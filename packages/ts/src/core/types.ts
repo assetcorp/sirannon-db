@@ -224,7 +224,9 @@ export interface ServerOptions {
 	host?: string
 	port?: number
 	cors?: boolean | CorsOptions
-	auth?: (req: { headers: Record<string, string> }) => boolean | Promise<boolean>
+	auth?: (req: {
+		headers: Record<string, string>
+	}) => boolean | Promise<boolean>
 }
 
 /** CORS configuration. */

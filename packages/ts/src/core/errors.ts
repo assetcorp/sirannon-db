@@ -69,10 +69,7 @@ export class MigrationError extends SirannonError {
 
 /** Thrown when a hook denies an operation. */
 export class HookDeniedError extends SirannonError {
-	constructor(
-		hookName: string,
-		reason?: string,
-	) {
+	constructor(hookName: string, reason?: string) {
 		super(
 			reason
 				? `Hook '${hookName}' denied the operation: ${reason}`
@@ -110,20 +107,14 @@ export class ConnectionPoolError extends SirannonError {
 /** Thrown when the maximum number of open databases is reached. */
 export class MaxDatabasesError extends SirannonError {
 	constructor(max: number) {
-		super(
-			`Maximum number of open databases (${max}) reached`,
-			'MAX_DATABASES',
-		)
+		super(`Maximum number of open databases (${max}) reached`, 'MAX_DATABASES')
 		this.name = 'MaxDatabasesError'
 	}
 }
 
 /** Thrown when an extension fails to load. */
 export class ExtensionError extends SirannonError {
-	constructor(
-		path: string,
-		cause?: string,
-	) {
+	constructor(path: string, cause?: string) {
 		super(
 			cause
 				? `Failed to load extension '${path}': ${cause}`

@@ -27,7 +27,10 @@
 	"scripts": {
 		"build": "tsup",
 		"test": "vitest run",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"format": "biome format --write ."
 	},
 	"exports": {
 		".": {

@@ -18,9 +18,12 @@
 		"build": "turbo run build",
 		"test": "turbo run test",
 		"typecheck": "turbo run typecheck",
-		"lint": "turbo run lint"
+		"lint": "turbo run lint",
+		"format": "biome format --write .",
+		"check": "biome check ."
 	},
 	"devDependencies": {
+		"@biomejs/biome": "2.4.4",
 		"turbo": "2.8.12"
 	}
 }

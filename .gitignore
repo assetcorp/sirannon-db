@@ -82,6 +82,7 @@ out
 .nuxt
 dist
 .output
+.turbo
 
 # Gatsby files
 .cache/

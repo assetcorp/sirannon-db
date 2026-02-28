@@ -1,6 +1,11 @@
-// ---------------------------------------------------------------------------
-// @delali/sirannon-db - Core entry point
-// ---------------------------------------------------------------------------
-
+export { ConnectionPool } from './connection-pool.js'
+export type { ConnectionPoolOptions } from './connection-pool.js'
+export { Database } from './database.js'
 export * from './errors.js'
+export { QueryExecutor } from './query-executor.js'
+export { Sirannon } from './sirannon.js'
+export { Transaction } from './transaction.js'
 export * from './types.js'
+export * from './hooks/types.js'
+export { HookRegistry } from './hooks/registry.js'
+export { MetricsCollector } from './metrics/collector.js'

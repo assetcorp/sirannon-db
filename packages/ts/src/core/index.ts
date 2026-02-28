@@ -2,5 +2,5 @@
 // @delali/sirannon-db - Core entry point
 // ---------------------------------------------------------------------------
 
-export * from './types.js'
 export * from './errors.js'
+export * from './types.js'

@@ -1,5 +1,8 @@
 import { Database } from './database.js'
 import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from './errors.js'
+import { HookRegistry } from './hooks/registry.js'
+import { LifecycleManager } from './lifecycle/manager.js'
+import { MetricsCollector } from './metrics/collector.js'
 import type {
   AfterQueryHook,
   BeforeConnectHook,
@@ -14,7 +17,22 @@ export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private _shutdown = false
 
-  constructor(readonly options?: SirannonOptions) {}
+  private readonly hookRegistry: HookRegistry
+  private readonly metricsCollector: MetricsCollector | null
+  private readonly lifecycleManager: LifecycleManager | null
+
+  constructor(readonly options?: SirannonOptions) {
+    this.hookRegistry = new HookRegistry(options?.hooks)
+    this.metricsCollector = options?.metrics ? new MetricsCollector(options.metrics) : null
+    this.lifecycleManager = options?.lifecycle
+      ? new LifecycleManager(options.lifecycle, {
+          open: (id, path, opts) => this.open(id, path, opts),
+          close: (id) => this.close(id),
+          count: () => this.dbs.size,
+          has: (id) => this.dbs.has(id),
+        })
+      : null
+  }
 
   open(id: string, path: string, options?: DatabaseOptions): Database {
     this.ensureRunning()
@@ -22,9 +40,16 @@ export class Sirannon {
       throw new DatabaseAlreadyExistsError(id)
     }
 
+    if (this.hookRegistry.has('beforeConnect')) {
+      this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
+    }
+
     let db: Database
     try {
-      db = new Database(id, path, options)
+      db = new Database(id, path, options, {
+        parentHooks: this.hookRegistry,
+        metrics: this.metricsCollector ?? undefined,
+      })
     } catch (err) {
       if (err instanceof SirannonError) throw err
       throw new SirannonError(
@@ -33,8 +58,44 @@ export class Sirannon {
       )
     }
 
-    db.addCloseListener(() => this.dbs.delete(id))
+    db.addCloseListener(() => {
+      this.dbs.delete(id)
+      this.lifecycleManager?.untrack(id)
+
+      if (this.hookRegistry.has('databaseClose')) {
+        try {
+          this.hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      this.metricsCollector?.trackConnection({
+        databaseId: id,
+        path,
+        readerCount: 0,
+        event: 'close',
+      })
+    })
+
     this.dbs.set(id, db)
+    this.lifecycleManager?.markActive(id)
+
+    if (this.hookRegistry.has('databaseOpen')) {
+      try {
+        this.hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    this.metricsCollector?.trackConnection({
+      databaseId: id,
+      path,
+      readerCount: db.readerCount,
+      event: 'open',
+    })
+
     return db
   }
 
@@ -48,7 +109,13 @@ export class Sirannon {
   }
 
   get(id: string): Database | undefined {
-    return this.dbs.get(id)
+    const db = this.dbs.get(id)
+    if (db) {
+      this.lifecycleManager?.markActive(id)
+      return db
+    }
+    if (this._shutdown) return undefined
+    return this.lifecycleManager?.resolve(id)
   }
 
   has(id: string): boolean {
@@ -62,6 +129,8 @@ export class Sirannon {
   shutdown(): void {
     if (this._shutdown) return
     this._shutdown = true
+
+    this.lifecycleManager?.dispose()
 
     const errors: unknown[] = []
     const snapshot = [...this.dbs.values()]
@@ -81,24 +150,24 @@ export class Sirannon {
     }
   }
 
-  onBeforeQuery(_hook: BeforeQueryHook): void {
-    throw new Error('not implemented')
+  onBeforeQuery(hook: BeforeQueryHook): void {
+    this.hookRegistry.register('beforeQuery', hook)
   }
 
-  onAfterQuery(_hook: AfterQueryHook): void {
-    throw new Error('not implemented')
+  onAfterQuery(hook: AfterQueryHook): void {
+    this.hookRegistry.register('afterQuery', hook)
   }
 
-  onBeforeConnect(_hook: BeforeConnectHook): void {
-    throw new Error('not implemented')
+  onBeforeConnect(hook: BeforeConnectHook): void {
+    this.hookRegistry.register('beforeConnect', hook)
   }
 
-  onDatabaseOpen(_hook: DatabaseOpenHook): void {
-    throw new Error('not implemented')
+  onDatabaseOpen(hook: DatabaseOpenHook): void {
+    this.hookRegistry.register('databaseOpen', hook)
   }
 
-  onDatabaseClose(_hook: DatabaseCloseHook): void {
-    throw new Error('not implemented')
+  onDatabaseClose(hook: DatabaseCloseHook): void {
+    this.hookRegistry.register('databaseClose', hook)
   }
 
   private ensureRunning(): void {

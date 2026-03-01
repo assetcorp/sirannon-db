@@ -95,6 +95,7 @@ export function startPolling(
   tracker: ChangeTracker,
   manager: SubscriptionManager,
   intervalMs: number,
+  onError?: (err: Error) => void,
 ): () => void {
   let running = true
 
@@ -103,15 +104,35 @@ export function startPolling(
     clearInterval(interval)
   }
 
+  let consecutiveErrors = 0
+  let tickCount = 0
+  const MAX_CONSECUTIVE_ERRORS = 10
+  const CLEANUP_INTERVAL_TICKS = 100
+
   const tick = () => {
     if (!running) return
+    if (manager.size === 0) return
+
     try {
       const events = tracker.poll(db)
       if (events.length > 0) {
         manager.dispatch(events)
       }
-    } catch {
-      stop()
+      consecutiveErrors = 0
+
+      tickCount++
+      if (tickCount >= CLEANUP_INTERVAL_TICKS) {
+        tickCount = 0
+        tracker.cleanup(db)
+      }
+    } catch (err) {
+      consecutiveErrors++
+      if (onError) {
+        onError(err instanceof Error ? err : new Error(String(err)))
+      }
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        stop()
+      }
     }
   }
 

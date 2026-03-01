@@ -145,16 +145,13 @@ export class WebSocketTransport implements Transport {
       return
     }
 
-    if (this.connectPromise) {
-      return this.connectPromise
+    if (!this.connectPromise) {
+      this.connectPromise = this.connect().finally(() => {
+        this.connectPromise = null
+      })
     }
 
-    this.connectPromise = this.connect()
-    try {
-      await this.connectPromise
-    } finally {
-      this.connectPromise = null
-    }
+    return this.connectPromise
   }
 
   private connect(): Promise<void> {

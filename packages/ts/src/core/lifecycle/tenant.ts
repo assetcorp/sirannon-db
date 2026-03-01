@@ -58,9 +58,7 @@ export function tenantPath(basePath: string, tenantId: string, extension = '.db'
   }
   const filename = `${sanitized}${extension}`
   if (filename.length > MAX_FILENAME_LENGTH) {
-    throw new Error(
-      `Tenant filename exceeds maximum length of ${MAX_FILENAME_LENGTH} characters`,
-    )
+    throw new Error(`Tenant filename exceeds maximum length of ${MAX_FILENAME_LENGTH} characters`)
   }
   return join(basePath, filename)
 }

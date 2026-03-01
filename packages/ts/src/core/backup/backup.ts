@@ -1,11 +1,21 @@
-import Database from 'better-sqlite3'
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import type Database from 'better-sqlite3'
 import { BackupError } from '../errors.js'
 
 type SqliteDb = InstanceType<typeof Database>
 
 const BACKUP_FILE_PREFIX = 'backup'
+
+function hasControlCharacters(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i)
+    if (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      return true
+    }
+  }
+  return false
+}
 
 export class BackupManager {
   /**
@@ -21,6 +31,10 @@ export class BackupManager {
    * silently overwrite it depending on the SQLite version.
    */
   backup(db: SqliteDb, destPath: string): void {
+    if (hasControlCharacters(destPath)) {
+      throw new BackupError('Backup path contains invalid characters')
+    }
+
     const resolved = resolve(destPath)
     const dir = dirname(resolved)
 
@@ -53,9 +67,7 @@ export class BackupManager {
       } catch {
         // Best-effort cleanup
       }
-      throw new BackupError(
-        `Backup to '${destPath}' failed: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      throw new BackupError(`Backup to '${destPath}' failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -89,8 +101,8 @@ export class BackupManager {
     let entries: { path: string; mtimeMs: number }[]
     try {
       entries = readdirSync(resolved)
-        .filter((f) => f.startsWith(`${BACKUP_FILE_PREFIX}-`) && f.endsWith('.db'))
-        .map((f) => {
+        .filter(f => f.startsWith(`${BACKUP_FILE_PREFIX}-`) && f.endsWith('.db'))
+        .map(f => {
           const filePath = join(resolved, f)
           return { path: filePath, mtimeMs: lstatSync(filePath).mtimeMs }
         })

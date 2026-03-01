@@ -168,12 +168,31 @@ export interface Subscription {
   unsubscribe(): void
 }
 
+/** Context passed to the onRequest middleware hook. */
+export interface RequestContext {
+  headers: Record<string, string>
+  method: string
+  path: string
+  databaseId?: string
+  remoteAddress: string
+}
+
+/** Return this from an onRequest hook to deny the request with a custom response. */
+export interface RequestDenial {
+  status: number
+  code: string
+  message: string
+}
+
+/** Middleware hook for auth, rate limiting, and request validation. */
+export type OnRequestHook = (ctx: RequestContext) => void | RequestDenial | Promise<void | RequestDenial>
+
 /** Options for the standalone HTTP + WS server. */
 export interface ServerOptions {
   host?: string
   port?: number
   cors?: boolean | CorsOptions
-  auth?: (req: { headers: Record<string, string> }) => boolean | Promise<boolean>
+  onRequest?: OnRequestHook
 }
 
 /** CORS configuration. */

@@ -168,7 +168,7 @@ describe('ConnectionPool', () => {
     expect(() => new ConnectionPool({ path: badPath })).toThrow()
   })
 
-  it('cleans up opened connections when constructor fails partway', () => {
+  it('reopens on same path after close', () => {
     const dbPath = join(tempDir, 'partial.db')
     seedDatabase(dbPath)
 

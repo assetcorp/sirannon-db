@@ -401,39 +401,44 @@ describe('CORS', () => {
   })
 })
 
-describe('auth', () => {
-  it('rejects requests when auth returns false', async () => {
-    const authServer = createServer(sirannon, {
+describe('onRequest', () => {
+  it('denies requests with custom status, code, and message', async () => {
+    const hookServer = createServer(sirannon, {
       port: 0,
-      auth: () => false,
+      onRequest: () => ({ status: 403, code: 'FORBIDDEN', message: 'Access denied' }),
     })
-    await authServer.listen()
-    const authUrl = `http://127.0.0.1:${authServer.listeningPort}`
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
 
     try {
-      const res = await fetch(`${authUrl}/db/test/query`, {
+      const res = await fetch(`${hookUrl}/db/test/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: 'SELECT 1' }),
       })
-      expect(res.status).toBe(401)
+      expect(res.status).toBe(403)
       const body = (await res.json()) as ApiResponse
-      expect(body.error.code).toBe('UNAUTHORIZED')
+      expect(body.error.code).toBe('FORBIDDEN')
+      expect(body.error.message).toBe('Access denied')
     } finally {
-      await authServer.close()
+      await hookServer.close()
     }
   })
 
-  it('allows requests when auth returns true', async () => {
-    const authServer = createServer(sirannon, {
+  it('allows requests when hook returns void', async () => {
+    const hookServer = createServer(sirannon, {
       port: 0,
-      auth: ({ headers }) => headers.authorization === 'Bearer valid-token',
+      onRequest: ({ headers }) => {
+        if (headers.authorization !== 'Bearer valid-token') {
+          return { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required' }
+        }
+      },
     })
-    await authServer.listen()
-    const authUrl = `http://127.0.0.1:${authServer.listeningPort}`
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
 
     try {
-      const res = await fetch(`${authUrl}/db/test/query`, {
+      const res = await fetch(`${hookUrl}/db/test/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -443,47 +448,51 @@ describe('auth', () => {
       })
       expect(res.status).toBe(200)
     } finally {
-      await authServer.close()
+      await hookServer.close()
     }
   })
 
-  it('does not require auth for health endpoints', async () => {
-    const authServer = createServer(sirannon, {
+  it('does not run onRequest for health endpoints', async () => {
+    const hookServer = createServer(sirannon, {
       port: 0,
-      auth: () => false,
+      onRequest: () => ({ status: 403, code: 'FORBIDDEN', message: 'Blocked' }),
     })
-    await authServer.listen()
-    const authUrl = `http://127.0.0.1:${authServer.listeningPort}`
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
 
     try {
-      const res = await fetch(`${authUrl}/health`)
-      expect(res.status).toBe(200)
+      const healthRes = await fetch(`${hookUrl}/health`)
+      expect(healthRes.status).toBe(200)
+
+      const readyRes = await fetch(`${hookUrl}/health/ready`)
+      expect(readyRes.status).toBe(200)
     } finally {
-      await authServer.close()
+      await hookServer.close()
     }
   })
 
-  it('handles async auth function', async () => {
-    const authServer = createServer(sirannon, {
+  it('handles async onRequest hook (allow and deny)', async () => {
+    const hookServer = createServer(sirannon, {
       port: 0,
-      auth: async ({ headers }) => {
-        // Simulate async auth check
+      onRequest: async ({ headers }) => {
         await new Promise(r => setTimeout(r, 5))
-        return headers['x-api-key'] === 'secret'
+        if (headers['x-api-key'] !== 'secret') {
+          return { status: 401, code: 'UNAUTHORIZED', message: 'Bad key' }
+        }
       },
     })
-    await authServer.listen()
-    const authUrl = `http://127.0.0.1:${authServer.listeningPort}`
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
 
     try {
-      const denied = await fetch(`${authUrl}/db/test/query`, {
+      const denied = await fetch(`${hookUrl}/db/test/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: 'SELECT 1' }),
       })
       expect(denied.status).toBe(401)
 
-      const allowed = await fetch(`${authUrl}/db/test/query`, {
+      const allowed = await fetch(`${hookUrl}/db/test/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -493,7 +502,64 @@ describe('auth', () => {
       })
       expect(allowed.status).toBe(200)
     } finally {
-      await authServer.close()
+      await hookServer.close()
+    }
+  })
+
+  it('returns 500 HOOK_ERROR when hook throws', async () => {
+    const hookServer = createServer(sirannon, {
+      port: 0,
+      onRequest: () => {
+        throw new Error('hook crashed')
+      },
+    })
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
+
+    try {
+      const res = await fetch(`${hookUrl}/db/test/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql: 'SELECT 1' }),
+      })
+      expect(res.status).toBe(500)
+      const body = (await res.json()) as ApiResponse
+      expect(body.error.code).toBe('HOOK_ERROR')
+    } finally {
+      await hookServer.close()
+    }
+  })
+
+  it('populates context with method, path, databaseId, remoteAddress, and headers', async () => {
+    let capturedCtx: Record<string, unknown> | undefined
+    const hookServer = createServer(sirannon, {
+      port: 0,
+      onRequest: ctx => {
+        capturedCtx = { ...ctx }
+      },
+    })
+    await hookServer.listen()
+    const hookUrl = `http://127.0.0.1:${hookServer.listeningPort}`
+
+    try {
+      await fetch(`${hookUrl}/db/test/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Custom': 'test-value',
+        },
+        body: JSON.stringify({ sql: 'SELECT 1' }),
+      })
+
+      expect(capturedCtx).toBeDefined()
+      expect(capturedCtx?.method).toBe('post')
+      expect(capturedCtx?.path).toBe('/db/test/query')
+      expect(capturedCtx?.databaseId).toBe('test')
+      expect(typeof capturedCtx?.remoteAddress).toBe('string')
+      const headers = capturedCtx?.headers as Record<string, string>
+      expect(headers['x-custom']).toBe('test-value')
+    } finally {
+      await hookServer.close()
     }
   })
 })

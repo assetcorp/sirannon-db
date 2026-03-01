@@ -3,15 +3,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Database } from '../database.js'
-import { ConnectionPoolError, QueryError, SirannonError } from '../errors.js'
+import { ConnectionPoolError, ExtensionError, QueryError, SirannonError } from '../errors.js'
 
 let tempDir: string
+const openDbs: Database[] = []
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-db-'))
 })
 
 afterEach(() => {
+  for (const db of openDbs) {
+    try {
+      if (!db.closed) db.close()
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+  openDbs.length = 0
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -23,11 +32,14 @@ function createTestDb(options?: { readOnly?: boolean; readPoolSize?: number }): 
     setup.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
     setup.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
     setup.close()
-    return new Database('test', dbPath, { readOnly: true })
+    const db = new Database('test', dbPath, { readOnly: true })
+    openDbs.push(db)
+    return db
   }
 
   const db = new Database('test', dbPath, options)
   db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  openDbs.push(db)
   return db
 }
 
@@ -336,7 +348,7 @@ describe('Database', () => {
       expect(() => db.addCloseListener(() => {})).toThrow(SirannonError)
     })
 
-    it('still invokes listeners when pool.close throws', () => {
+    it('invokes listeners during normal close', () => {
       const dbPath = join(tempDir, 'pool-err.db')
       const db = new Database('test', dbPath)
       let listenerCalled = false
@@ -345,6 +357,52 @@ describe('Database', () => {
       })
       db.close()
       expect(listenerCalled).toBe(true)
+    })
+  })
+
+  describe('loadExtension validation', () => {
+    it('rejects empty extension path', () => {
+      const db = createTestDb()
+      expect(() => db.loadExtension('')).toThrow(ExtensionError)
+      expect(() => db.loadExtension('')).toThrow('empty or contains null bytes')
+    })
+
+    it('rejects paths with null bytes', () => {
+      const db = createTestDb()
+      expect(() => db.loadExtension('/lib/ext\x00.so')).toThrow(ExtensionError)
+      expect(() => db.loadExtension('/lib/ext\x00.so')).toThrow('empty or contains null bytes')
+    })
+
+    it('rejects paths with directory traversal segments', () => {
+      const db = createTestDb()
+      expect(() => db.loadExtension('/lib/../etc/ext.so')).toThrow(ExtensionError)
+      expect(() => db.loadExtension('/lib/../etc/ext.so')).toThrow('directory traversal')
+    })
+
+    it('rejects relative paths with leading traversal', () => {
+      const db = createTestDb()
+      expect(() => db.loadExtension('../sneaky/ext.so')).toThrow(ExtensionError)
+    })
+
+    it('throws ExtensionError for nonexistent extension file', () => {
+      const db = createTestDb()
+      expect(() => db.loadExtension('/nonexistent/path/ext.so')).toThrow(ExtensionError)
+    })
+  })
+
+  describe('executeBatch transaction behavior', () => {
+    it('rolls back all rows on batch failure (implicit transaction)', () => {
+      const dbPath = join(tempDir, 'batch-tx.db')
+      const db = new Database('test', dbPath)
+      openDbs.push(db)
+      db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT UNIQUE)')
+      db.execute("INSERT INTO items (val) VALUES ('existing')")
+
+      expect(() => db.executeBatch('INSERT INTO items (val) VALUES (?)', [['a'], ['b'], ['existing']])).toThrow()
+
+      const rows = db.query<{ val: string }>('SELECT val FROM items')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].val).toBe('existing')
     })
   })
 })

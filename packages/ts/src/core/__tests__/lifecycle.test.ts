@@ -51,7 +51,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
         },
         callbacks,
@@ -59,11 +59,11 @@ describe('LifecycleManager', () => {
 
       const db = manager.resolve('tenantA')
       expect(db).toBeDefined()
-      expect(db!.id).toBe('tenantA')
+      expect(db?.id).toBe('tenantA')
       expect(dbs.has('tenantA')).toBe(true)
 
       manager.dispose()
-      db!.close()
+      db?.close()
     })
 
     it('returns undefined when no resolver is configured', () => {
@@ -94,7 +94,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
         },
         callbacks,
@@ -114,7 +114,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             maxOpen: 2,
           },
@@ -152,7 +152,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           maxOpen: 2,
         },
@@ -171,7 +171,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
         },
         callbacks,
@@ -210,7 +210,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           maxOpen: -1,
         },
@@ -233,7 +233,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             maxOpen: 1,
           },
@@ -263,7 +263,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({
+            resolver: id => ({
               path: join(tempDir, `${id}.db`),
               options: { readPoolSize: 2 },
             }),
@@ -274,7 +274,7 @@ describe('LifecycleManager', () => {
 
       const db = manager.resolve('custom')
       expect(db).toBeDefined()
-      expect(db!.readerCount).toBe(2)
+      expect(db?.readerCount).toBe(2)
 
       manager.dispose()
       for (const d of dbs.values()) d.close()
@@ -299,7 +299,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 1000,
           },
@@ -342,7 +342,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 500,
           },
@@ -371,7 +371,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 1000,
           },
@@ -398,7 +398,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           idleTimeout: 0,
         },
@@ -420,7 +420,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           idleTimeout: 10_000,
         },
@@ -459,7 +459,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 100,
           },
@@ -486,7 +486,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 500,
           },
@@ -516,7 +516,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 1000,
           },
@@ -551,7 +551,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
           },
           callbacks,
@@ -595,7 +595,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
           },
           callbacks,
@@ -628,7 +628,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
           },
           callbacks,
@@ -663,7 +663,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 1000,
           },
@@ -692,7 +692,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 0,
           },
@@ -719,7 +719,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: -500,
           },
@@ -745,7 +745,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
           },
           callbacks,
@@ -770,7 +770,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 500,
           },
@@ -800,7 +800,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
         },
         callbacks,
@@ -831,7 +831,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           idleTimeout: 1000,
         },
@@ -867,7 +867,7 @@ describe('LifecycleManager', () => {
         const manager = new LifecycleManager(
           {
             autoOpen: {
-              resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
             },
             idleTimeout: 1000,
             maxOpen: 5,
@@ -907,7 +907,7 @@ describe('LifecycleManager', () => {
       const manager = new LifecycleManager(
         {
           autoOpen: {
-            resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+            resolver: id => ({ path: join(tempDir, `${id}.db`) }),
           },
           maxOpen: 3,
         },
@@ -1026,7 +1026,7 @@ describe('tenant utilities', () => {
 
       const result = resolver('tenant1')
       expect(result).toBeDefined()
-      expect(result!.path).toBe(join('/data/dbs', 'tenant1.db'))
+      expect(result?.path).toBe(join('/data/dbs', 'tenant1.db'))
     })
 
     it('uses custom extension', () => {
@@ -1036,7 +1036,7 @@ describe('tenant utilities', () => {
       })
 
       const result = resolver('mydb')
-      expect(result!.path).toBe(join('/data', 'mydb.sqlite3'))
+      expect(result?.path).toBe(join('/data', 'mydb.sqlite3'))
     })
 
     it('returns undefined for invalid IDs', () => {
@@ -1056,13 +1056,13 @@ describe('tenant utilities', () => {
 
       const result = resolver('tenant1')
       expect(result).toBeDefined()
-      expect(result!.options).toEqual({ readOnly: true, readPoolSize: 2 })
+      expect(result?.options).toEqual({ readOnly: true, readPoolSize: 2 })
     })
 
     it('returns undefined options when none are configured', () => {
       const resolver = createTenantResolver({ basePath: '/data' })
       const result = resolver('tenant1')
-      expect(result!.options).toBeUndefined()
+      expect(result?.options).toBeUndefined()
     })
 
     it('returns undefined when filename exceeds 255 characters', () => {
@@ -1083,19 +1083,16 @@ describe('tenant utilities', () => {
       const { dbs, callbacks } = createRegistry()
       const resolver = createTenantResolver({ basePath: tempDir })
 
-      const manager = new LifecycleManager(
-        { autoOpen: { resolver } },
-        callbacks,
-      )
+      const manager = new LifecycleManager({ autoOpen: { resolver } }, callbacks)
 
       const db = manager.resolve('acme')
       expect(db).toBeDefined()
-      expect(db!.id).toBe('acme')
-      expect(db!.path).toBe(join(tempDir, 'acme.db'))
+      expect(db?.id).toBe('acme')
+      expect(db?.path).toBe(join(tempDir, 'acme.db'))
       expect(dbs.has('acme')).toBe(true)
 
       manager.dispose()
-      db!.close()
+      db?.close()
     })
   })
 })

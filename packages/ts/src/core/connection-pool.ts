@@ -41,6 +41,7 @@ export class ConnectionPool {
         }
         writer.pragma('synchronous = NORMAL')
         writer.pragma('foreign_keys = ON')
+        writer.pragma('busy_timeout = 5000')
       }
 
       const poolSize = Math.max(readPoolSize, 1)

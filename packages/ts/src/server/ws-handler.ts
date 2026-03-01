@@ -326,6 +326,14 @@ export class WSHandler {
     const manager = new SubscriptionManager()
 
     let running = true
+    let consecutiveErrors = 0
+    const MAX_CONSECUTIVE_ERRORS = 10
+
+    const stopPolling = () => {
+      running = false
+      clearInterval(interval)
+    }
+
     const tick = () => {
       if (!running || manager.size === 0) return
       try {
@@ -333,17 +341,16 @@ export class WSHandler {
         if (events.length > 0) {
           manager.dispatch(events)
         }
+        consecutiveErrors = 0
       } catch {
-        // Polling error; skip this tick and retry next interval
+        consecutiveErrors++
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          stopPolling()
+        }
       }
     }
     const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS)
     if (typeof interval.unref === 'function') interval.unref()
-
-    const stopPolling = () => {
-      running = false
-      clearInterval(interval)
-    }
 
     const ctx: CDCContext = { cdcDb, tracker, manager, stopPolling }
     this.cdcContexts.set(databaseId, ctx)

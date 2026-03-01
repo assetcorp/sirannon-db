@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type Database from 'better-sqlite3'
 import { MigrationError } from '../errors.js'
@@ -43,32 +43,24 @@ export class MigrationRunner {
     try {
       stat = statSync(resolvedPath)
     } catch {
-      throw new MigrationError(
-        `Migrations path does not exist: ${resolvedPath}`,
-        0,
-      )
+      throw new MigrationError(`Migrations path does not exist: ${resolvedPath}`, 0)
     }
 
     if (!stat.isDirectory()) {
-      throw new MigrationError(
-        `Migrations path is not a directory: ${resolvedPath}`,
-        0,
-      )
+      throw new MigrationError(`Migrations path is not a directory: ${resolvedPath}`, 0)
     }
 
     db.exec(CREATE_TRACKING_TABLE)
 
-    const files = this.scanMigrations(resolvedPath)
-    const applied = this.getAppliedVersions(db)
+    const files = MigrationRunner.scanMigrations(resolvedPath)
+    const applied = MigrationRunner.getAppliedVersions(db)
     const pending = files.filter(f => !applied.has(f.version))
 
     if (pending.length === 0) {
       return { applied: [], skipped: files.length }
     }
 
-    const insertMigration = db.prepare(
-      'INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)',
-    )
+    const insertMigration = db.prepare('INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)')
 
     db.transaction(() => {
       for (const migration of pending) {
@@ -110,10 +102,7 @@ export class MigrationRunner {
 
       const existing = seenVersions.get(version)
       if (existing) {
-        throw new MigrationError(
-          `Duplicate migration version ${version}: '${existing}' and '${entry.name}'`,
-          version,
-        )
+        throw new MigrationError(`Duplicate migration version ${version}: '${existing}' and '${entry.name}'`, version)
       }
       seenVersions.set(version, entry.name)
 
@@ -121,10 +110,7 @@ export class MigrationRunner {
       const sql = readFileSync(filePath, 'utf-8').trim()
 
       if (sql.length === 0) {
-        throw new MigrationError(
-          `Migration file is empty: ${entry.name}`,
-          version,
-        )
+        throw new MigrationError(`Migration file is empty: ${entry.name}`, version)
       }
 
       migrations.push({ version, name, sql })
@@ -138,9 +124,10 @@ export class MigrationRunner {
    * Read the set of already-applied migration versions from the tracking table.
    */
   private static getAppliedVersions(db: SqliteDb): Set<number> {
-    const rows = db
-      .prepare('SELECT version FROM _sirannon_migrations ORDER BY version')
-      .all() as Pick<AppliedMigration, 'version'>[]
+    const rows = db.prepare('SELECT version FROM _sirannon_migrations ORDER BY version').all() as Pick<
+      AppliedMigration,
+      'version'
+    >[]
 
     return new Set(rows.map(r => r.version))
   }

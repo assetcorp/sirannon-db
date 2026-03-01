@@ -1,8 +1,8 @@
-import BetterSqlite3 from 'better-sqlite3'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import BetterSqlite3 from 'better-sqlite3'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../backup/backup.js'
 import { BackupScheduler } from '../backup/scheduler.js'
 import { BackupError } from '../errors.js'
@@ -184,7 +184,7 @@ describe('BackupManager', () => {
 
     it('generates unique filenames across calls separated by time', async () => {
       const first = manager.generateFilename()
-      await new Promise((r) => setTimeout(r, 5))
+      await new Promise(r => setTimeout(r, 5))
       const second = manager.generateFilename()
       expect(first).not.toBe(second)
     })
@@ -206,7 +206,7 @@ describe('BackupManager', () => {
 
       manager.rotate(backupDir, 3)
 
-      const remaining = readdirSync(backupDir).filter((f) => f.endsWith('.db'))
+      const remaining = readdirSync(backupDir).filter(f => f.endsWith('.db'))
       expect(remaining).toHaveLength(3)
     })
 
@@ -243,7 +243,7 @@ describe('BackupManager', () => {
 
       manager.rotate(backupDir, 5)
 
-      const remaining = readdirSync(backupDir).filter((f) => f.endsWith('.db'))
+      const remaining = readdirSync(backupDir).filter(f => f.endsWith('.db'))
       expect(remaining).toHaveLength(2)
     })
 
@@ -264,7 +264,7 @@ describe('BackupManager', () => {
       const remaining = readdirSync(backupDir)
       expect(remaining).toContain('other-file.db')
       expect(remaining).toContain('notes.txt')
-      expect(remaining.filter((f) => f.startsWith('backup-'))).toHaveLength(1)
+      expect(remaining.filter(f => f.startsWith('backup-'))).toHaveLength(1)
       expect(remaining).toContain('backup-b.db')
     })
 
@@ -295,77 +295,87 @@ describe('BackupManager', () => {
 })
 
 describe('BackupScheduler', () => {
-  it('fires a backup on cron schedule', async () => {
-    const db = createTestDb()
-    const backupDir = join(tempDir, 'scheduled')
-    const scheduler = new BackupScheduler()
+  it('fires a backup on cron schedule', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      const backupDir = join(tempDir, 'scheduled')
+      const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-      maxFiles: 10,
-    })
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+      })
 
-    await new Promise((r) => setTimeout(r, 2500))
-    cancel()
+      vi.advanceTimersByTime(1500)
+      cancel()
 
-    const files = readdirSync(backupDir).filter((f) => f.endsWith('.db'))
-    expect(files.length).toBeGreaterThanOrEqual(1)
+      const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
+      expect(files.length).toBeGreaterThanOrEqual(1)
 
-    // Verify the backup file contains valid data
-    const backupPath = join(backupDir, files[0])
-    const backupDb = new BetterSqlite3(backupPath, { readonly: true })
-    const rows = backupDb.prepare('SELECT * FROM users').all() as { name: string }[]
-    expect(rows).toHaveLength(2)
-    backupDb.close()
-    db.close()
+      const backupPath = join(backupDir, files[0])
+      const backupDb = new BetterSqlite3(backupPath, { readonly: true })
+      const rows = backupDb.prepare('SELECT * FROM users').all() as { name: string }[]
+      expect(rows).toHaveLength(2)
+      backupDb.close()
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('rotates files according to maxFiles', async () => {
-    const db = createTestDb()
-    const backupDir = join(tempDir, 'rotated')
-    const scheduler = new BackupScheduler()
+  it('rotates files according to maxFiles', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      const backupDir = join(tempDir, 'rotated')
+      const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-      maxFiles: 2,
-    })
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 2,
+      })
 
-    // Wait for several ticks so rotation has a chance to prune
-    await new Promise((r) => setTimeout(r, 4500))
-    cancel()
+      vi.advanceTimersByTime(4500)
+      cancel()
 
-    const files = readdirSync(backupDir).filter((f) => f.endsWith('.db'))
-    // At least one backup must have been created, and at most maxFiles retained
-    expect(files.length).toBeGreaterThanOrEqual(1)
-    expect(files.length).toBeLessThanOrEqual(2)
-    db.close()
+      const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
+      expect(files.length).toBeGreaterThanOrEqual(1)
+      expect(files.length).toBeLessThanOrEqual(2)
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('cancel function stops future backups', async () => {
-    const db = createTestDb()
-    const backupDir = join(tempDir, 'cancelled')
-    const scheduler = new BackupScheduler()
+  it('cancel function stops future backups', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      const backupDir = join(tempDir, 'cancelled')
+      const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-      maxFiles: 10,
-    })
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+      })
 
-    // Let at least one backup fire, then cancel
-    await new Promise((r) => setTimeout(r, 2500))
-    cancel()
+      vi.advanceTimersByTime(1500)
+      cancel()
 
-    const countAfterCancel = readdirSync(backupDir).filter((f) => f.endsWith('.db')).length
-    expect(countAfterCancel).toBeGreaterThanOrEqual(1)
+      const countAfterCancel = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
+      expect(countAfterCancel).toBeGreaterThanOrEqual(1)
 
-    // Wait and confirm no new backups appear
-    await new Promise((r) => setTimeout(r, 2500))
-    const countLater = readdirSync(backupDir).filter((f) => f.endsWith('.db')).length
-    expect(countLater).toBe(countAfterCancel)
-    db.close()
+      vi.advanceTimersByTime(3000)
+      const countLater = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
+      expect(countLater).toBe(countAfterCancel)
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('throws BackupError with BACKUP_ERROR code for an invalid cron expression', () => {
@@ -391,7 +401,6 @@ describe('BackupScheduler', () => {
     const backupDir = join(tempDir, 'new', 'nested', 'dir')
     const scheduler = new BackupScheduler()
 
-    // Once-a-year schedule; we only verify directory creation, not firing
     const cancel = scheduler.schedule(db, {
       cron: '0 0 1 1 *',
       destDir: backupDir,
@@ -403,74 +412,87 @@ describe('BackupScheduler', () => {
     db.close()
   })
 
-  it('defaults maxFiles to 5 when not specified', async () => {
-    const db = createTestDb()
-    const backupDir = join(tempDir, 'defaults')
+  it('defaults maxFiles to 5 when not specified', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      const backupDir = join(tempDir, 'defaults')
 
-    let observedMaxFiles: number | undefined
-    const customManager = new BackupManager()
-    const originalRotate = customManager.rotate.bind(customManager)
-    customManager.rotate = (dir: string, maxFiles: number) => {
-      observedMaxFiles = maxFiles
-      return originalRotate(dir, maxFiles)
+      let observedMaxFiles: number | undefined
+      const customManager = new BackupManager()
+      const originalRotate = customManager.rotate.bind(customManager)
+      customManager.rotate = (dir: string, maxFiles: number) => {
+        observedMaxFiles = maxFiles
+        return originalRotate(dir, maxFiles)
+      }
+
+      const scheduler = new BackupScheduler(customManager)
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+      })
+
+      vi.advanceTimersByTime(1500)
+      cancel()
+
+      expect(observedMaxFiles).toBe(5)
+      db.close()
+    } finally {
+      vi.useRealTimers()
     }
-
-    const scheduler = new BackupScheduler(customManager)
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-    })
-
-    await new Promise((r) => setTimeout(r, 2500))
-    cancel()
-
-    expect(observedMaxFiles).toBe(5)
-    db.close()
   })
 
-  it('calls onError when a scheduled backup fails', async () => {
-    const db = createTestDb()
-    db.close() // close the database so every backup attempt fails
+  it('calls onError when a scheduled backup fails', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      db.close()
 
-    const backupDir = join(tempDir, 'error-reporting')
-    const errors: Error[] = []
-    const scheduler = new BackupScheduler()
+      const backupDir = join(tempDir, 'error-reporting')
+      const errors: Error[] = []
+      const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-      maxFiles: 5,
-      onError: (err) => errors.push(err),
-    })
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 5,
+        onError: err => errors.push(err),
+      })
 
-    await new Promise((r) => setTimeout(r, 2500))
-    cancel()
+      vi.advanceTimersByTime(1500)
+      cancel()
 
-    expect(errors.length).toBeGreaterThanOrEqual(1)
-    expect(errors[0]).toBeInstanceOf(BackupError)
-    expect((errors[0] as BackupError).code).toBe('BACKUP_ERROR')
+      expect(errors.length).toBeGreaterThanOrEqual(1)
+      expect(errors[0]).toBeInstanceOf(BackupError)
+      expect((errors[0] as BackupError).code).toBe('BACKUP_ERROR')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('silently discards errors when onError is not provided', async () => {
-    const db = createTestDb()
-    db.close()
+  it('silently discards errors when onError is not provided', () => {
+    vi.useFakeTimers()
+    try {
+      const db = createTestDb()
+      db.close()
 
-    const backupDir = join(tempDir, 'silent-errors')
-    const scheduler = new BackupScheduler()
+      const backupDir = join(tempDir, 'silent-errors')
+      const scheduler = new BackupScheduler()
 
-    // Should not throw or crash, even though every backup attempt fails
-    const cancel = scheduler.schedule(db, {
-      cron: '* * * * * *',
-      destDir: backupDir,
-      maxFiles: 5,
-    })
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 5,
+      })
 
-    await new Promise((r) => setTimeout(r, 2500))
-    cancel()
+      vi.advanceTimersByTime(1500)
+      cancel()
 
-    // No backup files should exist since the database was closed
-    const files = readdirSync(backupDir).filter((f) => f.endsWith('.db'))
-    expect(files).toHaveLength(0)
+      const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
+      expect(files).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('accepts a custom BackupManager via constructor', () => {

@@ -85,6 +85,18 @@ export class ConnectionPool {
     return this.writer === null
   }
 
+  loadExtension(extensionPath: string): void {
+    if (this.closed) {
+      throw new ConnectionPoolError('Connection pool is closed')
+    }
+    if (this.writer) {
+      this.writer.loadExtension(extensionPath)
+    }
+    for (const reader of this.readers) {
+      reader.loadExtension(extensionPath)
+    }
+  }
+
   close(): void {
     if (this.closed) return
     this.closed = true

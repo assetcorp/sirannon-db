@@ -1,22 +1,10 @@
-// ---------------------------------------------------------------------------
-// HTTP request handler for sirannon-db
-// ---------------------------------------------------------------------------
-
 import type { HttpResponse } from 'uWebSockets.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ErrorResponse, ExecuteRequest, QueryRequest, TransactionRequest } from './protocol.js'
 import { toExecuteResponse } from './protocol.js'
 
-// ---------------------------------------------------------------------------
-// Body size limit (1 MB default)
-// ---------------------------------------------------------------------------
-
 const MAX_BODY_BYTES = 1_048_576
-
-// ---------------------------------------------------------------------------
-// Abort tracking
-// ---------------------------------------------------------------------------
 
 /**
  * Shared abort tracker for a uWS HttpResponse. uWS only allows a single
@@ -54,10 +42,6 @@ export function initAbortHandler(res: HttpResponse): ResponseAbort {
 		},
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Body reading
-// ---------------------------------------------------------------------------
 
 /**
  * Read the full request body from a uWS HttpResponse.
@@ -106,10 +90,6 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
 	})
 }
 
-// ---------------------------------------------------------------------------
-// JSON parsing
-// ---------------------------------------------------------------------------
-
 /**
  * Parse a Buffer as JSON. Returns the parsed object or null if the body
  * is empty or malformed (sends the appropriate error response).
@@ -127,10 +107,6 @@ function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
 		return null
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Response helpers
-// ---------------------------------------------------------------------------
 
 function sendJson(res: HttpResponse, data: unknown): void {
 	const payload = JSON.stringify(data)
@@ -175,20 +151,12 @@ function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
 	return db
 }
 
-// ---------------------------------------------------------------------------
-// Route handler type
-// ---------------------------------------------------------------------------
-
 /**
  * Handler receives a pre-read body Buffer. Body reading happens in the
  * server's wrapDbRoute middleware so that `onData` is always registered
  * synchronously in the uWS route callback.
  */
 export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer) => void
-
-// ---------------------------------------------------------------------------
-// Route handlers
-// ---------------------------------------------------------------------------
 
 export function handleQuery(sirannon: Sirannon): DbRouteHandler {
 	return (res, dbId, rawBody) => {

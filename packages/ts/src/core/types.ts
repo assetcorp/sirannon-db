@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Shared type definitions for sirannon-db
-// ---------------------------------------------------------------------------
-
 /** Query parameter types: named (object) or positional (array). */
 export type Params = Record<string, unknown> | unknown[]
 
@@ -10,10 +6,6 @@ export interface ExecuteResult {
   changes: number
   lastInsertRowId: number | bigint
 }
-
-// ---------------------------------------------------------------------------
-// Change Data Capture
-// ---------------------------------------------------------------------------
 
 /** CDC operation type. */
 export type ChangeOperation = 'insert' | 'update' | 'delete'
@@ -27,10 +19,6 @@ export interface ChangeEvent<T = Record<string, unknown>> {
   seq: bigint
   timestamp: number
 }
-
-// ---------------------------------------------------------------------------
-// Hooks
-// ---------------------------------------------------------------------------
 
 /** Context passed to query hooks. */
 export interface QueryHookContext {
@@ -78,10 +66,6 @@ export interface HookConfig {
   onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[]
 }
 
-// ---------------------------------------------------------------------------
-// Metrics
-// ---------------------------------------------------------------------------
-
 /** Metrics emitted after a query completes. */
 export interface QueryMetrics {
   databaseId: string
@@ -116,10 +100,6 @@ export interface MetricsConfig {
   onCDCEvent?: (metrics: CDCMetrics) => void
 }
 
-// ---------------------------------------------------------------------------
-// Lifecycle & Multi-tenancy
-// ---------------------------------------------------------------------------
-
 /** Configuration for automatic database lifecycle management. */
 export interface LifecycleConfig {
   autoOpen?: {
@@ -130,10 +110,6 @@ export interface LifecycleConfig {
   /** Maximum number of concurrently open databases. 0 = unlimited. */
   maxOpen?: number
 }
-
-// ---------------------------------------------------------------------------
-// Database options
-// ---------------------------------------------------------------------------
 
 /** Options for opening a single database. */
 export interface DatabaseOptions {
@@ -149,20 +125,12 @@ export interface DatabaseOptions {
   cdcRetention?: number
 }
 
-// ---------------------------------------------------------------------------
-// Sirannon (registry) options
-// ---------------------------------------------------------------------------
-
 /** Top-level options for the Sirannon database registry. */
 export interface SirannonOptions {
   hooks?: HookConfig
   metrics?: MetricsConfig
   lifecycle?: LifecycleConfig
 }
-
-// ---------------------------------------------------------------------------
-// Migrations
-// ---------------------------------------------------------------------------
 
 /** A single migration file descriptor. */
 export interface MigrationFile {
@@ -177,10 +145,6 @@ export interface MigrationResult {
   skipped: number
 }
 
-// ---------------------------------------------------------------------------
-// Backup
-// ---------------------------------------------------------------------------
-
 /** Options for scheduled backups. */
 export interface BackupScheduleOptions {
   /** Cron expression (e.g., '0 * * * *' for hourly). */
@@ -190,10 +154,6 @@ export interface BackupScheduleOptions {
   /** Maximum number of backup files to keep. Default: 5. */
   maxFiles?: number
 }
-
-// ---------------------------------------------------------------------------
-// Subscription builder
-// ---------------------------------------------------------------------------
 
 /** Builder for creating CDC subscriptions with optional filters. */
 export interface SubscriptionBuilder {
@@ -205,10 +165,6 @@ export interface SubscriptionBuilder {
 export interface Subscription {
   unsubscribe(): void
 }
-
-// ---------------------------------------------------------------------------
-// Server types
-// ---------------------------------------------------------------------------
 
 /** Options for the standalone HTTP + WS server. */
 export interface ServerOptions {
@@ -230,10 +186,6 @@ export interface WSHandlerOptions {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
 }
-
-// ---------------------------------------------------------------------------
-// Client types
-// ---------------------------------------------------------------------------
 
 /** Options for the client SDK. */
 export interface ClientOptions {

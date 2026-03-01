@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// WebSocket handler for sirannon-db
-// ---------------------------------------------------------------------------
-
 import SqliteDatabase from 'better-sqlite3'
 import { ChangeTracker } from '../core/cdc/change-tracker.js'
 import { SubscriptionManager } from '../core/cdc/subscription.js'
@@ -15,19 +11,11 @@ import { toExecuteResponse } from './protocol.js'
 const DEFAULT_POLL_INTERVAL_MS = 50
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
-// ---------------------------------------------------------------------------
-// Public interfaces
-// ---------------------------------------------------------------------------
-
 /** Transport-agnostic WebSocket connection. */
 export interface WSConnection {
   send(data: string): void
   close(code?: number, reason?: string): void
 }
-
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
 
 /** Tracks subscriptions and database reference for a single WS connection. */
 interface ConnectionState {
@@ -43,10 +31,6 @@ interface CDCContext {
   manager: SubscriptionManager
   stopPolling: () => void
 }
-
-// ---------------------------------------------------------------------------
-// WSHandler
-// ---------------------------------------------------------------------------
 
 /**
  * Manages WebSocket connections, routes messages to databases, and integrates
@@ -426,10 +410,6 @@ export class WSHandler {
     })
   }
 }
-
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
 
 /** Create a transport-agnostic WebSocket handler bound to a Sirannon registry. */
 export function createWSHandler(sirannon: Sirannon, options?: WSHandlerOptions): WSHandler {

@@ -7,7 +7,6 @@ interface LivenessResponse {
 
 interface DatabaseStatus {
   id: string
-  path: string
   readOnly: boolean
   closed: boolean
 }
@@ -46,7 +45,6 @@ export function handleReadiness(sirannon: Sirannon): (res: HttpResponse, req: Ht
     for (const [id, db] of dbs) {
       const entry: DatabaseStatus = {
         id,
-        path: db.path,
         readOnly: db.readOnly,
         closed: db.closed,
       }

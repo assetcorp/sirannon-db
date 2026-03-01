@@ -391,7 +391,7 @@ export class WSHandler {
 
   private sendSirannonError(conn: WSConnection, id: string, err: unknown): void {
     const code = err instanceof SirannonError ? err.code : 'INTERNAL_ERROR'
-    const message = err instanceof Error ? err.message : String(err)
+    const message = err instanceof SirannonError ? err.message : 'An unexpected error occurred'
     this.sendError(conn, id, code, message)
   }
 

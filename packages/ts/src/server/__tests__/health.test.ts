@@ -58,7 +58,6 @@ describe('GET /health/ready', () => {
     expect(body.status).toBe('ok')
     expect(body.databases).toHaveLength(1)
     expect(body.databases[0].id).toBe('mydb')
-    expect(body.databases[0].path).toBe(dbPath)
     expect(body.databases[0].readOnly).toBe(false)
     expect(body.databases[0].closed).toBe(false)
   })

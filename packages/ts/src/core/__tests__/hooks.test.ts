@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { HookRegistry } from '../hooks/registry.js'
-import type { HookConfig, QueryHookContext } from '../types.js'
 import type { HookDispose } from '../hooks/types.js'
+import type { HookConfig, QueryHookContext } from '../types.js'
 
 describe('HookRegistry', () => {
   const queryCtx: QueryHookContext = {

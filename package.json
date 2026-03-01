@@ -19,7 +19,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "format": "biome format --write .",
+    "format": "biome check --write .",
     "check": "biome check ."
   },
   "devDependencies": {

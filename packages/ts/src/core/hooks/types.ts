@@ -1,13 +1,7 @@
-export type {
-	QueryHookContext,
-	BeforeQueryHook,
-	AfterQueryHook,
-	ConnectionHookContext,
-	BeforeConnectHook,
-	DatabaseOpenHook,
-	DatabaseCloseHook,
+import type {
 	BeforeSubscribeHook,
-	HookConfig,
+	ConnectionHookContext,
+	QueryHookContext,
 } from '../types.js'
 
 export type HookEvent =
@@ -18,13 +12,19 @@ export type HookEvent =
 	| 'databaseClose'
 	| 'beforeSubscribe'
 
-export type HookFunction = (...args: unknown[]) => void | Promise<void>
+export type SubscribeHookContext = Parameters<BeforeSubscribeHook>[0]
 
-export interface HookEventMap {
-	beforeQuery: HookFunction
-	afterQuery: HookFunction
-	beforeConnect: HookFunction
-	databaseOpen: HookFunction
-	databaseClose: HookFunction
-	beforeSubscribe: HookFunction
+export interface HookEventContextMap {
+	beforeQuery: QueryHookContext
+	afterQuery: QueryHookContext & { durationMs: number }
+	beforeConnect: ConnectionHookContext
+	databaseOpen: ConnectionHookContext
+	databaseClose: ConnectionHookContext
+	beforeSubscribe: SubscribeHookContext
 }
+
+export type HookHandler<E extends HookEvent> = (
+	ctx: HookEventContextMap[E],
+) => void | Promise<void>
+
+export type HookDispose = () => void

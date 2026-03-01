@@ -1,5 +1,12 @@
 import type { HookConfig } from '../types.js'
-import type { HookEvent, HookFunction } from './types.js'
+import type {
+	HookDispose,
+	HookEvent,
+	HookEventContextMap,
+	HookHandler,
+} from './types.js'
+
+type ErasedHookFn = (ctx: never) => void | Promise<void>
 
 const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
 	onBeforeQuery: 'beforeQuery',
@@ -11,7 +18,7 @@ const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
 }
 
 export class HookRegistry {
-	private hooks = new Map<HookEvent, HookFunction[]>()
+	private hooks = new Map<HookEvent, ErasedHookFn[]>()
 
 	constructor(config?: HookConfig) {
 		if (config) {
@@ -19,21 +26,49 @@ export class HookRegistry {
 		}
 	}
 
-	register(event: HookEvent, hook: HookFunction): void {
-		const list = this.hooks.get(event)
-		if (list) {
-			list.push(hook)
-		} else {
-			this.hooks.set(event, [hook])
+	register<E extends HookEvent>(event: E, hook: HookHandler<E>): HookDispose {
+		const stored = hook as ErasedHookFn
+		this.addHook(event, stored)
+
+		let disposed = false
+		return () => {
+			if (disposed) return
+			disposed = true
+			const current = this.hooks.get(event)
+			if (!current) return
+			const idx = current.indexOf(stored)
+			if (idx !== -1) current.splice(idx, 1)
 		}
 	}
 
-	async invoke(event: HookEvent, ctx: unknown): Promise<void> {
+	async invoke<E extends HookEvent>(
+		event: E,
+		ctx: HookEventContextMap[E],
+	): Promise<void> {
 		const list = this.hooks.get(event)
-		if (!list) return
+		if (!list || list.length === 0) return
 
-		for (const hook of list) {
+		const snapshot = list.slice() as HookHandler<E>[]
+		for (const hook of snapshot) {
 			await hook(ctx)
+		}
+	}
+
+	invokeSync<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void {
+		const list = this.hooks.get(event)
+		if (!list || list.length === 0) return
+
+		const snapshot = list.slice() as HookHandler<E>[]
+		for (const hook of snapshot) {
+			const result = hook(ctx)
+			if (
+				result != null &&
+				typeof (result as { then?: unknown }).then === 'function'
+			) {
+				throw new Error(
+					`Hook for '${event}' returned a Promise. Use invoke() for async hooks.`,
+				)
+			}
 		}
 	}
 
@@ -54,6 +89,15 @@ export class HookRegistry {
 		}
 	}
 
+	private addHook(event: HookEvent, hook: ErasedHookFn): void {
+		const list = this.hooks.get(event)
+		if (list) {
+			list.push(hook)
+		} else {
+			this.hooks.set(event, [hook])
+		}
+	}
+
 	private loadConfig(config: HookConfig): void {
 		for (const [configKey, event] of Object.entries(HOOK_CONFIG_MAP)) {
 			const value = config[configKey as keyof HookConfig]
@@ -61,7 +105,7 @@ export class HookRegistry {
 
 			const hooks = Array.isArray(value) ? value : [value]
 			for (const hook of hooks) {
-				this.register(event, hook as HookFunction)
+				this.addHook(event, hook as ErasedHookFn)
 			}
 		}
 	}

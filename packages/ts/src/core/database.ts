@@ -9,7 +9,7 @@ import type {
 	SubscriptionBuilder,
 } from './types.js'
 import { ConnectionPool } from './connection-pool.js'
-import { ConnectionPoolError } from './errors.js'
+import { SirannonError } from './errors.js'
 import { QueryExecutor } from './query-executor.js'
 import { Transaction } from './transaction.js'
 
@@ -18,6 +18,7 @@ export class Database {
 	readonly path: string
 	readonly readOnly: boolean
 	private readonly pool: ConnectionPool
+	private readonly closeListeners: (() => void)[] = []
 	private _closed = false
 
 	constructor(id: string, path: string, options?: DatabaseOptions) {
@@ -33,7 +34,10 @@ export class Database {
 		})
 	}
 
-	query<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
+	query<T = Record<string, unknown>>(
+		sql: string,
+		params?: Params,
+	): T[] {
 		this.ensureOpen()
 		const reader = this.pool.acquireReader()
 		return QueryExecutor.query<T>(reader, sql, params)
@@ -54,7 +58,10 @@ export class Database {
 		return QueryExecutor.execute(writer, sql, params)
 	}
 
-	executeBatch(sql: string, paramsBatch: Params[]): ExecuteResult[] {
+	executeBatch(
+		sql: string,
+		paramsBatch: Params[],
+	): ExecuteResult[] {
 		this.ensureOpen()
 		const writer = this.pool.acquireWriter()
 		return QueryExecutor.executeBatch(writer, sql, paramsBatch)
@@ -102,10 +109,33 @@ export class Database {
 		throw new Error('not implemented')
 	}
 
+	addCloseListener(fn: () => void): void {
+		this.ensureOpen()
+		this.closeListeners.push(fn)
+	}
+
 	close(): void {
 		if (this._closed) return
 		this._closed = true
-		this.pool.close()
+
+		let poolError: unknown
+		try {
+			this.pool.close()
+		} catch (err) {
+			poolError = err
+		}
+
+		for (const fn of this.closeListeners) {
+			try {
+				fn()
+			} catch {
+				// Listener errors are secondary to pool close
+			}
+		}
+
+		if (poolError) {
+			throw poolError
+		}
 	}
 
 	get closed(): boolean {
@@ -118,7 +148,10 @@ export class Database {
 
 	private ensureOpen(): void {
 		if (this._closed) {
-			throw new ConnectionPoolError(`Database '${this.id}' is closed`)
+			throw new SirannonError(
+				`Database '${this.id}' is closed`,
+				'DATABASE_CLOSED',
+			)
 		}
 	}
 }

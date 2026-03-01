@@ -9,7 +9,7 @@ export interface ChangeRow {
 	seq: number
 	table_name: string
 	operation: 'INSERT' | 'UPDATE' | 'DELETE'
-	row_id: number
+	row_id: number | string
 	changed_at: number
 	old_data: string | null
 	new_data: string | null
@@ -27,9 +27,11 @@ export interface ColumnInfo {
 export interface WatchedTableInfo {
 	table: string
 	columns: string[]
+	pkColumns: string[]
 }
 
 export interface ChangeTrackerOptions {
 	retention?: number
 	changesTable?: string
+	pollBatchSize?: number
 }

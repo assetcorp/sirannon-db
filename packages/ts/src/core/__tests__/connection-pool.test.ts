@@ -162,4 +162,25 @@ describe('ConnectionPool', () => {
 		pool.close()
 		expect(() => pool.close()).not.toThrow()
 	})
+
+	it('throws on non-existent directory path', () => {
+		const badPath = join(tempDir, 'no', 'such', 'dir', 'test.db')
+		expect(() => new ConnectionPool({ path: badPath })).toThrow()
+	})
+
+	it('cleans up opened connections when constructor fails partway', () => {
+		const dbPath = join(tempDir, 'partial.db')
+		seedDatabase(dbPath)
+
+		const pool = new ConnectionPool({ path: dbPath })
+		pool.close()
+
+		const pool2 = new ConnectionPool({ path: dbPath })
+		const writer = pool2.acquireWriter()
+		const rows = writer
+			.prepare('SELECT * FROM users')
+			.all()
+		expect(rows).toHaveLength(2)
+		pool2.close()
+	})
 })

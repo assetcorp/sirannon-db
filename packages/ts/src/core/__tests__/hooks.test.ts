@@ -1,40 +1,50 @@
 import { describe, it, expect, vi } from 'vitest'
 import { HookRegistry } from '../hooks/registry.js'
 import type { HookConfig, QueryHookContext } from '../types.js'
+import type { HookDispose } from '../hooks/types.js'
 
 describe('HookRegistry', () => {
+	const queryCtx: QueryHookContext = {
+		databaseId: 'main',
+		sql: 'SELECT 1',
+	}
+
 	describe('register and invoke', () => {
 		it('invokes a registered hook with the provided context', async () => {
 			const registry = new HookRegistry()
 			const hook = vi.fn()
-			const ctx: QueryHookContext = {
-				databaseId: 'main',
-				sql: 'SELECT 1',
-			}
 
 			registry.register('beforeQuery', hook)
-			await registry.invoke('beforeQuery', ctx)
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(hook).toHaveBeenCalledOnce()
-			expect(hook).toHaveBeenCalledWith(ctx)
+			expect(hook).toHaveBeenCalledWith(queryCtx)
 		})
 
-		it('invokes multiple hooks for the same event in registration order', async () => {
+		it('invokes multiple hooks in registration order', async () => {
 			const registry = new HookRegistry()
 			const order: number[] = []
 
-			registry.register('beforeQuery', () => { order.push(1) })
-			registry.register('beforeQuery', () => { order.push(2) })
-			registry.register('beforeQuery', () => { order.push(3) })
+			registry.register('beforeQuery', () => {
+				order.push(1)
+			})
+			registry.register('beforeQuery', () => {
+				order.push(2)
+			})
+			registry.register('beforeQuery', () => {
+				order.push(3)
+			})
 
-			await registry.invoke('beforeQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(order).toEqual([1, 2, 3])
 		})
 
 		it('does nothing when invoking an event with no hooks', async () => {
 			const registry = new HookRegistry()
-			await expect(registry.invoke('beforeQuery', {})).resolves.toBeUndefined()
+			await expect(
+				registry.invoke('beforeQuery', queryCtx),
+			).resolves.toBeUndefined()
 		})
 
 		it('keeps hooks for different events independent', async () => {
@@ -45,10 +55,66 @@ describe('HookRegistry', () => {
 			registry.register('beforeQuery', beforeQuery)
 			registry.register('afterQuery', afterQuery)
 
-			await registry.invoke('beforeQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(beforeQuery).toHaveBeenCalledOnce()
 			expect(afterQuery).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('dispose', () => {
+		it('returns a dispose function that removes the hook', async () => {
+			const registry = new HookRegistry()
+			const hook = vi.fn()
+
+			const dispose = registry.register('beforeQuery', hook)
+			dispose()
+
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(hook).not.toHaveBeenCalled()
+		})
+
+		it('is idempotent when called multiple times', () => {
+			const registry = new HookRegistry()
+			const hook = vi.fn()
+
+			const dispose = registry.register('beforeQuery', hook)
+			dispose()
+			dispose()
+			dispose()
+
+			expect(registry.count('beforeQuery')).toBe(0)
+		})
+
+		it('removes only the specific hook, leaving others intact', async () => {
+			const registry = new HookRegistry()
+			const hookA = vi.fn()
+			const hookB = vi.fn()
+
+			const disposeA = registry.register('beforeQuery', hookA)
+			registry.register('beforeQuery', hookB)
+
+			disposeA()
+			await registry.invoke('beforeQuery', queryCtx)
+
+			expect(hookA).not.toHaveBeenCalled()
+			expect(hookB).toHaveBeenCalledOnce()
+		})
+
+		it('reflects in has and count after disposal', () => {
+			const registry = new HookRegistry()
+			const dispose = registry.register(
+				'beforeQuery',
+				vi.fn(),
+			)
+
+			expect(registry.has('beforeQuery')).toBe(true)
+			expect(registry.count('beforeQuery')).toBe(1)
+
+			dispose()
+
+			expect(registry.has('beforeQuery')).toBe(false)
+			expect(registry.count('beforeQuery')).toBe(0)
 		})
 	})
 
@@ -58,14 +124,14 @@ describe('HookRegistry', () => {
 			const order: number[] = []
 
 			registry.register('beforeQuery', async () => {
-				await new Promise((r) => setTimeout(r, 10))
+				await new Promise(r => setTimeout(r, 10))
 				order.push(1)
 			})
 			registry.register('beforeQuery', () => {
 				order.push(2)
 			})
 
-			await registry.invoke('beforeQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(order).toEqual([1, 2])
 		})
@@ -78,9 +144,9 @@ describe('HookRegistry', () => {
 				throw new Error('access denied')
 			})
 
-			await expect(registry.invoke('beforeQuery', {})).rejects.toThrow(
-				'access denied',
-			)
+			await expect(
+				registry.invoke('beforeQuery', queryCtx),
+			).rejects.toThrow('access denied')
 		})
 
 		it('propagates errors thrown by async hooks', async () => {
@@ -89,9 +155,9 @@ describe('HookRegistry', () => {
 				throw new Error('async denial')
 			})
 
-			await expect(registry.invoke('beforeQuery', {})).rejects.toThrow(
-				'async denial',
-			)
+			await expect(
+				registry.invoke('beforeQuery', queryCtx),
+			).rejects.toThrow('async denial')
 		})
 
 		it('stops invoking remaining hooks after one throws', async () => {
@@ -103,8 +169,157 @@ describe('HookRegistry', () => {
 			})
 			registry.register('beforeQuery', secondHook)
 
-			await expect(registry.invoke('beforeQuery', {})).rejects.toThrow('denied')
+			await expect(
+				registry.invoke('beforeQuery', queryCtx),
+			).rejects.toThrow('denied')
 			expect(secondHook).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('snapshot isolation', () => {
+		it('hooks registered during invocation do not run in the current cycle', async () => {
+			const registry = new HookRegistry()
+			const lateHook = vi.fn()
+
+			registry.register('beforeQuery', () => {
+				registry.register('beforeQuery', lateHook)
+			})
+
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(lateHook).not.toHaveBeenCalled()
+
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(lateHook).toHaveBeenCalledOnce()
+		})
+
+		it('hooks disposed during invocation still run in the current cycle', async () => {
+			const registry = new HookRegistry()
+			const order: number[] = []
+			let dispose2: HookDispose
+
+			registry.register('beforeQuery', () => {
+				order.push(1)
+				dispose2()
+			})
+
+			dispose2 = registry.register('beforeQuery', () => {
+				order.push(2)
+			})
+
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(order).toEqual([1, 2])
+
+			order.length = 0
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(order).toEqual([1])
+		})
+	})
+
+	describe('duplicate registration', () => {
+		it('calls the same function twice when registered twice', async () => {
+			const registry = new HookRegistry()
+			const hook = vi.fn()
+
+			registry.register('beforeQuery', hook)
+			registry.register('beforeQuery', hook)
+
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(hook).toHaveBeenCalledTimes(2)
+		})
+
+		it('disposes only one instance when the same function is registered twice', async () => {
+			const registry = new HookRegistry()
+			const hook = vi.fn()
+
+			const dispose1 = registry.register('beforeQuery', hook)
+			registry.register('beforeQuery', hook)
+
+			dispose1()
+			await registry.invoke('beforeQuery', queryCtx)
+			expect(hook).toHaveBeenCalledOnce()
+		})
+	})
+
+	describe('invokeSync', () => {
+		it('runs sync hooks in registration order', () => {
+			const registry = new HookRegistry()
+			const order: number[] = []
+
+			registry.register('beforeQuery', () => {
+				order.push(1)
+			})
+			registry.register('beforeQuery', () => {
+				order.push(2)
+			})
+
+			registry.invokeSync('beforeQuery', queryCtx)
+			expect(order).toEqual([1, 2])
+		})
+
+		it('does nothing when no hooks are registered', () => {
+			const registry = new HookRegistry()
+			expect(() =>
+				registry.invokeSync('beforeQuery', queryCtx),
+			).not.toThrow()
+		})
+
+		it('throws when a hook returns a Promise', () => {
+			const registry = new HookRegistry()
+			registry.register('beforeQuery', async () => {})
+
+			expect(() =>
+				registry.invokeSync('beforeQuery', queryCtx),
+			).toThrow(
+				"Hook for 'beforeQuery' returned a Promise",
+			)
+		})
+
+		it('propagates sync hook errors', () => {
+			const registry = new HookRegistry()
+			registry.register('beforeQuery', () => {
+				throw new Error('sync denial')
+			})
+
+			expect(() =>
+				registry.invokeSync('beforeQuery', queryCtx),
+			).toThrow('sync denial')
+		})
+
+		it('snapshots the array so mutations during invocation are safe', () => {
+			const registry = new HookRegistry()
+			const lateHook = vi.fn()
+
+			registry.register('beforeQuery', () => {
+				registry.register('beforeQuery', lateHook)
+			})
+
+			registry.invokeSync('beforeQuery', queryCtx)
+			expect(lateHook).not.toHaveBeenCalled()
+
+			registry.invokeSync('beforeQuery', queryCtx)
+			expect(lateHook).toHaveBeenCalledOnce()
+		})
+
+		it('disposed hooks still run in the current sync cycle', () => {
+			const registry = new HookRegistry()
+			const order: number[] = []
+			let dispose2: HookDispose
+
+			registry.register('beforeQuery', () => {
+				order.push(1)
+				dispose2()
+			})
+
+			dispose2 = registry.register('beforeQuery', () => {
+				order.push(2)
+			})
+
+			registry.invokeSync('beforeQuery', queryCtx)
+			expect(order).toEqual([1, 2])
+
+			order.length = 0
+			registry.invokeSync('beforeQuery', queryCtx)
+			expect(order).toEqual([1])
 		})
 	})
 
@@ -119,8 +334,11 @@ describe('HookRegistry', () => {
 
 			const registry = new HookRegistry(config)
 
-			await registry.invoke('beforeQuery', {})
-			await registry.invoke('afterQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
+			await registry.invoke('afterQuery', {
+				...queryCtx,
+				durationMs: 1,
+			})
 
 			expect(beforeQuery).toHaveBeenCalledOnce()
 			expect(afterQuery).toHaveBeenCalledOnce()
@@ -134,7 +352,7 @@ describe('HookRegistry', () => {
 			}
 
 			const registry = new HookRegistry(config)
-			await registry.invoke('beforeQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(hook1).toHaveBeenCalledOnce()
 			expect(hook2).toHaveBeenCalledOnce()
@@ -152,12 +370,27 @@ describe('HookRegistry', () => {
 
 			const registry = new HookRegistry(hooks)
 
-			await registry.invoke('beforeQuery', {})
-			await registry.invoke('afterQuery', {})
-			await registry.invoke('beforeConnect', {})
-			await registry.invoke('databaseOpen', {})
-			await registry.invoke('databaseClose', {})
-			await registry.invoke('beforeSubscribe', {})
+			await registry.invoke('beforeQuery', queryCtx)
+			await registry.invoke('afterQuery', {
+				...queryCtx,
+				durationMs: 1,
+			})
+			await registry.invoke('beforeConnect', {
+				databaseId: 'main',
+				path: '/data/main.db',
+			})
+			await registry.invoke('databaseOpen', {
+				databaseId: 'main',
+				path: '/data/main.db',
+			})
+			await registry.invoke('databaseClose', {
+				databaseId: 'main',
+				path: '/data/main.db',
+			})
+			await registry.invoke('beforeSubscribe', {
+				databaseId: 'main',
+				table: 'users',
+			})
 
 			for (const hook of Object.values(hooks)) {
 				expect(hook).toHaveBeenCalledOnce()
@@ -191,7 +424,7 @@ describe('HookRegistry', () => {
 
 			registry.register('beforeQuery', hook)
 			registry.clear('beforeQuery')
-			await registry.invoke('beforeQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
 
 			expect(hook).not.toHaveBeenCalled()
 		})
@@ -205,8 +438,11 @@ describe('HookRegistry', () => {
 			registry.register('afterQuery', afterQuery)
 			registry.clear()
 
-			await registry.invoke('beforeQuery', {})
-			await registry.invoke('afterQuery', {})
+			await registry.invoke('beforeQuery', queryCtx)
+			await registry.invoke('afterQuery', {
+				...queryCtx,
+				durationMs: 1,
+			})
 
 			expect(beforeQuery).not.toHaveBeenCalled()
 			expect(afterQuery).not.toHaveBeenCalled()

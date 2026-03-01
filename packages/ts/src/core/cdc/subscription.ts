@@ -16,6 +16,7 @@ interface InternalSubscription {
 export class SubscriptionManager {
 	private nextId = 1
 	private readonly subscriptions = new Map<number, InternalSubscription>()
+	private readonly byTable = new Map<string, Set<number>>()
 
 	subscribe(
 		table: string,
@@ -25,23 +26,43 @@ export class SubscriptionManager {
 		const id = this.nextId++
 		this.subscriptions.set(id, { id, table, filter, callback })
 
+		let tableSet = this.byTable.get(table)
+		if (!tableSet) {
+			tableSet = new Set()
+			this.byTable.set(table, tableSet)
+		}
+		tableSet.add(id)
+
 		return {
 			unsubscribe: () => {
 				this.subscriptions.delete(id)
+				const set = this.byTable.get(table)
+				if (set) {
+					set.delete(id)
+					if (set.size === 0) {
+						this.byTable.delete(table)
+					}
+				}
 			},
 		}
 	}
 
 	dispatch(events: ChangeEvent[]): void {
 		for (const event of events) {
-			for (const sub of this.subscriptions.values()) {
-				if (sub.table !== event.table) {
-					continue
-				}
+			const ids = this.byTable.get(event.table)
+			if (!ids) continue
+
+			for (const id of ids) {
+				const sub = this.subscriptions.get(id)
+				if (!sub) continue
 				if (sub.filter && !matchesFilter(event, sub.filter)) {
 					continue
 				}
-				sub.callback(event)
+				try {
+					sub.callback(event)
+				} catch {
+					/* subscriber errors must not break other subscribers */
+				}
 			}
 		}
 	}
@@ -51,13 +72,7 @@ export class SubscriptionManager {
 	}
 
 	subscriberCount(table: string): number {
-		let count = 0
-		for (const sub of this.subscriptions.values()) {
-			if (sub.table === table) {
-				count++
-			}
-		}
-		return count
+		return this.byTable.get(table)?.size ?? 0
 	}
 }
 
@@ -96,6 +111,7 @@ export function startPolling(
 	}
 
 	const interval = setInterval(tick, intervalMs)
+	interval.unref()
 
 	return () => {
 		running = false

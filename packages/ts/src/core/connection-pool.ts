@@ -10,6 +10,17 @@ export interface ConnectionPoolOptions {
 
 type SqliteDb = InstanceType<typeof Database>
 
+function closeAllSilently(connections: (SqliteDb | null)[]): void {
+	for (const conn of connections) {
+		if (!conn) continue
+		try {
+			conn.close()
+		} catch {
+			// Best-effort cleanup; the original error takes priority
+		}
+	}
+}
+
 export class ConnectionPool {
 	private readonly writer: SqliteDb | null
 	private readonly readers: SqliteDb[]
@@ -17,26 +28,39 @@ export class ConnectionPool {
 	private closed = false
 
 	constructor(options: ConnectionPoolOptions) {
-		const { path, readOnly = false, readPoolSize = 4, walMode = true } = options
+		const {
+			path,
+			readOnly = false,
+			readPoolSize = 4,
+			walMode = true,
+		} = options
 
-		if (readOnly) {
-			this.writer = null
-		} else {
-			this.writer = new Database(path)
-			if (walMode) {
-				this.writer.pragma('journal_mode = WAL')
+		let writer: SqliteDb | null = null
+		const readers: SqliteDb[] = []
+
+		try {
+			if (!readOnly) {
+				writer = new Database(path)
+				if (walMode) {
+					writer.pragma('journal_mode = WAL')
+				}
+				writer.pragma('synchronous = NORMAL')
+				writer.pragma('foreign_keys = ON')
 			}
-			this.writer.pragma('synchronous = NORMAL')
-			this.writer.pragma('foreign_keys = ON')
+
+			const poolSize = Math.max(readPoolSize, 1)
+			for (let i = 0; i < poolSize; i++) {
+				const reader = new Database(path, { readonly: true })
+				readers.push(reader)
+				reader.pragma('foreign_keys = ON')
+			}
+		} catch (err) {
+			closeAllSilently([...readers, writer])
+			throw err
 		}
 
-		this.readers = []
-		const poolSize = Math.max(readPoolSize, 1)
-		for (let i = 0; i < poolSize; i++) {
-			const reader = new Database(path, { readonly: true })
-			reader.pragma('foreign_keys = ON')
-			this.readers.push(reader)
-		}
+		this.writer = writer
+		this.readers = readers
 	}
 
 	acquireReader(): SqliteDb {
@@ -71,9 +95,29 @@ export class ConnectionPool {
 	close(): void {
 		if (this.closed) return
 		this.closed = true
+
+		const errors: unknown[] = []
+
 		for (const reader of this.readers) {
-			reader.close()
+			try {
+				reader.close()
+			} catch (err) {
+				errors.push(err)
+			}
 		}
-		this.writer?.close()
+
+		if (this.writer) {
+			try {
+				this.writer.close()
+			} catch (err) {
+				errors.push(err)
+			}
+		}
+
+		if (errors.length > 0) {
+			throw new ConnectionPoolError(
+				`Failed to close ${errors.length} connection(s)`,
+			)
+		}
 	}
 }

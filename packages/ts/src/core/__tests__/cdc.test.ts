@@ -60,6 +60,17 @@ describe('ChangeTracker', () => {
 			expect(tables).toHaveLength(1)
 		})
 
+		it('creates an index on changed_at', () => {
+			tracker.watch(db, 'users')
+
+			const indexes = db
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type='index' AND name='idx__sirannon_changes_changed_at'",
+				)
+				.all()
+			expect(indexes).toHaveLength(1)
+		})
+
 		it('installs INSERT, UPDATE, and DELETE triggers', () => {
 			tracker.watch(db, 'users')
 
@@ -93,6 +104,76 @@ describe('ChangeTracker', () => {
 			expect(() => tracker.watch(db, 'nonexistent')).toThrow(
 				"Table 'nonexistent' does not exist or has no columns",
 			)
+		})
+	})
+
+	describe('input validation', () => {
+		it('rejects table names with SQL injection characters', () => {
+			expect(() => tracker.watch(db, 'users; DROP TABLE users')).toThrow(
+				CDCError,
+			)
+			expect(() => tracker.watch(db, 'users; DROP TABLE users')).toThrow(
+				'Invalid table name',
+			)
+		})
+
+		it('rejects table names with special characters', () => {
+			expect(() => tracker.watch(db, 'my-table')).toThrow(CDCError)
+			expect(() => tracker.watch(db, 'table name')).toThrow(CDCError)
+			expect(() => tracker.watch(db, "users'--")).toThrow(CDCError)
+		})
+
+		it('rejects table names starting with a digit', () => {
+			expect(() => tracker.watch(db, '1users')).toThrow(CDCError)
+		})
+
+		it('allows valid identifier names', () => {
+			db.exec('CREATE TABLE my_table_123 (id INTEGER PRIMARY KEY)')
+			expect(() => tracker.watch(db, 'my_table_123')).not.toThrow()
+		})
+
+		it('rejects invalid changesTable names at construction', () => {
+			expect(
+				() =>
+					new ChangeTracker({
+						changesTable: 'bad; name',
+					}),
+			).toThrow(CDCError)
+			expect(
+				() =>
+					new ChangeTracker({
+						changesTable: 'bad; name',
+					}),
+			).toThrow('Invalid changes table name')
+		})
+	})
+
+	describe('schema evolution', () => {
+		it('re-installs triggers when columns change after watch', () => {
+			tracker.watch(db, 'users')
+			insertUser(db, 'Alice', 'alice@example.com', 30)
+
+			const events1 = tracker.poll(db)
+			expect(events1).toHaveLength(1)
+			expect(Object.keys(events1[0].row).sort()).toEqual([
+				'age',
+				'email',
+				'id',
+				'name',
+			])
+
+			db.exec('ALTER TABLE users ADD COLUMN role TEXT')
+
+			tracker.watch(db, 'users')
+
+			db.prepare(
+				'INSERT INTO users (name, email, age, role) VALUES (?, ?, ?, ?)',
+			).run('Bob', 'bob@example.com', 25, 'admin')
+
+			const events2 = tracker.poll(db)
+			expect(events2).toHaveLength(1)
+			expect(events2[0].row).toHaveProperty('role')
+			expect(events2[0].row.role).toBe('admin')
 		})
 	})
 
@@ -229,6 +310,45 @@ describe('ChangeTracker', () => {
 		})
 	})
 
+	describe('poll - batch size', () => {
+		it('limits the number of events per poll to pollBatchSize', () => {
+			const tracker = new ChangeTracker({
+				pollBatchSize: 2,
+			})
+			tracker.watch(db, 'users')
+
+			insertUser(db, 'Alice')
+			insertUser(db, 'Bob')
+			insertUser(db, 'Charlie')
+			insertUser(db, 'Dave')
+
+			const first = tracker.poll(db)
+			expect(first).toHaveLength(2)
+			expect(first[0].row.name).toBe('Alice')
+			expect(first[1].row.name).toBe('Bob')
+
+			const second = tracker.poll(db)
+			expect(second).toHaveLength(2)
+			expect(second[0].row.name).toBe('Charlie')
+			expect(second[1].row.name).toBe('Dave')
+
+			const third = tracker.poll(db)
+			expect(third).toHaveLength(0)
+		})
+	})
+
+	describe('second instance detection', () => {
+		it('a second tracker can poll the same changes table', () => {
+			tracker.watch(db, 'users')
+			insertUser(db, 'Alice')
+
+			const tracker2 = new ChangeTracker()
+			const events = tracker2.poll(db)
+			expect(events).toHaveLength(1)
+			expect(events[0].row.name).toBe('Alice')
+		})
+	})
+
 	describe('multiple tables', () => {
 		it('tracks changes across multiple watched tables', () => {
 			db.exec(`
@@ -255,9 +375,98 @@ describe('ChangeTracker', () => {
 		})
 	})
 
+	describe('WITHOUT ROWID tables', () => {
+		it('tracks changes on WITHOUT ROWID tables using PK columns', () => {
+			db.exec(`
+				CREATE TABLE kv (
+					key TEXT PRIMARY KEY,
+					value TEXT
+				) WITHOUT ROWID
+			`)
+
+			tracker.watch(db, 'kv')
+
+			db.prepare('INSERT INTO kv (key, value) VALUES (?, ?)').run(
+				'greeting',
+				'hello',
+			)
+
+			const events = tracker.poll(db)
+			expect(events).toHaveLength(1)
+			expect(events[0].type).toBe('insert')
+			expect(events[0].row).toEqual({
+				key: 'greeting',
+				value: 'hello',
+			})
+		})
+
+		it('tracks changes on tables with composite primary keys', () => {
+			db.exec(`
+				CREATE TABLE user_roles (
+					user_id INTEGER,
+					role_id INTEGER,
+					granted_at TEXT,
+					PRIMARY KEY (user_id, role_id)
+				) WITHOUT ROWID
+			`)
+
+			tracker.watch(db, 'user_roles')
+
+			db.prepare(
+				'INSERT INTO user_roles (user_id, role_id, granted_at) VALUES (?, ?, ?)',
+			).run(1, 10, '2025-01-01')
+
+			const events = tracker.poll(db)
+			expect(events).toHaveLength(1)
+			expect(events[0].row).toEqual({
+				user_id: 1,
+				role_id: 10,
+				granted_at: '2025-01-01',
+			})
+		})
+
+		it('captures updates and deletes on WITHOUT ROWID tables', () => {
+			db.exec(`
+				CREATE TABLE kv (
+					key TEXT PRIMARY KEY,
+					value TEXT
+				) WITHOUT ROWID
+			`)
+
+			tracker.watch(db, 'kv')
+
+			db.prepare('INSERT INTO kv (key, value) VALUES (?, ?)').run('a', 'one')
+			tracker.poll(db)
+
+			db.prepare('UPDATE kv SET value = ? WHERE key = ?').run('two', 'a')
+			const updateEvents = tracker.poll(db)
+			expect(updateEvents).toHaveLength(1)
+			expect(updateEvents[0].type).toBe('update')
+			expect(updateEvents[0].oldRow).toEqual({
+				key: 'a',
+				value: 'one',
+			})
+			expect(updateEvents[0].row).toEqual({
+				key: 'a',
+				value: 'two',
+			})
+
+			db.prepare('DELETE FROM kv WHERE key = ?').run('a')
+			const deleteEvents = tracker.poll(db)
+			expect(deleteEvents).toHaveLength(1)
+			expect(deleteEvents[0].type).toBe('delete')
+			expect(deleteEvents[0].oldRow).toEqual({
+				key: 'a',
+				value: 'two',
+			})
+		})
+	})
+
 	describe('cleanup', () => {
 		it('deletes entries older than the retention period', () => {
-			const tracker = new ChangeTracker({ retention: 1000 })
+			const tracker = new ChangeTracker({
+				retention: 1000,
+			})
 			tracker.watch(db, 'users')
 			insertUser(db, 'Alice')
 
@@ -276,7 +485,9 @@ describe('ChangeTracker', () => {
 		})
 
 		it('preserves entries within the retention window', () => {
-			const tracker = new ChangeTracker({ retention: 60_000 })
+			const tracker = new ChangeTracker({
+				retention: 60_000,
+			})
 			tracker.watch(db, 'users')
 			insertUser(db, 'Alice')
 
@@ -287,6 +498,30 @@ describe('ChangeTracker', () => {
 		it('returns 0 when no changes table exists', () => {
 			const deleted = tracker.cleanup(db)
 			expect(deleted).toBe(0)
+		})
+
+		it('does not delete un-polled rows when poll has been used', () => {
+			const tracker = new ChangeTracker({
+				retention: 1000,
+			})
+			tracker.watch(db, 'users')
+
+			insertUser(db, 'Alice')
+			tracker.poll(db)
+
+			insertUser(db, 'Bob')
+
+			const twoSecondsAgo = Date.now() / 1000 - 2
+			db.prepare('UPDATE _sirannon_changes SET changed_at = ?').run(
+				twoSecondsAgo,
+			)
+
+			const deleted = tracker.cleanup(db)
+			expect(deleted).toBe(1)
+
+			const events = tracker.poll(db)
+			expect(events).toHaveLength(1)
+			expect(events[0].row.name).toBe('Bob')
 		})
 	})
 
@@ -307,7 +542,9 @@ describe('ChangeTracker', () => {
 
 	describe('custom changes table name', () => {
 		it('uses a custom table name when configured', () => {
-			const custom = new ChangeTracker({ changesTable: 'my_changelog' })
+			const custom = new ChangeTracker({
+				changesTable: 'my_changelog',
+			})
 			custom.watch(db, 'users')
 
 			const tables = db
@@ -323,6 +560,27 @@ describe('ChangeTracker', () => {
 			expect(events).toHaveLength(1)
 			expect(events[0].type).toBe('insert')
 			expect(events[0].row.name).toBe('Alice')
+		})
+	})
+
+	describe('watchedTables caching', () => {
+		it('returns the same Set reference when no changes', () => {
+			tracker.watch(db, 'users')
+			const first = tracker.watchedTables
+			const second = tracker.watchedTables
+			expect(first).toBe(second)
+		})
+
+		it('returns a new Set reference after watch or unwatch', () => {
+			tracker.watch(db, 'users')
+			const first = tracker.watchedTables
+
+			db.exec('CREATE TABLE posts (id INTEGER PRIMARY KEY)')
+			tracker.watch(db, 'posts')
+			const second = tracker.watchedTables
+
+			expect(first).not.toBe(second)
+			expect(second.size).toBe(2)
 		})
 	})
 })
@@ -425,6 +683,28 @@ describe('SubscriptionManager', () => {
 		sub1.unsubscribe()
 		expect(manager.subscriberCount('users')).toBe(1)
 		expect(manager.size).toBe(2)
+	})
+
+	it('isolates subscriber exceptions from other subscribers', () => {
+		const manager = new SubscriptionManager()
+		const received: ChangeEvent[] = []
+
+		manager.subscribe('users', undefined, () => {
+			throw new Error('subscriber error')
+		})
+		manager.subscribe('users', undefined, e => received.push(e))
+
+		manager.dispatch([
+			{
+				type: 'insert',
+				table: 'users',
+				row: { id: 1 },
+				seq: 1n,
+				timestamp: Date.now() / 1000,
+			},
+		])
+
+		expect(received).toHaveLength(1)
 	})
 
 	describe('filter matching', () => {

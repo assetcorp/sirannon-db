@@ -97,6 +97,7 @@ export interface QueryMetrics {
 	durationMs: number
 	rowsReturned?: number
 	changes?: number
+	error?: boolean
 }
 
 /** Metrics emitted when a connection opens or closes. */

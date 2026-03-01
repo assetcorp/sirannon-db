@@ -1,8 +1,8 @@
 import type {
+	CDCMetrics,
+	ConnectionMetrics,
 	MetricsConfig,
 	QueryMetrics,
-	ConnectionMetrics,
-	CDCMetrics,
 } from '../types.js'
 
 export class MetricsCollector {
@@ -14,35 +14,51 @@ export class MetricsCollector {
 
 	trackQuery<T>(
 		fn: () => T,
-		context: Omit<QueryMetrics, 'durationMs'>,
+		context: Omit<QueryMetrics, 'durationMs' | 'error'>,
 	): T {
 		if (!this.config.onQueryComplete) {
 			return fn()
 		}
 
 		const start = performance.now()
+		let failed = false
 		try {
-			const result = fn()
+			return fn()
+		} catch (err) {
+			failed = true
+			throw err
+		} finally {
 			const durationMs = performance.now() - start
-			this.config.onQueryComplete({ ...context, durationMs })
-			return result
-		} catch (error) {
-			const durationMs = performance.now() - start
-			this.config.onQueryComplete({ ...context, durationMs })
-			throw error
+			try {
+				this.config.onQueryComplete({
+					...context,
+					durationMs,
+					error: failed,
+				})
+			} catch {
+				void 0
+			}
 		}
 	}
 
 	trackConnection(metrics: ConnectionMetrics): void {
-		if (metrics.event === 'open') {
-			this.config.onConnectionOpen?.(metrics)
-		} else {
-			this.config.onConnectionClose?.(metrics)
+		try {
+			if (metrics.event === 'open') {
+				this.config.onConnectionOpen?.(metrics)
+			} else {
+				this.config.onConnectionClose?.(metrics)
+			}
+		} catch {
+			void 0
 		}
 	}
 
 	trackCDCEvent(metrics: CDCMetrics): void {
-		this.config.onCDCEvent?.(metrics)
+		try {
+			this.config.onCDCEvent?.(metrics)
+		} catch {
+			void 0
+		}
 	}
 
 	get active(): boolean {

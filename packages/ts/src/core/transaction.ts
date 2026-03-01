@@ -1,5 +1,5 @@
-import Database from 'better-sqlite3'
-import { QueryExecutor } from './query-executor.js'
+import type Database from 'better-sqlite3'
+import { execute, executeBatch, query } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
 
 type SqliteDb = InstanceType<typeof Database>
@@ -10,17 +10,17 @@ export class Transaction {
   constructor(private readonly db: SqliteDb) {}
 
   query<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
-    return QueryExecutor.query<T>(this.db, sql, params)
+    return query<T>(this.db, sql, params)
   }
 
   execute(sql: string, params?: Params): ExecuteResult {
-    const result = QueryExecutor.execute(this.db, sql, params)
+    const result = execute(this.db, sql, params)
     this._lastInsertRowId = result.lastInsertRowId
     return result
   }
 
   executeBatch(sql: string, paramsBatch: Params[]): ExecuteResult[] {
-    const results = QueryExecutor.executeBatch(this.db, sql, paramsBatch)
+    const results = executeBatch(this.db, sql, paramsBatch)
     if (results.length > 0) {
       this._lastInsertRowId = results[results.length - 1].lastInsertRowId
     }

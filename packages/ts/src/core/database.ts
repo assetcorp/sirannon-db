@@ -1,6 +1,6 @@
 import { ConnectionPool } from './connection-pool.js'
 import { SirannonError } from './errors.js'
-import { QueryExecutor } from './query-executor.js'
+import { execute, executeBatch, query, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -37,25 +37,25 @@ export class Database {
   query<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
     this.ensureOpen()
     const reader = this.pool.acquireReader()
-    return QueryExecutor.query<T>(reader, sql, params)
+    return query<T>(reader, sql, params)
   }
 
   queryOne<T = Record<string, unknown>>(sql: string, params?: Params): T | undefined {
     this.ensureOpen()
     const reader = this.pool.acquireReader()
-    return QueryExecutor.queryOne<T>(reader, sql, params)
+    return queryOne<T>(reader, sql, params)
   }
 
   execute(sql: string, params?: Params): ExecuteResult {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    return QueryExecutor.execute(writer, sql, params)
+    return execute(writer, sql, params)
   }
 
   executeBatch(sql: string, paramsBatch: Params[]): ExecuteResult[] {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    return QueryExecutor.executeBatch(writer, sql, paramsBatch)
+    return executeBatch(writer, sql, paramsBatch)
   }
 
   transaction<T>(fn: (tx: Transaction) => T): T {

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MetricsCollector } from '../metrics/collector.js'
-import type { QueryMetrics, ConnectionMetrics, CDCMetrics } from '../types.js'
+import type { CDCMetrics, ConnectionMetrics, QueryMetrics } from '../types.js'
 
 describe('MetricsCollector', () => {
   describe('trackQuery', () => {

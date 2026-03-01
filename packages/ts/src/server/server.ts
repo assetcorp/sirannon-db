@@ -119,13 +119,14 @@ export class SirannonServer {
   private registerRoutes(): void {
     // CORS preflight — writeStatus MUST come before writeHeader in uWS
     if (this.cors) {
+      const cors = this.cors
       this.app.options('/*', res => {
         res.cork(() => {
           res
             .writeStatus('204 No Content')
-            .writeHeader('Access-Control-Allow-Origin', this.cors!.origin)
-            .writeHeader('Access-Control-Allow-Methods', this.cors!.methods)
-            .writeHeader('Access-Control-Allow-Headers', this.cors!.headers)
+            .writeHeader('Access-Control-Allow-Origin', cors.origin)
+            .writeHeader('Access-Control-Allow-Methods', cors.methods)
+            .writeHeader('Access-Control-Allow-Headers', cors.headers)
             .writeHeader('Access-Control-Max-Age', '86400')
             .endWithoutBody()
         })
@@ -187,21 +188,10 @@ export class SirannonServer {
       // Capture route param synchronously — req is invalid after return
       const dbId = req.getParameter(0) ?? ''
 
-      // Capture headers synchronously for auth (if needed)
-      let headers: Record<string, string> | undefined
-      if (authFn) {
-        headers = {}
-        req.forEach((key, value) => {
-          headers![key] = value
-        })
-      }
-
       if (corsHeaders) {
         res.writeHeader('Access-Control-Allow-Origin', corsHeaders.origin)
       }
 
-      // Register onAborted + onData synchronously before the callback
-      // returns. This ensures uWS doesn't discard body data.
       const abort = initAbortHandler(res)
       const bodyPromise = readBody(res, MAX_BODY, abort)
 
@@ -215,8 +205,12 @@ export class SirannonServer {
         return
       }
 
-      // Run body reading and auth check in parallel
-      const authPromise = checkAuth(res, headers!, authFn)
+      const headers: Record<string, string> = {}
+      req.forEach((key, value) => {
+        headers[key] = value
+      })
+
+      const authPromise = checkAuth(res, headers, authFn)
 
       Promise.all([bodyPromise, authPromise])
         .then(([rawBody, allowed]) => {

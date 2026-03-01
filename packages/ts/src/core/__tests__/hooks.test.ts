@@ -103,10 +103,7 @@ describe('HookRegistry', () => {
 
 		it('reflects in has and count after disposal', () => {
 			const registry = new HookRegistry()
-			const dispose = registry.register(
-				'beforeQuery',
-				vi.fn(),
-			)
+			const dispose = registry.register('beforeQuery', vi.fn())
 
 			expect(registry.has('beforeQuery')).toBe(true)
 			expect(registry.count('beforeQuery')).toBe(1)
@@ -144,9 +141,9 @@ describe('HookRegistry', () => {
 				throw new Error('access denied')
 			})
 
-			await expect(
-				registry.invoke('beforeQuery', queryCtx),
-			).rejects.toThrow('access denied')
+			await expect(registry.invoke('beforeQuery', queryCtx)).rejects.toThrow(
+				'access denied',
+			)
 		})
 
 		it('propagates errors thrown by async hooks', async () => {
@@ -155,9 +152,9 @@ describe('HookRegistry', () => {
 				throw new Error('async denial')
 			})
 
-			await expect(
-				registry.invoke('beforeQuery', queryCtx),
-			).rejects.toThrow('async denial')
+			await expect(registry.invoke('beforeQuery', queryCtx)).rejects.toThrow(
+				'async denial',
+			)
 		})
 
 		it('stops invoking remaining hooks after one throws', async () => {
@@ -169,9 +166,9 @@ describe('HookRegistry', () => {
 			})
 			registry.register('beforeQuery', secondHook)
 
-			await expect(
-				registry.invoke('beforeQuery', queryCtx),
-			).rejects.toThrow('denied')
+			await expect(registry.invoke('beforeQuery', queryCtx)).rejects.toThrow(
+				'denied',
+			)
 			expect(secondHook).not.toHaveBeenCalled()
 		})
 	})
@@ -258,18 +255,14 @@ describe('HookRegistry', () => {
 
 		it('does nothing when no hooks are registered', () => {
 			const registry = new HookRegistry()
-			expect(() =>
-				registry.invokeSync('beforeQuery', queryCtx),
-			).not.toThrow()
+			expect(() => registry.invokeSync('beforeQuery', queryCtx)).not.toThrow()
 		})
 
 		it('throws when a hook returns a Promise', () => {
 			const registry = new HookRegistry()
 			registry.register('beforeQuery', async () => {})
 
-			expect(() =>
-				registry.invokeSync('beforeQuery', queryCtx),
-			).toThrow(
+			expect(() => registry.invokeSync('beforeQuery', queryCtx)).toThrow(
 				"Hook for 'beforeQuery' returned a Promise",
 			)
 		})
@@ -280,9 +273,9 @@ describe('HookRegistry', () => {
 				throw new Error('sync denial')
 			})
 
-			expect(() =>
-				registry.invokeSync('beforeQuery', queryCtx),
-			).toThrow('sync denial')
+			expect(() => registry.invokeSync('beforeQuery', queryCtx)).toThrow(
+				'sync denial',
+			)
 		})
 
 		it('snapshots the array so mutations during invocation are safe', () => {

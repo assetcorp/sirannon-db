@@ -7,21 +7,16 @@ type SqliteDb = InstanceType<typeof Database>
 interface PreparedStatement {
 	all(...params: unknown[]): unknown[]
 	get(...params: unknown[]): unknown
-	run(
-		...params: unknown[]
-	): { changes: number; lastInsertRowid: number | bigint }
+	run(...params: unknown[]): {
+		changes: number
+		lastInsertRowid: number | bigint
+	}
 }
 
 const STATEMENT_CACHE_CAPACITY = 128
-const statementCaches = new WeakMap<
-	SqliteDb,
-	Map<string, PreparedStatement>
->()
+const statementCaches = new WeakMap<SqliteDb, Map<string, PreparedStatement>>()
 
-function getStatement(
-	db: SqliteDb,
-	sql: string,
-): PreparedStatement {
+function getStatement(db: SqliteDb, sql: string): PreparedStatement {
 	let cache = statementCaches.get(db)
 	if (!cache) {
 		cache = new Map()
@@ -87,11 +82,7 @@ export class QueryExecutor {
 		}
 	}
 
-	static execute(
-		db: SqliteDb,
-		sql: string,
-		params?: Params,
-	): ExecuteResult {
+	static execute(db: SqliteDb, sql: string, params?: Params): ExecuteResult {
 		try {
 			const stmt = getStatement(db, sql)
 			const result = stmt.run(...bindParams(params))

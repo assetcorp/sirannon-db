@@ -34,10 +34,7 @@ export class Database {
 		})
 	}
 
-	query<T = Record<string, unknown>>(
-		sql: string,
-		params?: Params,
-	): T[] {
+	query<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
 		this.ensureOpen()
 		const reader = this.pool.acquireReader()
 		return QueryExecutor.query<T>(reader, sql, params)
@@ -58,10 +55,7 @@ export class Database {
 		return QueryExecutor.execute(writer, sql, params)
 	}
 
-	executeBatch(
-		sql: string,
-		paramsBatch: Params[],
-	): ExecuteResult[] {
+	executeBatch(sql: string, paramsBatch: Params[]): ExecuteResult[] {
 		this.ensureOpen()
 		const writer = this.pool.acquireWriter()
 		return QueryExecutor.executeBatch(writer, sql, paramsBatch)

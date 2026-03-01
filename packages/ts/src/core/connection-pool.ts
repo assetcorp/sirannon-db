@@ -28,12 +28,7 @@ export class ConnectionPool {
 	private closed = false
 
 	constructor(options: ConnectionPoolOptions) {
-		const {
-			path,
-			readOnly = false,
-			readPoolSize = 4,
-			walMode = true,
-		} = options
+		const { path, readOnly = false, readPoolSize = 4, walMode = true } = options
 
 		let writer: SqliteDb | null = null
 		const readers: SqliteDb[] = []

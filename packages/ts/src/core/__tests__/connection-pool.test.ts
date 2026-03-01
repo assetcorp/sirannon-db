@@ -177,9 +177,7 @@ describe('ConnectionPool', () => {
 
 		const pool2 = new ConnectionPool({ path: dbPath })
 		const writer = pool2.acquireWriter()
-		const rows = writer
-			.prepare('SELECT * FROM users')
-			.all()
+		const rows = writer.prepare('SELECT * FROM users').all()
 		expect(rows).toHaveLength(2)
 		pool2.close()
 	})

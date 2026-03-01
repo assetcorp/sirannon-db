@@ -32,9 +32,9 @@ describe('Sirannon', () => {
 		const sir = new Sirannon()
 		sir.open('main', join(tempDir, 'main.db'))
 
-		expect(() =>
-			sir.open('main', join(tempDir, 'other.db')),
-		).toThrow(DatabaseAlreadyExistsError)
+		expect(() => sir.open('main', join(tempDir, 'other.db'))).toThrow(
+			DatabaseAlreadyExistsError,
+		)
 		sir.shutdown()
 	})
 
@@ -49,9 +49,7 @@ describe('Sirannon', () => {
 
 	it('throws DatabaseNotFoundError when closing an unknown id', () => {
 		const sir = new Sirannon()
-		expect(() => sir.close('nope')).toThrow(
-			DatabaseNotFoundError,
-		)
+		expect(() => sir.close('nope')).toThrow(DatabaseNotFoundError)
 		sir.shutdown()
 	})
 
@@ -88,35 +86,19 @@ describe('Sirannon', () => {
 
 	it('manages multiple databases independently', () => {
 		const sir = new Sirannon()
-		const db1 = sir.open(
-			'users',
-			join(tempDir, 'users.db'),
-		)
-		const db2 = sir.open(
-			'products',
-			join(tempDir, 'products.db'),
-		)
+		const db1 = sir.open('users', join(tempDir, 'users.db'))
+		const db2 = sir.open('products', join(tempDir, 'products.db'))
 
-		db1.execute(
-			'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
-		)
+		db1.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 		db1.execute("INSERT INTO users (name) VALUES ('Alice')")
 
-		db2.execute(
-			'CREATE TABLE products (id INTEGER PRIMARY KEY, title TEXT)',
-		)
-		db2.execute(
-			"INSERT INTO products (title) VALUES ('Widget')",
-		)
+		db2.execute('CREATE TABLE products (id INTEGER PRIMARY KEY, title TEXT)')
+		db2.execute("INSERT INTO products (title) VALUES ('Widget')")
 
-		expect(
-			db1.query<{ name: string }>('SELECT * FROM users'),
-		).toHaveLength(1)
-		expect(
-			db2.query<{ title: string }>(
-				'SELECT * FROM products',
-			),
-		).toHaveLength(1)
+		expect(db1.query<{ name: string }>('SELECT * FROM users')).toHaveLength(1)
+		expect(db2.query<{ title: string }>('SELECT * FROM products')).toHaveLength(
+			1,
+		)
 		sir.shutdown()
 	})
 
@@ -140,9 +122,9 @@ describe('Sirannon', () => {
 	it('throws after shutdown on open', () => {
 		const sir = new Sirannon()
 		sir.shutdown()
-		expect(() =>
-			sir.open('main', join(tempDir, 'main.db')),
-		).toThrow(SirannonError)
+		expect(() => sir.open('main', join(tempDir, 'main.db'))).toThrow(
+			SirannonError,
+		)
 	})
 
 	it('throws after shutdown on close', () => {
@@ -163,13 +145,7 @@ describe('Sirannon', () => {
 
 	it('wraps open errors in SirannonError with DATABASE_OPEN_FAILED', () => {
 		const sir = new Sirannon()
-		const badPath = join(
-			tempDir,
-			'no',
-			'such',
-			'dir',
-			'test.db',
-		)
+		const badPath = join(tempDir, 'no', 'such', 'dir', 'test.db')
 
 		try {
 			sir.open('bad', badPath)
@@ -200,16 +176,12 @@ describe('Sirannon', () => {
 	it('allows re-opening after direct close', () => {
 		const sir = new Sirannon()
 		const db1 = sir.open('main', join(tempDir, 'main.db'))
-		db1.execute(
-			'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)',
-		)
+		db1.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
 		db1.execute("INSERT INTO notes (body) VALUES ('hello')")
 		db1.close()
 
 		const db2 = sir.open('main', join(tempDir, 'main.db'))
-		const rows = db2.query<{ body: string }>(
-			'SELECT * FROM notes',
-		)
+		const rows = db2.query<{ body: string }>('SELECT * FROM notes')
 		expect(rows).toHaveLength(1)
 		expect(rows[0].body).toBe('hello')
 		sir.shutdown()
@@ -220,9 +192,7 @@ describe('Sirannon', () => {
 		const db = sir.open('main', join(tempDir, 'main.db'))
 		db.close()
 
-		expect(() => sir.close('main')).toThrow(
-			DatabaseNotFoundError,
-		)
+		expect(() => sir.close('main')).toThrow(DatabaseNotFoundError)
 		sir.shutdown()
 	})
 })

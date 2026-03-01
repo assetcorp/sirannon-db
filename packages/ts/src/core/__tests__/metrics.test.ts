@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { MetricsCollector } from '../metrics/collector.js'
-import type {
-	QueryMetrics,
-	ConnectionMetrics,
-	CDCMetrics,
-} from '../types.js'
+import type { QueryMetrics, ConnectionMetrics, CDCMetrics } from '../types.js'
 
 describe('MetricsCollector', () => {
 	describe('trackQuery', () => {
@@ -14,13 +10,10 @@ describe('MetricsCollector', () => {
 				onQueryComplete,
 			})
 
-			const result = collector.trackQuery(
-				() => [{ id: 1, name: 'alice' }],
-				{
-					databaseId: 'main',
-					sql: 'SELECT * FROM users',
-				},
-			)
+			const result = collector.trackQuery(() => [{ id: 1, name: 'alice' }], {
+				databaseId: 'main',
+				sql: 'SELECT * FROM users',
+			})
 
 			expect(result).toEqual([{ id: 1, name: 'alice' }])
 		})
@@ -38,8 +31,7 @@ describe('MetricsCollector', () => {
 			})
 
 			expect(onQueryComplete).toHaveBeenCalledOnce()
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.databaseId).toBe('main')
 			expect(metrics.sql).toBe('SELECT 1')
 			expect(metrics.rowsReturned).toBe(1)
@@ -67,8 +59,7 @@ describe('MetricsCollector', () => {
 				},
 			)
 
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.durationMs).toBeGreaterThanOrEqual(15)
 		})
 
@@ -88,8 +79,7 @@ describe('MetricsCollector', () => {
 			).toThrow('query failed')
 
 			expect(onQueryComplete).toHaveBeenCalledOnce()
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.sql).toBe('INVALID SQL')
 			expect(typeof metrics.durationMs).toBe('number')
 		})
@@ -105,8 +95,7 @@ describe('MetricsCollector', () => {
 				sql: 'SELECT 1',
 			})
 
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.error).toBe(false)
 		})
 
@@ -125,8 +114,7 @@ describe('MetricsCollector', () => {
 				),
 			).toThrow('boom')
 
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.error).toBe(true)
 		})
 
@@ -153,8 +141,7 @@ describe('MetricsCollector', () => {
 				changes: 5,
 			})
 
-			const metrics: QueryMetrics =
-				onQueryComplete.mock.calls[0][0]
+			const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
 			expect(metrics.changes).toBe(5)
 		})
 
@@ -165,13 +152,10 @@ describe('MetricsCollector', () => {
 				},
 			})
 
-			const result = collector.trackQuery(
-				() => [{ id: 1 }],
-				{
-					databaseId: 'main',
-					sql: 'SELECT * FROM users',
-				},
-			)
+			const result = collector.trackQuery(() => [{ id: 1 }], {
+				databaseId: 'main',
+				sql: 'SELECT * FROM users',
+			})
 
 			expect(result).toEqual([{ id: 1 }])
 		})
@@ -228,9 +212,7 @@ describe('MetricsCollector', () => {
 			collector.trackConnection(metrics)
 
 			expect(onConnectionClose).toHaveBeenCalledOnce()
-			expect(onConnectionClose).toHaveBeenCalledWith(
-				metrics,
-			)
+			expect(onConnectionClose).toHaveBeenCalledWith(metrics)
 		})
 
 		it('does nothing when no callback is configured', () => {
@@ -242,9 +224,7 @@ describe('MetricsCollector', () => {
 				event: 'open',
 			}
 
-			expect(() =>
-				collector.trackConnection(metrics),
-			).not.toThrow()
+			expect(() => collector.trackConnection(metrics)).not.toThrow()
 		})
 
 		it('swallows callback errors', () => {

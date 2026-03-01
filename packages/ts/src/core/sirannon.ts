@@ -20,11 +20,7 @@ export class Sirannon {
 
 	constructor(private readonly options?: SirannonOptions) {}
 
-	open(
-		id: string,
-		path: string,
-		options?: DatabaseOptions,
-	): Database {
+	open(id: string, path: string, options?: DatabaseOptions): Database {
 		this.ensureRunning()
 		if (this.dbs.has(id)) {
 			throw new DatabaseAlreadyExistsError(id)
@@ -116,10 +112,7 @@ export class Sirannon {
 
 	private ensureRunning(): void {
 		if (this._shutdown) {
-			throw new SirannonError(
-				'Sirannon has been shut down',
-				'SHUTDOWN',
-			)
+			throw new SirannonError('Sirannon has been shut down', 'SHUTDOWN')
 		}
 	}
 }

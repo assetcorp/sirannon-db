@@ -47,15 +47,11 @@ describe('MigrationRunner', () => {
       expect(result.applied[1].name).toBe('add_email')
       expect(result.skipped).toBe(0)
 
-      const rows = db.query<{ name: string; email: string | null }>(
-        "SELECT * FROM users WHERE name = 'test'",
-      )
+      const rows = db.query<{ name: string; email: string | null }>("SELECT * FROM users WHERE name = 'test'")
       expect(rows).toEqual([])
 
       db.execute("INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')")
-      const inserted = db.queryOne<{ name: string; email: string }>(
-        'SELECT name, email FROM users WHERE id = 1',
-      )
+      const inserted = db.queryOne<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = 1')
       expect(inserted?.name).toBe('Alice')
       expect(inserted?.email).toBe('alice@example.com')
 
@@ -164,9 +160,7 @@ INSERT INTO users (name) VALUES ('Bob');`,
       )
       expect(tables).toHaveLength(0)
 
-      const tracking = db.query<{ version: number }>(
-        'SELECT version FROM _sirannon_migrations',
-      )
+      const tracking = db.query<{ version: number }>('SELECT version FROM _sirannon_migrations')
       expect(tracking).toHaveLength(0)
 
       db.close()
@@ -368,9 +362,7 @@ INSERT INTO users (name) VALUES ('Bob');`,
       expect(result.applied[0].version).toBe(3)
       expect(result.skipped).toBe(2)
 
-      const tracked = db.query<{ version: number }>(
-        'SELECT version FROM _sirannon_migrations ORDER BY version',
-      )
+      const tracked = db.query<{ version: number }>('SELECT version FROM _sirannon_migrations ORDER BY version')
       expect(tracked.map(r => r.version)).toEqual([1, 2, 3])
 
       db.close()

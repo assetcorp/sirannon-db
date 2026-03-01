@@ -72,7 +72,9 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
       totalLength += chunk.byteLength
       if (totalLength > maxBytes) {
         done = true
-        sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'Request body exceeds size limit')
+        if (!abort.aborted) {
+          sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'Request body exceeds size limit')
+        }
         reject(new Error('Payload too large'))
         return
       }

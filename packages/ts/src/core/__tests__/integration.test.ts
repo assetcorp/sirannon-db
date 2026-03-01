@@ -24,11 +24,11 @@ describe('CDC integration via Database', () => {
 
     db.watch('users')
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     expect(received[0].type).toBe('insert')
@@ -45,14 +45,14 @@ describe('CDC integration via Database', () => {
     db.watch('users')
 
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
     received.length = 0
 
     db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     expect(received[0].type).toBe('update')
@@ -68,14 +68,14 @@ describe('CDC integration via Database', () => {
     db.watch('users')
 
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
     received.length = 0
 
     db.execute("DELETE FROM users WHERE name = 'Alice'")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     expect(received[0].type).toBe('delete')
@@ -92,14 +92,16 @@ describe('CDC integration via Database', () => {
     const aliceOnly: ChangeEvent[] = []
     const allEvents: ChangeEvent[] = []
 
-    db.on('users').filter({ name: 'Alice' }).subscribe((event) => aliceOnly.push(event))
-    db.on('users').subscribe((event) => allEvents.push(event))
+    db.on('users')
+      .filter({ name: 'Alice' })
+      .subscribe(event => aliceOnly.push(event))
+    db.on('users').subscribe(event => allEvents.push(event))
 
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
     db.execute("INSERT INTO users (name) VALUES ('Bob')")
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(allEvents).toHaveLength(3)
     expect(aliceOnly).toHaveLength(2)
@@ -113,15 +115,15 @@ describe('CDC integration via Database', () => {
     db.watch('users')
 
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
     expect(received).toHaveLength(1)
 
     db.unwatch('users')
     db.execute("INSERT INTO users (name) VALUES ('Bob')")
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received).toHaveLength(1)
 
@@ -144,12 +146,12 @@ describe('CDC integration via Database', () => {
     db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.watch('users')
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     expect(received[0].row.name).toBe('Alice')
@@ -163,11 +165,11 @@ describe('CDC integration via Database', () => {
     db.watch('users')
 
     const received: ChangeEvent[] = []
-    db.on('users').subscribe((event) => received.push(event))
+    db.on('users').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
 
-    await new Promise((resolve) => setTimeout(resolve, 80))
+    await new Promise(resolve => setTimeout(resolve, 80))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     db.close()
@@ -181,7 +183,7 @@ describe('CDC integration via Database', () => {
 
     db.close()
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
     expect(db.closed).toBe(true)
   })
 })
@@ -194,8 +196,8 @@ describe('Hooks integration', () => {
 
       const sir = new Sirannon({
         hooks: {
-          onBeforeQuery: (ctx) => beforeCalls.push(ctx),
-          onAfterQuery: (ctx) => afterCalls.push(ctx),
+          onBeforeQuery: ctx => beforeCalls.push(ctx),
+          onAfterQuery: ctx => afterCalls.push(ctx),
         },
       })
 
@@ -218,8 +220,8 @@ describe('Hooks integration', () => {
 
       const sir = new Sirannon({
         hooks: {
-          onDatabaseOpen: (ctx) => opened.push(ctx.databaseId),
-          onDatabaseClose: (ctx) => closed.push(ctx.databaseId),
+          onDatabaseOpen: ctx => opened.push(ctx.databaseId),
+          onDatabaseClose: ctx => closed.push(ctx.databaseId),
         },
       })
 
@@ -239,7 +241,7 @@ describe('Hooks integration', () => {
     it('fires onBeforeConnect hook and denies connection when hook throws', () => {
       const sir = new Sirannon({
         hooks: {
-          onBeforeConnect: (ctx) => {
+          onBeforeConnect: ctx => {
             if (ctx.databaseId === 'blocked') {
               throw new HookDeniedError('beforeConnect', 'access denied')
             }
@@ -260,7 +262,7 @@ describe('Hooks integration', () => {
   describe('Sirannon-level hooks via registration methods', () => {
     it('registers beforeQuery hook that can deny operations', () => {
       const sir = new Sirannon()
-      sir.onBeforeQuery((ctx) => {
+      sir.onBeforeQuery(ctx => {
         if (ctx.sql.includes('DROP')) {
           throw new HookDeniedError('beforeQuery', 'DROP statements are forbidden')
         }
@@ -291,8 +293,8 @@ describe('Hooks integration', () => {
       const db1Queries: string[] = []
       const db2Queries: string[] = []
 
-      db1.onBeforeQuery((ctx) => db1Queries.push(ctx.sql))
-      db2.onBeforeQuery((ctx) => db2Queries.push(ctx.sql))
+      db1.onBeforeQuery(ctx => db1Queries.push(ctx.sql))
+      db2.onBeforeQuery(ctx => db2Queries.push(ctx.sql))
 
       db1.query('SELECT * FROM items')
       db2.query('SELECT * FROM items')
@@ -330,7 +332,7 @@ describe('Hooks integration', () => {
       db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
 
       const queries: string[] = []
-      db.onBeforeQuery((ctx) => queries.push(ctx.sql))
+      db.onBeforeQuery(ctx => queries.push(ctx.sql))
       db.query('SELECT * FROM t')
 
       expect(queries).toHaveLength(1)
@@ -359,7 +361,7 @@ describe('Metrics integration', () => {
 
     const sir = new Sirannon({
       metrics: {
-        onQueryComplete: (m) => queryMetrics.push({ sql: m.sql, durationMs: m.durationMs }),
+        onQueryComplete: m => queryMetrics.push({ sql: m.sql, durationMs: m.durationMs }),
       },
     })
 
@@ -369,7 +371,7 @@ describe('Metrics integration', () => {
     db.query('SELECT * FROM users')
 
     expect(queryMetrics.length).toBeGreaterThanOrEqual(3)
-    expect(queryMetrics.every((m) => m.durationMs >= 0)).toBe(true)
+    expect(queryMetrics.every(m => m.durationMs >= 0)).toBe(true)
 
     sir.shutdown()
   })
@@ -379,8 +381,8 @@ describe('Metrics integration', () => {
 
     const sir = new Sirannon({
       metrics: {
-        onConnectionOpen: (m) => connectionEvents.push({ databaseId: m.databaseId, event: m.event }),
-        onConnectionClose: (m) => connectionEvents.push({ databaseId: m.databaseId, event: m.event }),
+        onConnectionOpen: m => connectionEvents.push({ databaseId: m.databaseId, event: m.event }),
+        onConnectionClose: m => connectionEvents.push({ databaseId: m.databaseId, event: m.event }),
       },
     })
 
@@ -408,7 +410,7 @@ describe('Metrics integration', () => {
 
     const sir = new Sirannon({
       metrics: {
-        onQueryComplete: (m) => metrics.push({ sql: m.sql, error: m.error }),
+        onQueryComplete: m => metrics.push({ sql: m.sql, error: m.error }),
       },
     })
 
@@ -438,7 +440,7 @@ describe('Lifecycle integration', () => {
     const sir = new Sirannon({
       lifecycle: {
         autoOpen: {
-          resolver: (id) => {
+          resolver: id => {
             if (id === 'auto') return { path: dbPath }
             return undefined
           },
@@ -450,10 +452,10 @@ describe('Lifecycle integration', () => {
 
     const db = sir.get('auto')
     expect(db).toBeDefined()
-    expect(db!.id).toBe('auto')
+    expect(db?.id).toBe('auto')
     expect(sir.has('auto')).toBe(true)
 
-    const rows = db!.query<{ name: string }>('SELECT * FROM users')
+    const rows = db?.query<{ name: string }>('SELECT * FROM users')
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Alice')
 
@@ -466,7 +468,7 @@ describe('Lifecycle integration', () => {
     const sir = new Sirannon({
       lifecycle: {
         autoOpen: {
-          resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+          resolver: id => ({ path: join(tempDir, `${id}.db`) }),
         },
         idleTimeout: 200,
       },
@@ -476,7 +478,7 @@ describe('Lifecycle integration', () => {
     expect(db).toBeDefined()
     expect(sir.has('idle-test')).toBe(true)
 
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    await new Promise(resolve => setTimeout(resolve, 400))
 
     expect(sir.has('idle-test')).toBe(false)
 
@@ -487,7 +489,7 @@ describe('Lifecycle integration', () => {
     const sir = new Sirannon({
       lifecycle: {
         autoOpen: {
-          resolver: (id) => ({ path: join(tempDir, `${id}.db`) }),
+          resolver: id => ({ path: join(tempDir, `${id}.db`) }),
         },
         maxOpen: 2,
       },
@@ -528,14 +530,14 @@ describe('Lifecycle integration', () => {
 
     const sir = new Sirannon({
       hooks: {
-        onDatabaseOpen: (ctx) => opened.push(ctx.databaseId),
+        onDatabaseOpen: ctx => opened.push(ctx.databaseId),
       },
       metrics: {
-        onConnectionOpen: (m) => connectionEvents.push(m.databaseId),
+        onConnectionOpen: m => connectionEvents.push(m.databaseId),
       },
       lifecycle: {
         autoOpen: {
-          resolver: (id) => ({ path: join(tempDir, `${id}-lifecycle.db`) }),
+          resolver: id => ({ path: join(tempDir, `${id}-lifecycle.db`) }),
         },
       },
     })
@@ -614,11 +616,11 @@ describe('End-to-end smoke test', () => {
 
     const sir = new Sirannon({
       hooks: {
-        onBeforeQuery: (ctx) => queryLog.push(ctx.sql),
+        onBeforeQuery: ctx => queryLog.push(ctx.sql),
       },
       metrics: {
-        onConnectionOpen: (m) => connectionLog.push(`open:${m.databaseId}`),
-        onConnectionClose: (m) => connectionLog.push(`close:${m.databaseId}`),
+        onConnectionOpen: m => connectionLog.push(`open:${m.databaseId}`),
+        onConnectionClose: m => connectionLog.push(`close:${m.databaseId}`),
       },
     })
 
@@ -629,11 +631,11 @@ describe('End-to-end smoke test', () => {
     db.watch('users')
 
     const events: ChangeEvent[] = []
-    const sub = db.on('users').subscribe((event) => events.push(event))
+    const sub = db.on('users').subscribe(event => events.push(event))
 
     db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(events.length).toBeGreaterThanOrEqual(1)
     expect(events[0].type).toBe('insert')
@@ -667,14 +669,14 @@ describe('Combined integration edge cases', () => {
 
     const sir = new Sirannon({
       hooks: {
-        onBeforeQuery: (ctx) => {
+        onBeforeQuery: ctx => {
           if (ctx.sql.includes('forbidden')) {
             throw new HookDeniedError('beforeQuery', 'forbidden query')
           }
         },
       },
       metrics: {
-        onQueryComplete: (m) => metrics.push({ sql: m.sql, error: m.error }),
+        onQueryComplete: m => metrics.push({ sql: m.sql, error: m.error }),
       },
     })
 
@@ -683,7 +685,7 @@ describe('Combined integration edge cases', () => {
 
     expect(() => db.query('SELECT forbidden FROM t')).toThrow(HookDeniedError)
 
-    const forbiddenMetrics = metrics.filter((m) => m.sql.includes('forbidden'))
+    const forbiddenMetrics = metrics.filter(m => m.sql.includes('forbidden'))
     expect(forbiddenMetrics).toHaveLength(0)
 
     sir.shutdown()
@@ -724,7 +726,7 @@ describe('Combined integration edge cases', () => {
     const localLog2: string[] = []
 
     const sir = new Sirannon()
-    sir.onBeforeQuery((ctx) => globalLog.push(`${ctx.databaseId}:${ctx.sql}`))
+    sir.onBeforeQuery(ctx => globalLog.push(`${ctx.databaseId}:${ctx.sql}`))
 
     const db1 = sir.open('db1', join(tempDir, 'multi-hook1.db'))
     const db2 = sir.open('db2', join(tempDir, 'multi-hook2.db'))
@@ -732,8 +734,8 @@ describe('Combined integration edge cases', () => {
     db1.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
     db2.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
 
-    db1.onBeforeQuery((ctx) => localLog1.push(ctx.sql))
-    db2.onBeforeQuery((ctx) => localLog2.push(ctx.sql))
+    db1.onBeforeQuery(ctx => localLog1.push(ctx.sql))
+    db2.onBeforeQuery(ctx => localLog2.push(ctx.sql))
 
     globalLog.length = 0
 
@@ -756,11 +758,11 @@ describe('CDC through Sirannon', () => {
     db.watch('messages')
 
     const received: ChangeEvent[] = []
-    db.on('messages').subscribe((event) => received.push(event))
+    db.on('messages').subscribe(event => received.push(event))
 
     db.execute("INSERT INTO messages (body) VALUES ('hello world')")
 
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    await new Promise(resolve => setTimeout(resolve, 120))
 
     expect(received.length).toBeGreaterThanOrEqual(1)
     expect(received[0].row.body).toBe('hello world')
@@ -774,7 +776,7 @@ describe('Close listener cleanup', () => {
     const sir = new Sirannon({
       lifecycle: {
         autoOpen: {
-          resolver: (id) => ({ path: join(tempDir, `${id}-cleanup.db`) }),
+          resolver: id => ({ path: join(tempDir, `${id}-cleanup.db`) }),
         },
         idleTimeout: 60_000,
       },
@@ -784,7 +786,7 @@ describe('Close listener cleanup', () => {
     expect(db).toBeDefined()
     expect(sir.has('tracked')).toBe(true)
 
-    db!.close()
+    db?.close()
 
     expect(sir.has('tracked')).toBe(false)
   })

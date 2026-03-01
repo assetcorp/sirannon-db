@@ -83,15 +83,18 @@ export function execute(db: SqliteDb, sql: string, params?: Params): ExecuteResu
 export function executeBatch(db: SqliteDb, sql: string, paramsBatch: Params[]): ExecuteResult[] {
   try {
     const stmt = getStatement(db, sql)
-    const results: ExecuteResult[] = []
-    for (const params of paramsBatch) {
-      const result = stmt.run(...bindParams(params))
-      results.push({
-        changes: result.changes,
-        lastInsertRowId: result.lastInsertRowid,
-      })
-    }
-    return results
+    const run = db.transaction(() => {
+      const results: ExecuteResult[] = []
+      for (const params of paramsBatch) {
+        const result = stmt.run(...bindParams(params))
+        results.push({
+          changes: result.changes,
+          lastInsertRowId: result.lastInsertRowid,
+        })
+      }
+      return results
+    })
+    return run()
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }

@@ -74,17 +74,14 @@ describe('GET /health/ready', () => {
     expect(ids).toContain('db2')
   })
 
-  it('shows degraded status when a database is closed', async () => {
+  it('returns ok when closed databases are auto-removed from registry', async () => {
     const db = sirannon.open('closing', join(tempDir, 'closing.db'))
     db.close()
 
-    // The db auto-removes from the registry via the close listener,
-    // so open a new one and close it manually without the listener
     const db2 = sirannon.open('remaining', join(tempDir, 'remaining.db'))
 
     const res = await fetch(`${baseUrl}/health/ready`)
     const body = await res.json()
-    // All open databases should be healthy
     expect(body.status).toBe('ok')
     db2.close()
   })

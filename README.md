@@ -155,6 +155,8 @@ sirannon.onDatabaseOpen(ctx => {
 
 Global hooks on the `Sirannon` instance: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, `onDatabaseClose`. The `onBeforeSubscribe` hook is available through the `HookConfig` constructor option. Query hooks (`onBeforeQuery`, `onAfterQuery`) can also be registered locally on individual `Database` instances.
 
+**Note:** The `ctx.sql.includes('DROP')` pattern shown above is for illustration only. Simple string matching is not a production SQL firewall because casing, comments, Unicode tricks, and concatenated SQL can bypass it. For real access control, combine `onBeforeQuery` with an allow-list of query patterns or a proper SQL parser.
+
 ### Metrics
 
 Plug in callbacks to collect query timing, connection events, and CDC activity.
@@ -203,13 +205,19 @@ sirannon.open('app', './data/app.db')
 const server = createServer(sirannon, {
   port: 9876,
   cors: true,
-  auth: async ({ headers }) => {
-    return headers.authorization === `Bearer ${process.env.API_TOKEN}`
+  onRequest: ({ headers, path, method, remoteAddress }) => {
+    if (headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
+      return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid or missing token' }
+    }
   },
 })
 
 await server.listen()
 ```
+
+The `onRequest` hook runs before every database route (HTTP and WebSocket upgrade). Return `void` to allow the request, or return a `{ status, code, message }` object to deny it. The hook receives a `RequestContext` with `headers`, `method`, `path`, `databaseId`, and `remoteAddress`. Health endpoints (`/health`, `/health/ready`) bypass this hook.
+
+**Important:** The server accepts arbitrary SQL from clients. When exposed beyond localhost, always use `onRequest` to authenticate and authorize requests.
 
 ### HTTP routes
 
@@ -327,10 +335,10 @@ try {
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `host` | `string` | `'0.0.0.0'` | Bind address |
+| `host` | `string` | `'127.0.0.1'` | Bind address |
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
-| `auth` | `(req) => boolean \| Promise<boolean>` | - | Request authentication function |
+| `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
 
 ### `ClientOptions`
 

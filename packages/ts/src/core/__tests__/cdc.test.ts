@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChangeTracker } from '../cdc/change-tracker.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from '../cdc/subscription.js'
 import { CDCError } from '../errors.js'
@@ -842,6 +842,7 @@ describe('startPolling', () => {
   let manager: SubscriptionManager
 
   beforeEach(() => {
+    vi.useFakeTimers()
     db = createTestDb()
     tracker = new ChangeTracker()
     manager = new SubscriptionManager()
@@ -850,24 +851,24 @@ describe('startPolling', () => {
 
   afterEach(() => {
     db.close()
+    vi.useRealTimers()
   })
 
-  it('dispatches events on each polling interval', async () => {
+  it('dispatches events on each polling interval', () => {
     const received: ChangeEvent[] = []
     manager.subscribe('users', undefined, e => received.push(e))
 
     const stop = startPolling(db, tracker, manager, 20)
 
     insertUser(db, 'Alice')
-
-    await new Promise(resolve => setTimeout(resolve, 60))
+    vi.advanceTimersByTime(20)
 
     stop()
-    expect(received.length).toBeGreaterThanOrEqual(1)
+    expect(received).toHaveLength(1)
     expect(received[0].row.name).toBe('Alice')
   })
 
-  it('stops polling when the stop function is called', async () => {
+  it('stops polling when the stop function is called', () => {
     const received: ChangeEvent[] = []
     manager.subscribe('users', undefined, e => received.push(e))
 
@@ -875,9 +876,69 @@ describe('startPolling', () => {
     stop()
 
     insertUser(db, 'Alice')
-    await new Promise(resolve => setTimeout(resolve, 60))
+    vi.advanceTimersByTime(60)
 
     expect(received).toHaveLength(0)
+  })
+
+  it('skips polling when there are zero subscribers', () => {
+    const stop = startPolling(db, tracker, manager, 20)
+
+    insertUser(db, 'Alice')
+    vi.advanceTimersByTime(20)
+
+    const events = tracker.poll(db)
+    expect(events).toHaveLength(1)
+    expect(events[0].row.name).toBe('Alice')
+
+    stop()
+  })
+
+  it('continues polling after transient errors and calls onError', () => {
+    const received: ChangeEvent[] = []
+    const errors: Error[] = []
+    manager.subscribe('users', undefined, e => received.push(e))
+
+    const originalPoll = tracker.poll.bind(tracker)
+    let callCount = 0
+    tracker.poll = (pollDb: Database.Database) => {
+      callCount++
+      if (callCount <= 3) throw new Error(`transient error ${callCount}`)
+      return originalPoll(pollDb)
+    }
+
+    const stop = startPolling(db, tracker, manager, 20, err => errors.push(err))
+
+    vi.advanceTimersByTime(20)
+    vi.advanceTimersByTime(20)
+    vi.advanceTimersByTime(20)
+    expect(errors).toHaveLength(3)
+
+    insertUser(db, 'Alice')
+    vi.advanceTimersByTime(20)
+
+    expect(received).toHaveLength(1)
+    expect(received[0].row.name).toBe('Alice')
+
+    stop()
+  })
+
+  it('stops polling after 10 consecutive errors', () => {
+    const errors: Error[] = []
+    manager.subscribe('users', undefined, () => {})
+
+    tracker.poll = () => {
+      throw new Error('persistent failure')
+    }
+
+    const stop = startPolling(db, tracker, manager, 20, err => errors.push(err))
+
+    for (let i = 0; i < 15; i++) {
+      vi.advanceTimersByTime(20)
+    }
+
+    expect(errors).toHaveLength(10)
+    stop()
   })
 })
 

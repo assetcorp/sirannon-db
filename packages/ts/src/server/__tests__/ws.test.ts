@@ -1,52 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Database } from '../../core/database.js'
 import { Sirannon } from '../../core/sirannon.js'
-import { createWSHandler, type WSConnection, WSHandler } from '../ws-handler.js'
+import { createWSHandler, WSHandler } from '../ws-handler.js'
+import { createMockConnection, lastMessage, parseMessages } from './helpers.js'
 
 let tempDir: string
 let sirannon: Sirannon
 
-interface MockWSConnection extends WSConnection {
-  messages: string[]
-  closed: boolean
-  closeCode?: number
-  closeReason?: string
-}
-
-function createMockConnection(): MockWSConnection {
-  const conn: MockWSConnection = {
-    messages: [],
-    closed: false,
-    closeCode: undefined,
-    closeReason: undefined,
-    send(data: string) {
-      conn.messages.push(data)
-    },
-    close(code?: number, reason?: string) {
-      conn.closed = true
-      conn.closeCode = code
-      conn.closeReason = reason
-    },
-  }
-  return conn
-}
-
-function parseMessages(conn: MockWSConnection): Record<string, unknown>[] {
-  return conn.messages.map(m => JSON.parse(m))
-}
-
-function lastMessage(conn: MockWSConnection): Record<string, unknown> {
-  return JSON.parse(conn.messages[conn.messages.length - 1])
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 beforeEach(() => {
+  vi.useFakeTimers()
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-'))
   sirannon = new Sirannon()
 })
@@ -54,6 +19,7 @@ beforeEach(() => {
 afterEach(() => {
   sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
+  vi.useRealTimers()
 })
 
 describe('WSHandler', () => {
@@ -358,7 +324,7 @@ describe('WSHandler', () => {
       )
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const messages = parseMessages(conn)
       const changeMsg = messages.find(m => m.type === 'change') as Record<string, unknown>
@@ -393,7 +359,7 @@ describe('WSHandler', () => {
 
       db.execute("INSERT INTO users (name) VALUES ('Bob')")
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)
@@ -581,7 +547,7 @@ describe('WSHandler', () => {
       )
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(0)
@@ -741,7 +707,7 @@ describe('WSHandler', () => {
       handler.handleClose(conn)
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(0)
@@ -848,7 +814,7 @@ describe('WSHandler', () => {
       )
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changes1 = parseMessages(conn1).filter(m => m.type === 'change')
       const changes2 = parseMessages(conn2).filter(m => m.type === 'change')
@@ -890,7 +856,7 @@ describe('WSHandler', () => {
       handler.handleClose(conn1)
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changes1 = parseMessages(conn1).filter(m => m.type === 'change')
       const changes2 = parseMessages(conn2).filter(m => m.type === 'change')
@@ -963,7 +929,7 @@ describe('WSHandler', () => {
       )
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       handler.handleMessage(
         conn,
@@ -974,7 +940,7 @@ describe('WSHandler', () => {
       )
 
       db.execute("INSERT INTO users (name) VALUES ('Bob')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)
@@ -1002,7 +968,7 @@ describe('WSHandler', () => {
       db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
       db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
       db.execute("DELETE FROM users WHERE name = 'Alice'")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const events = parseMessages(conn)
         .filter(m => m.type === 'change')
@@ -1055,7 +1021,7 @@ describe('WSHandler', () => {
       expect(subMessages).toHaveLength(2)
 
       db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await wait(200)
+      vi.advanceTimersByTime(200)
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)

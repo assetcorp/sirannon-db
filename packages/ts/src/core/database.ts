@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { BackupManager } from './backup/backup.js'
 import { BackupScheduler } from './backup/scheduler.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
@@ -155,7 +156,7 @@ export class Database {
 
     this.ensureCdc()
     const writer = this.pool.acquireWriter()
-    this.changeTracker!.watch(writer, table)
+    this.changeTracker?.watch(writer, table)
     this.ensureCdcPolling()
   }
 
@@ -174,7 +175,9 @@ export class Database {
   on(table: string): SubscriptionBuilder {
     this.ensureOpen()
     this.ensureCdc()
-    return new SubscriptionBuilderImpl(table, this.subscriptionManager!)
+    const manager = this.subscriptionManager
+    if (!manager) throw new Error('subscriptionManager not initialized')
+    return new SubscriptionBuilderImpl(table, manager)
   }
 
   migrate(migrationsPath: string): MigrationResult {
@@ -198,8 +201,19 @@ export class Database {
 
   loadExtension(extensionPath: string): void {
     this.ensureOpen()
+
+    if (!extensionPath || extensionPath.includes('\0')) {
+      throw new ExtensionError(extensionPath || '', 'Extension path is empty or contains null bytes')
+    }
+
+    const segments = extensionPath.split(/[/\\]/)
+    if (segments.includes('..')) {
+      throw new ExtensionError(extensionPath, 'Extension path must not contain directory traversal segments')
+    }
+
+    const resolved = resolve(extensionPath)
     try {
-      this.pool.loadExtension(extensionPath)
+      this.pool.loadExtension(resolved)
     } catch (err) {
       throw new ExtensionError(extensionPath, err instanceof Error ? err.message : String(err))
     }

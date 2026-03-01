@@ -1,7 +1,7 @@
-import { Cron } from 'croner'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type Database from 'better-sqlite3'
+import { Cron } from 'croner'
 import { BackupError } from '../errors.js'
 import type { BackupScheduleOptions } from '../types.js'
 import { BackupManager } from './backup.js'
@@ -56,9 +56,7 @@ export class BackupScheduler {
           catch: (err: unknown) => {
             if (onError) {
               const error =
-                err instanceof Error
-                  ? err
-                  : new BackupError(typeof err === 'string' ? err : 'Scheduled backup failed')
+                err instanceof Error ? err : new BackupError(typeof err === 'string' ? err : 'Scheduled backup failed')
               onError(error)
             }
           },

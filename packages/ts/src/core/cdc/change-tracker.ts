@@ -35,6 +35,10 @@ export class ChangeTracker {
       throw new CDCError(`Table '${table}' does not exist or has no columns`)
     }
 
+    for (const col of columns) {
+      this.assertIdentifier(col, `column name in table '${table}'`)
+    }
+
     const pkColumns = this.getPkColumns(db, table)
     const existing = this.watched.get(table)
 

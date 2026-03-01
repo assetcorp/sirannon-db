@@ -27,9 +27,9 @@ export class Sirannon {
     this.lifecycleManager = options?.lifecycle
       ? new LifecycleManager(options.lifecycle, {
           open: (id, path, opts) => this.open(id, path, opts),
-          close: (id) => this.close(id),
+          close: id => this.close(id),
           count: () => this.dbs.size,
-          has: (id) => this.dbs.has(id),
+          has: id => this.dbs.has(id),
         })
       : null
   }

@@ -14,21 +14,7 @@ import {
   SirannonError,
   TransactionError,
 } from '../errors.js'
-import type {
-  BackupScheduleOptions,
-  ChangeEvent,
-  ClientOptions,
-  DatabaseOptions,
-  ExecuteResult,
-  MigrationFile,
-  MigrationResult,
-  Params,
-  QueryHookContext,
-  ServerOptions,
-  SirannonOptions,
-  Subscription,
-  SubscriptionBuilder,
-} from '../types.js'
+import type { ChangeEvent, ExecuteResult } from '../types.js'
 
 describe('Error classes', () => {
   it('SirannonError has code and message', () => {

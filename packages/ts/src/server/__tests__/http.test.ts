@@ -5,6 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
 import { createServer, type SirannonServer } from '../server.js'
 
+/** Union response type covering all HTTP endpoint shapes in tests. */
+interface ApiResponse {
+  rows: Record<string, unknown>[]
+  changes: number
+  lastInsertRowId: number | string
+  results: { changes: number; lastInsertRowId: number | string }[]
+  error: { code: string; message: string }
+}
+
 let tempDir: string
 let sirannon: Sirannon
 let server: SirannonServer
@@ -38,7 +47,7 @@ describe('POST /db/:id/query', () => {
       body: JSON.stringify({ sql: 'SELECT * FROM users ORDER BY id' }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.rows).toHaveLength(2)
     expect(body.rows[0].name).toBe('Alice')
     expect(body.rows[1].name).toBe('Bob')
@@ -54,7 +63,7 @@ describe('POST /db/:id/query', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.rows).toHaveLength(1)
     expect(body.rows[0].age).toBe(30)
   })
@@ -69,7 +78,7 @@ describe('POST /db/:id/query', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.rows).toHaveLength(1)
     expect(body.rows[0].name).toBe('Alice')
   })
@@ -83,7 +92,7 @@ describe('POST /db/:id/query', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.rows).toEqual([])
   })
 
@@ -94,7 +103,7 @@ describe('POST /db/:id/query', () => {
       body: JSON.stringify({ sql: 'SELECT 1' }),
     })
     expect(res.status).toBe(404)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('DATABASE_NOT_FOUND')
   })
 
@@ -105,7 +114,7 @@ describe('POST /db/:id/query', () => {
       body: JSON.stringify({}),
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('INVALID_REQUEST')
   })
 
@@ -116,7 +125,7 @@ describe('POST /db/:id/query', () => {
       body: 'not json',
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('INVALID_JSON')
   })
 
@@ -136,7 +145,7 @@ describe('POST /db/:id/query', () => {
       body: JSON.stringify({ sql: 'SELCT GARBAGE' }),
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('QUERY_ERROR')
   })
 })
@@ -151,7 +160,7 @@ describe('POST /db/:id/execute', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.changes).toBe(1)
     expect(body.lastInsertRowId).toBeDefined()
   })
@@ -166,7 +175,7 @@ describe('POST /db/:id/execute', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.changes).toBe(1)
   })
 
@@ -179,7 +188,7 @@ describe('POST /db/:id/execute', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.changes).toBe(1)
   })
 
@@ -199,7 +208,7 @@ describe('POST /db/:id/execute', () => {
       body: JSON.stringify({ params: [] }),
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('INVALID_REQUEST')
   })
 })
@@ -221,7 +230,7 @@ describe('POST /db/:id/transaction', () => {
       }),
     })
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.results).toHaveLength(2)
     expect(body.results[0].changes).toBe(1)
     expect(body.results[1].changes).toBe(1)
@@ -234,7 +243,7 @@ describe('POST /db/:id/transaction', () => {
         sql: 'SELECT COUNT(*) as count FROM users',
       }),
     })
-    const verifyBody = await verify.json()
+    const verifyBody = (await verify.json()) as ApiResponse
     expect(verifyBody.rows[0].count).toBe(4)
   })
 
@@ -262,7 +271,7 @@ describe('POST /db/:id/transaction', () => {
         sql: "SELECT * FROM users WHERE name = 'Eve'",
       }),
     })
-    const verifyBody = await verify.json()
+    const verifyBody = (await verify.json()) as ApiResponse
     expect(verifyBody.rows).toHaveLength(0)
   })
 
@@ -273,7 +282,7 @@ describe('POST /db/:id/transaction', () => {
       body: JSON.stringify({}),
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('INVALID_REQUEST')
   })
 
@@ -295,7 +304,7 @@ describe('POST /db/:id/transaction', () => {
       }),
     })
     expect(res.status).toBe(400)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.message).toContain('index 0')
   })
 
@@ -317,7 +326,7 @@ describe('error responses', () => {
       method: 'GET',
     })
     expect(res.status).toBe(404)
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error.code).toBe('NOT_FOUND')
   })
 
@@ -327,7 +336,7 @@ describe('error responses', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sql: 'DROP TABLE nonexistent' }),
     })
-    const body = await res.json()
+    const body = (await res.json()) as ApiResponse
     expect(body.error).toBeDefined()
     expect(typeof body.error.code).toBe('string')
     expect(typeof body.error.message).toBe('string')
@@ -408,7 +417,7 @@ describe('auth', () => {
         body: JSON.stringify({ sql: 'SELECT 1' }),
       })
       expect(res.status).toBe(401)
-      const body = await res.json()
+      const body = (await res.json()) as ApiResponse
       expect(body.error.code).toBe('UNAUTHORIZED')
     } finally {
       await authServer.close()
@@ -418,7 +427,7 @@ describe('auth', () => {
   it('allows requests when auth returns true', async () => {
     const authServer = createServer(sirannon, {
       port: 0,
-      auth: ({ headers }) => headers['authorization'] === 'Bearer valid-token',
+      auth: ({ headers }) => headers.authorization === 'Bearer valid-token',
     })
     await authServer.listen()
     const authUrl = `http://127.0.0.1:${authServer.listeningPort}`

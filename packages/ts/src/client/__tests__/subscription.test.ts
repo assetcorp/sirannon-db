@@ -2,16 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChangeEvent } from '../../core/types.js'
 import { Sirannon } from '../../core/sirannon.js'
-import { createServer } from '../../server/server.js'
-import type { SirannonServer } from '../../server/server.js'
+import type { WSConnection, WSHandler } from '../../server/ws-handler.js'
 import { createWSHandler } from '../../server/ws-handler.js'
-import type { WSHandler, WSConnection } from '../../server/ws-handler.js'
-import { SirannonClient } from '../client.js'
 import { RemoteSubscriptionBuilderImpl } from '../subscription.js'
 import { WebSocketTransport } from '../transport/ws.js'
-import { RemoteError } from '../types.js'
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -32,11 +27,7 @@ describe('RemoteSubscriptionBuilder', () => {
     const callback = () => {}
     await builder.filter({ name: 'Alice' }).subscribe(callback)
 
-    expect(subscribeFn).toHaveBeenCalledWith(
-      'users',
-      { name: 'Alice' },
-      callback,
-    )
+    expect(subscribeFn).toHaveBeenCalledWith('users', { name: 'Alice' }, callback)
   })
 
   it('merges multiple filter calls', async () => {
@@ -55,11 +46,7 @@ describe('RemoteSubscriptionBuilder', () => {
       .filter({ age: 30 })
       .subscribe(() => {})
 
-    expect(subscribeFn).toHaveBeenCalledWith(
-      'users',
-      { name: 'Alice', age: 30 },
-      expect.any(Function),
-    )
+    expect(subscribeFn).toHaveBeenCalledWith('users', { name: 'Alice', age: 30 }, expect.any(Function))
   })
 
   it('passes undefined filter when no conditions are set', async () => {
@@ -75,11 +62,7 @@ describe('RemoteSubscriptionBuilder', () => {
     const builder = new RemoteSubscriptionBuilderImpl('orders', transport)
     await builder.subscribe(() => {})
 
-    expect(subscribeFn).toHaveBeenCalledWith(
-      'orders',
-      undefined,
-      expect.any(Function),
-    )
+    expect(subscribeFn).toHaveBeenCalledWith('orders', undefined, expect.any(Function))
   })
 })
 
@@ -104,8 +87,6 @@ describe('WebSocket subscription integration', () => {
     db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
-    const events: ChangeEvent[] = []
-
     // Simulate a WS connection using the mock approach from server tests
     const conn = createMockConnection()
     wsHandler.handleOpen(conn, 'mydb')
@@ -126,9 +107,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
-    const changeMessages = conn.messages
-      .map(m => JSON.parse(m))
-      .filter(m => m.type === 'change')
+    const changeMessages = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
 
     expect(changeMessages).toHaveLength(1)
     expect(changeMessages[0].event.type).toBe('insert')
@@ -158,9 +137,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
-    const changeMessages = conn.messages
-      .map(m => JSON.parse(m))
-      .filter(m => m.type === 'change')
+    const changeMessages = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
 
     expect(changeMessages).toHaveLength(1)
     expect(changeMessages[0].event.row.name).toBe('Alice')
@@ -188,9 +165,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
-    let changeCount = conn.messages
-      .map(m => JSON.parse(m))
-      .filter(m => m.type === 'change').length
+    let changeCount = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change').length
     expect(changeCount).toBe(1)
 
     // Unsubscribe
@@ -206,9 +181,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Bob')")
     await wait(200)
 
-    changeCount = conn.messages
-      .map(m => JSON.parse(m))
-      .filter(m => m.type === 'change').length
+    changeCount = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change').length
     expect(changeCount).toBe(1) // Still 1, no new events
   })
 
@@ -279,9 +252,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Bob')")
     await wait(200)
 
-    const changes = conn.messages
-      .map(m => JSON.parse(m))
-      .filter(m => m.type === 'change')
+    const changes = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
 
     // sub-a should get 1 event (Alice only), sub-b should get 2 events (all)
     const subAChanges = changes.filter(m => m.id === 'sub-a')
@@ -311,9 +282,7 @@ describe('WebSocket subscription integration', () => {
     db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
-    const change = conn.messages
-      .map(m => JSON.parse(m))
-      .find(m => m.type === 'change')
+    const change = conn.messages.map(m => JSON.parse(m)).find(m => m.type === 'change')
 
     expect(typeof change.event.seq).toBe('string')
     expect(typeof change.event.timestamp).toBe('number')
@@ -324,18 +293,16 @@ describe('WebSocket subscription integration', () => {
 describe('WebSocketTransport', () => {
   it('rejects transactions', async () => {
     const transport = new WebSocketTransport('ws://localhost:1234/db/test')
-    await expect(
-      transport.transaction([{ sql: 'SELECT 1' }]),
-    ).rejects.toThrow('Transactions are not supported over WebSocket')
+    await expect(transport.transaction([{ sql: 'SELECT 1' }])).rejects.toThrow(
+      'Transactions are not supported over WebSocket',
+    )
     transport.close()
   })
 
   it('rejects operations after close', async () => {
     const transport = new WebSocketTransport('ws://localhost:1234/db/test')
     transport.close()
-    await expect(transport.query('SELECT 1')).rejects.toThrow(
-      'Transport is closed',
-    )
+    await expect(transport.query('SELECT 1')).rejects.toThrow('Transport is closed')
   })
 })
 

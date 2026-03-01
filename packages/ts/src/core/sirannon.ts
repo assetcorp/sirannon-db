@@ -14,7 +14,7 @@ export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private _shutdown = false
 
-  constructor(private readonly options?: SirannonOptions) {}
+  constructor(readonly options?: SirannonOptions) {}
 
   open(id: string, path: string, options?: DatabaseOptions): Database {
     this.ensureRunning()

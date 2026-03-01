@@ -1,9 +1,5 @@
 import type { ChangeEvent, Params } from '../core/types.js'
-import type {
-  ExecuteResponse,
-  QueryResponse,
-  TransactionResponse,
-} from '../server/protocol.js'
+import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../server/protocol.js'
 
 /**
  * Transport layer for communicating with a sirannon-db server.
@@ -12,9 +8,7 @@ import type {
 export interface Transport {
   query(sql: string, params?: Params): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
-  transaction(
-    statements: Array<{ sql: string; params?: Params }>,
-  ): Promise<TransactionResponse>
+  transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
@@ -31,9 +25,7 @@ export interface RemoteSubscription {
 /** Builder for creating remote CDC subscriptions with optional filters. */
 export interface RemoteSubscriptionBuilder {
   filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
-  subscribe(
-    callback: (event: ChangeEvent) => void,
-  ): Promise<RemoteSubscription>
+  subscribe(callback: (event: ChangeEvent) => void): Promise<RemoteSubscription>
 }
 
 /**

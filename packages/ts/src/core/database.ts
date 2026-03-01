@@ -1,3 +1,7 @@
+import { ConnectionPool } from './connection-pool.js'
+import { SirannonError } from './errors.js'
+import { QueryExecutor } from './query-executor.js'
+import { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
   BackupScheduleOptions,
@@ -8,10 +12,6 @@ import type {
   Params,
   SubscriptionBuilder,
 } from './types.js'
-import { ConnectionPool } from './connection-pool.js'
-import { SirannonError } from './errors.js'
-import { QueryExecutor } from './query-executor.js'
-import { Transaction } from './transaction.js'
 
 export class Database {
   readonly id: string

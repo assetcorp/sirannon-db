@@ -68,7 +68,7 @@ export class SirannonServer {
 
   constructor(sirannon: Sirannon, options?: ServerOptions) {
     this.sirannon = sirannon
-    this.host = options?.host ?? '0.0.0.0'
+    this.host = options?.host ?? '127.0.0.1'
     this.port = options?.port ?? 9876
     this.cors = resolveCors(options?.cors)
     this.authFn = options?.auth

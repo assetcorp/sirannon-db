@@ -153,6 +153,8 @@ export interface BackupScheduleOptions {
   destDir: string
   /** Maximum number of backup files to keep. Default: 5. */
   maxFiles?: number
+  /** Called when a scheduled backup fails. Without this, errors are silently discarded. */
+  onError?: (error: Error) => void
 }
 
 /** Builder for creating CDC subscriptions with optional filters. */

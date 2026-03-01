@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// uWebSockets.js HTTP server for sirannon-db
-// ---------------------------------------------------------------------------
-
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
@@ -9,10 +5,6 @@ import type { CorsOptions, ServerOptions } from '../core/types.js'
 import { handleLiveness, handleReadiness } from './health.js'
 import type { DbRouteHandler } from './http-handler.js'
 import { handleExecute, handleQuery, handleTransaction, initAbortHandler, readBody, sendError } from './http-handler.js'
-
-// ---------------------------------------------------------------------------
-// CORS helpers
-// ---------------------------------------------------------------------------
 
 interface ResolvedCors {
   origin: string
@@ -36,10 +28,6 @@ function resolveCors(cors: boolean | CorsOptions | undefined): ResolvedCors | nu
     headers: cors.headers?.join(', ') ?? 'Content-Type, Authorization',
   }
 }
-
-// ---------------------------------------------------------------------------
-// Auth middleware
-// ---------------------------------------------------------------------------
 
 /**
  * Run the user-supplied auth function against pre-extracted request headers.
@@ -68,10 +56,6 @@ async function checkAuth(
   }
   return true
 }
-
-// ---------------------------------------------------------------------------
-// SirannonServer
-// ---------------------------------------------------------------------------
 
 export class SirannonServer {
   private app: uWS.TemplatedApp
@@ -131,10 +115,6 @@ export class SirannonServer {
     if (!this.listenSocket) return -1
     return uWS.us_socket_local_port(this.listenSocket as unknown as uWS.us_socket)
   }
-
-  // -----------------------------------------------------------------------
-  // Route registration
-  // -----------------------------------------------------------------------
 
   private registerRoutes(): void {
     // CORS preflight — writeStatus MUST come before writeHeader in uWS
@@ -247,10 +227,6 @@ export class SirannonServer {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Factory function
-// ---------------------------------------------------------------------------
 
 /**
  * Create a sirannon-db HTTP server wrapping the given Sirannon instance.

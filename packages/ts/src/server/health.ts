@@ -1,13 +1,5 @@
-// ---------------------------------------------------------------------------
-// Health and readiness endpoints for sirannon-db server
-// ---------------------------------------------------------------------------
-
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface LivenessResponse {
   status: 'ok'
@@ -25,10 +17,6 @@ interface ReadinessResponse {
   databases: DatabaseStatus[]
 }
 
-// ---------------------------------------------------------------------------
-// GET /health — Liveness check
-// ---------------------------------------------------------------------------
-
 /**
  * Returns a handler that responds with a simple `{ status: 'ok' }` payload.
  * This endpoint confirms the process is running and able to serve requests.
@@ -42,10 +30,6 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
     })
   }
 }
-
-// ---------------------------------------------------------------------------
-// GET /health/ready — Readiness check with per-database status
-// ---------------------------------------------------------------------------
 
 /**
  * Returns a handler that responds with the readiness status of every

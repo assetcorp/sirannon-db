@@ -6,10 +6,6 @@ import { Database } from '../../core/database.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { createWSHandler, type WSConnection, WSHandler } from '../ws-handler.js'
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 let tempDir: string
 let sirannon: Sirannon
 
@@ -50,10 +46,6 @@ function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// ---------------------------------------------------------------------------
-// Setup / teardown
-// ---------------------------------------------------------------------------
-
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-'))
   sirannon = new Sirannon()
@@ -63,10 +55,6 @@ afterEach(() => {
   sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
 })
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('WSHandler', () => {
   describe('createWSHandler', () => {

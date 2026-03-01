@@ -1,12 +1,4 @@
-// ---------------------------------------------------------------------------
-// Wire protocol types for sirannon-db HTTP + WS server
-// ---------------------------------------------------------------------------
-
 import type { ExecuteResult } from '../core/types.js'
-
-// ---------------------------------------------------------------------------
-// HTTP request bodies
-// ---------------------------------------------------------------------------
 
 /** Body for POST /db/:id/query */
 export interface QueryRequest {
@@ -31,10 +23,6 @@ export interface TransactionRequest {
   statements: TransactionStatement[]
 }
 
-// ---------------------------------------------------------------------------
-// HTTP response bodies
-// ---------------------------------------------------------------------------
-
 /** Response for a successful query. */
 export interface QueryResponse {
   rows: Record<string, unknown>[]
@@ -58,10 +46,6 @@ export interface ErrorResponse {
     message: string
   }
 }
-
-// ---------------------------------------------------------------------------
-// WebSocket message types (for Agent E, defined here for shared use)
-// ---------------------------------------------------------------------------
 
 /** Inbound WS message types. */
 export type WSClientMessage = WSSubscribeMessage | WSUnsubscribeMessage | WSQueryMessage | WSExecuteMessage
@@ -137,10 +121,6 @@ export interface WSErrorMessage {
     message: string
   }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /** Convert an ExecuteResult (with possible bigint) to a JSON-safe response. */
 export function toExecuteResponse(result: ExecuteResult): ExecuteResponse {

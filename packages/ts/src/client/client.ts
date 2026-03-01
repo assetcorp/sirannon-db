@@ -32,9 +32,7 @@ export class SirannonClient {
   constructor(url: string, options?: ClientOptions) {
     this.baseUrl = url.replace(/\/$/, '')
 
-    this.wsBaseUrl = this.baseUrl
-      .replace(/^http:\/\//i, 'ws://')
-      .replace(/^https:\/\//i, 'wss://')
+    this.wsBaseUrl = this.baseUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://')
 
     this.transport = options?.transport ?? 'websocket'
     this.headers = options?.headers
@@ -73,28 +71,25 @@ export class SirannonClient {
    */
   close(): void {
     this.closed = true
-    for (const db of this.databases.values()) {
+    // Snapshot the values before iterating so that onDispose callbacks
+    // (which delete from the map) don't cause entries to be skipped.
+    const openDatabases = [...this.databases.values()]
+    this.databases.clear()
+    for (const db of openDatabases) {
       db.close()
     }
-    this.databases.clear()
   }
 
   private createTransport(databaseId: string): Transport {
     const encodedId = encodeURIComponent(databaseId)
 
     if (this.transport === 'http') {
-      return new HttpTransport(
-        `${this.baseUrl}/db/${encodedId}`,
-        this.headers,
-      )
+      return new HttpTransport(`${this.baseUrl}/db/${encodedId}`, this.headers)
     }
 
-    return new WebSocketTransport(
-      `${this.wsBaseUrl}/db/${encodedId}`,
-      {
-        autoReconnect: this.autoReconnect,
-        reconnectInterval: this.reconnectInterval,
-      },
-    )
+    return new WebSocketTransport(`${this.wsBaseUrl}/db/${encodedId}`, {
+      autoReconnect: this.autoReconnect,
+      reconnectInterval: this.reconnectInterval,
+    })
   }
 }

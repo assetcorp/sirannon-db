@@ -6,8 +6,8 @@ import type {
   WSClientMessage,
   WSServerMessage,
 } from '../../server/protocol.js'
-import { RemoteError } from '../types.js'
 import type { RemoteSubscription, Transport } from '../types.js'
+import { RemoteError } from '../types.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
 
@@ -75,9 +75,7 @@ export class WebSocketTransport implements Transport {
     return this.request<ExecuteResponse>({ type: 'execute', id, sql, params })
   }
 
-  async transaction(
-    _statements: Array<{ sql: string; params?: Params }>,
-  ): Promise<TransactionResponse> {
+  async transaction(_statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     throw new RemoteError(
       'TRANSPORT_ERROR',
       'Transactions are not supported over WebSocket. Use HTTP transport for batch transactions.',
@@ -173,12 +171,7 @@ export class WebSocketTransport implements Transport {
       const onError = () => {
         if (!settled) {
           settled = true
-          reject(
-            new RemoteError(
-              'CONNECTION_ERROR',
-              `Failed to connect to ${this.url}`,
-            ),
-          )
+          reject(new RemoteError('CONNECTION_ERROR', `Failed to connect to ${this.url}`))
         }
       }
 
@@ -189,10 +182,7 @@ export class WebSocketTransport implements Transport {
         if (!settled) {
           settled = true
           reject(
-            new RemoteError(
-              'CONNECTION_ERROR',
-              `Connection closed during handshake: ${event.code} ${event.reason}`,
-            ),
+            new RemoteError('CONNECTION_ERROR', `Connection closed during handshake: ${event.code} ${event.reason}`),
           )
           return
         }
@@ -254,19 +244,20 @@ export class WebSocketTransport implements Transport {
       case 'change': {
         const sub = this.activeSubscriptions.get(msg.id)
         if (sub) {
-          const event: ChangeEvent = {
-            type: msg.event.type,
-            table: msg.event.table,
-            row: msg.event.row,
-            oldRow: msg.event.oldRow,
-            seq: BigInt(msg.event.seq),
-            timestamp: msg.event.timestamp,
-          }
           try {
+            const event: ChangeEvent = {
+              type: msg.event.type,
+              table: msg.event.table,
+              row: msg.event.row,
+              oldRow: msg.event.oldRow,
+              seq: BigInt(msg.event.seq),
+              timestamp: msg.event.timestamp,
+            }
             sub.callback(event)
           } catch {
-            // Swallow subscriber callback errors to prevent one broken
-            // subscriber from disrupting the message processing loop.
+            // Swallow errors from BigInt conversion on malformed data
+            // and subscriber callback errors to prevent one broken
+            // message from disrupting the processing loop.
           }
         }
         break
@@ -280,9 +271,7 @@ export class WebSocketTransport implements Transport {
   }
 
   private handleDisconnect(): void {
-    this.rejectAllPending(
-      new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'),
-    )
+    this.rejectAllPending(new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
 
     if (this.autoReconnect && !this.closed && this.activeSubscriptions.size > 0) {
       this.scheduleReconnect()
@@ -342,12 +331,7 @@ export class WebSocketTransport implements Transport {
 
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id)
-        reject(
-          new RemoteError(
-            'TIMEOUT',
-            `Request timed out after ${this.requestTimeout}ms`,
-          ),
-        )
+        reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
       }, this.requestTimeout)
 
       this.pendingRequests.set(id, {

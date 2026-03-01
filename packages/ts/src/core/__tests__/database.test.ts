@@ -91,7 +91,7 @@ describe('Database', () => {
 
       const row = db.queryOne<{ name: string }>('SELECT * FROM users WHERE id = 1')
       expect(row).toBeDefined()
-      expect(row!.name).toBe('Alice')
+      expect(row?.name).toBe('Alice')
       db.close()
     })
 
@@ -136,8 +136,8 @@ describe('Database', () => {
       expect(result.changes).toBe(1)
 
       const row = db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
-      expect(row!.name).toBe('Alice')
-      expect(row!.age).toBe(30)
+      expect(row?.name).toBe('Alice')
+      expect(row?.age).toBe(30)
       db.close()
     })
 
@@ -147,8 +147,8 @@ describe('Database', () => {
       expect(result.changes).toBe(1)
 
       const row = db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
-      expect(row!.name).toBe('Bob')
-      expect(row!.age).toBe(40)
+      expect(row?.name).toBe('Bob')
+      expect(row?.age).toBe(40)
       db.close()
     })
 

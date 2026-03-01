@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
-import { createServer } from '../../server/server.js'
 import type { SirannonServer } from '../../server/server.js'
+import { createServer } from '../../server/server.js'
 import { SirannonClient } from '../client.js'
 import { RemoteDatabase } from '../database-proxy.js'
 import { HttpTransport } from '../transport/http.js'
@@ -87,9 +87,7 @@ describe('RemoteDatabase via HTTP', () => {
 
   it('queries and returns rows', async () => {
     const db = client.database('testdb')
-    const rows = await db.query<{ id: number; name: string; age: number }>(
-      'SELECT * FROM users ORDER BY id',
-    )
+    const rows = await db.query<{ id: number; name: string; age: number }>('SELECT * FROM users ORDER BY id')
     expect(rows).toHaveLength(2)
     expect(rows[0].name).toBe('Alice')
     expect(rows[1].name).toBe('Bob')
@@ -97,59 +95,43 @@ describe('RemoteDatabase via HTTP', () => {
 
   it('queries with positional parameters', async () => {
     const db = client.database('testdb')
-    const rows = await db.query<{ name: string }>(
-      'SELECT name FROM users WHERE age > ?',
-      [26],
-    )
+    const rows = await db.query<{ name: string }>('SELECT name FROM users WHERE age > ?', [26])
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Alice')
   })
 
   it('queries with named parameters', async () => {
     const db = client.database('testdb')
-    const rows = await db.query<{ name: string }>(
-      'SELECT name FROM users WHERE name = :name',
-      { name: 'Bob' },
-    )
+    const rows = await db.query<{ name: string }>('SELECT name FROM users WHERE name = :name', { name: 'Bob' })
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Bob')
   })
 
   it('returns empty array for no matching rows', async () => {
     const db = client.database('testdb')
-    const rows = await db.query(
-      'SELECT * FROM users WHERE age > 100',
-    )
+    const rows = await db.query('SELECT * FROM users WHERE age > 100')
     expect(rows).toEqual([])
   })
 
   it('executes a mutation and returns result', async () => {
     const db = client.database('testdb')
-    const result = await db.execute(
-      "INSERT INTO users (name, age) VALUES ('Charlie', 35)",
-    )
+    const result = await db.execute("INSERT INTO users (name, age) VALUES ('Charlie', 35)")
     expect(result.changes).toBe(1)
     expect(result.lastInsertRowId).toBeDefined()
   })
 
   it('executes an update', async () => {
     const db = client.database('testdb')
-    const result = await db.execute(
-      "UPDATE users SET age = 31 WHERE name = 'Alice'",
-    )
+    const result = await db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
     expect(result.changes).toBe(1)
 
-    const rows = await db.query<{ age: number }>(
-      "SELECT age FROM users WHERE name = 'Alice'",
-    )
+    const rows = await db.query<{ age: number }>("SELECT age FROM users WHERE name = 'Alice'")
     expect(rows[0].age).toBe(31)
   })
 
   it('executes a delete', async () => {
     const db = client.database('testdb')
-    const result = await db.execute(
-      "DELETE FROM users WHERE name = 'Bob'",
-    )
+    const result = await db.execute("DELETE FROM users WHERE name = 'Bob'")
     expect(result.changes).toBe(1)
 
     const rows = await db.query('SELECT * FROM users')
@@ -254,9 +236,9 @@ describe('HttpTransport', () => {
 
   it('rejects subscribe', async () => {
     const transport = new HttpTransport(`${baseUrl}/db/testdb`)
-    await expect(
-      transport.subscribe('users', undefined, () => {}),
-    ).rejects.toThrow('Subscriptions require WebSocket transport')
+    await expect(transport.subscribe('users', undefined, () => {})).rejects.toThrow(
+      'Subscriptions require WebSocket transport',
+    )
     transport.close()
   })
 })

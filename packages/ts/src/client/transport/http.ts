@@ -1,12 +1,7 @@
 import type { ChangeEvent, Params } from '../../core/types.js'
-import type {
-  ErrorResponse,
-  ExecuteResponse,
-  QueryResponse,
-  TransactionResponse,
-} from '../../server/protocol.js'
-import { RemoteError } from '../types.js'
+import type { ErrorResponse, ExecuteResponse, QueryResponse, TransactionResponse } from '../../server/protocol.js'
 import type { RemoteSubscription, Transport } from '../types.js'
+import { RemoteError } from '../types.js'
 
 /**
  * HTTP transport for sirannon-db. Sends requests via `fetch` to the
@@ -35,9 +30,7 @@ export class HttpTransport implements Transport {
     return this.post<ExecuteResponse>('/execute', { sql, params })
   }
 
-  async transaction(
-    statements: Array<{ sql: string; params?: Params }>,
-  ): Promise<TransactionResponse> {
+  async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     return this.post<TransactionResponse>('/transaction', { statements })
   }
 
@@ -61,13 +54,28 @@ export class HttpTransport implements Transport {
       throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(body),
-    })
+    const url = `${this.baseUrl}${path}`
 
-    const data: unknown = await response.json()
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(body),
+      })
+    } catch (err) {
+      throw new RemoteError(
+        'CONNECTION_ERROR',
+        `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+
+    let data: unknown
+    try {
+      data = await response.json()
+    } catch {
+      throw new RemoteError('INVALID_RESPONSE', `Server returned non-JSON response (HTTP ${response.status})`)
+    }
 
     if (!response.ok) {
       const errorData = data as ErrorResponse

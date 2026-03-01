@@ -25,10 +25,7 @@ export class RemoteDatabase {
    * )
    * ```
    */
-  async query<T = Record<string, unknown>>(
-    sql: string,
-    params?: Params,
-  ): Promise<T[]> {
+  async query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
     const response = await this.transport.query(sql, params)
     return response.rows as T[]
   }
@@ -37,10 +34,7 @@ export class RemoteDatabase {
    * Execute a mutation (INSERT, UPDATE, DELETE) and return
    * the number of affected rows and last insert row ID.
    */
-  async execute(
-    sql: string,
-    params?: Params,
-  ): Promise<ExecuteResponse> {
+  async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
     return this.transport.execute(sql, params)
   }
 
@@ -51,9 +45,7 @@ export class RemoteDatabase {
    * Requires HTTP transport. WebSocket transport does not
    * support server-side transactions.
    */
-  async transaction(
-    statements: Array<{ sql: string; params?: Params }>,
-  ): Promise<ExecuteResponse[]> {
+  async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
     const response = await this.transport.transaction(statements)
     return response.results
   }

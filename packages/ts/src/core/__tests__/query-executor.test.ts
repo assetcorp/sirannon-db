@@ -76,7 +76,7 @@ describe('queryOne', () => {
   it('returns the first matching row', () => {
     const row = queryOne<{ name: string }>(db, 'SELECT * FROM users WHERE id = 1')
     expect(row).toBeDefined()
-    expect(row!.name).toBe('Alice')
+    expect(row?.name).toBe('Alice')
   })
 
   it('returns undefined when no match', () => {
@@ -141,8 +141,8 @@ describe('statement caching', () => {
     const sql = 'SELECT * FROM users WHERE id = ?'
     const row1 = queryOne<{ name: string }>(db, sql, [1])
     const row2 = queryOne<{ name: string }>(db, sql, [2])
-    expect(row1!.name).toBe('Alice')
-    expect(row2!.name).toBe('Bob')
+    expect(row1?.name).toBe('Alice')
+    expect(row2?.name).toBe('Bob')
   })
 
   it('evicts the oldest statement when cache capacity is exceeded', () => {

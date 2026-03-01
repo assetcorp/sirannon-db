@@ -3,11 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Database } from '../database.js'
-import {
-	ConnectionPoolError,
-	QueryError,
-	SirannonError,
-} from '../errors.js'
+import { ConnectionPoolError, QueryError, SirannonError } from '../errors.js'
 
 let tempDir: string
 
@@ -30,9 +26,7 @@ function createTestDb(options?: {
 		setup.execute(
 			'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)',
 		)
-		setup.execute(
-			"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-		)
+		setup.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 		setup.close()
 		return new Database('test', dbPath, { readOnly: true })
 	}
@@ -48,12 +42,8 @@ describe('Database', () => {
 	describe('query', () => {
 		it('returns all matching rows', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Bob', 25)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+			db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
 			const rows = db.query<{
 				id: number
@@ -68,18 +58,14 @@ describe('Database', () => {
 
 		it('returns empty array when no rows match', () => {
 			const db = createTestDb()
-			const rows = db.query(
-				'SELECT * FROM users WHERE id = 999',
-			)
+			const rows = db.query('SELECT * FROM users WHERE id = 999')
 			expect(rows).toEqual([])
 			db.close()
 		})
 
 		it('supports named parameters', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
 			const rows = db.query<{ name: string }>(
 				'SELECT * FROM users WHERE name = :name',
@@ -92,12 +78,8 @@ describe('Database', () => {
 
 		it('supports positional parameters', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Bob', 25)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+			db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
 			const rows = db.query<{ name: string }>(
 				'SELECT * FROM users WHERE age > ?',
@@ -110,9 +92,7 @@ describe('Database', () => {
 
 		it('throws QueryError on invalid SQL', () => {
 			const db = createTestDb()
-			expect(() => db.query('SELECT * FORM users')).toThrow(
-				QueryError,
-			)
+			expect(() => db.query('SELECT * FORM users')).toThrow(QueryError)
 			db.close()
 		})
 	})
@@ -120,9 +100,7 @@ describe('Database', () => {
 	describe('queryOne', () => {
 		it('returns the first matching row', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
 			const row = db.queryOne<{ name: string }>(
 				'SELECT * FROM users WHERE id = 1',
@@ -134,9 +112,7 @@ describe('Database', () => {
 
 		it('returns undefined when no rows match', () => {
 			const db = createTestDb()
-			const row = db.queryOne(
-				'SELECT * FROM users WHERE id = 999',
-			)
+			const row = db.queryOne('SELECT * FROM users WHERE id = 999')
 			expect(row).toBeUndefined()
 			db.close()
 		})
@@ -155,12 +131,8 @@ describe('Database', () => {
 
 		it('reports correct changes for UPDATE', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Bob', 25)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+			db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
 			const result = db.execute('UPDATE users SET age = 99')
 			expect(result.changes).toBe(2)
@@ -169,12 +141,8 @@ describe('Database', () => {
 
 		it('reports correct changes for DELETE', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
-			const result = db.execute(
-				'DELETE FROM users WHERE id = 1',
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+			const result = db.execute('DELETE FROM users WHERE id = 1')
 			expect(result.changes).toBe(1)
 			db.close()
 		})
@@ -197,10 +165,10 @@ describe('Database', () => {
 
 		it('supports positional parameters', () => {
 			const db = createTestDb()
-			const result = db.execute(
-				'INSERT INTO users (name, age) VALUES (?, ?)',
-				['Bob', 40],
-			)
+			const result = db.execute('INSERT INTO users (name, age) VALUES (?, ?)', [
+				'Bob',
+				40,
+			])
 			expect(result.changes).toBe(1)
 
 			const row = db.queryOne<{ name: string; age: number }>(
@@ -247,12 +215,8 @@ describe('Database', () => {
 		it('commits on success', () => {
 			const db = createTestDb()
 			const result = db.transaction(tx => {
-				tx.execute(
-					"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-				)
-				tx.execute(
-					"INSERT INTO users (name, age) VALUES ('Bob', 25)",
-				)
+				tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+				tx.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 				return tx.lastInsertRowId
 			})
 
@@ -266,9 +230,7 @@ describe('Database', () => {
 			const db = createTestDb()
 			expect(() =>
 				db.transaction(tx => {
-					tx.execute(
-						"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-					)
+					tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 					throw new Error('rollback')
 				}),
 			).toThrow('rollback')
@@ -280,9 +242,7 @@ describe('Database', () => {
 
 		it('supports queries within a transaction', () => {
 			const db = createTestDb()
-			db.execute(
-				"INSERT INTO users (name, age) VALUES ('Alice', 30)",
-			)
+			db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
 			const found = db.transaction(tx => {
 				const rows = tx.query<{ name: string }>(
@@ -299,13 +259,10 @@ describe('Database', () => {
 		it('supports executeBatch within a transaction', () => {
 			const db = createTestDb()
 			db.transaction(tx => {
-				tx.executeBatch(
-					'INSERT INTO users (name, age) VALUES (?, ?)',
-					[
-						['Alice', 30],
-						['Bob', 25],
-					],
-				)
+				tx.executeBatch('INSERT INTO users (name, age) VALUES (?, ?)', [
+					['Alice', 30],
+					['Bob', 25],
+				])
 			})
 
 			const rows = db.query('SELECT * FROM users')
@@ -317,9 +274,7 @@ describe('Database', () => {
 	describe('read-only mode', () => {
 		it('can query a read-only database', () => {
 			const db = createTestDb({ readOnly: true })
-			const rows = db.query<{ name: string }>(
-				'SELECT * FROM users',
-			)
+			const rows = db.query<{ name: string }>('SELECT * FROM users')
 			expect(rows).toHaveLength(1)
 			expect(rows[0].name).toBe('Alice')
 			db.close()
@@ -328,9 +283,7 @@ describe('Database', () => {
 		it('throws ConnectionPoolError on execute', () => {
 			const db = createTestDb({ readOnly: true })
 			expect(() =>
-				db.execute(
-					"INSERT INTO users (name, age) VALUES ('Bob', 25)",
-				),
+				db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)"),
 			).toThrow(ConnectionPoolError)
 			db.close()
 		})
@@ -353,19 +306,13 @@ describe('Database', () => {
 			const db = new Database('test', dbPath)
 			db.close()
 
-			expect(() => db.query('SELECT 1')).toThrow(
-				SirannonError,
-			)
-			expect(() => db.execute('SELECT 1')).toThrow(
-				SirannonError,
-			)
+			expect(() => db.query('SELECT 1')).toThrow(SirannonError)
+			expect(() => db.execute('SELECT 1')).toThrow(SirannonError)
 
 			try {
 				db.query('SELECT 1')
 			} catch (err) {
-				expect((err as SirannonError).code).toBe(
-					'DATABASE_CLOSED',
-				)
+				expect((err as SirannonError).code).toBe('DATABASE_CLOSED')
 			}
 		})
 
@@ -425,9 +372,7 @@ describe('Database', () => {
 			const dbPath = join(tempDir, 'closed-listen.db')
 			const db = new Database('test', dbPath)
 			db.close()
-			expect(() =>
-				db.addCloseListener(() => {}),
-			).toThrow(SirannonError)
+			expect(() => db.addCloseListener(() => {})).toThrow(SirannonError)
 		})
 
 		it('still invokes listeners when pool.close throws', () => {

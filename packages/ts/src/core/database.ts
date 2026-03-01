@@ -1,5 +1,6 @@
 import { ConnectionPool } from './connection-pool.js'
 import { SirannonError } from './errors.js'
+import { MigrationRunner } from './migrations/runner.js'
 import { execute, executeBatch, query, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
 import type {
@@ -76,8 +77,10 @@ export class Database {
     throw new Error('not implemented')
   }
 
-  migrate(_migrationsPath: string): MigrationResult {
-    throw new Error('not implemented')
+  migrate(migrationsPath: string): MigrationResult {
+    this.ensureOpen()
+    const writer = this.pool.acquireWriter()
+    return MigrationRunner.run(writer, migrationsPath)
   }
 
   backup(_destPath: string): void {

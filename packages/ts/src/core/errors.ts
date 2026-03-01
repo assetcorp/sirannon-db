@@ -1,8 +1,7 @@
-// ---------------------------------------------------------------------------
-// Error types for sirannon-db
-// ---------------------------------------------------------------------------
-
-/** Base error class for all sirannon-db errors. */
+/**
+ * Base class for all sirannon-db errors. Extend this class to create
+ * domain-specific errors that carry a machine-readable {@link code}.
+ */
 export class SirannonError extends Error {
   constructor(
     message: string,
@@ -13,7 +12,10 @@ export class SirannonError extends Error {
   }
 }
 
-/** Thrown when a database with the given ID is not found in the registry. */
+/**
+ * Thrown when a database ID cannot be resolved in the registry.
+ * This typically means the database was never opened or has already been closed.
+ */
 export class DatabaseNotFoundError extends SirannonError {
   constructor(id: string) {
     super(`Database '${id}' not found`, 'DATABASE_NOT_FOUND')
@@ -21,7 +23,10 @@ export class DatabaseNotFoundError extends SirannonError {
   }
 }
 
-/** Thrown when a database with the given ID already exists in the registry. */
+/**
+ * Thrown when attempting to register a database with an ID that is already
+ * in use. Each database ID must be unique within the registry.
+ */
 export class DatabaseAlreadyExistsError extends SirannonError {
   constructor(id: string) {
     super(`Database '${id}' already exists`, 'DATABASE_ALREADY_EXISTS')
@@ -29,7 +34,10 @@ export class DatabaseAlreadyExistsError extends SirannonError {
   }
 }
 
-/** Thrown when attempting to write to a read-only database. */
+/**
+ * Thrown when a write operation is attempted on a database that was opened
+ * in read-only mode.
+ */
 export class ReadOnlyError extends SirannonError {
   constructor(id: string) {
     super(`Database '${id}' is read-only`, 'READ_ONLY')
@@ -37,7 +45,11 @@ export class ReadOnlyError extends SirannonError {
   }
 }
 
-/** Thrown when a query fails to execute. */
+/**
+ * Thrown when SQLite fails to execute a statement. The {@link sql} property
+ * holds the original SQL string that caused the failure, which is useful for
+ * debugging and logging.
+ */
 export class QueryError extends SirannonError {
   constructor(
     message: string,
@@ -48,7 +60,10 @@ export class QueryError extends SirannonError {
   }
 }
 
-/** Thrown when a transaction fails. */
+/**
+ * Thrown when a transaction cannot be committed or is forcibly rolled back.
+ * Check the message for the underlying cause.
+ */
 export class TransactionError extends SirannonError {
   constructor(message: string) {
     super(message, 'TRANSACTION_ERROR')
@@ -56,7 +71,11 @@ export class TransactionError extends SirannonError {
   }
 }
 
-/** Thrown when a migration fails. */
+/**
+ * Thrown when a migration step fails. The {@link version} property identifies
+ * which schema version triggered the error so the failure can be pinpointed
+ * in the migration history.
+ */
 export class MigrationError extends SirannonError {
   constructor(
     message: string,
@@ -67,7 +86,11 @@ export class MigrationError extends SirannonError {
   }
 }
 
-/** Thrown when a hook denies an operation. */
+/**
+ * Thrown when a before-hook explicitly rejects an operation. The optional
+ * `reason` string is surfaced in the message so callers can distinguish
+ * between different hook policies.
+ */
 export class HookDeniedError extends SirannonError {
   constructor(hookName: string, reason?: string) {
     super(
@@ -78,7 +101,10 @@ export class HookDeniedError extends SirannonError {
   }
 }
 
-/** Thrown when a CDC operation fails. */
+/**
+ * Thrown when the change-data-capture pipeline encounters an unrecoverable
+ * error, such as a failed event dispatch or a corrupt change record.
+ */
 export class CDCError extends SirannonError {
   constructor(message: string) {
     super(message, 'CDC_ERROR')
@@ -86,7 +112,10 @@ export class CDCError extends SirannonError {
   }
 }
 
-/** Thrown when a backup operation fails. */
+/**
+ * Thrown when a backup operation fails, whether that is an online backup via
+ * the SQLite backup API or a file-level copy.
+ */
 export class BackupError extends SirannonError {
   constructor(message: string) {
     super(message, 'BACKUP_ERROR')
@@ -94,7 +123,10 @@ export class BackupError extends SirannonError {
   }
 }
 
-/** Thrown when the connection pool is exhausted or misconfigured. */
+/**
+ * Thrown when the connection pool reaches its limit or is configured with
+ * invalid parameters such as a minimum size greater than the maximum.
+ */
 export class ConnectionPoolError extends SirannonError {
   constructor(message: string) {
     super(message, 'CONNECTION_POOL_ERROR')
@@ -102,7 +134,11 @@ export class ConnectionPoolError extends SirannonError {
   }
 }
 
-/** Thrown when the maximum number of open databases is reached. */
+/**
+ * Thrown when opening a new database would exceed the configured cap on
+ * concurrently open databases. Close an existing database before opening
+ * another one.
+ */
 export class MaxDatabasesError extends SirannonError {
   constructor(max: number) {
     super(`Maximum number of open databases (${max}) reached`, 'MAX_DATABASES')
@@ -110,7 +146,11 @@ export class MaxDatabasesError extends SirannonError {
   }
 }
 
-/** Thrown when an extension fails to load. */
+/**
+ * Thrown when a native SQLite extension cannot be loaded. The `path` argument
+ * is the filesystem path passed to `load_extension`, and the optional `cause`
+ * string carries the error detail reported by SQLite.
+ */
 export class ExtensionError extends SirannonError {
   constructor(path: string, cause?: string) {
     super(

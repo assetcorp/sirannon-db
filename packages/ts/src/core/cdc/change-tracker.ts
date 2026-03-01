@@ -232,9 +232,11 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 			return `${ref}.rowid`
 		}
 		if (pkColumns.length === 1) {
-			return `${ref}."${pkColumns[0]}"`
+			return `${ref}."${this.escId(pkColumns[0])}"`
 		}
-		return pkColumns.map(col => `${ref}."${col}"`).join(" || '-' || ")
+		return pkColumns
+			.map(col => `${ref}."${this.escId(col)}"`)
+			.join(" || '-' || ")
 	}
 
 	private installTriggers(
@@ -277,7 +279,17 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 	}
 
 	private buildJsonObject(columns: string[], ref: 'NEW' | 'OLD'): string {
-		const pairs = columns.map(col => `'${col}', ${ref}."${col}"`).join(', ')
+		const pairs = columns
+			.map(col => `'${this.escStr(col)}', ${ref}."${this.escId(col)}"`)
+			.join(', ')
 		return `json_object(${pairs})`
+	}
+
+	private escId(name: string): string {
+		return name.replace(/"/g, '""')
+	}
+
+	private escStr(name: string): string {
+		return name.replace(/'/g, "''")
 	}
 }

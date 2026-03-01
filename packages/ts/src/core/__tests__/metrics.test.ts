@@ -338,6 +338,13 @@ describe('MetricsCollector', () => {
 			expect(collector.active).toBe(true)
 		})
 
+		it('returns true when onConnectionClose is configured', () => {
+			const collector = new MetricsCollector({
+				onConnectionClose: vi.fn(),
+			})
+			expect(collector.active).toBe(true)
+		})
+
 		it('returns true when onCDCEvent is configured', () => {
 			const collector = new MetricsCollector({
 				onCDCEvent: vi.fn(),

@@ -102,21 +102,27 @@ export function startPolling(
 ): () => void {
 	let running = true
 
+	const stop = () => {
+		running = false
+		clearInterval(interval)
+	}
+
 	const tick = () => {
 		if (!running) return
-		const events = tracker.poll(db)
-		if (events.length > 0) {
-			manager.dispatch(events)
+		try {
+			const events = tracker.poll(db)
+			if (events.length > 0) {
+				manager.dispatch(events)
+			}
+		} catch {
+			stop()
 		}
 	}
 
 	const interval = setInterval(tick, intervalMs)
 	interval.unref()
 
-	return () => {
-		running = false
-		clearInterval(interval)
-	}
+	return stop
 }
 
 function matchesFilter(

@@ -1,0 +1,36 @@
+FROM node:22-trixie-slim AS base
+
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY packages/ts/package.json packages/ts/package.json
+
+ENV NODE_ENV=development
+RUN pnpm install --frozen-lockfile
+
+COPY tsconfig.json ./
+COPY packages/ts/tsconfig.json packages/ts/tsup.config.ts packages/ts/
+COPY packages/ts/src packages/ts/src
+COPY packages/ts/benchmarks/e2e packages/ts/benchmarks/e2e
+COPY packages/ts/benchmarks/schemas.ts packages/ts/benchmarks/schemas.ts
+COPY packages/ts/benchmarks/tsconfig.json packages/ts/benchmarks/tsconfig.json
+
+WORKDIR /app/packages/ts
+
+ENV HOST=0.0.0.0
+ENV PORT=9877
+ENV PGHOST=postgres-e2e
+ENV PGPORT=5432
+ENV PGUSER=benchmark
+ENV PGPASSWORD=benchmark
+ENV PGDATABASE=benchmark
+ENV PG_POOL_SIZE=20
+ENV DATA_SIZE=10000
+
+EXPOSE ${PORT}
+
+CMD ["node", "--import", "tsx", "benchmarks/e2e/postgres-app.ts"]

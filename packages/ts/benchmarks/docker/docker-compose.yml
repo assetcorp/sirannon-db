@@ -1,0 +1,199 @@
+services:
+  # ──────────────────────────────────────────────
+  # Category 1: End-to-End Application Benchmarks
+  # ──────────────────────────────────────────────
+
+  sirannon-app:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/benchmarks/docker/Dockerfile.sirannon-app
+    profiles: [e2e, all]
+    ports:
+      - '9876:9876'
+    environment:
+      - HOST=0.0.0.0
+      - PORT=9876
+      - DATA_SIZE=${BENCH_DATA_SIZE:-10000}
+    deploy:
+      resources:
+        limits:
+          cpus: '${BENCH_CPUS:-2}'
+          memory: ${BENCH_MEMORY:-2g}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9876/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-app:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/benchmarks/docker/Dockerfile.postgres-app
+    profiles: [e2e, all]
+    ports:
+      - '9877:9877'
+    environment:
+      - HOST=0.0.0.0
+      - PORT=9877
+      - PGHOST=postgres-e2e
+      - PGPORT=5432
+      - PGUSER=benchmark
+      - PGPASSWORD=benchmark
+      - PGDATABASE=benchmark
+      - PG_POOL_SIZE=20
+      - DATA_SIZE=${BENCH_DATA_SIZE:-10000}
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '${BENCH_PG_APP_CPUS:-1}'
+          memory: ${BENCH_PG_APP_MEMORY:-1g}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9877/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-e2e:
+    image: postgres:17-alpine
+    profiles: [e2e, all]
+    environment:
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+      POSTGRES_DB: benchmark
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - synchronous_commit=off
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - random_page_cost=1.1
+    deploy:
+      resources:
+        limits:
+          cpus: '${BENCH_PG_CPUS:-1}'
+          memory: ${BENCH_PG_MEMORY:-1g}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U benchmark']
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────
+  # Category 2: Engine-Level Benchmarks
+  # ──────────────────────────────────────────
+
+  sirannon-engine:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/benchmarks/docker/Dockerfile.engine
+    profiles: [engine, all]
+    ports:
+      - '9878:9878'
+    environment:
+      - ENGINE=sirannon
+      - HOST=0.0.0.0
+      - PORT=9878
+    deploy:
+      resources:
+        limits:
+          cpus: '${BENCH_CPUS:-2}'
+          memory: ${BENCH_MEMORY:-2g}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9878/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-engine:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/benchmarks/docker/Dockerfile.engine
+    profiles: [engine, all]
+    ports:
+      - '9879:9879'
+    environment:
+      - ENGINE=postgres
+      - HOST=0.0.0.0
+      - PORT=9879
+      - PGHOST=postgres-eng
+      - PGPORT=5432
+      - PGUSER=benchmark
+      - PGPASSWORD=benchmark
+      - PGDATABASE=benchmark
+      - PG_POOL_SIZE=10
+      - NODE_OPTIONS=--max-old-space-size=1536
+    depends_on:
+      postgres-eng:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: ${BENCH_PG_CLIENT_MEMORY:-2g}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9879/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-eng:
+    image: postgres:17-alpine
+    profiles: [engine, all]
+    environment:
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+      POSTGRES_DB: benchmark
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - synchronous_commit=off
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - random_page_cost=1.1
+    deploy:
+      resources:
+        limits:
+          cpus: '${BENCH_CPUS:-2}'
+          memory: ${BENCH_MEMORY:-2g}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U benchmark']
+      interval: 2s
+      timeout: 5s
+      retries: 5

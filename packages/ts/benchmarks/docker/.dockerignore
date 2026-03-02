@@ -1,0 +1,10 @@
+node_modules
+.turbo
+coverage
+dist
+*.tsbuildinfo
+.git
+.gitignore
+.vscode
+.cursor
+.claude

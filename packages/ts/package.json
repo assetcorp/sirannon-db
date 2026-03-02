@@ -31,7 +31,13 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "bench": "node --expose-gc --import tsx benchmarks/run-all.ts",
+    "bench:micro": "node --expose-gc --import tsx benchmarks/micro/point-select.ts",
+    "bench:ycsb": "node --expose-gc --import tsx benchmarks/ycsb/workload-b.ts",
+    "bench:oltp": "node --expose-gc --import tsx benchmarks/oltp/tpc-c-lite.ts",
+    "bench:server": "node --expose-gc --import tsx benchmarks/server/http-throughput.ts",
+    "bench:cdc": "node --expose-gc --import tsx benchmarks/sirannon/cdc-latency.ts"
   },
   "exports": {
     ".": {
@@ -61,10 +67,16 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0"
   },
   "devDependencies": {
+    "@types/autocannon": "7.12.7",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.3.3",
+    "@types/pg": "8.11.10",
     "@vitest/coverage-v8": "4.0.18",
+    "autocannon": "8.0.0",
+    "pg": "8.19.0",
+    "tinybench": "6.0.0",
     "tsup": "8.5.1",
+    "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vitest": "4.0.18"
   }

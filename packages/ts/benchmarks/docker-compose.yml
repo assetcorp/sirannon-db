@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+      POSTGRES_DB: benchmark
+    command:
+      - postgres
+      # 256MB shared buffer pool (default 128MB is too small for benchmarks)
+      - -c
+      - shared_buffers=256MB
+      # 64MB per-operation memory for sorts and hash joins
+      - -c
+      - work_mem=64MB
+      # Planner hint: assume 512MB of OS page cache is available
+      - -c
+      - effective_cache_size=512MB
+      # 128MB for VACUUM, CREATE INDEX, etc.
+      - -c
+      - maintenance_work_mem=128MB
+      # Match SQLite synchronous=NORMAL: committed data survives process crash
+      # but not OS/power crash between WAL flushes
+      - -c
+      - synchronous_commit=off
+      # Minimal WAL since we have no replicas
+      - -c
+      - wal_level=minimal
+      # No replication slots needed
+      - -c
+      - max_wal_senders=0
+      # Longer checkpoint interval reduces fsync frequency
+      - -c
+      - checkpoint_timeout=15min
+      # Allow up to 1GB of WAL before forced checkpoint
+      - -c
+      - max_wal_size=1GB
+      # SSD storage: sequential and random reads cost about the same
+      - -c
+      - random_page_cost=1.1
+    volumes:
+      # Named volume writes to real disk (not tmpfs) to match SQLite behavior
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'benchmark']
+      interval: 2s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

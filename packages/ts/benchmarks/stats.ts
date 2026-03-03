@@ -2,7 +2,7 @@ declare module 'simple-statistics' {
   export function gammaln(x: number): number
 }
 
-import { errorFunction, gammaln, mean, quantile, standardDeviation } from 'simple-statistics'
+import { errorFunction, gammaln, mean, quantile, sampleStandardDeviation } from 'simple-statistics'
 import { SeededRng } from './rng'
 
 export interface WelchResult {
@@ -93,8 +93,8 @@ export function welchTTest(samplesA: number[], samplesB: number[]): WelchResult 
   const nB = samplesB.length
   const meanA = mean(samplesA)
   const meanB = mean(samplesB)
-  const sdA = standardDeviation(samplesA)
-  const sdB = standardDeviation(samplesB)
+  const sdA = sampleStandardDeviation(samplesA)
+  const sdB = sampleStandardDeviation(samplesB)
 
   const varA = sdA * sdA
   const varB = sdB * sdB

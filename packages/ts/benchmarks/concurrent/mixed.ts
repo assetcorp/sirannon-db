@@ -23,7 +23,7 @@ async function main() {
   const pgAvailable = await isPostgresAvailable(config)
 
   if (!pgAvailable) {
-    console.log('Postgres not available, skipping concurrent mixed benchmark.')
+    console.log('Postgres not available, skipping batch mixed benchmark.')
     process.exit(0)
   }
 
@@ -55,12 +55,12 @@ async function main() {
     const ids = Array.from({ length: 10_000 }, () => (zipfian.next() % DATA_SIZE) + 1)
 
     await pool.query({
-      name: `concurrent-mixed-read-warmup-${concurrency}`,
+      name: `batch-mixed-read-warmup-${concurrency}`,
       text: 'SELECT * FROM users WHERE id = $1',
       values: [1],
     })
     await pool.query({
-      name: `concurrent-mixed-write-warmup-${concurrency}`,
+      name: `batch-mixed-write-warmup-${concurrency}`,
       text: 'UPDATE users SET age = $1 WHERE id = $2',
       values: [25, 1],
     })
@@ -68,21 +68,27 @@ async function main() {
     let sirannonIdx = 0
     let postgresIdx = 0
 
+    const ops = Array.from({ length: 10_000 }, () => ({
+      isRead: getGlobalRng().next() < READ_RATIO,
+      age: getGlobalRng().nextInt(62) + 18,
+    }))
+    let sirannonOpIdx = 0
+    let postgresOpIdx = 0
+
     pairs.push({
-      workload: `concurrent-mixed-c${concurrency}`,
+      workload: `batch-mixed-n${concurrency}`,
       dataSize: DATA_SIZE,
       framing: FRAMING,
       sirannon: {
-        name: `concurrent-mixed [c${concurrency}]`,
+        name: `batch-mixed [n${concurrency}]`,
         fn: () => {
           for (let c = 0; c < concurrency; c++) {
             const id = ids[sirannonIdx++ % ids.length]
-            const isRead = getGlobalRng().next() < READ_RATIO
-            if (isRead) {
+            const op = ops[sirannonOpIdx++ % ops.length]
+            if (op.isRead) {
               db.query('SELECT * FROM users WHERE id = ?', [id])
             } else {
-              const age = getGlobalRng().nextInt(62) + 18
-              db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+              db.execute('UPDATE users SET age = ? WHERE id = ?', [op.age, id])
             }
           }
         },
@@ -92,42 +98,31 @@ async function main() {
         },
       },
       postgres: {
-        name: `concurrent-mixed [c${concurrency}]`,
+        name: `batch-mixed [n${concurrency}]`,
         fn: async () => {
           const tasks: Promise<void>[] = []
           for (let c = 0; c < concurrency; c++) {
             const id = ids[postgresIdx++ % ids.length]
-            const isRead = getGlobalRng().next() < READ_RATIO
-            if (isRead) {
+            const op = ops[postgresOpIdx++ % ops.length]
+            if (op.isRead) {
               tasks.push(
                 pool
                   .query({
-                    name: `concurrent-mixed-read-${concurrency}`,
+                    name: `batch-mixed-read-${concurrency}`,
                     text: 'SELECT * FROM users WHERE id = $1',
                     values: [id],
                   })
                   .then(() => {}),
               )
             } else {
-              const age = getGlobalRng().nextInt(62) + 18
               tasks.push(
-                (async () => {
-                  const client = await pool.connect()
-                  try {
-                    await client.query('BEGIN')
-                    await client.query({
-                      name: `concurrent-mixed-write-${concurrency}`,
-                      text: 'UPDATE users SET age = $1 WHERE id = $2',
-                      values: [age, id],
-                    })
-                    await client.query('COMMIT')
-                  } catch (err) {
-                    await client.query('ROLLBACK')
-                    throw err
-                  } finally {
-                    client.release()
-                  }
-                })(),
+                pool
+                  .query({
+                    name: `batch-mixed-write-${concurrency}`,
+                    text: 'UPDATE users SET age = $1 WHERE id = $2',
+                    values: [op.age, id],
+                  })
+                  .then(() => {}),
               )
             }
           }
@@ -141,8 +136,8 @@ async function main() {
     })
   }
 
-  const results = await runComparison({ category: 'concurrent-mixed', ...config }, pairs)
-  writeResults('concurrent-mixed', systemInfo, results)
+  const results = await runComparison({ category: 'batch-mixed', ...config }, pairs)
+  writeResults('batch-mixed', systemInfo, results)
 }
 
 main().catch(err => {

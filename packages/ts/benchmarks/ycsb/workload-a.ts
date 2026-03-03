@@ -12,12 +12,6 @@ const FRAMING =
   'Measures mixed read/write performance under realistic access skew. ' +
   'Does not test concurrent multi-client access patterns.'
 
-function randomField(): string {
-  const bytes = getGlobalRng().nextBytes(50)
-  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
-  return hex
-}
-
 async function main() {
   const config = loadConfig()
   const pgAvailable = await isPostgresAvailable(config)
@@ -69,6 +63,13 @@ async function main() {
       values: ['warmup', 'user0'],
     })
 
+    const ops = Array.from({ length: 10_000 }, () => ({
+      isRead: getGlobalRng().next() < READ_RATIO,
+      field: Array.from(getGlobalRng().nextBytes(50), b => b.toString(16).padStart(2, '0')).join(''),
+    }))
+    let sirannonOpIdx = 0
+    let postgresOpIdx = 0
+
     pairs.push({
       workload: 'ycsb-a',
       dataSize,
@@ -77,10 +78,11 @@ async function main() {
         name: `ycsb-a [${dataSize}]`,
         fn: () => {
           const key = keys[sirannonIdx++ % keys.length]
-          if (getGlobalRng().next() < READ_RATIO) {
+          const op = ops[sirannonOpIdx++ % ops.length]
+          if (op.isRead) {
             db.query('SELECT * FROM usertable WHERE ycsb_key = ?', [key])
           } else {
-            db.execute('UPDATE usertable SET field0 = ? WHERE ycsb_key = ?', [randomField(), key])
+            db.execute('UPDATE usertable SET field0 = ? WHERE ycsb_key = ?', [op.field, key])
           }
         },
         opts: { async: false },
@@ -92,7 +94,8 @@ async function main() {
         name: `ycsb-a [${dataSize}]`,
         fn: async () => {
           const key = keys[postgresIdx++ % keys.length]
-          if (getGlobalRng().next() < READ_RATIO) {
+          const op = ops[postgresOpIdx++ % ops.length]
+          if (op.isRead) {
             await pool.query({
               name: `ycsba-read-${dataSize}`,
               text: 'SELECT * FROM usertable WHERE ycsb_key = $1',
@@ -102,7 +105,7 @@ async function main() {
             await pool.query({
               name: `ycsba-update-${dataSize}`,
               text: 'UPDATE usertable SET field0 = $1 WHERE ycsb_key = $2',
-              values: [randomField(), key],
+              values: [op.field, key],
             })
           }
         },

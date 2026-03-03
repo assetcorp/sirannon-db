@@ -115,6 +115,15 @@ async function main() {
   await pool.query('DELETE FROM order_items WHERE order_id = 999999')
   await pool.query('DELETE FROM orders WHERE id = 999999')
 
+  const txOps = Array.from({ length: 10_000 }, () => ({
+    roll: getGlobalRng().next(),
+    numItems: 1 + Math.floor(getGlobalRng().next() * 5),
+    quantities: Array.from({ length: 5 }, () => 1 + Math.floor(getGlobalRng().next() * 5)),
+    paymentAmount: Math.round(getGlobalRng().next() * 500 * 100) / 100,
+  }))
+  let sirannonTxIdx = 0
+  let postgresTxIdx = 0
+
   const pairs: ComparisonPair[] = [
     {
       workload: 'tpc-c-lite',
@@ -135,18 +144,17 @@ async function main() {
       sirannon: {
         name: 'tpc-c-lite',
         fn: () => {
-          const roll = getGlobalRng().next()
+          const txOp = txOps[sirannonTxIdx++ % txOps.length]
           const customerId = (customerZipfian.next() % NUM_CUSTOMERS) + 1
 
-          if (roll < NEW_ORDER_THRESHOLD) {
+          if (txOp.roll < NEW_ORDER_THRESHOLD) {
             const orderId = sirannonOrderId++
-            const numItems = 1 + Math.floor(getGlobalRng().next() * 5)
             db.transaction(tx => {
               tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
               let total = 0
-              for (let i = 0; i < numItems; i++) {
+              for (let i = 0; i < txOp.numItems; i++) {
                 const productId = (productZipfian.next() % NUM_PRODUCTS) + 1
-                const quantity = 1 + Math.floor(getGlobalRng().next() * 5)
+                const quantity = txOp.quantities[i]
                 const product = tx.query<{ price: number; stock: number }>('SELECT * FROM products WHERE id = ?', [
                   productId,
                 ])[0]
@@ -167,11 +175,10 @@ async function main() {
               )
               tx.execute('UPDATE customers SET balance = balance - ? WHERE id = ?', [total, customerId])
             })
-          } else if (roll < PAYMENT_THRESHOLD) {
-            const paymentAmount = Math.round(getGlobalRng().next() * 500 * 100) / 100
+          } else if (txOp.roll < PAYMENT_THRESHOLD) {
             db.transaction(tx => {
               tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
-              tx.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [paymentAmount, customerId])
+              tx.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [txOp.paymentAmount, customerId])
             })
           } else {
             db.query(
@@ -193,12 +200,11 @@ async function main() {
       postgres: {
         name: 'tpc-c-lite',
         fn: async () => {
-          const roll = getGlobalRng().next()
+          const txOp = txOps[postgresTxIdx++ % txOps.length]
           const customerId = (customerZipfian.next() % NUM_CUSTOMERS) + 1
 
-          if (roll < NEW_ORDER_THRESHOLD) {
+          if (txOp.roll < NEW_ORDER_THRESHOLD) {
             const orderId = postgresOrderId++
-            const numItems = 1 + Math.floor(getGlobalRng().next() * 5)
             const client = await pool.connect()
             try {
               await client.query('BEGIN')
@@ -209,9 +215,9 @@ async function main() {
               })
 
               let total = 0
-              for (let i = 0; i < numItems; i++) {
+              for (let i = 0; i < txOp.numItems; i++) {
                 const productId = (productZipfian.next() % NUM_PRODUCTS) + 1
-                const quantity = 1 + Math.floor(getGlobalRng().next() * 5)
+                const quantity = txOp.quantities[i]
                 const { rows } = await client.query({
                   name: 'tpc-select-product',
                   text: 'SELECT * FROM products WHERE id = $1',
@@ -250,8 +256,7 @@ async function main() {
             } finally {
               client.release()
             }
-          } else if (roll < PAYMENT_THRESHOLD) {
-            const paymentAmount = Math.round(getGlobalRng().next() * 500 * 100) / 100
+          } else if (txOp.roll < PAYMENT_THRESHOLD) {
             const client = await pool.connect()
             try {
               await client.query('BEGIN')
@@ -263,7 +268,7 @@ async function main() {
               await client.query({
                 name: 'tpc-update-balance-credit',
                 text: 'UPDATE customers SET balance = balance + $1 WHERE id = $2',
-                values: [paymentAmount, customerId],
+                values: [txOp.paymentAmount, customerId],
               })
               await client.query('COMMIT')
             } catch (err) {

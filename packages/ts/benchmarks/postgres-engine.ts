@@ -31,6 +31,9 @@ export function createPostgresEngine(config?: BenchConfig): PostgresEngine {
       })
 
       if (cfg.durability === 'full') {
+        pool.on('connect', (client: pg.PoolClient) => {
+          client.query('SET synchronous_commit = on')
+        })
         await pool.query('SET synchronous_commit = on')
       }
 

@@ -22,7 +22,7 @@ async function main() {
   const pgAvailable = await isPostgresAvailable(config)
 
   if (!pgAvailable) {
-    console.log('Postgres not available, skipping concurrent read benchmark.')
+    console.log('Postgres not available, skipping batch read benchmark.')
     process.exit(0)
   }
 
@@ -54,7 +54,7 @@ async function main() {
     const keys = Array.from({ length: 10_000 }, () => (zipfian.next() % DATA_SIZE) + 1)
 
     await pool.query({
-      name: `concurrent-read-warmup-${concurrency}`,
+      name: `batch-read-warmup-${concurrency}`,
       text: 'SELECT * FROM users WHERE id = $1',
       values: [1],
     })
@@ -63,11 +63,11 @@ async function main() {
     let postgresIdx = 0
 
     pairs.push({
-      workload: `concurrent-read-c${concurrency}`,
+      workload: `batch-read-n${concurrency}`,
       dataSize: DATA_SIZE,
       framing: FRAMING,
       sirannon: {
-        name: `concurrent-read [c${concurrency}]`,
+        name: `batch-read [n${concurrency}]`,
         fn: () => {
           for (let c = 0; c < concurrency; c++) {
             const id = keys[sirannonIdx++ % keys.length]
@@ -80,7 +80,7 @@ async function main() {
         },
       },
       postgres: {
-        name: `concurrent-read [c${concurrency}]`,
+        name: `batch-read [n${concurrency}]`,
         fn: async () => {
           const tasks: Promise<void>[] = []
           for (let c = 0; c < concurrency; c++) {
@@ -88,7 +88,7 @@ async function main() {
             tasks.push(
               pool
                 .query({
-                  name: `concurrent-read-${concurrency}`,
+                  name: `batch-read-${concurrency}`,
                   text: 'SELECT * FROM users WHERE id = $1',
                   values: [id],
                 })
@@ -105,8 +105,8 @@ async function main() {
     })
   }
 
-  const results = await runComparison({ category: 'concurrent-read', ...config }, pairs)
-  writeResults('concurrent-read', systemInfo, results)
+  const results = await runComparison({ category: 'batch-read', ...config }, pairs)
+  writeResults('batch-read', systemInfo, results)
 }
 
 main().catch(err => {

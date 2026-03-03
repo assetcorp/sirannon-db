@@ -46,7 +46,7 @@ async function main() {
 
     const start = performance.now()
     const db = new Database(`cold-${i}`, dbPath)
-    db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+    db.execute('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)')
     db.query('SELECT 1')
     db.close()
     const elapsed = performance.now() - start
@@ -86,12 +86,22 @@ async function main() {
       await client.connect()
       await client.query('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)')
       await client.query('SELECT 1')
-      await client.query('DROP TABLE IF EXISTS t')
       await client.end()
       const elapsed = performance.now() - start
 
       postgresSamples.push(elapsed)
     }
+
+    const cleanupClient = new pg.Client({
+      host: config.postgres.host,
+      port: config.postgres.port,
+      user: config.postgres.user,
+      password: config.postgres.password,
+      database: config.postgres.database,
+    })
+    await cleanupClient.connect()
+    await cleanupClient.query('DROP TABLE IF EXISTS t')
+    await cleanupClient.end()
 
     postgresStats = computeStats(postgresSamples)
 

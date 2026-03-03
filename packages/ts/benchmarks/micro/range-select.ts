@@ -6,9 +6,9 @@ import { generateUserRow, microSchemaPostgres, microSchemaSqlite, ZipfianGenerat
 import { createSirannonEngine } from '../sirannon-engine'
 
 const FRAMING =
-  'Range scan returning ~10 rows per query via BETWEEN on indexed age column. ' +
-  'Tests index scan and result serialization. ' +
-  'Does not test full table scans or large result set streaming.'
+  'Range scan via BETWEEN on indexed age column. Returns ~160 rows per age value ' +
+  '(10-value range yields ~1,600 rows at 10K dataset). Tests index scan and result ' +
+  'set serialization. Does not test full table scans or streaming.'
 
 async function main() {
   const config = loadConfig()

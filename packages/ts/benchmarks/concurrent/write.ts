@@ -23,7 +23,7 @@ async function main() {
   const pgAvailable = await isPostgresAvailable(config)
 
   if (!pgAvailable) {
-    console.log('Postgres not available, skipping concurrent write benchmark.')
+    console.log('Postgres not available, skipping batch write benchmark.')
     process.exit(0)
   }
 
@@ -55,7 +55,7 @@ async function main() {
     const ids = Array.from({ length: 10_000 }, () => (zipfian.next() % DATA_SIZE) + 1)
 
     await pool.query({
-      name: `concurrent-write-warmup-${concurrency}`,
+      name: `batch-write-warmup-${concurrency}`,
       text: 'UPDATE users SET age = $1 WHERE id = $2',
       values: [25, 1],
     })
@@ -63,16 +63,20 @@ async function main() {
     let sirannonIdx = 0
     let postgresIdx = 0
 
+    const ages = Array.from({ length: 10_000 }, () => getGlobalRng().nextInt(62) + 18)
+    let sirannonAgeIdx = 0
+    let postgresAgeIdx = 0
+
     pairs.push({
-      workload: `concurrent-write-c${concurrency}`,
+      workload: `batch-write-n${concurrency}`,
       dataSize: DATA_SIZE,
       framing: FRAMING,
       sirannon: {
-        name: `concurrent-write [c${concurrency}]`,
+        name: `batch-write [n${concurrency}]`,
         fn: () => {
           for (let c = 0; c < concurrency; c++) {
             const id = ids[sirannonIdx++ % ids.length]
-            const age = getGlobalRng().nextInt(62) + 18
+            const age = ages[sirannonAgeIdx++ % ages.length]
             db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
           }
         },
@@ -82,30 +86,20 @@ async function main() {
         },
       },
       postgres: {
-        name: `concurrent-write [c${concurrency}]`,
+        name: `batch-write [n${concurrency}]`,
         fn: async () => {
           const tasks: Promise<void>[] = []
           for (let c = 0; c < concurrency; c++) {
             const id = ids[postgresIdx++ % ids.length]
-            const age = getGlobalRng().nextInt(62) + 18
+            const age = ages[postgresAgeIdx++ % ages.length]
             tasks.push(
-              (async () => {
-                const client = await pool.connect()
-                try {
-                  await client.query('BEGIN')
-                  await client.query({
-                    name: `concurrent-write-${concurrency}`,
-                    text: 'UPDATE users SET age = $1 WHERE id = $2',
-                    values: [age, id],
-                  })
-                  await client.query('COMMIT')
-                } catch (err) {
-                  await client.query('ROLLBACK')
-                  throw err
-                } finally {
-                  client.release()
-                }
-              })(),
+              pool
+                .query({
+                  name: `batch-write-${concurrency}`,
+                  text: 'UPDATE users SET age = $1 WHERE id = $2',
+                  values: [age, id],
+                })
+                .then(() => {}),
             )
           }
           await Promise.all(tasks)
@@ -118,8 +112,8 @@ async function main() {
     })
   }
 
-  const results = await runComparison({ category: 'concurrent-write', ...config }, pairs)
-  writeResults('concurrent-write', systemInfo, results)
+  const results = await runComparison({ category: 'batch-write', ...config }, pairs)
+  writeResults('batch-write', systemInfo, results)
 }
 
 main().catch(err => {

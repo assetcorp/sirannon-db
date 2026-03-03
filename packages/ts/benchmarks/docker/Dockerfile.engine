@@ -23,6 +23,8 @@ COPY packages/ts/benchmarks/postgres-engine.ts packages/ts/benchmarks/postgres-e
 COPY packages/ts/benchmarks/engine.ts packages/ts/benchmarks/engine.ts
 COPY packages/ts/benchmarks/runner.ts packages/ts/benchmarks/runner.ts
 COPY packages/ts/benchmarks/reporter.ts packages/ts/benchmarks/reporter.ts
+COPY packages/ts/benchmarks/rng.ts packages/ts/benchmarks/rng.ts
+COPY packages/ts/benchmarks/stats.ts packages/ts/benchmarks/stats.ts
 COPY packages/ts/benchmarks/tsconfig.json packages/ts/benchmarks/tsconfig.json
 
 WORKDIR /app/packages/ts

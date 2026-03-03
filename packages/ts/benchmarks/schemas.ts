@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { getGlobalRng, type SeededRng } from './rng'
 
 export const ycsbSchema = `
 CREATE TABLE IF NOT EXISTS usertable (
@@ -102,6 +103,10 @@ function randomString(length: number): string {
   return result
 }
 
+/**
+ * YCSB rows contain 10 fields of 100 bytes each, producing ~1 KB per row.
+ * This matches the standard YCSB specification (10 fields x 100 bytes).
+ */
 export function generateYcsbRow(key: string): unknown[] {
   const fields: string[] = []
   for (let i = 0; i < 10; i++) {
@@ -140,7 +145,7 @@ export function generateCustomer(id: number): unknown[] {
 
 export function generateProduct(id: number): unknown[] {
   const name = `Product ${id}`
-  const price = Math.round((10 + Math.random() * 490) * 100) / 100
+  const price = Math.round((10 + getGlobalRng().next() * 490) * 100) / 100
   const stock = 1000
   return [id, name, price, stock]
 }
@@ -155,10 +160,12 @@ export class ZipfianGenerator {
   private readonly zetaN: number
   private readonly eta: number
   private readonly alpha: number
+  private readonly customRng: SeededRng | null
 
-  constructor(items: number, theta = 0.99) {
+  constructor(items: number, theta = 0.99, rng?: SeededRng) {
     this.items = items
     this.theta = theta
+    this.customRng = rng ?? null
 
     this.zetaN = this.computeZeta(items, theta)
     const zeta2 = this.computeZeta(2, theta)
@@ -168,7 +175,7 @@ export class ZipfianGenerator {
   }
 
   next(): number {
-    const u = Math.random()
+    const u = (this.customRng ?? getGlobalRng()).next()
     const uz = u * this.zetaN
 
     if (uz < 1.0) return 0

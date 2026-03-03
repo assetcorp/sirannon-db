@@ -1,5 +1,9 @@
 import { Bench } from 'tinybench'
 import type { BenchmarkResult, ComparisonResult } from './reporter'
+import { getGlobalRng, resetGlobalRng } from './rng'
+import { detectOutliers, speedupConfidenceInterval, welchTTest } from './stats'
+
+type RunOrder = 'random' | 'sirannon-first' | 'postgres-first'
 
 export interface BenchmarkConfig {
   category: string
@@ -23,6 +27,7 @@ export interface ComparisonPair {
   framing: string
   sirannon: TaskDef
   postgres: TaskDef
+  beforeRun?: () => void | Promise<void>
 }
 
 const MS_TO_NS = 1_000_000
@@ -80,53 +85,76 @@ export async function runBenchmark(config: BenchmarkConfig, tasks: TaskDef[]): P
   return completed.map(extractResult)
 }
 
-export async function runComparison(config: BenchmarkConfig, pairs: ComparisonPair[]): Promise<ComparisonResult[]> {
-  const sirannonBench = new Bench({
+function resolveRunOrder(runIndex?: number): { sirannonFirst: boolean; label: string } {
+  const env = (process.env.BENCH_RUN_ORDER ?? 'random') as RunOrder
+  if (env === 'sirannon-first') return { sirannonFirst: true, label: 'sirannon-first (forced)' }
+  if (env === 'postgres-first') return { sirannonFirst: false, label: 'postgres-first (forced)' }
+
+  if (runIndex !== undefined) {
+    const sirannonFirst = runIndex % 2 === 0
+    return { sirannonFirst, label: sirannonFirst ? 'sirannon-first (alternating)' : 'postgres-first (alternating)' }
+  }
+
+  const sirannonFirst = getGlobalRng().next() < 0.5
+  return { sirannonFirst, label: sirannonFirst ? 'sirannon-first (random)' : 'postgres-first (random)' }
+}
+
+async function runEngineSide(
+  label: string,
+  pairs: ComparisonPair[],
+  side: 'sirannon' | 'postgres',
+  config: BenchmarkConfig,
+  skipCleanup = false,
+): Promise<Awaited<ReturnType<Bench['run']>>> {
+  const bench = new Bench({
     warmupTime: config.warmupTime ?? 5_000,
     time: config.measureTime ?? 10_000,
     throws: true,
   })
 
   for (const pair of pairs) {
-    const task = pair.sirannon
-    sirannonBench.add(`${pair.workload} [${pair.dataSize}]`, task.fn, {
-      async: task.opts?.async ?? false,
+    const task = pair[side]
+    const defaultAsync = side === 'postgres'
+    bench.add(`${pair.workload} [${pair.dataSize}]`, task.fn, {
+      async: task.opts?.async ?? defaultAsync,
       beforeEach: task.beforeEach,
       afterEach: task.afterEach,
     })
   }
 
-  console.log(`Running Sirannon benchmarks (${pairs.length} tasks)...`)
-  const sirannonTasks = await sirannonBench.run()
+  console.log(`Running ${label} benchmarks (${pairs.length} tasks)...`)
+  const tasks = await bench.run()
 
-  for (const pair of pairs) {
-    await pair.sirannon.afterAll?.()
+  if (!skipCleanup) {
+    for (const pair of pairs) {
+      await pair[side].afterAll?.()
+    }
   }
+
+  return tasks
+}
+
+async function singleComparison(
+  config: BenchmarkConfig,
+  pairs: ComparisonPair[],
+  skipCleanup = false,
+  runIndex?: number,
+): Promise<ComparisonResult[]> {
+  const { sirannonFirst, label } = resolveRunOrder(runIndex)
+  console.log(`Run order: ${label}`)
+
+  const firstSide = sirannonFirst ? 'sirannon' : 'postgres'
+  const secondSide = sirannonFirst ? 'postgres' : 'sirannon'
+
+  const firstTasks = await runEngineSide(firstSide, pairs, firstSide, config, skipCleanup)
 
   global.gc?.()
   await sleep(1_000)
 
-  const postgresBench = new Bench({
-    warmupTime: config.warmupTime ?? 5_000,
-    time: config.measureTime ?? 10_000,
-    throws: true,
-  })
+  const secondTasks = await runEngineSide(secondSide, pairs, secondSide, config, skipCleanup)
 
-  for (const pair of pairs) {
-    const task = pair.postgres
-    postgresBench.add(`${pair.workload} [${pair.dataSize}]`, task.fn, {
-      async: task.opts?.async ?? true,
-      beforeEach: task.beforeEach,
-      afterEach: task.afterEach,
-    })
-  }
-
-  console.log(`Running Postgres benchmarks (${pairs.length} tasks)...`)
-  const postgresTasks = await postgresBench.run()
-
-  for (const pair of pairs) {
-    await pair.postgres.afterAll?.()
-  }
+  const sirannonTasks = sirannonFirst ? firstTasks : secondTasks
+  const postgresTasks = sirannonFirst ? secondTasks : firstTasks
 
   const results: ComparisonResult[] = []
   for (let i = 0; i < pairs.length; i++) {
@@ -145,6 +173,75 @@ export async function runComparison(config: BenchmarkConfig, pairs: ComparisonPa
   }
 
   return results
+}
+
+export async function runComparison(config: BenchmarkConfig, pairs: ComparisonPair[]): Promise<ComparisonResult[]> {
+  const totalRuns = Number(process.env.BENCH_RUNS ?? 1)
+
+  if (totalRuns <= 1) {
+    return singleComparison(config, pairs)
+  }
+
+  const perPairSirannonOps: number[][] = pairs.map(() => [])
+  const perPairPostgresOps: number[][] = pairs.map(() => [])
+
+  let lastResults: ComparisonResult[] = []
+
+  for (let run = 0; run < totalRuns; run++) {
+    console.log(`\n--- Run ${run + 1}/${totalRuns} ---`)
+    resetGlobalRng()
+
+    for (const pair of pairs) {
+      await pair.beforeRun?.()
+    }
+
+    const isLast = run === totalRuns - 1
+    const results = await singleComparison(config, pairs, !isLast, run)
+
+    for (let i = 0; i < results.length; i++) {
+      perPairSirannonOps[i].push(results[i].sirannon.opsPerSec)
+      perPairPostgresOps[i].push(results[i].postgres.opsPerSec)
+    }
+
+    lastResults = results
+
+    if (!isLast) {
+      global.gc?.()
+      await sleep(2_000)
+    }
+  }
+
+  for (let i = 0; i < lastResults.length; i++) {
+    const sOps = perPairSirannonOps[i]
+    const pOps = perPairPostgresOps[i]
+
+    const avgSirannon = sOps.reduce((a, b) => a + b, 0) / sOps.length
+    const avgPostgres = pOps.reduce((a, b) => a + b, 0) / pOps.length
+
+    lastResults[i].sirannon.opsPerSec = avgSirannon
+    lastResults[i].postgres.opsPerSec = avgPostgres
+    lastResults[i].speedup = avgPostgres > 0 ? avgSirannon / avgPostgres : Infinity
+    lastResults[i].sirannonSamples = sOps
+    lastResults[i].postgresSamples = pOps
+    lastResults[i].runs = totalRuns
+
+    if (totalRuns >= 5) {
+      lastResults[i].significance = welchTTest(sOps, pOps)
+      lastResults[i].speedupCI = speedupConfidenceInterval(sOps, pOps)
+      const sOutliers = detectOutliers(sOps)
+      const pOutliers = detectOutliers(pOps)
+      lastResults[i].outliers = {
+        sirannon: { count: sOutliers.count, percentage: sOutliers.percentage },
+        postgres: { count: pOutliers.count, percentage: pOutliers.percentage },
+      }
+    }
+  }
+
+  if (totalRuns >= 2 && totalRuns < 5) {
+    console.log(`\nNote: ${totalRuns} runs collected. Statistical analysis requires >= 5 runs.`)
+  }
+
+  return lastResults
 }
 
 function sleep(ms: number): Promise<void> {

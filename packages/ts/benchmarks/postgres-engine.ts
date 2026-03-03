@@ -75,13 +75,13 @@ export function createPostgresEngine(config?: BenchConfig): PostgresEngine {
 
     async cleanup() {
       if (pool) {
-        const tables = ['order_items', 'orders', 'products', 'customers', 'usertable', 'users', 'events']
-        for (const table of tables) {
-          try {
-            await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`)
-          } catch {
-            // table might not exist
+        try {
+          const { rows } = await pool.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+          for (const row of rows) {
+            await pool.query(`DROP TABLE IF EXISTS ${row.tablename} CASCADE`)
           }
+        } catch {
+          // pool may already be closed
         }
         await pool.end()
       }

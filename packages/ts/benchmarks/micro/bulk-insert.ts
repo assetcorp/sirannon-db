@@ -6,11 +6,9 @@ import { generateUserRow, microSchemaPostgres, microSchemaSqlite } from '../sche
 import { createSirannonEngine } from '../sirannon-engine'
 
 const FRAMING =
-  'Bulk write throughput in a single transaction. Tests write path overhead, WAL performance, ' +
-  'and transaction commit cost. Each iteration creates a fresh table and inserts all rows. ' +
-  'Does not test concurrent writers or cross-transaction isolation.'
-
-const BULK_SIZES = [1_000, 10_000]
+  'Per-row insert throughput inside a single transaction. Both engines use individual ' +
+  'prepared-statement INSERTs (no batching or multi-value tricks). Tests write path overhead, ' +
+  'WAL performance, and transaction commit cost. Does not test concurrent writers.'
 
 async function main() {
   const config = loadConfig()
@@ -24,7 +22,7 @@ async function main() {
   const systemInfo = collectSystemInfo()
   const pairs: ComparisonPair[] = []
 
-  for (const bulkSize of BULK_SIZES) {
+  for (const bulkSize of config.dataSizes) {
     const rows = Array.from({ length: bulkSize }, (_, i) => generateUserRow(i + 1))
 
     const sirannonEngine = createSirannonEngine(config)
@@ -50,7 +48,9 @@ async function main() {
         fn: () => {
           db.transaction(tx => {
             tx.execute('DELETE FROM users')
-            tx.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+            for (const row of rows) {
+              tx.execute('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', row)
+            }
           })
         },
         opts: { async: false },
@@ -65,30 +65,13 @@ async function main() {
           try {
             await client.query('BEGIN')
             await client.query('DELETE FROM users')
-
-            const colCount = 5
-            const chunkSize = 500
-            for (let offset = 0; offset < rows.length; offset += chunkSize) {
-              const chunk = rows.slice(offset, offset + chunkSize)
-              const values: unknown[] = []
-              const placeholders: string[] = []
-
-              for (let i = 0; i < chunk.length; i++) {
-                const row = chunk[i]
-                const rowPh: string[] = []
-                for (let j = 0; j < colCount; j++) {
-                  values.push(row[j])
-                  rowPh.push(`$${i * colCount + j + 1}`)
-                }
-                placeholders.push(`(${rowPh.join(', ')})`)
-              }
-
-              await client.query(
-                `INSERT INTO users (id, name, email, age, bio) VALUES ${placeholders.join(', ')}`,
-                values,
-              )
+            for (const row of rows) {
+              await client.query({
+                name: `bulk-insert-row-${bulkSize}`,
+                text: 'INSERT INTO users (id, name, email, age, bio) VALUES ($1, $2, $3, $4, $5)',
+                values: row,
+              })
             }
-
             await client.query('COMMIT')
           } catch (err) {
             await client.query('ROLLBACK')

@@ -9,9 +9,10 @@ import { isPostgresAvailable } from '../postgres-engine'
 import { writeSirannonOnlyResults } from '../reporter'
 
 const FRAMING =
-  'Time from zero to first query result. Measures connection establishment overhead. ' +
+  'Time from zero to first query result. Both engines perform identical work: ' +
+  'connect/open, create a table, run SELECT 1, then close. ' +
   'Critical for serverless, edge functions, and CLI tools. ' +
-  'Does not test steady-state query throughput.'
+  'Postgres includes network round-trip latency; Sirannon is in-process.'
 
 const ITERATIONS = 200
 
@@ -83,7 +84,9 @@ async function main() {
 
       const start = performance.now()
       await client.connect()
+      await client.query('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)')
       await client.query('SELECT 1')
+      await client.query('DROP TABLE IF EXISTS t')
       await client.end()
       const elapsed = performance.now() - start
 

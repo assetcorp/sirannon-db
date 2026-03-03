@@ -1,7 +1,7 @@
-import { randomBytes } from 'node:crypto'
 import { collectSystemInfo, loadConfig } from '../config'
 import { createPostgresEngine, isPostgresAvailable } from '../postgres-engine'
 import { writeResults } from '../reporter'
+import { getGlobalRng } from '../rng'
 import { type ComparisonPair, runComparison } from '../runner'
 import { generateYcsbRow, ycsbSchema, ZipfianGenerator } from '../schemas'
 import { createSirannonEngine } from '../sirannon-engine'
@@ -13,7 +13,9 @@ const FRAMING =
   'Does not test concurrent multi-client access patterns.'
 
 function randomField(): string {
-  return randomBytes(50).toString('hex')
+  const bytes = getGlobalRng().nextBytes(50)
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+  return hex
 }
 
 async function main() {
@@ -75,7 +77,7 @@ async function main() {
         name: `ycsb-a [${dataSize}]`,
         fn: () => {
           const key = keys[sirannonIdx++ % keys.length]
-          if (Math.random() < READ_RATIO) {
+          if (getGlobalRng().next() < READ_RATIO) {
             db.query('SELECT * FROM usertable WHERE ycsb_key = ?', [key])
           } else {
             db.execute('UPDATE usertable SET field0 = ? WHERE ycsb_key = ?', [randomField(), key])
@@ -90,7 +92,7 @@ async function main() {
         name: `ycsb-a [${dataSize}]`,
         fn: async () => {
           const key = keys[postgresIdx++ % keys.length]
-          if (Math.random() < READ_RATIO) {
+          if (getGlobalRng().next() < READ_RATIO) {
             await pool.query({
               name: `ycsba-read-${dataSize}`,
               text: 'SELECT * FROM usertable WHERE ycsb_key = $1',

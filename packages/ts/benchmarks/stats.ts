@@ -1,11 +1,9 @@
-import { errorFunction, mean, quantile, standardDeviation } from 'simple-statistics'
-import { SeededRng } from './rng'
-
 declare module 'simple-statistics' {
   export function gammaln(x: number): number
 }
 
-import { gammaln } from 'simple-statistics'
+import { errorFunction, gammaln, mean, quantile, standardDeviation } from 'simple-statistics'
+import { SeededRng } from './rng'
 
 export interface WelchResult {
   tStatistic: number
@@ -69,18 +67,17 @@ function regularizedIncompleteBeta(x: number, a: number, b: number): number {
   if (x <= 0) return 0
   if (x >= 1) return 1
 
-  const lnBeta = gammaln(a) + gammaln(b) - gammaln(a + b)
-  const frontFactor = Math.exp(a * Math.log(x) + b * Math.log(1 - x) - lnBeta) / a
-
   if (x > (a + 1) / (a + b + 2)) {
     return 1 - regularizedIncompleteBeta(1 - x, b, a)
   }
 
+  const lnBeta = gammaln(a) + gammaln(b) - gammaln(a + b)
+  const frontFactor = Math.exp(a * Math.log(x) + b * Math.log(1 - x) - lnBeta) / a
   return frontFactor * betaContinuedFraction(x, a, b)
 }
 
 export function tDistCdf(t: number, df: number): number {
-  if (df <= 0) return NaN
+  if (!(df > 0)) return NaN
   if (t === 0) return 0.5
   if (!Number.isFinite(df)) return 0.5 * (1 + errorFunction(t / Math.SQRT2))
 
@@ -105,13 +102,14 @@ export function welchTTest(samplesA: number[], samplesB: number[]): WelchResult 
   const seB = varB / nB
 
   if (seA + seB === 0) {
+    const identical = meanA === meanB
     return {
-      tStatistic: 0,
-      pValue: 1,
+      tStatistic: identical ? 0 : meanA > meanB ? Infinity : -Infinity,
+      pValue: identical ? 1 : 0,
       degreesOfFreedom: nA + nB - 2,
-      significant005: false,
-      significant001: false,
-      significant0001: false,
+      significant005: !identical,
+      significant001: !identical,
+      significant0001: !identical,
     }
   }
 

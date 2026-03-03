@@ -181,7 +181,7 @@ export class ZipfianGenerator {
     if (uz < 1.0) return 0
     if (uz < 1.0 + 0.5 ** this.theta) return 1
 
-    return Math.floor(this.items * (this.eta * u - this.eta + 1.0) ** this.alpha)
+    return Math.min(this.items - 1, Math.floor(this.items * (this.eta * u - this.eta + 1.0) ** this.alpha))
   }
 
   private computeZeta(n: number, theta: number): number {

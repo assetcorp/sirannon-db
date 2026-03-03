@@ -125,8 +125,12 @@ async function main() {
         postgresOrderId = 100_000
         db.execute('DELETE FROM order_items')
         db.execute('DELETE FROM orders')
+        db.execute('UPDATE products SET stock = 1000')
+        db.execute('UPDATE customers SET balance = 10000')
         await pool.query('DELETE FROM order_items')
         await pool.query('DELETE FROM orders')
+        await pool.query('UPDATE products SET stock = 1000')
+        await pool.query('UPDATE customers SET balance = 10000')
       },
       sirannon: {
         name: 'tpc-c-lite',

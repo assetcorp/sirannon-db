@@ -18,7 +18,7 @@ export class SeededRng {
   }
 
   next(): number {
-    const result = rotl(this.s1 * 5n, 7n) * 9n
+    const result = (rotl(this.s1 * 5n, 7n) * 9n) & 0xffffffffffffffffn
     const t = (this.s1 << 17n) & 0xffffffffffffffffn
 
     this.s2 = (this.s2 ^ this.s0) & 0xffffffffffffffffn

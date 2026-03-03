@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
 import { join } from 'node:path'
 import { collectSystemInfo } from './config'
 import { formatLatency } from './reporter'
@@ -40,17 +41,60 @@ async function waitForHealth(url: string, label: string, maxRetries = 30) {
   throw new Error(`${label} did not become healthy after ${maxRetries * 2}s`)
 }
 
-async function postJson(url: string, body: unknown): Promise<unknown> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+async function postJson(url: string, body: unknown, timeoutMs = 30_000): Promise<unknown> {
+  const jsonBody = JSON.stringify(body)
+  const parsed = new URL(url)
+
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(jsonBody),
+        },
+      },
+      res => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf-8')
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(JSON.parse(text))
+          } else {
+            reject(new Error(`POST ${url} failed: ${res.statusCode} ${text}`))
+          }
+        })
+      },
+    )
+
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`POST ${url} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+
+    req.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    req.on('close', () => clearTimeout(timer))
+    req.write(jsonBody)
+    req.end()
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`POST ${url} failed: ${res.status} ${text}`)
-  }
-  return res.json()
+}
+
+function estimateBenchmarkTimeoutMs(
+  workloads: string[],
+  dataSizes: number[],
+  warmupMs: number,
+  measureMs: number,
+): number {
+  const numRuns = workloads.length * dataSizes.length
+  const perRunOverhead = 15_000
+  const estimated = numRuns * (warmupMs + measureMs + perRunOverhead)
+  return Math.max(estimated * 2, 120_000)
 }
 
 interface EngineResult {
@@ -140,21 +184,32 @@ async function main() {
     await waitForHealth(SIRANNON_ENGINE_URL, 'Sirannon engine')
     await waitForHealth(POSTGRES_ENGINE_URL, 'Postgres engine')
 
+    const benchTimeout = estimateBenchmarkTimeoutMs(WORKLOADS, DATA_SIZES, WARMUP_MS, MEASURE_MS)
+    console.log(`\nBenchmark timeout: ${Math.round(benchTimeout / 1000)}s per engine`)
+
     console.log('\nRunning Sirannon engine benchmarks...')
-    const sirannonResult = (await postJson(`${SIRANNON_ENGINE_URL}/benchmark/all`, {
-      dataSizes: DATA_SIZES,
-      warmupMs: WARMUP_MS,
-      measureMs: MEASURE_MS,
-      workloads: WORKLOADS,
-    })) as { engine: string; results: EngineResult[] }
+    const sirannonResult = (await postJson(
+      `${SIRANNON_ENGINE_URL}/benchmark/all`,
+      {
+        dataSizes: DATA_SIZES,
+        warmupMs: WARMUP_MS,
+        measureMs: MEASURE_MS,
+        workloads: WORKLOADS,
+      },
+      benchTimeout,
+    )) as { engine: string; results: EngineResult[] }
 
     console.log('\nRunning Postgres engine benchmarks...')
-    const postgresResult = (await postJson(`${POSTGRES_ENGINE_URL}/benchmark/all`, {
-      dataSizes: DATA_SIZES,
-      warmupMs: WARMUP_MS,
-      measureMs: MEASURE_MS,
-      workloads: WORKLOADS,
-    })) as { engine: string; results: EngineResult[] }
+    const postgresResult = (await postJson(
+      `${POSTGRES_ENGINE_URL}/benchmark/all`,
+      {
+        dataSizes: DATA_SIZES,
+        warmupMs: WARMUP_MS,
+        measureMs: MEASURE_MS,
+        workloads: WORKLOADS,
+      },
+      benchTimeout,
+    )) as { engine: string; results: EngineResult[] }
 
     printComparisonTable(sirannonResult.results as EngineResult[], postgresResult.results as EngineResult[])
 

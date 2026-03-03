@@ -351,6 +351,10 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+server.requestTimeout = 0
+server.headersTimeout = 0
+server.timeout = 0
+
 server.listen(Number(PORT), HOST, () => {
   console.log(`Engine control server (${ENGINE}) listening on ${HOST}:${PORT}`)
 })

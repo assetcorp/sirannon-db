@@ -1,3 +1,4 @@
+import { getGlobalRng } from '../rng'
 import {
   generateCustomer,
   generateProduct,
@@ -129,7 +130,7 @@ export const workloads: WorkloadDefinition[] = [
         postgresSql:
           'INSERT INTO users (id, name, email, age, bio) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name',
         paramsFn: dataSize => {
-          const id = Math.floor(Math.random() * dataSize) + 1
+          const id = Math.floor(getGlobalRng().next() * dataSize) + 1
           return generateUserRow(id)
         },
       },
@@ -149,7 +150,7 @@ export const workloads: WorkloadDefinition[] = [
         postgresSql: 'UPDATE users SET age = $1 WHERE id = $2',
         paramsFn: dataSize => {
           const id = getZipf(dataSize).next() + 1
-          return [Math.floor(Math.random() * 80) + 18, id]
+          return [Math.floor(getGlobalRng().next() * 80) + 18, id]
         },
       },
     ],
@@ -173,7 +174,7 @@ export const workloads: WorkloadDefinition[] = [
         weight: 0.5,
         sqliteSql: 'UPDATE usertable SET field0 = ? WHERE ycsb_key = ?',
         postgresSql: 'UPDATE usertable SET field0 = $1 WHERE ycsb_key = $2',
-        paramsFn: dataSize => [`value_${Date.now()}`, `user${getZipf(dataSize).next()}`],
+        paramsFn: dataSize => [`value_${getGlobalRng().nextInt(1_000_000)}`, `user${getZipf(dataSize).next()}`],
       },
     ],
   },
@@ -196,7 +197,7 @@ export const workloads: WorkloadDefinition[] = [
         weight: 0.05,
         sqliteSql: 'UPDATE usertable SET field0 = ? WHERE ycsb_key = ?',
         postgresSql: 'UPDATE usertable SET field0 = $1 WHERE ycsb_key = $2',
-        paramsFn: dataSize => [`value_${Date.now()}`, `user${getZipf(dataSize).next()}`],
+        paramsFn: dataSize => [`value_${getGlobalRng().nextInt(1_000_000)}`, `user${getZipf(dataSize).next()}`],
       },
     ],
   },
@@ -229,8 +230,8 @@ export const workloads: WorkloadDefinition[] = [
         sqliteSql: 'INSERT INTO orders (customer_id, total, status, created_at) VALUES (?, ?, ?, ?)',
         postgresSql: 'INSERT INTO orders (customer_id, total, status, created_at) VALUES ($1, $2, $3, $4)',
         paramsFn: dataSize => {
-          const customerId = Math.floor(Math.random() * dataSize) + 1
-          const total = Math.round(Math.random() * 500 * 100) / 100
+          const customerId = Math.floor(getGlobalRng().next() * dataSize) + 1
+          const total = Math.round(getGlobalRng().next() * 500 * 100) / 100
           return [customerId, total, 'pending', new Date().toISOString()]
         },
       },
@@ -240,8 +241,8 @@ export const workloads: WorkloadDefinition[] = [
         sqliteSql: 'UPDATE customers SET balance = balance - ? WHERE id = ?',
         postgresSql: 'UPDATE customers SET balance = balance - $1 WHERE id = $2',
         paramsFn: dataSize => {
-          const amount = Math.round(Math.random() * 100 * 100) / 100
-          const customerId = Math.floor(Math.random() * dataSize) + 1
+          const amount = Math.round(getGlobalRng().next() * 100 * 100) / 100
+          const customerId = Math.floor(getGlobalRng().next() * dataSize) + 1
           return [amount, customerId]
         },
       },
@@ -254,7 +255,7 @@ export function getWorkload(name: string): WorkloadDefinition | undefined {
 }
 
 export function pickOperation(ops: WorkloadOperation[]): WorkloadOperation {
-  const r = Math.random()
+  const r = getGlobalRng().next()
   let cumulative = 0
   for (const op of ops) {
     cumulative += op.weight

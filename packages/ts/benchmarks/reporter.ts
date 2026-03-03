@@ -18,6 +18,27 @@ export interface BenchmarkResult {
   samples: number
 }
 
+export interface SignificanceInfo {
+  tStatistic: number
+  pValue: number
+  degreesOfFreedom: number
+  significant005: boolean
+  significant001: boolean
+  significant0001: boolean
+}
+
+export interface SpeedupCIInfo {
+  pointEstimate: number
+  lowerBound: number
+  upperBound: number
+  confidence: number
+}
+
+export interface OutlierInfo {
+  sirannon: { count: number; percentage: number }
+  postgres: { count: number; percentage: number }
+}
+
 export interface ComparisonResult {
   workload: string
   dataSize: number
@@ -25,6 +46,12 @@ export interface ComparisonResult {
   postgres: BenchmarkResult
   speedup: number
   framing: string
+  sirannonSamples?: number[]
+  postgresSamples?: number[]
+  significance?: SignificanceInfo
+  speedupCI?: SpeedupCIInfo
+  outliers?: OutlierInfo
+  runs?: number
 }
 
 export interface SirannonOnlyResult {
@@ -58,8 +85,27 @@ function cvWarning(cv: number): string {
   return cv > 0.1 ? ' [!]' : ''
 }
 
+function fmtSig(r: ComparisonResult): string {
+  if (!r.significance) return '-'
+  if (r.significance.significant0001) return '***'
+  if (r.significance.significant001) return '**'
+  if (r.significance.significant005) return '*'
+  return 'n/s'
+}
+
+function fmtCI(r: ComparisonResult): string {
+  if (!r.speedupCI) return '-'
+  return `[${r.speedupCI.lowerBound.toFixed(1)}, ${r.speedupCI.upperBound.toFixed(1)}]`
+}
+
+function fmtRuns(r: ComparisonResult): string {
+  return r.runs ? String(r.runs) : '-'
+}
+
 export function formatTable(results: ComparisonResult[]): string {
-  const header = [
+  const hasStats = results.some(r => r.significance)
+
+  const headerCols = [
     pad('Workload', 30, 'left'),
     pad('N Rows', 8),
     pad('Sirannon ops/s', 16),
@@ -68,13 +114,18 @@ export function formatTable(results: ComparisonResult[]): string {
     pad('P50', 14),
     pad('P99', 14),
     pad('CV', 10),
-  ].join(' | ')
+  ]
 
+  if (hasStats) {
+    headerCols.push(pad('Sig', 5), pad('CI', 16), pad('Runs', 5))
+  }
+
+  const header = headerCols.join(' | ')
   const separator = '-'.repeat(header.length)
 
   const rows = results.map(r => {
     const sirannonCv = `${(r.sirannon.cv * 100).toFixed(1)}%${cvWarning(r.sirannon.cv)}`
-    return [
+    const cols = [
       pad(r.workload, 30, 'left'),
       pad(r.dataSize.toLocaleString(), 8),
       pad(fmtOps(r.sirannon.opsPerSec), 16),
@@ -83,10 +134,24 @@ export function formatTable(results: ComparisonResult[]): string {
       pad(formatLatency(r.sirannon.p50Ns), 14),
       pad(formatLatency(r.sirannon.p99Ns), 14),
       pad(sirannonCv, 10),
-    ].join(' | ')
+    ]
+
+    if (hasStats) {
+      cols.push(pad(fmtSig(r), 5), pad(fmtCI(r), 16), pad(fmtRuns(r), 5))
+    }
+
+    return cols.join(' | ')
   })
 
-  return [separator, header, separator, ...rows, separator].join('\n')
+  const lines = [separator, header, separator, ...rows, separator]
+
+  if (hasStats) {
+    lines.push('')
+    lines.push('Significance: *** p<0.001, ** p<0.01, * p<0.05, n/s = not significant, - = single run')
+    lines.push('CI: 95% bootstrap confidence interval on speedup ratio')
+  }
+
+  return lines.join('\n')
 }
 
 export function printSystemInfo(info: SystemInfo): void {
@@ -100,6 +165,7 @@ export function printSystemInfo(info: SystemInfo): void {
   console.log(`SQLite:          ${info.sqliteVersion}`)
   console.log(`Postgres:        ${info.postgresVersion}`)
   console.log(`Durability:      ${info.durability}`)
+  console.log(`Seed:            ${info.seed}`)
   console.log('=============================\n')
 }
 
@@ -122,6 +188,10 @@ export function writeResults(category: string, systemInfo: SystemInfo, results: 
       speedup: r.speedup,
       sirannon: r.sirannon,
       postgres: r.postgres,
+      ...(r.significance && { significance: r.significance }),
+      ...(r.speedupCI && { speedupCI: r.speedupCI }),
+      ...(r.outliers && { outliers: r.outliers }),
+      ...(r.runs && { runs: r.runs }),
     })),
   }
 

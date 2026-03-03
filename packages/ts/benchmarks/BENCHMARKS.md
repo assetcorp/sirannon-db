@@ -25,7 +25,7 @@ Most local benchmarks run Sirannon against a Postgres baseline. Start the Postgr
 docker compose -f benchmarks/docker-compose.yml up -d --wait
 ```
 
-This launches Postgres 17 Alpine on port `5433` with tuned settings (256 MB shared buffers, `synchronous_commit=off` to match SQLite's `NORMAL` durability, SSD-optimized planner costs).
+This launches Postgres 17 Alpine on port `5433` with tuned settings (256 MB shared buffers, `synchronous_commit=off` for reduced write latency, SSD-optimized planner costs). The default `matched` durability mode uses `synchronous_commit=off` for Postgres and `PRAGMA synchronous=NORMAL` for SQLite. Both approaches survive process crashes but use different WAL flush strategies; they are similar but not identical trade-offs.
 
 | Setting  | Value       |
 |----------|-------------|
@@ -59,7 +59,7 @@ Runs every benchmark sequentially. Benchmarks that need Postgres are skipped if 
 pnpm bench:micro    # point-select, range-select, bulk-insert, batch-update
 pnpm bench:ycsb     # YCSB workload-b (read-heavy)
 pnpm bench:oltp     # TPC-C lite
-pnpm bench:server   # HTTP throughput
+pnpm bench:concurrent # concurrent read, write, mixed
 pnpm bench:cdc      # CDC latency
 ```
 
@@ -89,9 +89,11 @@ pnpm bench:cdc      # CDC latency
 - `cold-start` - Database open and first-query latency
 - `multi-tenant` - Multi-database isolation throughput
 
-**Server** (no Postgres needed):
+**Concurrent** (requires Postgres) - Multi-client parallelism:
 
-- `http-throughput` - HTTP request handling throughput
+- `concurrent/read` - Concurrent read throughput at 1, 4, 8, 16 clients
+- `concurrent/write` - Concurrent write throughput (shows SQLite single-writer limitation)
+- `concurrent/mixed` - 80% read / 20% write at varying concurrency
 
 ### Configuration
 
@@ -109,6 +111,10 @@ Override defaults with environment variables:
 | `BENCH_DATA_SIZES`         | `1000,10000,100000` | Comma-separated row counts to test at each scale     |
 | `BENCH_WARMUP_MS`          | `5000`              | Warmup duration per task in milliseconds             |
 | `BENCH_MEASURE_MS`         | `10000`             | Measurement duration per task in milliseconds        |
+| `BENCH_SEED`               | `42`                | PRNG seed for reproducible data generation           |
+| `BENCH_RUNS`               | `1`                 | Number of runs per comparison (enables significance testing when > 1) |
+| `BENCH_RUN_ORDER`          | `random`            | Engine run order: `random`, `sirannon-first`, or `postgres-first` |
+| `BENCH_SHUFFLE`            | `true`              | Randomize benchmark execution order in the full suite |
 
 Example with custom settings:
 
@@ -246,8 +252,7 @@ benchmarks/
   ycsb/                                 # Local YCSB benchmarks
   oltp/                                 # Local OLTP benchmarks
   sirannon/                             # Sirannon-only benchmarks (CDC, pool, etc.)
-  server/                               # HTTP throughput benchmark
-
+  concurrent/                           # Concurrent multi-client benchmarks
   docker/                               # Docker-based fair benchmarks
     docker-compose.yml                  # Orchestrates all containers
     Dockerfile.sirannon-app             # Category 1: Sirannon HTTP server

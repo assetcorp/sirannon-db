@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { handleReadiness } from '../health.js'
 import { createServer, type SirannonServer } from '../server.js'
 
 let tempDir: string
@@ -141,5 +142,51 @@ describe('server lifecycle', () => {
     } finally {
       await corsServer.close()
     }
+  })
+
+  it('uses default host and port options when omitted', () => {
+    const defaultServer = createServer(sirannon)
+    expect(defaultServer.listeningPort).toBe(-1)
+  })
+})
+
+describe('readiness handler unit paths', () => {
+  it('reports degraded when a closed database is present in snapshot', () => {
+    const fakeSirannon = {
+      databases: () =>
+        new Map([
+          ['open-db', { readOnly: false, closed: false }],
+          ['closed-db', { readOnly: true, closed: true }],
+        ]),
+    } as unknown as Sirannon
+
+    let payload = ''
+    const res = {
+      cork(fn: () => void) {
+        fn()
+        return this
+      },
+      writeStatus() {
+        return this
+      },
+      writeHeader() {
+        return this
+      },
+      end(body: string) {
+        payload = body
+        return this
+      },
+    }
+
+    const handler = handleReadiness(fakeSirannon)
+    handler(res as never, {} as never)
+
+    const body = JSON.parse(payload) as {
+      status: string
+      databases: { id: string; closed: boolean; readOnly: boolean }[]
+    }
+    expect(body.status).toBe('degraded')
+    expect(body.databases).toHaveLength(2)
+    expect(body.databases.find(d => d.id === 'closed-db')?.closed).toBe(true)
   })
 })

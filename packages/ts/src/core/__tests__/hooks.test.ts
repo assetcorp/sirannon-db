@@ -111,6 +111,24 @@ describe('HookRegistry', () => {
       expect(registry.has('beforeQuery')).toBe(false)
       expect(registry.count('beforeQuery')).toBe(0)
     })
+
+    it('dispose is safe when hooks for the event were cleared', () => {
+      const registry = new HookRegistry()
+      const dispose = registry.register('beforeQuery', vi.fn())
+      registry.clear('beforeQuery')
+
+      expect(() => dispose()).not.toThrow()
+    })
+
+    it('dispose is safe when event exists but the target hook is already absent', () => {
+      const registry = new HookRegistry()
+      const dispose = registry.register('beforeQuery', vi.fn())
+      registry.clear('beforeQuery')
+      registry.register('beforeQuery', vi.fn())
+
+      expect(() => dispose()).not.toThrow()
+      expect(registry.count('beforeQuery')).toBe(1)
+    })
   })
 
   describe('async hooks', () => {

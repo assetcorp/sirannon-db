@@ -87,6 +87,22 @@ describe('queryOne', () => {
   it('throws QueryError on invalid SQL', () => {
     expect(() => queryOne(db, 'SELCT oops')).toThrow(QueryError)
   })
+
+  it('wraps non-Error throwables in QueryError', () => {
+    const fakeDb = {
+      prepare() {
+        throw 'string error'
+      },
+    } as unknown as InstanceType<typeof Database>
+
+    try {
+      queryOne(fakeDb, 'SELECT 1')
+      expect.fail('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(QueryError)
+      expect((err as QueryError).message).toBe('string error')
+    }
+  })
 })
 
 describe('execute', () => {
@@ -109,6 +125,22 @@ describe('execute', () => {
   it('throws QueryError on constraint violation', () => {
     db.exec('CREATE TABLE strict (id INTEGER PRIMARY KEY, val TEXT NOT NULL)')
     expect(() => execute(db, 'INSERT INTO strict (val) VALUES (NULL)')).toThrow(QueryError)
+  })
+
+  it('wraps non-Error throwables in QueryError', () => {
+    const fakeDb = {
+      prepare() {
+        throw 'string error'
+      },
+    } as unknown as InstanceType<typeof Database>
+
+    try {
+      execute(fakeDb, 'INSERT INTO users (name) VALUES (?)', ['Alice'])
+      expect.fail('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(QueryError)
+      expect((err as QueryError).message).toBe('string error')
+    }
   })
 })
 
@@ -134,6 +166,25 @@ describe('executeBatch', () => {
   it('throws QueryError on bad SQL', () => {
     expect(() => executeBatch(db, 'INSERT INTO nonexistent (x) VALUES (?)', [['a']])).toThrow(QueryError)
   })
+
+  it('wraps non-Error throwables in QueryError', () => {
+    const fakeDb = {
+      prepare() {
+        throw 'string error'
+      },
+      transaction<T>(fn: () => T) {
+        return fn
+      },
+    } as unknown as InstanceType<typeof Database>
+
+    try {
+      executeBatch(fakeDb, 'INSERT INTO users (name) VALUES (?)', [['Alice']])
+      expect.fail('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(QueryError)
+      expect((err as QueryError).message).toBe('string error')
+    }
+  })
 })
 
 describe('statement caching', () => {
@@ -152,5 +203,35 @@ describe('statement caching', () => {
 
     const rows = query<{ val: number }>(db, 'SELECT 139 as val')
     expect(rows[0].val).toBe(139)
+  })
+
+  it('handles unexpected undefined oldest key during eviction', () => {
+    const originalKeys = Map.prototype.keys
+    Map.prototype.keys = function () {
+      const iterator = originalKeys.call(this)
+      let first = true
+      return {
+        next() {
+          if (first) {
+            first = false
+            return { value: undefined, done: false }
+          }
+          return iterator.next()
+        },
+        [Symbol.iterator]() {
+          return this
+        },
+      } as IterableIterator<string>
+    }
+
+    try {
+      for (let i = 0; i < 140; i++) {
+        query(db, `SELECT ${i} as val`)
+      }
+      const rows = query<{ val: number }>(db, 'SELECT 139 as val')
+      expect(rows[0].val).toBe(139)
+    } finally {
+      Map.prototype.keys = originalKeys
+    }
   })
 })

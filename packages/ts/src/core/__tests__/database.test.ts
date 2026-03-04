@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Database } from '../database.js'
 import { ConnectionPoolError, ExtensionError, QueryError, SirannonError } from '../errors.js'
 import { MetricsCollector } from '../metrics/collector.js'
@@ -445,6 +445,63 @@ describe('Database', () => {
     })
   })
 
+  describe('CDC guard branches', () => {
+    it('unwatch returns when CDC has not been initialized', () => {
+      const db = createTestDb()
+      expect(() => db.unwatch('users')).not.toThrow()
+      db.close()
+    })
+
+    it('unwatch does not stop polling when other watched tables remain', () => {
+      const dbPath = join(tempDir, 'watch-multi.db')
+      const db = new Database('test', dbPath)
+      openDbs.push(db)
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      db.execute('CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)')
+      db.watch('users')
+      db.watch('posts')
+
+      const stopFn = vi.fn()
+      ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = stopFn
+      db.unwatch('users')
+
+      expect(stopFn).not.toHaveBeenCalled()
+      db.close()
+    })
+
+    it('throws when subscription manager is unexpectedly missing', () => {
+      const db = createTestDb()
+      ;(db as unknown as { ensureCdc: () => void }).ensureCdc = () => {}
+      ;(db as unknown as { subscriptionManager: unknown }).subscriptionManager = null
+
+      expect(() => db.on('users')).toThrow('subscriptionManager not initialized')
+      db.close()
+    })
+
+    it('ensureCdcPolling returns when CDC objects are absent', () => {
+      const db = createTestDb()
+      const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
+      const acquireWriter = vi.spyOn(pool, 'acquireWriter')
+
+      ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
+
+      expect(acquireWriter).not.toHaveBeenCalled()
+      db.close()
+    })
+
+    it('ensureCdcPolling returns when polling is already active', () => {
+      const db = createTestDb()
+      const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
+      const acquireWriter = vi.spyOn(pool, 'acquireWriter')
+      ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = vi.fn()
+
+      ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
+
+      expect(acquireWriter).not.toHaveBeenCalled()
+      db.close()
+    })
+  })
+
   describe('loadExtension validation', () => {
     it('rejects empty extension path', () => {
       const db = createTestDb()
@@ -472,6 +529,23 @@ describe('Database', () => {
     it('throws ExtensionError for nonexistent extension file', () => {
       const db = createTestDb()
       expect(() => db.loadExtension('/nonexistent/path/ext.so')).toThrow(ExtensionError)
+    })
+
+    it('converts non-Error extension load failures', () => {
+      const db = createTestDb()
+      ;(db as unknown as { pool: { loadExtension: (extensionPath: string) => void } }).pool.loadExtension = () => {
+        throw 'load failed'
+      }
+
+      try {
+        db.loadExtension('ext.so')
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(ExtensionError)
+        expect((err as ExtensionError).message).toContain('load failed')
+      }
+
+      db.close()
     })
   })
 

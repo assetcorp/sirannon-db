@@ -300,6 +300,34 @@ describe('E2E WebSocket', () => {
     }
   })
 
+  it('handles aborted WS upgrade without onRequest hook', async () => {
+    const socket = createConnection({
+      host: '127.0.0.1',
+      port: server.listeningPort,
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', () => resolve())
+      socket.once('error', reject)
+    })
+
+    socket.write(
+      [
+        'GET /db/test HTTP/1.1',
+        `Host: 127.0.0.1:${server.listeningPort}`,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        'Sec-WebSocket-Version: 13',
+        '',
+        '',
+      ].join('\r\n'),
+    )
+    socket.destroy()
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+  })
+
   it('receives error for unknown database on WS connect', async () => {
     const ws = new WebSocket(`${wsUrl}/db/nonexistent`)
     await waitForOpen(ws)

@@ -792,6 +792,40 @@ describe('LifecycleManager', () => {
         vi.useRealTimers()
       }
     })
+
+    it('handles timer handles without unref', () => {
+      const originalSetInterval = globalThis.setInterval
+      const originalClearInterval = globalThis.clearInterval
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation((fn: TimerHandler) => {
+        if (typeof fn === 'function') {
+          fn()
+        }
+        return 1 as unknown as ReturnType<typeof setInterval>
+      })
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
+
+      try {
+        const { callbacks } = createRegistry()
+        const manager = new LifecycleManager(
+          {
+            autoOpen: {
+              resolver: id => ({ path: join(tempDir, `${id}.db`) }),
+            },
+            idleTimeout: 1000,
+          },
+          callbacks,
+        )
+
+        expect(setIntervalSpy).toHaveBeenCalled()
+        manager.dispose()
+        expect(clearIntervalSpy).toHaveBeenCalled()
+      } finally {
+        setIntervalSpy.mockRestore()
+        clearIntervalSpy.mockRestore()
+        globalThis.setInterval = originalSetInterval
+        globalThis.clearInterval = originalClearInterval
+      }
+    })
   })
 
   describe('untrack', () => {

@@ -325,17 +325,15 @@ export class WSHandler {
     const tracker = new ChangeTracker()
     const manager = new SubscriptionManager()
 
-    let running = true
     let consecutiveErrors = 0
     const MAX_CONSECUTIVE_ERRORS = 10
 
     const stopPolling = () => {
-      running = false
       clearInterval(interval)
     }
 
     const tick = () => {
-      if (!running || manager.size === 0) return
+      if (manager.size === 0) return
       try {
         const events = tracker.poll(cdcDb)
         if (events.length > 0) {

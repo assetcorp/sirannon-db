@@ -49,8 +49,7 @@ export class SubscriptionManager {
       if (!ids) continue
 
       for (const id of ids) {
-        const sub = this.subscriptions.get(id)
-        if (!sub) continue
+        const sub = this.subscriptions.get(id) as InternalSubscription
         if (sub.filter && !matchesFilter(event, sub.filter)) {
           continue
         }
@@ -97,20 +96,12 @@ export function startPolling(
   intervalMs: number,
   onError?: (err: Error) => void,
 ): () => void {
-  let running = true
-
-  const stop = () => {
-    running = false
-    clearInterval(interval)
-  }
-
   let consecutiveErrors = 0
   let tickCount = 0
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
   const tick = () => {
-    if (!running) return
     if (manager.size === 0) return
 
     try {
@@ -138,6 +129,10 @@ export function startPolling(
 
   const interval = setInterval(tick, intervalMs)
   interval.unref()
+
+  const stop = () => {
+    clearInterval(interval)
+  }
 
   return stop
 }

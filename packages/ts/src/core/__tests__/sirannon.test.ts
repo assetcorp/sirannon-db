@@ -225,4 +225,58 @@ describe('Sirannon', () => {
       expect((err as SirannonError).code).toBe('SHUTDOWN_ERROR')
     }
   })
+
+  it('rethrows SirannonError from Database constructor', async () => {
+    vi.resetModules()
+
+    try {
+      const { SirannonError: MockSirannonError } = await import('../errors.js')
+      const ctorError = new MockSirannonError('constructor failed', 'DATABASE_CLOSED')
+      vi.doMock('../database.js', () => ({
+        Database: class {
+          constructor() {
+            throw ctorError
+          }
+        },
+      }))
+
+      const { Sirannon: MockSirannon } = await import('../sirannon.js')
+      const sir = new MockSirannon()
+      expect(() => sir.open('main', join(tempDir, 'mocked.db'))).toThrow(MockSirannonError)
+    } finally {
+      vi.doUnmock('../database.js')
+      vi.resetModules()
+    }
+  })
+
+  it('wraps non-Error Database constructor failures', async () => {
+    vi.resetModules()
+
+    try {
+      vi.doMock('../database.js', () => ({
+        Database: class {
+          constructor() {
+            throw 'string constructor failure'
+          }
+        },
+      }))
+
+      const { SirannonError: MockSirannonError } = await import('../errors.js')
+      const { Sirannon: MockSirannon } = await import('../sirannon.js')
+      const sir = new MockSirannon()
+
+      try {
+        sir.open('main', join(tempDir, 'mocked.db'))
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MockSirannonError)
+        const sErr = err as InstanceType<typeof MockSirannonError>
+        expect(sErr.code).toBe('DATABASE_OPEN_FAILED')
+        expect(sErr.message).toContain('string constructor failure')
+      }
+    } finally {
+      vi.doUnmock('../database.js')
+      vi.resetModules()
+    }
+  })
 })

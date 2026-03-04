@@ -244,6 +244,39 @@ describe('WSHandler', () => {
       expect((msg.error as Record<string, unknown>).code).toBe('INVALID_MESSAGE')
       handler.close()
     })
+
+    it('returns INTERNAL_ERROR for non-Sirannon query failures', () => {
+      const fakeSirannon = {
+        get: () =>
+          ({
+            id: 'mydb',
+            path: '/tmp/test.db',
+            readOnly: false,
+            closed: false,
+            query: () => {
+              throw new Error('unexpected failure')
+            },
+          }) as unknown as Database,
+      } as unknown as Sirannon
+      const handler = createWSHandler(fakeSirannon)
+      const conn = createMockConnection()
+
+      handler.handleOpen(conn, 'mydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'r1',
+          type: 'query',
+          sql: 'SELECT 1',
+        }),
+      )
+
+      const msg = lastMessage(conn)
+      expect(msg.type).toBe('error')
+      expect((msg.error as Record<string, unknown>).code).toBe('INTERNAL_ERROR')
+      expect((msg.error as Record<string, unknown>).message).toBe('An unexpected error occurred')
+      handler.close()
+    })
   })
 
   describe('handleMessage - execute', () => {
@@ -1137,6 +1170,40 @@ describe('WSHandler', () => {
       vi.advanceTimersByTime(2_000)
       expect(pollCalls).toBe(10)
       handler.close()
+    })
+
+    it('supports timer handles without unref in CDC polling setup', () => {
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation((fn: TimerHandler) => {
+        if (typeof fn === 'function') {
+          fn()
+        }
+        return 1 as unknown as ReturnType<typeof setInterval>
+      })
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
+
+      try {
+        const handler = createWSHandler(sirannon)
+        const db = sirannon.open('mydb', join(tempDir, 'no-unref.db'))
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+        const conn = createMockConnection()
+        handler.handleOpen(conn, 'mydb')
+        handler.handleMessage(
+          conn,
+          JSON.stringify({
+            id: 'sub-1',
+            type: 'subscribe',
+            table: 'users',
+          }),
+        )
+
+        handler.close()
+        expect(setIntervalSpy).toHaveBeenCalled()
+        expect(clearIntervalSpy).toHaveBeenCalled()
+      } finally {
+        setIntervalSpy.mockRestore()
+        clearIntervalSpy.mockRestore()
+      }
     })
   })
 })

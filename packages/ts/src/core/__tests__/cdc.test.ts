@@ -472,6 +472,29 @@ describe('ChangeTracker', () => {
       expect(deleted).toBe(0)
     })
 
+    it('detects and cleans up a pre-existing changes table', () => {
+      db.exec(`
+        CREATE TABLE _sirannon_changes (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          table_name TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          row_id TEXT NOT NULL,
+          changed_at REAL NOT NULL,
+          old_data TEXT,
+          new_data TEXT
+        )
+      `)
+
+      const staleTime = Date.now() / 1000 - 10
+      db.prepare(
+        "INSERT INTO _sirannon_changes (table_name, operation, row_id, changed_at, old_data, new_data) VALUES ('users', 'INSERT', '1', ?, NULL, '{\"id\":1}')",
+      ).run(staleTime)
+
+      const shortRetention = new ChangeTracker({ retention: 1000 })
+      const deleted = shortRetention.cleanup(db)
+      expect(deleted).toBe(1)
+    })
+
     it('does not delete un-polled rows when poll has been used', () => {
       const tracker = new ChangeTracker({
         retention: 1000,
@@ -636,6 +659,14 @@ describe('SubscriptionManager', () => {
     expect(received).toHaveLength(0)
   })
 
+  it('unsubscribe is safe to call multiple times', () => {
+    const manager = new SubscriptionManager()
+    const sub = manager.subscribe('users', undefined, () => {})
+
+    sub.unsubscribe()
+    expect(() => sub.unsubscribe()).not.toThrow()
+  })
+
   it('tracks subscriber count per table', () => {
     const manager = new SubscriptionManager()
     const sub1 = manager.subscribe('users', undefined, () => {})
@@ -649,6 +680,11 @@ describe('SubscriptionManager', () => {
     sub1.unsubscribe()
     expect(manager.subscriberCount('users')).toBe(1)
     expect(manager.size).toBe(2)
+  })
+
+  it('returns zero subscriber count for unknown tables', () => {
+    const manager = new SubscriptionManager()
+    expect(manager.subscriberCount('missing')).toBe(0)
   })
 
   it('isolates subscriber exceptions from other subscribers', () => {
@@ -759,6 +795,25 @@ describe('SubscriptionManager', () => {
       ])
 
       expect(received).toHaveLength(1)
+    })
+
+    it('treats delete events without oldRow as non-matching for filtered subscriptions', () => {
+      const manager = new SubscriptionManager()
+      const received: ChangeEvent[] = []
+
+      manager.subscribe('users', { name: 'Alice' }, e => received.push(e))
+
+      manager.dispatch([
+        {
+          type: 'delete',
+          table: 'users',
+          row: {},
+          seq: 1n,
+          timestamp: Date.now() / 1000,
+        },
+      ])
+
+      expect(received).toHaveLength(0)
     })
   })
 })
@@ -951,6 +1006,33 @@ describe('startPolling', () => {
 
     expect(errors).toHaveLength(10)
     stop()
+  })
+
+  it('does not call onError when no error callback is provided', () => {
+    manager.subscribe('users', undefined, () => {})
+    tracker.poll = () => {
+      throw new Error('poll failed')
+    }
+
+    const stop = startPolling(db, tracker, manager, 20)
+    vi.advanceTimersByTime(40)
+    stop()
+  })
+
+  it('wraps non-Error poll failures before passing to onError', () => {
+    manager.subscribe('users', undefined, () => {})
+    const errors: Error[] = []
+    tracker.poll = () => {
+      throw 'poll failed as string'
+    }
+
+    const stop = startPolling(db, tracker, manager, 20, err => errors.push(err))
+    vi.advanceTimersByTime(20)
+    stop()
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(Error)
+    expect(errors[0].message).toContain('poll failed as string')
   })
 
   it('runs tracker cleanup after each 100 successful ticks', () => {

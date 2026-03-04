@@ -101,8 +101,7 @@ export class MigrationRunner {
       for (const v of rollbackVersions) {
         const m = inputByVersion.get(v)
         if (!m || m.down === undefined) {
-          const name = rollbackSet.find(r => r.version === v)?.name ?? 'unknown'
-          throw new MigrationError(`Migration version ${v} (${name}) has no down migration`, v, 'MIGRATION_NO_DOWN')
+          throw new MigrationError(`Migration version ${v} has no down migration`, v, 'MIGRATION_NO_DOWN')
         }
         downByVersion.set(v, m)
       }

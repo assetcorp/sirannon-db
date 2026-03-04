@@ -399,6 +399,45 @@ describe('CORS', () => {
       await corsServer.close()
     }
   })
+
+  it('joins multiple CORS origins from array configuration', async () => {
+    const corsServer = createServer(sirannon, {
+      port: 0,
+      cors: { origin: ['https://app.example.com', 'https://admin.example.com'] },
+    })
+    await corsServer.listen()
+    const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
+
+    try {
+      const res = await fetch(`${corsUrl}/db/test/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql: 'SELECT 1 as val' }),
+      })
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://app.example.com, https://admin.example.com')
+    } finally {
+      await corsServer.close()
+    }
+  })
+
+  it('defaults CORS origin to wildcard when omitted in config object', async () => {
+    const corsServer = createServer(sirannon, {
+      port: 0,
+      cors: {},
+    })
+    await corsServer.listen()
+    const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
+
+    try {
+      const preflight = await fetch(`${corsUrl}/db/test/query`, {
+        method: 'OPTIONS',
+      })
+      expect(preflight.status).toBe(204)
+      expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
+    } finally {
+      await corsServer.close()
+    }
+  })
 })
 
 describe('onRequest', () => {

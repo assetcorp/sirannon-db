@@ -112,6 +112,57 @@ describe('http-handler helpers', () => {
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('PAYLOAD_TOO_LARGE')
   })
+
+  it('readBody resolves from multiple chunks', async () => {
+    const mock = createMockResponse()
+    const abort = initAbortHandler(mock.res)
+    const pending = readBody(mock.res, 1024, abort)
+
+    mock.data('ab', false)
+    mock.data('cd', true)
+
+    await expect(pending).resolves.toEqual(Buffer.from('abcd'))
+  })
+
+  it('readBody ignores abort notifications after completion', async () => {
+    const mock = createMockResponse()
+    const abort = initAbortHandler(mock.res)
+    const pending = readBody(mock.res, 1024, abort)
+
+    mock.data('done', true)
+    await expect(pending).resolves.toEqual(Buffer.from('done'))
+
+    expect(() => mock.abort()).not.toThrow()
+  })
+
+  it('readBody ignores additional data events after completion', async () => {
+    const mock = createMockResponse()
+    const abort = initAbortHandler(mock.res)
+    const pending = readBody(mock.res, 1024, abort)
+
+    mock.data('done', true)
+    mock.data('ignored', true)
+
+    await expect(pending).resolves.toEqual(Buffer.from('done'))
+  })
+
+  it('readBody skips sending 413 when the request is already aborted during overflow', async () => {
+    const mock = createMockResponse()
+    let checks = 0
+    const abort = {
+      get aborted() {
+        checks++
+        return checks >= 3
+      },
+      onAbort: () => {},
+    }
+
+    const pending = readBody(mock.res, 3, abort)
+    mock.data('abcd', true)
+
+    await expect(pending).rejects.toThrow('Payload too large')
+    expect(mock.state.status).toBeUndefined()
+  })
 })
 
 describe('http-handler status mapping and catch branches', () => {
@@ -120,6 +171,8 @@ describe('http-handler status mapping and catch branches', () => {
       { code: 'DATABASE_NOT_FOUND', expectedStatus: '404' },
       { code: 'READ_ONLY', expectedStatus: '403' },
       { code: 'HOOK_DENIED', expectedStatus: '403' },
+      { code: 'TRANSACTION_ERROR', expectedStatus: '400' },
+      { code: 'DATABASE_CLOSED', expectedStatus: '503' },
       { code: 'SHUTDOWN', expectedStatus: '503' },
       { code: 'UNKNOWN_CODE', expectedStatus: '500' },
     ] as const
@@ -198,6 +251,22 @@ describe('http-handler status mapping and catch branches', () => {
     expect(body.error?.code).toBe('INTERNAL_ERROR')
   })
 
+  it('returns INVALID_JSON for malformed execute body', () => {
+    const mock = createMockResponse()
+    const sirannon = {
+      get: () => ({
+        execute: () => ({ changes: 1, lastInsertRowId: 1 }),
+      }),
+    } as unknown as Sirannon
+    const handler = handleExecute(sirannon)
+
+    handler(mock.res, 'db1', Buffer.from('not json'))
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_JSON')
+  })
+
   it('returns INTERNAL_ERROR for unexpected transaction errors', () => {
     const mock = createMockResponse()
     const db = {
@@ -223,5 +292,21 @@ describe('http-handler status mapping and catch branches', () => {
     expect(mock.state.status).toBe('500')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('INTERNAL_ERROR')
+  })
+
+  it('returns INVALID_JSON for malformed transaction body', () => {
+    const mock = createMockResponse()
+    const sirannon = {
+      get: () => ({
+        transaction: () => [],
+      }),
+    } as unknown as Sirannon
+    const handler = handleTransaction(sirannon)
+
+    handler(mock.res, 'db1', Buffer.from('not json'))
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_JSON')
   })
 })

@@ -186,6 +186,58 @@ describe('BackupManager', () => {
       expect(() => manager.backup(db, destPath)).toThrow(BackupError)
       db.close()
     })
+
+    it('formats non-Error values thrown during backup execution', () => {
+      const fakeDb = {
+        exec() {
+          throw 'string exec failure'
+        },
+      } as unknown as SqliteDb
+      const destPath = join(tempDir, 'non-error-exec.db')
+
+      try {
+        manager.backup(fakeDb, destPath)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(BackupError)
+        expect((err as BackupError).message).toContain('string exec failure')
+      }
+    })
+
+    it('formats non-Error values thrown while creating destination directory', async () => {
+      vi.resetModules()
+      const fsActual = await vi.importActual<typeof import('node:fs')>('node:fs')
+
+      try {
+        vi.doMock('node:fs', () => ({
+          ...fsActual,
+          existsSync: fsActual.existsSync,
+          lstatSync: fsActual.lstatSync,
+          readdirSync: fsActual.readdirSync,
+          rmSync: fsActual.rmSync,
+          mkdirSync: () => {
+            throw 'string mkdir failure'
+          },
+        }))
+
+        const { BackupManager: MockedBackupManager } = await import('../backup/backup.js')
+        const mockedManager = new MockedBackupManager()
+        const db = createTestDb()
+        const destPath = join(tempDir, 'nested', 'backup.db')
+
+        try {
+          mockedManager.backup(db, destPath)
+          expect.unreachable('should have thrown')
+        } catch (err) {
+          expect((err as Error).message).toContain('string mkdir failure')
+        } finally {
+          db.close()
+        }
+      } finally {
+        vi.doUnmock('node:fs')
+        vi.resetModules()
+      }
+    })
   })
 
   describe('generateFilename', () => {
@@ -315,6 +367,36 @@ describe('BackupManager', () => {
       writeFileSync(filePath, 'x')
 
       expect(() => manager.rotate(filePath, 2)).toThrow(BackupError)
+    })
+
+    it('formats non-Error values thrown while listing backup files', async () => {
+      vi.resetModules()
+      const fsActual = await vi.importActual<typeof import('node:fs')>('node:fs')
+
+      try {
+        vi.doMock('node:fs', () => ({
+          ...fsActual,
+          existsSync: () => true,
+          readdirSync: () => {
+            throw 'string readdir failure'
+          },
+        }))
+
+        const { BackupError: MockedBackupError } = await import('../errors.js')
+        const { BackupManager: MockedBackupManager } = await import('../backup/backup.js')
+        const mockedManager = new MockedBackupManager()
+
+        try {
+          mockedManager.rotate(tempDir, 1)
+          expect.unreachable('should have thrown')
+        } catch (err) {
+          expect(err).toBeInstanceOf(MockedBackupError)
+          expect((err as InstanceType<typeof MockedBackupError>).message).toContain('string readdir failure')
+        }
+      } finally {
+        vi.doUnmock('node:fs')
+        vi.resetModules()
+      }
     })
   })
 })
@@ -540,5 +622,152 @@ describe('BackupScheduler', () => {
       }),
     ).toThrow(BackupError)
     db.close()
+  })
+
+  it('schedules without creating directory when destination already exists', () => {
+    const db = createTestDb()
+    const backupDir = join(tempDir, 'existing-dir')
+    mkdirSync(backupDir, { recursive: true })
+    const scheduler = new BackupScheduler()
+
+    const cancel = scheduler.schedule(db, {
+      cron: '0 0 1 1 *',
+      destDir: backupDir,
+      maxFiles: 5,
+    })
+    cancel()
+    db.close()
+  })
+
+  it('formats non-Error mkdir failures when preparing scheduler destination', async () => {
+    vi.resetModules()
+    const fsActual = await vi.importActual<typeof import('node:fs')>('node:fs')
+
+    try {
+      vi.doMock('node:fs', () => ({
+        ...fsActual,
+        existsSync: () => false,
+        mkdirSync: () => {
+          throw 'mkdir failed'
+        },
+      }))
+
+      const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
+      const scheduler = new MockedBackupScheduler()
+      const db = createTestDb()
+
+      expect(() =>
+        scheduler.schedule(db, {
+          cron: '0 0 1 1 *',
+          destDir: join(tempDir, 'new-dir'),
+        }),
+      ).toThrow('mkdir failed')
+      db.close()
+    } finally {
+      vi.doUnmock('node:fs')
+      vi.resetModules()
+    }
+  })
+
+  it('wraps string cron callback failures into BackupError for onError', async () => {
+    vi.resetModules()
+
+    try {
+      vi.doMock('croner', () => ({
+        Cron: class {
+          constructor(_expr: string, options: { catch?: (err: unknown) => void }) {
+            options.catch?.('string cron failure')
+          }
+          stop() {}
+        },
+      }))
+
+      const { BackupError: MockedBackupError } = await import('../errors.js')
+      const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
+      const scheduler = new MockedBackupScheduler()
+      const db = createTestDb()
+      const errors: Error[] = []
+
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: join(tempDir, 'cron-string'),
+        onError: err => errors.push(err),
+      })
+      cancel()
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toBeInstanceOf(MockedBackupError)
+      expect(errors[0].message).toContain('string cron failure')
+      db.close()
+    } finally {
+      vi.doUnmock('croner')
+      vi.resetModules()
+    }
+  })
+
+  it('wraps non-string cron callback failures into a generic BackupError', async () => {
+    vi.resetModules()
+
+    try {
+      vi.doMock('croner', () => ({
+        Cron: class {
+          constructor(_expr: string, options: { catch?: (err: unknown) => void }) {
+            options.catch?.(12345)
+          }
+          stop() {}
+        },
+      }))
+
+      const { BackupError: MockedBackupError } = await import('../errors.js')
+      const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
+      const scheduler = new MockedBackupScheduler()
+      const db = createTestDb()
+      const errors: Error[] = []
+
+      const cancel = scheduler.schedule(db, {
+        cron: '* * * * * *',
+        destDir: join(tempDir, 'cron-number'),
+        onError: err => errors.push(err),
+      })
+      cancel()
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toBeInstanceOf(MockedBackupError)
+      expect(errors[0].message).toContain('Scheduled backup failed')
+      db.close()
+    } finally {
+      vi.doUnmock('croner')
+      vi.resetModules()
+    }
+  })
+
+  it('formats non-Error cron constructor failures', async () => {
+    vi.resetModules()
+
+    try {
+      vi.doMock('croner', () => ({
+        Cron: class {
+          constructor() {
+            throw 'invalid cron syntax'
+          }
+          stop() {}
+        },
+      }))
+
+      const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
+      const scheduler = new MockedBackupScheduler()
+      const db = createTestDb()
+
+      expect(() =>
+        scheduler.schedule(db, {
+          cron: 'bad cron',
+          destDir: join(tempDir, 'invalid-cron'),
+        }),
+      ).toThrow("Invalid cron expression 'bad cron': invalid cron syntax")
+      db.close()
+    } finally {
+      vi.doUnmock('croner')
+      vi.resetModules()
+    }
   })
 })

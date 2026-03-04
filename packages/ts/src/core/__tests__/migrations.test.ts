@@ -467,6 +467,91 @@ INSERT INTO users (name) VALUES ('Bob');`,
 
       db.close()
     })
+
+    it('rethrows MigrationError from programmatic up migration', () => {
+      const db = createTestDb()
+      const original = new MigrationError('denied', 1, 'MIGRATION_ERROR')
+      const migrations: Migration[] = [
+        {
+          version: 1,
+          name: 'denied',
+          up: () => {
+            throw original
+          },
+        },
+      ]
+
+      expect(() => db.migrate(migrations)).toThrow(original)
+      db.close()
+    })
+
+    it('wraps non-Error throws from programmatic up migration', () => {
+      const db = createTestDb()
+      const migrations: Migration[] = [
+        {
+          version: 1,
+          name: 'string_throw',
+          up: () => {
+            throw 'up string failure'
+          },
+        },
+      ]
+
+      try {
+        db.migrate(migrations)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).message).toContain('up string failure')
+      }
+
+      db.close()
+    })
+
+    it('rethrows MigrationError from programmatic down migration', () => {
+      const db = createTestDb()
+      const original = new MigrationError('down denied', 1, 'MIGRATION_ROLLBACK_ERROR')
+      const migrations: Migration[] = [
+        {
+          version: 1,
+          name: 'down_denied',
+          up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+          down: () => {
+            throw original
+          },
+        },
+      ]
+
+      db.migrate(migrations)
+      expect(() => db.rollback(migrations)).toThrow(original)
+      db.close()
+    })
+
+    it('wraps non-Error throws from programmatic down migration', () => {
+      const db = createTestDb()
+      const migrations: Migration[] = [
+        {
+          version: 1,
+          name: 'down_string',
+          up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+          down: () => {
+            throw 'down string failure'
+          },
+        },
+      ]
+
+      db.migrate(migrations)
+
+      try {
+        db.rollback(migrations)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).message).toContain('down string failure')
+      }
+
+      db.close()
+    })
   })
 
   describe('validation', () => {
@@ -551,6 +636,24 @@ INSERT INTO users (name) VALUES ('Bob');`,
 
       try {
         db.migrate(migrations)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
+    it('throws rollback validation error for non-finite target version', () => {
+      const db = createTestDb()
+      const migrations: Migration[] = [
+        { version: 1, name: 'create_users', up: 'CREATE TABLE users (id INTEGER PRIMARY KEY)' },
+      ]
+      db.migrate(migrations)
+
+      try {
+        db.rollback(migrations, Number.NaN as unknown as number)
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(MigrationError)

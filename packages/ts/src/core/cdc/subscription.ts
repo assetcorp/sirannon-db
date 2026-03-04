@@ -49,7 +49,8 @@ export class SubscriptionManager {
       if (!ids) continue
 
       for (const id of ids) {
-        const sub = this.subscriptions.get(id) as InternalSubscription
+        const sub = this.subscriptions.get(id)
+        if (!sub) continue
         if (sub.filter && !matchesFilter(event, sub.filter)) {
           continue
         }

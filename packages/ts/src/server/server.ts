@@ -9,7 +9,7 @@ import type { WSConnection } from './ws-handler.js'
 import { WSHandler } from './ws-handler.js'
 
 interface ResolvedCors {
-  origin: string
+  origin: string | string[]
   methods: string
   headers: string
 }
@@ -23,11 +23,26 @@ function resolveCors(cors: boolean | CorsOptions | undefined): ResolvedCors | nu
       headers: 'Content-Type, Authorization',
     }
   }
-  const origins = Array.isArray(cors.origin) ? cors.origin.join(', ') : (cors.origin ?? '*')
   return {
-    origin: origins,
+    origin: cors.origin ?? '*',
     methods: cors.methods?.join(', ') ?? 'GET, POST, OPTIONS',
     headers: cors.headers?.join(', ') ?? 'Content-Type, Authorization',
+  }
+}
+
+function matchOrigin(cors: ResolvedCors, requestOrigin: string): string | null {
+  if (cors.origin === '*') return '*'
+  if (typeof cors.origin === 'string') return cors.origin
+  if (cors.origin.includes(requestOrigin)) return requestOrigin
+  return null
+}
+
+function writeCorsOrigin(res: uWS.HttpResponse, cors: ResolvedCors, requestOrigin: string): void {
+  const allowed = matchOrigin(cors, requestOrigin)
+  if (!allowed) return
+  res.writeHeader('Access-Control-Allow-Origin', allowed)
+  if (allowed !== '*') {
+    res.writeHeader('Vary', 'Origin')
   }
 }
 
@@ -111,11 +126,12 @@ export class SirannonServer {
   private registerRoutes(): void {
     if (this.cors) {
       const cors = this.cors
-      this.app.options('/*', res => {
+      this.app.options('/*', (res, req) => {
+        const requestOrigin = req.getHeader('origin')
         res.cork(() => {
+          res.writeStatus('204 No Content')
+          writeCorsOrigin(res, cors, requestOrigin)
           res
-            .writeStatus('204 No Content')
-            .writeHeader('Access-Control-Allow-Origin', cors.origin)
             .writeHeader('Access-Control-Allow-Methods', cors.methods)
             .writeHeader('Access-Control-Allow-Headers', cors.headers)
             .writeHeader('Access-Control-Max-Age', '86400')
@@ -244,9 +260,9 @@ export class SirannonServer {
   ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
     if (!this.cors) return handler
 
-    const corsHeaders = this.cors
+    const cors = this.cors
     return (res, req) => {
-      res.writeHeader('Access-Control-Allow-Origin', corsHeaders.origin)
+      writeCorsOrigin(res, cors, req.getHeader('origin'))
       handler(res, req)
     }
   }
@@ -262,7 +278,7 @@ export class SirannonServer {
       const path = req.getUrl()
 
       if (corsHeaders) {
-        res.writeHeader('Access-Control-Allow-Origin', corsHeaders.origin)
+        writeCorsOrigin(res, corsHeaders, req.getHeader('origin'))
       }
 
       const abort = initAbortHandler(res)

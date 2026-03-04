@@ -16,6 +16,7 @@ COPY tsconfig.json ./
 COPY packages/ts/tsconfig.json packages/ts/tsup.config.ts packages/ts/
 COPY packages/ts/src packages/ts/src
 COPY packages/ts/benchmarks/engine packages/ts/benchmarks/engine
+COPY packages/ts/benchmarks/scaling packages/ts/benchmarks/scaling
 COPY packages/ts/benchmarks/schemas.ts packages/ts/benchmarks/schemas.ts
 COPY packages/ts/benchmarks/config.ts packages/ts/benchmarks/config.ts
 COPY packages/ts/benchmarks/sirannon-engine.ts packages/ts/benchmarks/sirannon-engine.ts

@@ -12,20 +12,15 @@ interface BenchmarkEntry {
 
 const benchmarks: BenchmarkEntry[] = [
   { name: 'micro/point-select', path: 'benchmarks/micro/point-select.ts', requiresPostgres: true },
-  { name: 'micro/range-select', path: 'benchmarks/micro/range-select.ts', requiresPostgres: true },
   { name: 'micro/bulk-insert', path: 'benchmarks/micro/bulk-insert.ts', requiresPostgres: true },
   { name: 'micro/batch-update', path: 'benchmarks/micro/batch-update.ts', requiresPostgres: true },
   { name: 'ycsb/workload-a', path: 'benchmarks/ycsb/workload-a.ts', requiresPostgres: true },
-  { name: 'ycsb/workload-b', path: 'benchmarks/ycsb/workload-b.ts', requiresPostgres: true },
-  { name: 'ycsb/workload-c', path: 'benchmarks/ycsb/workload-c.ts', requiresPostgres: true },
   { name: 'oltp/tpc-c-lite', path: 'benchmarks/oltp/tpc-c-lite.ts', requiresPostgres: true },
   { name: 'sirannon/cdc-latency', path: 'benchmarks/sirannon/cdc-latency.ts', requiresPostgres: false },
   { name: 'sirannon/connection-pool', path: 'benchmarks/sirannon/connection-pool.ts', requiresPostgres: false },
   { name: 'sirannon/cold-start', path: 'benchmarks/sirannon/cold-start.ts', requiresPostgres: false },
   { name: 'sirannon/multi-tenant', path: 'benchmarks/sirannon/multi-tenant.ts', requiresPostgres: false },
-  { name: 'concurrent/read', path: 'benchmarks/concurrent/read.ts', requiresPostgres: true },
-  { name: 'concurrent/write', path: 'benchmarks/concurrent/write.ts', requiresPostgres: true },
-  { name: 'concurrent/mixed', path: 'benchmarks/concurrent/mixed.ts', requiresPostgres: true },
+  { name: 'scaling/concurrency', path: 'benchmarks/scaling/concurrency.ts', requiresPostgres: true },
 ]
 
 function fisherYatesShuffle<T>(arr: T[]): T[] {

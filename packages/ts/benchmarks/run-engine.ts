@@ -14,9 +14,7 @@ const POSTGRES_ENGINE_URL = process.env.POSTGRES_ENGINE_URL ?? 'http://localhost
 const DATA_SIZES = (process.env.BENCH_DATA_SIZES ?? '1000,10000').split(',').map(Number)
 const WARMUP_MS = Number(process.env.BENCH_WARMUP_MS ?? 5000)
 const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 10000)
-const WORKLOADS = (
-  process.env.BENCH_WORKLOADS ?? 'point-select,range-select,bulk-insert,batch-update,ycsb-a,ycsb-b,ycsb-c,tpc-c-lite'
-).split(',')
+const WORKLOADS = (process.env.BENCH_WORKLOADS ?? 'point-select,bulk-insert,batch-update,ycsb-a,tpc-c-lite').split(',')
 
 function run(cmd: string, opts?: { ignoreError?: boolean }) {
   console.log(`> ${cmd}`)
@@ -122,6 +120,76 @@ function fmtOps(ops: number): string {
   if (ops >= 1_000_000) return `${(ops / 1_000_000).toFixed(2)}M`
   if (ops >= 1_000) return `${(ops / 1_000).toFixed(2)}K`
   return ops.toFixed(2)
+}
+
+interface ConcurrentDataPoint {
+  concurrency: number
+  readRatio: number
+  model: string
+  totalOps: number
+  opsPerSec: number
+  p50Ns: number
+  p99Ns: number
+}
+
+function workloadLabel(readRatio: number): string {
+  if (readRatio === 1.0) return 'read-only'
+  if (readRatio === 0.5) return 'mixed-50/50'
+  return `read-${Math.round(readRatio * 100)}%`
+}
+
+function printScalingTable(
+  title: string,
+  model: string,
+  sirannonPoints: ConcurrentDataPoint[],
+  postgresPoints: ConcurrentDataPoint[],
+) {
+  const filtered = sirannonPoints.filter(p => p.model === model)
+  if (filtered.length === 0) return
+
+  console.log(`\n${'='.repeat(120)}`)
+  console.log(title)
+  console.log('='.repeat(120))
+
+  const header = [
+    pad('Workload', 14, 'left'),
+    pad('N', 4),
+    pad('Sirannon ops/s', 16),
+    pad('Postgres ops/s', 16),
+    pad('Speedup', 10),
+    pad('S P50', 12),
+    pad('S P99', 12),
+    pad('P P50', 12),
+    pad('P P99', 12),
+  ].join(' | ')
+
+  console.log('-'.repeat(header.length))
+  console.log(header)
+  console.log('-'.repeat(header.length))
+
+  for (const sp of filtered) {
+    const pp = postgresPoints.find(
+      p => p.model === model && p.concurrency === sp.concurrency && p.readRatio === sp.readRatio,
+    )
+    if (!pp) continue
+
+    const speedup = pp.opsPerSec > 0 ? sp.opsPerSec / pp.opsPerSec : Infinity
+    console.log(
+      [
+        pad(workloadLabel(sp.readRatio), 14, 'left'),
+        pad(String(sp.concurrency), 4),
+        pad(fmtOps(sp.opsPerSec), 16),
+        pad(fmtOps(pp.opsPerSec), 16),
+        pad(`${speedup.toFixed(2)}x`, 10),
+        pad(formatLatency(sp.p50Ns), 12),
+        pad(formatLatency(sp.p99Ns), 12),
+        pad(formatLatency(pp.p50Ns), 12),
+        pad(formatLatency(pp.p99Ns), 12),
+      ].join(' | '),
+    )
+  }
+
+  console.log('-'.repeat(header.length))
 }
 
 function printComparisonTable(sirannonResults: EngineResult[], postgresResults: EngineResult[]) {
@@ -232,6 +300,55 @@ async function main() {
     )
 
     console.log(`\nEngine benchmark results written to ${resultsPath}`)
+
+    const concurrencyLevels = (process.env.BENCH_CONCURRENCY_LEVELS ?? '1,2,4,8,16,32,64').split(',').map(Number)
+    const scalingDurationMs = Number(process.env.BENCH_SCALING_DURATION_MS ?? 10_000)
+    const scalingTimeout = concurrencyLevels.length * 2 * 2 * (scalingDurationMs + 30_000) * 2
+
+    console.log('\nRunning Sirannon concurrency scaling benchmarks...')
+    const sirannonConcResult = (await postJson(
+      `${SIRANNON_ENGINE_URL}/benchmark/concurrent`,
+      { concurrencyLevels, durationMs: scalingDurationMs, dataSize: 10_000, readRatios: [1.0, 0.5] },
+      scalingTimeout,
+    )) as { engine: string; results: ConcurrentDataPoint[] }
+
+    console.log('\nRunning Postgres concurrency scaling benchmarks...')
+    const postgresConcResult = (await postJson(
+      `${POSTGRES_ENGINE_URL}/benchmark/concurrent`,
+      { concurrencyLevels, durationMs: scalingDurationMs, dataSize: 10_000, readRatios: [1.0, 0.5] },
+      scalingTimeout,
+    )) as { engine: string; results: ConcurrentDataPoint[] }
+
+    printScalingTable(
+      'Concurrency Scaling: Single Event Loop',
+      'event-loop',
+      sirannonConcResult.results,
+      postgresConcResult.results,
+    )
+    printScalingTable(
+      'Concurrency Scaling: Worker Thread Pool',
+      'worker-threads',
+      sirannonConcResult.results,
+      postgresConcResult.results,
+    )
+
+    const scalingResultsPath = join(RESULTS_DIR, `engine-scaling-${timestamp}.json`)
+    writeFileSync(
+      scalingResultsPath,
+      `${JSON.stringify(
+        {
+          category: 'engine-scaling',
+          timestamp: new Date().toISOString(),
+          system: systemInfo,
+          config: { concurrencyLevels, durationMs: scalingDurationMs, dataSize: 10_000, readRatios: [1.0, 0.5] },
+          sirannon: sirannonConcResult,
+          postgres: postgresConcResult,
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    console.log(`\nScaling benchmark results written to ${scalingResultsPath}`)
 
     await postJson(`${SIRANNON_ENGINE_URL}/cleanup`, {})
     await postJson(`${POSTGRES_ENGINE_URL}/cleanup`, {})

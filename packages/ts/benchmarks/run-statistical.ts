@@ -34,8 +34,9 @@ async function main() {
     process.exit(1)
   }
 
+  const dataSizeCount = DATA_SIZES.split(',').length
   const estimatedMinutes = Math.ceil(
-    (RUNS * BENCHMARKS.length * 2 * (Number(WARMUP_MS) + Number(MEASURE_MS) + 3000)) / 60_000,
+    (RUNS * BENCHMARKS.length * dataSizeCount * (Number(WARMUP_MS) + Number(MEASURE_MS) + 3000)) / 60_000,
   )
   console.log(`Statistical benchmark suite: ${BENCHMARKS.length} benchmarks x ${RUNS} runs`)
   console.log(`Data sizes: ${DATA_SIZES}`)

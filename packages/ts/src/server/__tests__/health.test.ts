@@ -116,4 +116,30 @@ describe('server lifecycle', () => {
     await tmpServer.close()
     expect(tmpServer.listeningPort).toBe(-1)
   })
+
+  it('rejects listen when port is already in use', async () => {
+    const first = createServer(sirannon, { port: 0 })
+    await first.listen()
+    const usedPort = first.listeningPort
+
+    const second = createServer(sirannon, { port: usedPort })
+    await expect(second.listen()).rejects.toThrow(`Failed to listen on 127.0.0.1:${usedPort}`)
+
+    await second.close()
+    await first.close()
+  })
+
+  it('adds CORS headers to health routes when CORS is enabled', async () => {
+    const corsServer = createServer(sirannon, { port: 0, cors: true })
+    await corsServer.listen()
+    const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
+
+    try {
+      const res = await fetch(`${corsUrl}/health`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    } finally {
+      await corsServer.close()
+    }
+  })
 })

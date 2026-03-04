@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Database } from '../database.js'
 import { MigrationError } from '../errors.js'
 import { MigrationRunner } from '../migrations/runner.js'
@@ -314,6 +314,42 @@ INSERT INTO users (name) VALUES ('Bob');`,
       expect(result.rolledBack).toHaveLength(0)
       db.close()
     })
+
+    it('throws validation error for negative rollback target version', () => {
+      const db = createTestDb()
+
+      try {
+        db.rollback(migrationsDir, -1)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
+    it('throws rollback error when applied versions are missing from the migration source', () => {
+      const db = createTestDb()
+
+      writeMigration('001_create_users.up.sql', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      writeMigration('001_create_users.down.sql', 'DROP TABLE users')
+      db.migrate(migrationsDir)
+
+      rmSync(migrationsDir, { recursive: true, force: true })
+      mkdirSync(migrationsDir)
+
+      try {
+        db.rollback(migrationsDir)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_ROLLBACK_ERROR')
+        expect((err as MigrationError).message).toContain('No down migration found')
+      }
+
+      db.close()
+    })
   })
 
   describe('programmatic migrations (array input)', () => {
@@ -557,6 +593,28 @@ INSERT INTO users (name) VALUES ('Bob');`,
       db.close()
     })
 
+    it('throws for empty down string', () => {
+      const db = createTestDb()
+      const migrations: Migration[] = [
+        {
+          version: 1,
+          name: 'create_users',
+          up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+          down: '   ',
+        },
+      ]
+
+      try {
+        db.migrate(migrations)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
     it('throws for name with non-word characters', () => {
       const db = createTestDb()
       const migrations: Migration[] = [{ version: 1, name: 'bad-name', up: 'SELECT 1' }]
@@ -735,6 +793,93 @@ INSERT INTO users (name) VALUES ('Bob');`,
       }
 
       db.close()
+    })
+
+    it('throws when migration filename version exceeds MAX_SAFE_INTEGER', () => {
+      const db = createTestDb()
+
+      writeMigration('9007199254740992_overflow.up.sql', 'SELECT 1')
+
+      try {
+        db.migrate(migrationsDir)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
+    it('throws when a version has only a down file and no up file', () => {
+      const db = createTestDb()
+
+      writeMigration('001_create_users.down.sql', 'DROP TABLE users')
+
+      try {
+        db.migrate(migrationsDir)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
+    it('throws when down migration SQL file is empty during rollback', () => {
+      const db = createTestDb()
+
+      writeMigration('001_create_users.up.sql', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      writeMigration('001_create_users.down.sql', '   ')
+      db.migrate(migrationsDir)
+
+      try {
+        db.rollback(migrationsDir)
+        expect.unreachable('should have thrown')
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationError)
+        expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+      }
+
+      db.close()
+    })
+
+    it('maps down files when directory entries are processed with up first', async () => {
+      writeMigration('001_reordered.up.sql', 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
+      writeMigration('001_reordered.down.sql', 'DROP TABLE users')
+
+      vi.resetModules()
+      const fsActual = await vi.importActual<typeof import('node:fs')>('node:fs')
+      const readdirSync = ((
+        path: Parameters<typeof fsActual.readdirSync>[0],
+        options?: Parameters<typeof fsActual.readdirSync>[1],
+      ) => {
+        const entries = fsActual.readdirSync(path as never, options as never)
+        if (options && typeof options === 'object' && 'withFileTypes' in options && options.withFileTypes === true) {
+          return [...(entries as import('node:fs').Dirent[])].sort((a, b) => {
+            const aUp = a.name.endsWith('.up.sql')
+            const bUp = b.name.endsWith('.up.sql')
+            if (aUp === bUp) return a.name.localeCompare(b.name)
+            return aUp ? -1 : 1
+          })
+        }
+        return entries
+      }) as typeof fsActual.readdirSync
+
+      try {
+        vi.doMock('node:fs', () => ({
+          ...fsActual,
+          readdirSync,
+        }))
+        const { scanDirectory } = await import('../migrations/scanner.js')
+        const scanned = scanDirectory(migrationsDir)
+        expect(scanned).toHaveLength(1)
+        expect(scanned[0].downPath).toBeTruthy()
+      } finally {
+        vi.doUnmock('node:fs')
+        vi.resetModules()
+      }
     })
   })
 

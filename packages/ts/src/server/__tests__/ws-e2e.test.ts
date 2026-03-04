@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -255,6 +256,45 @@ describe('E2E WebSocket', () => {
       expect(result.type).toBe('result')
 
       ws.close()
+    } finally {
+      await hookServer.close()
+    }
+  })
+
+  it('handles aborted WS upgrade while async onRequest is pending', async () => {
+    const hookServer = createServer(sirannon, {
+      port: 0,
+      onRequest: async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      },
+    })
+    await hookServer.listen()
+
+    try {
+      const socket = createConnection({
+        host: '127.0.0.1',
+        port: hookServer.listeningPort,
+      })
+      await new Promise<void>((resolve, reject) => {
+        socket.once('connect', () => resolve())
+        socket.once('error', reject)
+      })
+
+      socket.write(
+        [
+          'GET /db/test HTTP/1.1',
+          `Host: 127.0.0.1:${hookServer.listeningPort}`,
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version: 13',
+          '',
+          '',
+        ].join('\r\n'),
+      )
+      socket.destroy()
+
+      await new Promise(resolve => setTimeout(resolve, 100))
     } finally {
       await hookServer.close()
     }

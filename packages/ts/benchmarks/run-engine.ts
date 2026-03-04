@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { join } from 'node:path'
 import { collectSystemInfo } from './config'
-import { formatLatency } from './reporter'
+import { escapeCsvField, formatLatency } from './reporter'
 
 const COMPOSE_FILE = join(import.meta.dirname, 'docker', 'docker-compose.yml')
 const RESULTS_DIR = join(import.meta.dirname, 'results')
@@ -330,9 +330,9 @@ async function main() {
         const speedup = pr.opsPerSec > 0 ? sr.opsPerSec / pr.opsPerSec : Infinity
         engineCsvRows.push(
           [
-            sResult.workload,
+            escapeCsvField(sResult.workload),
             sResult.dataSize,
-            sr.name,
+            escapeCsvField(sr.name),
             sr.opsPerSec.toFixed(2),
             pr.opsPerSec.toFixed(2),
             speedup.toFixed(4),
@@ -425,8 +425,8 @@ async function main() {
       const speedup = pp.opsPerSec > 0 ? sp.opsPerSec / pp.opsPerSec : Infinity
       scalingCsvRows.push(
         [
-          sp.model,
-          workloadLabel(sp.readRatio),
+          escapeCsvField(sp.model),
+          escapeCsvField(workloadLabel(sp.readRatio)),
           sp.concurrency,
           sp.opsPerSec.toFixed(2),
           pp.opsPerSec.toFixed(2),

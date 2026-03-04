@@ -424,6 +424,18 @@ describe('ChangeTracker', () => {
         value: 'two',
       })
     })
+
+    it('tracks changes for tables without explicit primary keys', () => {
+      db.exec('CREATE TABLE logs (message TEXT NOT NULL)')
+      tracker.watch(db, 'logs')
+
+      db.prepare('INSERT INTO logs (message) VALUES (?)').run('hello')
+
+      const events = tracker.poll(db)
+      expect(events).toHaveLength(1)
+      expect(events[0].type).toBe('insert')
+      expect(events[0].row).toEqual({ message: 'hello' })
+    })
   })
 
   describe('cleanup', () => {
@@ -939,6 +951,18 @@ describe('startPolling', () => {
 
     expect(errors).toHaveLength(10)
     stop()
+  })
+
+  it('runs tracker cleanup after each 100 successful ticks', () => {
+    manager.subscribe('users', undefined, () => {})
+    const cleanup = vi.fn(() => 0)
+    tracker.cleanup = cleanup
+
+    const stop = startPolling(db, tracker, manager, 10)
+    vi.advanceTimersByTime(1000)
+    stop()
+
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 })
 

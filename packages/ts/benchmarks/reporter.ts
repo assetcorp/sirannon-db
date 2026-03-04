@@ -173,7 +173,7 @@ export function printSystemInfo(info: SystemInfo): void {
   console.log('=============================\n')
 }
 
-function escapeCsvField(value: string | number): string {
+export function escapeCsvField(value: string | number): string {
   const str = String(value)
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return `"${str.replace(/"/g, '""')}"`

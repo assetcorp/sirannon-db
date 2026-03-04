@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from '../errors.js'
 import { Sirannon } from '../sirannon.js'
 
@@ -184,5 +184,45 @@ describe('Sirannon', () => {
 
     expect(() => sir.close('main')).toThrow(DatabaseNotFoundError)
     sir.shutdown()
+  })
+
+  it('registers hook helpers and invokes them through database lifecycle', () => {
+    const sir = new Sirannon()
+    const beforeConnect = vi.fn()
+    const databaseOpen = vi.fn()
+    const databaseClose = vi.fn()
+    const afterQuery = vi.fn()
+
+    sir.onBeforeConnect(beforeConnect)
+    sir.onDatabaseOpen(databaseOpen)
+    sir.onDatabaseClose(databaseClose)
+    sir.onAfterQuery(afterQuery)
+
+    const db = sir.open('main', join(tempDir, 'hooks.db'))
+    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    db.query('SELECT * FROM users')
+    db.close()
+
+    expect(beforeConnect).toHaveBeenCalledOnce()
+    expect(databaseOpen).toHaveBeenCalledOnce()
+    expect(databaseClose).toHaveBeenCalledOnce()
+    expect(afterQuery).toHaveBeenCalled()
+    sir.shutdown()
+  })
+
+  it('throws SHUTDOWN_ERROR when closing a database fails during shutdown', () => {
+    const sir = new Sirannon()
+    const db = sir.open('main', join(tempDir, 'shutdown-error.db'))
+    ;(db as unknown as { close: () => void }).close = () => {
+      throw new Error('close failure')
+    }
+
+    try {
+      sir.shutdown()
+      expect.unreachable('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(SirannonError)
+      expect((err as SirannonError).code).toBe('SHUTDOWN_ERROR')
+    }
   })
 })

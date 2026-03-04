@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionPool } from '../connection-pool.js'
 import { ConnectionPoolError } from '../errors.js'
 
@@ -166,6 +166,99 @@ describe('ConnectionPool', () => {
   it('throws on non-existent directory path', () => {
     const badPath = join(tempDir, 'no', 'such', 'dir', 'test.db')
     expect(() => new ConnectionPool({ path: badPath })).toThrow()
+  })
+
+  it('throws ConnectionPoolError on loadExtension after close', () => {
+    const dbPath = join(tempDir, 'closed-extension.db')
+    seedDatabase(dbPath)
+    const pool = new ConnectionPool({ path: dbPath })
+    pool.close()
+
+    expect(() => pool.loadExtension('/tmp/nope-extension.so')).toThrow(ConnectionPoolError)
+  })
+
+  it('attempts to load extension on readers in read-only mode', () => {
+    const dbPath = join(tempDir, 'readonly-extension.db')
+    seedDatabase(dbPath)
+    const pool = new ConnectionPool({
+      path: dbPath,
+      readOnly: true,
+      readPoolSize: 1,
+    })
+
+    const reader = pool.acquireReader() as unknown as {
+      loadExtension: (extensionPath: string) => void
+    }
+    const extensionErr = new Error('reader extension load failed')
+    reader.loadExtension = () => {
+      throw extensionErr
+    }
+
+    expect(() => pool.loadExtension('/tmp/nope-extension.so')).toThrow(extensionErr)
+    pool.close()
+  })
+
+  it('aggregates close errors from readers and writer', () => {
+    const dbPath = join(tempDir, 'close-errors.db')
+    seedDatabase(dbPath)
+    const pool = new ConnectionPool({ path: dbPath, readPoolSize: 2 })
+
+    const internals = pool as unknown as {
+      readers: { close: () => void }[]
+      writer: { close: () => void } | null
+    }
+
+    for (const reader of internals.readers) {
+      reader.close = () => {
+        throw new Error('reader close failure')
+      }
+    }
+    if (internals.writer) {
+      internals.writer.close = () => {
+        throw new Error('writer close failure')
+      }
+    }
+
+    expect(() => pool.close()).toThrow(ConnectionPoolError)
+  })
+
+  it('cleans up opened connections when initialization later fails', async () => {
+    vi.resetModules()
+    const close = vi.fn(() => {
+      throw new Error('close failure')
+    })
+
+    try {
+      let readerCtorCount = 0
+      const MockDatabase = vi.fn(function (
+        this: Record<string, unknown>,
+        _path: string,
+        options?: { readonly?: boolean },
+      ) {
+        this.close = close
+        this.pragma = vi.fn()
+        this.loadExtension = vi.fn()
+
+        if (options?.readonly) {
+          readerCtorCount++
+          if (readerCtorCount >= 2) {
+            throw new Error('reader init failure')
+          }
+        }
+      })
+
+      vi.doMock('better-sqlite3', () => ({
+        default: MockDatabase,
+      }))
+
+      const { ConnectionPool: MockedConnectionPool } = await import('../connection-pool.js')
+
+      expect(() => new MockedConnectionPool({ path: 'mock.db' })).toThrow('reader init failure')
+      expect(close).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.doUnmock('better-sqlite3')
+      vi.resetModules()
+    }
   })
 
   it('reopens on same path after close', () => {

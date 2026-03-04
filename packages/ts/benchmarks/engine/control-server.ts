@@ -506,6 +506,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
             dataSize: config.dataSize,
             readRatio,
             seed: BASE_SEED + i + 1,
+            durability: DURABILITY,
           }
           if (ENGINE === 'sirannon') {
             wConfig.sirannonDbPath = sirannonDbPath

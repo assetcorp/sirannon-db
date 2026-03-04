@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Database } from '../database.js'
 import { ConnectionPoolError, ExtensionError, QueryError, SirannonError } from '../errors.js'
+import { MetricsCollector } from '../metrics/collector.js'
 
 let tempDir: string
 const openDbs: Database[] = []
@@ -187,6 +188,31 @@ describe('Database', () => {
       expect(rows).toHaveLength(3)
       db.close()
     })
+
+    it('tracks executeBatch via metrics collector when configured', () => {
+      const metrics: { sql: string }[] = []
+      const collector = new MetricsCollector({
+        onQueryComplete: metric => {
+          metrics.push({ sql: metric.sql })
+        },
+      })
+
+      const dbPath = join(tempDir, 'metrics-batch.db')
+      const db = new Database('test', dbPath, undefined, { metrics: collector })
+      openDbs.push(db)
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+      metrics.length = 0
+
+      const results = db.executeBatch('INSERT INTO users (name, age) VALUES (?, ?)', [
+        ['Alice', 30],
+        ['Bob', 25],
+      ])
+
+      expect(results).toHaveLength(2)
+      expect(metrics).toHaveLength(1)
+      expect(metrics[0].sql).toContain('INSERT INTO users')
+      db.close()
+    })
   })
 
   describe('transaction', () => {
@@ -304,6 +330,28 @@ describe('Database', () => {
       expect(db.readerCount).toBe(2)
       db.close()
     })
+
+    it('tracks queryOne via metrics collector when configured', () => {
+      const metrics: { sql: string }[] = []
+      const collector = new MetricsCollector({
+        onQueryComplete: metric => {
+          metrics.push({ sql: metric.sql })
+        },
+      })
+
+      const dbPath = join(tempDir, 'metrics-queryone.db')
+      const db = new Database('test', dbPath, undefined, { metrics: collector })
+      openDbs.push(db)
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      db.execute("INSERT INTO users (name) VALUES ('Alice')")
+      metrics.length = 0
+
+      const row = db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = 1')
+      expect(row?.name).toBe('Alice')
+      expect(metrics).toHaveLength(1)
+      expect(metrics[0].sql).toContain('SELECT name FROM users')
+      db.close()
+    })
   })
 
   describe('close listeners', () => {
@@ -357,6 +405,43 @@ describe('Database', () => {
       })
       db.close()
       expect(listenerCalled).toBe(true)
+    })
+
+    it('swallows backup cancel errors during close', () => {
+      const dbPath = join(tempDir, 'close-cancel-error.db')
+      const db = new Database('test', dbPath)
+      ;(db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers.push(() => {
+        throw new Error('cancel failed')
+      })
+
+      expect(() => db.close()).not.toThrow()
+    })
+
+    it('rethrows pool close errors after listener processing', () => {
+      const dbPath = join(tempDir, 'pool-close-error.db')
+      const db = new Database('test', dbPath)
+      ;(db as unknown as { pool: { close: () => void } }).pool.close = () => {
+        throw new Error('pool close failed')
+      }
+
+      expect(() => db.close()).toThrow('pool close failed')
+    })
+  })
+
+  describe('backup scheduling', () => {
+    it('stores backup cancel functions from scheduleBackup', () => {
+      const dbPath = join(tempDir, 'schedule.db')
+      const db = new Database('test', dbPath)
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      db.scheduleBackup({
+        cron: '0 0 1 1 *',
+        destDir: join(tempDir, 'scheduled-backups'),
+      })
+
+      const cancellers = (db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers
+      expect(cancellers).toHaveLength(1)
+      db.close()
     })
   })
 

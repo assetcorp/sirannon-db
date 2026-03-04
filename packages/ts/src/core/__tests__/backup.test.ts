@@ -168,6 +168,24 @@ describe('BackupManager', () => {
       expect(() => manager.backup(db, destPath)).toThrow(BackupError)
       expect(existsSync(destPath)).toBe(false)
     })
+
+    it('rejects backup paths with control characters', () => {
+      const db = createTestDb()
+      const badPath = `${join(tempDir, 'bad')}\u0001.db`
+
+      expect(() => manager.backup(db, badPath)).toThrow(BackupError)
+      db.close()
+    })
+
+    it('throws when backup directory creation fails', () => {
+      const db = createTestDb()
+      const blocked = join(tempDir, 'blocked')
+      writeFileSync(blocked, 'not-a-directory')
+      const destPath = join(blocked, 'nested', 'backup.db')
+
+      expect(() => manager.backup(db, destPath)).toThrow(BackupError)
+      db.close()
+    })
   })
 
   describe('generateFilename', () => {
@@ -290,6 +308,13 @@ describe('BackupManager', () => {
       manager.rotate(backupDir, -1)
 
       expect(readdirSync(backupDir)).toHaveLength(1)
+    })
+
+    it('throws when backup directory cannot be read', () => {
+      const filePath = join(tempDir, 'not-a-directory')
+      writeFileSync(filePath, 'x')
+
+      expect(() => manager.rotate(filePath, 2)).toThrow(BackupError)
     })
   })
 })
@@ -499,5 +524,21 @@ describe('BackupScheduler', () => {
     const customManager = new BackupManager()
     const scheduler = new BackupScheduler(customManager)
     expect(scheduler).toBeInstanceOf(BackupScheduler)
+  })
+
+  it('throws when scheduler destination directory cannot be created', () => {
+    const db = createTestDb()
+    const blocked = join(tempDir, 'blocked')
+    writeFileSync(blocked, 'not-a-directory')
+    const scheduler = new BackupScheduler()
+
+    expect(() =>
+      scheduler.schedule(db, {
+        cron: '0 0 1 1 *',
+        destDir: join(blocked, 'nested'),
+        maxFiles: 5,
+      }),
+    ).toThrow(BackupError)
+    db.close()
   })
 })

@@ -83,6 +83,29 @@ describe('WSHandler', () => {
       expect(msg.type).toBe('error')
       expect((msg.error as Record<string, unknown>).code).toBe('HANDLER_CLOSED')
     })
+
+    it('rejects connection when sirannon returns a closed database object', () => {
+      const fakeSirannon = {
+        get: () =>
+          ({
+            id: 'closed-db',
+            path: '/tmp/closed.db',
+            readOnly: false,
+            closed: true,
+          }) as Database,
+      } as unknown as Sirannon
+      const handler = createWSHandler(fakeSirannon)
+      const conn = createMockConnection()
+
+      handler.handleOpen(conn, 'closed-db')
+
+      expect(conn.closed).toBe(true)
+      expect(conn.closeCode).toBe(1008)
+      const msg = lastMessage(conn)
+      expect(msg.type).toBe('error')
+      expect((msg.error as Record<string, unknown>).code).toBe('DATABASE_CLOSED')
+      handler.close()
+    })
   })
 
   describe('handleMessage - query', () => {
@@ -276,6 +299,28 @@ describe('WSHandler', () => {
       const conn = createMockConnection()
       handler.handleOpen(conn, 'mydb')
       handler.handleMessage(conn, JSON.stringify({ id: 'r1', type: 'execute' }))
+
+      const msg = lastMessage(conn)
+      expect(msg.type).toBe('error')
+      expect((msg.error as Record<string, unknown>).code).toBe('INVALID_MESSAGE')
+      handler.close()
+    })
+
+    it('returns error for non-object execute params', () => {
+      const handler = createWSHandler(sirannon)
+      sirannon.open('mydb', join(tempDir, 'badexecparams.db'))
+
+      const conn = createMockConnection()
+      handler.handleOpen(conn, 'mydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'r1',
+          type: 'execute',
+          sql: 'SELECT 1',
+          params: 'invalid',
+        }),
+      )
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -486,6 +531,35 @@ describe('WSHandler', () => {
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
       expect((msg.error as Record<string, unknown>).code).toBe('INVALID_MESSAGE')
+      handler.close()
+    })
+
+    it('returns error when subscribing to in-memory database', () => {
+      const fakeSirannon = {
+        get: () =>
+          ({
+            id: 'memorydb',
+            path: ':memory:',
+            readOnly: false,
+            closed: false,
+          }) as unknown as Database,
+      } as unknown as Sirannon
+      const handler = createWSHandler(fakeSirannon)
+
+      const conn = createMockConnection()
+      handler.handleOpen(conn, 'memorydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'sub-1',
+          type: 'subscribe',
+          table: 'users',
+        }),
+      )
+
+      const msg = lastMessage(conn)
+      expect(msg.type).toBe('error')
+      expect((msg.error as Record<string, unknown>).code).toBe('CDC_UNSUPPORTED')
       handler.close()
     })
   })
@@ -1025,6 +1099,43 @@ describe('WSHandler', () => {
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)
+      handler.close()
+    })
+
+    it('stops CDC polling after repeated polling errors', () => {
+      const handler = createWSHandler(sirannon)
+      const db = sirannon.open('mydb', join(tempDir, 'poll-errors.db'))
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const conn = createMockConnection()
+      handler.handleOpen(conn, 'mydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'sub-1',
+          type: 'subscribe',
+          table: 'users',
+        }),
+      )
+
+      const contexts = (
+        handler as unknown as {
+          cdcContexts: Map<string, { tracker: { poll: () => unknown[] } }>
+        }
+      ).cdcContexts
+      const ctx = contexts.get('mydb')
+      expect(ctx).toBeDefined()
+
+      let pollCalls = 0
+      if (ctx) {
+        ctx.tracker.poll = () => {
+          pollCalls++
+          throw new Error('poll failed')
+        }
+      }
+
+      vi.advanceTimersByTime(2_000)
+      expect(pollCalls).toBe(10)
       handler.close()
     })
   })

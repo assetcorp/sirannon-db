@@ -1,19 +1,10 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
 import type Database from 'better-sqlite3'
 import { MigrationError } from '../errors.js'
-import type { MigrationFile, MigrationResult } from '../types.js'
-import type { AppliedMigration } from './types.js'
+import { Transaction } from '../transaction.js'
+import { scanDirectory, readUpMigrations, readDownMigrations } from './scanner.js'
+import type { Migration, MigrationResult, RollbackResult, AppliedMigrationEntry } from './types.js'
 
 type SqliteDb = InstanceType<typeof Database>
-
-/**
- * Pattern for valid migration filenames: one or more digits, an underscore,
- * one or more word characters (letters, digits, underscores), ending in `.sql`.
- *
- * Examples: `001_create_users.sql`, `2_add_email.sql`, `10_drop_legacy_table.sql`
- */
-const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.sql$/
 
 const CREATE_TRACKING_TABLE = `
   CREATE TABLE IF NOT EXISTS _sirannon_migrations (
@@ -24,111 +15,185 @@ const CREATE_TRACKING_TABLE = `
 `
 
 export class MigrationRunner {
-  /**
-   * Run all pending migrations from the given directory against the database.
-   *
-   * Creates the `_sirannon_migrations` tracking table if it doesn't exist,
-   * scans the directory for `NNN_name.sql` files, skips already-applied
-   * versions, and runs the rest in ascending version order inside a single
-   * transaction. Each applied migration is recorded in the tracking table
-   * before the transaction commits.
-   *
-   * @throws {MigrationError} if the path doesn't exist, contains duplicate
-   *   versions, or a migration statement fails.
-   */
-  static run(db: SqliteDb, migrationsPath: string): MigrationResult {
-    const resolvedPath = resolve(migrationsPath)
-
-    let stat: ReturnType<typeof statSync> | undefined
-    try {
-      stat = statSync(resolvedPath)
-    } catch {
-      throw new MigrationError(`Migrations path does not exist: ${resolvedPath}`, 0)
-    }
-
-    if (!stat.isDirectory()) {
-      throw new MigrationError(`Migrations path is not a directory: ${resolvedPath}`, 0)
-    }
-
+  static run(db: SqliteDb, input: string | Migration[]): MigrationResult {
     db.exec(CREATE_TRACKING_TABLE)
 
-    const files = MigrationRunner.scanMigrations(resolvedPath)
+    const migrations =
+      typeof input === 'string'
+        ? readUpMigrations(scanDirectory(input))
+        : MigrationRunner.validateMigrations(input)
+
     const applied = MigrationRunner.getAppliedVersions(db)
-    const pending = files.filter(f => !applied.has(f.version))
+    const pending = migrations.filter(m => !applied.has(m.version))
 
     if (pending.length === 0) {
-      return { applied: [], skipped: files.length }
+      return { applied: [], skipped: migrations.length }
     }
 
     const insertMigration = db.prepare('INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)')
+    const appliedEntries: AppliedMigrationEntry[] = []
 
     db.transaction(() => {
       for (const migration of pending) {
         try {
-          db.exec(migration.sql)
+          if (typeof migration.up === 'string') {
+            db.exec(migration.up)
+          } else {
+            migration.up(new Transaction(db))
+          }
         } catch (err) {
+          if (err instanceof MigrationError) throw err
           throw new MigrationError(
             `Migration ${migration.version}_${migration.name} failed: ${err instanceof Error ? err.message : String(err)}`,
             migration.version,
           )
         }
         insertMigration.run(migration.version, migration.name)
+        appliedEntries.push({ version: migration.version, name: migration.name })
       }
     })()
 
     return {
-      applied: pending,
-      skipped: files.length - pending.length,
+      applied: appliedEntries,
+      skipped: migrations.length - pending.length,
     }
   }
 
-  /**
-   * Scan a directory for migration files, parse them, validate for duplicates,
-   * and return them sorted by version in ascending order.
-   */
-  private static scanMigrations(dirPath: string): MigrationFile[] {
-    const entries = readdirSync(dirPath, { withFileTypes: true })
-    const migrations: MigrationFile[] = []
+  static rollback(db: SqliteDb, input: string | Migration[], version?: number): RollbackResult {
+    if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
+      throw new MigrationError(
+        `Invalid rollback target version: ${version}`,
+        typeof version === 'number' && Number.isFinite(version) ? version : 0,
+        'MIGRATION_VALIDATION_ERROR',
+      )
+    }
+
+    db.exec(CREATE_TRACKING_TABLE)
+
+    const appliedRows = db
+      .prepare('SELECT version, name FROM _sirannon_migrations ORDER BY version DESC')
+      .all() as AppliedMigrationEntry[]
+
+    if (appliedRows.length === 0) {
+      return { rolledBack: [] }
+    }
+
+    let rollbackSet: AppliedMigrationEntry[]
+    if (version === undefined) {
+      rollbackSet = [appliedRows[0]]
+    } else {
+      rollbackSet = appliedRows.filter(row => row.version > version)
+    }
+
+    if (rollbackSet.length === 0) {
+      return { rolledBack: [] }
+    }
+
+    const rollbackVersions = rollbackSet.map(r => r.version)
+
+    let downByVersion: Map<number, Migration>
+    if (typeof input === 'string') {
+      const scanned = scanDirectory(input)
+      const downMigrations = readDownMigrations(scanned, rollbackVersions)
+      downByVersion = new Map(downMigrations.map(m => [m.version, m]))
+    } else {
+      const inputByVersion = new Map(input.map(m => [m.version, m]))
+      downByVersion = new Map()
+      for (const v of rollbackVersions) {
+        const m = inputByVersion.get(v)
+        if (!m || m.down === undefined) {
+          const name = rollbackSet.find(r => r.version === v)?.name ?? 'unknown'
+          throw new MigrationError(
+            `Migration version ${v} (${name}) has no down migration`,
+            v,
+            'MIGRATION_NO_DOWN',
+          )
+        }
+        downByVersion.set(v, m)
+      }
+    }
+
+    const deleteMigration = db.prepare('DELETE FROM _sirannon_migrations WHERE version = ?')
+    const rolledBackEntries: AppliedMigrationEntry[] = []
+
+    db.transaction(() => {
+      for (const entry of rollbackSet) {
+        const migration = downByVersion.get(entry.version)!
+
+        try {
+          if (typeof migration.down === 'string') {
+            db.exec(migration.down)
+          } else {
+            migration.down!(new Transaction(db))
+          }
+        } catch (err) {
+          if (err instanceof MigrationError) throw err
+          throw new MigrationError(
+            `Rollback of migration ${entry.version}_${entry.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+            entry.version,
+            'MIGRATION_ROLLBACK_ERROR',
+          )
+        }
+        deleteMigration.run(entry.version)
+        rolledBackEntries.push({ version: entry.version, name: entry.name })
+      }
+    })()
+
+    return { rolledBack: rolledBackEntries }
+  }
+
+  private static validateMigrations(migrations: Migration[]): Migration[] {
     const seenVersions = new Map<number, string>()
 
-    for (const entry of entries) {
-      if (!entry.isFile()) continue
+    for (const m of migrations) {
+      if (!Number.isSafeInteger(m.version) || m.version <= 0) {
+        throw new MigrationError(
+          `Invalid migration version: ${m.version}`,
+          typeof m.version === 'number' && Number.isFinite(m.version) ? m.version : 0,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
 
-      const match = MIGRATION_FILENAME_PATTERN.exec(entry.name)
-      if (!match) continue
+      if (!/^\w+$/.test(m.name)) {
+        throw new MigrationError(
+          `Invalid migration name: '${m.name}'`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
 
-      const version = parseInt(match[1], 10)
-      const name = match[2]
-
-      const existing = seenVersions.get(version)
+      const existing = seenVersions.get(m.version)
       if (existing) {
-        throw new MigrationError(`Duplicate migration version ${version}: '${existing}' and '${entry.name}'`, version)
+        throw new MigrationError(
+          `Duplicate migration version ${m.version}: '${existing}' and '${m.name}'`,
+          m.version,
+          'MIGRATION_DUPLICATE_VERSION',
+        )
       }
-      seenVersions.set(version, entry.name)
+      seenVersions.set(m.version, m.name)
 
-      const filePath = join(dirPath, entry.name)
-      const sql = readFileSync(filePath, 'utf-8').trim()
-
-      if (sql.length === 0) {
-        throw new MigrationError(`Migration file is empty: ${entry.name}`, version)
+      if (typeof m.up === 'string' && m.up.trim().length === 0) {
+        throw new MigrationError(
+          `Migration ${m.version}_${m.name} has empty up SQL`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
       }
 
-      migrations.push({ version, name, sql })
+      if (m.down !== undefined && typeof m.down === 'string' && m.down.trim().length === 0) {
+        throw new MigrationError(
+          `Migration ${m.version}_${m.name} has empty down SQL`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
     }
 
-    migrations.sort((a, b) => a.version - b.version)
-    return migrations
+    return [...migrations].sort((a, b) => a.version - b.version)
   }
 
-  /**
-   * Read the set of already-applied migration versions from the tracking table.
-   */
   private static getAppliedVersions(db: SqliteDb): Set<number> {
-    const rows = db.prepare('SELECT version FROM _sirannon_migrations ORDER BY version').all() as Pick<
-      AppliedMigration,
-      'version'
-    >[]
-
+    const rows = db.prepare('SELECT version FROM _sirannon_migrations ORDER BY version').all() as { version: number }[]
     return new Set(rows.map(r => r.version))
   }
 }

@@ -10,13 +10,13 @@ import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import { execute, executeBatch, query, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
+import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import type {
   AfterQueryHook,
   BackupScheduleOptions,
   BeforeQueryHook,
   DatabaseOptions,
   ExecuteResult,
-  MigrationResult,
   Params,
   QueryHookContext,
   SubscriptionBuilder,
@@ -180,10 +180,16 @@ export class Database {
     return new SubscriptionBuilderImpl(table, manager)
   }
 
-  migrate(migrationsPath: string): MigrationResult {
+  migrate(input: string | Migration[]): MigrationResult {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    return MigrationRunner.run(writer, migrationsPath)
+    return MigrationRunner.run(writer, input)
+  }
+
+  rollback(input: string | Migration[], version?: number): RollbackResult {
+    this.ensureOpen()
+    const writer = this.pool.acquireWriter()
+    return MigrationRunner.rollback(writer, input, version)
   }
 
   backup(destPath: string): void {

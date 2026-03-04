@@ -24,7 +24,7 @@ const CONCURRENCY_LEVELS = [1, 2, 4, 8, 16, 32, 64]
 const READ_RATIOS = [1.0, 0.5]
 const DATA_SIZE = 10_000
 const DURATION_MS = Number(process.env.BENCH_SCALING_DURATION_MS ?? 10_000)
-const WORKER_PATH = join(import.meta.dirname, 'worker.ts')
+const WORKER_PATH = join(import.meta.dirname, 'worker-bootstrap.mjs')
 const BASE_SEED = 42
 
 interface WorkerResult {
@@ -58,10 +58,7 @@ function aggregateLatencies(allSamples: number[][]): { p50Ns: number; p99Ns: num
 
 function spawnWorker(config: Record<string, unknown>): Promise<WorkerResult> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(WORKER_PATH, {
-      workerData: config,
-      execArgv: ['--import', 'tsx'],
-    })
+    const worker = new Worker(WORKER_PATH, { workerData: config })
     worker.on('message', (result: WorkerResult) => resolve(result))
     worker.on('error', reject)
     worker.on('exit', code => {
@@ -79,36 +76,39 @@ function runEventLoopSirannon(
   db.execute('PRAGMA busy_timeout = 5000')
   db.execute('PRAGMA synchronous = NORMAL')
 
-  const rng = new SeededRng(BigInt(BASE_SEED))
-  const zipf = new ZipfianGenerator(DATA_SIZE, 0.99, rng)
+  try {
+    const rng = new SeededRng(BigInt(BASE_SEED))
+    const zipf = new ZipfianGenerator(DATA_SIZE, 0.99, rng)
 
-  let ops = 0
-  const latencySamples: number[] = []
-  const deadline = Date.now() + DURATION_MS
+    let ops = 0
+    const latencySamples: number[] = []
+    const deadline = Date.now() + DURATION_MS
 
-  while (Date.now() < deadline) {
-    for (let i = 0; i < concurrency; i++) {
-      const isRead = rng.next() < readRatio
-      const id = zipf.next() + 1
-      const start = process.hrtime.bigint()
-      if (isRead) {
-        db.query('SELECT * FROM users WHERE id = ?', [id])
-      } else {
-        const age = Math.floor(rng.next() * 80) + 18
-        db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+    while (Date.now() < deadline) {
+      for (let i = 0; i < concurrency; i++) {
+        const isRead = rng.next() < readRatio
+        const id = zipf.next() + 1
+        const start = process.hrtime.bigint()
+        if (isRead) {
+          db.query('SELECT * FROM users WHERE id = ?', [id])
+        } else {
+          const age = Math.floor(rng.next() * 80) + 18
+          db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+        }
+        const elapsed = Number(process.hrtime.bigint() - start)
+        ops++
+        if (latencySamples.length < 10_000) latencySamples.push(elapsed)
       }
-      const elapsed = Number(process.hrtime.bigint() - start)
-      ops++
-      if (latencySamples.length < 10_000) latencySamples.push(elapsed)
     }
-  }
 
-  db.close()
-  latencySamples.sort((a, b) => a - b)
-  return {
-    totalOps: ops,
-    p50Ns: percentile(latencySamples, 0.5),
-    p99Ns: percentile(latencySamples, 0.99),
+    latencySamples.sort((a, b) => a - b)
+    return {
+      totalOps: ops,
+      p50Ns: percentile(latencySamples, 0.5),
+      p99Ns: percentile(latencySamples, 0.99),
+    }
+  } finally {
+    db.close()
   }
 }
 
@@ -118,48 +118,52 @@ async function runEventLoopPostgres(
   readRatio: number,
 ): Promise<{ totalOps: number; p50Ns: number; p99Ns: number }> {
   const pool = new pg.Pool({ ...pgConfig, max: concurrency })
-  const rng = new SeededRng(BigInt(BASE_SEED))
-  const zipf = new ZipfianGenerator(DATA_SIZE, 0.99, rng)
 
-  let ops = 0
-  const latencySamples: number[] = []
-  const deadline = Date.now() + DURATION_MS
+  try {
+    const rng = new SeededRng(BigInt(BASE_SEED))
+    const zipf = new ZipfianGenerator(DATA_SIZE, 0.99, rng)
 
-  while (Date.now() < deadline) {
-    const batch: Promise<void>[] = []
-    for (let i = 0; i < concurrency; i++) {
-      const isRead = rng.next() < readRatio
-      const id = zipf.next() + 1
-      const start = process.hrtime.bigint()
+    let ops = 0
+    const latencySamples: number[] = []
+    const deadline = Date.now() + DURATION_MS
 
-      if (isRead) {
-        batch.push(
-          pool.query({ text: 'SELECT * FROM users WHERE id = $1', values: [id] }).then(() => {
-            const elapsed = Number(process.hrtime.bigint() - start)
-            ops++
-            if (latencySamples.length < 10_000) latencySamples.push(elapsed)
-          }),
-        )
-      } else {
-        const age = Math.floor(rng.next() * 80) + 18
-        batch.push(
-          pool.query({ text: 'UPDATE users SET age = $1 WHERE id = $2', values: [age, id] }).then(() => {
-            const elapsed = Number(process.hrtime.bigint() - start)
-            ops++
-            if (latencySamples.length < 10_000) latencySamples.push(elapsed)
-          }),
-        )
+    while (Date.now() < deadline) {
+      const batch: Promise<void>[] = []
+      for (let i = 0; i < concurrency; i++) {
+        const isRead = rng.next() < readRatio
+        const id = zipf.next() + 1
+        const start = process.hrtime.bigint()
+
+        if (isRead) {
+          batch.push(
+            pool.query({ text: 'SELECT * FROM users WHERE id = $1', values: [id] }).then(() => {
+              const elapsed = Number(process.hrtime.bigint() - start)
+              ops++
+              if (latencySamples.length < 10_000) latencySamples.push(elapsed)
+            }),
+          )
+        } else {
+          const age = Math.floor(rng.next() * 80) + 18
+          batch.push(
+            pool.query({ text: 'UPDATE users SET age = $1 WHERE id = $2', values: [age, id] }).then(() => {
+              const elapsed = Number(process.hrtime.bigint() - start)
+              ops++
+              if (latencySamples.length < 10_000) latencySamples.push(elapsed)
+            }),
+          )
+        }
       }
+      await Promise.all(batch)
     }
-    await Promise.all(batch)
-  }
 
-  await pool.end()
-  latencySamples.sort((a, b) => a - b)
-  return {
-    totalOps: ops,
-    p50Ns: percentile(latencySamples, 0.5),
-    p99Ns: percentile(latencySamples, 0.99),
+    latencySamples.sort((a, b) => a - b)
+    return {
+      totalOps: ops,
+      p50Ns: percentile(latencySamples, 0.5),
+      p99Ns: percentile(latencySamples, 0.99),
+    }
+  } finally {
+    await pool.end()
   }
 }
 
@@ -215,34 +219,36 @@ function setupSirannonDb(tempDir: string): string {
 async function setupPostgres(pgConfig: pg.PoolConfig): Promise<void> {
   const pool = new pg.Pool({ ...pgConfig, max: 2 })
 
-  for (const stmt of microSchemaPostgres
-    .split(';')
-    .map(s => s.trim())
-    .filter(Boolean)) {
-    const match = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i)
-    if (match) await pool.query(`DROP TABLE IF EXISTS ${match[1]} CASCADE`)
-    await pool.query(stmt)
-  }
-
-  const rows = Array.from({ length: DATA_SIZE }, (_, i) => generateUserRow(i + 1))
-  const CHUNK = 500
-  for (let offset = 0; offset < rows.length; offset += CHUNK) {
-    const chunk = rows.slice(offset, offset + CHUNK)
-    const values: unknown[] = []
-    const placeholders: string[] = []
-    for (let i = 0; i < chunk.length; i++) {
-      const row = chunk[i]
-      const rowPh: string[] = []
-      for (let j = 0; j < 5; j++) {
-        values.push(row[j])
-        rowPh.push(`$${i * 5 + j + 1}`)
-      }
-      placeholders.push(`(${rowPh.join(', ')})`)
+  try {
+    for (const stmt of microSchemaPostgres
+      .split(';')
+      .map(s => s.trim())
+      .filter(Boolean)) {
+      const match = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i)
+      if (match) await pool.query(`DROP TABLE IF EXISTS ${match[1]} CASCADE`)
+      await pool.query(stmt)
     }
-    await pool.query(`INSERT INTO users (id, name, email, age, bio) VALUES ${placeholders.join(', ')}`, values)
-  }
 
-  await pool.end()
+    const rows = Array.from({ length: DATA_SIZE }, (_, i) => generateUserRow(i + 1))
+    const CHUNK = 500
+    for (let offset = 0; offset < rows.length; offset += CHUNK) {
+      const chunk = rows.slice(offset, offset + CHUNK)
+      const values: unknown[] = []
+      const placeholders: string[] = []
+      for (let i = 0; i < chunk.length; i++) {
+        const row = chunk[i]
+        const rowPh: string[] = []
+        for (let j = 0; j < 5; j++) {
+          values.push(row[j])
+          rowPh.push(`$${i * 5 + j + 1}`)
+        }
+        placeholders.push(`(${rowPh.join(', ')})`)
+      }
+      await pool.query(`INSERT INTO users (id, name, email, age, bio) VALUES ${placeholders.join(', ')}`, values)
+    }
+  } finally {
+    await pool.end()
+  }
 }
 
 function workloadLabel(readRatio: number): string {

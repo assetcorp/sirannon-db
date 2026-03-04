@@ -80,8 +80,9 @@ export class MigrationError extends SirannonError {
   constructor(
     message: string,
     public readonly version: number,
+    code: string = 'MIGRATION_ERROR',
   ) {
-    super(message, 'MIGRATION_ERROR')
+    super(message, code)
     this.name = 'MigrationError'
   }
 }

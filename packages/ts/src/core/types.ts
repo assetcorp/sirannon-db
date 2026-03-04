@@ -132,19 +132,6 @@ export interface SirannonOptions {
   lifecycle?: LifecycleConfig
 }
 
-/** A single migration file descriptor. */
-export interface MigrationFile {
-  version: number
-  name: string
-  sql: string
-}
-
-/** Result of running migrations. */
-export interface MigrationResult {
-  applied: MigrationFile[]
-  skipped: number
-}
-
 /** Options for scheduled backups. */
 export interface BackupScheduleOptions {
   /** Cron expression (e.g., '0 * * * *' for hourly). */

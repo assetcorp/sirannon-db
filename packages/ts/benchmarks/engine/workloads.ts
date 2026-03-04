@@ -98,25 +98,6 @@ export const workloads: WorkloadDefinition[] = [
     ],
   },
   {
-    name: 'range-select',
-    category: 'micro',
-    sqliteSchema: microSchemaSqlite,
-    postgresSchema: microSchemaPostgres,
-    seedFn: userSeed,
-    operations: [
-      {
-        name: 'range-select',
-        weight: 1,
-        sqliteSql: 'SELECT * FROM users WHERE id >= ? AND id < ? LIMIT 100',
-        postgresSql: 'SELECT * FROM users WHERE id >= $1 AND id < $2 LIMIT 100',
-        paramsFn: dataSize => {
-          const start = getZipf(dataSize).next() + 1
-          return [start, start + 100]
-        },
-      },
-    ],
-  },
-  {
     name: 'bulk-insert',
     category: 'micro',
     sqliteSchema: microSchemaSqlite,
@@ -175,45 +156,6 @@ export const workloads: WorkloadDefinition[] = [
         sqliteSql: 'UPDATE usertable SET field0 = ? WHERE ycsb_key = ?',
         postgresSql: 'UPDATE usertable SET field0 = $1 WHERE ycsb_key = $2',
         paramsFn: dataSize => [`value_${getGlobalRng().nextInt(1_000_000)}`, `user${getZipf(dataSize).next()}`],
-      },
-    ],
-  },
-  {
-    name: 'ycsb-b',
-    category: 'ycsb',
-    sqliteSchema: ycsbSchema,
-    postgresSchema: ycsbSchema,
-    seedFn: ycsbSeed,
-    operations: [
-      {
-        name: 'read',
-        weight: 0.95,
-        sqliteSql: 'SELECT * FROM usertable WHERE ycsb_key = ?',
-        postgresSql: 'SELECT * FROM usertable WHERE ycsb_key = $1',
-        paramsFn: dataSize => [`user${getZipf(dataSize).next()}`],
-      },
-      {
-        name: 'update',
-        weight: 0.05,
-        sqliteSql: 'UPDATE usertable SET field0 = ? WHERE ycsb_key = ?',
-        postgresSql: 'UPDATE usertable SET field0 = $1 WHERE ycsb_key = $2',
-        paramsFn: dataSize => [`value_${getGlobalRng().nextInt(1_000_000)}`, `user${getZipf(dataSize).next()}`],
-      },
-    ],
-  },
-  {
-    name: 'ycsb-c',
-    category: 'ycsb',
-    sqliteSchema: ycsbSchema,
-    postgresSchema: ycsbSchema,
-    seedFn: ycsbSeed,
-    operations: [
-      {
-        name: 'read',
-        weight: 1,
-        sqliteSql: 'SELECT * FROM usertable WHERE ycsb_key = ?',
-        postgresSql: 'SELECT * FROM usertable WHERE ycsb_key = $1',
-        paramsFn: dataSize => [`user${getZipf(dataSize).next()}`],
       },
     ],
   },

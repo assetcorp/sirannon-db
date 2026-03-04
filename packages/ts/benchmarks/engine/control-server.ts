@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { Bench } from 'tinybench'
+import { SeededRng } from '../rng'
+import { generateUserRow, microSchemaPostgres, microSchemaSqlite, ZipfianGenerator } from '../schemas'
 import { getWorkload, type WorkloadConfig, workloads } from './workloads'
 
 const ENGINE = process.env.ENGINE ?? 'sirannon'
@@ -260,6 +263,253 @@ async function runWorkloadBenchmark(backend: EngineBackend, config: WorkloadConf
   return results
 }
 
+interface ConcurrentConfig {
+  concurrencyLevels: number[]
+  durationMs: number
+  dataSize: number
+  readRatios: number[]
+}
+
+interface WorkerResult {
+  ops: number
+  latencySamplesNs: number[]
+}
+
+interface ConcurrentDataPoint {
+  concurrency: number
+  readRatio: number
+  model: string
+  totalOps: number
+  opsPerSec: number
+  p50Ns: number
+  p99Ns: number
+}
+
+const WORKER_PATH = join(import.meta.dirname, '..', 'scaling', 'worker.ts')
+const BASE_SEED = 42
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0
+  const idx = Math.ceil(p * sorted.length) - 1
+  return sorted[Math.max(0, idx)]
+}
+
+function spawnWorker(config: Record<string, unknown>): Promise<WorkerResult> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(WORKER_PATH, {
+      workerData: config,
+      execArgv: ['--import', 'tsx'],
+    })
+    worker.on('message', (result: WorkerResult) => resolve(result))
+    worker.on('error', reject)
+    worker.on('exit', code => {
+      if (code !== 0) reject(new Error(`Worker exited with code ${code}`))
+    })
+  })
+}
+
+async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<ConcurrentDataPoint[]> {
+  const results: ConcurrentDataPoint[] = []
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-conc-'))
+  let sirannonDbPath = ''
+  const pgConfig =
+    ENGINE === 'postgres'
+      ? {
+          host: process.env.PGHOST ?? '127.0.0.1',
+          port: Number(process.env.PGPORT ?? 5432),
+          user: process.env.PGUSER ?? 'benchmark',
+          password: process.env.PGPASSWORD ?? 'benchmark',
+          database: process.env.PGDATABASE ?? 'benchmark',
+        }
+      : undefined
+
+  if (ENGINE === 'sirannon') {
+    const { Database } = await import('../../src/core/database')
+    sirannonDbPath = join(tempDir, 'conc.db')
+    const db = new Database('conc-setup', sirannonDbPath, { readPoolSize: 1, walMode: true })
+    db.execute('PRAGMA synchronous = NORMAL')
+
+    for (const stmt of microSchemaSqlite
+      .split(';')
+      .map(s => s.trim())
+      .filter(Boolean)) {
+      db.execute(stmt)
+    }
+    const rows = Array.from({ length: config.dataSize }, (_, i) => generateUserRow(i + 1))
+    db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+    db.close()
+  } else {
+    const pg = await import('pg')
+    const pool = new pg.default.Pool({ ...pgConfig, max: 2 })
+
+    for (const stmt of microSchemaPostgres
+      .split(';')
+      .map(s => s.trim())
+      .filter(Boolean)) {
+      const match = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i)
+      if (match) await pool.query(`DROP TABLE IF EXISTS ${match[1]} CASCADE`)
+      await pool.query(stmt)
+    }
+
+    const rows = Array.from({ length: config.dataSize }, (_, i) => generateUserRow(i + 1))
+    const CHUNK = 500
+    for (let offset = 0; offset < rows.length; offset += CHUNK) {
+      const chunk = rows.slice(offset, offset + CHUNK)
+      const values: unknown[] = []
+      const placeholders: string[] = []
+      for (let i = 0; i < chunk.length; i++) {
+        const row = chunk[i]
+        const rowPh: string[] = []
+        for (let j = 0; j < 5; j++) {
+          values.push(row[j])
+          rowPh.push(`$${i * 5 + j + 1}`)
+        }
+        placeholders.push(`(${rowPh.join(', ')})`)
+      }
+      await pool.query(`INSERT INTO users (id, name, email, age, bio) VALUES ${placeholders.join(', ')}`, values)
+    }
+    await pool.end()
+  }
+
+  for (const readRatio of config.readRatios) {
+    for (const N of config.concurrencyLevels) {
+      console.log(`[${ENGINE}] Event loop: readRatio=${readRatio}, N=${N}`)
+
+      if (ENGINE === 'sirannon') {
+        const { Database } = await import('../../src/core/database')
+        const db = new Database('conc-el', sirannonDbPath, { readPoolSize: 1, walMode: true })
+        db.execute('PRAGMA busy_timeout = 5000')
+        db.execute('PRAGMA synchronous = NORMAL')
+        const rng = new SeededRng(BigInt(BASE_SEED))
+        const zipf = new ZipfianGenerator(config.dataSize, 0.99, rng)
+
+        let ops = 0
+        const samples: number[] = []
+        const deadline = Date.now() + config.durationMs
+
+        while (Date.now() < deadline) {
+          for (let i = 0; i < N; i++) {
+            const isRead = rng.next() < readRatio
+            const id = zipf.next() + 1
+            const start = process.hrtime.bigint()
+            if (isRead) {
+              db.query('SELECT * FROM users WHERE id = ?', [id])
+            } else {
+              const age = Math.floor(rng.next() * 80) + 18
+              db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+            }
+            const elapsed = Number(process.hrtime.bigint() - start)
+            ops++
+            if (samples.length < 10_000) samples.push(elapsed)
+          }
+        }
+
+        db.close()
+        samples.sort((a, b) => a - b)
+        const opsPerSec = ops / (config.durationMs / 1_000)
+        results.push({
+          concurrency: N,
+          readRatio,
+          model: 'event-loop',
+          totalOps: ops,
+          opsPerSec,
+          p50Ns: percentile(samples, 0.5),
+          p99Ns: percentile(samples, 0.99),
+        })
+      } else {
+        const pg = await import('pg')
+        const pool = new pg.default.Pool({ ...pgConfig, max: N })
+        const rng = new SeededRng(BigInt(BASE_SEED))
+        const zipf = new ZipfianGenerator(config.dataSize, 0.99, rng)
+
+        let ops = 0
+        const samples: number[] = []
+        const deadline = Date.now() + config.durationMs
+
+        while (Date.now() < deadline) {
+          const batch: Promise<void>[] = []
+          for (let i = 0; i < N; i++) {
+            const isRead = rng.next() < readRatio
+            const id = zipf.next() + 1
+            const start = process.hrtime.bigint()
+
+            if (isRead) {
+              batch.push(
+                pool.query({ text: 'SELECT * FROM users WHERE id = $1', values: [id] }).then(() => {
+                  const elapsed = Number(process.hrtime.bigint() - start)
+                  ops++
+                  if (samples.length < 10_000) samples.push(elapsed)
+                }),
+              )
+            } else {
+              const age = Math.floor(rng.next() * 80) + 18
+              batch.push(
+                pool.query({ text: 'UPDATE users SET age = $1 WHERE id = $2', values: [age, id] }).then(() => {
+                  const elapsed = Number(process.hrtime.bigint() - start)
+                  ops++
+                  if (samples.length < 10_000) samples.push(elapsed)
+                }),
+              )
+            }
+          }
+          await Promise.all(batch)
+        }
+
+        await pool.end()
+        samples.sort((a, b) => a - b)
+        const opsPerSec = ops / (config.durationMs / 1_000)
+        results.push({
+          concurrency: N,
+          readRatio,
+          model: 'event-loop',
+          totalOps: ops,
+          opsPerSec,
+          p50Ns: percentile(samples, 0.5),
+          p99Ns: percentile(samples, 0.99),
+        })
+      }
+
+      console.log(`[${ENGINE}] Worker threads: readRatio=${readRatio}, N=${N}`)
+
+      const workers: Promise<WorkerResult>[] = []
+      for (let i = 0; i < N; i++) {
+        const wConfig: Record<string, unknown> = {
+          engine: ENGINE,
+          durationMs: config.durationMs,
+          dataSize: config.dataSize,
+          readRatio,
+          seed: BASE_SEED + i + 1,
+        }
+        if (ENGINE === 'sirannon') {
+          wConfig.sirannonDbPath = sirannonDbPath
+        } else {
+          wConfig.pgConfig = pgConfig
+        }
+        workers.push(spawnWorker(wConfig))
+      }
+
+      const workerResults = await Promise.all(workers)
+      const totalOps = workerResults.reduce((sum, r) => sum + r.ops, 0)
+      const mergedSamples = workerResults.flatMap(r => r.latencySamplesNs).sort((a, b) => a - b)
+      const opsPerSec = totalOps / (config.durationMs / 1_000)
+
+      results.push({
+        concurrency: N,
+        readRatio,
+        model: 'worker-threads',
+        totalOps,
+        opsPerSec,
+        p50Ns: percentile(mergedSamples, 0.5),
+        p99Ns: percentile(mergedSamples, 0.99),
+      })
+    }
+  }
+
+  rmSync(tempDir, { recursive: true, force: true })
+  return results
+}
+
 function sendJson(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(body))
@@ -332,6 +582,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       sendJson(res, 200, { engine: ENGINE, results: allResults })
+      return
+    }
+
+    if (url === '/benchmark/concurrent' && method === 'POST') {
+      const body = JSON.parse(await readBody(req))
+      const concConfig: ConcurrentConfig = {
+        concurrencyLevels: body.concurrencyLevels ?? [1, 2, 4, 8, 16, 32, 64],
+        durationMs: body.durationMs ?? 10_000,
+        dataSize: body.dataSize ?? 10_000,
+        readRatios: body.readRatios ?? [1.0, 0.5],
+      }
+
+      const dataPoints = await runConcurrentBenchmark(concConfig)
+      sendJson(res, 200, { engine: ENGINE, results: dataPoints })
       return
     }
 

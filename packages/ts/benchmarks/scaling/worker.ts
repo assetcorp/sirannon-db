@@ -111,8 +111,9 @@ async function runPostgres(): Promise<WorkerResult> {
 }
 
 async function main() {
+  if (!parentPort) throw new Error('worker.ts must run inside a Worker thread')
   const result = config.engine === 'sirannon' ? await runSirannon() : await runPostgres()
-  parentPort?.postMessage(result)
+  parentPort.postMessage(result)
 }
 
 main().catch(err => {

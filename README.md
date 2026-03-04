@@ -103,19 +103,69 @@ db.unwatch('orders')
 
 ### Migrations
 
-Place numbered SQL files in a directory and run them in order. Each migration runs inside a transaction and is tracked in a `_sirannon_migrations` table so it only applies once.
+Place numbered SQL files in a directory using the `.up.sql` / `.down.sql` convention. Each migration runs inside a transaction and is tracked in a `_sirannon_migrations` table so it only applies once. Down files are optional; rollback throws if a down file is missing for a version being rolled back.
 
-```
+```txt
 migrations/
-  001_create_users.sql
-  002_add_email_index.sql
-  003_create_orders.sql
+  001_create_users.up.sql
+  001_create_users.down.sql
+  002_add_email_index.up.sql
+  003_create_orders.up.sql
+  003_create_orders.down.sql
 ```
+
+Timestamp-based versioning works the same way:
+
+```txt
+migrations/
+  1709312400_create_users.up.sql
+  1709312400_create_users.down.sql
+```
+
+#### File-based migrations
 
 ```ts
 const result = db.migrate('./migrations')
-// result.applied: files that ran this time
-// result.skipped: number of files already applied
+// result.applied: entries that ran this time
+// result.skipped: number of entries already applied
+```
+
+#### Rollback
+
+```ts
+db.rollback('./migrations')            // undo the last applied migration
+db.rollback('./migrations', 2)         // undo all migrations after version 2
+db.rollback('./migrations', 0)         // undo everything
+```
+
+#### Programmatic migrations
+
+Pass an array of migration objects instead of a directory path. The `up` and `down` fields accept SQL strings or functions that receive a `Transaction`.
+
+```ts
+const migrations = [
+  {
+    version: 1,
+    name: 'create_users',
+    up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+    down: 'DROP TABLE users',
+  },
+  {
+    version: 2,
+    name: 'seed_data',
+    up: (tx) => {
+      // You can run any code here
+      tx.execute("INSERT INTO users (name) VALUES (?)", ['Alice'])
+    },
+    down: (tx) => {
+      tx.execute("DELETE FROM users WHERE name = ?", ['Alice'])
+    },
+  },
+]
+
+db.migrate(migrations)
+db.rollback(migrations)        // undo last migration
+db.rollback(migrations, 0)     // undo everything
 ```
 
 ### Backups

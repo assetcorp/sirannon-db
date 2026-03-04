@@ -19,7 +19,11 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
 
   const segments = dirPath.split(/[/\\]/)
   if (segments.includes('..')) {
-    throw new MigrationError('Migration path must not contain directory traversal segments', 0, 'MIGRATION_VALIDATION_ERROR')
+    throw new MigrationError(
+      'Migration path must not contain directory traversal segments',
+      0,
+      'MIGRATION_VALIDATION_ERROR',
+    )
   }
 
   const resolvedPath = resolve(dirPath)
@@ -123,7 +127,11 @@ export function readDownMigrations(scanned: ScannedMigration[], versions: number
 
     const downSql = readFileSync(entry.downPath, 'utf-8').trim()
     if (downSql.length === 0) {
-      throw new MigrationError(`Down migration file is empty: ${entry.downPath}`, entry.version, 'MIGRATION_VALIDATION_ERROR')
+      throw new MigrationError(
+        `Down migration file is empty: ${entry.downPath}`,
+        entry.version,
+        'MIGRATION_VALIDATION_ERROR',
+      )
     }
 
     return {

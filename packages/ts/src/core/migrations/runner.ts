@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3'
 import { MigrationError } from '../errors.js'
 import { Transaction } from '../transaction.js'
-import { scanDirectory, readUpMigrations, readDownMigrations } from './scanner.js'
-import type { Migration, MigrationResult, RollbackResult, AppliedMigrationEntry } from './types.js'
+import { readDownMigrations, readUpMigrations, scanDirectory } from './scanner.js'
+import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
 
 type SqliteDb = InstanceType<typeof Database>
 
@@ -14,14 +14,13 @@ const CREATE_TRACKING_TABLE = `
   )
 `
 
+// biome-ignore lint/complexity/noStaticOnlyClass: public API exported as a class namespace
 export class MigrationRunner {
   static run(db: SqliteDb, input: string | Migration[]): MigrationResult {
     db.exec(CREATE_TRACKING_TABLE)
 
     const migrations =
-      typeof input === 'string'
-        ? readUpMigrations(scanDirectory(input))
-        : MigrationRunner.validateMigrations(input)
+      typeof input === 'string' ? readUpMigrations(scanDirectory(input)) : MigrationRunner.validateMigrations(input)
 
     const applied = MigrationRunner.getAppliedVersions(db)
     const pending = migrations.filter(m => !applied.has(m.version))
@@ -103,11 +102,7 @@ export class MigrationRunner {
         const m = inputByVersion.get(v)
         if (!m || m.down === undefined) {
           const name = rollbackSet.find(r => r.version === v)?.name ?? 'unknown'
-          throw new MigrationError(
-            `Migration version ${v} (${name}) has no down migration`,
-            v,
-            'MIGRATION_NO_DOWN',
-          )
+          throw new MigrationError(`Migration version ${v} (${name}) has no down migration`, v, 'MIGRATION_NO_DOWN')
         }
         downByVersion.set(v, m)
       }
@@ -118,13 +113,20 @@ export class MigrationRunner {
 
     db.transaction(() => {
       for (const entry of rollbackSet) {
-        const migration = downByVersion.get(entry.version)!
+        const migration = downByVersion.get(entry.version)
+        if (!migration) {
+          throw new MigrationError(
+            `No down migration found for version ${entry.version}`,
+            entry.version,
+            'MIGRATION_ROLLBACK_ERROR',
+          )
+        }
 
         try {
           if (typeof migration.down === 'string') {
             db.exec(migration.down)
           } else {
-            migration.down!(new Transaction(db))
+            migration.down?.(new Transaction(db))
           }
         } catch (err) {
           if (err instanceof MigrationError) throw err
@@ -155,11 +157,7 @@ export class MigrationRunner {
       }
 
       if (!/^\w+$/.test(m.name)) {
-        throw new MigrationError(
-          `Invalid migration name: '${m.name}'`,
-          m.version,
-          'MIGRATION_VALIDATION_ERROR',
-        )
+        throw new MigrationError(`Invalid migration name: '${m.name}'`, m.version, 'MIGRATION_VALIDATION_ERROR')
       }
 
       const existing = seenVersions.get(m.version)

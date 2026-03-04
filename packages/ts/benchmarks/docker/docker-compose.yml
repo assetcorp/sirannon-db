@@ -113,6 +113,7 @@ services:
       - ENGINE=sirannon
       - HOST=0.0.0.0
       - PORT=9878
+      - BENCH_DURABILITY=${BENCH_DURABILITY:-matched}
     deploy:
       resources:
         limits:
@@ -143,13 +144,14 @@ services:
       - PGDATABASE=benchmark
       - PG_POOL_SIZE=10
       - NODE_OPTIONS=--max-old-space-size=1536
+      - BENCH_DURABILITY=${BENCH_DURABILITY:-matched}
     depends_on:
       postgres-eng:
         condition: service_healthy
     deploy:
       resources:
         limits:
-          cpus: '1'
+          cpus: '${BENCH_CPUS:-2}'
           memory: ${BENCH_PG_CLIENT_MEMORY:-2g}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9879/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]

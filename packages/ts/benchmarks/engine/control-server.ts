@@ -11,6 +11,7 @@ import { getWorkload, type WorkloadConfig, workloads } from './workloads'
 const ENGINE = process.env.ENGINE ?? 'sirannon'
 const HOST = process.env.HOST ?? '0.0.0.0'
 const PORT = Number(process.env.PORT ?? 9878)
+const DURABILITY = (process.env.BENCH_DURABILITY ?? 'matched') as 'matched' | 'full'
 
 interface EngineBackend {
   setup(schemaSql: string): Promise<void>
@@ -31,7 +32,7 @@ async function createSirannonBackend(): Promise<EngineBackend> {
       tempDir = mkdtempSync(join(tmpdir(), 'sirannon-engine-'))
       const dbPath = join(tempDir, 'bench.db')
       db = new Database('bench', dbPath, { readPoolSize: 4, walMode: true })
-      db.execute('PRAGMA synchronous = NORMAL')
+      db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
       for (const stmt of schemaSql
         .split(';')
@@ -89,6 +90,11 @@ async function createPostgresBackend(): Promise<EngineBackend> {
         password: process.env.PGPASSWORD ?? 'benchmark',
         database: process.env.PGDATABASE ?? 'benchmark',
         max: Number(process.env.PG_POOL_SIZE ?? 10),
+      })
+
+      const syncCommit = DURABILITY === 'full' ? 'on' : 'off'
+      pool.on('connect', client => {
+        client.query(`SET synchronous_commit = ${syncCommit}`)
       })
 
       for (const stmt of schemaSql
@@ -326,7 +332,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
       const { Database } = await import('../../src/core/database')
       sirannonDbPath = join(tempDir, 'conc.db')
       const db = new Database('conc-setup', sirannonDbPath, { readPoolSize: 1, walMode: true })
-      db.execute('PRAGMA synchronous = NORMAL')
+      db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
       try {
         for (const stmt of microSchemaSqlite
@@ -343,6 +349,10 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
     } else {
       const pg = await import('pg')
       const pool = new pg.default.Pool({ ...pgConfig, max: 2 })
+      const syncCommitConc = DURABILITY === 'full' ? 'on' : 'off'
+      pool.on('connect', client => {
+        client.query(`SET synchronous_commit = ${syncCommitConc}`)
+      })
 
       try {
         for (const stmt of microSchemaPostgres
@@ -384,7 +394,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
           const { Database } = await import('../../src/core/database')
           const db = new Database('conc-el', sirannonDbPath, { readPoolSize: 1, walMode: true })
           db.execute('PRAGMA busy_timeout = 5000')
-          db.execute('PRAGMA synchronous = NORMAL')
+          db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
           try {
             const rng = new SeededRng(BigInt(BASE_SEED))
@@ -428,6 +438,10 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
         } else {
           const pg = await import('pg')
           const pool = new pg.default.Pool({ ...pgConfig, max: N })
+          const syncCommitEl = DURABILITY === 'full' ? 'on' : 'off'
+          pool.on('connect', client => {
+            client.query(`SET synchronous_commit = ${syncCommitEl}`)
+          })
 
           try {
             const rng = new SeededRng(BigInt(BASE_SEED))

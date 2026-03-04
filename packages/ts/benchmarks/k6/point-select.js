@@ -55,7 +55,7 @@ export function querySirannon() {
     'sirannon status 200': r => r.status === 200,
     'sirannon has rows': r => {
       const body = r.json()
-      return body && body.rows && body.rows.length > 0
+      return body?.rows && body.rows.length > 0
     },
   })
 }
@@ -72,7 +72,7 @@ export function queryPostgres() {
     'postgres status 200': r => r.status === 200,
     'postgres has rows': r => {
       const body = r.json()
-      return body && body.rows && body.rows.length > 0
+      return body?.rows && body.rows.length > 0
     },
   })
 }

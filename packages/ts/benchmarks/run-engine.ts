@@ -301,6 +301,56 @@ async function main() {
 
     console.log(`\nEngine benchmark results written to ${resultsPath}`)
 
+    const engineCsvHeader = [
+      'workload',
+      'dataSize',
+      'operation',
+      'sirannonOpsPerSec',
+      'postgresOpsPerSec',
+      'speedup',
+      'sirannonP50Ns',
+      'sirannonP99Ns',
+      'postgresP50Ns',
+      'postgresP99Ns',
+      'sirannonCV',
+      'postgresCV',
+    ].join(',')
+    const engineCsvRows: string[] = []
+
+    for (const sResult of sirannonResult.results as EngineResult[]) {
+      const pResult = (postgresResult.results as EngineResult[]).find(
+        r => r.workload === sResult.workload && r.dataSize === sResult.dataSize,
+      )
+      if (!pResult) continue
+
+      for (let i = 0; i < sResult.results.length; i++) {
+        const sr = sResult.results[i]
+        const pr = pResult.results[i]
+        if (!pr) continue
+        const speedup = pr.opsPerSec > 0 ? sr.opsPerSec / pr.opsPerSec : Infinity
+        engineCsvRows.push(
+          [
+            sResult.workload,
+            sResult.dataSize,
+            sr.name,
+            sr.opsPerSec.toFixed(2),
+            pr.opsPerSec.toFixed(2),
+            speedup.toFixed(4),
+            sr.p50Ns.toFixed(0),
+            sr.p99Ns.toFixed(0),
+            pr.p50Ns.toFixed(0),
+            pr.p99Ns.toFixed(0),
+            sr.cv.toFixed(4),
+            pr.cv.toFixed(4),
+          ].join(','),
+        )
+      }
+    }
+
+    const engineCsvPath = join(RESULTS_DIR, `engine-${timestamp}.csv`)
+    writeFileSync(engineCsvPath, `${[engineCsvHeader, ...engineCsvRows].join('\n')}\n`)
+    console.log(`Engine CSV written to ${engineCsvPath}`)
+
     const concurrencyLevels = (process.env.BENCH_CONCURRENCY_LEVELS ?? '1,2,4,8,16,32,64').split(',').map(Number)
     const scalingDurationMs = Number(process.env.BENCH_SCALING_DURATION_MS ?? 10_000)
     const scalingTimeout = concurrencyLevels.length * 2 * 2 * (scalingDurationMs + 30_000) * 2
@@ -349,6 +399,49 @@ async function main() {
       )}\n`,
     )
     console.log(`\nScaling benchmark results written to ${scalingResultsPath}`)
+
+    const scalingCsvHeader = [
+      'model',
+      'workload',
+      'concurrency',
+      'sirannonOpsPerSec',
+      'postgresOpsPerSec',
+      'speedup',
+      'sirannonP50Ns',
+      'sirannonP99Ns',
+      'postgresP50Ns',
+      'postgresP99Ns',
+    ].join(',')
+    const scalingCsvRows: string[] = []
+
+    const sirannonConcPoints = sirannonConcResult.results
+    const postgresConcPoints = postgresConcResult.results
+
+    for (const sp of sirannonConcPoints) {
+      const pp = postgresConcPoints.find(
+        p => p.model === sp.model && p.concurrency === sp.concurrency && p.readRatio === sp.readRatio,
+      )
+      if (!pp) continue
+      const speedup = pp.opsPerSec > 0 ? sp.opsPerSec / pp.opsPerSec : Infinity
+      scalingCsvRows.push(
+        [
+          sp.model,
+          workloadLabel(sp.readRatio),
+          sp.concurrency,
+          sp.opsPerSec.toFixed(2),
+          pp.opsPerSec.toFixed(2),
+          speedup.toFixed(4),
+          sp.p50Ns.toFixed(0),
+          sp.p99Ns.toFixed(0),
+          pp.p50Ns.toFixed(0),
+          pp.p99Ns.toFixed(0),
+        ].join(','),
+      )
+    }
+
+    const scalingCsvPath = join(RESULTS_DIR, `engine-scaling-${timestamp}.csv`)
+    writeFileSync(scalingCsvPath, `${[scalingCsvHeader, ...scalingCsvRows].join('\n')}\n`)
+    console.log(`Scaling CSV written to ${scalingCsvPath}`)
 
     await postJson(`${SIRANNON_ENGINE_URL}/cleanup`, {})
     await postJson(`${POSTGRES_ENGINE_URL}/cleanup`, {})

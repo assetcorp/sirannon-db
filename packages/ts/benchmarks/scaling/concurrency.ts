@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -24,6 +24,7 @@ const CONCURRENCY_LEVELS = [1, 2, 4, 8, 16, 32, 64]
 const READ_RATIOS = [1.0, 0.5]
 const DATA_SIZE = 10_000
 const DURATION_MS = Number(process.env.BENCH_SCALING_DURATION_MS ?? 10_000)
+const DURABILITY = (process.env.BENCH_DURABILITY ?? 'matched') as 'matched' | 'full'
 const WORKER_PATH = join(import.meta.dirname, 'worker-bootstrap.mjs')
 const BASE_SEED = 42
 
@@ -74,7 +75,7 @@ function runEventLoopSirannon(
 ): { totalOps: number; p50Ns: number; p99Ns: number } {
   const db = new Database('scaling-el', dbPath, { readPoolSize: 1, walMode: true })
   db.execute('PRAGMA busy_timeout = 5000')
-  db.execute('PRAGMA synchronous = NORMAL')
+  db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   try {
     const rng = new SeededRng(BigInt(BASE_SEED))
@@ -118,6 +119,10 @@ async function runEventLoopPostgres(
   readRatio: number,
 ): Promise<{ totalOps: number; p50Ns: number; p99Ns: number }> {
   const pool = new pg.Pool({ ...pgConfig, max: concurrency })
+  const syncCommit = DURABILITY === 'full' ? 'on' : 'off'
+  pool.on('connect', (client: pg.PoolClient) => {
+    client.query(`SET synchronous_commit = ${syncCommit}`)
+  })
 
   try {
     const rng = new SeededRng(BigInt(BASE_SEED))
@@ -183,6 +188,7 @@ async function runWorkerThreads(
       dataSize: DATA_SIZE,
       readRatio,
       seed: BASE_SEED + i + 1,
+      durability: DURABILITY,
     }
     if (engine === 'sirannon') {
       config.sirannonDbPath = sirannonDbPath
@@ -201,7 +207,7 @@ async function runWorkerThreads(
 function setupSirannonDb(tempDir: string): string {
   const dbPath = join(tempDir, 'scaling.db')
   const db = new Database('scaling-setup', dbPath, { readPoolSize: 1, walMode: true })
-  db.execute('PRAGMA synchronous = NORMAL')
+  db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   for (const stmt of microSchemaSqlite
     .split(';')
@@ -218,6 +224,10 @@ function setupSirannonDb(tempDir: string): string {
 
 async function setupPostgres(pgConfig: pg.PoolConfig): Promise<void> {
   const pool = new pg.Pool({ ...pgConfig, max: 2 })
+  const syncCommitSetup = DURABILITY === 'full' ? 'on' : 'off'
+  pool.on('connect', (client: pg.PoolClient) => {
+    client.query(`SET synchronous_commit = ${syncCommitSetup}`)
+  })
 
   try {
     for (const stmt of microSchemaPostgres
@@ -353,6 +363,44 @@ function toComparisonResults(dataPoints: ScalingDataPoint[]): ComparisonResult[]
   })
 }
 
+function writeScalingCsv(dataPoints: ScalingDataPoint[]): void {
+  const resultsDir = join(import.meta.dirname, '..', 'results')
+  mkdirSync(resultsDir, { recursive: true })
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const csvHeader = [
+    'model',
+    'workload',
+    'concurrency',
+    'sirannonOpsPerSec',
+    'postgresOpsPerSec',
+    'speedup',
+    'sirannonP50Ns',
+    'sirannonP99Ns',
+    'postgresP50Ns',
+    'postgresP99Ns',
+  ].join(',')
+
+  const csvRows = dataPoints.map(dp =>
+    [
+      dp.model,
+      workloadLabel(dp.readRatio),
+      dp.concurrency,
+      dp.sirannonOps.toFixed(2),
+      dp.postgresOps.toFixed(2),
+      dp.speedup.toFixed(4),
+      dp.sirannonP50Ns.toFixed(0),
+      dp.sirannonP99Ns.toFixed(0),
+      dp.postgresP50Ns.toFixed(0),
+      dp.postgresP99Ns.toFixed(0),
+    ].join(','),
+  )
+
+  const csvPath = join(resultsDir, `concurrency-scaling-${timestamp}.csv`)
+  writeFileSync(csvPath, `${[csvHeader, ...csvRows].join('\n')}\n`)
+  console.log(`Scaling CSV written to ${csvPath}`)
+}
+
 async function main() {
   const config = loadConfig()
   const pgAvailable = await isPostgresAvailable(config)
@@ -461,6 +509,7 @@ async function main() {
     printScalingTable('Worker Thread Pool Model', workerThreadPoints)
 
     const allPoints = [...eventLoopPoints, ...workerThreadPoints]
+    writeScalingCsv(allPoints)
     const results = toComparisonResults(allPoints)
     writeResults('concurrency-scaling', systemInfo, results)
   } finally {

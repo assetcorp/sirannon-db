@@ -400,7 +400,7 @@ describe('CORS', () => {
     }
   })
 
-  it('joins multiple CORS origins from array configuration', async () => {
+  it('echoes matching origin from array configuration', async () => {
     const corsServer = createServer(sirannon, {
       port: 0,
       cors: { origin: ['https://app.example.com', 'https://admin.example.com'] },
@@ -411,10 +411,37 @@ describe('CORS', () => {
     try {
       const res = await fetch(`${corsUrl}/db/test/query`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'https://admin.example.com',
+        },
         body: JSON.stringify({ sql: 'SELECT 1 as val' }),
       })
-      expect(res.headers.get('access-control-allow-origin')).toBe('https://app.example.com, https://admin.example.com')
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://admin.example.com')
+      expect(res.headers.get('vary')).toBe('Origin')
+    } finally {
+      await corsServer.close()
+    }
+  })
+
+  it('omits CORS header when origin is not in allowed list', async () => {
+    const corsServer = createServer(sirannon, {
+      port: 0,
+      cors: { origin: ['https://app.example.com', 'https://admin.example.com'] },
+    })
+    await corsServer.listen()
+    const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
+
+    try {
+      const res = await fetch(`${corsUrl}/db/test/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'https://evil.example.com',
+        },
+        body: JSON.stringify({ sql: 'SELECT 1 as val' }),
+      })
+      expect(res.headers.get('access-control-allow-origin')).toBeNull()
     } finally {
       await corsServer.close()
     }

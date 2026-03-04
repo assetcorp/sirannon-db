@@ -221,7 +221,7 @@ describe('statement caching', () => {
         [Symbol.iterator]() {
           return this
         },
-      } as IterableIterator<string>
+      } as unknown as ReturnType<typeof originalKeys>
     }
 
     try {

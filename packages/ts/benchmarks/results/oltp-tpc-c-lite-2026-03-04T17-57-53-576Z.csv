@@ -1,0 +1,2 @@
+workload,dataSize,sirannonOpsPerSec,postgresOpsPerSec,speedup,sirannonP50Ns,sirannonP99Ns,postgresP50Ns,postgresP99Ns,sirannonCV,postgresCV,pValue,ciLower,ciUpper,runs
+tpc-c-lite,1000,55824.46,1275.81,43.7560,15833,3843652,852459,2617014,2.5814,0.5887,0.000000,42.48,44.97,10

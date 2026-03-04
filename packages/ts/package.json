@@ -40,7 +40,9 @@
     "bench:cdc": "node --expose-gc --import tsx benchmarks/sirannon/cdc-latency.ts",
     "bench:docker": "node --import tsx benchmarks/run-docker.ts",
     "bench:docker:e2e": "node --import tsx benchmarks/run-e2e.ts",
-    "bench:docker:engine": "node --expose-gc --import tsx benchmarks/run-engine.ts"
+    "bench:docker:engine": "node --expose-gc --import tsx benchmarks/run-engine.ts",
+    "bench:statistical": "node --expose-gc --import tsx benchmarks/run-statistical.ts",
+    "bench:charts": "python3 benchmarks/scripts/generate-charts.py benchmarks/results/"
   },
   "exports": {
     ".": {

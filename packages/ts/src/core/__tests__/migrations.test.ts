@@ -344,9 +344,9 @@ INSERT INTO users (name) VALUES ('Bob');`,
         {
           version: 1,
           name: 'create_users',
-          up: (tx) => {
+          up: tx => {
             tx.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
-            tx.execute("INSERT INTO users (name) VALUES (?)", ['Alice'])
+            tx.execute('INSERT INTO users (name) VALUES (?)', ['Alice'])
           },
         },
       ]
@@ -369,9 +369,9 @@ INSERT INTO users (name) VALUES ('Bob');`,
         {
           version: 2,
           name: 'seed_users',
-          up: (tx) => {
-            tx.execute("INSERT INTO users (name) VALUES (?)", ['Alice'])
-            tx.execute("INSERT INTO users (name) VALUES (?)", ['Bob'])
+          up: tx => {
+            tx.execute('INSERT INTO users (name) VALUES (?)', ['Alice'])
+            tx.execute('INSERT INTO users (name) VALUES (?)', ['Bob'])
           },
         },
       ]
@@ -393,7 +393,7 @@ INSERT INTO users (name) VALUES ('Bob');`,
           version: 1,
           name: 'create_users',
           up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
-          down: (tx) => {
+          down: tx => {
             tx.execute('DROP TABLE users')
           },
         },
@@ -767,9 +767,7 @@ INSERT INTO users (name) VALUES ('Bob');`,
       expect(result.rolledBack).toHaveLength(1)
       expect(result.rolledBack[0].version).toBe(1)
 
-      const tables = raw
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'")
-        .all()
+      const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").all()
       expect(tables).toHaveLength(0)
 
       raw.close()

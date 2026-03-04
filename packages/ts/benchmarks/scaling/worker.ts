@@ -8,6 +8,7 @@ interface WorkerConfig {
   dataSize: number
   readRatio: number
   seed: number
+  durability?: 'matched' | 'full'
   sirannonDbPath?: string
   pgConfig?: {
     host: string
@@ -53,7 +54,7 @@ async function runSirannon(): Promise<WorkerResult> {
     walMode: true,
   })
   db.execute('PRAGMA busy_timeout = 5000')
-  db.execute('PRAGMA synchronous = NORMAL')
+  db.execute(config.durability === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   let ops = 0
   const latencySamplesNs: number[] = []
@@ -84,6 +85,10 @@ async function runPostgres(): Promise<WorkerResult> {
   const pool = new pg.default.Pool({
     ...config.pgConfig,
     max: 1,
+  })
+  const syncCommit = config.durability === 'full' ? 'on' : 'off'
+  pool.on('connect', (client: InstanceType<typeof pg.default.Client>) => {
+    client.query(`SET synchronous_commit = ${syncCommit}`)
   })
 
   let ops = 0

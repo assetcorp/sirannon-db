@@ -172,7 +172,7 @@ export interface RequestDenial {
 }
 
 /** Middleware hook for auth, rate limiting, and request validation. */
-export type OnRequestHook = (ctx: RequestContext) => void | RequestDenial | Promise<void | RequestDenial>
+export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
 /** Options for the standalone HTTP + WS server. */
 export interface ServerOptions {

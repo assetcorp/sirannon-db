@@ -1,6 +1,6 @@
 # Benchmarks
 
-Sirannon benchmarks compare embedded SQLite performance against Postgres 17 across micro-operations, industry-standard workloads (YCSB, TPC-C), and Sirannon-specific features like CDC and connection pooling.
+Sirannon benchmarks compare embedded SQLite performance against Postgres 17 across micro-operations, industry-standard workloads (YCSB, TPC-C), concurrency scaling, and Sirannon-specific features like CDC and connection pooling.
 
 Two benchmark categories exist: **local benchmarks** for quick development feedback, and **Docker-based benchmarks** for fair, reproducible comparisons.
 
@@ -10,6 +10,7 @@ Two benchmark categories exist: **local benchmarks** for quick development feedb
 - pnpm
 - Docker and Docker Compose
 - [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) (for end-to-end Docker benchmarks)
+- Python 3 with matplotlib and pandas (for chart generation, optional)
 
 ## Local Benchmarks
 
@@ -56,11 +57,13 @@ Runs every benchmark sequentially. Benchmarks that need Postgres are skipped if 
 **Individual suites:**
 
 ```sh
-pnpm bench:micro    # point-select, range-select, bulk-insert, batch-update
-pnpm bench:ycsb     # YCSB workload-b (read-heavy)
-pnpm bench:oltp     # TPC-C lite
-pnpm bench:concurrent # concurrent read, write, mixed
-pnpm bench:cdc      # CDC latency
+pnpm bench:micro       # point-select, bulk-insert, batch-update
+pnpm bench:ycsb        # YCSB workload-a (50/50 mixed)
+pnpm bench:oltp        # TPC-C lite
+pnpm bench:scaling     # Concurrency scaling (event-loop + worker threads)
+pnpm bench:cdc         # CDC latency
+pnpm bench:statistical # 4 key benchmarks x 10 runs with full statistics
+pnpm bench:charts      # Generate SVG charts from CSV results
 ```
 
 ### Local Benchmark Categories
@@ -68,19 +71,20 @@ pnpm bench:cdc      # CDC latency
 **Micro** (requires Postgres) - Single-operation latency and throughput:
 
 - `point-select` - Primary-key lookups
-- `range-select` - Range scans with LIMIT
 - `bulk-insert` - Batch row inserts
 - `batch-update` - Batch row updates
 
 **YCSB** (requires Postgres) - Yahoo! Cloud Serving Benchmark workloads:
 
 - `workload-a` - 50% read, 50% update
-- `workload-b` - 95% read, 5% update
-- `workload-c` - 100% read
 
 **OLTP** (requires Postgres) - Online transaction processing:
 
 - `tpc-c-lite` - Simplified TPC-C with new-order and payment transactions
+
+**Scaling** (requires Postgres) - Concurrency scaling from 1 to 64 clients:
+
+- `scaling/concurrency` - Tests two deployment models: single event-loop (Sirannon serializes, Postgres overlaps via async pool) and worker thread pool (N threads with their own connections). Two workloads: read-only (WAL concurrent readers) and 50/50 mixed (single-writer contention).
 
 **Sirannon** (no Postgres needed) - Sirannon-specific features:
 
@@ -88,12 +92,6 @@ pnpm bench:cdc      # CDC latency
 - `connection-pool` - Connection pool throughput and contention
 - `cold-start` - Database open and first-query latency
 - `multi-tenant` - Multi-database isolation throughput
-
-**Concurrent** (requires Postgres) - Multi-client parallelism:
-
-- `concurrent/read` - Concurrent read throughput at 1, 4, 8, 16 clients
-- `concurrent/write` - Concurrent write throughput (shows SQLite single-writer limitation)
-- `concurrent/mixed` - 80% read / 20% write at varying concurrency
 
 ### Configuration
 
@@ -167,18 +165,20 @@ pnpm bench:docker:e2e
 
 ### Category 2: Engine-Level Benchmarks
 
-Measures raw query execution performance under identical constraints. Both database engines get the same CPU and memory. No network latency in the measurement; each container runs tinybench internally.
+Measures raw query execution performance under identical constraints. No network latency in the measurement; each container runs tinybench internally.
 
-**Architecture:**
+**Resource allocation:**
 
-- **Sirannon engine**: Sirannon + tinybench in a container (2 CPU, 2 GB)
-- **Postgres engine**: pg.Pool + tinybench in a thin client container (0.5 CPU, 2 GB) connected to a Postgres DB container (2 CPU, 2 GB)
-- Both database engines get 2 CPU, 2 GB
+- **Sirannon engine**: Sirannon + tinybench in a single container (2 CPU, 2 GB)
+- **Postgres engine**: pg.Pool + tinybench in a client container (2 CPU, 2 GB) connected to a Postgres DB container (2 CPU, 2 GB)
+- Sirannon uses 2 CPUs total. Postgres uses 4 CPUs total (2 client + 2 database). Sirannon wins with half the total CPU resources.
+
+Both engines receive `BENCH_DURABILITY` via environment variable, so the `matched` vs `full` durability mode applies in Docker the same way it does locally.
 
 **Workloads** (same as local benchmarks):
 
-- Micro: point-select, range-select, bulk-insert, batch-update
-- YCSB: workload A (50/50), B (95/5), C (100% read)
+- Micro: point-select, bulk-insert, batch-update
+- YCSB: workload A (50/50)
 - OLTP: TPC-C lite
 
 **Running:**
@@ -200,25 +200,70 @@ pnpm bench:docker
 | `BENCH_DATA_SIZES` | `1000,10000`                     | Comma-separated row counts           |
 | `BENCH_WARMUP_MS`  | `5000`                           | Warmup duration per task             |
 | `BENCH_MEASURE_MS` | `10000`                          | Measurement duration per task        |
-| `BENCH_WORKLOADS`  | `point-select,range-select,...`  | Comma-separated workload names       |
+| `BENCH_WORKLOADS`  | `point-select,bulk-insert,...`   | Comma-separated workload names       |
+| `BENCH_DURABILITY` | `matched`                        | Durability mode for both engines     |
+
+## Statistical Analysis
+
+### Multi-run methodology
+
+Set `BENCH_RUNS` to a value greater than 1 to enable multi-run analysis. Each run creates a fresh database, seeds it independently, and measures throughput. After all runs complete, the runner calculates:
+
+- **Welch t-test** for statistical significance (unequal variance, N-1 degrees of freedom)
+- **95% bootstrap confidence interval** on the speedup ratio (10,000 resamples)
+- **IQR-based outlier detection** on per-run ops/sec
+
+The `pnpm bench:statistical` convenience script runs the 4 most representative benchmarks (point-select, batch-update, workload-a, tpc-c-lite) with `BENCH_RUNS=10` at data sizes 1,000 and 10,000.
+
+### Reading statistical columns
+
+The console table and CSV files include these columns when multi-run data is available:
+
+- **Sig**: Significance stars. `***` = p < 0.001, `**` = p < 0.01, `*` = p < 0.05, `n/s` = not significant, `-` = single run.
+- **CI**: 95% confidence interval on the speedup ratio, e.g. `[4.2, 5.8]` means the true speedup is between 4.2x and 5.8x with 95% confidence.
+- **Runs**: Number of independent runs used for the calculation.
+
+### Speedup ratio as the primary metric
+
+Absolute ops/sec varies by hardware, OS, thermal throttling, and background load. The **speedup ratio** (Sirannon ops/sec / Postgres ops/sec) cancels out most machine-specific factors and stays stable across different systems. When comparing results from different machines, focus on the ratio and CI, not raw throughput.
 
 ## Results
 
 ### Console output
 
-Each run prints a comparison table to stdout:
+Each run prints a comparison table to stdout with speedup and CI columns first:
 
 ```text
-Workload                  | N Rows | Sirannon ops/s | Postgres ops/s |  Speedup |        S P50 |        S P99 |    S CV
+Workload | N Rows | Speedup | CI | Sig | Sirannon ops/s | Postgres ops/s | P50 | P99 | CV | [Runs]
 ```
 
 - **Speedup** - Sirannon ops/s divided by Postgres ops/s
+- **CI** - 95% bootstrap confidence interval on speedup (multi-run only)
+- **Sig** - Statistical significance (multi-run only)
 - **P50 / P99** - Sirannon median and 99th-percentile latency
 - **CV** - Coefficient of variation; results marked `[!]` have CV > 10% and may be unreliable
 
-### JSON files
+### JSON and CSV files
 
-Raw results are written to `benchmarks/results/` as timestamped JSON files. Each file contains system information, configuration, and per-workload results for both engines.
+Raw results are written to `benchmarks/results/` as timestamped JSON and CSV files. Each file contains system information, configuration, and per-workload results for both engines.
+
+CSV files can be loaded directly into R, pandas, or any spreadsheet tool for custom analysis. When multi-run data is available, a separate `*-per-run-*.csv` file contains individual run data.
+
+### Charts
+
+Generate SVG charts from CSV results:
+
+```sh
+pnpm bench:charts
+```
+
+This reads all CSV files from `benchmarks/results/` and writes charts to `benchmarks/results/charts/`. Three chart types are generated:
+
+- **Speedup bar chart** - Horizontal bars showing speedup ratio per workload, with CI error bars when available
+- **Scaling line chart** - Ops/sec vs concurrency level for event-loop and worker-thread models
+- **Latency comparison** - Grouped bars comparing P50 and P99 latencies between engines
+
+Requires Python 3 with matplotlib and pandas (`pip install matplotlib pandas`).
 
 ### Interpreting results
 
@@ -248,11 +293,14 @@ benchmarks/
   schemas.ts, engine.ts                 # Schema definitions, engine interface
   sirannon-engine.ts, postgres-engine.ts # Engine implementations
   run-all.ts                            # Local benchmark orchestrator
+  run-statistical.ts                    # Multi-run statistical benchmark script
   micro/                                # Local micro benchmarks
   ycsb/                                 # Local YCSB benchmarks
   oltp/                                 # Local OLTP benchmarks
   sirannon/                             # Sirannon-only benchmarks (CDC, pool, etc.)
-  concurrent/                           # Concurrent multi-client benchmarks
+  scaling/                              # Concurrency scaling benchmarks
+  scripts/
+    generate-charts.py                  # Chart generation from CSV results
   docker/                               # Docker-based fair benchmarks
     docker-compose.yml                  # Orchestrates all containers
     Dockerfile.sirannon-app             # Category 1: Sirannon HTTP server
@@ -278,5 +326,5 @@ benchmarks/
   run-e2e.ts                            # Orchestrate Category 1
   run-engine.ts                         # Orchestrate Category 2
   run-docker.ts                         # Run both categories
-  results/                              # Output directory for JSON results
+  results/                              # Output directory for JSON/CSV results and charts
 ```

@@ -8,9 +8,9 @@ import { ExtensionError, ReadOnlyError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
+import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import { execute, executeBatch, query, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
-import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import type {
   AfterQueryHook,
   BackupScheduleOptions,

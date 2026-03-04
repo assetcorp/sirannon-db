@@ -108,16 +108,18 @@ export function formatTable(results: ComparisonResult[]): string {
   const headerCols = [
     pad('Workload', 30, 'left'),
     pad('N Rows', 8),
+    pad('Speedup', 10),
+    pad('CI', 16),
+    pad('Sig', 5),
     pad('Sirannon ops/s', 16),
     pad('Postgres ops/s', 16),
-    pad('Speedup', 10),
     pad('P50', 14),
     pad('P99', 14),
     pad('CV', 10),
   ]
 
   if (hasStats) {
-    headerCols.push(pad('Sig', 5), pad('CI', 16), pad('Runs', 5))
+    headerCols.push(pad('Runs', 5))
   }
 
   const header = headerCols.join(' | ')
@@ -128,16 +130,18 @@ export function formatTable(results: ComparisonResult[]): string {
     const cols = [
       pad(r.workload, 30, 'left'),
       pad(r.dataSize.toLocaleString(), 8),
+      pad(fmtSpeedup(r.speedup), 10),
+      pad(fmtCI(r), 16),
+      pad(fmtSig(r), 5),
       pad(fmtOps(r.sirannon.opsPerSec), 16),
       pad(fmtOps(r.postgres.opsPerSec), 16),
-      pad(fmtSpeedup(r.speedup), 10),
       pad(formatLatency(r.sirannon.p50Ns), 14),
       pad(formatLatency(r.sirannon.p99Ns), 14),
       pad(sirannonCv, 10),
     ]
 
     if (hasStats) {
-      cols.push(pad(fmtSig(r), 5), pad(fmtCI(r), 16), pad(fmtRuns(r), 5))
+      cols.push(pad(fmtRuns(r), 5))
     }
 
     return cols.join(' | ')
@@ -169,6 +173,84 @@ export function printSystemInfo(info: SystemInfo): void {
   console.log('=============================\n')
 }
 
+function escapeCsvField(value: string | number): string {
+  const str = String(value)
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
+function writeCsv(resultsDir: string, category: string, timestamp: string, results: ComparisonResult[]): void {
+  const csvHeader = [
+    'workload',
+    'dataSize',
+    'sirannonOpsPerSec',
+    'postgresOpsPerSec',
+    'speedup',
+    'sirannonP50Ns',
+    'sirannonP99Ns',
+    'postgresP50Ns',
+    'postgresP99Ns',
+    'sirannonCV',
+    'postgresCV',
+    'pValue',
+    'ciLower',
+    'ciUpper',
+    'runs',
+  ].join(',')
+
+  const csvRows = results.map(r =>
+    [
+      escapeCsvField(r.workload),
+      r.dataSize,
+      r.sirannon.opsPerSec.toFixed(2),
+      r.postgres.opsPerSec.toFixed(2),
+      r.speedup.toFixed(4),
+      r.sirannon.p50Ns.toFixed(0),
+      r.sirannon.p99Ns.toFixed(0),
+      r.postgres.p50Ns.toFixed(0),
+      r.postgres.p99Ns.toFixed(0),
+      r.sirannon.cv.toFixed(4),
+      r.postgres.cv.toFixed(4),
+      r.significance ? r.significance.pValue.toFixed(6) : '',
+      r.speedupCI ? r.speedupCI.lowerBound.toFixed(2) : '',
+      r.speedupCI ? r.speedupCI.upperBound.toFixed(2) : '',
+      r.runs ?? '',
+    ].join(','),
+  )
+
+  const csvPath = join(resultsDir, `${category}-${timestamp}.csv`)
+  writeFileSync(csvPath, `${[csvHeader, ...csvRows].join('\n')}\n`)
+  console.log(`CSV written to ${csvPath}`)
+
+  const hasMultiRun = results.some(r => r.sirannonSamples && r.postgresSamples)
+  if (hasMultiRun) {
+    const perRunHeader = 'workload,dataSize,run,sirannonOpsPerSec,postgresOpsPerSec'
+    const perRunRows: string[] = []
+
+    for (const r of results) {
+      if (!r.sirannonSamples || !r.postgresSamples) continue
+      const runCount = Math.min(r.sirannonSamples.length, r.postgresSamples.length)
+      for (let i = 0; i < runCount; i++) {
+        perRunRows.push(
+          [
+            escapeCsvField(r.workload),
+            r.dataSize,
+            i + 1,
+            r.sirannonSamples[i].toFixed(2),
+            r.postgresSamples[i].toFixed(2),
+          ].join(','),
+        )
+      }
+    }
+
+    const perRunPath = join(resultsDir, `${category}-per-run-${timestamp}.csv`)
+    writeFileSync(perRunPath, `${[perRunHeader, ...perRunRows].join('\n')}\n`)
+    console.log(`Per-run CSV written to ${perRunPath}`)
+  }
+}
+
 export function writeResults(category: string, systemInfo: SystemInfo, results: ComparisonResult[]): void {
   const resultsDir = join(import.meta.dirname, 'results')
   mkdirSync(resultsDir, { recursive: true })
@@ -197,6 +279,8 @@ export function writeResults(category: string, systemInfo: SystemInfo, results: 
 
   writeFileSync(filepath, `${JSON.stringify(output, null, 2)}\n`)
   console.log(`Results written to ${filepath}`)
+
+  writeCsv(resultsDir, category, timestamp, results)
 
   printSystemInfo(systemInfo)
   console.log(formatTable(results))

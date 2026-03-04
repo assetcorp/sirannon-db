@@ -67,7 +67,7 @@ export function transactionSirannon() {
     'sirannon tx status 200': r => r.status === 200,
     'sirannon tx has results': r => {
       const body = r.json()
-      return body && body.results && body.results.length === 3
+      return body?.results && body.results.length === 3
     },
   })
 }
@@ -79,7 +79,7 @@ export function transactionPostgres() {
     'postgres tx status 200': r => r.status === 200,
     'postgres tx has results': r => {
       const body = r.json()
-      return body && body.results && body.results.length === 3
+      return body?.results && body.results.length === 3
     },
   })
 }

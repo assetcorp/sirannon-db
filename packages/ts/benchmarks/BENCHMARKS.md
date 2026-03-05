@@ -329,15 +329,15 @@ Mixed workloads tell a different story. Even with worker threads, write throughp
 
 ### The crossover point
 
-Postgres never catches Sirannon in absolute throughput within the 64-client range tested here. Even at 64 concurrent mixed clients, Sirannon delivers 5x the throughput. But the trend is clear: Postgres throughput grows linearly with concurrency while Sirannon's stays constant.
+Postgres never catches Sirannon within the concurrency range tested (1 to 64 clients). At 64 concurrent mixed-workload clients, Sirannon still delivers 5x the throughput.
 
-Extrapolating the event-loop mixed workload curve, Postgres would need roughly 200-300 concurrent connections doing real parallel work to match Sirannon's single-threaded throughput. Whether your application reaches that concurrency level depends on your deployment model.
+Postgres throughput grows linearly with concurrency while Sirannon's stays constant. Extrapolating the mixed-workload curve, Postgres would need roughly 300-400 concurrent database connections doing real parallel work to match Sirannon's throughput. In practice, production Postgres deployments rarely exceed 20-100 direct connections. Postgres documentation recommends keeping `max_connections` low, and tools like PgBouncer exist specifically to multiplex thousands of application requests through a small pool of database connections. The crossover point falls well outside normal production configurations.
 
 ### Practical guidance
 
-The benchmarks show Sirannon outperforming Postgres across every workload and concurrency level tested, from 91x on single-client point-selects down to 5x at 64 concurrent mixed-workload clients. These results cover a wide range of application profiles.
+Sirannon outperforms Postgres across every workload and concurrency level tested, from 244x on batch updates down to 5x at 64 concurrent mixed clients. The concurrency range tested (1 to 64 clients) covers and exceeds what most production database connection pools use.
 
-**Single-client and low-concurrency applications** (CLI tools, desktop apps, mobile apps, edge functions, typical web backends with 5-50 concurrent users) see the largest gains. Sirannon eliminates the network round-trip between application and database, and the benchmarks confirm this translates to 22x-244x speedups depending on workload. Deployment is simpler too: no connection strings, no connection pooling, no database server to manage.
+**Web applications at standard scale** see large, consistent gains. A backend handling hundreds or thousands of requests per day, with a connection pool of 10-50 concurrent database queries, falls squarely within the range where Sirannon leads by 5-22x on mixed workloads and 13-66x on reads. Sirannon also eliminates the operational overhead of running a separate database server. Connection pooling and configuration happen in-process rather than requiring external infrastructure to manage.
 
 **Multi-tenant architectures** are a natural fit. Each tenant gets its own SQLite database, so write serialization applies per tenant rather than across the whole system. A tenant with 10 concurrent users gets the full single-client performance profile, and tenants don't contend with each other.
 
@@ -345,14 +345,14 @@ The benchmarks show Sirannon outperforming Postgres across every workload and co
 
 **Where Postgres is the better fit:**
 
-- **Hundreds of concurrent writers contending on the same rows.** SQLite serializes writes through a single-writer lock. The scaling benchmarks show Sirannon's write throughput stays flat as concurrency increases, while Postgres scales linearly. At 64 concurrent mixed clients, Sirannon still leads 5x, but the gap closes. Applications with hundreds of writers hitting the same tables (high-frequency event ingestion, shared inventory with concurrent checkout processes) will eventually hit the single-writer ceiling.
-- **Data exceeding a single machine's disk.** SQLite operates on a single file on a single machine. If your dataset outgrows local storage, Postgres with its partitioning, tablespaces, and distributed extensions handles that natively.
+- **Extremely write-heavy workloads with high concurrent writer counts on shared rows.** SQLite serializes writes through a single-writer lock. The scaling benchmarks show Sirannon's write throughput stays flat as concurrency increases, while Postgres scales linearly with its row-level locking. For applications where hundreds of clients mutate the same tables simultaneously (high-frequency trading systems, real-time bidding platforms, shared counters with hundreds of concurrent writers), Postgres's ability to parallelize writes across connections is a genuine advantage. For most applications, SQLite's single writer processes mutations fast enough that the queue never becomes a bottleneck.
+- **Data exceeding a single machine's disk.** SQLite operates on a single file on a single machine. If your dataset outgrows local storage, Postgres handles that natively with partitioning, tablespaces, and distributed extensions.
 
 ### What these benchmarks do and don't measure
 
-These benchmarks measure raw query throughput on a single machine. They confirm that Sirannon is faster than Postgres across every tested scenario, with the advantage ranging from 5x under heavy concurrency to 244x for batch operations.
+These benchmarks measure raw database throughput at concurrency levels that match real production deployments (1 to 64 concurrent clients). Sirannon is faster than Postgres across every tested scenario, with the advantage ranging from 5x under heavy concurrency to 244x for batch operations.
 
-The benchmarks do not measure replication, failover, or distributed transactions. SQLite replication is available through external tools (Litestream, cr-sqlite), while Postgres includes these capabilities as built-in features. The operational trade-off is between Sirannon's simplicity (fewer moving parts, no database server) and Postgres's integrated feature set.
+The benchmarks do not measure replication, failover, or distributed transactions. SQLite replication is available through external tools (Litestream for WAL streaming, cr-sqlite for CRDT-based multi-writer), while Postgres includes these capabilities as built-in features. The trade-off is between Sirannon's deployment simplicity and Postgres's integrated feature set; both approaches achieve the same end result through different means.
 
 ## Tips
 

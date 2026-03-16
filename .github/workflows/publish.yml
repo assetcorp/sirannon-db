@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version bump (major, minor, patch, or explicit like 1.2.3)'
+        description: "Version bump (major, minor, patch, or explicit like 1.2.3)"
         required: true
         type: string
       dry-run:
-        description: 'Dry run (skip actual publish)'
+        description: "Dry run (skip actual publish)"
         required: false
         type: boolean
         default: false
@@ -61,9 +61,21 @@ jobs:
       - name: Publish
         run: pnpm nx release publish ${{ inputs.dry-run && '--dry-run' || '' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
 
       - name: Push tags
         if: ${{ !inputs.dry-run }}
         run: git push --follow-tags
+
+      - name: Create GitHub Release
+        if: ${{ !inputs.dry-run }}
+        run: |
+          TAG=$(git describe --tags --abbrev=0)
+          CHANGELOG_FILE=packages/ts/CHANGELOG.md
+          if [ -f "$CHANGELOG_FILE" ]; then
+            gh release create "$TAG" --title "$TAG" --notes-file "$CHANGELOG_FILE"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

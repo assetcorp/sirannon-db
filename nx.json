@@ -13,18 +13,20 @@
   },
   "release": {
     "projects": ["sirannon-ts"],
+    "projectsRelationship": "fixed",
     "releaseTagPattern": "v{version}",
-    "changelog": {
-      "automaticFromRef": true,
-      "projectChangelogs": {
-        "file": "{projectRoot}/CHANGELOG.md"
-      },
-      "workspaceChangelog": false
-    },
     "version": {
-      "conventionalCommits": true
+      "conventionalCommits": false
+    },
+    "changelog": {
+      "workspaceChangelog": {
+        "createRelease": "github"
+      },
+      "projectChangelogs": false
     },
     "git": {
+      "commit": true,
+      "tag": true,
       "commitMessage": "chore(release): v{version}"
     }
   },

@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@latest
+
       - name: Build
         run: pnpm nx run sirannon-ts:build
 
@@ -59,23 +62,11 @@ jobs:
         run: pnpm nx release changelog ${{ inputs.version }}
 
       - name: Publish
-        run: pnpm nx release publish ${{ inputs.dry-run && '--dry-run' || '' }}
+        if: ${{ !inputs.dry-run }}
+        run: pnpm nx release publish --verbose
         env:
           NPM_CONFIG_PROVENANCE: true
 
-      - name: Push tags
+      - name: Push tags and changelog
         if: ${{ !inputs.dry-run }}
         run: git push --follow-tags
-
-      - name: Create GitHub Release
-        if: ${{ !inputs.dry-run }}
-        run: |
-          TAG=$(git describe --tags --abbrev=0)
-          CHANGELOG_FILE=packages/ts/CHANGELOG.md
-          if [ -f "$CHANGELOG_FILE" ]; then
-            gh release create "$TAG" --title "$TAG" --notes-file "$CHANGELOG_FILE"
-          else
-            gh release create "$TAG" --title "$TAG" --generate-notes
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

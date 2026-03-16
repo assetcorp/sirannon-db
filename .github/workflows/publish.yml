@@ -61,6 +61,8 @@ jobs:
 
       - name: Changelog
         run: pnpm nx release changelog ${{ inputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
       - name: Publish
         if: ${{ !inputs.dry-run }}

@@ -146,3 +146,5 @@ vite.config.ts.timestamp-*
 
 # Benchmark results
 packages/ts/benchmarks/results/*.json
+
+.nx/

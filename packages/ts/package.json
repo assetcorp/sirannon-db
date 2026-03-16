@@ -1,7 +1,7 @@
 {
   "name": "@delali/sirannon-db",
   "type": "module",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "A production-grade library that turns SQLite databases into a networked data layer with real-time subscriptions.",
   "author": "Delali (https://sondelali.com)",
   "license": "Apache-2.0",

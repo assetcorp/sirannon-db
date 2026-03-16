@@ -12,7 +12,10 @@
     ]
   },
   "release": {
-    "projects": ["sirannon-ts"]
+    "projects": ["sirannon-ts"],
+    "changelog": {
+      "automaticFromRef": true
+    }
   },
   "targetDefaults": {
     "build": {

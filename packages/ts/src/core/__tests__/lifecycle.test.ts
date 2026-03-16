@@ -817,10 +817,10 @@ describe('LifecycleManager', () => {
       const setIntervalSpy = vi
         .spyOn(globalThis, 'setInterval')
         .mockImplementation((fn: Parameters<typeof setInterval>[0]) => {
-        if (typeof fn === 'function') {
-          fn()
-        }
-        return 1 as unknown as ReturnType<typeof setInterval>
+          if (typeof fn === 'function') {
+            fn()
+          }
+          return 1 as unknown as ReturnType<typeof setInterval>
         })
       const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
 

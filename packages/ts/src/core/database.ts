@@ -238,14 +238,23 @@ export class Database {
       throw new ExtensionError(extensionPath || '', 'Extension path is empty or contains null bytes')
     }
 
+    for (let i = 0; i < extensionPath.length; i++) {
+      if (extensionPath.charCodeAt(i) <= 0x1f) {
+        throw new ExtensionError(extensionPath, 'Extension path contains control characters')
+      }
+    }
+
     const segments = extensionPath.split(/[/\\]/)
     if (segments.includes('..')) {
       throw new ExtensionError(extensionPath, 'Extension path must not contain directory traversal segments')
     }
 
+    const { resolve } = await import('node:path')
+    const resolved = resolve(extensionPath)
+
     try {
       const writer = this.pool.acquireWriter()
-      const escaped = extensionPath.replace(/'/g, "''")
+      const escaped = resolved.replace(/'/g, "''")
       await writer.exec(`SELECT load_extension('${escaped}')`)
     } catch (err) {
       throw new ExtensionError(extensionPath, err instanceof Error ? err.message : String(err))

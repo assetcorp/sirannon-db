@@ -37,373 +37,41 @@ const users = db.query<{ id: number; name: string }>('SELECT * FROM users')
 The package ships three independent exports so you only bundle what you need:
 
 | Import | What you get |
-|---|---|
+| --- | --- |
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
 
-## Core features
-
-### Queries and transactions
-
-```ts
-const row = db.queryOne<{ count: number }>('SELECT count(*) as count FROM users')
-
-const result = db.execute(
-  'INSERT INTO users (name, email) VALUES (?, ?)',
-  ['Grace', 'grace@example.com'],
-)
-// result.changes === 1, result.lastInsertRowId === 2
-
-db.executeBatch('INSERT INTO tags (label) VALUES (?)', [
-  ['typescript'],
-  ['sqlite'],
-  ['realtime'],
-])
-
-const total = db.transaction(tx => {
-  tx.execute('UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1])
-  tx.execute('UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2])
-  const [row] = tx.query<{ balance: number }>('SELECT balance FROM accounts WHERE id = ?', [2])
-  return row
-})
-```
-
-Statements are cached in an LRU pool (capacity 128) so repeated queries skip the prepare step.
-
-### Connection pooling
-
-Every database opens with 1 dedicated write connection and N read connections (default 4). WAL mode is enabled by default, allowing concurrent reads during writes.
-
-```ts
-const db = sirannon.open('analytics', './data/analytics.db', {
-  readPoolSize: 8,
-  walMode: true,
-})
-```
-
-### Change data capture (CDC)
-
-Watch tables for INSERT, UPDATE, and DELETE events in real time. The CDC system installs SQLite triggers that record changes into a tracking table, then polls at a configurable interval.
-
-```ts
-db.watch('orders')
-
-const subscription = db
-  .on('orders')
-  .filter({ status: 'shipped' })
-  .subscribe(event => {
-    // event.type: 'insert' | 'update' | 'delete'
-    // event.row: the current row
-    // event.oldRow: previous row (updates and deletes)
-    // event.seq: monotonic sequence number
-    console.log(`Order ${event.row.id} was ${event.type}d`)
-  })
-
-// Stop listening:
-subscription.unsubscribe()
-
-// Stop tracking entirely:
-db.unwatch('orders')
-```
-
-### Migrations
-
-Place numbered SQL files in a directory using the `.up.sql` / `.down.sql` convention. Each migration runs inside a transaction and is tracked in a `_sirannon_migrations` table so it only applies once. Down files are optional; rollback throws if a down file is missing for a version being rolled back.
-
-```txt
-migrations/
-  001_create_users.up.sql
-  001_create_users.down.sql
-  002_add_email_index.up.sql
-  003_create_orders.up.sql
-  003_create_orders.down.sql
-```
-
-Timestamp-based versioning works the same way:
-
-```txt
-migrations/
-  1709312400_create_users.up.sql
-  1709312400_create_users.down.sql
-```
-
-#### File-based migrations
-
-```ts
-const result = db.migrate('./migrations')
-// result.applied: entries that ran this time
-// result.skipped: number of entries already applied
-```
-
-#### Rollback
-
-```ts
-db.rollback('./migrations')            // undo the last applied migration
-db.rollback('./migrations', 2)         // undo all migrations after version 2
-db.rollback('./migrations', 0)         // undo everything
-```
-
-#### Programmatic migrations
-
-Pass an array of migration objects instead of a directory path. The `up` and `down` fields accept SQL strings or functions that receive a `Transaction`.
-
-```ts
-const migrations = [
-  {
-    version: 1,
-    name: 'create_users',
-    up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
-    down: 'DROP TABLE users',
-  },
-  {
-    version: 2,
-    name: 'seed_data',
-    up: (tx) => {
-      // You can run any code here
-      tx.execute("INSERT INTO users (name) VALUES (?)", ['Alice'])
-    },
-    down: (tx) => {
-      tx.execute("DELETE FROM users WHERE name = ?", ['Alice'])
-    },
-  },
-]
-
-db.migrate(migrations)
-db.rollback(migrations)        // undo last migration
-db.rollback(migrations, 0)     // undo everything
-```
-
-### Backups
-
-One-shot backups use `VACUUM INTO` for a consistent snapshot. Scheduled backups run on a cron expression with automatic file rotation.
-
-```ts
-db.backup('./backups/snapshot.db')
-
-db.scheduleBackup({
-  cron: '0 */6 * * *',      // every 6 hours
-  destDir: './backups',
-  maxFiles: 10,              // keep the 10 most recent
-  onError: err => console.error('Backup failed:', err),
-})
-```
-
-### Hooks
-
-Hooks run before or after key operations. Throwing from a before-hook denies the operation.
-
-```ts
-sirannon.onBeforeQuery(ctx => {
-  if (ctx.sql.includes('DROP')) {
-    throw new Error('DROP statements are not allowed')
-  }
-})
-
-sirannon.onAfterQuery(ctx => {
-  console.log(`[${ctx.databaseId}] ${ctx.sql} took ${ctx.durationMs}ms`)
-})
-
-sirannon.onDatabaseOpen(ctx => {
-  console.log(`Opened ${ctx.databaseId} at ${ctx.path}`)
-})
-```
-
-Global hooks on the `Sirannon` instance: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, `onDatabaseClose`. The `onBeforeSubscribe` hook is available through the `HookConfig` constructor option. Query hooks (`onBeforeQuery`, `onAfterQuery`) can also be registered locally on individual `Database` instances.
-
-**Note:** The `ctx.sql.includes('DROP')` pattern shown above is for illustration only. Simple string matching is not a production SQL firewall because casing, comments, Unicode tricks, and concatenated SQL can bypass it. For real access control, combine `onBeforeQuery` with an allow-list of query patterns or a proper SQL parser.
-
-### Metrics
-
-Plug in callbacks to collect query timing, connection events, and CDC activity.
-
-```ts
-const sirannon = new Sirannon({
-  metrics: {
-    onQueryComplete: m => histogram.observe(m.durationMs),
-    onConnectionOpen: m => gauge.inc({ db: m.databaseId }),
-    onConnectionClose: m => gauge.dec({ db: m.databaseId }),
-    onCDCEvent: m => counter.inc({ table: m.table, op: m.operation }),
-  },
-})
-```
-
-### Lifecycle management
-
-For multi-tenant setups, the lifecycle manager handles auto-opening, idle timeouts, and LRU eviction so you don't have to manage database handles yourself.
-
-```ts
-const sirannon = new Sirannon({
-  lifecycle: {
-    autoOpen: {
-      resolver: id => ({ path: `/data/tenants/${id}.db` }),
-    },
-    idleTimeout: 300_000, // close after 5 minutes of inactivity
-    maxOpen: 50,          // evict least-recently-used when full
-  },
-})
-
-// Databases resolve on first access:
-const db = sirannon.get('tenant-42') // opens /data/tenants/tenant-42.db
-```
-
-## Server
-
-Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. The server uses uWebSockets.js for high throughput.
-
-```ts
-import { Sirannon } from '@delali/sirannon-db'
-import { createServer } from '@delali/sirannon-db/server'
-
-const sirannon = new Sirannon()
-sirannon.open('app', './data/app.db')
-
-const server = createServer(sirannon, {
-  port: 9876,
-  cors: true,
-  onRequest: ({ headers, path, method, remoteAddress }) => {
-    if (headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
-      return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid or missing token' }
-    }
-  },
-})
-
-await server.listen()
-```
-
-The `onRequest` hook runs before every database route (HTTP and WebSocket upgrade). Return `void` to allow the request, or return a `{ status, code, message }` object to deny it. The hook receives a `RequestContext` with `headers`, `method`, `path`, `databaseId`, and `remoteAddress`. Health endpoints (`/health`, `/health/ready`) bypass this hook.
-
-**Important:** The server accepts arbitrary SQL from clients. When exposed beyond localhost, always use `onRequest` to authenticate and authorize requests.
-
-### HTTP routes
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/db/:id/query` | Execute a SELECT, returns `{ rows }` |
-| `POST` | `/db/:id/execute` | Execute a mutation, returns `{ changes, lastInsertRowId }` |
-| `POST` | `/db/:id/transaction` | Execute a batch of statements atomically, returns `{ results }` |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/health/ready` | Readiness check with per-database status |
-
-### WebSocket protocol
-
-Connect to `ws://host:port/db/:id` and send JSON messages for queries, executions, and CDC subscriptions. The server dispatches change events to subscribers in real time.
-
-## Client SDK
-
-The client SDK mirrors the core `Database` API with async methods. It supports both HTTP and WebSocket transports, with automatic reconnection and subscription restoration on the WebSocket transport.
-
-```ts
-import { SirannonClient } from '@delali/sirannon-db/client'
-
-const client = new SirannonClient('http://localhost:9876', {
-  transport: 'websocket',
-  autoReconnect: true,
-  reconnectInterval: 1000,
-})
-
-const db = client.database('app')
-
-const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
-
-await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
-
-const sub = await db
-  .on('users')
-  .filter({ role: 'admin' })
-  .subscribe(event => console.log('Admin changed:', event))
-
-// Cleanup:
-sub.unsubscribe()
-client.close()
-```
-
-Transactions require HTTP transport:
-
-```ts
-const httpClient = new SirannonClient('http://localhost:9876', {
-  transport: 'http',
-})
-
-const httpDb = httpClient.database('app')
-
-await httpDb.transaction([
-  { sql: 'UPDATE accounts SET balance = balance - 50 WHERE id = ?', params: [1] },
-  { sql: 'UPDATE accounts SET balance = balance + 50 WHERE id = ?', params: [2] },
-])
-
-httpClient.close()
-```
-
-## Error handling
-
-All errors extend `SirannonError` with a machine-readable `code` property:
-
-| Error | Code | When |
-|---|---|---|
-| `DatabaseNotFoundError` | `DATABASE_NOT_FOUND` | Database ID not in registry |
-| `DatabaseAlreadyExistsError` | `DATABASE_ALREADY_EXISTS` | Duplicate database ID |
-| `ReadOnlyError` | `READ_ONLY` | Write attempted on read-only database |
-| `QueryError` | `QUERY_ERROR` | SQL execution failure |
-| `TransactionError` | `TRANSACTION_ERROR` | Transaction commit/rollback failure |
-| `MigrationError` | `MIGRATION_ERROR` | Migration step failure |
-| `HookDeniedError` | `HOOK_DENIED` | Before-hook rejected the operation |
-| `CDCError` | `CDC_ERROR` | Change tracking pipeline failure |
-| `BackupError` | `BACKUP_ERROR` | Backup operation failure |
-| `ConnectionPoolError` | `CONNECTION_POOL_ERROR` | Pool closed or misconfigured |
-| `MaxDatabasesError` | `MAX_DATABASES` | Capacity limit reached |
-| `ExtensionError` | `EXTENSION_ERROR` | SQLite extension load failure |
-
-```ts
-import { QueryError } from '@delali/sirannon-db'
-
-try {
-  db.execute('INSERT INTO users (id) VALUES (?)', [1])
-} catch (err) {
-  if (err instanceof QueryError) {
-    console.error(`SQL failed [${err.code}]: ${err.message}`)
-    console.error(`Statement: ${err.sql}`)
-  }
-}
-```
-
-## Configuration reference
-
-### `DatabaseOptions`
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `readOnly` | `boolean` | `false` | Open in read-only mode |
-| `readPoolSize` | `number` | `4` | Number of read connections |
-| `walMode` | `boolean` | `true` | Enable WAL mode |
-| `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
-| `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms (1 hour) |
-
-### `SirannonOptions`
-
-| Option | Type | Description |
-|---|---|---|
-| `hooks` | `HookConfig` | Before/after hooks for queries, connections, subscriptions |
-| `metrics` | `MetricsConfig` | Callbacks for query timing, connection events, CDC activity |
-| `lifecycle` | `LifecycleConfig` | Auto-open resolver, idle timeout, max open databases |
-
-### `ServerOptions`
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `host` | `string` | `'127.0.0.1'` | Bind address |
-| `port` | `number` | `9876` | Listen port |
-| `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
-| `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
-
-### `ClientOptions`
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `transport` | `'websocket' \| 'http'` | `'websocket'` | Transport protocol |
-| `headers` | `Record<string, string>` | - | Custom HTTP headers |
-| `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
-| `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
+## Features
+
+- **Queries and transactions** - Execute reads, writes, and batch operations with automatic statement caching (LRU, capacity 128). Transactions provide full ACID guarantees.
+- **Connection pooling** - 1 dedicated write connection + N read connections (default 4). WAL mode enabled by default for concurrent reads during writes.
+- **Change data capture (CDC)** - Watch tables for INSERT, UPDATE, and DELETE events in real time through SQLite triggers and configurable polling.
+- **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations, tracked in a `_sirannon_migrations` table. Supports rollback to any version.
+- **Backups** - One-shot snapshots via `VACUUM INTO` and scheduled backups on a cron expression with automatic file rotation.
+- **Hooks** - Before/after hooks for queries, connections, and subscriptions. Throwing from a before-hook denies the operation.
+- **Metrics** - Plug in callbacks to collect query timing, connection events, and CDC activity.
+- **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
+- **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Includes health endpoints, CORS configuration, and an `onRequest` hook for authentication.
+- **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
+
+## Security
+
+Sirannon-db is designed to be secure by default in its core operations:
+
+- **Parameterized queries** - All SQL execution uses parameter binding through better-sqlite3, preventing SQL injection.
+- **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`).
+- **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters.
+- **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB.
+- **No secrets in code** - The library reads credentials from environment variables and never hardcodes tokens.
+
+> **Warning:** The server accepts arbitrary SQL from clients. When you expose it beyond localhost, always use the `onRequest` hook to authenticate and authorize requests. See the [TypeScript package docs](packages/ts/README.md#server) for examples.
+>
+> The built-in server binds plain HTTP and WebSocket without TLS. When you serve traffic outside a trusted network, terminate TLS upstream with a reverse proxy (nginx, Caddy, a cloud load balancer) or your clients' bearer tokens and query payloads will travel in cleartext.
+
+## Documentation
+
+Full API reference, code examples, and configuration tables are in the [TypeScript package README](packages/ts/README.md).
 
 ## Benchmarks
 

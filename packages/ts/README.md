@@ -37,7 +37,7 @@ const users = db.query<{ id: number; name: string }>('SELECT * FROM users')
 The package ships three independent exports so you only bundle what you need:
 
 | Import | What you get |
-|---|---|
+| --- | --- |
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
@@ -258,27 +258,16 @@ import { createServer } from '@delali/sirannon-db/server'
 const sirannon = new Sirannon()
 sirannon.open('app', './data/app.db')
 
-const server = createServer(sirannon, {
-  port: 9876,
-  cors: true,
-  onRequest: ({ headers, path, method, remoteAddress }) => {
-    if (headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
-      return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid or missing token' }
-    }
-  },
-})
-
+const server = createServer(sirannon, { port: 9876 })
 await server.listen()
 ```
 
-The `onRequest` hook runs before every database route (HTTP and WebSocket upgrade). Return `void` to allow the request, or return a `{ status, code, message }` object to deny it. The hook receives a `RequestContext` with `headers`, `method`, `path`, `databaseId`, and `remoteAddress`. Health endpoints (`/health`, `/health/ready`) bypass this hook.
-
-**Important:** The server accepts arbitrary SQL from clients. When exposed beyond localhost, always use `onRequest` to authenticate and authorize requests.
+See the [Security](#security) section for authentication, TLS, and CORS configuration.
 
 ### HTTP routes
 
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | `POST` | `/db/:id/query` | Execute a SELECT, returns `{ rows }` |
 | `POST` | `/db/:id/execute` | Execute a mutation, returns `{ changes, lastInsertRowId }` |
 | `POST` | `/db/:id/transaction` | Execute a batch of statements atomically, returns `{ results }` |
@@ -335,12 +324,70 @@ await httpDb.transaction([
 httpClient.close()
 ```
 
+## Security
+
+Sirannon-db is designed to be secure by default in its core operations. This section covers what the library handles for you and what you're responsible for when deploying to production.
+
+### Built-in protections
+
+- **Parameterized queries** - All SQL execution uses parameter binding through better-sqlite3, preventing SQL injection. User input never touches query strings directly.
+- **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), and identifiers are escaped with double-quote wrapping.
+- **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters before any filesystem access.
+- **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB, preventing memory exhaustion from oversized requests.
+- **Error isolation** - Errors returned to clients contain a machine-readable code and message. Stack traces and internal details are never leaked.
+- **Connection isolation** - Read and write operations use separate connection pools. Read-only databases enforce immutability at the connection level.
+
+### Authentication and authorization
+
+The server accepts arbitrary SQL from clients. When you expose it beyond localhost, always use the `onRequest` hook to authenticate and authorize requests.
+
+```ts
+const server = createServer(sirannon, {
+  port: 9876,
+  onRequest: ({ headers, path, method, remoteAddress }) => {
+    if (headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
+      return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid or missing token' }
+    }
+  },
+})
+```
+
+The hook runs before every database route (HTTP and WebSocket upgrade). Return `void` to allow the request, or return a `{ status, code, message }` object to deny it. Health endpoints (`/health`, `/health/ready`) bypass this hook.
+
+### TLS and transport security
+
+> **Warning:** The built-in server binds plain HTTP and WebSocket without TLS. When you serve traffic outside a trusted network, terminate TLS upstream with a reverse proxy (nginx, Caddy, a cloud load balancer) or your clients' bearer tokens and query payloads will travel in cleartext.
+
+Once TLS is in place, update your client URLs to use `https://` and `wss://`:
+
+```ts
+const client = new SirannonClient('https://db.example.com', {
+  transport: 'websocket',
+  headers: { Authorization: `Bearer ${token}` },
+})
+```
+
+### CORS
+
+CORS is disabled by default. Enable it only if browser clients need direct access, and restrict origins to trusted domains:
+
+```ts
+const server = createServer(sirannon, {
+  port: 9876,
+  cors: {
+    origin: ['https://app.example.com'],
+  },
+})
+```
+
+Passing `cors: true` allows all origins, which is fine for local development but should be avoided in production.
+
 ## Error handling
 
 All errors extend `SirannonError` with a machine-readable `code` property:
 
 | Error | Code | When |
-|---|---|---|
+| --- | --- | --- |
 | `DatabaseNotFoundError` | `DATABASE_NOT_FOUND` | Database ID not in registry |
 | `DatabaseAlreadyExistsError` | `DATABASE_ALREADY_EXISTS` | Duplicate database ID |
 | `ReadOnlyError` | `READ_ONLY` | Write attempted on read-only database |
@@ -372,7 +419,7 @@ try {
 ### `DatabaseOptions`
 
 | Option | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `readOnly` | `boolean` | `false` | Open in read-only mode |
 | `readPoolSize` | `number` | `4` | Number of read connections |
 | `walMode` | `boolean` | `true` | Enable WAL mode |
@@ -382,7 +429,7 @@ try {
 ### `SirannonOptions`
 
 | Option | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `hooks` | `HookConfig` | Before/after hooks for queries, connections, subscriptions |
 | `metrics` | `MetricsConfig` | Callbacks for query timing, connection events, CDC activity |
 | `lifecycle` | `LifecycleConfig` | Auto-open resolver, idle timeout, max open databases |
@@ -390,7 +437,7 @@ try {
 ### `ServerOptions`
 
 | Option | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `host` | `string` | `'127.0.0.1'` | Bind address |
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
@@ -399,7 +446,7 @@ try {
 ### `ClientOptions`
 
 | Option | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `transport` | `'websocket' \| 'http'` | `'websocket'` | Transport protocol |
 | `headers` | `Record<string, string>` | - | Custom HTTP headers |
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |

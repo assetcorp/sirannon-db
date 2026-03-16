@@ -56,11 +56,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Version
-        run: pnpm nx release version ${{ inputs.version }}
-
-      - name: Changelog
-        run: pnpm nx release changelog ${{ inputs.version }}
+      - name: Release
+        run: pnpm nx release ${{ inputs.version }} ${{ inputs.dry-run && '--dry-run' || '' }} --skip-publish
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
@@ -69,7 +66,3 @@ jobs:
         run: pnpm nx release publish --verbose
         env:
           NPM_CONFIG_PROVENANCE: true
-
-      - name: Push tags and changelog
-        if: ${{ !inputs.dry-run }}
-        run: git push --follow-tags

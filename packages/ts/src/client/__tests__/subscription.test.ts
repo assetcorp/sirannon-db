@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { WSConnection, WSHandler } from '../../server/ws-handler.js'
 import { createWSHandler } from '../../server/ws-handler.js'
 import { RemoteSubscriptionBuilderImpl } from '../subscription.js'
 import { WebSocketTransport } from '../transport/ws.js'
+
+const driver = betterSqlite3()
 
 function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -73,23 +76,22 @@ describe('WebSocket subscription integration', () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'sirannon-sub-'))
-    sirannon = new Sirannon()
+    sirannon = new Sirannon({ driver })
   })
 
-  afterEach(() => {
-    wsHandler?.close()
-    sirannon.shutdown()
+  afterEach(async () => {
+    await wsHandler?.close()
+    await sirannon.shutdown()
     rmSync(tempDir, { recursive: true, force: true })
   })
 
   it('subscribes and receives insert events via mock WS handler', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'sub.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    const db = await sirannon.open('mydb', join(tempDir, 'sub.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
-    // Simulate a WS connection using the mock approach from server tests
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -100,11 +102,12 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
+    await wait(100)
+
     const subMsg = JSON.parse(conn.messages[conn.messages.length - 1])
     expect(subMsg.type).toBe('subscribed')
 
-    // Insert a row and wait for CDC polling
-    db.execute("INSERT INTO users (name) VALUES ('Alice')")
+    await db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
     const changeMessages = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
@@ -115,13 +118,13 @@ describe('WebSocket subscription integration', () => {
   })
 
   it('receives filtered events', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'filter.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    const db = await sirannon.open('mydb', join(tempDir, 'filter.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
 
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -133,8 +136,10 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    db.execute("INSERT INTO users (name) VALUES ('Bob')")
-    db.execute("INSERT INTO users (name) VALUES ('Alice')")
+    await wait(100)
+
+    await db.execute("INSERT INTO users (name) VALUES ('Bob')")
+    await db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
     const changeMessages = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
@@ -144,13 +149,13 @@ describe('WebSocket subscription integration', () => {
   })
 
   it('stops receiving events after unsubscribe', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'unsub.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    const db = await sirannon.open('mydb', join(tempDir, 'unsub.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
 
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -161,14 +166,14 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    // Verify subscription is active
-    db.execute("INSERT INTO users (name) VALUES ('Alice')")
+    await wait(100)
+
+    await db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
     let changeCount = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change').length
     expect(changeCount).toBe(1)
 
-    // Unsubscribe
     wsHandler.handleMessage(
       conn,
       JSON.stringify({
@@ -177,22 +182,21 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    // Insert after unsubscribe
-    db.execute("INSERT INTO users (name) VALUES ('Bob')")
+    await db.execute("INSERT INTO users (name) VALUES ('Bob')")
     await wait(200)
 
     changeCount = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change').length
-    expect(changeCount).toBe(1) // Still 1, no new events
+    expect(changeCount).toBe(1)
   })
 
   it('receives update and delete events', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'upddel.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+    const db = await sirannon.open('mydb', join(tempDir, 'upddel.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
 
     wsHandler = createWSHandler(sirannon)
 
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -203,9 +207,11 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-    db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
-    db.execute("DELETE FROM users WHERE name = 'Alice'")
+    await wait(100)
+
+    await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    await db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
+    await db.execute("DELETE FROM users WHERE name = 'Alice'")
     await wait(200)
 
     const events = conn.messages
@@ -222,13 +228,13 @@ describe('WebSocket subscription integration', () => {
   })
 
   it('multiple subscriptions on the same table', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'multi.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    const db = await sirannon.open('mydb', join(tempDir, 'multi.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
 
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -248,13 +254,14 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    db.execute("INSERT INTO users (name) VALUES ('Alice')")
-    db.execute("INSERT INTO users (name) VALUES ('Bob')")
+    await wait(100)
+
+    await db.execute("INSERT INTO users (name) VALUES ('Alice')")
+    await db.execute("INSERT INTO users (name) VALUES ('Bob')")
     await wait(200)
 
     const changes = conn.messages.map(m => JSON.parse(m)).filter(m => m.type === 'change')
 
-    // sub-a should get 1 event (Alice only), sub-b should get 2 events (all)
     const subAChanges = changes.filter(m => m.id === 'sub-a')
     const subBChanges = changes.filter(m => m.id === 'sub-b')
     expect(subAChanges).toHaveLength(1)
@@ -262,13 +269,13 @@ describe('WebSocket subscription integration', () => {
   })
 
   it('change events include seq as string and timestamp', async () => {
-    const db = sirannon.open('mydb', join(tempDir, 'seq.db'))
-    db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    const db = await sirannon.open('mydb', join(tempDir, 'seq.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
     wsHandler = createWSHandler(sirannon)
 
     const conn = createMockConnection()
-    wsHandler.handleOpen(conn, 'mydb')
+    await wsHandler.handleOpen(conn, 'mydb')
 
     wsHandler.handleMessage(
       conn,
@@ -279,7 +286,9 @@ describe('WebSocket subscription integration', () => {
       }),
     )
 
-    db.execute("INSERT INTO users (name) VALUES ('Alice')")
+    await wait(100)
+
+    await db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await wait(200)
 
     const change = conn.messages.map(m => JSON.parse(m)).find(m => m.type === 'change')
@@ -306,7 +315,6 @@ describe('WebSocketTransport', () => {
   })
 })
 
-// Helper: mock WebSocket connection for the WSHandler (same pattern as server tests)
 interface MockWSConnection extends WSConnection {
   messages: string[]
   closed: boolean

@@ -1,53 +1,54 @@
-import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { SQLiteConnection } from '../driver/types.js'
 import { QueryError } from '../errors.js'
 import { execute, executeBatch, query, queryOne } from '../query-executor.js'
+import { testDriver } from './helpers/test-driver.js'
 
-let db: InstanceType<typeof Database>
+let conn: SQLiteConnection
 
-beforeEach(() => {
-  db = new Database(':memory:')
-  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-  db.exec("INSERT INTO users (name, age) VALUES ('Alice', 30), ('Bob', 25)")
+beforeEach(async () => {
+  conn = await testDriver.open(':memory:')
+  await conn.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  await conn.exec("INSERT INTO users (name, age) VALUES ('Alice', 30), ('Bob', 25)")
 })
 
-afterEach(() => {
-  db.close()
+afterEach(async () => {
+  await conn.close()
 })
 
 describe('query', () => {
-  it('returns all rows for a SELECT', () => {
-    const rows = query<{ id: number; name: string }>(db, 'SELECT * FROM users ORDER BY id')
+  it('returns all rows for a SELECT', async () => {
+    const rows = await query<{ id: number; name: string }>(conn, 'SELECT * FROM users ORDER BY id')
     expect(rows).toHaveLength(2)
     expect(rows[0].name).toBe('Alice')
     expect(rows[1].name).toBe('Bob')
   })
 
-  it('supports named parameters', () => {
-    const rows = query<{ name: string }>(db, 'SELECT * FROM users WHERE name = :name', { name: 'Bob' })
+  it('supports named parameters', async () => {
+    const rows = await query<{ name: string }>(conn, 'SELECT * FROM users WHERE name = :name', { name: 'Bob' })
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Bob')
   })
 
-  it('supports positional parameters', () => {
-    const rows = query<{ name: string }>(db, 'SELECT * FROM users WHERE age > ?', [26])
+  it('supports positional parameters', async () => {
+    const rows = await query<{ name: string }>(conn, 'SELECT * FROM users WHERE age > ?', [26])
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Alice')
   })
 
-  it('returns an empty array for no matches', () => {
-    const rows = query(db, 'SELECT * FROM users WHERE id = 999')
+  it('returns an empty array for no matches', async () => {
+    const rows = await query(conn, 'SELECT * FROM users WHERE id = 999')
     expect(rows).toEqual([])
   })
 
-  it('throws QueryError on invalid SQL', () => {
-    expect(() => query(db, 'SELCT * FORM users')).toThrow(QueryError)
+  it('throws QueryError on invalid SQL', async () => {
+    await expect(query(conn, 'SELCT * FORM users')).rejects.toThrow(QueryError)
   })
 
-  it('throws QueryError with the offending SQL', () => {
+  it('throws QueryError with the offending SQL', async () => {
     const badSql = 'SELECT * FROM nonexistent_table'
     try {
-      query(db, badSql)
+      await query(conn, badSql)
       expect.fail('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(QueryError)
@@ -55,15 +56,15 @@ describe('query', () => {
     }
   })
 
-  it('wraps non-Error throwables in QueryError', () => {
-    const fakeDb = {
+  it('wraps non-Error throwables in QueryError', async () => {
+    const fakeConn = {
       prepare() {
         throw 'string error'
       },
-    } as unknown as InstanceType<typeof Database>
+    } as unknown as SQLiteConnection
 
     try {
-      query(fakeDb, 'SELECT 1')
+      await query(fakeConn, 'SELECT 1')
       expect.fail('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(QueryError)
@@ -73,30 +74,30 @@ describe('query', () => {
 })
 
 describe('queryOne', () => {
-  it('returns the first matching row', () => {
-    const row = queryOne<{ name: string }>(db, 'SELECT * FROM users WHERE id = 1')
+  it('returns the first matching row', async () => {
+    const row = await queryOne<{ name: string }>(conn, 'SELECT * FROM users WHERE id = 1')
     expect(row).toBeDefined()
     expect(row?.name).toBe('Alice')
   })
 
-  it('returns undefined when no match', () => {
-    const row = queryOne(db, 'SELECT * FROM users WHERE id = 999')
+  it('returns undefined when no match', async () => {
+    const row = await queryOne(conn, 'SELECT * FROM users WHERE id = 999')
     expect(row).toBeUndefined()
   })
 
-  it('throws QueryError on invalid SQL', () => {
-    expect(() => queryOne(db, 'SELCT oops')).toThrow(QueryError)
+  it('throws QueryError on invalid SQL', async () => {
+    await expect(queryOne(conn, 'SELCT oops')).rejects.toThrow(QueryError)
   })
 
-  it('wraps non-Error throwables in QueryError', () => {
-    const fakeDb = {
+  it('wraps non-Error throwables in QueryError', async () => {
+    const fakeConn = {
       prepare() {
         throw 'string error'
       },
-    } as unknown as InstanceType<typeof Database>
+    } as unknown as SQLiteConnection
 
     try {
-      queryOne(fakeDb, 'SELECT 1')
+      await queryOne(fakeConn, 'SELECT 1')
       expect.fail('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(QueryError)
@@ -106,36 +107,36 @@ describe('queryOne', () => {
 })
 
 describe('execute', () => {
-  it('returns changes and lastInsertRowId', () => {
-    const result = execute(db, "INSERT INTO users (name, age) VALUES ('Carol', 22)")
+  it('returns changes and lastInsertRowId', async () => {
+    const result = await execute(conn, "INSERT INTO users (name, age) VALUES ('Carol', 22)")
     expect(result.changes).toBe(1)
     expect(Number(result.lastInsertRowId)).toBe(3)
   })
 
-  it('reports update changes', () => {
-    const result = execute(db, 'UPDATE users SET age = 99')
+  it('reports update changes', async () => {
+    const result = await execute(conn, 'UPDATE users SET age = 99')
     expect(result.changes).toBe(2)
   })
 
-  it('reports delete changes', () => {
-    const result = execute(db, 'DELETE FROM users WHERE name = ?', ['Alice'])
+  it('reports delete changes', async () => {
+    const result = await execute(conn, 'DELETE FROM users WHERE name = ?', ['Alice'])
     expect(result.changes).toBe(1)
   })
 
-  it('throws QueryError on constraint violation', () => {
-    db.exec('CREATE TABLE strict (id INTEGER PRIMARY KEY, val TEXT NOT NULL)')
-    expect(() => execute(db, 'INSERT INTO strict (val) VALUES (NULL)')).toThrow(QueryError)
+  it('throws QueryError on constraint violation', async () => {
+    await conn.exec('CREATE TABLE strict (id INTEGER PRIMARY KEY, val TEXT NOT NULL)')
+    await expect(execute(conn, 'INSERT INTO strict (val) VALUES (NULL)')).rejects.toThrow(QueryError)
   })
 
-  it('wraps non-Error throwables in QueryError', () => {
-    const fakeDb = {
+  it('wraps non-Error throwables in QueryError', async () => {
+    const fakeConn = {
       prepare() {
         throw 'string error'
       },
-    } as unknown as InstanceType<typeof Database>
+    } as unknown as SQLiteConnection
 
     try {
-      execute(fakeDb, 'INSERT INTO users (name) VALUES (?)', ['Alice'])
+      await execute(fakeConn, 'INSERT INTO users (name) VALUES (?)', ['Alice'])
       expect.fail('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(QueryError)
@@ -145,8 +146,8 @@ describe('execute', () => {
 })
 
 describe('executeBatch', () => {
-  it('executes the same statement with multiple param sets', () => {
-    const results = executeBatch(db, 'INSERT INTO users (name, age) VALUES (?, ?)', [
+  it('executes the same statement with multiple param sets', async () => {
+    const results = await executeBatch(conn, 'INSERT INTO users (name, age) VALUES (?, ?)', [
       ['Carol', 22],
       ['Dave', 40],
     ])
@@ -154,31 +155,31 @@ describe('executeBatch', () => {
     expect(results[0].changes).toBe(1)
     expect(results[1].changes).toBe(1)
 
-    const rows = query(db, 'SELECT COUNT(*) as count FROM users')
+    const rows = await query(conn, 'SELECT COUNT(*) as count FROM users')
     expect((rows[0] as { count: number }).count).toBe(4)
   })
 
-  it('returns empty array for empty batch', () => {
-    const results = executeBatch(db, 'INSERT INTO users (name, age) VALUES (?, ?)', [])
+  it('returns empty array for empty batch', async () => {
+    const results = await executeBatch(conn, 'INSERT INTO users (name, age) VALUES (?, ?)', [])
     expect(results).toEqual([])
   })
 
-  it('throws QueryError on bad SQL', () => {
-    expect(() => executeBatch(db, 'INSERT INTO nonexistent (x) VALUES (?)', [['a']])).toThrow(QueryError)
+  it('throws QueryError on bad SQL', async () => {
+    await expect(executeBatch(conn, 'INSERT INTO nonexistent (x) VALUES (?)', [['a']])).rejects.toThrow(QueryError)
   })
 
-  it('wraps non-Error throwables in QueryError', () => {
-    const fakeDb = {
+  it('wraps non-Error throwables in QueryError', async () => {
+    const fakeConn = {
       prepare() {
         throw 'string error'
       },
-      transaction<T>(fn: () => T) {
-        return fn
+      async transaction<T>(fn: (txConn: unknown) => Promise<T>) {
+        return fn(this)
       },
-    } as unknown as InstanceType<typeof Database>
+    } as unknown as SQLiteConnection
 
     try {
-      executeBatch(fakeDb, 'INSERT INTO users (name) VALUES (?)', [['Alice']])
+      await executeBatch(fakeConn, 'INSERT INTO users (name) VALUES (?)', [['Alice']])
       expect.fail('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(QueryError)
@@ -188,24 +189,24 @@ describe('executeBatch', () => {
 })
 
 describe('statement caching', () => {
-  it('reuses prepared statements for repeated SQL', () => {
+  it('reuses prepared statements for repeated SQL', async () => {
     const sql = 'SELECT * FROM users WHERE id = ?'
-    const row1 = queryOne<{ name: string }>(db, sql, [1])
-    const row2 = queryOne<{ name: string }>(db, sql, [2])
+    const row1 = await queryOne<{ name: string }>(conn, sql, [1])
+    const row2 = await queryOne<{ name: string }>(conn, sql, [2])
     expect(row1?.name).toBe('Alice')
     expect(row2?.name).toBe('Bob')
   })
 
-  it('evicts the oldest statement when cache capacity is exceeded', () => {
+  it('evicts the oldest statement when cache capacity is exceeded', async () => {
     for (let i = 0; i < 140; i++) {
-      query(db, `SELECT ${i} as val`)
+      await query(conn, `SELECT ${i} as val`)
     }
 
-    const rows = query<{ val: number }>(db, 'SELECT 139 as val')
+    const rows = await query<{ val: number }>(conn, 'SELECT 139 as val')
     expect(rows[0].val).toBe(139)
   })
 
-  it('handles unexpected undefined oldest key during eviction', () => {
+  it('handles unexpected undefined oldest key during eviction', async () => {
     const originalKeys = Map.prototype.keys
     Map.prototype.keys = function () {
       const iterator = originalKeys.call(this)
@@ -226,9 +227,9 @@ describe('statement caching', () => {
 
     try {
       for (let i = 0; i < 140; i++) {
-        query(db, `SELECT ${i} as val`)
+        await query(conn, `SELECT ${i} as val`)
       }
-      const rows = query<{ val: number }>(db, 'SELECT 139 as val')
+      const rows = await query<{ val: number }>(conn, 'SELECT 139 as val')
       expect(rows[0].val).toBe(139)
     } finally {
       Map.prototype.keys = originalKeys

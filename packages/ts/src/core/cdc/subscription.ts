@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3'
+import type { SQLiteConnection } from '../driver/types.js'
 import type { ChangeEvent, Subscription, SubscriptionBuilder } from '../types.js'
 import type { ChangeTracker } from './change-tracker.js'
 
@@ -91,7 +91,7 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
 }
 
 export function startPolling(
-  db: Database.Database,
+  conn: SQLiteConnection,
   tracker: ChangeTracker,
   manager: SubscriptionManager,
   intervalMs: number,
@@ -99,14 +99,17 @@ export function startPolling(
 ): () => void {
   let consecutiveErrors = 0
   let tickCount = 0
+  let polling = false
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
-  const tick = () => {
+  const tick = async () => {
     if (manager.size === 0) return
+    if (polling) return
+    polling = true
 
     try {
-      const events = tracker.poll(db)
+      const events = await tracker.poll(conn)
       if (events.length > 0) {
         manager.dispatch(events)
       }
@@ -115,7 +118,7 @@ export function startPolling(
       tickCount++
       if (tickCount >= CLEANUP_INTERVAL_TICKS) {
         tickCount = 0
-        tracker.cleanup(db)
+        await tracker.cleanup(conn)
       }
     } catch (err) {
       consecutiveErrors++
@@ -125,11 +128,15 @@ export function startPolling(
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         stop()
       }
+    } finally {
+      polling = false
     }
   }
 
   const interval = setInterval(tick, intervalMs)
-  interval.unref()
+  if (typeof interval === 'object' && 'unref' in interval) {
+    interval.unref()
+  }
 
   const stop = () => {
     clearInterval(interval)

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { handleReadiness } from '../health.js'
 import { createServer, type SirannonServer } from '../server.js'
 
@@ -11,9 +12,11 @@ let sirannon: Sirannon
 let server: SirannonServer
 let baseUrl: string
 
+const driver = betterSqlite3()
+
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-health-'))
-  sirannon = new Sirannon()
+  sirannon = new Sirannon({ driver })
   server = createServer(sirannon, { port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
@@ -21,7 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close()
-  sirannon.shutdown()
+  await sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -51,7 +54,7 @@ describe('GET /health/ready', () => {
 
   it('returns database details for open databases', async () => {
     const dbPath = join(tempDir, 'ready.db')
-    sirannon.open('mydb', dbPath)
+    await sirannon.open('mydb', dbPath)
 
     const res = await fetch(`${baseUrl}/health/ready`)
     expect(res.status).toBe(200)
@@ -64,8 +67,8 @@ describe('GET /health/ready', () => {
   })
 
   it('shows multiple databases', async () => {
-    sirannon.open('db1', join(tempDir, 'db1.db'))
-    sirannon.open('db2', join(tempDir, 'db2.db'))
+    await sirannon.open('db1', join(tempDir, 'db1.db'))
+    await sirannon.open('db2', join(tempDir, 'db2.db'))
 
     const res = await fetch(`${baseUrl}/health/ready`)
     const body = await res.json()
@@ -76,25 +79,24 @@ describe('GET /health/ready', () => {
   })
 
   it('returns ok when closed databases are auto-removed from registry', async () => {
-    const db = sirannon.open('closing', join(tempDir, 'closing.db'))
-    db.close()
+    const db = await sirannon.open('closing', join(tempDir, 'closing.db'))
+    await db.close()
 
-    const db2 = sirannon.open('remaining', join(tempDir, 'remaining.db'))
+    const db2 = await sirannon.open('remaining', join(tempDir, 'remaining.db'))
 
     const res = await fetch(`${baseUrl}/health/ready`)
     const body = await res.json()
     expect(body.status).toBe('ok')
-    db2.close()
+    await db2.close()
   })
 
   it('returns ok with read-only database', async () => {
-    // Create a database first so it exists on disk
     const dbPath = join(tempDir, 'ro.db')
-    const setup = sirannon.open('setup', dbPath)
-    setup.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
-    sirannon.close('setup')
+    const setup = await sirannon.open('setup', dbPath)
+    await setup.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+    await sirannon.close('setup')
 
-    sirannon.open('readonly', dbPath, { readOnly: true })
+    await sirannon.open('readonly', dbPath, { readOnly: true })
 
     const res = await fetch(`${baseUrl}/health/ready`)
     const body = await res.json()

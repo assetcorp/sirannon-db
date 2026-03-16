@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { createServer, type SirannonServer } from '../server.js'
 
-/** Union response type covering all HTTP endpoint shapes in tests. */
 interface ApiResponse {
   rows: Record<string, unknown>[]
   changes: number
@@ -19,13 +19,15 @@ let sirannon: Sirannon
 let server: SirannonServer
 let baseUrl: string
 
+const driver = betterSqlite3()
+
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-http-'))
-  sirannon = new Sirannon()
-  const db = sirannon.open('test', join(tempDir, 'test.db'))
-  db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-  db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-  db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+  sirannon = new Sirannon({ driver })
+  const db = await sirannon.open('test', join(tempDir, 'test.db'))
+  await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+  await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
   server = createServer(sirannon, { port: 0 })
   await server.listen()
@@ -35,7 +37,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close()
-  sirannon.shutdown()
+  await sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -235,7 +237,6 @@ describe('POST /db/:id/transaction', () => {
     expect(body.results[0].changes).toBe(1)
     expect(body.results[1].changes).toBe(1)
 
-    // Verify both rows exist
     const verify = await fetch(`${baseUrl}/db/test/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -260,10 +261,8 @@ describe('POST /db/:id/transaction', () => {
         ],
       }),
     })
-    // Transaction errors return 400
     expect(res.status).toBe(400)
 
-    // Verify rollback: Eve should not exist
     const verify = await fetch(`${baseUrl}/db/test/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -354,13 +353,11 @@ describe('error responses', () => {
 
 describe('CORS', () => {
   it('sets CORS headers when cors: true', async () => {
-    // Create a separate server with CORS enabled
     const corsServer = createServer(sirannon, { port: 0, cors: true })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 
     try {
-      // Preflight
       const preflight = await fetch(`${corsUrl}/db/test/query`, {
         method: 'OPTIONS',
       })
@@ -368,7 +365,6 @@ describe('CORS', () => {
       expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
       expect(preflight.headers.get('access-control-allow-methods')).toContain('POST')
 
-      // Regular request
       const res = await fetch(`${corsUrl}/db/test/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

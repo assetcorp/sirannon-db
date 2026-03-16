@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { createServer, type SirannonServer } from '../server.js'
 
 let tempDir: string
@@ -87,13 +88,15 @@ function collectMessages(ws: WebSocket, count: number, timeoutMs = 3000): Promis
   })
 }
 
+const driver = betterSqlite3()
+
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-e2e-'))
-  sirannon = new Sirannon()
-  const db = sirannon.open('test', join(tempDir, 'test.db'))
-  db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-  db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-  db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+  sirannon = new Sirannon({ driver })
+  const db = await sirannon.open('test', join(tempDir, 'test.db'))
+  await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+  await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
   server = createServer(sirannon, { port: 0 })
   await server.listen()
@@ -102,7 +105,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close()
-  sirannon.shutdown()
+  await sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -168,7 +171,7 @@ describe('E2E WebSocket', () => {
     const changePromise = collectMessages(ws, 1)
 
     const db = sirannon.get('test')
-    db?.execute("INSERT INTO users (name, age) VALUES ('Dave', 40)")
+    await db?.execute("INSERT INTO users (name, age) VALUES ('Dave', 40)")
 
     const changes = await changePromise
     expect(changes.length).toBeGreaterThanOrEqual(1)
@@ -192,7 +195,7 @@ describe('E2E WebSocket', () => {
     const unsubResult = await sendAndReceive(ws, { id: 'sub-1', type: 'unsubscribe' })
     expect(unsubResult.type).toBe('unsubscribed')
 
-    sirannon.get('test')?.execute("INSERT INTO users (name, age) VALUES ('Eve', 22)")
+    await sirannon.get('test')?.execute("INSERT INTO users (name, age) VALUES ('Eve', 22)")
 
     const collected = await collectMessages(ws, 1, 300)
     const changeMessages = collected.filter(m => m.type === 'change')

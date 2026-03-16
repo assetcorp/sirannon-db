@@ -1,10 +1,7 @@
-import type Database from 'better-sqlite3'
+import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
 import { Transaction } from '../transaction.js'
-import { readDownMigrations, readUpMigrations, scanDirectory } from './scanner.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
-
-type SqliteDb = InstanceType<typeof Database>
 
 const CREATE_TRACKING_TABLE = `
   CREATE TABLE IF NOT EXISTS _sirannon_migrations (
@@ -16,29 +13,29 @@ const CREATE_TRACKING_TABLE = `
 
 // biome-ignore lint/complexity/noStaticOnlyClass: public API exported as a class namespace
 export class MigrationRunner {
-  static run(db: SqliteDb, input: string | Migration[]): MigrationResult {
-    db.exec(CREATE_TRACKING_TABLE)
+  static async run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult> {
+    await conn.exec(CREATE_TRACKING_TABLE)
 
-    const migrations =
-      typeof input === 'string' ? readUpMigrations(scanDirectory(input)) : MigrationRunner.validateMigrations(input)
-
-    const applied = MigrationRunner.getAppliedVersions(db)
-    const pending = migrations.filter(m => !applied.has(m.version))
+    const validated = MigrationRunner.validateMigrations(migrations)
+    const applied = await MigrationRunner.getAppliedVersions(conn)
+    const pending = validated.filter(m => !applied.has(m.version))
 
     if (pending.length === 0) {
-      return { applied: [], skipped: migrations.length }
+      return { applied: [], skipped: validated.length }
     }
 
-    const insertMigration = db.prepare('INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)')
     const appliedEntries: AppliedMigrationEntry[] = []
 
-    db.transaction(() => {
+    await conn.transaction(async txConn => {
+      const insertStmt = await txConn.prepare('INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)')
+
       for (const migration of pending) {
         try {
           if (typeof migration.up === 'string') {
-            db.exec(migration.up)
+            await txConn.exec(migration.up)
           } else {
-            migration.up(new Transaction(db))
+            const result = migration.up(new Transaction(txConn))
+            if (result instanceof Promise) await result
           }
         } catch (err) {
           if (err instanceof MigrationError) throw err
@@ -47,18 +44,18 @@ export class MigrationRunner {
             migration.version,
           )
         }
-        insertMigration.run(migration.version, migration.name)
+        await insertStmt.run(migration.version, migration.name)
         appliedEntries.push({ version: migration.version, name: migration.name })
       }
-    })()
+    })
 
     return {
       applied: appliedEntries,
-      skipped: migrations.length - pending.length,
+      skipped: validated.length - pending.length,
     }
   }
 
-  static rollback(db: SqliteDb, input: string | Migration[], version?: number): RollbackResult {
+  static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
     if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
       throw new MigrationError(
         `Invalid rollback target version: ${version}`,
@@ -67,11 +64,10 @@ export class MigrationRunner {
       )
     }
 
-    db.exec(CREATE_TRACKING_TABLE)
+    await conn.exec(CREATE_TRACKING_TABLE)
 
-    const appliedRows = db
-      .prepare('SELECT version, name FROM _sirannon_migrations ORDER BY version DESC')
-      .all() as AppliedMigrationEntry[]
+    const selectStmt = await conn.prepare('SELECT version, name FROM _sirannon_migrations ORDER BY version DESC')
+    const appliedRows = (await selectStmt.all()) as AppliedMigrationEntry[]
 
     if (appliedRows.length === 0) {
       return { rolledBack: [] }
@@ -89,28 +85,21 @@ export class MigrationRunner {
     }
 
     const rollbackVersions = rollbackSet.map(r => r.version)
-
-    let downByVersion: Map<number, Migration>
-    if (typeof input === 'string') {
-      const scanned = scanDirectory(input)
-      const downMigrations = readDownMigrations(scanned, rollbackVersions)
-      downByVersion = new Map(downMigrations.map(m => [m.version, m]))
-    } else {
-      const inputByVersion = new Map(input.map(m => [m.version, m]))
-      downByVersion = new Map()
-      for (const v of rollbackVersions) {
-        const m = inputByVersion.get(v)
-        if (!m || m.down === undefined) {
-          throw new MigrationError(`Migration version ${v} has no down migration`, v, 'MIGRATION_NO_DOWN')
-        }
-        downByVersion.set(v, m)
+    const inputByVersion = new Map(migrations.map(m => [m.version, m]))
+    const downByVersion = new Map<number, Migration>()
+    for (const v of rollbackVersions) {
+      const m = inputByVersion.get(v)
+      if (!m || m.down === undefined) {
+        throw new MigrationError(`Migration version ${v} has no down migration`, v, 'MIGRATION_NO_DOWN')
       }
+      downByVersion.set(v, m)
     }
 
-    const deleteMigration = db.prepare('DELETE FROM _sirannon_migrations WHERE version = ?')
     const rolledBackEntries: AppliedMigrationEntry[] = []
 
-    db.transaction(() => {
+    await conn.transaction(async txConn => {
+      const deleteStmt = await txConn.prepare('DELETE FROM _sirannon_migrations WHERE version = ?')
+
       for (const entry of rollbackSet) {
         const migration = downByVersion.get(entry.version)
         if (!migration) {
@@ -123,9 +112,10 @@ export class MigrationRunner {
 
         try {
           if (typeof migration.down === 'string') {
-            db.exec(migration.down)
+            await txConn.exec(migration.down)
           } else {
-            migration.down?.(new Transaction(db))
+            const result = migration.down?.(new Transaction(txConn))
+            if (result instanceof Promise) await result
           }
         } catch (err) {
           if (err instanceof MigrationError) throw err
@@ -135,10 +125,10 @@ export class MigrationRunner {
             'MIGRATION_ROLLBACK_ERROR',
           )
         }
-        deleteMigration.run(entry.version)
+        await deleteStmt.run(entry.version)
         rolledBackEntries.push({ version: entry.version, name: entry.name })
       }
-    })()
+    })
 
     return { rolledBack: rolledBackEntries }
   }
@@ -189,8 +179,9 @@ export class MigrationRunner {
     return [...migrations].sort((a, b) => a.version - b.version)
   }
 
-  private static getAppliedVersions(db: SqliteDb): Set<number> {
-    const rows = db.prepare('SELECT version FROM _sirannon_migrations ORDER BY version').all() as { version: number }[]
+  private static async getAppliedVersions(conn: SQLiteConnection): Promise<Set<number>> {
+    const stmt = await conn.prepare('SELECT version FROM _sirannon_migrations ORDER BY version')
+    const rows = (await stmt.all()) as { version: number }[]
     return new Set(rows.map(r => r.version))
   }
 }

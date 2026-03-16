@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3'
+import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import type { ChangeEvent } from '../types.js'
 import type { ChangeRow, ChangeTrackerOptions, ColumnInfo, WatchedTableInfo } from './types.js'
@@ -16,7 +16,7 @@ export class ChangeTracker {
   private readonly pollBatchSize: number
   private changesTableReady = false
   private watchedTablesCache: ReadonlySet<string> | null = null
-  private readonly stmtCache = new WeakMap<Database.Database, Map<string, Database.Statement>>()
+  private readonly stmtCache = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
@@ -26,11 +26,11 @@ export class ChangeTracker {
     this.assertIdentifier(this.changesTable, 'changes table name')
   }
 
-  watch(db: Database.Database, table: string): void {
+  async watch(conn: SQLiteConnection, table: string): Promise<void> {
     this.assertIdentifier(table, 'table name')
-    this.ensureChangesTable(db)
+    await this.ensureChangesTable(conn)
 
-    const columns = this.getColumns(db, table)
+    const columns = await this.getColumns(conn, table)
     if (columns.length === 0) {
       throw new CDCError(`Table '${table}' does not exist or has no columns`)
     }
@@ -39,7 +39,7 @@ export class ChangeTracker {
       this.assertIdentifier(col, `column name in table '${table}'`)
     }
 
-    const pkColumns = this.getPkColumns(db, table)
+    const pkColumns = await this.getPkColumns(conn, table)
     const existing = this.watched.get(table)
 
     if (existing) {
@@ -47,34 +47,34 @@ export class ChangeTracker {
       if (same) {
         return
       }
-      this.dropTriggers(db, table)
+      await this.dropTriggers(conn, table)
     }
 
-    this.installTriggers(db, table, columns, pkColumns)
+    await this.installTriggers(conn, table, columns, pkColumns)
     this.watched.set(table, { table, columns, pkColumns })
     this.watchedTablesCache = null
   }
 
-  unwatch(db: Database.Database, table: string): void {
+  async unwatch(conn: SQLiteConnection, table: string): Promise<void> {
     if (!this.watched.has(table)) {
       return
     }
 
-    this.dropTriggers(db, table)
+    await this.dropTriggers(conn, table)
     this.watched.delete(table)
     this.watchedTablesCache = null
   }
 
-  poll(db: Database.Database): ChangeEvent[] {
+  async poll(conn: SQLiteConnection): Promise<ChangeEvent[]> {
     if (!this.changesTableReady) {
-      this.detectChangesTable(db)
+      await this.detectChangesTable(conn)
       if (!this.changesTableReady) {
         return []
       }
     }
 
-    const stmt = this.getStmt(
-      db,
+    const stmt = await this.getStmt(
+      conn,
       'poll',
       `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
 			 FROM "${this.changesTable}"
@@ -83,7 +83,7 @@ export class ChangeTracker {
 			 LIMIT ?`,
     )
 
-    const rows = stmt.all(this.lastSeq, this.pollBatchSize) as ChangeRow[]
+    const rows = (await stmt.all(this.lastSeq, this.pollBatchSize)) as ChangeRow[]
 
     if (rows.length === 0) {
       return []
@@ -107,9 +107,9 @@ export class ChangeTracker {
     return events
   }
 
-  cleanup(db: Database.Database): number {
+  async cleanup(conn: SQLiteConnection): Promise<number> {
     if (!this.changesTableReady) {
-      this.detectChangesTable(db)
+      await this.detectChangesTable(conn)
       if (!this.changesTableReady) {
         return 0
       }
@@ -118,16 +118,18 @@ export class ChangeTracker {
     const cutoff = Date.now() / 1000 - this.retentionMs / 1000
 
     if (this.lastSeq > 0) {
-      const stmt = this.getStmt(
-        db,
+      const stmt = await this.getStmt(
+        conn,
         'cleanup_coordinated',
         `DELETE FROM "${this.changesTable}" WHERE changed_at < ? AND seq <= ?`,
       )
-      return stmt.run(cutoff, this.lastSeq).changes
+      const result = await stmt.run(cutoff, this.lastSeq)
+      return result.changes
     }
 
-    const stmt = this.getStmt(db, 'cleanup', `DELETE FROM "${this.changesTable}" WHERE changed_at < ?`)
-    return stmt.run(cutoff).changes
+    const stmt = await this.getStmt(conn, 'cleanup', `DELETE FROM "${this.changesTable}" WHERE changed_at < ?`)
+    const result = await stmt.run(cutoff)
+    return result.changes
   }
 
   get watchedTables(): ReadonlySet<string> {
@@ -145,19 +147,20 @@ export class ChangeTracker {
     }
   }
 
-  private detectChangesTable(db: Database.Database): void {
-    const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(this.changesTable)
+  private async detectChangesTable(conn: SQLiteConnection): Promise<void> {
+    const stmt = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+    const row = await stmt.get(this.changesTable)
     if (row) {
       this.changesTableReady = true
     }
   }
 
-  private ensureChangesTable(db: Database.Database): void {
+  private async ensureChangesTable(conn: SQLiteConnection): Promise<void> {
     if (this.changesTableReady) {
       return
     }
 
-    db.exec(`
+    await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   table_name TEXT NOT NULL,
@@ -167,42 +170,52 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   old_data TEXT,
   new_data TEXT
 )`)
-    db.exec(`CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`)
+    await conn.exec(
+      `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
+    )
     this.changesTableReady = true
   }
 
-  private getColumns(db: Database.Database, table: string): string[] {
-    const info = db.prepare(`PRAGMA table_info("${table}")`).all() as ColumnInfo[]
+  private async getColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
+    const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
+    const info = (await stmt.all()) as ColumnInfo[]
     return info.map(col => col.name)
   }
 
-  private getPkColumns(db: Database.Database, table: string): string[] {
-    const info = db.prepare(`PRAGMA table_info("${table}")`).all() as ColumnInfo[]
+  private async getPkColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
+    const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
+    const info = (await stmt.all()) as ColumnInfo[]
     return info
       .filter(col => col.pk > 0)
       .sort((a, b) => a.pk - b.pk)
       .map(col => col.name)
   }
 
-  private dropTriggers(db: Database.Database, table: string): void {
-    db.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_insert"`)
-    db.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_update"`)
-    db.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_delete"`)
+  private async dropTriggers(conn: SQLiteConnection, table: string): Promise<void> {
+    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_insert"`)
+    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_update"`)
+    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_delete"`)
   }
 
-  private getStmt(db: Database.Database, key: string, sql: string): Database.Statement {
-    let stmts = this.stmtCache.get(db)
+  private async getStmt(conn: SQLiteConnection, key: string, sql: string): Promise<SQLiteStatement> {
+    let stmts = this.stmtCache.get(conn)
     if (!stmts) {
       stmts = new Map()
-      this.stmtCache.set(db, stmts)
+      this.stmtCache.set(conn, stmts)
     }
 
-    let stmt = stmts.get(key)
-    if (!stmt) {
-      stmt = db.prepare(sql)
-      stmts.set(key, stmt)
+    const existing = stmts.get(key)
+    if (existing) return existing
+
+    const pending = conn.prepare(sql)
+    stmts.set(key, pending)
+
+    try {
+      return await pending
+    } catch (err) {
+      stmts.delete(key)
+      throw err
     }
-    return stmt
   }
 
   private buildPkRef(pkColumns: string[], ref: 'NEW' | 'OLD'): string {
@@ -215,13 +228,18 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
     return pkColumns.map(col => `${ref}."${this.escId(col)}"`).join(" || '-' || ")
   }
 
-  private installTriggers(db: Database.Database, table: string, columns: string[], pkColumns: string[]): void {
+  private async installTriggers(
+    conn: SQLiteConnection,
+    table: string,
+    columns: string[],
+    pkColumns: string[],
+  ): Promise<void> {
     const newJson = this.buildJsonObject(columns, 'NEW')
     const oldJson = this.buildJsonObject(columns, 'OLD')
     const newPk = this.buildPkRef(pkColumns, 'NEW')
     const oldPk = this.buildPkRef(pkColumns, 'OLD')
 
-    db.exec(`
+    await conn.exec(`
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_insert"
 			AFTER INSERT ON "${table}"
 			BEGIN
@@ -230,7 +248,7 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 			END
 		`)
 
-    db.exec(`
+    await conn.exec(`
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_update"
 			AFTER UPDATE ON "${table}"
 			BEGIN
@@ -239,7 +257,7 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 			END
 		`)
 
-    db.exec(`
+    await conn.exec(`
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_delete"
 			AFTER DELETE ON "${table}"
 			BEGIN

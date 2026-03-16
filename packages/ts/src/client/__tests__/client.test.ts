@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import { SirannonClient } from '../client.js'
@@ -10,6 +11,7 @@ import { RemoteDatabase } from '../database-proxy.js'
 import { HttpTransport } from '../transport/http.js'
 import { RemoteError } from '../types.js'
 
+const driver = betterSqlite3()
 let tempDir: string
 let sirannon: Sirannon
 let server: SirannonServer
@@ -17,12 +19,12 @@ let baseUrl: string
 
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-client-'))
-  sirannon = new Sirannon()
+  sirannon = new Sirannon({ driver })
 
-  const db = sirannon.open('testdb', join(tempDir, 'test.db'))
-  db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-  db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-  db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+  const db = await sirannon.open('testdb', join(tempDir, 'test.db'))
+  await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+  await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
   server = createServer(sirannon, { port: 0 })
   await server.listen()
@@ -31,7 +33,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close()
-  sirannon.shutdown()
+  await sirannon.shutdown()
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -203,8 +205,6 @@ describe('RemoteDatabase via HTTP', () => {
       headers: { 'x-custom': 'test-value' },
     })
     const db = authClient.database('testdb')
-    // The server doesn't validate custom headers, so we verify
-    // the request succeeds (headers are forwarded).
     const rows = await db.query('SELECT 1 as result')
     expect(rows).toHaveLength(1)
     authClient.close()

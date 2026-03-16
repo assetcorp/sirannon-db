@@ -4,13 +4,13 @@ import type { CDCMetrics, ConnectionMetrics, QueryMetrics } from '../types.js'
 
 describe('MetricsCollector', () => {
   describe('trackQuery', () => {
-    it('returns the result of the wrapped function', () => {
+    it('returns the result of the wrapped function', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      const result = collector.trackQuery(() => [{ id: 1, name: 'alice' }], {
+      const result = await collector.trackQuery(async () => [{ id: 1, name: 'alice' }], {
         databaseId: 'main',
         sql: 'SELECT * FROM users',
       })
@@ -18,13 +18,13 @@ describe('MetricsCollector', () => {
       expect(result).toEqual([{ id: 1, name: 'alice' }])
     })
 
-    it('invokes onQueryComplete with timing data', () => {
+    it('invokes onQueryComplete with timing data', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      collector.trackQuery(() => [], {
+      await collector.trackQuery(async () => [], {
         databaseId: 'main',
         sql: 'SELECT 1',
         rowsReturned: 1,
@@ -39,14 +39,14 @@ describe('MetricsCollector', () => {
       expect(metrics.durationMs).toBeGreaterThanOrEqual(0)
     })
 
-    it('measures duration with reasonable accuracy', () => {
+    it('measures duration with reasonable accuracy', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      collector.trackQuery(
-        () => {
+      await collector.trackQuery(
+        async () => {
           const end = performance.now() + 20
           while (performance.now() < end) {
             /* spin */
@@ -63,20 +63,20 @@ describe('MetricsCollector', () => {
       expect(metrics.durationMs).toBeGreaterThanOrEqual(15)
     })
 
-    it('reports metrics when the wrapped function throws', () => {
+    it('reports metrics when the wrapped function throws', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      expect(() =>
+      await expect(
         collector.trackQuery(
-          () => {
+          async () => {
             throw new Error('query failed')
           },
           { databaseId: 'main', sql: 'INVALID SQL' },
         ),
-      ).toThrow('query failed')
+      ).rejects.toThrow('query failed')
 
       expect(onQueryComplete).toHaveBeenCalledOnce()
       const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
@@ -84,13 +84,13 @@ describe('MetricsCollector', () => {
       expect(typeof metrics.durationMs).toBe('number')
     })
 
-    it('sets error to false on success', () => {
+    it('sets error to false on success', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      collector.trackQuery(() => 'ok', {
+      await collector.trackQuery(async () => 'ok', {
         databaseId: 'main',
         sql: 'SELECT 1',
       })
@@ -99,29 +99,29 @@ describe('MetricsCollector', () => {
       expect(metrics.error).toBe(false)
     })
 
-    it('sets error to true on failure', () => {
+    it('sets error to true on failure', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      expect(() =>
+      await expect(
         collector.trackQuery(
-          () => {
+          async () => {
             throw new Error('boom')
           },
           { databaseId: 'main', sql: 'BAD SQL' },
         ),
-      ).toThrow('boom')
+      ).rejects.toThrow('boom')
 
       const metrics: QueryMetrics = onQueryComplete.mock.calls[0][0]
       expect(metrics.error).toBe(true)
     })
 
-    it('skips timing overhead when no callback is configured', () => {
+    it('skips timing overhead when no callback is configured', async () => {
       const collector = new MetricsCollector()
 
-      const result = collector.trackQuery(() => 42, {
+      const result = await collector.trackQuery(async () => 42, {
         databaseId: 'main',
         sql: 'SELECT 42',
       })
@@ -129,13 +129,13 @@ describe('MetricsCollector', () => {
       expect(result).toBe(42)
     })
 
-    it('passes changes and rowsReturned through', () => {
+    it('passes changes and rowsReturned through', async () => {
       const onQueryComplete = vi.fn()
       const collector = new MetricsCollector({
         onQueryComplete,
       })
 
-      collector.trackQuery(() => null, {
+      await collector.trackQuery(async () => null, {
         databaseId: 'main',
         sql: 'UPDATE users SET name = ?',
         changes: 5,
@@ -145,14 +145,14 @@ describe('MetricsCollector', () => {
       expect(metrics.changes).toBe(5)
     })
 
-    it('swallows callback errors on success and still returns the result', () => {
+    it('swallows callback errors on success and still returns the result', async () => {
       const collector = new MetricsCollector({
         onQueryComplete: () => {
           throw new Error('callback exploded')
         },
       })
 
-      const result = collector.trackQuery(() => [{ id: 1 }], {
+      const result = await collector.trackQuery(async () => [{ id: 1 }], {
         databaseId: 'main',
         sql: 'SELECT * FROM users',
       })
@@ -160,21 +160,21 @@ describe('MetricsCollector', () => {
       expect(result).toEqual([{ id: 1 }])
     })
 
-    it('swallows callback errors on failure and preserves the original error', () => {
+    it('swallows callback errors on failure and preserves the original error', async () => {
       const collector = new MetricsCollector({
         onQueryComplete: () => {
           throw new Error('callback exploded')
         },
       })
 
-      expect(() =>
+      await expect(
         collector.trackQuery(
-          () => {
+          async () => {
             throw new Error('real query error')
           },
           { databaseId: 'main', sql: 'BAD SQL' },
         ),
-      ).toThrow('real query error')
+      ).rejects.toThrow('real query error')
     })
   })
 

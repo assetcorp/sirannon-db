@@ -22,7 +22,10 @@
     "subscriptions",
     "websocket",
     "embedded",
-    "better-sqlite3"
+    "better-sqlite3",
+    "wa-sqlite",
+    "expo-sqlite",
+    "pluggable"
   ],
   "scripts": {
     "build": "tsup",
@@ -49,6 +52,34 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.mjs"
     },
+    "./driver/better-sqlite3": {
+      "types": "./dist/driver/better-sqlite3.d.ts",
+      "import": "./dist/driver/better-sqlite3.mjs"
+    },
+    "./driver/node": {
+      "types": "./dist/driver/node.d.ts",
+      "import": "./dist/driver/node.mjs"
+    },
+    "./driver/bun": {
+      "types": "./dist/driver/bun.d.ts",
+      "import": "./dist/driver/bun.mjs"
+    },
+    "./driver/wa-sqlite": {
+      "types": "./dist/driver/wa-sqlite.d.ts",
+      "import": "./dist/driver/wa-sqlite.mjs"
+    },
+    "./driver/expo": {
+      "types": "./dist/driver/expo.d.ts",
+      "import": "./dist/driver/expo.mjs"
+    },
+    "./file-migrations": {
+      "types": "./dist/file-migrations/index.d.ts",
+      "import": "./dist/file-migrations/index.mjs"
+    },
+    "./backup-scheduler": {
+      "types": "./dist/backup-scheduler/index.d.ts",
+      "import": "./dist/backup-scheduler/index.mjs"
+    },
     "./server": {
       "types": "./dist/server/index.d.ts",
       "import": "./dist/server/index.mjs"
@@ -66,22 +97,44 @@
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {
-    "better-sqlite3": "12.6.2",
-    "croner": "10.0.1",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0"
+  "peerDependencies": {
+    "better-sqlite3": ">=12.0.0",
+    "wa-sqlite": ">=1.0.0",
+    "expo-sqlite": ">=14.0.0",
+    "croner": ">=10.0.0",
+    "uWebSockets.js": ">=20.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "wa-sqlite": {
+      "optional": true
+    },
+    "expo-sqlite": {
+      "optional": true
+    },
+    "croner": {
+      "optional": true
+    },
+    "uWebSockets.js": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.3.3",
     "@types/pg": "8.11.10",
     "@vitest/coverage-v8": "4.0.18",
+    "better-sqlite3": "12.6.2",
+    "croner": "10.0.1",
     "pg": "8.19.0",
     "simple-statistics": "7.8.7",
     "tinybench": "6.0.0",
     "tsup": "8.5.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0",
     "vitest": "4.0.18"
   }
 }

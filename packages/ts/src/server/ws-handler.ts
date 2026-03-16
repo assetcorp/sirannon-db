@@ -1,7 +1,7 @@
-import SqliteDatabase from 'better-sqlite3'
 import { ChangeTracker } from '../core/cdc/change-tracker.js'
 import { SubscriptionManager } from '../core/cdc/subscription.js'
 import type { Database } from '../core/database.js'
+import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, Subscription, WSHandlerOptions } from '../core/types.js'
@@ -11,40 +11,30 @@ import { toExecuteResponse } from './protocol.js'
 const DEFAULT_POLL_INTERVAL_MS = 50
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
-/** Transport-agnostic WebSocket connection. */
 export interface WSConnection {
   send(data: string): void
   close(code?: number, reason?: string): void
 }
 
-/** Tracks subscriptions and database reference for a single WS connection. */
 interface ConnectionState {
   databaseId: string
   database: Database
   subscriptions: Map<string, Subscription>
 }
 
-/** CDC resources shared across all WS connections to the same database. */
 interface CDCContext {
-  cdcDb: InstanceType<typeof SqliteDatabase>
+  cdcConn: SQLiteConnection
   tracker: ChangeTracker
   manager: SubscriptionManager
   stopPolling: () => void
 }
 
-/**
- * Manages WebSocket connections, routes messages to databases, and integrates
- * with CDC for real-time change subscriptions.
- *
- * Designed to be transport-agnostic: any WebSocket implementation can drive
- * this handler by calling handleOpen/handleMessage/handleClose with a
- * WSConnection adapter.
- */
 export class WSHandler {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdcContexts = new Map<string, CDCContext>()
+  private readonly cdcPending = new Map<string, Promise<CDCContext>>()
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
@@ -52,22 +42,14 @@ export class WSHandler {
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
   }
 
-  // --- Public API ---
-
-  /**
-   * Register a new WebSocket connection for the given database.
-   *
-   * Sends an error and closes the connection if the database does not exist,
-   * is closed, or the handler itself has been shut down.
-   */
-  handleOpen(conn: WSConnection, databaseId: string): void {
+  async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
     if (this.closed) {
       this.sendError(conn, '', 'HANDLER_CLOSED', 'WebSocket handler is shut down')
       conn.close(1013, 'Handler shutting down')
       return
     }
 
-    const database = this.sirannon.get(databaseId)
+    const database = await this.sirannon.resolve(databaseId)
     if (!database) {
       this.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
       conn.close(1008, 'Database not found')
@@ -87,12 +69,6 @@ export class WSHandler {
     })
   }
 
-  /**
-   * Process an incoming WebSocket message.
-   *
-   * Validates the JSON payload, extracts the message type and correlation ID,
-   * and routes to the appropriate handler.
-   */
   handleMessage(conn: WSConnection, data: string): void {
     const state = this.connections.get(conn)
     if (!state) return
@@ -145,12 +121,6 @@ export class WSHandler {
     }
   }
 
-  /**
-   * Clean up after a WebSocket connection closes.
-   *
-   * Unsubscribes all active CDC subscriptions for this connection and
-   * releases the per-database CDC context if no subscribers remain.
-   */
   handleClose(conn: WSConnection): void {
     const state = this.connections.get(conn)
     if (!state) return
@@ -164,18 +134,11 @@ export class WSHandler {
     this.connections.delete(conn)
   }
 
-  /** Number of active WebSocket connections. */
   get connectionCount(): number {
     return this.connections.size
   }
 
-  /**
-   * Shut down the handler.
-   *
-   * Unsubscribes all CDC subscriptions, closes all WebSocket connections
-   * with code 1001 (Going Away), and releases all CDC resources.
-   */
-  close(): void {
+  async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
 
@@ -191,7 +154,7 @@ export class WSHandler {
     for (const ctx of this.cdcContexts.values()) {
       ctx.stopPolling()
       try {
-        ctx.cdcDb.close()
+        await ctx.cdcConn.close()
       } catch {
         /* best effort */
       }
@@ -199,9 +162,12 @@ export class WSHandler {
     this.cdcContexts.clear()
   }
 
-  // --- Private message handlers ---
-
-  private handleQuery(conn: WSConnection, state: ConnectionState, msg: Record<string, unknown>, id: string): void {
+  private async handleQuery(
+    conn: WSConnection,
+    state: ConnectionState,
+    msg: Record<string, unknown>,
+    id: string,
+  ): Promise<void> {
     if (typeof msg.sql !== 'string') {
       this.sendError(conn, id, 'INVALID_MESSAGE', 'Query message requires a "sql" string field')
       return
@@ -214,14 +180,19 @@ export class WSHandler {
 
     try {
       const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const rows = state.database.query(msg.sql, params)
+      const rows = await state.database.query(msg.sql, params)
       this.send(conn, { type: 'result', id, data: { rows } })
     } catch (err) {
       this.sendSirannonError(conn, id, err)
     }
   }
 
-  private handleExecute(conn: WSConnection, state: ConnectionState, msg: Record<string, unknown>, id: string): void {
+  private async handleExecute(
+    conn: WSConnection,
+    state: ConnectionState,
+    msg: Record<string, unknown>,
+    id: string,
+  ): Promise<void> {
     if (typeof msg.sql !== 'string') {
       this.sendError(conn, id, 'INVALID_MESSAGE', 'Execute message requires a "sql" string field')
       return
@@ -234,7 +205,7 @@ export class WSHandler {
 
     try {
       const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const result = state.database.execute(msg.sql, params)
+      const result = await state.database.execute(msg.sql, params)
       this.send(conn, {
         type: 'result',
         id,
@@ -245,7 +216,12 @@ export class WSHandler {
     }
   }
 
-  private handleSubscribe(conn: WSConnection, state: ConnectionState, msg: Record<string, unknown>, id: string): void {
+  private async handleSubscribe(
+    conn: WSConnection,
+    state: ConnectionState,
+    msg: Record<string, unknown>,
+    id: string,
+  ): Promise<void> {
     if (typeof msg.table !== 'string') {
       this.sendError(conn, id, 'INVALID_MESSAGE', 'Subscribe message requires a "table" string field')
       return
@@ -278,8 +254,8 @@ export class WSHandler {
     const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
 
     try {
-      const ctx = this.ensureCDC(state.databaseId, state.database)
-      ctx.tracker.watch(ctx.cdcDb, msg.table)
+      const ctx = await this.ensureCDC(state.databaseId, state.database)
+      await ctx.tracker.watch(ctx.cdcConn, msg.table)
 
       const sub = ctx.manager.subscribe(msg.table, filter, (event: ChangeEvent) => {
         this.sendChange(conn, id, event)
@@ -305,26 +281,31 @@ export class WSHandler {
     this.maybeCleanupCDC(state.databaseId)
   }
 
-  // --- CDC management ---
-
-  /**
-   * Get or create a CDC context for the given database.
-   *
-   * Opens a separate better-sqlite3 connection for trigger installation and
-   * change polling. WAL mode and a 5-second busy timeout are set so that
-   * the CDC connection coexists with the Database class's connection pool.
-   */
-  private ensureCDC(databaseId: string, database: Database): CDCContext {
+  private async ensureCDC(databaseId: string, database: Database): Promise<CDCContext> {
     const existing = this.cdcContexts.get(databaseId)
     if (existing) return existing
 
-    const cdcDb = new SqliteDatabase(database.path)
-    cdcDb.pragma('journal_mode = WAL')
-    cdcDb.pragma('busy_timeout = 5000')
+    const pending = this.cdcPending.get(databaseId)
+    if (pending) return pending
+
+    const promise = this.createCDCContext(database)
+    this.cdcPending.set(databaseId, promise)
+    try {
+      const ctx = await promise
+      this.cdcContexts.set(databaseId, ctx)
+      return ctx
+    } finally {
+      this.cdcPending.delete(databaseId)
+    }
+  }
+
+  private async createCDCContext(database: Database): Promise<CDCContext> {
+    const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
 
     const tracker = new ChangeTracker()
     const manager = new SubscriptionManager()
 
+    let polling = false
     let consecutiveErrors = 0
     const MAX_CONSECUTIVE_ERRORS = 10
 
@@ -332,10 +313,12 @@ export class WSHandler {
       clearInterval(interval)
     }
 
-    const tick = () => {
+    const tick = async () => {
       if (manager.size === 0) return
+      if (polling) return
+      polling = true
       try {
-        const events = tracker.poll(cdcDb)
+        const events = await tracker.poll(cdcConn)
         if (events.length > 0) {
           manager.dispatch(events)
         }
@@ -345,42 +328,33 @@ export class WSHandler {
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
           stopPolling()
         }
+      } finally {
+        polling = false
       }
     }
     const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS)
-    if (typeof interval.unref === 'function') interval.unref()
+    if (typeof interval === 'object' && 'unref' in interval && typeof interval.unref === 'function') {
+      interval.unref()
+    }
 
-    const ctx: CDCContext = { cdcDb, tracker, manager, stopPolling }
-    this.cdcContexts.set(databaseId, ctx)
-    return ctx
+    return { cdcConn, tracker, manager, stopPolling }
   }
 
-  /**
-   * Release CDC resources for a database if no subscribers remain.
-   *
-   * Stops the polling loop and closes the dedicated CDC connection.
-   */
   private maybeCleanupCDC(databaseId: string): void {
     const ctx = this.cdcContexts.get(databaseId)
     if (!ctx || ctx.manager.size > 0) return
 
     ctx.stopPolling()
-    try {
-      ctx.cdcDb.close()
-    } catch {
+    ctx.cdcConn.close().catch(() => {
       /* best effort */
-    }
+    })
     this.cdcContexts.delete(databaseId)
   }
-
-  // --- Validation ---
 
   private isValidParams(params: unknown): boolean {
     if (params === undefined || params === null) return true
     return typeof params === 'object'
   }
-
-  // --- Send helpers ---
 
   private send(conn: WSConnection, msg: WSServerMessage): void {
     try {
@@ -416,7 +390,6 @@ export class WSHandler {
   }
 }
 
-/** Create a transport-agnostic WebSocket handler bound to a Sirannon registry. */
 export function createWSHandler(sirannon: Sirannon, options?: WSHandlerOptions): WSHandler {
   return new WSHandler(sirannon, options)
 }

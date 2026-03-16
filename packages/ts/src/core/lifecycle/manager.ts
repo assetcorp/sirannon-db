@@ -15,6 +15,7 @@ export class LifecycleManager {
   private readonly lastAccess = new Map<string, number>()
   private idleTimer: ReturnType<typeof setInterval> | null = null
   private _disposed = false
+  #idleCheckPromise: Promise<void> | null = null
 
   constructor(config: LifecycleConfig, callbacks: LifecycleCallbacks) {
     this.config = config
@@ -23,7 +24,9 @@ export class LifecycleManager {
     const timeout = config.idleTimeout
     if (timeout && timeout > 0) {
       const interval = Math.min(Math.max(Math.floor(timeout / 2), 100), 60_000)
-      this.idleTimer = setInterval(() => this.checkIdle(), interval)
+      this.idleTimer = setInterval(async () => {
+        await this.#runIdleCheck()
+      }, interval)
       if (typeof this.idleTimer === 'object' && 'unref' in this.idleTimer) {
         this.idleTimer.unref()
       }
@@ -146,6 +149,22 @@ export class LifecycleManager {
   private ensureNotDisposed(): void {
     if (this._disposed) {
       throw new SirannonError('LifecycleManager has been disposed', 'LIFECYCLE_DISPOSED')
+    }
+  }
+
+  async #runIdleCheck(): Promise<void> {
+    if (this.#idleCheckPromise) {
+      await this.#idleCheckPromise
+      return
+    }
+
+    this.#idleCheckPromise = this.checkIdle()
+
+    try {
+      await this.#idleCheckPromise
+    } catch {
+    } finally {
+      this.#idleCheckPromise = null
     }
   }
 }

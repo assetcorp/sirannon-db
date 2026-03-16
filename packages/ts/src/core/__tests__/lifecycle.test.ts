@@ -25,7 +25,9 @@ function createRegistry() {
   const callbacks: LifecycleCallbacks = {
     async open(id: string, path: string, options?) {
       const db = await Database.create(id, path, testDriver, options)
-      db.addCloseListener(() => dbs.delete(id))
+      db.addCloseListener(() => {
+        dbs.delete(id)
+      })
       dbs.set(id, db)
       return db
     },
@@ -656,6 +658,56 @@ describe('LifecycleManager', () => {
       }
     })
 
+    it('does not overlap async idle cleanup between timer ticks', async () => {
+      vi.useFakeTimers()
+      try {
+        let releaseClose: (() => void) | undefined
+        let isOpen = true
+        let activeCloses = 0
+        let maxActiveCloses = 0
+
+        const close = vi.fn(async () => {
+          activeCloses += 1
+          maxActiveCloses = Math.max(maxActiveCloses, activeCloses)
+
+          await new Promise<void>(resolve => {
+            releaseClose = () => {
+              isOpen = false
+              activeCloses -= 1
+              resolve()
+            }
+          })
+        })
+
+        const callbacks: LifecycleCallbacks = {
+          open: async () => {
+            throw new Error('open should not be called')
+          },
+          close,
+          count: () => 1,
+          has: () => isOpen,
+        }
+
+        const manager = new LifecycleManager({ idleTimeout: 100 }, callbacks)
+        manager.markActive('db1')
+
+        await vi.advanceTimersByTimeAsync(100)
+        expect(close).toHaveBeenCalledTimes(1)
+
+        await vi.advanceTimersByTimeAsync(200)
+        expect(close).toHaveBeenCalledTimes(1)
+        expect(maxActiveCloses).toBe(1)
+
+        releaseClose?.()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(manager.trackedCount).toBe(0)
+        manager.dispose()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('does not start a timer when idleTimeout is 0', async () => {
       vi.useFakeTimers()
       try {
@@ -762,12 +814,14 @@ describe('LifecycleManager', () => {
     it('handles timer handles without unref', () => {
       const originalSetInterval = globalThis.setInterval
       const originalClearInterval = globalThis.clearInterval
-      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation((fn: TimerHandler) => {
+      const setIntervalSpy = vi
+        .spyOn(globalThis, 'setInterval')
+        .mockImplementation((fn: Parameters<typeof setInterval>[0]) => {
         if (typeof fn === 'function') {
           fn()
         }
         return 1 as unknown as ReturnType<typeof setInterval>
-      })
+        })
       const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
 
       try {

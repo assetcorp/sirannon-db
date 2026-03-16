@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { MigrationError } from '../errors.js'
-import type { Migration } from './types.js'
+import { MigrationError } from '../../core/errors.js'
+import type { Migration } from '../../core/migrations/types.js'
 
 export interface ScannedMigration {
   version: number
@@ -141,4 +141,8 @@ export function readDownMigrations(scanned: ScannedMigration[], versions: number
       down: downSql,
     }
   })
+}
+
+export function loadMigrations(dirPath: string): Migration[] {
+  return readUpMigrations(scanDirectory(dirPath))
 }

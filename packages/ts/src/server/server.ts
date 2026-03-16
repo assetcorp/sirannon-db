@@ -107,15 +107,12 @@ export class SirannonServer {
     })
   }
 
-  close(): Promise<void> {
-    return new Promise(resolve => {
-      this.wsHandler.close()
-      if (this.listenSocket) {
-        uWS.us_listen_socket_close(this.listenSocket)
-        this.listenSocket = null
-      }
-      resolve()
-    })
+  async close(): Promise<void> {
+    await this.wsHandler.close()
+    if (this.listenSocket) {
+      uWS.us_listen_socket_close(this.listenSocket)
+      this.listenSocket = null
+    }
   }
 
   get listeningPort(): number {
@@ -236,7 +233,7 @@ export class SirannonServer {
           },
         }
         userData.conn = conn
-        wsHandler.handleOpen(conn, userData.databaseId)
+        wsHandler.handleOpen(conn, userData.databaseId).catch(() => {})
       },
 
       message: (ws, message) => {
@@ -286,9 +283,9 @@ export class SirannonServer {
 
       if (!onRequestHook) {
         bodyPromise
-          .then(rawBody => {
+          .then(async rawBody => {
             if (abort.aborted) return
-            handler(res, dbId, rawBody)
+            await handler(res, dbId, rawBody, abort)
           })
           .catch(() => {})
         return
@@ -311,9 +308,9 @@ export class SirannonServer {
       const hookPromise = runOnRequest(res, ctx, onRequestHook)
 
       Promise.all([bodyPromise, hookPromise])
-        .then(([rawBody, allowed]) => {
+        .then(async ([rawBody, allowed]) => {
           if (abort.aborted || !allowed) return
-          handler(res, dbId, rawBody)
+          await handler(res, dbId, rawBody, abort)
         })
         .catch(() => {})
     }

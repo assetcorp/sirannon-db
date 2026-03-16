@@ -166,7 +166,7 @@ describe('http-handler helpers', () => {
 })
 
 describe('http-handler status mapping and catch branches', () => {
-  it('maps SirannonError codes to expected HTTP statuses for query', () => {
+  it('maps SirannonError codes to expected HTTP statuses for query', async () => {
     const scenarios = [
       { code: 'DATABASE_NOT_FOUND', expectedStatus: '404' },
       { code: 'READ_ONLY', expectedStatus: '403' },
@@ -185,16 +185,19 @@ describe('http-handler status mapping and catch branches', () => {
         },
       }
       const sirannon = {
-        get: () => db,
+        resolve: () => Promise.resolve(db),
       } as unknown as Sirannon
       const handler = handleQuery(sirannon)
 
-      handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })))
+      await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
+        aborted: false,
+        onAbort: () => {},
+      })
       expect(mock.state.status).toBe(scenario.expectedStatus)
     }
   })
 
-  it('returns INTERNAL_ERROR for unexpected query errors', () => {
+  it('returns INTERNAL_ERROR for unexpected query errors', async () => {
     const mock = createMockResponse()
     const db = {
       query: () => {
@@ -202,18 +205,21 @@ describe('http-handler status mapping and catch branches', () => {
       },
     }
     const sirannon = {
-      get: () => db,
+      resolve: () => Promise.resolve(db),
     } as unknown as Sirannon
     const handler = handleQuery(sirannon)
 
-    handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })))
+    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
+      aborted: false,
+      onAbort: () => {},
+    })
 
     expect(mock.state.status).toBe('500')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('INTERNAL_ERROR')
   })
 
-  it('maps SirannonError in execute handler', () => {
+  it('maps SirannonError in execute handler', async () => {
     const mock = createMockResponse()
     const db = {
       execute: () => {
@@ -221,18 +227,21 @@ describe('http-handler status mapping and catch branches', () => {
       },
     }
     const sirannon = {
-      get: () => db,
+      resolve: () => Promise.resolve(db),
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })))
+    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })), {
+      aborted: false,
+      onAbort: () => {},
+    })
 
     expect(mock.state.status).toBe('403')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('READ_ONLY')
   })
 
-  it('returns INTERNAL_ERROR for unexpected execute errors', () => {
+  it('returns INTERNAL_ERROR for unexpected execute errors', async () => {
     const mock = createMockResponse()
     const db = {
       execute: () => {
@@ -240,34 +249,38 @@ describe('http-handler status mapping and catch branches', () => {
       },
     }
     const sirannon = {
-      get: () => db,
+      resolve: () => Promise.resolve(db),
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })))
+    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })), {
+      aborted: false,
+      onAbort: () => {},
+    })
 
     expect(mock.state.status).toBe('500')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('INTERNAL_ERROR')
   })
 
-  it('returns INVALID_JSON for malformed execute body', () => {
+  it('returns INVALID_JSON for malformed execute body', async () => {
     const mock = createMockResponse()
     const sirannon = {
-      get: () => ({
-        execute: () => ({ changes: 1, lastInsertRowId: 1 }),
-      }),
+      resolve: () =>
+        Promise.resolve({
+          execute: () => ({ changes: 1, lastInsertRowId: 1 }),
+        }),
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    handler(mock.res, 'db1', Buffer.from('not json'))
+    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} })
 
     expect(mock.state.status).toBe('400')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('INVALID_JSON')
   })
 
-  it('returns INTERNAL_ERROR for unexpected transaction errors', () => {
+  it('returns INTERNAL_ERROR for unexpected transaction errors', async () => {
     const mock = createMockResponse()
     const db = {
       transaction: () => {
@@ -275,11 +288,11 @@ describe('http-handler status mapping and catch branches', () => {
       },
     }
     const sirannon = {
-      get: () => db,
+      resolve: () => Promise.resolve(db),
     } as unknown as Sirannon
     const handler = handleTransaction(sirannon)
 
-    handler(
+    await handler(
       mock.res,
       'db1',
       Buffer.from(
@@ -287,6 +300,7 @@ describe('http-handler status mapping and catch branches', () => {
           statements: [{ sql: 'UPDATE users SET name = ? WHERE id = ?', params: ['Alice', 1] }],
         }),
       ),
+      { aborted: false, onAbort: () => {} },
     )
 
     expect(mock.state.status).toBe('500')
@@ -294,16 +308,17 @@ describe('http-handler status mapping and catch branches', () => {
     expect(body.error?.code).toBe('INTERNAL_ERROR')
   })
 
-  it('returns INVALID_JSON for malformed transaction body', () => {
+  it('returns INVALID_JSON for malformed transaction body', async () => {
     const mock = createMockResponse()
     const sirannon = {
-      get: () => ({
-        transaction: () => [],
-      }),
+      resolve: () =>
+        Promise.resolve({
+          transaction: () => [],
+        }),
     } as unknown as Sirannon
     const handler = handleTransaction(sirannon)
 
-    handler(mock.res, 'db1', Buffer.from('not json'))
+    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} })
 
     expect(mock.state.status).toBe('400')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }

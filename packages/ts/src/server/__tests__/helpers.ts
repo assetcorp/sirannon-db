@@ -1,3 +1,5 @@
+import { Sirannon } from '../../core/sirannon.js'
+import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { WSConnection } from '../ws-handler.js'
 
 export interface MockWSConnection extends WSConnection {
@@ -23,6 +25,11 @@ export function createMockConnection(): MockWSConnection {
     },
   }
   return conn
+}
+
+export function createTestSirannon(): Sirannon {
+  const driver = betterSqlite3()
+  return new Sirannon({ driver })
 }
 
 export function parseMessages(conn: MockWSConnection): Record<string, unknown>[] {

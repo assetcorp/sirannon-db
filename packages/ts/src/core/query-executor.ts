@@ -1,26 +1,15 @@
-import type Database from 'better-sqlite3'
+import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError } from './errors.js'
 import type { ExecuteResult, Params } from './types.js'
 
-type SqliteDb = InstanceType<typeof Database>
-
-interface PreparedStatement {
-  all(...params: unknown[]): unknown[]
-  get(...params: unknown[]): unknown
-  run(...params: unknown[]): {
-    changes: number
-    lastInsertRowid: number | bigint
-  }
-}
-
 const STATEMENT_CACHE_CAPACITY = 128
-const statementCaches = new WeakMap<SqliteDb, Map<string, PreparedStatement>>()
+const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
 
-function getStatement(db: SqliteDb, sql: string): PreparedStatement {
-  let cache = statementCaches.get(db)
+async function getStatement(conn: SQLiteConnection, sql: string): Promise<SQLiteStatement> {
+  let cache = statementCaches.get(conn)
   if (!cache) {
     cache = new Map()
-    statementCaches.set(db, cache)
+    statementCaches.set(conn, cache)
   }
 
   const cached = cache.get(sql)
@@ -30,8 +19,8 @@ function getStatement(db: SqliteDb, sql: string): PreparedStatement {
     return cached
   }
 
-  const stmt = db.prepare(sql)
-  cache.set(sql, stmt)
+  const pending = conn.prepare(sql)
+  cache.set(sql, pending)
 
   if (cache.size > STATEMENT_CACHE_CAPACITY) {
     const oldest = cache.keys().next().value
@@ -40,61 +29,75 @@ function getStatement(db: SqliteDb, sql: string): PreparedStatement {
     }
   }
 
-  return stmt
+  try {
+    return await pending
+  } catch (err) {
+    cache.delete(sql)
+    throw err
+  }
 }
 
-function bindParams(params?: Params): unknown[] {
+export function bindParams(params?: Params): unknown[] {
   if (params === undefined) return []
   if (Array.isArray(params)) return params
   return [params]
 }
 
-export function query<T = Record<string, unknown>>(db: SqliteDb, sql: string, params?: Params): T[] {
+export async function query<T = Record<string, unknown>>(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+): Promise<T[]> {
   try {
-    const stmt = getStatement(db, sql)
-    return stmt.all(...bindParams(params)) as T[]
+    const stmt = await getStatement(conn, sql)
+    return await stmt.all<T>(...bindParams(params))
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }
 }
 
-export function queryOne<T = Record<string, unknown>>(db: SqliteDb, sql: string, params?: Params): T | undefined {
+export async function queryOne<T = Record<string, unknown>>(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+): Promise<T | undefined> {
   try {
-    const stmt = getStatement(db, sql)
-    return stmt.get(...bindParams(params)) as T | undefined
+    const stmt = await getStatement(conn, sql)
+    return await stmt.get<T>(...bindParams(params))
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }
 }
 
-export function execute(db: SqliteDb, sql: string, params?: Params): ExecuteResult {
+export async function execute(conn: SQLiteConnection, sql: string, params?: Params): Promise<ExecuteResult> {
   try {
-    const stmt = getStatement(db, sql)
-    const result = stmt.run(...bindParams(params))
+    const stmt = await getStatement(conn, sql)
+    const result = await stmt.run(...bindParams(params))
     return {
       changes: result.changes,
-      lastInsertRowId: result.lastInsertRowid,
+      lastInsertRowId: result.lastInsertRowId,
     }
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }
 }
 
-export function executeBatch(db: SqliteDb, sql: string, paramsBatch: Params[]): ExecuteResult[] {
+export async function executeBatch(
+  conn: SQLiteConnection,
+  sql: string,
+  paramsBatch: Params[],
+): Promise<ExecuteResult[]> {
   try {
-    const stmt = getStatement(db, sql)
-    const run = db.transaction(() => {
-      const results: ExecuteResult[] = []
-      for (const params of paramsBatch) {
-        const result = stmt.run(...bindParams(params))
-        results.push({
-          changes: result.changes,
-          lastInsertRowId: result.lastInsertRowid,
-        })
-      }
-      return results
-    })
-    return run()
+    const stmt = await getStatement(conn, sql)
+    const results: ExecuteResult[] = []
+    for (const params of paramsBatch) {
+      const result = await stmt.run(...bindParams(params))
+      results.push({
+        changes: result.changes,
+        lastInsertRowId: result.lastInsertRowId,
+      })
+    }
+    return results
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }

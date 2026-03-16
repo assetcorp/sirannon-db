@@ -1,3 +1,5 @@
+import type { SQLiteDriver } from './driver/types.js'
+
 /** Query parameter types: named (object) or positional (array). */
 export type Params = Record<string, unknown> | unknown[]
 
@@ -127,6 +129,7 @@ export interface DatabaseOptions {
 
 /** Top-level options for the Sirannon database registry. */
 export interface SirannonOptions {
+  driver: SQLiteDriver
   hooks?: HookConfig
   metrics?: MetricsConfig
   lifecycle?: LifecycleConfig

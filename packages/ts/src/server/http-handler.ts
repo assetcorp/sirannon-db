@@ -4,20 +4,11 @@ import type { Sirannon } from '../core/sirannon.js'
 import type { ErrorResponse, ExecuteRequest, QueryRequest, TransactionRequest } from './protocol.js'
 import { toExecuteResponse } from './protocol.js'
 
-/**
- * Shared abort tracker for a uWS HttpResponse. uWS only allows a single
- * `onAborted` handler per response, so we register once and fan out to
- * multiple listeners.
- */
 export interface ResponseAbort {
   readonly aborted: boolean
   onAbort(fn: () => void): void
 }
 
-/**
- * Register the abort handler on a response. Must be called exactly once
- * per response before any async work begins.
- */
 export function initAbortHandler(res: HttpResponse): ResponseAbort {
   const listeners: (() => void)[] = []
   let aborted = false
@@ -41,14 +32,6 @@ export function initAbortHandler(res: HttpResponse): ResponseAbort {
   }
 }
 
-/**
- * Read the full request body from a uWS HttpResponse.
- *
- * IMPORTANT: This MUST be called synchronously inside the route handler
- * callback (before the handler function returns to uWS), because uWS
- * delivers body data immediately. If `onData` isn't registered before
- * the route callback returns, body data is lost.
- */
 export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbort): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (abort.aborted) {
@@ -79,7 +62,6 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
         return
       }
 
-      // Copy chunk because uWS neuters the ArrayBuffer after return
       chunks.push(Buffer.from(chunk))
 
       if (isLast) {
@@ -90,10 +72,6 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
   })
 }
 
-/**
- * Parse a Buffer as JSON. Returns the parsed object or null if the body
- * is empty or malformed (sends the appropriate error response).
- */
 function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
   if (raw.length === 0) {
     sendError(res, 400, 'EMPTY_BODY', 'Request body is empty')
@@ -142,8 +120,8 @@ function httpStatusForError(err: SirannonError): number {
   }
 }
 
-function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
-  const db = sirannon.get(id)
+async function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
+  const db = await sirannon.resolve(id)
   if (!db) {
     sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${id}' not found`)
     return null
@@ -151,15 +129,10 @@ function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
   return db
 }
 
-/**
- * Handler receives a pre-read body Buffer. Body reading happens in the
- * server's wrapDbRoute middleware so that `onData` is always registered
- * synchronously in the uWS route callback.
- */
-export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer) => void
+export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
 
 export function handleQuery(sirannon: Sirannon): DbRouteHandler {
-  return (res, dbId, rawBody) => {
+  return async (res, dbId, rawBody, abort) => {
     const body = parseBody<QueryRequest>(res, rawBody)
     if (!body) return
 
@@ -168,13 +141,15 @@ export function handleQuery(sirannon: Sirannon): DbRouteHandler {
       return
     }
 
-    const db = resolveDatabase(res, sirannon, dbId)
+    const db = await resolveDatabase(res, sirannon, dbId)
     if (!db) return
 
     try {
-      const rows = db.query(body.sql, body.params)
+      const rows = await db.query(body.sql, body.params)
+      if (abort.aborted) return
       sendJson(res, { rows })
     } catch (err) {
+      if (abort.aborted) return
       if (err instanceof SirannonError) {
         sendError(res, httpStatusForError(err), err.code, err.message)
       } else {
@@ -185,7 +160,7 @@ export function handleQuery(sirannon: Sirannon): DbRouteHandler {
 }
 
 export function handleExecute(sirannon: Sirannon): DbRouteHandler {
-  return (res, dbId, rawBody) => {
+  return async (res, dbId, rawBody, abort) => {
     const body = parseBody<ExecuteRequest>(res, rawBody)
     if (!body) return
 
@@ -194,13 +169,15 @@ export function handleExecute(sirannon: Sirannon): DbRouteHandler {
       return
     }
 
-    const db = resolveDatabase(res, sirannon, dbId)
+    const db = await resolveDatabase(res, sirannon, dbId)
     if (!db) return
 
     try {
-      const result = db.execute(body.sql, body.params)
+      const result = await db.execute(body.sql, body.params)
+      if (abort.aborted) return
       sendJson(res, toExecuteResponse(result))
     } catch (err) {
+      if (abort.aborted) return
       if (err instanceof SirannonError) {
         sendError(res, httpStatusForError(err), err.code, err.message)
       } else {
@@ -211,7 +188,7 @@ export function handleExecute(sirannon: Sirannon): DbRouteHandler {
 }
 
 export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
-  return (res, dbId, rawBody) => {
+  return async (res, dbId, rawBody, abort) => {
     const body = parseBody<TransactionRequest>(res, rawBody)
     if (!body) return
 
@@ -233,17 +210,23 @@ export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
       }
     }
 
-    const db = resolveDatabase(res, sirannon, dbId)
+    const db = await resolveDatabase(res, sirannon, dbId)
     if (!db) return
 
     try {
-      const results = db.transaction(tx => {
-        return body.statements.map(stmt => tx.execute(stmt.sql, stmt.params))
+      const results = await db.transaction(async tx => {
+        const txResults = []
+        for (const stmt of body.statements) {
+          txResults.push(await tx.execute(stmt.sql, stmt.params))
+        }
+        return txResults
       })
+      if (abort.aborted) return
       sendJson(res, {
         results: results.map(toExecuteResponse),
       })
     } catch (err) {
+      if (abort.aborted) return
       if (err instanceof SirannonError) {
         sendError(res, httpStatusForError(err), err.code, err.message)
       } else {

@@ -3,6 +3,15 @@ export { BackupScheduler } from './backup/scheduler.js'
 export type { ConnectionPoolOptions } from './connection-pool.js'
 export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'
+export { defineDriver } from './driver/define.js'
+export type {
+  DriverCapabilities,
+  OpenOptions,
+  RunResult,
+  SQLiteConnection,
+  SQLiteDriver,
+  SQLiteStatement,
+} from './driver/types.js'
 export * from './errors.js'
 export { HookRegistry } from './hooks/registry.js'
 export * from './hooks/types.js'

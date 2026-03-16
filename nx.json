@@ -16,18 +16,22 @@
     "projectsRelationship": "fixed",
     "releaseTagPattern": "v{version}",
     "version": {
-      "conventionalCommits": false
+      "conventionalCommits": false,
+      "git": {
+        "commit": true,
+        "commitMessage": "chore(release): v{version}",
+        "tag": false
+      }
     },
     "changelog": {
       "workspaceChangelog": {
         "createRelease": "github"
       },
-      "projectChangelogs": false
-    },
-    "git": {
-      "commit": true,
-      "tag": true,
-      "commitMessage": "chore(release): v{version}"
+      "projectChangelogs": false,
+      "git": {
+        "commit": false,
+        "tag": true
+      }
     }
   },
   "targetDefaults": {

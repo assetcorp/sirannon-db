@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sirannon DB - Client SDK Example</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; background: #fafafa; color: #1a1a1a; }
+      h1 { margin-bottom: 0.5rem; }
+      p.subtitle { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
+      .section-label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+      button { padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.9rem; }
+      button:hover { background: #f0f0f0; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.primary { background: #2563eb; color: white; border-color: #2563eb; }
+      button.primary:hover { background: #1d4ed8; }
+      #output { background: #1a1a1a; color: #e0e0e0; padding: 1rem; border-radius: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; white-space: pre-wrap; min-height: 300px; max-height: 600px; overflow-y: auto; }
+      .status { margin-bottom: 1rem; padding: 0.5rem 1rem; border-radius: 4px; font-size: 0.9rem; }
+      .status.ready { background: #d4edda; color: #155724; }
+      .status.loading { background: #fff3cd; color: #856404; }
+      .status.error { background: #f8d7da; color: #721c24; }
+    </style>
+  </head>
+  <body>
+    <h1>Sirannon DB - Client SDK</h1>
+    <p class="subtitle">Browser client connecting to a Sirannon server via HTTP or WebSocket</p>
+    <div id="status" class="status loading">Not connected</div>
+
+    <div class="section-label">Transport</div>
+    <div class="controls">
+      <button type="button" id="btn-http" class="primary">Connect HTTP</button>
+      <button type="button" id="btn-ws" class="primary">Connect WS</button>
+    </div>
+
+    <div class="section-label">Operations</div>
+    <div class="controls">
+      <button type="button" id="btn-query" disabled>Query</button>
+      <button type="button" id="btn-insert" disabled>Insert</button>
+      <button type="button" id="btn-transaction" disabled>Transaction</button>
+      <button type="button" id="btn-subscribe" disabled>CDC Subscribe</button>
+      <button type="button" id="btn-clear">Clear Log</button>
+    </div>
+    <div id="output"></div>
+    <script type="module" src="/src/client.ts"></script>
+  </body>
+</html>

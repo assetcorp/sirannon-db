@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sirannon DB - wa-sqlite Browser Example</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; background: #fafafa; color: #1a1a1a; }
+      h1 { margin-bottom: 1.5rem; }
+      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+      button { padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.9rem; }
+      button:hover { background: #f0f0f0; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #output { background: #1a1a1a; color: #e0e0e0; padding: 1rem; border-radius: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; white-space: pre-wrap; min-height: 300px; max-height: 600px; overflow-y: auto; }
+      .status { margin-bottom: 1rem; padding: 0.5rem 1rem; border-radius: 4px; font-size: 0.9rem; }
+      .status.ready { background: #d4edda; color: #155724; }
+      .status.loading { background: #fff3cd; color: #856404; }
+      .status.error { background: #f8d7da; color: #721c24; }
+    </style>
+  </head>
+  <body>
+    <h1>Sirannon DB - wa-sqlite</h1>
+    <div id="status" class="status loading">Loading...</div>
+    <div class="controls">
+      <button type="button" id="btn-init" disabled>Initialize DB</button>
+      <button type="button" id="btn-insert" disabled>Insert Row</button>
+      <button type="button" id="btn-query" disabled>Query All</button>
+      <button type="button" id="btn-transaction" disabled>Run Transaction</button>
+      <button type="button" id="btn-cdc" disabled>CDC Watch</button>
+      <button type="button" id="btn-clear">Clear Log</button>
+    </div>
+    <div id="output"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

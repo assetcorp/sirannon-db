@@ -1,0 +1,19 @@
+{
+  "name": "@delali/sirannon-example-web-wa-sqlite",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@delali/sirannon-db": "workspace:*",
+    "wa-sqlite": "1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "8.0.0"
+  }
+}

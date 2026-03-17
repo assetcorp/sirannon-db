@@ -1,4 +1,4 @@
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { createPostgresEngine, isPostgresAvailable } from '../postgres-engine'
 import { writeResults } from '../reporter'
 import { type ComparisonPair, runComparison } from '../runner'
@@ -20,10 +20,11 @@ async function main() {
   }
 
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const pairs: ComparisonPair[] = []
 
   for (const dataSize of config.dataSizes) {
-    const sirannonEngine = createSirannonEngine(config)
+    const sirannonEngine = createSirannonEngine(driver, config)
     const postgresEngine = createPostgresEngine(config)
 
     await sirannonEngine.setup(microSchemaSqlite)
@@ -58,11 +59,11 @@ async function main() {
       framing: FRAMING,
       sirannon: {
         name: `point-select [${dataSize}]`,
-        fn: () => {
+        fn: async () => {
           const id = queryIds[sirannonIdx++ % queryIds.length]
-          db.query('SELECT * FROM users WHERE id = ?', [id])
+          await db.query('SELECT * FROM users WHERE id = ?', [id])
         },
-        opts: { async: false },
+        opts: { async: true },
         afterAll: async () => {
           await sirannonEngine.cleanup()
         },

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import pg from 'pg'
 import { Database } from '../../src/core/database'
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { isPostgresAvailable } from '../postgres-engine'
 import { writeSirannonOnlyResults } from '../reporter'
 
@@ -36,6 +36,7 @@ function computeStats(samples: number[]) {
 async function main() {
   const config = loadConfig()
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
 
   global.gc?.()
 
@@ -45,10 +46,10 @@ async function main() {
     const dbPath = join(tempDir, 'cold.db')
 
     const start = performance.now()
-    const db = new Database(`cold-${i}`, dbPath)
-    db.execute('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)')
-    db.query('SELECT 1')
-    db.close()
+    const db = await Database.create(`cold-${i}`, dbPath, driver)
+    await db.execute('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)')
+    await db.query('SELECT 1')
+    await db.close()
     const elapsed = performance.now() - start
 
     rmSync(tempDir, { recursive: true, force: true })

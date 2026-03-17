@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import pg from 'pg'
 import { Database } from '../../src/core/database'
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { isPostgresAvailable } from '../postgres-engine'
 import type { BenchmarkResult, ComparisonResult } from '../reporter'
 import { writeResults } from '../reporter'
@@ -68,14 +68,15 @@ function spawnWorker(config: Record<string, unknown>): Promise<WorkerResult> {
   })
 }
 
-function runEventLoopSirannon(
+async function runEventLoopSirannon(
   dbPath: string,
   concurrency: number,
   readRatio: number,
-): { totalOps: number; p50Ns: number; p99Ns: number } {
-  const db = new Database('scaling-el', dbPath, { readPoolSize: 1, walMode: true })
-  db.execute('PRAGMA busy_timeout = 5000')
-  db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+): Promise<{ totalOps: number; p50Ns: number; p99Ns: number }> {
+  const driver = await loadBenchDriver()
+  const db = await Database.create('scaling-el', dbPath, driver, { readPoolSize: 1, walMode: true })
+  await db.execute('PRAGMA busy_timeout = 5000')
+  await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   try {
     const rng = new SeededRng(BigInt(BASE_SEED))
@@ -91,10 +92,10 @@ function runEventLoopSirannon(
         const id = zipf.next() + 1
         const start = process.hrtime.bigint()
         if (isRead) {
-          db.query('SELECT * FROM users WHERE id = ?', [id])
+          await db.query('SELECT * FROM users WHERE id = ?', [id])
         } else {
           const age = Math.floor(rng.next() * 80) + 18
-          db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+          await db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
         }
         const elapsed = Number(process.hrtime.bigint() - start)
         ops++
@@ -109,7 +110,7 @@ function runEventLoopSirannon(
       p99Ns: percentile(latencySamples, 0.99),
     }
   } finally {
-    db.close()
+    await db.close()
   }
 }
 
@@ -204,21 +205,22 @@ async function runWorkerThreads(
   return { totalOps, ...latencies }
 }
 
-function setupSirannonDb(tempDir: string): string {
+async function setupSirannonDb(tempDir: string): Promise<string> {
+  const driver = await loadBenchDriver()
   const dbPath = join(tempDir, 'scaling.db')
-  const db = new Database('scaling-setup', dbPath, { readPoolSize: 1, walMode: true })
-  db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+  const db = await Database.create('scaling-setup', dbPath, driver, { readPoolSize: 1, walMode: true })
+  await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   for (const stmt of microSchemaSqlite
     .split(';')
     .map(s => s.trim())
     .filter(Boolean)) {
-    db.execute(stmt)
+    await db.execute(stmt)
   }
 
   const rows = Array.from({ length: DATA_SIZE }, (_, i) => generateUserRow(i + 1))
-  db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
-  db.close()
+  await db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+  await db.close()
   return dbPath
 }
 
@@ -424,7 +426,7 @@ async function main() {
 
   try {
     console.log('Setting up databases...')
-    const dbPath = setupSirannonDb(tempDir)
+    const dbPath = await setupSirannonDb(tempDir)
     await setupPostgres(pgConfig)
 
     console.log(`Duration per test: ${DURATION_MS}ms`)
@@ -441,7 +443,7 @@ async function main() {
       for (const N of CONCURRENCY_LEVELS) {
         console.log(`\n--- Event loop: ${wl}, concurrency=${N} ---`)
 
-        const sResult = runEventLoopSirannon(dbPath, N, readRatio)
+        const sResult = await runEventLoopSirannon(dbPath, N, readRatio)
         const sOpsPerSec = sResult.totalOps / (DURATION_MS / 1_000)
 
         const pResult = await runEventLoopPostgres(pgConfig, N, readRatio)

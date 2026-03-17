@@ -16,29 +16,72 @@ Turn any SQLite database into a networked data layer with real-time subscription
 pnpm add @delali/sirannon-db
 ```
 
+Then install the SQLite driver for your platform:
+
+```bash
+pnpm add better-sqlite3              # Node.js (recommended)
+# or use Node 22's built-in sqlite    — no extra package needed
+# or pnpm add wa-sqlite              # Browser (IndexedDB persistence)
+```
+
 Requires Node.js >= 22.
 
 ## Quick start
 
 ```ts
-import { Sirannon } from '@delali/sirannon-db'
+import { Database, Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 
-const sirannon = new Sirannon()
-const db = sirannon.open('app', './data/app.db')
+const driver = betterSqlite3()
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('app', './data/app.db')
 
-db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)')
-db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@example.com'])
+await db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)')
+await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@example.com'])
 
-const users = db.query<{ id: number; name: string }>('SELECT * FROM users')
+const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-## Three entry points
+You can also create standalone databases without a `Sirannon` registry:
 
-The package ships three independent exports so you only bundle what you need:
+```ts
+const db = await Database.create('app', './data/app.db', driver)
+```
+
+## Pluggable drivers
+
+Sirannon-db separates the database engine from the library. You pick the driver that fits your runtime, and the rest of the API stays the same.
+
+| Driver | Import | Runtime | Install |
+| --- | --- | --- | --- |
+| better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add better-sqlite3` |
+| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (use `--experimental-sqlite` flag) |
+| wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser | `pnpm add wa-sqlite` |
+| Bun | `@delali/sirannon-db/driver/bun` | Bun | None (uses `bun:sqlite`) |
+| Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add expo-sqlite` |
+
+```ts
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+const driver = betterSqlite3()
+
+// or for Node 22's built-in sqlite:
+import { nodeSqlite } from '@delali/sirannon-db/driver/node'
+const driver = nodeSqlite()
+
+// or for browser with IndexedDB persistence:
+import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
+const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
+```
+
+## Package exports
+
+The package ships independent exports so you only bundle what you need:
 
 | Import | What you get |
 | --- | --- |
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, migrations, backups, hooks, metrics, lifecycle |
+| `@delali/sirannon-db/driver/*` | SQLite driver adapters (see table above) |
+| `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
 
@@ -47,36 +90,34 @@ The package ships three independent exports so you only bundle what you need:
 ### Queries and transactions
 
 ```ts
-const row = db.queryOne<{ count: number }>('SELECT count(*) as count FROM users')
+const row = await db.queryOne<{ count: number }>('SELECT count(*) as count FROM users')
 
-const result = db.execute(
+const result = await db.execute(
   'INSERT INTO users (name, email) VALUES (?, ?)',
   ['Grace', 'grace@example.com'],
 )
 // result.changes === 1, result.lastInsertRowId === 2
 
-db.executeBatch('INSERT INTO tags (label) VALUES (?)', [
+await db.executeBatch('INSERT INTO tags (label) VALUES (?)', [
   ['typescript'],
   ['sqlite'],
   ['realtime'],
 ])
 
-const total = db.transaction(tx => {
-  tx.execute('UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1])
-  tx.execute('UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2])
-  const [row] = tx.query<{ balance: number }>('SELECT balance FROM accounts WHERE id = ?', [2])
+const total = await db.transaction(async tx => {
+  await tx.execute('UPDATE accounts SET balance = balance - 100 WHERE id = ?', [1])
+  await tx.execute('UPDATE accounts SET balance = balance + 100 WHERE id = ?', [2])
+  const [row] = await tx.query<{ balance: number }>('SELECT balance FROM accounts WHERE id = ?', [2])
   return row
 })
 ```
-
-Statements are cached in an LRU pool (capacity 128) so repeated queries skip the prepare step.
 
 ### Connection pooling
 
 Every database opens with 1 dedicated write connection and N read connections (default 4). WAL mode is enabled by default, allowing concurrent reads during writes.
 
 ```ts
-const db = sirannon.open('analytics', './data/analytics.db', {
+const db = await sirannon.open('analytics', './data/analytics.db', {
   readPoolSize: 8,
   walMode: true,
 })
@@ -87,7 +128,7 @@ const db = sirannon.open('analytics', './data/analytics.db', {
 Watch tables for INSERT, UPDATE, and DELETE events in real time. The CDC system installs SQLite triggers that record changes into a tracking table, then polls at a configurable interval.
 
 ```ts
-db.watch('orders')
+await db.watch('orders')
 
 const subscription = db
   .on('orders')
@@ -104,7 +145,7 @@ const subscription = db
 subscription.unsubscribe()
 
 // Stop tracking entirely:
-db.unwatch('orders')
+await db.unwatch('orders')
 ```
 
 ### Migrations
@@ -131,7 +172,10 @@ migrations/
 #### File-based migrations
 
 ```ts
-const result = db.migrate('./migrations')
+import { loadMigrations } from '@delali/sirannon-db/file-migrations'
+
+const migrations = loadMigrations('./migrations')
+const result = await db.migrate(migrations)
 // result.applied: entries that ran this time
 // result.skipped: number of entries already applied
 ```
@@ -139,14 +183,15 @@ const result = db.migrate('./migrations')
 #### Rollback
 
 ```ts
-db.rollback('./migrations')            // undo the last applied migration
-db.rollback('./migrations', 2)         // undo all migrations after version 2
-db.rollback('./migrations', 0)         // undo everything
+const migrations = loadMigrations('./migrations')
+await db.rollback(migrations)            // undo the last applied migration
+await db.rollback(migrations, 2)         // undo all migrations after version 2
+await db.rollback(migrations, 0)         // undo everything
 ```
 
 #### Programmatic migrations
 
-Pass an array of migration objects instead of a directory path. The `up` and `down` fields accept SQL strings or functions that receive a `Transaction`.
+Pass an array of migration objects instead of loading from files:
 
 ```ts
 const migrations = [
@@ -156,22 +201,11 @@ const migrations = [
     up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
     down: 'DROP TABLE users',
   },
-  {
-    version: 2,
-    name: 'seed_data',
-    up: (tx) => {
-      // You can run any code here
-      tx.execute("INSERT INTO users (name) VALUES (?)", ['Alice'])
-    },
-    down: (tx) => {
-      tx.execute("DELETE FROM users WHERE name = ?", ['Alice'])
-    },
-  },
 ]
 
-db.migrate(migrations)
-db.rollback(migrations)        // undo last migration
-db.rollback(migrations, 0)     // undo everything
+await db.migrate(migrations)
+await db.rollback(migrations)        // undo last migration
+await db.rollback(migrations, 0)     // undo everything
 ```
 
 ### Backups
@@ -179,7 +213,7 @@ db.rollback(migrations, 0)     // undo everything
 One-shot backups use `VACUUM INTO` for a consistent snapshot. Scheduled backups run on a cron expression with automatic file rotation.
 
 ```ts
-db.backup('./backups/snapshot.db')
+await db.backup('./backups/snapshot.db')
 
 db.scheduleBackup({
   cron: '0 */6 * * *',      // every 6 hours
@@ -219,6 +253,7 @@ Plug in callbacks to collect query timing, connection events, and CDC activity.
 
 ```ts
 const sirannon = new Sirannon({
+  driver,
   metrics: {
     onQueryComplete: m => histogram.observe(m.durationMs),
     onConnectionOpen: m => gauge.inc({ db: m.databaseId }),
@@ -234,6 +269,7 @@ For multi-tenant setups, the lifecycle manager handles auto-opening, idle timeou
 
 ```ts
 const sirannon = new Sirannon({
+  driver,
   lifecycle: {
     autoOpen: {
       resolver: id => ({ path: `/data/tenants/${id}.db` }),
@@ -244,7 +280,7 @@ const sirannon = new Sirannon({
 })
 
 // Databases resolve on first access:
-const db = sirannon.get('tenant-42') // opens /data/tenants/tenant-42.db
+const db = await sirannon.resolve('tenant-42') // opens /data/tenants/tenant-42.db
 ```
 
 ## Server
@@ -253,10 +289,12 @@ Expose any `Sirannon` instance over HTTP and WebSocket with a single function ca
 
 ```ts
 import { Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { createServer } from '@delali/sirannon-db/server'
 
-const sirannon = new Sirannon()
-sirannon.open('app', './data/app.db')
+const driver = betterSqlite3()
+const sirannon = new Sirannon({ driver })
+await sirannon.open('app', './data/app.db')
 
 const server = createServer(sirannon, { port: 9876 })
 await server.listen()
@@ -297,17 +335,16 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
 
-const sub = await db
-  .on('users')
-  .filter({ role: 'admin' })
-  .subscribe(event => console.log('Admin changed:', event))
+const sub = db.subscribe('users', event => {
+  console.log('User changed:', event)
+})
 
 // Cleanup:
 sub.unsubscribe()
 client.close()
 ```
 
-Transactions require HTTP transport:
+Transactions use the HTTP transport:
 
 ```ts
 const httpClient = new SirannonClient('http://localhost:9876', {
@@ -330,7 +367,7 @@ Sirannon-db is designed to be secure by default in its core operations. This sec
 
 ### Built-in protections
 
-- **Parameterized queries** - All SQL execution uses parameter binding through better-sqlite3, preventing SQL injection. User input never touches query strings directly.
+- **Parameterized queries** - All SQL execution uses parameter binding through the driver layer, preventing SQL injection. User input never touches query strings directly.
 - **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), and identifiers are escaped with double-quote wrapping.
 - **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters before any filesystem access.
 - **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB, preventing memory exhaustion from oversized requests.
@@ -405,7 +442,7 @@ All errors extend `SirannonError` with a machine-readable `code` property:
 import { QueryError } from '@delali/sirannon-db'
 
 try {
-  db.execute('INSERT INTO users (id) VALUES (?)', [1])
+  await db.execute('INSERT INTO users (id) VALUES (?)', [1])
 } catch (err) {
   if (err instanceof QueryError) {
     console.error(`SQL failed [${err.code}]: ${err.message}`)
@@ -416,6 +453,15 @@ try {
 
 ## Configuration reference
 
+### `SirannonOptions`
+
+| Option | Type | Required | Description |
+| --- | --- | --- | --- |
+| `driver` | `SQLiteDriver` | Yes | The SQLite driver adapter to use |
+| `hooks` | `HookConfig` | No | Before/after hooks for queries, connections, subscriptions |
+| `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
+| `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
+
 ### `DatabaseOptions`
 
 | Option | Type | Default | Description |
@@ -425,14 +471,6 @@ try {
 | `walMode` | `boolean` | `true` | Enable WAL mode |
 | `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms (1 hour) |
-
-### `SirannonOptions`
-
-| Option | Type | Description |
-| --- | --- | --- |
-| `hooks` | `HookConfig` | Before/after hooks for queries, connections, subscriptions |
-| `metrics` | `MetricsConfig` | Callbacks for query timing, connection events, CDC activity |
-| `lifecycle` | `LifecycleConfig` | Auto-open resolver, idle timeout, max open databases |
 
 ### `ServerOptions`
 
@@ -452,9 +490,49 @@ try {
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
 | `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
 
+## Examples
+
+Self-contained example projects live in [`examples/`](examples/) and cover every runtime target:
+
+| Example | Runtime | Driver | What it demonstrates |
+| --- | --- | --- | --- |
+| [`node-better-sqlite3`](examples/node-better-sqlite3/) | Node.js | better-sqlite3 | All core features: schema, migrations, CRUD, transactions, CDC, connection pools, metrics, multi-tenant, hooks, backup, shutdown |
+| [`node-native`](examples/node-native/) | Node.js >= 22 | built-in `node:sqlite` | Same features as above using the zero-dependency Node driver |
+| [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser (Vite) | wa-sqlite + IndexedDB | CRUD, transactions, CDC subscriptions in the browser |
+| [`web-client`](examples/web-client/) | Browser + Node.js | better-sqlite3 (server) | Client SDK connecting to a Sirannon server over HTTP and WebSocket |
+
+### Running the examples
+
+From the repository root:
+
+```bash
+pnpm install
+pnpm --filter @delali/sirannon-db build
+```
+
+Then pick an example:
+
+```bash
+# Node.js with better-sqlite3
+cd packages/ts/examples/node-better-sqlite3
+pnpm start
+
+# Node.js with built-in sqlite
+cd packages/ts/examples/node-native
+pnpm start
+
+# Browser with wa-sqlite (opens Vite dev server)
+cd packages/ts/examples/web-wa-sqlite
+pnpm dev
+
+# Client-server (starts both Sirannon server and Vite client)
+cd packages/ts/examples/web-client
+pnpm start
+```
+
 ## Benchmarks
 
-The benchmark suite compares Sirannon's embedded SQLite performance against Postgres 17 across micro-operations, YCSB, TPC-C, and concurrency scaling. See [`packages/ts/benchmarks/BENCHMARKS.md`](packages/ts/benchmarks/BENCHMARKS.md) for setup instructions, configuration, Docker-based fair comparisons, and statistical analysis methodology.
+The benchmark suite compares Sirannon's embedded SQLite performance against Postgres 17 across micro-operations, YCSB, TPC-C, and concurrency scaling. All benchmarks support driver switching via the `BENCH_DRIVER` environment variable (`better-sqlite3` or `node`). See [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md) for setup instructions, configuration, Docker-based fair comparisons, and statistical analysis methodology.
 
 ## Development
 

@@ -6,15 +6,25 @@ import { Database } from '../../core/database.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { createWSHandler, WSHandler } from '../ws-handler.js'
-import { createMockConnection, lastMessage, parseMessages } from './helpers.js'
+import { createMockConnection, lastMessage, type MockWSConnection, parseMessages } from './helpers.js'
 
 let tempDir: string
 let sirannon: Sirannon
 
 const driver = betterSqlite3()
 
-async function flushAsync(): Promise<void> {
-  await new Promise(r => setTimeout(r, 10))
+async function flushAsync(predicate: () => boolean, timeout = 2000): Promise<void> {
+  const start = Date.now()
+  while (!predicate()) {
+    if (Date.now() - start >= timeout) {
+      throw new Error(`flushAsync timed out after ${timeout}ms: condition never became true`)
+    }
+    await new Promise(r => setTimeout(r, 5))
+  }
+}
+
+function hasMessageCount(conn: MockWSConnection, count: number): () => boolean {
+  return () => conn.messages.length >= count
 }
 
 beforeEach(() => {
@@ -132,7 +142,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.id).toBe('req1')
@@ -161,7 +171,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const data = lastMessage(conn).data as Record<string, unknown>
       const rows = data.rows as Record<string, unknown>[]
@@ -189,7 +199,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const data = lastMessage(conn).data as Record<string, unknown>
       const rows = data.rows as Record<string, unknown>[]
@@ -213,7 +223,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.id).toBe('r1')
@@ -284,7 +294,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -311,7 +321,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.id).toBe('r1')
@@ -337,7 +347,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -398,7 +408,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.id).toBe('sub-1')
@@ -422,10 +432,10 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
 
       const messages = parseMessages(conn)
       const changeMsg = messages.find(m => m.type === 'change') as Record<string, unknown>
@@ -458,11 +468,11 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       await db.execute("INSERT INTO users (name) VALUES ('Bob')")
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)
@@ -488,7 +498,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       handler.handleMessage(
         conn,
@@ -499,7 +509,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 2))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -527,7 +537,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -550,7 +560,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -624,7 +634,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const msg = lastMessage(conn)
       expect(msg.type).toBe('error')
@@ -651,7 +661,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       handler.handleMessage(
         conn,
@@ -684,7 +694,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       handler.handleMessage(
         conn,
@@ -852,7 +862,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       handler.handleClose(conn)
 
@@ -929,7 +939,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(() => conn1.messages.length >= 1 && conn2.messages.length >= 1)
 
       const data1 = lastMessage(conn1).data as Record<string, unknown>
       const data2 = lastMessage(conn2).data as Record<string, unknown>
@@ -965,10 +975,13 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(() => conn1.messages.length >= 1 && conn2.messages.length >= 1)
 
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(
+        () =>
+          parseMessages(conn1).some(m => m.type === 'change') && parseMessages(conn2).some(m => m.type === 'change'),
+      )
 
       const changes1 = parseMessages(conn1).filter(m => m.type === 'change')
       const changes2 = parseMessages(conn2).filter(m => m.type === 'change')
@@ -1007,12 +1020,12 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(() => conn1.messages.length >= 1 && conn2.messages.length >= 1)
 
       handler.handleClose(conn1)
 
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn2).some(m => m.type === 'change'))
 
       const changes1 = parseMessages(conn1).filter(m => m.type === 'change')
       const changes2 = parseMessages(conn2).filter(m => m.type === 'change')
@@ -1056,7 +1069,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(() => conn1.messages.length >= 1 && conn2.messages.length >= 1)
 
       const data1 = lastMessage(conn1).data as Record<string, unknown>
       const data2 = lastMessage(conn2).data as Record<string, unknown>
@@ -1086,10 +1099,10 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
 
       handler.handleMessage(
         conn,
@@ -1125,12 +1138,12 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
       await db.execute("UPDATE users SET age = 31 WHERE name = 'Alice'")
       await db.execute("DELETE FROM users WHERE name = 'Alice'")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn).filter(m => m.type === 'change').length >= 3)
 
       const events = parseMessages(conn)
         .filter(m => m.type === 'change')
@@ -1162,7 +1175,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       handler.handleMessage(
         conn,
@@ -1181,13 +1194,13 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(() => parseMessages(conn).filter(m => m.type === 'subscribed').length >= 2)
 
       const subMessages = parseMessages(conn).filter(m => m.type === 'subscribed')
       expect(subMessages).toHaveLength(2)
 
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
-      await new Promise(r => setTimeout(r, 200))
+      await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
 
       const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
       expect(changeMessages).toHaveLength(1)
@@ -1210,7 +1223,7 @@ describe('WSHandler', () => {
         }),
       )
 
-      await flushAsync()
+      await flushAsync(hasMessageCount(conn, 1))
 
       const contexts = (
         handler as unknown as {
@@ -1228,7 +1241,7 @@ describe('WSHandler', () => {
         }
       }
 
-      await new Promise(r => setTimeout(r, 2_000))
+      await flushAsync(() => pollCalls >= 10, 5000)
       expect(pollCalls).toBeGreaterThanOrEqual(10)
       await handler.close()
     })
@@ -1258,7 +1271,7 @@ describe('WSHandler', () => {
           }),
         )
 
-        await flushAsync()
+        await flushAsync(hasMessageCount(conn, 1))
 
         await handler.close()
         expect(setIntervalSpy).toHaveBeenCalled()

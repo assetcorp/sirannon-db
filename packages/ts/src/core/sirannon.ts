@@ -71,6 +71,11 @@ export class Sirannon {
 
     this.opening.delete(id)
 
+    if (this._shutdown) {
+      await db.close().catch(() => {})
+      throw new SirannonError('Sirannon has been shut down', 'SHUTDOWN')
+    }
+
     db.addCloseListener(() => {
       this.dbs.delete(id)
       this.lifecycleManager?.untrack(id)

@@ -292,6 +292,11 @@ export class WSHandler {
     this.cdcPending.set(databaseId, promise)
     try {
       const ctx = await promise
+      if (this.closed) {
+        ctx.stopPolling()
+        await ctx.cdcConn.close().catch(() => {})
+        throw new SirannonError('WebSocket handler is shut down', 'HANDLER_CLOSED')
+      }
       this.cdcContexts.set(databaseId, ctx)
       return ctx
     } finally {

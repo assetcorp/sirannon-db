@@ -127,6 +127,7 @@ export class Database {
 
   async execute(sql: string, params?: Params): Promise<ExecuteResult> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     this.fireBeforeQueryHooks(sql, params)
 
     const start = performance.now()
@@ -146,6 +147,7 @@ export class Database {
 
   async executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     this.fireBeforeQueryHooks(sql)
 
     const start = performance.now()
@@ -166,6 +168,7 @@ export class Database {
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     const writer = this.pool.acquireWriter()
     return Transaction.run(writer, fn)
   }

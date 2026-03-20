@@ -121,7 +121,17 @@ function httpStatusForError(err: SirannonError): number {
 }
 
 async function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
-  const db = await sirannon.resolve(id)
+  let db: Awaited<ReturnType<Sirannon['resolve']>>
+  try {
+    db = await sirannon.resolve(id)
+  } catch (err) {
+    if (err instanceof SirannonError) {
+      sendError(res, httpStatusForError(err), err.code, err.message)
+    } else {
+      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+    }
+    return null
+  }
   if (!db) {
     sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${id}' not found`)
     return null
@@ -217,6 +227,7 @@ export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
       const results = await db.transaction(async tx => {
         const txResults = []
         for (const stmt of body.statements) {
+          if (abort.aborted) throw new Error('Request aborted')
           txResults.push(await tx.execute(stmt.sql, stmt.params))
         }
         return txResults

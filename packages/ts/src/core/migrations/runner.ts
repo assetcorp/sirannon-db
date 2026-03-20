@@ -84,6 +84,8 @@ export class MigrationRunner {
       return { rolledBack: [] }
     }
 
+    MigrationRunner.validateMigrations(migrations)
+
     const rollbackVersions = rollbackSet.map(r => r.version)
     const inputByVersion = new Map(migrations.map(m => [m.version, m]))
     const downByVersion = new Map<number, Migration>()

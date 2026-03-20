@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { Database } from '../../src/core/database'
-import { collectSystemInfo } from '../config'
+import { collectSystemInfo, loadBenchDriver } from '../config'
 import { type SirannonOnlyResult, writeSirannonOnlyResults } from '../reporter'
 import { generateUserRow, microSchemaSqlite } from '../schemas'
 
@@ -18,6 +18,7 @@ const USERS_PER_DB = 100
 
 async function main() {
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const tempDirs: string[] = []
   const databases: Database[] = []
 
@@ -32,17 +33,17 @@ async function main() {
     const dbPath = join(tempDir, 'tenant.db')
 
     const start = performance.now()
-    const db = new Database(`tenant-${i}`, dbPath, { readPoolSize: 1, walMode: true })
+    const db = await Database.create(`tenant-${i}`, dbPath, driver, { readPoolSize: 1, walMode: true })
 
     for (const stmt of microSchemaSqlite
       .split(';')
       .map(s => s.trim())
       .filter(Boolean)) {
-      db.execute(stmt)
+      await db.execute(stmt)
     }
 
     const rows = Array.from({ length: USERS_PER_DB }, (_, j) => generateUserRow(j + 1))
-    db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+    await db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
 
     const elapsed = performance.now() - start
     openSamples.push(elapsed)
@@ -56,14 +57,14 @@ async function main() {
 
   const queryStart = performance.now()
   for (const db of databases) {
-    db.query('SELECT * FROM users WHERE id = ?', [1])
+    await db.query('SELECT * FROM users WHERE id = ?', [1])
   }
   const queryElapsed = performance.now() - queryStart
 
   const closeSamples: number[] = []
   for (const db of databases) {
     const start = performance.now()
-    db.close()
+    await db.close()
     closeSamples.push(performance.now() - start)
   }
 

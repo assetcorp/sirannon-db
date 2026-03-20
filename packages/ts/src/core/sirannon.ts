@@ -1,4 +1,5 @@
 import { Database } from './database.js'
+import type { SQLiteDriver } from './driver/types.js'
 import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import { LifecycleManager } from './lifecycle/manager.js'
@@ -15,16 +16,19 @@ import type {
 
 export class Sirannon {
   private readonly dbs = new Map<string, Database>()
+  private readonly opening = new Set<string>()
   private _shutdown = false
 
+  private readonly _driver: SQLiteDriver
   private readonly hookRegistry: HookRegistry
   private readonly metricsCollector: MetricsCollector | null
   private readonly lifecycleManager: LifecycleManager | null
 
-  constructor(readonly options?: SirannonOptions) {
-    this.hookRegistry = new HookRegistry(options?.hooks)
-    this.metricsCollector = options?.metrics ? new MetricsCollector(options.metrics) : null
-    this.lifecycleManager = options?.lifecycle
+  constructor(readonly options: SirannonOptions) {
+    this._driver = options.driver
+    this.hookRegistry = new HookRegistry(options.hooks)
+    this.metricsCollector = options.metrics ? new MetricsCollector(options.metrics) : null
+    this.lifecycleManager = options.lifecycle
       ? new LifecycleManager(options.lifecycle, {
           open: (id, path, opts) => this.open(id, path, opts),
           close: id => this.close(id),
@@ -34,28 +38,42 @@ export class Sirannon {
       : null
   }
 
-  open(id: string, path: string, options?: DatabaseOptions): Database {
+  get driver(): SQLiteDriver {
+    return this._driver
+  }
+
+  async open(id: string, path: string, options?: DatabaseOptions): Promise<Database> {
     this.ensureRunning()
-    if (this.dbs.has(id)) {
+    if (this.dbs.has(id) || this.opening.has(id)) {
       throw new DatabaseAlreadyExistsError(id)
     }
 
-    if (this.hookRegistry.has('beforeConnect')) {
-      this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
-    }
+    this.opening.add(id)
 
     let db: Database
     try {
-      db = new Database(id, path, options, {
+      if (this.hookRegistry.has('beforeConnect')) {
+        this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
+      }
+
+      db = await Database.create(id, path, this._driver, options, {
         parentHooks: this.hookRegistry,
         metrics: this.metricsCollector ?? undefined,
       })
     } catch (err) {
+      this.opening.delete(id)
       if (err instanceof SirannonError) throw err
       throw new SirannonError(
         `Failed to open database '${id}' at '${path}': ${err instanceof Error ? err.message : String(err)}`,
         'DATABASE_OPEN_FAILED',
       )
+    }
+
+    this.opening.delete(id)
+
+    if (this._shutdown) {
+      await db.close().catch(() => {})
+      throw new SirannonError('Sirannon has been shut down', 'SHUTDOWN')
     }
 
     db.addCloseListener(() => {
@@ -99,13 +117,13 @@ export class Sirannon {
     return db
   }
 
-  close(id: string): void {
+  async close(id: string): Promise<void> {
     this.ensureRunning()
     const db = this.dbs.get(id)
     if (!db) {
       throw new DatabaseNotFoundError(id)
     }
-    db.close()
+    await db.close()
   }
 
   get(id: string): Database | undefined {
@@ -114,6 +132,13 @@ export class Sirannon {
       this.lifecycleManager?.markActive(id)
       return db
     }
+    if (this._shutdown) return undefined
+    return undefined
+  }
+
+  async resolve(id: string): Promise<Database | undefined> {
+    const db = this.get(id)
+    if (db) return db
     if (this._shutdown) return undefined
     return this.lifecycleManager?.resolve(id)
   }
@@ -126,7 +151,7 @@ export class Sirannon {
     return new Map(this.dbs)
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     if (this._shutdown) return
     this._shutdown = true
 
@@ -137,7 +162,7 @@ export class Sirannon {
 
     for (const db of snapshot) {
       try {
-        db.close()
+        await db.close()
       } catch (err) {
         errors.push(err)
       }

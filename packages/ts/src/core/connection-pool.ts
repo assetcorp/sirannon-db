@@ -1,20 +1,19 @@
-import Database from 'better-sqlite3'
+import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { ConnectionPoolError } from './errors.js'
 
 export interface ConnectionPoolOptions {
+  driver: SQLiteDriver
   path: string
   readOnly?: boolean
   readPoolSize?: number
   walMode?: boolean
 }
 
-type SqliteDb = InstanceType<typeof Database>
-
-function closeAllSilently(connections: (SqliteDb | null)[]): void {
+async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promise<void> {
   for (const conn of connections) {
     if (!conn) continue
     try {
-      conn.close()
+      await conn.close()
     } catch {
       // Best-effort cleanup; the original error takes priority
     }
@@ -22,53 +21,57 @@ function closeAllSilently(connections: (SqliteDb | null)[]): void {
 }
 
 export class ConnectionPool {
-  private readonly writer: SqliteDb | null
-  private readonly readers: SqliteDb[]
+  private readonly writer: SQLiteConnection | null
+  private readonly readers: SQLiteConnection[]
   private readerIndex = 0
   private closed = false
 
-  constructor(options: ConnectionPoolOptions) {
-    const { path, readOnly = false, readPoolSize = 4, walMode = true } = options
-
-    let writer: SqliteDb | null = null
-    const readers: SqliteDb[] = []
-
-    try {
-      if (!readOnly) {
-        writer = new Database(path)
-        if (walMode) {
-          writer.pragma('journal_mode = WAL')
-        }
-        writer.pragma('synchronous = NORMAL')
-        writer.pragma('foreign_keys = ON')
-        writer.pragma('busy_timeout = 5000')
-      }
-
-      const poolSize = Math.max(readPoolSize, 1)
-      for (let i = 0; i < poolSize; i++) {
-        const reader = new Database(path, { readonly: true })
-        readers.push(reader)
-        reader.pragma('foreign_keys = ON')
-      }
-    } catch (err) {
-      closeAllSilently([...readers, writer])
-      throw err
-    }
-
+  private constructor(writer: SQLiteConnection | null, readers: SQLiteConnection[]) {
     this.writer = writer
     this.readers = readers
   }
 
-  acquireReader(): SqliteDb {
+  static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
+    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true } = options
+
+    let writer: SQLiteConnection | null = null
+    const readers: SQLiteConnection[] = []
+
+    try {
+      if (!readOnly) {
+        writer = await driver.open(path, { walMode })
+      }
+
+      const poolSize = driver.capabilities.multipleConnections ? Math.max(readPoolSize, 1) : 0
+
+      for (let i = 0; i < poolSize; i++) {
+        const reader = await driver.open(path, { readonly: true, walMode: false })
+        readers.push(reader)
+      }
+    } catch (err) {
+      await closeAllSilently([...readers, writer])
+      throw err
+    }
+
+    return new ConnectionPool(writer, readers)
+  }
+
+  acquireReader(): SQLiteConnection {
     if (this.closed) {
       throw new ConnectionPoolError('Connection pool is closed')
+    }
+    if (this.readers.length === 0) {
+      if (!this.writer) {
+        throw new ConnectionPoolError('No connections available')
+      }
+      return this.writer
     }
     const reader = this.readers[this.readerIndex % this.readers.length]
     this.readerIndex = (this.readerIndex + 1) % this.readers.length
     return reader
   }
 
-  acquireWriter(): SqliteDb {
+  acquireWriter(): SQLiteConnection {
     if (this.closed) {
       throw new ConnectionPoolError('Connection pool is closed')
     }
@@ -86,19 +89,7 @@ export class ConnectionPool {
     return this.writer === null
   }
 
-  loadExtension(extensionPath: string): void {
-    if (this.closed) {
-      throw new ConnectionPoolError('Connection pool is closed')
-    }
-    if (this.writer) {
-      this.writer.loadExtension(extensionPath)
-    }
-    for (const reader of this.readers) {
-      reader.loadExtension(extensionPath)
-    }
-  }
-
-  close(): void {
+  async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
 
@@ -106,7 +97,7 @@ export class ConnectionPool {
 
     for (const reader of this.readers) {
       try {
-        reader.close()
+        await reader.close()
       } catch (err) {
         errors.push(err)
       }
@@ -114,7 +105,7 @@ export class ConnectionPool {
 
     if (this.writer) {
       try {
-        this.writer.close()
+        await this.writer.close()
       } catch (err) {
         errors.push(err)
       }

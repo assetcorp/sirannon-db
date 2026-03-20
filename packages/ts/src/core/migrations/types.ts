@@ -9,8 +9,8 @@ export interface AppliedMigration {
 export interface Migration {
   version: number
   name: string
-  up: string | ((tx: Transaction) => void)
-  down?: string | ((tx: Transaction) => void)
+  up: string | ((tx: Transaction) => void | Promise<void>)
+  down?: string | ((tx: Transaction) => void | Promise<void>)
 }
 
 export interface AppliedMigrationEntry {

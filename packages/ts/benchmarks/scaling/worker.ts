@@ -1,4 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads'
+import type { PoolClient } from 'pg'
+import { loadBenchDriver } from '../config'
 import { SeededRng } from '../rng'
 import { ZipfianGenerator } from '../schemas'
 
@@ -48,13 +50,14 @@ function sampleLatency(samples: number[], value: number, ops: number) {
 
 async function runSirannon(): Promise<WorkerResult> {
   const { Database } = await import('../../src/core/database')
+  const driver = await loadBenchDriver()
   const dbPath = config.sirannonDbPath ?? ''
-  const db = new Database(`worker-${config.seed}`, dbPath, {
+  const db = await Database.create(`worker-${config.seed}`, dbPath, driver, {
     readPoolSize: 1,
     walMode: true,
   })
-  db.execute('PRAGMA busy_timeout = 5000')
-  db.execute(config.durability === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+  await db.execute('PRAGMA busy_timeout = 5000')
+  await db.execute(config.durability === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
   let ops = 0
   const latencySamplesNs: number[] = []
@@ -66,17 +69,17 @@ async function runSirannon(): Promise<WorkerResult> {
 
     const start = process.hrtime.bigint()
     if (isRead) {
-      db.query(READ_SQL_SQLITE, [id])
+      await db.query(READ_SQL_SQLITE, [id])
     } else {
       const age = Math.floor(rng.next() * 80) + 18
-      db.execute(WRITE_SQL_SQLITE, [age, id])
+      await db.execute(WRITE_SQL_SQLITE, [age, id])
     }
     const elapsed = Number(process.hrtime.bigint() - start)
     ops++
     sampleLatency(latencySamplesNs, elapsed, ops)
   }
 
-  db.close()
+  await db.close()
   return { ops, latencySamplesNs }
 }
 
@@ -87,7 +90,7 @@ async function runPostgres(): Promise<WorkerResult> {
     max: 1,
   })
   const syncCommit = config.durability === 'full' ? 'on' : 'off'
-  pool.on('connect', (client: InstanceType<typeof pg.default.Client>) => {
+  pool.on('connect', (client: PoolClient) => {
     client.query(`SET synchronous_commit = ${syncCommit}`)
   })
 

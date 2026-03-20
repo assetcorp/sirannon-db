@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Database } from '../src/core/database'
+import type { SQLiteDriver } from '../src/core/driver/types'
 import type { DatabaseOptions } from '../src/core/types'
 import type { BenchConfig } from './config'
 import type { Engine } from './engine'
@@ -11,7 +12,11 @@ export interface SirannonEngine extends Engine {
   db: Database
 }
 
-export function createSirannonEngine(config?: BenchConfig, dbOptions?: DatabaseOptions): SirannonEngine {
+export function createSirannonEngine(
+  driver: SQLiteDriver,
+  config?: BenchConfig,
+  dbOptions?: DatabaseOptions,
+): SirannonEngine {
   let tempDir: string
   let db: Database
 
@@ -25,26 +30,26 @@ export function createSirannonEngine(config?: BenchConfig, dbOptions?: DatabaseO
     async setup(schemaSql: string) {
       tempDir = mkdtempSync(join(tmpdir(), 'sirannon-bench-'))
       const dbPath = join(tempDir, 'bench.db')
-      db = new Database('bench', dbPath, {
+      db = await Database.create('bench', dbPath, driver, {
         readPoolSize: dbOptions?.readPoolSize ?? 4,
         walMode: true,
         ...dbOptions,
       })
 
       if (config?.durability === 'full') {
-        db.execute('PRAGMA synchronous = FULL')
+        await db.execute('PRAGMA synchronous = FULL')
       }
 
       for (const stmt of schemaSql
         .split(';')
         .map(s => s.trim())
         .filter(Boolean)) {
-        db.execute(stmt)
+        await db.execute(stmt)
       }
     },
 
     async seed(insertSql: string, rows: unknown[][]) {
-      db.executeBatch(
+      await db.executeBatch(
         insertSql,
         rows.map(r => r as unknown[]),
       )
@@ -52,7 +57,7 @@ export function createSirannonEngine(config?: BenchConfig, dbOptions?: DatabaseO
 
     async cleanup() {
       if (db && !db.closed) {
-        db.close()
+        await db.close()
       }
       if (tempDir) {
         rmSync(tempDir, { recursive: true, force: true })
@@ -63,7 +68,7 @@ export function createSirannonEngine(config?: BenchConfig, dbOptions?: DatabaseO
       const pragmas = ['journal_mode', 'synchronous', 'cache_size', 'mmap_size', 'page_size']
       const info: Record<string, string> = {}
       for (const pragma of pragmas) {
-        const result = db.query<Record<string, unknown>>(`PRAGMA ${pragma}`)
+        const result = await db.query<Record<string, unknown>>(`PRAGMA ${pragma}`)
         const val = result[0] ? Object.values(result[0])[0] : 'unknown'
         info[pragma] = String(val)
       }

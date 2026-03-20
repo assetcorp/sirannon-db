@@ -1,16 +1,85 @@
-import { defineConfig } from 'tsup'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { defineConfig, type Options } from 'tsup'
 
-export default defineConfig({
-  entry: {
-    'core/index': 'src/core/index.ts',
-    'server/index': 'src/server/index.ts',
-    'client/index': 'src/client/index.ts',
-  },
+const peerDeps = ['better-sqlite3', 'uWebSockets.js', 'wa-sqlite', 'expo-sqlite', 'croner']
+
+async function restoreNodePrefix() {
+  const distDir = join(import.meta.dirname, 'dist')
+  const files = readdirSync(distDir, { recursive: true, withFileTypes: true })
+  for (const entry of files) {
+    if (!entry.isFile() || !entry.name.endsWith('.mjs')) continue
+    const filePath = join(entry.parentPath, entry.name)
+    let content = readFileSync(filePath, 'utf-8')
+    let changed = false
+    const replacements: [RegExp, string][] = [
+      [/import\('sqlite'\)/g, "import('node:sqlite')"],
+      [/from 'sqlite'/g, "from 'node:sqlite'"],
+      [/import\("sqlite"\)/g, 'import("node:sqlite")'],
+      [/from "sqlite"/g, 'from "node:sqlite"'],
+    ]
+    for (const [pattern, replacement] of replacements) {
+      if (pattern.test(content)) {
+        content = content.replace(pattern, replacement)
+        changed = true
+      }
+    }
+    if (changed) {
+      writeFileSync(filePath, content)
+    }
+  }
+}
+
+const sharedOptions: Options = {
   format: ['esm'],
-  dts: true,
   splitting: true,
-  clean: true,
   treeshake: true,
   outExtension: () => ({ js: '.mjs' }),
-  external: ['better-sqlite3', 'uWebSockets.js'],
-})
+  external: [...peerDeps, /^node:/, /^bun:/],
+}
+
+export default defineConfig([
+  {
+    ...sharedOptions,
+    entry: {
+      'core/index': 'src/core/index.ts',
+      'server/index': 'src/server/index.ts',
+      'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
+      'driver/node': 'src/drivers/node/index.ts',
+      'file-migrations/index': 'src/utils/file-migrations/index.ts',
+      'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
+    },
+    platform: 'node',
+    dts: true,
+    clean: false,
+    onSuccess: restoreNodePrefix,
+  },
+  {
+    ...sharedOptions,
+    entry: {
+      'client/index': 'src/client/index.ts',
+    },
+    platform: 'browser',
+    dts: true,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: {
+      'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts',
+    },
+    platform: 'browser',
+    dts: true,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: {
+      'driver/bun': 'src/drivers/bun/index.ts',
+      'driver/expo': 'src/drivers/expo/index.ts',
+    },
+    platform: 'browser',
+    dts: false,
+    clean: false,
+  },
+])

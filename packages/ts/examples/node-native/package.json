@@ -1,0 +1,21 @@
+{
+  "name": "@delali/sirannon-example-node-native",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite --import tsx src/main.ts"
+  },
+  "dependencies": {
+    "@delali/sirannon-db": "workspace:*",
+    "croner": "10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

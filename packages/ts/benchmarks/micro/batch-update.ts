@@ -1,4 +1,4 @@
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { createPostgresEngine, isPostgresAvailable } from '../postgres-engine'
 import { writeResults } from '../reporter'
 import { type ComparisonPair, runComparison } from '../runner'
@@ -22,10 +22,11 @@ async function main() {
   }
 
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const pairs: ComparisonPair[] = []
 
   for (const dataSize of config.dataSizes) {
-    const sirannonEngine = createSirannonEngine(config)
+    const sirannonEngine = createSirannonEngine(driver, config)
     const postgresEngine = createPostgresEngine(config)
 
     await sirannonEngine.setup(microSchemaSqlite)
@@ -68,15 +69,15 @@ async function main() {
       framing: FRAMING,
       sirannon: {
         name: `batch-update [${dataSize}]`,
-        fn: () => {
+        fn: async () => {
           const batch = updateBatches[sirannonIdx++ % updateBatches.length]
-          db.transaction(tx => {
+          await db.transaction(async tx => {
             for (const id of batch) {
-              tx.execute('UPDATE users SET age = ? WHERE id = ?', [20 + (id % 60), id])
+              await tx.execute('UPDATE users SET age = ? WHERE id = ?', [20 + (id % 60), id])
             }
           })
         },
-        opts: { async: false },
+        opts: { async: true },
         afterAll: async () => {
           await sirannonEngine.cleanup()
         },

@@ -50,12 +50,12 @@ export class Sirannon {
 
     this.opening.add(id)
 
-    if (this.hookRegistry.has('beforeConnect')) {
-      this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
-    }
-
     let db: Database
     try {
+      if (this.hookRegistry.has('beforeConnect')) {
+        this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
+      }
+
       db = await Database.create(id, path, this._driver, options, {
         parentHooks: this.hookRegistry,
         metrics: this.metricsCollector ?? undefined,

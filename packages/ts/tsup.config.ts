@@ -2,13 +2,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineConfig, type Options } from 'tsup'
 
-const peerDeps = [
-  'better-sqlite3',
-  'uWebSockets.js',
-  'wa-sqlite',
-  'expo-sqlite',
-  'croner',
-]
+const peerDeps = ['better-sqlite3', 'uWebSockets.js', 'wa-sqlite', 'expo-sqlite', 'croner']
 
 async function restoreNodePrefix() {
   const distDir = join(import.meta.dirname, 'dist')

@@ -9,28 +9,30 @@ export function expoSqlite(): SQLiteDriver {
       const db = await SQLite.openDatabaseAsync(path, {
         readOnly: options?.readonly,
       } as Record<string, unknown>)
+      type SQLiteHandle = Awaited<ReturnType<typeof SQLite.openDatabaseAsync>>
+
       if (options?.walMode !== false) await db.execAsync('PRAGMA journal_mode = WAL')
       await db.execAsync('PRAGMA synchronous = NORMAL')
       await db.execAsync('PRAGMA foreign_keys = ON')
 
-      const conn: SQLiteConnection = {
+      const buildConnectionFromHandle = (dbHandle: SQLiteHandle): SQLiteConnection => ({
         async exec(sql: string): Promise<void> {
-          await db.execAsync(sql)
+          await dbHandle.execAsync(sql)
         },
 
         async prepare(sql: string): Promise<SQLiteStatement> {
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return db.getAllAsync(sql, params as (string | number | null)[]) as Promise<T[]>
+              return dbHandle.getAllAsync(sql, params as (string | number | null)[]) as Promise<T[]>
             },
 
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              const row = await db.getFirstAsync(sql, params as (string | number | null)[])
+              const row = await dbHandle.getFirstAsync(sql, params as (string | number | null)[])
               return (row ?? undefined) as T | undefined
             },
 
             async run(...params: unknown[]) {
-              const result = await db.runAsync(sql, params as (string | number | null)[])
+              const result = await dbHandle.runAsync(sql, params as (string | number | null)[])
               return {
                 changes: result.changes,
                 lastInsertRowId: result.lastInsertRowId,
@@ -41,17 +43,19 @@ export function expoSqlite(): SQLiteDriver {
 
         async transaction<T>(fn: (c: SQLiteConnection) => Promise<T>): Promise<T> {
           let result: T | undefined
-          await db.withTransactionAsync(async () => {
-            result = await fn(conn)
+          await dbHandle.withExclusiveTransactionAsync(async txDb => {
+            const txConn = buildConnectionFromHandle(txDb)
+            result = await fn(txConn)
           })
           return result as T
         },
 
         async close(): Promise<void> {
-          await db.closeAsync()
+          await dbHandle.closeAsync()
         },
-      }
+      })
 
+      const conn = buildConnectionFromHandle(db)
       return conn
     },
   })

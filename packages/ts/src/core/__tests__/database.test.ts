@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Database } from '../database.js'
-import { ConnectionPoolError, ExtensionError, QueryError, SirannonError } from '../errors.js'
+import { ExtensionError, QueryError, ReadOnlyError, SirannonError } from '../errors.js'
 import { MetricsCollector } from '../metrics/collector.js'
 import { testDriver } from './helpers/test-driver.js'
 
@@ -280,9 +280,9 @@ describe('Database', () => {
       await db.close()
     })
 
-    it('throws ConnectionPoolError on execute', async () => {
+    it('throws ReadOnlyError on execute', async () => {
       const db = await createTestDb({ readOnly: true })
-      await expect(db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")).rejects.toThrow(ConnectionPoolError)
+      await expect(db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")).rejects.toThrow(ReadOnlyError)
       await db.close()
     })
   })

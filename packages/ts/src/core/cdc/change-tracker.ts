@@ -47,10 +47,13 @@ export class ChangeTracker {
       if (same) {
         return
       }
-      await this.dropTriggers(conn, table)
+      await conn.transaction(async txConn => {
+        await this.dropTriggers(txConn, table)
+        await this.installTriggers(txConn, table, columns, pkColumns)
+      })
+    } else {
+      await this.installTriggers(conn, table, columns, pkColumns)
     }
-
-    await this.installTriggers(conn, table, columns, pkColumns)
     this.watched.set(table, { table, columns, pkColumns })
     this.watchedTablesCache = null
   }

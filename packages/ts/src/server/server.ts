@@ -108,10 +108,13 @@ export class SirannonServer {
   }
 
   async close(): Promise<void> {
-    await this.wsHandler.close()
-    if (this.listenSocket) {
-      uWS.us_listen_socket_close(this.listenSocket)
-      this.listenSocket = null
+    try {
+      await this.wsHandler.close()
+    } finally {
+      if (this.listenSocket) {
+        uWS.us_listen_socket_close(this.listenSocket)
+        this.listenSocket = null
+      }
     }
   }
 

@@ -26,5 +26,7 @@
   "prettier.enable": false,
   "search.exclude": {
     "**/.archive": true
-  }
+  },
+  "vitest.rootConfig": "./packages/ts/vitest.config.ts",
+  "vitest.runtime": "node"
 }

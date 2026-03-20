@@ -1,3 +1,28 @@
+## 0.1.4 (2026-03-20)
+
+### 🚀 Features
+
+- **ts:** add pluggable SQLite driver adapter system ([58dc122](https://github.com/assetcorp/sirannon-db/commit/58dc122))
+- **ts:** improve wa-sqlite driver and tsup build config ([8577ace](https://github.com/assetcorp/sirannon-db/commit/8577ace))
+- **ts:** update benchmarks for pluggable driver and async API ([4322c04](https://github.com/assetcorp/sirannon-db/commit/4322c04))
+- **ts:** add example projects for each runtime ([e10109a](https://github.com/assetcorp/sirannon-db/commit/e10109a))
+- **ts:** overhaul web client for product inventory management with real-time updates ([534ed8f](https://github.com/assetcorp/sirannon-db/commit/534ed8f))
+
+### 🩹 Fixes
+
+- **ts:** idle check improvement for LifecycleManager ([7a58903](https://github.com/assetcorp/sirannon-db/commit/7a58903))
+- **ts:** validate extension path for control characters and improve path resolution in Database class ([832abeb](https://github.com/assetcorp/sirannon-db/commit/832abeb))
+- **ts:** address SQLite transaction hanlding in expo ([adcf792](https://github.com/assetcorp/sirannon-db/commit/adcf792))
+- **ts:** address flushAsync function in WSHandler tests for better message handling ([f08cb87](https://github.com/assetcorp/sirannon-db/commit/f08cb87))
+- **ts:** address isseus with error handling in SirannonServer to manage unexpected errors during request processing ([5c86b3e](https://github.com/assetcorp/sirannon-db/commit/5c86b3e))
+- **ts:** move beforeConnect hook invocation to ensure it executes before database creation in Sirannon ([b05cc60](https://github.com/assetcorp/sirannon-db/commit/b05cc60))
+- **ts:** fix backup path validation to prevent directory traversal and control characters in migration paths ([94d4429](https://github.com/assetcorp/sirannon-db/commit/94d4429))
+- **ts:** enforce read-only checks in Database methods and handle shutdown errors in Sirannon ([dc58216](https://github.com/assetcorp/sirannon-db/commit/dc58216))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.3 (2026-03-16)
 
 ### 🚀 Features

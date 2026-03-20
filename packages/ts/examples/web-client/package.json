@@ -6,7 +6,7 @@
   "scripts": {
     "server": "tsx src/server.ts",
     "dev": "vite",
-    "start": "concurrently \"pnpm server\" \"pnpm dev\""
+    "start": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm dev\""
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",

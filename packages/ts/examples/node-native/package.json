@@ -10,8 +10,7 @@
     "start": "node --experimental-sqlite --import tsx src/main.ts"
   },
   "dependencies": {
-    "@delali/sirannon-db": "workspace:*",
-    "croner": "10.0.1"
+    "@delali/sirannon-db": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "25.5.0",

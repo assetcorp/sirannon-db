@@ -7,7 +7,7 @@ export class MetricsCollector {
     this.config = config ?? {}
   }
 
-  trackQuery<T>(fn: () => T, context: Omit<QueryMetrics, 'durationMs' | 'error'>): T {
+  async trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>): Promise<T> {
     if (!this.config.onQueryComplete) {
       return fn()
     }
@@ -15,7 +15,7 @@ export class MetricsCollector {
     const start = performance.now()
     let failed = false
     try {
-      return fn()
+      return await fn()
     } catch (err) {
       failed = true
       throw err

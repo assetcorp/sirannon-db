@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { Database } from '../../src/core/database'
-import { collectSystemInfo } from '../config'
+import { collectSystemInfo, loadBenchDriver } from '../config'
 import { writeSirannonOnlyResults } from '../reporter'
 
 const FRAMING =
@@ -15,16 +15,17 @@ const ITERATIONS = 1_000
 
 async function main() {
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-cdc-bench-'))
   const dbPath = join(tempDir, 'cdc-bench.db')
 
-  const db = new Database('cdc-bench', dbPath, {
+  const db = await Database.create('cdc-bench', dbPath, driver, {
     cdcPollInterval: 1,
     walMode: true,
   })
 
-  db.execute('CREATE TABLE events (id INTEGER PRIMARY KEY, data TEXT)')
-  db.watch('events')
+  await db.execute('CREATE TABLE events (id INTEGER PRIMARY KEY, data TEXT)')
+  await db.watch('events')
 
   const keepAlive = setInterval(() => {}, 60_000)
 
@@ -52,7 +53,7 @@ async function main() {
 
   subscription.unsubscribe()
   clearInterval(keepAlive)
-  db.close()
+  await db.close()
   rmSync(tempDir, { recursive: true, force: true })
 
   samples.sort((a, b) => a - b)

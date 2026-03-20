@@ -107,15 +107,15 @@ export class SirannonServer {
     })
   }
 
-  close(): Promise<void> {
-    return new Promise(resolve => {
-      this.wsHandler.close()
+  async close(): Promise<void> {
+    try {
+      await this.wsHandler.close()
+    } finally {
       if (this.listenSocket) {
         uWS.us_listen_socket_close(this.listenSocket)
         this.listenSocket = null
       }
-      resolve()
-    })
+    }
   }
 
   get listeningPort(): number {
@@ -236,7 +236,7 @@ export class SirannonServer {
           },
         }
         userData.conn = conn
-        wsHandler.handleOpen(conn, userData.databaseId)
+        wsHandler.handleOpen(conn, userData.databaseId).catch(() => {})
       },
 
       message: (ws, message) => {
@@ -286,9 +286,15 @@ export class SirannonServer {
 
       if (!onRequestHook) {
         bodyPromise
-          .then(rawBody => {
+          .then(async rawBody => {
             if (abort.aborted) return
-            handler(res, dbId, rawBody)
+            try {
+              await handler(res, dbId, rawBody, abort)
+            } catch {
+              if (!abort.aborted) {
+                sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+              }
+            }
           })
           .catch(() => {})
         return
@@ -311,9 +317,15 @@ export class SirannonServer {
       const hookPromise = runOnRequest(res, ctx, onRequestHook)
 
       Promise.all([bodyPromise, hookPromise])
-        .then(([rawBody, allowed]) => {
+        .then(async ([rawBody, allowed]) => {
           if (abort.aborted || !allowed) return
-          handler(res, dbId, rawBody)
+          try {
+            await handler(res, dbId, rawBody, abort)
+          } catch {
+            if (!abort.aborted) {
+              sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+            }
+          }
         })
         .catch(() => {})
     }

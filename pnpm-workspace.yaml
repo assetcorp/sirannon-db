@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - packages/ts
+  - packages/ts/examples/*
 
 onlyBuiltDependencies:
   - better-sqlite3

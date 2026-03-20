@@ -1,4 +1,4 @@
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { createPostgresEngine, isPostgresAvailable } from '../postgres-engine'
 import { writeResults } from '../reporter'
 import { getGlobalRng } from '../rng'
@@ -22,10 +22,11 @@ async function main() {
   }
 
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const pairs: ComparisonPair[] = []
 
   for (const dataSize of config.dataSizes) {
-    const sirannonEngine = createSirannonEngine(config)
+    const sirannonEngine = createSirannonEngine(driver, config)
     const postgresEngine = createPostgresEngine(config)
 
     await sirannonEngine.setup(ycsbSchema)
@@ -76,16 +77,16 @@ async function main() {
       framing: FRAMING,
       sirannon: {
         name: `ycsb-a [${dataSize}]`,
-        fn: () => {
+        fn: async () => {
           const key = keys[sirannonIdx++ % keys.length]
           const op = ops[sirannonOpIdx++ % ops.length]
           if (op.isRead) {
-            db.query('SELECT * FROM usertable WHERE ycsb_key = ?', [key])
+            await db.query('SELECT * FROM usertable WHERE ycsb_key = ?', [key])
           } else {
-            db.execute('UPDATE usertable SET field0 = ? WHERE ycsb_key = ?', [op.field, key])
+            await db.execute('UPDATE usertable SET field0 = ? WHERE ycsb_key = ?', [op.field, key])
           }
         },
-        opts: { async: false },
+        opts: { async: true },
         afterAll: async () => {
           await sirannonEngine.cleanup()
         },

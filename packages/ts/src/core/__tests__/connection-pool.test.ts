@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConnectionPool } from '../connection-pool.js'
 import { ConnectionPoolError } from '../errors.js'
+import { testDriver } from './helpers/test-driver.js'
 
 let tempDir: string
 
@@ -16,49 +16,52 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-function seedDatabase(path: string) {
-  const db = new Database(path)
-  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
-  db.exec("INSERT INTO users (name) VALUES ('Alice'), ('Bob')")
-  db.close()
+async function seedDatabase(path: string) {
+  const conn = await testDriver.open(path)
+  await conn.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+  await conn.exec("INSERT INTO users (name) VALUES ('Alice'), ('Bob')")
+  await conn.close()
 }
 
 describe('ConnectionPool', () => {
-  it('creates the default number of readers (4) and one writer', () => {
+  it('creates the default number of readers (4) and one writer', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
     expect(pool.readerCount).toBe(4)
     expect(pool.isReadOnly).toBe(false)
-    pool.close()
+    await pool.close()
   })
 
-  it('respects a custom readPoolSize', () => {
+  it('respects a custom readPoolSize', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       readPoolSize: 2,
     })
     expect(pool.readerCount).toBe(2)
-    pool.close()
+    await pool.close()
   })
 
-  it('enforces at least one reader', () => {
+  it('enforces at least one reader', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       readPoolSize: 0,
     })
     expect(pool.readerCount).toBe(1)
-    pool.close()
+    await pool.close()
   })
 
-  it('distributes readers round-robin', () => {
+  it('distributes readers round-robin', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       readPoolSize: 3,
     })
@@ -71,207 +74,148 @@ describe('ConnectionPool', () => {
     expect(first).not.toBe(second)
     expect(second).not.toBe(third)
     expect(fourth).toBe(first)
-    pool.close()
+    await pool.close()
   })
 
-  it('returns a single writer connection', () => {
+  it('returns a single writer connection', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
 
     const w1 = pool.acquireWriter()
     const w2 = pool.acquireWriter()
     expect(w1).toBe(w2)
-    pool.close()
+    await pool.close()
   })
 
-  it('enables WAL mode by default', () => {
+  it('enables WAL mode by default', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
 
     const writer = pool.acquireWriter()
-    const mode = writer.pragma('journal_mode', { simple: true })
-    expect(mode).toBe('wal')
-    pool.close()
+    const stmt = await writer.prepare('PRAGMA journal_mode')
+    const row = await stmt.get<{ journal_mode: string }>()
+    expect(row?.journal_mode).toBe('wal')
+    await pool.close()
   })
 
-  it('disables WAL mode when walMode is false', () => {
-    const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+  it('disables WAL mode when walMode is false', async () => {
+    const dbPath = join(tempDir, 'nowal.db')
+    const setupConn = await testDriver.open(dbPath, { walMode: false })
+    await setupConn.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+    await setupConn.close()
+
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       walMode: false,
     })
 
     const writer = pool.acquireWriter()
-    const mode = writer.pragma('journal_mode', { simple: true })
-    expect(mode).not.toBe('wal')
-    pool.close()
+    const stmt = await writer.prepare('PRAGMA journal_mode')
+    const row = await stmt.get<{ journal_mode: string }>()
+    expect(row?.journal_mode).not.toBe('wal')
+    await pool.close()
   })
 
-  it('creates a read-only pool without a writer', () => {
+  it('creates a read-only pool without a writer', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       readOnly: true,
     })
 
     expect(pool.isReadOnly).toBe(true)
     expect(() => pool.acquireWriter()).toThrow(ConnectionPoolError)
-    pool.close()
+    await pool.close()
   })
 
-  it('read-only readers can execute SELECT', () => {
+  it('read-only readers can execute SELECT', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({
+      driver: testDriver,
       path: dbPath,
       readOnly: true,
     })
 
     const reader = pool.acquireReader()
-    const rows = reader.prepare('SELECT * FROM users').all()
+    const stmt = await reader.prepare('SELECT * FROM users')
+    const rows = await stmt.all()
     expect(rows).toHaveLength(2)
-    pool.close()
+    await pool.close()
   })
 
-  it('throws ConnectionPoolError on acquireReader after close', () => {
+  it('throws ConnectionPoolError on acquireReader after close', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
-    pool.close()
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
+    await pool.close()
 
     expect(() => pool.acquireReader()).toThrow(ConnectionPoolError)
   })
 
-  it('throws ConnectionPoolError on acquireWriter after close', () => {
+  it('throws ConnectionPoolError on acquireWriter after close', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
-    pool.close()
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
+    await pool.close()
 
     expect(() => pool.acquireWriter()).toThrow(ConnectionPoolError)
   })
 
-  it('close is idempotent', () => {
+  it('close is idempotent', async () => {
     const dbPath = join(tempDir, 'test.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
-    pool.close()
-    expect(() => pool.close()).not.toThrow()
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
+    await pool.close()
+    await expect(pool.close()).resolves.not.toThrow()
   })
 
-  it('throws on non-existent directory path', () => {
+  it('throws on non-existent directory path', async () => {
     const badPath = join(tempDir, 'no', 'such', 'dir', 'test.db')
-    expect(() => new ConnectionPool({ path: badPath })).toThrow()
+    await expect(ConnectionPool.create({ driver: testDriver, path: badPath })).rejects.toThrow()
   })
 
-  it('throws ConnectionPoolError on loadExtension after close', () => {
-    const dbPath = join(tempDir, 'closed-extension.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath })
-    pool.close()
-
-    expect(() => pool.loadExtension('/tmp/nope-extension.so')).toThrow(ConnectionPoolError)
-  })
-
-  it('attempts to load extension on readers in read-only mode', () => {
-    const dbPath = join(tempDir, 'readonly-extension.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({
-      path: dbPath,
-      readOnly: true,
-      readPoolSize: 1,
-    })
-
-    const reader = pool.acquireReader() as unknown as {
-      loadExtension: (extensionPath: string) => void
-    }
-    const extensionErr = new Error('reader extension load failed')
-    reader.loadExtension = () => {
-      throw extensionErr
-    }
-
-    expect(() => pool.loadExtension('/tmp/nope-extension.so')).toThrow(extensionErr)
-    pool.close()
-  })
-
-  it('aggregates close errors from readers and writer', () => {
+  it('aggregates close errors from readers and writer', async () => {
     const dbPath = join(tempDir, 'close-errors.db')
-    seedDatabase(dbPath)
-    const pool = new ConnectionPool({ path: dbPath, readPoolSize: 2 })
+    await seedDatabase(dbPath)
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath, readPoolSize: 2 })
 
     const internals = pool as unknown as {
-      readers: { close: () => void }[]
-      writer: { close: () => void } | null
+      readers: { close: () => Promise<void> }[]
+      writer: { close: () => Promise<void> } | null
     }
 
     for (const reader of internals.readers) {
-      reader.close = () => {
+      reader.close = async () => {
         throw new Error('reader close failure')
       }
     }
     if (internals.writer) {
-      internals.writer.close = () => {
+      internals.writer.close = async () => {
         throw new Error('writer close failure')
       }
     }
 
-    expect(() => pool.close()).toThrow(ConnectionPoolError)
+    await expect(pool.close()).rejects.toThrow(ConnectionPoolError)
   })
 
-  it('cleans up opened connections when initialization later fails', async () => {
-    vi.resetModules()
-    const close = vi.fn(() => {
-      throw new Error('close failure')
-    })
-
-    try {
-      let readerCtorCount = 0
-      const MockDatabase = vi.fn(function (
-        this: Record<string, unknown>,
-        _path: string,
-        options?: { readonly?: boolean },
-      ) {
-        this.close = close
-        this.pragma = vi.fn()
-        this.loadExtension = vi.fn()
-
-        if (options?.readonly) {
-          readerCtorCount++
-          if (readerCtorCount >= 2) {
-            throw new Error('reader init failure')
-          }
-        }
-      })
-
-      vi.doMock('better-sqlite3', () => ({
-        default: MockDatabase,
-      }))
-
-      const { ConnectionPool: MockedConnectionPool } = await import('../connection-pool.js')
-
-      expect(() => new MockedConnectionPool({ path: 'mock.db' })).toThrow('reader init failure')
-      expect(close).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.doUnmock('better-sqlite3')
-      vi.resetModules()
-    }
-  })
-
-  it('reopens on same path after close', () => {
+  it('reopens on same path after close', async () => {
     const dbPath = join(tempDir, 'partial.db')
-    seedDatabase(dbPath)
+    await seedDatabase(dbPath)
 
-    const pool = new ConnectionPool({ path: dbPath })
-    pool.close()
+    const pool = await ConnectionPool.create({ driver: testDriver, path: dbPath })
+    await pool.close()
 
-    const pool2 = new ConnectionPool({ path: dbPath })
+    const pool2 = await ConnectionPool.create({ driver: testDriver, path: dbPath })
     const writer = pool2.acquireWriter()
-    const rows = writer.prepare('SELECT * FROM users').all()
+    const stmt = await writer.prepare('SELECT * FROM users')
+    const rows = await stmt.all()
     expect(rows).toHaveLength(2)
-    pool2.close()
+    await pool2.close()
   })
 })

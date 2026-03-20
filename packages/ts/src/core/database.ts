@@ -1,9 +1,9 @@
-import { resolve } from 'node:path'
 import { BackupManager } from './backup/backup.js'
 import { BackupScheduler } from './backup/scheduler.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import { ConnectionPool } from './connection-pool.js'
+import type { SQLiteDriver } from './driver/types.js'
 import { ExtensionError, ReadOnlyError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
@@ -32,7 +32,8 @@ export class Database {
   readonly path: string
   readonly readOnly: boolean
   private readonly pool: ConnectionPool
-  private readonly closeListeners: (() => void)[] = []
+  private readonly driver: SQLiteDriver
+  private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
   private changeTracker: ChangeTracker | null = null
@@ -49,24 +50,44 @@ export class Database {
   private readonly backupScheduler = new BackupScheduler(this.backupManager)
   private readonly scheduledBackupCancellers: (() => void)[] = []
 
-  constructor(id: string, path: string, options?: DatabaseOptions, internals?: DatabaseInternals) {
+  private constructor(
+    id: string,
+    path: string,
+    pool: ConnectionPool,
+    driver: SQLiteDriver,
+    options?: DatabaseOptions,
+    internals?: DatabaseInternals,
+  ) {
     this.id = id
     this.path = path
+    this.pool = pool
+    this.driver = driver
     this.readOnly = options?.readOnly ?? false
     this.cdcPollInterval = options?.cdcPollInterval ?? 50
     this.cdcRetention = options?.cdcRetention ?? 3_600_000
     this.parentHooks = internals?.parentHooks ?? null
     this.metricsCollector = internals?.metrics ?? null
+  }
 
-    this.pool = new ConnectionPool({
+  static async create(
+    id: string,
+    path: string,
+    driver: SQLiteDriver,
+    options?: DatabaseOptions,
+    internals?: DatabaseInternals,
+  ): Promise<Database> {
+    const pool = await ConnectionPool.create({
+      driver,
       path,
-      readOnly: this.readOnly,
+      readOnly: options?.readOnly,
       readPoolSize: options?.readPoolSize ?? 4,
       walMode: options?.walMode ?? true,
     })
+
+    return new Database(id, path, pool, driver, options, internals)
   }
 
-  query<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
+  async query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
     this.ensureOpen()
     this.fireBeforeQueryHooks(sql, params)
 
@@ -74,18 +95,18 @@ export class Database {
     try {
       const reader = this.pool.acquireReader()
       if (this.metricsCollector) {
-        return this.metricsCollector.trackQuery(() => query<T>(reader, sql, params), {
+        return await this.metricsCollector.trackQuery(() => query<T>(reader, sql, params), {
           databaseId: this.id,
           sql,
         })
       }
-      return query<T>(reader, sql, params)
+      return await query<T>(reader, sql, params)
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
   }
 
-  queryOne<T = Record<string, unknown>>(sql: string, params?: Params): T | undefined {
+  async queryOne<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T | undefined> {
     this.ensureOpen()
     this.fireBeforeQueryHooks(sql, params)
 
@@ -93,62 +114,66 @@ export class Database {
     try {
       const reader = this.pool.acquireReader()
       if (this.metricsCollector) {
-        return this.metricsCollector.trackQuery(() => queryOne<T>(reader, sql, params), {
+        return await this.metricsCollector.trackQuery(() => queryOne<T>(reader, sql, params), {
           databaseId: this.id,
           sql,
         })
       }
-      return queryOne<T>(reader, sql, params)
+      return await queryOne<T>(reader, sql, params)
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
   }
 
-  execute(sql: string, params?: Params): ExecuteResult {
+  async execute(sql: string, params?: Params): Promise<ExecuteResult> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     this.fireBeforeQueryHooks(sql, params)
 
     const start = performance.now()
     try {
       const writer = this.pool.acquireWriter()
       if (this.metricsCollector) {
-        return this.metricsCollector.trackQuery(() => execute(writer, sql, params), {
+        return await this.metricsCollector.trackQuery(() => execute(writer, sql, params), {
           databaseId: this.id,
           sql,
         })
       }
-      return execute(writer, sql, params)
+      return await execute(writer, sql, params)
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
   }
 
-  executeBatch(sql: string, paramsBatch: Params[]): ExecuteResult[] {
+  async executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     this.fireBeforeQueryHooks(sql)
 
     const start = performance.now()
     try {
       const writer = this.pool.acquireWriter()
+      const batchFn = () => writer.transaction(async txConn => executeBatch(txConn, sql, paramsBatch))
       if (this.metricsCollector) {
-        return this.metricsCollector.trackQuery(() => executeBatch(writer, sql, paramsBatch), {
+        return await this.metricsCollector.trackQuery(batchFn, {
           databaseId: this.id,
           sql,
         })
       }
-      return executeBatch(writer, sql, paramsBatch)
+      return await batchFn()
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
     }
   }
 
-  transaction<T>(fn: (tx: Transaction) => T): T {
+  async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
     const writer = this.pool.acquireWriter()
     return Transaction.run(writer, fn)
   }
 
-  watch(table: string): void {
+  async watch(table: string): Promise<void> {
     this.ensureOpen()
     if (this.readOnly) {
       throw new ReadOnlyError(this.id)
@@ -156,16 +181,16 @@ export class Database {
 
     this.ensureCdc()
     const writer = this.pool.acquireWriter()
-    this.changeTracker?.watch(writer, table)
+    await this.changeTracker?.watch(writer, table)
     this.ensureCdcPolling()
   }
 
-  unwatch(table: string): void {
+  async unwatch(table: string): Promise<void> {
     this.ensureOpen()
     if (!this.changeTracker) return
 
     const writer = this.pool.acquireWriter()
-    this.changeTracker.unwatch(writer, table)
+    await this.changeTracker.unwatch(writer, table)
 
     if (this.changeTracker.watchedTables.size === 0) {
       this.stopCdcPollingLoop()
@@ -180,22 +205,22 @@ export class Database {
     return new SubscriptionBuilderImpl(table, manager)
   }
 
-  migrate(input: string | Migration[]): MigrationResult {
+  async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    return MigrationRunner.run(writer, input)
+    return MigrationRunner.run(writer, migrations)
   }
 
-  rollback(input: string | Migration[], version?: number): RollbackResult {
+  async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    return MigrationRunner.rollback(writer, input, version)
+    return MigrationRunner.rollback(writer, migrations, version)
   }
 
-  backup(destPath: string): void {
+  async backup(destPath: string): Promise<void> {
     this.ensureOpen()
     const writer = this.pool.acquireWriter()
-    this.backupManager.backup(writer, destPath)
+    await this.backupManager.backup(writer, destPath)
   }
 
   scheduleBackup(options: BackupScheduleOptions): void {
@@ -205,11 +230,21 @@ export class Database {
     this.scheduledBackupCancellers.push(cancel)
   }
 
-  loadExtension(extensionPath: string): void {
+  async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
+
+    if (!this.driver.capabilities.extensions) {
+      throw new ExtensionError(extensionPath, 'Extensions are not supported by the current driver')
+    }
 
     if (!extensionPath || extensionPath.includes('\0')) {
       throw new ExtensionError(extensionPath || '', 'Extension path is empty or contains null bytes')
+    }
+
+    for (let i = 0; i < extensionPath.length; i++) {
+      if (extensionPath.charCodeAt(i) <= 0x1f) {
+        throw new ExtensionError(extensionPath, 'Extension path contains control characters')
+      }
     }
 
     const segments = extensionPath.split(/[/\\]/)
@@ -217,9 +252,13 @@ export class Database {
       throw new ExtensionError(extensionPath, 'Extension path must not contain directory traversal segments')
     }
 
+    const { resolve } = await import('node:path')
     const resolved = resolve(extensionPath)
+
     try {
-      this.pool.loadExtension(resolved)
+      const writer = this.pool.acquireWriter()
+      const escaped = resolved.replace(/'/g, "''")
+      await writer.exec(`SELECT load_extension('${escaped}')`)
     } catch (err) {
       throw new ExtensionError(extensionPath, err instanceof Error ? err.message : String(err))
     }
@@ -233,12 +272,12 @@ export class Database {
     this.hookRegistry.register('afterQuery', hook)
   }
 
-  addCloseListener(fn: () => void): void {
+  addCloseListener(fn: () => void | Promise<void>): void {
     this.ensureOpen()
     this.closeListeners.push(fn)
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (this._closed) return
     this._closed = true
 
@@ -255,14 +294,14 @@ export class Database {
 
     let poolError: unknown
     try {
-      this.pool.close()
+      await this.pool.close()
     } catch (err) {
       poolError = err
     }
 
     for (const fn of this.closeListeners) {
       try {
-        fn()
+        await fn()
       } catch {
         /* listener errors are secondary to pool close */
       }

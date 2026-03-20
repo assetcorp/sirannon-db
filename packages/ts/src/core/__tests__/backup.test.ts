@@ -1,13 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../backup/backup.js'
 import { BackupScheduler } from '../backup/scheduler.js'
+import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError } from '../errors.js'
-
-type SqliteDb = InstanceType<typeof BetterSqlite3>
+import { testDriver } from './helpers/test-driver.js'
 
 let tempDir: string
 
@@ -19,30 +18,31 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-function createTestDb(): SqliteDb {
+async function createTestDb(): Promise<SQLiteConnection> {
   const dbPath = join(tempDir, 'source.db')
-  const db = new BetterSqlite3(dbPath)
-  db.pragma('journal_mode = WAL')
-  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-  db.exec("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-  db.exec("INSERT INTO users (name, age) VALUES ('Bob', 25)")
-  return db
+  const conn = await testDriver.open(dbPath)
+  await conn.exec('PRAGMA journal_mode = WAL')
+  await conn.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  await conn.exec("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+  await conn.exec("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+  return conn
 }
 
 describe('BackupManager', () => {
   const manager = new BackupManager()
 
   describe('backup', () => {
-    it('creates a valid SQLite backup file', () => {
-      const db = createTestDb()
+    it('creates a valid SQLite backup file', async () => {
+      const conn = await createTestDb()
       const destPath = join(tempDir, 'backup.db')
 
-      manager.backup(db, destPath)
+      await manager.backup(conn, destPath)
 
       expect(existsSync(destPath)).toBe(true)
 
-      const backupDb = new BetterSqlite3(destPath, { readonly: true })
-      const rows = backupDb.prepare('SELECT * FROM users ORDER BY id').all() as {
+      const backupConn = await testDriver.open(destPath, { readonly: true, walMode: false })
+      const stmt = await backupConn.prepare('SELECT * FROM users ORDER BY id')
+      const rows = (await stmt.all()) as {
         id: number
         name: string
         age: number
@@ -50,62 +50,64 @@ describe('BackupManager', () => {
       expect(rows).toHaveLength(2)
       expect(rows[0].name).toBe('Alice')
       expect(rows[1].name).toBe('Bob')
-      backupDb.close()
-      db.close()
+      await backupConn.close()
+      await conn.close()
     })
 
-    it('preserves all rows and schema in the backup', () => {
-      const db = createTestDb()
-      db.exec('CREATE TABLE products (sku TEXT PRIMARY KEY, price REAL)')
-      db.exec("INSERT INTO products (sku, price) VALUES ('WIDGET-01', 9.99)")
+    it('preserves all rows and schema in the backup', async () => {
+      const conn = await createTestDb()
+      await conn.exec('CREATE TABLE products (sku TEXT PRIMARY KEY, price REAL)')
+      await conn.exec("INSERT INTO products (sku, price) VALUES ('WIDGET-01', 9.99)")
 
       const destPath = join(tempDir, 'full-backup.db')
-      manager.backup(db, destPath)
+      await manager.backup(conn, destPath)
 
-      const backupDb = new BetterSqlite3(destPath, { readonly: true })
-      const users = backupDb.prepare('SELECT count(*) as cnt FROM users').get() as { cnt: number }
-      const products = backupDb.prepare('SELECT * FROM products').all() as { sku: string; price: number }[]
+      const backupConn = await testDriver.open(destPath, { readonly: true, walMode: false })
+      const usersStmt = await backupConn.prepare('SELECT count(*) as cnt FROM users')
+      const users = (await usersStmt.get()) as { cnt: number }
+      const productsStmt = await backupConn.prepare('SELECT * FROM products')
+      const products = (await productsStmt.all()) as { sku: string; price: number }[]
       expect(users.cnt).toBe(2)
       expect(products).toHaveLength(1)
       expect(products[0].sku).toBe('WIDGET-01')
-      backupDb.close()
-      db.close()
+      await backupConn.close()
+      await conn.close()
     })
 
-    it('creates parent directories when they do not exist', () => {
-      const db = createTestDb()
+    it('creates parent directories when they do not exist', async () => {
+      const conn = await createTestDb()
       const nested = join(tempDir, 'a', 'b', 'c')
       const destPath = join(nested, 'backup.db')
 
-      manager.backup(db, destPath)
+      await manager.backup(conn, destPath)
 
       expect(existsSync(destPath)).toBe(true)
-      db.close()
+      await conn.close()
     })
 
-    it('throws BackupError with BACKUP_ERROR code when destination already exists', () => {
-      const db = createTestDb()
+    it('throws BackupError with BACKUP_ERROR code when destination already exists', async () => {
+      const conn = await createTestDb()
       const destPath = join(tempDir, 'existing.db')
       writeFileSync(destPath, '')
 
       try {
-        manager.backup(db, destPath)
+        await manager.backup(conn, destPath)
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BackupError)
         expect((err as BackupError).code).toBe('BACKUP_ERROR')
         expect((err as BackupError).message).toContain('already exists')
       }
-      db.close()
+      await conn.close()
     })
 
-    it('throws BackupError with BACKUP_ERROR code when database is closed', () => {
-      const db = createTestDb()
-      db.close()
+    it('throws BackupError with BACKUP_ERROR code when database is closed', async () => {
+      const conn = await createTestDb()
+      await conn.close()
       const destPath = join(tempDir, 'closed-backup.db')
 
       try {
-        manager.backup(db, destPath)
+        await manager.backup(conn, destPath)
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BackupError)
@@ -113,90 +115,92 @@ describe('BackupManager', () => {
       }
     })
 
-    it('throws BackupError when backing up to the source database path', () => {
-      const db = createTestDb()
+    it('throws BackupError when backing up to the source database path', async () => {
+      const conn = await createTestDb()
       const sourcePath = join(tempDir, 'source.db')
 
       try {
-        manager.backup(db, sourcePath)
+        await manager.backup(conn, sourcePath)
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BackupError)
         expect((err as BackupError).code).toBe('BACKUP_ERROR')
         expect((err as BackupError).message).toContain('already exists')
       }
-      db.close()
+      await conn.close()
     })
 
-    it('handles paths with spaces', () => {
-      const db = createTestDb()
+    it('handles paths with spaces', async () => {
+      const conn = await createTestDb()
       const spacedDir = join(tempDir, 'dir with spaces')
       mkdirSync(spacedDir, { recursive: true })
       const destPath = join(spacedDir, 'backup file.db')
 
-      manager.backup(db, destPath)
+      await manager.backup(conn, destPath)
 
       expect(existsSync(destPath)).toBe(true)
-      const backupDb = new BetterSqlite3(destPath, { readonly: true })
-      const rows = backupDb.prepare('SELECT * FROM users').all()
+      const backupConn = await testDriver.open(destPath, { readonly: true, walMode: false })
+      const stmt = await backupConn.prepare('SELECT * FROM users')
+      const rows = await stmt.all()
       expect(rows).toHaveLength(2)
-      backupDb.close()
-      db.close()
+      await backupConn.close()
+      await conn.close()
     })
 
-    it('handles paths with single quotes', () => {
-      const db = createTestDb()
+    it('handles paths with single quotes', async () => {
+      const conn = await createTestDb()
       const quotedDir = join(tempDir, "it's a dir")
       mkdirSync(quotedDir, { recursive: true })
       const destPath = join(quotedDir, 'backup.db')
 
-      manager.backup(db, destPath)
+      await manager.backup(conn, destPath)
 
       expect(existsSync(destPath)).toBe(true)
-      const backupDb = new BetterSqlite3(destPath, { readonly: true })
-      const rows = backupDb.prepare('SELECT * FROM users').all()
+      const backupConn = await testDriver.open(destPath, { readonly: true, walMode: false })
+      const stmt = await backupConn.prepare('SELECT * FROM users')
+      const rows = await stmt.all()
       expect(rows).toHaveLength(2)
-      backupDb.close()
-      db.close()
+      await backupConn.close()
+      await conn.close()
     })
 
-    it('cleans up partial files on failure', () => {
-      const db = createTestDb()
-      db.close()
+    it('cleans up partial files on failure', async () => {
+      const conn = await createTestDb()
+      await conn.close()
       const destPath = join(tempDir, 'partial.db')
 
-      expect(() => manager.backup(db, destPath)).toThrow(BackupError)
+      await expect(manager.backup(conn, destPath)).rejects.toThrow(BackupError)
       expect(existsSync(destPath)).toBe(false)
     })
 
-    it('rejects backup paths with control characters', () => {
-      const db = createTestDb()
+    it('rejects backup paths with control characters', async () => {
+      const conn = await createTestDb()
       const badPath = `${join(tempDir, 'bad')}\u0001.db`
 
-      expect(() => manager.backup(db, badPath)).toThrow(BackupError)
-      db.close()
+      await expect(manager.backup(conn, badPath)).rejects.toThrow(BackupError)
+      await conn.close()
     })
 
-    it('throws when backup directory creation fails', () => {
-      const db = createTestDb()
+    it('throws when backup directory creation fails', async () => {
+      const conn = await createTestDb()
       const blocked = join(tempDir, 'blocked')
       writeFileSync(blocked, 'not-a-directory')
       const destPath = join(blocked, 'nested', 'backup.db')
 
-      expect(() => manager.backup(db, destPath)).toThrow(BackupError)
-      db.close()
+      await expect(manager.backup(conn, destPath)).rejects.toThrow(BackupError)
+      await conn.close()
     })
 
-    it('formats non-Error values thrown during backup execution', () => {
-      const fakeDb = {
-        exec() {
+    it('formats non-Error values thrown during backup execution', async () => {
+      const fakeConn = {
+        async exec() {
           throw 'string exec failure'
         },
-      } as unknown as SqliteDb
+      } as unknown as SQLiteConnection
       const destPath = join(tempDir, 'non-error-exec.db')
 
       try {
-        manager.backup(fakeDb, destPath)
+        await manager.backup(fakeConn, destPath)
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BackupError)
@@ -222,16 +226,16 @@ describe('BackupManager', () => {
 
         const { BackupManager: MockedBackupManager } = await import('../backup/backup.js')
         const mockedManager = new MockedBackupManager()
-        const db = createTestDb()
+        const conn = await createTestDb()
         const destPath = join(tempDir, 'nested', 'backup.db')
 
         try {
-          mockedManager.backup(db, destPath)
+          await mockedManager.backup(conn, destPath)
           expect.unreachable('should have thrown')
         } catch (err) {
           expect((err as Error).message).toContain('string mkdir failure')
         } finally {
-          db.close()
+          await conn.close()
         }
       } finally {
         vi.doUnmock('node:fs')
@@ -248,7 +252,6 @@ describe('BackupManager', () => {
 
     it('includes an ISO-style timestamp with hyphens replacing colons and dots', () => {
       const filename = manager.generateFilename()
-      // Expected format: backup-YYYY-MM-DDTHH-MM-SS-mmmZ.db
       expect(filename).toMatch(/^backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/)
     })
 
@@ -269,7 +272,6 @@ describe('BackupManager', () => {
       for (let i = 0; i < 5; i++) {
         const filePath = join(backupDir, `backup-file-${i}.db`)
         writeFileSync(filePath, `data-${i}`)
-        // Stagger modification times so ordering is deterministic
         const time = new Date(now - (4 - i) * 2000)
         utimesSync(filePath, time, time)
       }
@@ -402,95 +404,96 @@ describe('BackupManager', () => {
 })
 
 describe('BackupScheduler', () => {
-  it('fires a backup on cron schedule', () => {
+  it('fires a backup on cron schedule', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
+      const conn = await createTestDb()
       const backupDir = join(tempDir, 'scheduled')
       const scheduler = new BackupScheduler()
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 10,
       })
 
-      vi.advanceTimersByTime(1500)
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
       expect(files.length).toBeGreaterThanOrEqual(1)
 
       const backupPath = join(backupDir, files[0])
-      const backupDb = new BetterSqlite3(backupPath, { readonly: true })
-      const rows = backupDb.prepare('SELECT * FROM users').all() as { name: string }[]
+      const backupConn = await testDriver.open(backupPath, { readonly: true, walMode: false })
+      const stmt = await backupConn.prepare('SELECT * FROM users')
+      const rows = (await stmt.all()) as { name: string }[]
       expect(rows).toHaveLength(2)
-      backupDb.close()
-      db.close()
+      await backupConn.close()
+      await conn.close()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('rotates files according to maxFiles', () => {
+  it('rotates files according to maxFiles', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
+      const conn = await createTestDb()
       const backupDir = join(tempDir, 'rotated')
       const scheduler = new BackupScheduler()
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 2,
       })
 
-      vi.advanceTimersByTime(4500)
+      await vi.advanceTimersByTimeAsync(4500)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
       expect(files.length).toBeGreaterThanOrEqual(1)
       expect(files.length).toBeLessThanOrEqual(2)
-      db.close()
+      await conn.close()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('cancel function stops future backups', () => {
+  it('cancel function stops future backups', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
+      const conn = await createTestDb()
       const backupDir = join(tempDir, 'cancelled')
       const scheduler = new BackupScheduler()
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 10,
       })
 
-      vi.advanceTimersByTime(1500)
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
       const countAfterCancel = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
       expect(countAfterCancel).toBeGreaterThanOrEqual(1)
 
-      vi.advanceTimersByTime(3000)
+      await vi.advanceTimersByTimeAsync(3000)
       const countLater = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
       expect(countLater).toBe(countAfterCancel)
-      db.close()
+      await conn.close()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('throws BackupError with BACKUP_ERROR code for an invalid cron expression', () => {
-    const db = createTestDb()
+  it('throws BackupError with BACKUP_ERROR code for an invalid cron expression', async () => {
+    const conn = await createTestDb()
     const scheduler = new BackupScheduler()
 
     try {
-      scheduler.schedule(db, {
+      scheduler.schedule(conn, {
         cron: 'not a cron',
         destDir: join(tempDir, 'invalid'),
         maxFiles: 5,
@@ -500,15 +503,15 @@ describe('BackupScheduler', () => {
       expect(err).toBeInstanceOf(BackupError)
       expect((err as BackupError).code).toBe('BACKUP_ERROR')
     }
-    db.close()
+    await conn.close()
   })
 
-  it('creates destination directory if it does not exist', () => {
-    const db = createTestDb()
+  it('creates destination directory if it does not exist', async () => {
+    const conn = await createTestDb()
     const backupDir = join(tempDir, 'new', 'nested', 'dir')
     const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
+    const cancel = scheduler.schedule(conn, {
       cron: '0 0 1 1 *',
       destDir: backupDir,
       maxFiles: 5,
@@ -516,13 +519,13 @@ describe('BackupScheduler', () => {
 
     expect(existsSync(backupDir)).toBe(true)
     cancel()
-    db.close()
+    await conn.close()
   })
 
-  it('defaults maxFiles to 5 when not specified', () => {
+  it('defaults maxFiles to 5 when not specified', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
+      const conn = await createTestDb()
       const backupDir = join(tempDir, 'defaults')
 
       let observedMaxFiles: number | undefined
@@ -534,39 +537,39 @@ describe('BackupScheduler', () => {
       }
 
       const scheduler = new BackupScheduler(customManager)
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
       })
 
-      vi.advanceTimersByTime(1500)
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
       expect(observedMaxFiles).toBe(5)
-      db.close()
+      await conn.close()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('calls onError when a scheduled backup fails', () => {
+  it('calls onError when a scheduled backup fails', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
-      db.close()
+      const conn = await createTestDb()
+      await conn.close()
 
       const backupDir = join(tempDir, 'error-reporting')
       const errors: Error[] = []
       const scheduler = new BackupScheduler()
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 5,
         onError: err => errors.push(err),
       })
 
-      vi.advanceTimersByTime(1500)
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
       expect(errors.length).toBeGreaterThanOrEqual(1)
@@ -577,22 +580,22 @@ describe('BackupScheduler', () => {
     }
   })
 
-  it('silently discards errors when onError is not provided', () => {
+  it('silently discards errors when onError is not provided', async () => {
     vi.useFakeTimers()
     try {
-      const db = createTestDb()
-      db.close()
+      const conn = await createTestDb()
+      await conn.close()
 
       const backupDir = join(tempDir, 'silent-errors')
       const scheduler = new BackupScheduler()
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 5,
       })
 
-      vi.advanceTimersByTime(1500)
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
@@ -608,35 +611,35 @@ describe('BackupScheduler', () => {
     expect(scheduler).toBeInstanceOf(BackupScheduler)
   })
 
-  it('throws when scheduler destination directory cannot be created', () => {
-    const db = createTestDb()
+  it('throws when scheduler destination directory cannot be created', async () => {
+    const conn = await createTestDb()
     const blocked = join(tempDir, 'blocked')
     writeFileSync(blocked, 'not-a-directory')
     const scheduler = new BackupScheduler()
 
     expect(() =>
-      scheduler.schedule(db, {
+      scheduler.schedule(conn, {
         cron: '0 0 1 1 *',
         destDir: join(blocked, 'nested'),
         maxFiles: 5,
       }),
     ).toThrow(BackupError)
-    db.close()
+    await conn.close()
   })
 
-  it('schedules without creating directory when destination already exists', () => {
-    const db = createTestDb()
+  it('schedules without creating directory when destination already exists', async () => {
+    const conn = await createTestDb()
     const backupDir = join(tempDir, 'existing-dir')
     mkdirSync(backupDir, { recursive: true })
     const scheduler = new BackupScheduler()
 
-    const cancel = scheduler.schedule(db, {
+    const cancel = scheduler.schedule(conn, {
       cron: '0 0 1 1 *',
       destDir: backupDir,
       maxFiles: 5,
     })
     cancel()
-    db.close()
+    await conn.close()
   })
 
   it('formats non-Error mkdir failures when preparing scheduler destination', async () => {
@@ -654,15 +657,15 @@ describe('BackupScheduler', () => {
 
       const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
       const scheduler = new MockedBackupScheduler()
-      const db = createTestDb()
+      const conn = await createTestDb()
 
       expect(() =>
-        scheduler.schedule(db, {
+        scheduler.schedule(conn, {
           cron: '0 0 1 1 *',
           destDir: join(tempDir, 'new-dir'),
         }),
       ).toThrow('mkdir failed')
-      db.close()
+      await conn.close()
     } finally {
       vi.doUnmock('node:fs')
       vi.resetModules()
@@ -685,10 +688,10 @@ describe('BackupScheduler', () => {
       const { BackupError: MockedBackupError } = await import('../errors.js')
       const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
       const scheduler = new MockedBackupScheduler()
-      const db = createTestDb()
+      const conn = await createTestDb()
       const errors: Error[] = []
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: join(tempDir, 'cron-string'),
         onError: err => errors.push(err),
@@ -698,7 +701,7 @@ describe('BackupScheduler', () => {
       expect(errors).toHaveLength(1)
       expect(errors[0]).toBeInstanceOf(MockedBackupError)
       expect(errors[0].message).toContain('string cron failure')
-      db.close()
+      await conn.close()
     } finally {
       vi.doUnmock('croner')
       vi.resetModules()
@@ -721,10 +724,10 @@ describe('BackupScheduler', () => {
       const { BackupError: MockedBackupError } = await import('../errors.js')
       const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
       const scheduler = new MockedBackupScheduler()
-      const db = createTestDb()
+      const conn = await createTestDb()
       const errors: Error[] = []
 
-      const cancel = scheduler.schedule(db, {
+      const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
         destDir: join(tempDir, 'cron-number'),
         onError: err => errors.push(err),
@@ -734,7 +737,7 @@ describe('BackupScheduler', () => {
       expect(errors).toHaveLength(1)
       expect(errors[0]).toBeInstanceOf(MockedBackupError)
       expect(errors[0].message).toContain('Scheduled backup failed')
-      db.close()
+      await conn.close()
     } finally {
       vi.doUnmock('croner')
       vi.resetModules()
@@ -756,15 +759,15 @@ describe('BackupScheduler', () => {
 
       const { BackupScheduler: MockedBackupScheduler } = await import('../backup/scheduler.js')
       const scheduler = new MockedBackupScheduler()
-      const db = createTestDb()
+      const conn = await createTestDb()
 
       expect(() =>
-        scheduler.schedule(db, {
+        scheduler.schedule(conn, {
           cron: 'bad cron',
           destDir: join(tempDir, 'invalid-cron'),
         }),
       ).toThrow("Invalid cron expression 'bad cron': invalid cron syntax")
-      db.close()
+      await conn.close()
     } finally {
       vi.doUnmock('croner')
       vi.resetModules()

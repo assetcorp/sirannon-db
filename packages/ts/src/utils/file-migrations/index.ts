@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { MigrationError } from '../errors.js'
-import type { Migration } from './types.js'
+import { MigrationError } from '../../core/errors.js'
+import type { Migration } from '../../core/migrations/types.js'
 
 export interface ScannedMigration {
   version: number
@@ -12,9 +12,16 @@ export interface ScannedMigration {
 
 const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.(up|down)\.sql$/
 
+function hasControlCharacters(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) <= 0x1f) return true
+  }
+  return false
+}
+
 export function scanDirectory(dirPath: string): ScannedMigration[] {
-  if (dirPath.includes('\0')) {
-    throw new MigrationError('Migration path contains null bytes', 0, 'MIGRATION_VALIDATION_ERROR')
+  if (hasControlCharacters(dirPath)) {
+    throw new MigrationError('Migration path contains invalid characters', 0, 'MIGRATION_VALIDATION_ERROR')
   }
 
   const segments = dirPath.split(/[/\\]/)
@@ -141,4 +148,8 @@ export function readDownMigrations(scanned: ScannedMigration[], versions: number
       down: downSql,
     }
   })
+}
+
+export function loadMigrations(dirPath: string): Migration[] {
+  return readUpMigrations(scanDirectory(dirPath))
 }

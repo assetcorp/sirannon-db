@@ -1,4 +1,4 @@
-import { collectSystemInfo, loadConfig } from '../config'
+import { collectSystemInfo, loadBenchDriver, loadConfig } from '../config'
 import { createPostgresEngine, isPostgresAvailable } from '../postgres-engine'
 import { writeResults } from '../reporter'
 import { getGlobalRng } from '../rng'
@@ -26,8 +26,9 @@ async function main() {
   }
 
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
 
-  const sirannonEngine = createSirannonEngine(config)
+  const sirannonEngine = createSirannonEngine(driver, config)
   const postgresEngine = createPostgresEngine(config)
 
   await sirannonEngine.setup(tpccSchemaSqlite)
@@ -54,26 +55,29 @@ async function main() {
   let sirannonOrderId = 1
   let postgresOrderId = 100_000
 
-  db.query('SELECT * FROM customers WHERE id = ?', [1])
-  db.query('SELECT * FROM products WHERE id = ?', [1])
-  db.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [0, 1])
-  db.execute("INSERT INTO orders (id, customer_id, total, status, created_at) VALUES (?, ?, ?, 'warmup', ?)", [
+  await db.query('SELECT * FROM customers WHERE id = ?', [1])
+  await db.query('SELECT * FROM products WHERE id = ?', [1])
+  await db.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [0, 1])
+  await db.execute("INSERT INTO orders (id, customer_id, total, status, created_at) VALUES (?, ?, ?, 'warmup', ?)", [
     999998,
     1,
     0,
     new Date().toISOString(),
   ])
-  db.execute('INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)', [999998, 1, 1, 10])
-  db.execute('UPDATE customers SET balance = balance - ? WHERE id = ?', [0, 1])
-  db.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [0, 1])
-  db.query(
+  await db.execute(
+    'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+    [999998, 1, 1, 10],
+  )
+  await db.execute('UPDATE customers SET balance = balance - ? WHERE id = ?', [0, 1])
+  await db.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [0, 1])
+  await db.query(
     `SELECT o.id, o.total, o.status, o.created_at, oi.product_id, oi.quantity, oi.price
      FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id
      WHERE o.customer_id = ? ORDER BY o.id DESC LIMIT 5`,
     [1],
   )
-  db.execute('DELETE FROM order_items WHERE order_id = ?', [999998])
-  db.execute('DELETE FROM orders WHERE id = ?', [999998])
+  await db.execute('DELETE FROM order_items WHERE order_id = ?', [999998])
+  await db.execute('DELETE FROM orders WHERE id = ?', [999998])
 
   await pool.query({ name: 'tpc-select-customer', text: 'SELECT * FROM customers WHERE id = $1', values: [1] })
   await pool.query({ name: 'tpc-select-product', text: 'SELECT * FROM products WHERE id = $1', values: [1] })
@@ -132,10 +136,10 @@ async function main() {
       beforeRun: async () => {
         sirannonOrderId = 1
         postgresOrderId = 100_000
-        db.execute('DELETE FROM order_items')
-        db.execute('DELETE FROM orders')
-        db.execute('UPDATE products SET stock = 1000')
-        db.execute('UPDATE customers SET balance = 10000')
+        await db.execute('DELETE FROM order_items')
+        await db.execute('DELETE FROM orders')
+        await db.execute('UPDATE products SET stock = 1000')
+        await db.execute('UPDATE customers SET balance = 10000')
         await pool.query('DELETE FROM order_items')
         await pool.query('DELETE FROM orders')
         await pool.query('UPDATE products SET stock = 1000')
@@ -143,45 +147,47 @@ async function main() {
       },
       sirannon: {
         name: 'tpc-c-lite',
-        fn: () => {
+        fn: async () => {
           const txOp = txOps[sirannonTxIdx++ % txOps.length]
           const customerId = (customerZipfian.next() % NUM_CUSTOMERS) + 1
 
           if (txOp.roll < NEW_ORDER_THRESHOLD) {
             const orderId = sirannonOrderId++
-            db.transaction(tx => {
-              tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
+            await db.transaction(async tx => {
+              await tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
               let total = 0
               for (let i = 0; i < txOp.numItems; i++) {
                 const productId = (productZipfian.next() % NUM_PRODUCTS) + 1
                 const quantity = txOp.quantities[i]
-                const product = tx.query<{ price: number; stock: number }>('SELECT * FROM products WHERE id = ?', [
+                const result = await tx.query<{ price: number; stock: number }>('SELECT * FROM products WHERE id = ?', [
                   productId,
-                ])[0]
+                ])
+                const product = result[0]
                 if (product && product.stock >= quantity) {
-                  tx.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [quantity, productId])
-                  tx.execute('INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)', [
-                    orderId,
-                    productId,
-                    quantity,
-                    product.price,
-                  ])
+                  await tx.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [quantity, productId])
+                  await tx.execute(
+                    'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+                    [orderId, productId, quantity, product.price],
+                  )
                   total += product.price * quantity
                 }
               }
-              tx.execute(
+              await tx.execute(
                 "INSERT INTO orders (id, customer_id, total, status, created_at) VALUES (?, ?, ?, 'completed', ?)",
                 [orderId, customerId, total, new Date().toISOString()],
               )
-              tx.execute('UPDATE customers SET balance = balance - ? WHERE id = ?', [total, customerId])
+              await tx.execute('UPDATE customers SET balance = balance - ? WHERE id = ?', [total, customerId])
             })
           } else if (txOp.roll < PAYMENT_THRESHOLD) {
-            db.transaction(tx => {
-              tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
-              tx.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [txOp.paymentAmount, customerId])
+            await db.transaction(async tx => {
+              await tx.query('SELECT * FROM customers WHERE id = ?', [customerId])
+              await tx.execute('UPDATE customers SET balance = balance + ? WHERE id = ?', [
+                txOp.paymentAmount,
+                customerId,
+              ])
             })
           } else {
-            db.query(
+            await db.query(
               `SELECT o.id, o.total, o.status, o.created_at, oi.product_id, oi.quantity, oi.price
                FROM orders o
                LEFT JOIN order_items oi ON oi.order_id = o.id
@@ -192,7 +198,7 @@ async function main() {
             )
           }
         },
-        opts: { async: false },
+        opts: { async: true },
         afterAll: async () => {
           await sirannonEngine.cleanup()
         },

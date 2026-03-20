@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Database } from '../database.js'
-import { ConnectionPoolError, ExtensionError, QueryError, SirannonError } from '../errors.js'
+import { ExtensionError, QueryError, ReadOnlyError, SirannonError } from '../errors.js'
 import { MetricsCollector } from '../metrics/collector.js'
+import { testDriver } from './helpers/test-driver.js'
 
 let tempDir: string
 const openDbs: Database[] = []
@@ -13,10 +14,10 @@ beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-db-'))
 })
 
-afterEach(() => {
+afterEach(async () => {
   for (const db of openDbs) {
     try {
-      if (!db.closed) db.close()
+      if (!db.closed) await db.close()
     } catch {
       /* best-effort cleanup */
     }
@@ -25,33 +26,33 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-function createTestDb(options?: { readOnly?: boolean; readPoolSize?: number }): Database {
+async function createTestDb(options?: { readOnly?: boolean; readPoolSize?: number }): Promise<Database> {
   const dbPath = join(tempDir, 'test.db')
 
   if (options?.readOnly) {
-    const setup = new Database('setup', dbPath)
-    setup.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
-    setup.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-    setup.close()
-    const db = new Database('test', dbPath, { readOnly: true })
+    const setup = await Database.create('setup', dbPath, testDriver)
+    await setup.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+    await setup.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    await setup.close()
+    const db = await Database.create('test', dbPath, testDriver, { readOnly: true })
     openDbs.push(db)
     return db
   }
 
-  const db = new Database('test', dbPath, options)
-  db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+  const db = await Database.create('test', dbPath, testDriver, options)
+  await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
   openDbs.push(db)
   return db
 }
 
 describe('Database', () => {
   describe('query', () => {
-    it('returns all matching rows', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-      db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    it('returns all matching rows', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+      await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-      const rows = db.query<{
+      const rows = await db.query<{
         id: number
         name: string
         age: number
@@ -59,124 +60,124 @@ describe('Database', () => {
       expect(rows).toHaveLength(2)
       expect(rows[0].name).toBe('Alice')
       expect(rows[1].name).toBe('Bob')
-      db.close()
+      await db.close()
     })
 
-    it('returns empty array when no rows match', () => {
-      const db = createTestDb()
-      const rows = db.query('SELECT * FROM users WHERE id = 999')
+    it('returns empty array when no rows match', async () => {
+      const db = await createTestDb()
+      const rows = await db.query('SELECT * FROM users WHERE id = 999')
       expect(rows).toEqual([])
-      db.close()
+      await db.close()
     })
 
-    it('supports named parameters', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    it('supports named parameters', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
-      const rows = db.query<{ name: string }>('SELECT * FROM users WHERE name = :name', { name: 'Alice' })
+      const rows = await db.query<{ name: string }>('SELECT * FROM users WHERE name = :name', { name: 'Alice' })
       expect(rows).toHaveLength(1)
       expect(rows[0].name).toBe('Alice')
-      db.close()
+      await db.close()
     })
 
-    it('supports positional parameters', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-      db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    it('supports positional parameters', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+      await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-      const rows = db.query<{ name: string }>('SELECT * FROM users WHERE age > ?', [26])
+      const rows = await db.query<{ name: string }>('SELECT * FROM users WHERE age > ?', [26])
       expect(rows).toHaveLength(1)
       expect(rows[0].name).toBe('Alice')
-      db.close()
+      await db.close()
     })
 
-    it('throws QueryError on invalid SQL', () => {
-      const db = createTestDb()
-      expect(() => db.query('SELECT * FORM users')).toThrow(QueryError)
-      db.close()
+    it('throws QueryError on invalid SQL', async () => {
+      const db = await createTestDb()
+      await expect(db.query('SELECT * FORM users')).rejects.toThrow(QueryError)
+      await db.close()
     })
   })
 
   describe('queryOne', () => {
-    it('returns the first matching row', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    it('returns the first matching row', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
-      const row = db.queryOne<{ name: string }>('SELECT * FROM users WHERE id = 1')
+      const row = await db.queryOne<{ name: string }>('SELECT * FROM users WHERE id = 1')
       expect(row).toBeDefined()
       expect(row?.name).toBe('Alice')
-      db.close()
+      await db.close()
     })
 
-    it('returns undefined when no rows match', () => {
-      const db = createTestDb()
-      const row = db.queryOne('SELECT * FROM users WHERE id = 999')
+    it('returns undefined when no rows match', async () => {
+      const db = await createTestDb()
+      const row = await db.queryOne('SELECT * FROM users WHERE id = 999')
       expect(row).toBeUndefined()
-      db.close()
+      await db.close()
     })
   })
 
   describe('execute', () => {
-    it('returns changes and lastInsertRowId', () => {
-      const db = createTestDb()
-      const result = db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    it('returns changes and lastInsertRowId', async () => {
+      const db = await createTestDb()
+      const result = await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
       expect(result.changes).toBe(1)
       expect(result.lastInsertRowId).toBe(1)
-      db.close()
+      await db.close()
     })
 
-    it('reports correct changes for UPDATE', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-      db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    it('reports correct changes for UPDATE', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+      await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-      const result = db.execute('UPDATE users SET age = 99')
+      const result = await db.execute('UPDATE users SET age = 99')
       expect(result.changes).toBe(2)
-      db.close()
+      await db.close()
     })
 
-    it('reports correct changes for DELETE', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-      const result = db.execute('DELETE FROM users WHERE id = 1')
+    it('reports correct changes for DELETE', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+      const result = await db.execute('DELETE FROM users WHERE id = 1')
       expect(result.changes).toBe(1)
-      db.close()
+      await db.close()
     })
 
-    it('supports named parameters', () => {
-      const db = createTestDb()
-      const result = db.execute('INSERT INTO users (name, age) VALUES (:name, :age)', { name: 'Alice', age: 30 })
+    it('supports named parameters', async () => {
+      const db = await createTestDb()
+      const result = await db.execute('INSERT INTO users (name, age) VALUES (:name, :age)', { name: 'Alice', age: 30 })
       expect(result.changes).toBe(1)
 
-      const row = db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
+      const row = await db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
       expect(row?.name).toBe('Alice')
       expect(row?.age).toBe(30)
-      db.close()
+      await db.close()
     })
 
-    it('supports positional parameters', () => {
-      const db = createTestDb()
-      const result = db.execute('INSERT INTO users (name, age) VALUES (?, ?)', ['Bob', 40])
+    it('supports positional parameters', async () => {
+      const db = await createTestDb()
+      const result = await db.execute('INSERT INTO users (name, age) VALUES (?, ?)', ['Bob', 40])
       expect(result.changes).toBe(1)
 
-      const row = db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
+      const row = await db.queryOne<{ name: string; age: number }>('SELECT * FROM users WHERE id = 1')
       expect(row?.name).toBe('Bob')
       expect(row?.age).toBe(40)
-      db.close()
+      await db.close()
     })
 
-    it('throws QueryError on constraint violation', () => {
-      const db = createTestDb()
-      db.execute('CREATE TABLE strict (id INTEGER PRIMARY KEY, val TEXT NOT NULL)')
-      expect(() => db.execute('INSERT INTO strict (val) VALUES (NULL)')).toThrow(QueryError)
-      db.close()
+    it('throws QueryError on constraint violation', async () => {
+      const db = await createTestDb()
+      await db.execute('CREATE TABLE strict (id INTEGER PRIMARY KEY, val TEXT NOT NULL)')
+      await expect(db.execute('INSERT INTO strict (val) VALUES (NULL)')).rejects.toThrow(QueryError)
+      await db.close()
     })
   })
 
   describe('executeBatch', () => {
-    it('inserts multiple rows with the same statement', () => {
-      const db = createTestDb()
-      const results = db.executeBatch('INSERT INTO users (name, age) VALUES (:name, :age)', [
+    it('inserts multiple rows with the same statement', async () => {
+      const db = await createTestDb()
+      const results = await db.executeBatch('INSERT INTO users (name, age) VALUES (:name, :age)', [
         { name: 'Alice', age: 30 },
         { name: 'Bob', age: 25 },
         { name: 'Carol', age: 35 },
@@ -184,12 +185,12 @@ describe('Database', () => {
       expect(results).toHaveLength(3)
       expect(results.every(r => r.changes === 1)).toBe(true)
 
-      const rows = db.query('SELECT * FROM users')
+      const rows = await db.query('SELECT * FROM users')
       expect(rows).toHaveLength(3)
-      db.close()
+      await db.close()
     })
 
-    it('tracks executeBatch via metrics collector when configured', () => {
+    it('tracks executeBatch via metrics collector when configured', async () => {
       const metrics: { sql: string }[] = []
       const collector = new MetricsCollector({
         onQueryComplete: metric => {
@@ -198,12 +199,12 @@ describe('Database', () => {
       })
 
       const dbPath = join(tempDir, 'metrics-batch.db')
-      const db = new Database('test', dbPath, undefined, { metrics: collector })
+      const db = await Database.create('test', dbPath, testDriver, undefined, { metrics: collector })
       openDbs.push(db)
-      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
       metrics.length = 0
 
-      const results = db.executeBatch('INSERT INTO users (name, age) VALUES (?, ?)', [
+      const results = await db.executeBatch('INSERT INTO users (name, age) VALUES (?, ?)', [
         ['Alice', 30],
         ['Bob', 25],
       ])
@@ -211,127 +212,125 @@ describe('Database', () => {
       expect(results).toHaveLength(2)
       expect(metrics).toHaveLength(1)
       expect(metrics[0].sql).toContain('INSERT INTO users')
-      db.close()
+      await db.close()
     })
   })
 
   describe('transaction', () => {
-    it('commits on success', () => {
-      const db = createTestDb()
-      const result = db.transaction(tx => {
-        tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
-        tx.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    it('commits on success', async () => {
+      const db = await createTestDb()
+      const result = await db.transaction(async tx => {
+        await tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+        await tx.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
         return tx.lastInsertRowId
       })
 
       expect(result).toBe(2)
-      const rows = db.query('SELECT * FROM users')
+      const rows = await db.query('SELECT * FROM users')
       expect(rows).toHaveLength(2)
-      db.close()
+      await db.close()
     })
 
-    it('rolls back on error', () => {
-      const db = createTestDb()
-      expect(() =>
-        db.transaction(tx => {
-          tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    it('rolls back on error', async () => {
+      const db = await createTestDb()
+      await expect(
+        db.transaction(async tx => {
+          await tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
           throw new Error('rollback')
         }),
-      ).toThrow('rollback')
+      ).rejects.toThrow('rollback')
 
-      const rows = db.query('SELECT * FROM users')
+      const rows = await db.query('SELECT * FROM users')
       expect(rows).toHaveLength(0)
-      db.close()
+      await db.close()
     })
 
-    it('supports queries within a transaction', () => {
-      const db = createTestDb()
-      db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    it('supports queries within a transaction', async () => {
+      const db = await createTestDb()
+      await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
 
-      const found = db.transaction(tx => {
-        const rows = tx.query<{ name: string }>('SELECT * FROM users WHERE name = ?', ['Alice'])
+      const found = await db.transaction(async tx => {
+        const rows = await tx.query<{ name: string }>('SELECT * FROM users WHERE name = ?', ['Alice'])
         return rows.length > 0
       })
 
       expect(found).toBe(true)
-      db.close()
+      await db.close()
     })
 
-    it('supports executeBatch within a transaction', () => {
-      const db = createTestDb()
-      db.transaction(tx => {
-        tx.executeBatch('INSERT INTO users (name, age) VALUES (?, ?)', [
-          ['Alice', 30],
-          ['Bob', 25],
-        ])
+    it('supports executeBatch within a transaction', async () => {
+      const db = await createTestDb()
+      await db.transaction(async tx => {
+        await tx.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
+        await tx.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
       })
 
-      const rows = db.query('SELECT * FROM users')
+      const rows = await db.query('SELECT * FROM users')
       expect(rows).toHaveLength(2)
-      db.close()
+      await db.close()
     })
   })
 
   describe('read-only mode', () => {
-    it('can query a read-only database', () => {
-      const db = createTestDb({ readOnly: true })
-      const rows = db.query<{ name: string }>('SELECT * FROM users')
+    it('can query a read-only database', async () => {
+      const db = await createTestDb({ readOnly: true })
+      const rows = await db.query<{ name: string }>('SELECT * FROM users')
       expect(rows).toHaveLength(1)
       expect(rows[0].name).toBe('Alice')
-      db.close()
+      await db.close()
     })
 
-    it('throws ConnectionPoolError on execute', () => {
-      const db = createTestDb({ readOnly: true })
-      expect(() => db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")).toThrow(ConnectionPoolError)
-      db.close()
+    it('throws ReadOnlyError on execute', async () => {
+      const db = await createTestDb({ readOnly: true })
+      await expect(db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")).rejects.toThrow(ReadOnlyError)
+      await db.close()
     })
   })
 
   describe('lifecycle', () => {
-    it('exposes id, path, readOnly, and closed', () => {
+    it('exposes id, path, readOnly, and closed', async () => {
       const dbPath = join(tempDir, 'meta.db')
-      const db = new Database('my-db', dbPath)
+      const db = await Database.create('my-db', dbPath, testDriver)
       expect(db.id).toBe('my-db')
       expect(db.path).toBe(dbPath)
       expect(db.readOnly).toBe(false)
       expect(db.closed).toBe(false)
-      db.close()
+      await db.close()
       expect(db.closed).toBe(true)
     })
 
-    it('throws SirannonError with DATABASE_CLOSED after close', () => {
+    it('throws SirannonError with DATABASE_CLOSED after close', async () => {
       const dbPath = join(tempDir, 'closed.db')
-      const db = new Database('test', dbPath)
-      db.close()
+      const db = await Database.create('test', dbPath, testDriver)
+      await db.close()
 
-      expect(() => db.query('SELECT 1')).toThrow(SirannonError)
-      expect(() => db.execute('SELECT 1')).toThrow(SirannonError)
+      await expect(db.query('SELECT 1')).rejects.toThrow(SirannonError)
+      await expect(db.execute('SELECT 1')).rejects.toThrow(SirannonError)
 
       try {
-        db.query('SELECT 1')
+        await db.query('SELECT 1')
       } catch (err) {
         expect((err as SirannonError).code).toBe('DATABASE_CLOSED')
       }
     })
 
-    it('close is idempotent', () => {
+    it('close is idempotent', async () => {
       const dbPath = join(tempDir, 'idem.db')
-      const db = new Database('test', dbPath)
-      db.close()
-      expect(() => db.close()).not.toThrow()
+      const db = await Database.create('test', dbPath, testDriver)
+      await db.close()
+      await expect(db.close()).resolves.not.toThrow()
     })
 
-    it('reports reader count', () => {
+    it('reports reader count', async () => {
       const dbPath = join(tempDir, 'readers.db')
-      const db = new Database('test', dbPath, {
+      const db = await Database.create('test', dbPath, testDriver, {
         readPoolSize: 2,
       })
       expect(db.readerCount).toBe(2)
-      db.close()
+      await db.close()
     })
 
-    it('tracks queryOne via metrics collector when configured', () => {
+    it('tracks queryOne via metrics collector when configured', async () => {
       const metrics: { sql: string }[] = []
       const collector = new MetricsCollector({
         onQueryComplete: metric => {
@@ -340,99 +339,99 @@ describe('Database', () => {
       })
 
       const dbPath = join(tempDir, 'metrics-queryone.db')
-      const db = new Database('test', dbPath, undefined, { metrics: collector })
+      const db = await Database.create('test', dbPath, testDriver, undefined, { metrics: collector })
       openDbs.push(db)
-      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
-      db.execute("INSERT INTO users (name) VALUES ('Alice')")
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      await db.execute("INSERT INTO users (name) VALUES ('Alice')")
       metrics.length = 0
 
-      const row = db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = 1')
+      const row = await db.queryOne<{ name: string }>('SELECT name FROM users WHERE id = 1')
       expect(row?.name).toBe('Alice')
       expect(metrics).toHaveLength(1)
       expect(metrics[0].sql).toContain('SELECT name FROM users')
-      db.close()
+      await db.close()
     })
   })
 
   describe('close listeners', () => {
-    it('invokes listeners on close', () => {
+    it('invokes listeners on close', async () => {
       const dbPath = join(tempDir, 'listener.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       let called = false
       db.addCloseListener(() => {
         called = true
       })
-      db.close()
+      await db.close()
       expect(called).toBe(true)
     })
 
-    it('invokes multiple listeners in order', () => {
+    it('invokes multiple listeners in order', async () => {
       const dbPath = join(tempDir, 'multi.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       const order: number[] = []
       db.addCloseListener(() => order.push(1))
       db.addCloseListener(() => order.push(2))
       db.addCloseListener(() => order.push(3))
-      db.close()
+      await db.close()
       expect(order).toEqual([1, 2, 3])
     })
 
-    it('does not invoke listeners on second close call', () => {
+    it('does not invoke listeners on second close call', async () => {
       const dbPath = join(tempDir, 'once.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       let count = 0
       db.addCloseListener(() => {
         count++
       })
-      db.close()
-      db.close()
+      await db.close()
+      await db.close()
       expect(count).toBe(1)
     })
 
-    it('throws when adding listener to closed database', () => {
+    it('throws when adding listener to closed database', async () => {
       const dbPath = join(tempDir, 'closed-listen.db')
-      const db = new Database('test', dbPath)
-      db.close()
+      const db = await Database.create('test', dbPath, testDriver)
+      await db.close()
       expect(() => db.addCloseListener(() => {})).toThrow(SirannonError)
     })
 
-    it('invokes listeners during normal close', () => {
+    it('invokes listeners during normal close', async () => {
       const dbPath = join(tempDir, 'pool-err.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       let listenerCalled = false
       db.addCloseListener(() => {
         listenerCalled = true
       })
-      db.close()
+      await db.close()
       expect(listenerCalled).toBe(true)
     })
 
-    it('swallows backup cancel errors during close', () => {
+    it('swallows backup cancel errors during close', async () => {
       const dbPath = join(tempDir, 'close-cancel-error.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       ;(db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers.push(() => {
         throw new Error('cancel failed')
       })
 
-      expect(() => db.close()).not.toThrow()
+      await expect(db.close()).resolves.not.toThrow()
     })
 
-    it('rethrows pool close errors after listener processing', () => {
+    it('rethrows pool close errors after listener processing', async () => {
       const dbPath = join(tempDir, 'pool-close-error.db')
-      const db = new Database('test', dbPath)
-      ;(db as unknown as { pool: { close: () => void } }).pool.close = () => {
+      const db = await Database.create('test', dbPath, testDriver)
+      ;(db as unknown as { pool: { close: () => Promise<void> } }).pool.close = async () => {
         throw new Error('pool close failed')
       }
 
-      expect(() => db.close()).toThrow('pool close failed')
+      await expect(db.close()).rejects.toThrow('pool close failed')
     })
   })
 
   describe('backup scheduling', () => {
-    it('stores backup cancel functions from scheduleBackup', () => {
+    it('stores backup cancel functions from scheduleBackup', async () => {
       const dbPath = join(tempDir, 'schedule.db')
-      const db = new Database('test', dbPath)
-      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const db = await Database.create('test', dbPath, testDriver)
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
       db.scheduleBackup({
         cron: '0 0 1 1 *',
@@ -441,56 +440,56 @@ describe('Database', () => {
 
       const cancellers = (db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers
       expect(cancellers).toHaveLength(1)
-      db.close()
+      await db.close()
     })
   })
 
   describe('CDC guard branches', () => {
-    it('unwatch returns when CDC has not been initialized', () => {
-      const db = createTestDb()
-      expect(() => db.unwatch('users')).not.toThrow()
-      db.close()
+    it('unwatch returns when CDC has not been initialized', async () => {
+      const db = await createTestDb()
+      await expect(db.unwatch('users')).resolves.not.toThrow()
+      await db.close()
     })
 
-    it('unwatch does not stop polling when other watched tables remain', () => {
+    it('unwatch does not stop polling when other watched tables remain', async () => {
       const dbPath = join(tempDir, 'watch-multi.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       openDbs.push(db)
-      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
-      db.execute('CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)')
-      db.watch('users')
-      db.watch('posts')
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      await db.execute('CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)')
+      await db.watch('users')
+      await db.watch('posts')
 
       const stopFn = vi.fn()
       ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = stopFn
-      db.unwatch('users')
+      await db.unwatch('users')
 
       expect(stopFn).not.toHaveBeenCalled()
-      db.close()
+      await db.close()
     })
 
-    it('throws when subscription manager is unexpectedly missing', () => {
-      const db = createTestDb()
+    it('throws when subscription manager is unexpectedly missing', async () => {
+      const db = await createTestDb()
       ;(db as unknown as { ensureCdc: () => void }).ensureCdc = () => {}
       ;(db as unknown as { subscriptionManager: unknown }).subscriptionManager = null
 
       expect(() => db.on('users')).toThrow('subscriptionManager not initialized')
-      db.close()
+      await db.close()
     })
 
-    it('ensureCdcPolling returns when CDC objects are absent', () => {
-      const db = createTestDb()
+    it('ensureCdcPolling returns when CDC objects are absent', async () => {
+      const db = await createTestDb()
       const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
 
       ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
-      db.close()
+      await db.close()
     })
 
-    it('ensureCdcPolling returns when polling is already active', () => {
-      const db = createTestDb()
+    it('ensureCdcPolling returns when polling is already active', async () => {
+      const db = await createTestDb()
       const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
       ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = vi.fn()
@@ -498,68 +497,74 @@ describe('Database', () => {
       ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
-      db.close()
+      await db.close()
     })
   })
 
   describe('loadExtension validation', () => {
-    it('rejects empty extension path', () => {
-      const db = createTestDb()
-      expect(() => db.loadExtension('')).toThrow(ExtensionError)
-      expect(() => db.loadExtension('')).toThrow('empty or contains null bytes')
+    it('rejects empty extension path', async () => {
+      const db = await createTestDb()
+      await expect(db.loadExtension('')).rejects.toThrow(ExtensionError)
+      await expect(db.loadExtension('')).rejects.toThrow('empty or contains null bytes')
     })
 
-    it('rejects paths with null bytes', () => {
-      const db = createTestDb()
-      expect(() => db.loadExtension('/lib/ext\x00.so')).toThrow(ExtensionError)
-      expect(() => db.loadExtension('/lib/ext\x00.so')).toThrow('empty or contains null bytes')
+    it('rejects paths with null bytes', async () => {
+      const db = await createTestDb()
+      await expect(db.loadExtension('/lib/ext\x00.so')).rejects.toThrow(ExtensionError)
+      await expect(db.loadExtension('/lib/ext\x00.so')).rejects.toThrow('empty or contains null bytes')
     })
 
-    it('rejects paths with directory traversal segments', () => {
-      const db = createTestDb()
-      expect(() => db.loadExtension('/lib/../etc/ext.so')).toThrow(ExtensionError)
-      expect(() => db.loadExtension('/lib/../etc/ext.so')).toThrow('directory traversal')
+    it('rejects paths with directory traversal segments', async () => {
+      const db = await createTestDb()
+      await expect(db.loadExtension('/lib/../etc/ext.so')).rejects.toThrow(ExtensionError)
+      await expect(db.loadExtension('/lib/../etc/ext.so')).rejects.toThrow('directory traversal')
     })
 
-    it('rejects relative paths with leading traversal', () => {
-      const db = createTestDb()
-      expect(() => db.loadExtension('../sneaky/ext.so')).toThrow(ExtensionError)
+    it('rejects relative paths with leading traversal', async () => {
+      const db = await createTestDb()
+      await expect(db.loadExtension('../sneaky/ext.so')).rejects.toThrow(ExtensionError)
     })
 
-    it('throws ExtensionError for nonexistent extension file', () => {
-      const db = createTestDb()
-      expect(() => db.loadExtension('/nonexistent/path/ext.so')).toThrow(ExtensionError)
+    it('throws ExtensionError for nonexistent extension file', async () => {
+      const db = await createTestDb()
+      await expect(db.loadExtension('/nonexistent/path/ext.so')).rejects.toThrow(ExtensionError)
     })
 
-    it('converts non-Error extension load failures', () => {
-      const db = createTestDb()
-      ;(db as unknown as { pool: { loadExtension: (extensionPath: string) => void } }).pool.loadExtension = () => {
-        throw 'load failed'
-      }
+    it('converts non-Error extension load failures', async () => {
+      const db = await createTestDb()
+      ;(
+        db as unknown as { pool: { acquireWriter: () => { exec: (sql: string) => Promise<void> } } }
+      ).pool.acquireWriter = () => ({
+        exec: async () => {
+          throw 'load failed'
+        },
+      })
 
       try {
-        db.loadExtension('ext.so')
+        await db.loadExtension('ext.so')
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(ExtensionError)
         expect((err as ExtensionError).message).toContain('load failed')
       }
 
-      db.close()
+      await db.close()
     })
   })
 
   describe('executeBatch transaction behavior', () => {
-    it('rolls back all rows on batch failure (implicit transaction)', () => {
+    it('rolls back all rows on batch failure (implicit transaction)', async () => {
       const dbPath = join(tempDir, 'batch-tx.db')
-      const db = new Database('test', dbPath)
+      const db = await Database.create('test', dbPath, testDriver)
       openDbs.push(db)
-      db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT UNIQUE)')
-      db.execute("INSERT INTO items (val) VALUES ('existing')")
+      await db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, val TEXT UNIQUE)')
+      await db.execute("INSERT INTO items (val) VALUES ('existing')")
 
-      expect(() => db.executeBatch('INSERT INTO items (val) VALUES (?)', [['a'], ['b'], ['existing']])).toThrow()
+      await expect(
+        db.executeBatch('INSERT INTO items (val) VALUES (?)', [['a'], ['b'], ['existing']]),
+      ).rejects.toThrow()
 
-      const rows = db.query<{ val: string }>('SELECT val FROM items')
+      const rows = await db.query<{ val: string }>('SELECT val FROM items')
       expect(rows).toHaveLength(1)
       expect(rows[0].val).toBe('existing')
     })

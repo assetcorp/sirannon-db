@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { Bench } from 'tinybench'
+import { loadBenchDriver } from '../config'
 import { SeededRng } from '../rng'
 import { generateUserRow, microSchemaPostgres, microSchemaSqlite, ZipfianGenerator } from '../schemas'
 import { getWorkload, type WorkloadConfig, workloads } from './workloads'
@@ -16,14 +17,15 @@ const DURABILITY = (process.env.BENCH_DURABILITY ?? 'matched') as 'matched' | 'f
 interface EngineBackend {
   setup(schemaSql: string): Promise<void>
   seed(insertSql: string, rows: unknown[][]): Promise<void>
-  query(sql: string, params: unknown[]): unknown[]
-  execute(sql: string, params: unknown[]): { changes: number }
+  query(sql: string, params: unknown[]): Promise<unknown[]>
+  execute(sql: string, params: unknown[]): Promise<{ changes: number }>
   cleanup(): Promise<void>
   info(): Promise<Record<string, string>>
 }
 
 async function createSirannonBackend(): Promise<EngineBackend> {
   const { Database } = await import('../../src/core/database')
+  const driver = await loadBenchDriver()
   let db: InstanceType<typeof Database> | null = null
   let tempDir = ''
 
@@ -31,34 +33,34 @@ async function createSirannonBackend(): Promise<EngineBackend> {
     async setup(schemaSql: string) {
       tempDir = mkdtempSync(join(tmpdir(), 'sirannon-engine-'))
       const dbPath = join(tempDir, 'bench.db')
-      db = new Database('bench', dbPath, { readPoolSize: 4, walMode: true })
-      db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+      db = await Database.create('bench', dbPath, driver, { readPoolSize: 4, walMode: true })
+      await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
       for (const stmt of schemaSql
         .split(';')
         .map(s => s.trim())
         .filter(Boolean)) {
-        db.execute(stmt)
+        await db.execute(stmt)
       }
     },
 
     async seed(insertSql: string, rows: unknown[][]) {
       if (!db) throw new Error('Database not initialized')
-      db.executeBatch(insertSql, rows)
+      await db.executeBatch(insertSql, rows)
     },
 
-    query(sql: string, params: unknown[]) {
+    async query(sql: string, params: unknown[]) {
       if (!db) throw new Error('Database not initialized')
       return db.query(sql, params)
     },
 
-    execute(sql: string, params: unknown[]) {
+    async execute(sql: string, params: unknown[]) {
       if (!db) throw new Error('Database not initialized')
       return db.execute(sql, params)
     },
 
     async cleanup() {
-      if (db && !db.closed) db.close()
+      if (db && !db.closed) await db.close()
       if (tempDir) rmSync(tempDir, { recursive: true, force: true })
       db = null
       tempDir = ''
@@ -69,7 +71,7 @@ async function createSirannonBackend(): Promise<EngineBackend> {
       const pragmas = ['journal_mode', 'synchronous', 'cache_size', 'page_size']
       const result: Record<string, string> = { engine: 'sirannon' }
       for (const p of pragmas) {
-        const rows = db.query<Record<string, unknown>>(`PRAGMA ${p}`)
+        const rows = await db.query<Record<string, unknown>>(`PRAGMA ${p}`)
         result[p] = String(rows[0] ? Object.values(rows[0])[0] : 'unknown')
       }
       return result
@@ -135,11 +137,11 @@ async function createPostgresBackend(): Promise<EngineBackend> {
       }
     },
 
-    query(_sql: string, _params: unknown[]) {
+    async query(_sql: string, _params: unknown[]) {
       throw new Error('Use async operations for Postgres')
     },
 
-    execute(_sql: string, _params: unknown[]) {
+    async execute(_sql: string, _params: unknown[]) {
       throw new Error('Use async operations for Postgres')
     },
 
@@ -205,14 +207,18 @@ async function runWorkloadBenchmark(backend: EngineBackend, config: WorkloadConf
 
   if (ENGINE === 'sirannon') {
     for (const op of workload.operations) {
-      bench.add(`${config.name}/${op.name}`, () => {
-        const params = op.paramsFn(config.dataSize)
-        if (op.sqliteSql.trimStart().toUpperCase().startsWith('SELECT')) {
-          backend.query(op.sqliteSql, params)
-        } else {
-          backend.execute(op.sqliteSql, params)
-        }
-      })
+      bench.add(
+        `${config.name}/${op.name}`,
+        async () => {
+          const params = op.paramsFn(config.dataSize)
+          if (op.sqliteSql.trimStart().toUpperCase().startsWith('SELECT')) {
+            await backend.query(op.sqliteSql, params)
+          } else {
+            await backend.execute(op.sqliteSql, params)
+          }
+        },
+        { async: true },
+      )
     }
   } else {
     const pg = await import('pg')
@@ -330,21 +336,22 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
   try {
     if (ENGINE === 'sirannon') {
       const { Database } = await import('../../src/core/database')
+      const driver = await loadBenchDriver()
       sirannonDbPath = join(tempDir, 'conc.db')
-      const db = new Database('conc-setup', sirannonDbPath, { readPoolSize: 1, walMode: true })
-      db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+      const db = await Database.create('conc-setup', sirannonDbPath, driver, { readPoolSize: 1, walMode: true })
+      await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
       try {
         for (const stmt of microSchemaSqlite
           .split(';')
           .map(s => s.trim())
           .filter(Boolean)) {
-          db.execute(stmt)
+          await db.execute(stmt)
         }
         const rows = Array.from({ length: config.dataSize }, (_, i) => generateUserRow(i + 1))
-        db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+        await db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
       } finally {
-        db.close()
+        await db.close()
       }
     } else {
       const pg = await import('pg')
@@ -392,9 +399,10 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
 
         if (ENGINE === 'sirannon') {
           const { Database } = await import('../../src/core/database')
-          const db = new Database('conc-el', sirannonDbPath, { readPoolSize: 1, walMode: true })
-          db.execute('PRAGMA busy_timeout = 5000')
-          db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+          const driver = await loadBenchDriver()
+          const db = await Database.create('conc-el', sirannonDbPath, driver, { readPoolSize: 1, walMode: true })
+          await db.execute('PRAGMA busy_timeout = 5000')
+          await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
 
           try {
             const rng = new SeededRng(BigInt(BASE_SEED))
@@ -410,10 +418,10 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
                 const id = zipf.next() + 1
                 const start = process.hrtime.bigint()
                 if (isRead) {
-                  db.query('SELECT * FROM users WHERE id = ?', [id])
+                  await db.query('SELECT * FROM users WHERE id = ?', [id])
                 } else {
                   const age = Math.floor(rng.next() * 80) + 18
-                  db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
+                  await db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
                 }
                 const elapsed = Number(process.hrtime.bigint() - start)
                 ops++
@@ -433,7 +441,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
               p99Ns: percentile(samples, 0.99),
             })
           } finally {
-            db.close()
+            await db.close()
           }
         } else {
           const pg = await import('pg')

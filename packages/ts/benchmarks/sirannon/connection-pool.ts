@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Database } from '../../src/core/database'
-import { collectSystemInfo } from '../config'
+import { collectSystemInfo, loadBenchDriver } from '../config'
 import { type SirannonOnlyResult, writeSirannonOnlyResults } from '../reporter'
 import { runBenchmark } from '../runner'
 import { generateUserRow, microSchemaSqlite, ZipfianGenerator } from '../schemas'
@@ -18,13 +18,14 @@ const POOL_SIZES = [1, 2, 4, 8]
 
 async function main() {
   const systemInfo = collectSystemInfo()
+  const driver = await loadBenchDriver()
   const results: SirannonOnlyResult[] = []
 
   for (const poolSize of POOL_SIZES) {
     const tempDir = mkdtempSync(join(tmpdir(), `sirannon-pool-${poolSize}-`))
     const dbPath = join(tempDir, 'pool-bench.db')
 
-    const db = new Database(`pool-bench-${poolSize}`, dbPath, {
+    const db = await Database.create(`pool-bench-${poolSize}`, dbPath, driver, {
       readPoolSize: poolSize,
       walMode: true,
     })
@@ -33,11 +34,11 @@ async function main() {
       .split(';')
       .map(s => s.trim())
       .filter(Boolean)) {
-      db.execute(stmt)
+      await db.execute(stmt)
     }
 
     const rows = Array.from({ length: DATA_SIZE }, (_, i) => generateUserRow(i + 1))
-    db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
+    await db.executeBatch('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', rows)
 
     const zipfian = new ZipfianGenerator(DATA_SIZE)
     const queryIds = Array.from({ length: 10_000 }, () => (zipfian.next() % DATA_SIZE) + 1)
@@ -48,18 +49,18 @@ async function main() {
       [
         {
           name: `pool-size-${poolSize}`,
-          fn: () => {
+          fn: async () => {
             for (let i = 0; i < poolSize; i++) {
               const id = queryIds[idx++ % queryIds.length]
-              db.query('SELECT * FROM users WHERE id = ?', [id])
+              await db.query('SELECT * FROM users WHERE id = ?', [id])
             }
           },
-          opts: { async: false },
+          opts: { async: true },
         },
       ],
     )
 
-    db.close()
+    await db.close()
     rmSync(tempDir, { recursive: true, force: true })
 
     if (benchResults[0]) {

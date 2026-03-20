@@ -1,4 +1,5 @@
 import { cpus, release, totalmem, type } from 'node:os'
+import type { SQLiteDriver } from '../src/core/driver/types'
 
 export interface BenchConfig {
   postgres: {
@@ -35,6 +36,33 @@ export interface SystemInfo {
   postgresVersion: string
   durability: string
   seed: string
+  driverName: string
+}
+
+let cachedDriver: SQLiteDriver | null = null
+
+export function getBenchDriverName(): string {
+  return process.env.BENCH_DRIVER ?? 'better-sqlite3'
+}
+
+export async function loadBenchDriver(): Promise<SQLiteDriver> {
+  if (cachedDriver) return cachedDriver
+
+  const name = getBenchDriverName()
+  switch (name) {
+    case 'better-sqlite3': {
+      const { betterSqlite3 } = await import('../src/drivers/better-sqlite3/index.js')
+      cachedDriver = betterSqlite3()
+      return cachedDriver
+    }
+    case 'node': {
+      const { nodeSqlite } = await import('../src/drivers/node/index.js')
+      cachedDriver = nodeSqlite()
+      return cachedDriver
+    }
+    default:
+      throw new Error(`Unknown BENCH_DRIVER: ${name}. Supported: better-sqlite3, node`)
+  }
 }
 
 export function loadConfig(): BenchConfig {
@@ -105,5 +133,6 @@ export function collectSystemInfo(): SystemInfo {
     seed: config.seed,
     sqliteVersion: '',
     postgresVersion: '',
+    driverName: getBenchDriverName(),
   }
 }

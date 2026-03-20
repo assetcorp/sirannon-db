@@ -15,7 +15,7 @@ import { createServer } from '@delali/sirannon-db/server'
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 9876)
 
-const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-client-example-'))
+const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-inventory-'))
 
 const driver = betterSqlite3()
 const sirannon = new Sirannon({
@@ -26,37 +26,39 @@ const sirannon = new Sirannon({
   },
 })
 
-const db = await sirannon.open('main', join(tempDir, 'client-example.db'), {
+const db = await sirannon.open('main', join(tempDir, 'inventory.db'), {
   readPoolSize: 4,
   walMode: true,
   cdcPollInterval: 50,
 })
 
 await db.execute(`
-  CREATE TABLE IF NOT EXISTS messages (
+  CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    author TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    name TEXT NOT NULL,
+    price REAL NOT NULL,
+    stock INTEGER NOT NULL DEFAULT 0
   )
 `)
 
 await db.execute(`
-  CREATE TABLE IF NOT EXISTS users (
+  CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL DEFAULT 'active'
+    product_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `)
 
-await db.watch('messages')
-await db.watch('users')
+await db.watch('products')
+await db.watch('activity')
 
-await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Alice', 'alice@example.com'])
-await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Bob', 'bob@example.com'])
-await db.execute('INSERT INTO messages (author, content) VALUES (?, ?)', ['Alice', 'Welcome to Sirannon DB'])
-await db.execute('INSERT INTO messages (author, content) VALUES (?, ?)', ['Bob', 'This is a client-server example'])
+await db.execute('INSERT INTO products (name, price, stock) VALUES (?, ?, ?)', ['Wireless Keyboard', 49.99, 25])
+await db.execute('INSERT INTO products (name, price, stock) VALUES (?, ?, ?)', ['USB-C Cable', 12.99, 150])
+await db.execute('INSERT INTO products (name, price, stock) VALUES (?, ?, ?)', ['27" Monitor', 349.99, 8])
+await db.execute('INSERT INTO products (name, price, stock) VALUES (?, ?, ?)', ['Mechanical Keyboard', 89.99, 42])
+await db.execute('INSERT INTO products (name, price, stock) VALUES (?, ?, ?)', ['Webcam HD', 59.99, 30])
 
 console.log('Seed data inserted.')
 

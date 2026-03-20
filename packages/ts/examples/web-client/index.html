@@ -3,48 +3,266 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sirannon DB - Client SDK Example</title>
+    <title>Sirannon DB - Product Inventory</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; background: #fafafa; color: #1a1a1a; }
-      h1 { margin-bottom: 0.5rem; }
-      p.subtitle { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
-      .section-label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
-      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-      button { padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.9rem; }
-      button:hover { background: #f0f0f0; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      button.primary { background: #2563eb; color: white; border-color: #2563eb; }
-      button.primary:hover { background: #1d4ed8; }
-      button.primary.active { background: #16a34a; border-color: #16a34a; }
-      button.primary.active:hover { background: #15803d; }
-      #output { background: #1a1a1a; color: #e0e0e0; padding: 1rem; border-radius: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; white-space: pre-wrap; min-height: 300px; max-height: 600px; overflow-y: auto; }
-      .status { margin-bottom: 1rem; padding: 0.5rem 1rem; border-radius: 4px; font-size: 0.9rem; }
-      .status.ready { background: #d4edda; color: #155724; }
-      .status.loading { background: #fff3cd; color: #856404; }
-      .status.error { background: #f8d7da; color: #721c24; }
+
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #fafafa;
+        color: #1a1a1a;
+        min-height: 100vh;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 2rem;
+        border-bottom: 1px solid #e0e0e0;
+        background: #fff;
+      }
+
+      header h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .btn-reset {
+        padding: 0.35rem 0.85rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        font-size: 0.8rem;
+        font-family: inherit;
+        cursor: pointer;
+        color: #666;
+      }
+
+      .btn-reset:hover { background: #f5f5f5; color: #333; }
+      .btn-reset:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      .status-indicator {
+        font-size: 0.85rem;
+        padding: 0.3rem 0.75rem;
+        border-radius: 12px;
+        font-weight: 500;
+      }
+
+      .status-indicator.connecting {
+        background: #fff3cd;
+        color: #856404;
+      }
+
+      .status-indicator.connected {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .status-indicator.disconnected {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 0;
+        min-height: calc(100vh - 57px);
+      }
+
+      #products {
+        padding: 1.5rem 2rem;
+      }
+
+      #activity {
+        padding: 1.5rem;
+        border-left: 1px solid #e0e0e0;
+        background: #fff;
+        overflow-y: auto;
+        max-height: calc(100vh - 57px);
+      }
+
+      h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: #333;
+      }
+
+      /* Add Product Form */
+      .add-product-form {
+        margin-bottom: 1.5rem;
+        padding: 1rem 1.25rem;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+      }
+
+      .add-product-form h3 {
+        margin-bottom: 0.75rem;
+      }
+
+      .form-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+      }
+
+      .form-row input {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.9rem;
+        font-family: inherit;
+      }
+
+      .form-row input[name="product-name"] { flex: 2; }
+      .form-row input[name="product-price"] { flex: 1; max-width: 120px; }
+      .form-row input[name="product-stock"] { flex: 1; max-width: 100px; }
+
+      .form-row button {
+        padding: 0.5rem 1.25rem;
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-size: 0.9rem;
+        font-family: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .form-row button:hover { background: #1d4ed8; }
+      .form-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      /* Product Table */
+      .product-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .product-table th {
+        text-align: left;
+        padding: 0.75rem 1rem;
+        background: #f5f5f5;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+        border-bottom: 1px solid #e0e0e0;
+      }
+
+      .product-table td {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 0.9rem;
+      }
+
+      .product-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .stock-cell {
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .actions-cell {
+        display: flex;
+        gap: 0.4rem;
+      }
+
+      .btn-sell, .btn-restock {
+        padding: 0.3rem 0.75rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-family: inherit;
+        cursor: pointer;
+        background: #fff;
+      }
+
+      .btn-sell { color: #dc2626; border-color: #fca5a5; }
+      .btn-sell:hover:not(:disabled) { background: #fef2f2; }
+      .btn-restock { color: #16a34a; border-color: #86efac; }
+      .btn-restock:hover:not(:disabled) { background: #f0fdf4; }
+      .btn-sell:disabled, .btn-restock:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      /* Activity Feed */
+      .activity-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .activity-entry {
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        background: #f9fafb;
+        border-left: 3px solid #e0e0e0;
+        font-size: 0.85rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .activity-sale { border-left-color: #dc2626; }
+      .activity-restock { border-left-color: #16a34a; }
+      .activity-added { border-left-color: #2563eb; }
+
+      .activity-text {
+        color: #333;
+      }
+
+      .activity-time {
+        font-size: 0.75rem;
+        color: #999;
+      }
+
+      @media (max-width: 768px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        #activity {
+          border-left: none;
+          border-top: 1px solid #e0e0e0;
+          max-height: 300px;
+        }
+
+        .form-row {
+          flex-wrap: wrap;
+        }
+
+        .form-row input { min-width: 0; }
+      }
     </style>
   </head>
   <body>
-    <h1>Sirannon DB - Client SDK</h1>
-    <p class="subtitle">Browser client connecting to a Sirannon server via HTTP or WebSocket</p>
-    <div id="status" class="status loading">Not connected</div>
-
-    <div class="section-label">Transport</div>
-    <div class="controls">
-      <button type="button" id="btn-http" class="primary">Connect HTTP</button>
-      <button type="button" id="btn-ws" class="primary">Connect WS</button>
+    <header>
+      <h1>Sirannon DB - Product Inventory</h1>
+      <div class="header-actions">
+        <button type="button" id="btn-reset" class="btn-reset">Reset Database</button>
+        <span id="connection-status" class="status-indicator connecting">Connecting...</span>
+      </div>
+    </header>
+    <div class="layout">
+      <section id="products"></section>
+      <aside id="activity"></aside>
     </div>
-
-    <div class="section-label">Operations</div>
-    <div class="controls">
-      <button type="button" id="btn-query" disabled>Query</button>
-      <button type="button" id="btn-insert" disabled>Insert</button>
-      <button type="button" id="btn-transaction" disabled>Transaction</button>
-      <button type="button" id="btn-subscribe" disabled>CDC Subscribe</button>
-      <button type="button" id="btn-clear">Clear Log</button>
-    </div>
-    <div id="output"></div>
-    <script type="module" src="/src/client.ts"></script>
+    <script type="module" src="/src/app.ts"></script>
   </body>
 </html>

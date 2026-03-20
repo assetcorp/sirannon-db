@@ -1,20 +1,6 @@
-# Sirannon DB - Client SDK Example
+# Sirannon DB - Product Inventory Demo
 
-Browser client connecting to a Sirannon server over HTTP and WebSocket transports.
-
-## Prerequisites
-
-- Node.js >= 22
-- pnpm
-
-## Setup
-
-From the monorepo root:
-
-```bash
-pnpm install
-pnpm --filter @delali/sirannon-db build
-```
+A live product inventory that demonstrates real-time reactivity using CDC, HTTP mutations, WebSocket subscriptions, and transactions working together.
 
 ## Run
 
@@ -29,24 +15,46 @@ Or run them separately:
 
 ```bash
 pnpm run server   # starts Sirannon server on port 9876
-pnpm dev      # starts Vite dev server on port 5174
+pnpm dev          # starts Vite dev server on port 5174
 ```
 
-Open the Vite URL in your browser.
+Open the Vite URL in your browser to see the product table and live activity feed.
 
-## Features demonstrated
+## Architecture
 
-### Server (`src/server.ts`)
+The demo uses two `SirannonClient` instances, each handling a specific transport:
 
-- Sirannon server with `createServer()`, `cors: true`, and no `onRequest` authentication (fine for local dev)
-- Binds to `127.0.0.1` by default; set `HOST` (for example `0.0.0.0`) only if you need remote interfaces, then add auth and tighten CORS yourself
-- Database hooks (`onDatabaseOpen`, `onDatabaseClose`)
-- CDC watch on multiple tables
-- Seed data insertion
+- **HTTP client** handles mutations (sell, restock, add product) and initial data fetches. Transactions ensure stock changes and activity logs are written atomically.
+- **WebSocket client** powers CDC subscriptions that push live updates to the UI whenever products or activity records change.
 
-### Client (`src/client.ts`)
+This two-client pattern mirrors how a production app would wire up Sirannon DB: HTTP for request/response operations, WebSocket for real-time streaming.
 
-- `SirannonClient` with HTTP transport (query, execute, transaction)
-- `SirannonClient` with WebSocket transport (query, subscribe to CDC events)
-- Remote database proxy via `client.database(id)`
-- Real-time CDC subscriptions through WebSocket
+## Features
+
+- **Product table** with inline Sell and Restock buttons
+- **Add Product form** for creating new inventory items
+- **Live activity feed** updated through CDC (no polling)
+- **Atomic transactions** that pair stock changes with activity logs
+- **Connection status** indicator in the header
+- **CDC-driven UI** where product rows update in place without full reloads
+
+## Server schema
+
+Two tables seeded on startup:
+
+- `products` (id, name, price, stock) with 5 sample products
+- `activity` (id, product_name, action, quantity, created_at) tracking all changes
+
+Both tables have CDC watches enabled for real-time change detection.
+
+## Prerequisites
+
+- Node.js >= 22
+- pnpm
+
+From the monorepo root:
+
+```bash
+pnpm install
+pnpm --filter @delali/sirannon-db build
+```

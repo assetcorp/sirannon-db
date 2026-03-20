@@ -17,12 +17,12 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
 
       const vfsName = driverOptions?.vfs ?? 'IDBBatchAtomicVFS'
       if (vfsName === 'AccessHandlePoolVFS') {
-        const { AccessHandlePoolVFS } = await import('wa-sqlite/src/examples/AccessHandlePoolVFS.js')
+        const { AccessHandlePoolVFS } = await import('./vendor/vfs.js')
         const vfs = new AccessHandlePoolVFS(path)
         await vfs.isReady
         sqlite3.vfs_register(vfs, true)
       } else {
-        const { IDBBatchAtomicVFS } = await import('wa-sqlite/src/examples/IDBBatchAtomicVFS.js')
+        const { IDBBatchAtomicVFS } = await import('./vendor/vfs.js')
         const vfs = new IDBBatchAtomicVFS(path)
         await vfs.isReady
         sqlite3.vfs_register(vfs, true)

@@ -19,6 +19,11 @@ export class BackupManager {
       throw new BackupError('Backup path contains invalid characters')
     }
 
+    const segments = destPath.split(/[/\\]/)
+    if (segments.includes('..')) {
+      throw new BackupError('Backup path must not contain directory traversal segments')
+    }
+
     const resolved = resolve(destPath)
     const dir = dirname(resolved)
 

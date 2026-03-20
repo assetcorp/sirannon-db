@@ -12,9 +12,16 @@ export interface ScannedMigration {
 
 const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.(up|down)\.sql$/
 
+function hasControlCharacters(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) <= 0x1f) return true
+  }
+  return false
+}
+
 export function scanDirectory(dirPath: string): ScannedMigration[] {
-  if (dirPath.includes('\0')) {
-    throw new MigrationError('Migration path contains null bytes', 0, 'MIGRATION_VALIDATION_ERROR')
+  if (hasControlCharacters(dirPath)) {
+    throw new MigrationError('Migration path contains invalid characters', 0, 'MIGRATION_VALIDATION_ERROR')
   }
 
   const segments = dirPath.split(/[/\\]/)

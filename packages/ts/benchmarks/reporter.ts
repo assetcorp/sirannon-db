@@ -261,6 +261,7 @@ export function writeResults(category: string, systemInfo: SystemInfo, results: 
 
   const output = {
     category,
+    benchmarkType: 'comparison' as const,
     timestamp: new Date().toISOString(),
     system: systemInfo,
     results: results.map(r => ({
@@ -311,6 +312,7 @@ export function writeSirannonOnlyResults(
 
   const output = {
     category,
+    benchmarkType: 'feature' as const,
     timestamp: new Date().toISOString(),
     system: systemInfo,
     results: results.map(r => ({
@@ -322,5 +324,58 @@ export function writeSirannonOnlyResults(
 
   writeFileSync(filepath, `${JSON.stringify(output, null, 2)}\n`)
   console.log(`Results written to ${filepath}`)
+
+  writeSirannonOnlyCsv(resultsDir, category, timestamp, results)
+
   printSystemInfo(systemInfo)
+
+  console.log('\n--- Feature Benchmark Results ---')
+  for (const r of results) {
+    console.log(
+      `  ${r.workload}: ${fmtOps(r.result.opsPerSec)} ops/s | P50=${formatLatency(r.result.p50Ns)} | P99=${formatLatency(r.result.p99Ns)}`,
+    )
+  }
+}
+
+function writeSirannonOnlyCsv(
+  resultsDir: string,
+  category: string,
+  timestamp: string,
+  results: SirannonOnlyResult[],
+): void {
+  const header = [
+    'benchmarkType',
+    'workload',
+    'opsPerSec',
+    'meanNs',
+    'p50Ns',
+    'p99Ns',
+    'p999Ns',
+    'minNs',
+    'maxNs',
+    'sdNs',
+    'cv',
+    'samples',
+  ].join(',')
+
+  const rows = results.map(r =>
+    [
+      'feature',
+      escapeCsvField(r.workload),
+      r.result.opsPerSec.toFixed(2),
+      r.result.meanNs.toFixed(0),
+      r.result.p50Ns.toFixed(0),
+      r.result.p99Ns.toFixed(0),
+      r.result.p999Ns.toFixed(0),
+      r.result.minNs.toFixed(0),
+      r.result.maxNs.toFixed(0),
+      r.result.sdNs.toFixed(0),
+      r.result.cv.toFixed(4),
+      r.result.samples,
+    ].join(','),
+  )
+
+  const csvPath = join(resultsDir, `${category}-${timestamp}.csv`)
+  writeFileSync(csvPath, `${[header, ...rows].join('\n')}\n`)
+  console.log(`CSV written to ${csvPath}`)
 }

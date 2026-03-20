@@ -40,6 +40,7 @@
     "bench:ycsb": "node --expose-gc --import tsx benchmarks/ycsb/workload-a.ts",
     "bench:oltp": "node --expose-gc --import tsx benchmarks/oltp/tpc-c-lite.ts",
     "bench:scaling": "node --expose-gc --import tsx benchmarks/scaling/concurrency.ts",
+    "bench:pool": "node --expose-gc --import tsx benchmarks/scaling/pool-sweep.ts",
     "bench:cdc": "node --expose-gc --import tsx benchmarks/sirannon/cdc-latency.ts",
     "bench:docker": "node --import tsx benchmarks/run-docker.ts",
     "bench:docker:e2e": "node --import tsx benchmarks/run-e2e.ts",

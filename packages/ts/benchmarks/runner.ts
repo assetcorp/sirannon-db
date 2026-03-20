@@ -176,7 +176,7 @@ async function singleComparison(
 }
 
 export async function runComparison(config: BenchmarkConfig, pairs: ComparisonPair[]): Promise<ComparisonResult[]> {
-  const totalRuns = Number(process.env.BENCH_RUNS ?? 1)
+  const totalRuns = Number(process.env.BENCH_RUNS ?? 5)
 
   if (totalRuns <= 1) {
     return singleComparison(config, pairs)
@@ -227,7 +227,7 @@ export async function runComparison(config: BenchmarkConfig, pairs: ComparisonPa
 
     if (totalRuns >= 5) {
       lastResults[i].significance = welchTTest(sOps, pOps)
-      lastResults[i].speedupCI = speedupConfidenceInterval(sOps, pOps)
+      lastResults[i].speedupCI = speedupConfidenceInterval(sOps, pOps, 0.95, BigInt(process.env.BENCH_SEED ?? '42'))
       const sOutliers = detectOutliers(sOps)
       const pOutliers = detectOutliers(pOps)
       lastResults[i].outliers = {

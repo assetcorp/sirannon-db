@@ -78,7 +78,7 @@ export function loadConfig(): BenchConfig {
     durability: (process.env.BENCH_DURABILITY as 'matched' | 'full') ?? 'matched',
     dataSizes: process.env.BENCH_DATA_SIZES
       ? process.env.BENCH_DATA_SIZES.split(',').map(Number)
-      : [1_000, 10_000, 100_000],
+      : [1_000, 10_000, 100_000, 1_000_000],
     warmupTime: Number(process.env.BENCH_WARMUP_MS ?? 5_000),
     measureTime: Number(process.env.BENCH_MEASURE_MS ?? 10_000),
     seed: process.env.BENCH_SEED ?? '42',

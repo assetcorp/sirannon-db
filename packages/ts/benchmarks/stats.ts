@@ -155,9 +155,10 @@ export function speedupConfidenceInterval(
   sirannonSamples: number[],
   postgresSamples: number[],
   confidence = 0.95,
+  seed?: bigint,
 ): SpeedupCI {
   const iterations = 10_000
-  const rng = new SeededRng(12345n)
+  const rng = new SeededRng(seed ?? 42n)
   const ratios: number[] = []
 
   for (let i = 0; i < iterations; i++) {

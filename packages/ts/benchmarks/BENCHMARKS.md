@@ -26,7 +26,7 @@ Most local benchmarks run Sirannon against a Postgres baseline. Start the Postgr
 docker compose -f benchmarks/docker-compose.yml up -d --wait
 ```
 
-This launches Postgres 17 Alpine on port `5433` with tuned settings (256 MB shared buffers, `synchronous_commit=off` for reduced write latency, SSD-optimized planner costs). The default `matched` durability mode uses `synchronous_commit=off` for Postgres and `PRAGMA synchronous=NORMAL` for SQLite. Both approaches survive process crashes but use different WAL flush strategies; they are similar but not identical trade-offs.
+This launches Postgres 17 Alpine on port `5433` with tuned settings (256 MB shared buffers, `synchronous_commit=off` for reduced write latency, SSD-optimized planner costs). The default `matched` durability mode uses `synchronous_commit=off` for Postgres and `PRAGMA synchronous=NORMAL` for SQLite. Both sacrifice durability for write throughput, but at different layers. SQLite with `synchronous=NORMAL` in WAL mode syncs the WAL file at checkpoint boundaries rather than on every commit; a process crash is safe, but a power failure can lose transactions since the last checkpoint. Postgres with `synchronous_commit=off` reports a transaction as committed before the WAL is flushed to disk; a process crash is safe because the OS buffer cache remains intact, but an OS crash or power failure can lose up to ~600ms of recent transactions (3x the `wal_writer_delay` default of 200ms). Set `BENCH_DURABILITY=full` to enable maximum safety on both engines.
 
 | Setting  | Value       |
 |----------|-------------|
@@ -61,7 +61,8 @@ pnpm bench:micro       # point-select, bulk-insert, batch-update
 pnpm bench:ycsb        # YCSB workload-a (50/50 mixed)
 pnpm bench:oltp        # TPC-C lite
 pnpm bench:scaling     # Concurrency scaling (event-loop + worker threads)
-pnpm bench:cdc         # CDC latency
+pnpm bench:pool        # Pool size sweep (5, 10, 20 connections)
+pnpm bench:cdc         # CDC throughput and latency
 pnpm bench:statistical # 4 key benchmarks x 10 runs with full statistics
 pnpm bench:charts      # Generate SVG charts from CSV results
 ```
@@ -80,11 +81,12 @@ pnpm bench:charts      # Generate SVG charts from CSV results
 
 **OLTP** (requires Postgres) - Online transaction processing:
 
-- `tpc-c-lite` - Simplified TPC-C with new-order and payment transactions
+- `tpc-c-lite` - Simplified TPC-C with 100K customers and 10K products, running new-order (45%), payment (43%), and order-status (12%) transactions
 
 **Scaling** (requires Postgres) - Concurrency scaling from 1 to 64 clients:
 
 - `scaling/concurrency` - Tests two deployment models: single event-loop (Sirannon serializes, Postgres overlaps via async pool) and worker thread pool (N threads with their own connections). Two workloads: read-only (WAL concurrent readers) and 50/50 mixed (single-writer contention).
+- `scaling/pool-sweep` - Measures how Postgres connection pool size (5, 10, 20) affects throughput relative to Sirannon. Tests point-select and YCSB-A workloads at each pool size. Sirannon uses a fixed read pool of 4.
 
 **Sirannon** (no Postgres needed) - Sirannon-specific features:
 
@@ -106,13 +108,17 @@ Override defaults with environment variables:
 | `BENCH_PG_DATABASE`        | `benchmark`         | Postgres database                                                     |
 | `BENCH_PG_MAX_CONNECTIONS` | `10`                | Postgres connection pool size                                         |
 | `BENCH_DURABILITY`         | `matched`           | `matched` (SQLite NORMAL) or `full` (SQLite + fsync)                  |
-| `BENCH_DATA_SIZES`         | `1000,10000,100000` | Comma-separated row counts to test at each scale                      |
+| `BENCH_DATA_SIZES`         | `1000,10000,100000,1000000` | Comma-separated row counts to test at each scale                      |
 | `BENCH_WARMUP_MS`          | `5000`              | Warmup duration per task in milliseconds                              |
 | `BENCH_MEASURE_MS`         | `10000`             | Measurement duration per task in milliseconds                         |
 | `BENCH_SEED`               | `42`                | PRNG seed for reproducible data generation                            |
-| `BENCH_RUNS`               | `1`                 | Number of runs per comparison (enables significance testing when > 1) |
+| `BENCH_RUNS`               | `5`                 | Number of runs per comparison (statistical analysis activates at 5+ runs) |
 | `BENCH_RUN_ORDER`          | `random`            | Engine run order: `random`, `sirannon-first`, or `postgres-first`     |
 | `BENCH_SHUFFLE`            | `true`              | Randomize benchmark execution order in the full suite                 |
+
+The default pool size of 10 connections follows standard Postgres sizing guidance, which recommends roughly 2x CPU cores plus disk spindles. Most production deployments use pools of 5-20 connections. Postgres performance degrades beyond this range because each connection is a separate OS process consuming memory and adding context-switch overhead. Tools like PgBouncer exist to multiplex thousands of application requests through a small connection pool.
+
+The bulk-insert benchmark caps at 100K rows per iteration because each iteration inserts all rows in a single transaction; multi-second iterations produce too few samples for reliable measurement.
 
 Example with custom settings:
 
@@ -171,7 +177,7 @@ Measures raw query execution performance under identical constraints. No network
 
 - **Sirannon engine**: Sirannon + tinybench in a single container (2 CPU, 2 GB)
 - **Postgres engine**: pg.Pool + tinybench in a client container (2 CPU, 2 GB) connected to a Postgres DB container (2 CPU, 2 GB)
-- Sirannon uses 2 CPUs total. Postgres uses 4 CPUs total (2 client + 2 database). Sirannon wins with half the total CPU resources.
+- Sirannon uses 2 CPUs total. Postgres uses 4 CPUs total (2 client + 2 database). Sirannon runs as a single process with the database embedded in the application, so it needs one container. Postgres separates the database server from the client, requiring a container for each. This resource split reflects the architectural difference between embedded and client-server databases.
 
 Both engines receive `BENCH_DURABILITY` via environment variable, so the `matched` vs `full` durability mode applies in Docker the same way it does locally.
 
@@ -380,7 +386,7 @@ benchmarks/
   ycsb/                                 # Local YCSB benchmarks
   oltp/                                 # Local OLTP benchmarks
   sirannon/                             # Sirannon-only benchmarks (CDC, pool, etc.)
-  scaling/                              # Concurrency scaling benchmarks
+  scaling/                              # Concurrency and pool scaling benchmarks
   scripts/
     generate-charts.py                  # Chart generation from CSV results
   docker/                               # Docker-based fair benchmarks

@@ -19,17 +19,22 @@ pnpm add @delali/sirannon-db
 Then install the SQLite driver for your platform:
 
 ```bash
-pnpm add better-sqlite3              # Node.js (recommended)
-# or use Node 22's built-in sqlite    — no extra package needed
-# or pnpm add wa-sqlite              # Browser (IndexedDB persistence)
+pnpm add better-sqlite3    # Node.js
+pnpm add wa-sqlite          # Browser (IndexedDB persistence)
+pnpm add expo-sqlite        # React Native (Expo)
+# Node 22+ built-in sqlite and Bun need no extra package
 ```
-
-Requires Node.js >= 22.
 
 ## Quick start
 
+### Node.js
+
+```bash
+pnpm add @delali/sirannon-db better-sqlite3
+```
+
 ```ts
-import { Database, Sirannon } from '@delali/sirannon-db'
+import { Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 
 const driver = betterSqlite3()
@@ -42,7 +47,76 @@ await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@e
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-You can also create standalone databases without a `Sirannon` registry:
+Node.js 22+ users can skip the extra dependency by using the built-in `node:sqlite` module (requires the `--experimental-sqlite` flag):
+
+```ts
+import { nodeSqlite } from '@delali/sirannon-db/driver/node'
+
+const driver = nodeSqlite()
+```
+
+### Browser
+
+```bash
+pnpm add @delali/sirannon-db wa-sqlite
+```
+
+The browser driver persists data to IndexedDB through a WebAssembly SQLite build. Use `Database.create` directly since `Sirannon` registries are designed for server-side use.
+
+```ts
+import { Database } from '@delali/sirannon-db'
+import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
+
+const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
+const db = await Database.create('app', '/app.db', driver, {
+  readPoolSize: 1,
+  walMode: false,
+})
+
+await db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)')
+await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@example.com'])
+
+const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
+```
+
+### React Native (Expo)
+
+```bash
+pnpm add @delali/sirannon-db expo-sqlite
+```
+
+```ts
+import { Sirannon } from '@delali/sirannon-db'
+import { expoSqlite } from '@delali/sirannon-db/driver/expo'
+
+const driver = expoSqlite()
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('app', 'app.db', {
+  readPoolSize: 1,
+})
+
+await db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)')
+await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@example.com'])
+
+const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
+```
+
+### Bun
+
+No extra dependency needed since Bun ships `bun:sqlite` built in.
+
+```ts
+import { Sirannon } from '@delali/sirannon-db'
+import { bunSqlite } from '@delali/sirannon-db/driver/bun'
+
+const driver = bunSqlite()
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('app', './data/app.db')
+```
+
+### Standalone databases
+
+You can create databases without a `Sirannon` registry on any platform:
 
 ```ts
 const db = await Database.create('app', './data/app.db', driver)

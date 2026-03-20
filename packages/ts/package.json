@@ -61,15 +61,12 @@
       "import": "./dist/driver/node.mjs"
     },
     "./driver/bun": {
-      "types": "./dist/driver/bun.d.ts",
       "import": "./dist/driver/bun.mjs"
     },
     "./driver/wa-sqlite": {
-      "types": "./dist/driver/wa-sqlite.d.ts",
       "import": "./dist/driver/wa-sqlite.mjs"
     },
     "./driver/expo": {
-      "types": "./dist/driver/expo.d.ts",
       "import": "./dist/driver/expo.mjs"
     },
     "./file-migrations": {

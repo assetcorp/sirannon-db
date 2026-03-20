@@ -5,7 +5,14 @@ import { Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { createServer } from '@delali/sirannon-db/server'
 
-const HOST = process.env.HOST ?? '0.0.0.0'
+/*
+ * PORT defaults to 9876; override with PORT.
+ * HOST defaults to loopback (127.0.0.1). Set HOST (for example 0.0.0.0) only when you
+ * intentionally want the process to accept connections from other interfaces.
+ * createServer is called with cors: true and no onRequest auth; exposing the server
+ * beyond localhost requires both that explicit HOST override and your own hardening.
+ */
+const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 9876)
 
 const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-client-example-'))

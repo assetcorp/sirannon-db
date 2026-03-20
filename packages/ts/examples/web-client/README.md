@@ -38,7 +38,8 @@ Open the Vite URL in your browser.
 
 ### Server (`src/server.ts`)
 
-- Sirannon server with `createServer()` and CORS
+- Sirannon server with `createServer()`, `cors: true`, and no `onRequest` authentication (fine for local dev)
+- Binds to `127.0.0.1` by default; set `HOST` (for example `0.0.0.0`) only if you need remote interfaces, then add auth and tighten CORS yourself
 - Database hooks (`onDatabaseOpen`, `onDatabaseClose`)
 - CDC watch on multiple tables
 - Seed data insertion

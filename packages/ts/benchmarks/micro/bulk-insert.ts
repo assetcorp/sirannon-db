@@ -23,7 +23,16 @@ async function main() {
   const driver = await loadBenchDriver()
   const pairs: ComparisonPair[] = []
 
-  for (const bulkSize of config.dataSizes) {
+  const MAX_BULK_SIZE = 100_000
+  const bulkSizes = config.dataSizes.filter(s => s <= MAX_BULK_SIZE)
+  if (bulkSizes.length < config.dataSizes.length) {
+    const skipped = config.dataSizes.filter(s => s > MAX_BULK_SIZE)
+    console.log(
+      `Bulk-insert capped at ${MAX_BULK_SIZE.toLocaleString()} rows. Skipping: ${skipped.map(s => s.toLocaleString()).join(', ')}`,
+    )
+  }
+
+  for (const bulkSize of bulkSizes) {
     const rows = Array.from({ length: bulkSize }, (_, i) => generateUserRow(i + 1))
 
     const sirannonEngine = createSirannonEngine(driver, config)

@@ -21,6 +21,7 @@ const benchmarks: BenchmarkEntry[] = [
   { name: 'sirannon/cold-start', path: 'benchmarks/sirannon/cold-start.ts', requiresPostgres: false },
   { name: 'sirannon/multi-tenant', path: 'benchmarks/sirannon/multi-tenant.ts', requiresPostgres: false },
   { name: 'scaling/concurrency', path: 'benchmarks/scaling/concurrency.ts', requiresPostgres: true },
+  { name: 'scaling/pool-sweep', path: 'benchmarks/scaling/pool-sweep.ts', requiresPostgres: true },
 ]
 
 function fisherYatesShuffle<T>(arr: T[]): T[] {

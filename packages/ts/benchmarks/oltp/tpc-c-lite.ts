@@ -11,8 +11,8 @@ const FRAMING =
   'Tests multi-statement transactions, lock management, and join performance. ' +
   'Single-client only; does not test concurrent transaction isolation or deadlock handling.'
 
-const NUM_CUSTOMERS = 1_000
-const NUM_PRODUCTS = 100
+const NUM_CUSTOMERS = 100_000
+const NUM_PRODUCTS = 10_000
 const NEW_ORDER_THRESHOLD = 0.45
 const PAYMENT_THRESHOLD = 0.88
 
@@ -53,7 +53,7 @@ async function main() {
   const productZipfian = new ZipfianGenerator(NUM_PRODUCTS)
 
   let sirannonOrderId = 1
-  let postgresOrderId = 100_000
+  let postgresOrderId = 10_000_000
 
   await db.query('SELECT * FROM customers WHERE id = ?', [1])
   await db.query('SELECT * FROM products WHERE id = ?', [1])
@@ -135,13 +135,12 @@ async function main() {
       framing: FRAMING,
       beforeRun: async () => {
         sirannonOrderId = 1
-        postgresOrderId = 100_000
+        postgresOrderId = 10_000_000
         await db.execute('DELETE FROM order_items')
         await db.execute('DELETE FROM orders')
         await db.execute('UPDATE products SET stock = 1000')
         await db.execute('UPDATE customers SET balance = 10000')
-        await pool.query('DELETE FROM order_items')
-        await pool.query('DELETE FROM orders')
+        await pool.query('TRUNCATE order_items, orders')
         await pool.query('UPDATE products SET stock = 1000')
         await pool.query('UPDATE customers SET balance = 10000')
       },

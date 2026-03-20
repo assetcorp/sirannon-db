@@ -13,12 +13,16 @@ Turn any SQLite database into a networked data layer with real-time subscription
 ## Install
 
 ```bash
-pnpm add @delali/sirannon-db better-sqlite3
+pnpm add @delali/sirannon-db
 ```
 
-Requires Node.js >= 22.
+Then add the [driver](#pluggable-drivers) for your runtime. For example, Node.js users will typically add `better-sqlite3`:
 
-## Quick start
+```bash
+pnpm add better-sqlite3
+```
+
+## Quick start (Node.js)
 
 ```ts
 import { Sirannon } from '@delali/sirannon-db'

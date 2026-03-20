@@ -285,7 +285,13 @@ export class SirannonServer {
         bodyPromise
           .then(async rawBody => {
             if (abort.aborted) return
-            await handler(res, dbId, rawBody, abort)
+            try {
+              await handler(res, dbId, rawBody, abort)
+            } catch {
+              if (!abort.aborted) {
+                sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+              }
+            }
           })
           .catch(() => {})
         return
@@ -310,7 +316,13 @@ export class SirannonServer {
       Promise.all([bodyPromise, hookPromise])
         .then(async ([rawBody, allowed]) => {
           if (abort.aborted || !allowed) return
-          await handler(res, dbId, rawBody, abort)
+          try {
+            await handler(res, dbId, rawBody, abort)
+          } catch {
+            if (!abort.aborted) {
+              sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+            }
+          }
         })
         .catch(() => {})
     }

@@ -71,16 +71,39 @@ console.log(`Sirannon server listening on ${HOST}:${PORT}`)
 console.log(`  HTTP: http://localhost:${PORT}`)
 console.log(`  WS:   ws://localhost:${PORT}`)
 
-process.on('SIGTERM', async () => {
-  await server.close()
-  await sirannon.shutdown()
-  rmSync(tempDir, { recursive: true, force: true })
-  process.exit(0)
-})
+let isShuttingDown = false
 
-process.on('SIGINT', async () => {
-  await server.close()
-  await sirannon.shutdown()
-  rmSync(tempDir, { recursive: true, force: true })
-  process.exit(0)
-})
+const shutdown = async () => {
+  if (isShuttingDown) {
+    return
+  }
+
+  isShuttingDown = true
+  let exitCode = 0
+
+  try {
+    await server.close()
+  } catch (error) {
+    exitCode = 1
+    console.error('Failed to close server during shutdown.', error)
+  }
+
+  try {
+    await sirannon.shutdown()
+  } catch (error) {
+    exitCode = 1
+    console.error('Failed to shut down Sirannon during shutdown.', error)
+  }
+
+  try {
+    rmSync(tempDir, { recursive: true, force: true })
+  } catch (error) {
+    exitCode = 1
+    console.error('Failed to remove temporary directory during shutdown.', error)
+  }
+
+  process.exit(exitCode)
+}
+
+process.once('SIGTERM', shutdown)
+process.once('SIGINT', shutdown)

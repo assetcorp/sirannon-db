@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -6,12 +7,12 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      'node:fs': new URL('./src/shims/empty.ts', import.meta.url).pathname,
-      'node:path': new URL('./src/shims/empty.ts', import.meta.url).pathname,
-      'node:os': new URL('./src/shims/empty.ts', import.meta.url).pathname,
-      fs: new URL('./src/shims/empty.ts', import.meta.url).pathname,
-      path: new URL('./src/shims/empty.ts', import.meta.url).pathname,
-      os: new URL('./src/shims/empty.ts', import.meta.url).pathname,
+      'node:fs': fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
+      'node:path': fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
+      'node:os': fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
+      fs: fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
+      path: fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
+      os: fileURLToPath(new URL('./src/shims/empty.ts', import.meta.url)),
     },
   },
   server: {

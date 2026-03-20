@@ -28,7 +28,7 @@ pnpm start
 Or run them separately:
 
 ```bash
-pnpm server   # starts Sirannon server on port 9876
+pnpm run server   # starts Sirannon server on port 9876
 pnpm dev      # starts Vite dev server on port 5174
 ```
 

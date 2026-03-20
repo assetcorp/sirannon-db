@@ -1,3 +1,4 @@
+import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import { SirannonClient } from '@delali/sirannon-db/client'
 
 const SERVER_URL = 'http://localhost:9876'
@@ -14,6 +15,7 @@ const btnClear = document.getElementById('btn-clear') as HTMLButtonElement
 
 let client: SirannonClient | null = null
 let transport: 'http' | 'websocket' = 'http'
+let activeSubscription: RemoteSubscription | null = null
 
 function log(message: string) {
   output.textContent += `${message}\n`
@@ -36,21 +38,38 @@ btnClear.addEventListener('click', () => {
   output.textContent = ''
 })
 
+function clearSubscription() {
+  if (activeSubscription) {
+    activeSubscription.unsubscribe()
+    activeSubscription = null
+    btnSubscribe.textContent = 'CDC Subscribe'
+  }
+}
+
+function updateTransportButtons() {
+  btnHttp.classList.toggle('active', transport === 'http' && client !== null)
+  btnWs.classList.toggle('active', transport === 'websocket' && client !== null)
+}
+
 btnHttp.addEventListener('click', () => {
+  clearSubscription()
   if (client) client.close()
   transport = 'http'
   client = new SirannonClient(SERVER_URL, { transport: 'http' })
   log(`Connected via HTTP to ${SERVER_URL}`)
   setStatus('Connected (HTTP)', 'ready')
+  updateTransportButtons()
   enableOperations(true)
 })
 
 btnWs.addEventListener('click', () => {
+  clearSubscription()
   if (client) client.close()
   transport = 'websocket'
   client = new SirannonClient(SERVER_URL, { transport: 'websocket' })
   log(`Connected via WebSocket to ${SERVER_URL}`)
   setStatus('Connected (WebSocket)', 'ready')
+  updateTransportButtons()
   enableOperations(true)
 })
 
@@ -144,30 +163,31 @@ btnTransaction.addEventListener('click', async () => {
 
 btnSubscribe.addEventListener('click', async () => {
   if (!client) return
+
+  if (activeSubscription) {
+    clearSubscription()
+    log('Subscription closed.')
+    return
+  }
+
   if (transport !== 'websocket') {
     log('CDC subscriptions require WebSocket transport. Click "Connect WS" first.')
     return
   }
+
   btnSubscribe.disabled = true
 
   try {
     const db = client.database('main')
     log('\nSubscribing to "messages" table changes...')
+    log('Use the Insert button to see live CDC events.')
 
-    const subscription = db.subscribe('messages', event => {
+    activeSubscription = await db.on('messages').subscribe(event => {
       const row = event.row as Record<string, unknown>
       log(`  [CDC] ${event.type}: id=${row.id}, author=${row.author}, content=${row.content}`)
     })
 
-    log('Inserting 3 messages to trigger events...')
-    for (let i = 1; i <= 3; i++) {
-      await db.execute('INSERT INTO messages (author, content) VALUES (?, ?)', ['CDC Tester', `Subscription test ${i}`])
-    }
-
-    await new Promise(resolve => globalThis.setTimeout(resolve, 500))
-
-    subscription.unsubscribe()
-    log('Subscription closed.')
+    btnSubscribe.textContent = 'CDC Unsubscribe'
   } catch (err) {
     log(`Subscribe error: ${err}`)
   } finally {

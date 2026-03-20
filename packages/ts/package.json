@@ -28,7 +28,7 @@
     "pluggable"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
@@ -64,6 +64,7 @@
       "import": "./dist/driver/bun.mjs"
     },
     "./driver/wa-sqlite": {
+      "types": "./dist/driver/wa-sqlite.d.ts",
       "import": "./dist/driver/wa-sqlite.mjs"
     },
     "./driver/expo": {

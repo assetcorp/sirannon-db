@@ -6,13 +6,11 @@ const peerDeps = [
   'better-sqlite3',
   'uWebSockets.js',
   'wa-sqlite',
-  'wa-sqlite/src/examples/IDBBatchAtomicVFS.js',
-  'wa-sqlite/src/examples/AccessHandlePoolVFS.js',
   'expo-sqlite',
   'croner',
 ]
 
-function restoreNodePrefix() {
+async function restoreNodePrefix() {
   const distDir = join(import.meta.dirname, 'dist')
   const files = readdirSync(distDir, { recursive: true, withFileTypes: true })
   for (const entry of files) {
@@ -59,7 +57,7 @@ export default defineConfig([
     },
     platform: 'node',
     dts: true,
-    clean: true,
+    clean: false,
     onSuccess: restoreNodePrefix,
   },
   {
@@ -74,8 +72,16 @@ export default defineConfig([
   {
     ...sharedOptions,
     entry: {
-      'driver/bun': 'src/drivers/bun/index.ts',
       'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts',
+    },
+    platform: 'browser',
+    dts: true,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: {
+      'driver/bun': 'src/drivers/bun/index.ts',
       'driver/expo': 'src/drivers/expo/index.ts',
     },
     platform: 'browser',

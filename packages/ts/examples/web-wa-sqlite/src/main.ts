@@ -39,9 +39,11 @@ btnInit.addEventListener('click', async () => {
   setStatus('Initializing database...', 'loading')
   log('Creating wa-sqlite driver with IDBBatchAtomicVFS...')
 
+  let newDb: Database | null = null
+
   try {
     const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
-    db = await Database.create('browser-demo', '/sirannon-example.db', driver, {
+    newDb = await Database.create('browser-demo', '/sirannon-example.db', driver, {
       readPoolSize: 1,
       walMode: false,
       cdcPollInterval: 50,
@@ -49,7 +51,7 @@ btnInit.addEventListener('click', async () => {
 
     log('Database created. Running migrations...')
 
-    await db.execute(`
+    await newDb.execute(`
       CREATE TABLE IF NOT EXISTS notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -57,7 +59,7 @@ btnInit.addEventListener('click', async () => {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `)
-    await db.execute(`
+    await newDb.execute(`
       CREATE TABLE IF NOT EXISTS tags (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         note_id INTEGER NOT NULL REFERENCES notes(id),
@@ -65,10 +67,19 @@ btnInit.addEventListener('click', async () => {
       )
     `)
 
+    db = newDb
     log('Schema created: notes, tags')
     setStatus('Database ready', 'ready')
     enableButtons(true)
   } catch (err) {
+    if (newDb) {
+      try {
+        await newDb.close()
+      } catch (closeError) {
+        log(`Cleanup error: ${closeError}`)
+      }
+    }
+
     log(`Error: ${err}`)
     setStatus('Initialization failed', 'error')
     btnInit.disabled = false

@@ -1,0 +1,3 @@
+workload,dataSize,sirannonOpsPerSec,postgresOpsPerSec,speedup,sirannonP50Ns,sirannonP99Ns,postgresP50Ns,postgresP99Ns,sirannonCV,postgresCV,pValue,ciLower,ciUpper,runs
+point-select,1000,525124.47,7572.03,69.3506,1875,2334,130000,159083,0.8018,0.1043,0.000000,68.67,69.98,10
+point-select,10000,513809.83,7526.72,68.2647,1917,2417,133875,162208,2.3354,0.0964,0.000000,67.68,68.79,10

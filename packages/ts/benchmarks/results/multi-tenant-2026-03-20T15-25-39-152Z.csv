@@ -1,0 +1,3 @@
+benchmarkType,workload,opsPerSec,meanNs,p50Ns,p99Ns,p999Ns,minNs,maxNs,sdNs,cv,samples
+feature,multi-tenant-query,30850.70,32414,32414,0,0,0,0,0,0.0000,50
+feature,multi-tenant-open,561.02,1782457,1547084,0,0,1160792,8103958,0,0.0000,50

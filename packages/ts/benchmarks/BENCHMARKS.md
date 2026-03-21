@@ -118,7 +118,7 @@ Override defaults with environment variables:
 
 The default pool size of 10 connections follows standard Postgres sizing guidance, which recommends roughly 2x CPU cores plus disk spindles. Most production deployments use pools of 5-20 connections. Postgres performance degrades beyond this range because each connection is a separate OS process consuming memory and adding context-switch overhead. Tools like PgBouncer exist to multiplex thousands of application requests through a small connection pool.
 
-The bulk-insert benchmark caps at 100K rows per iteration because each iteration inserts all rows in a single transaction; multi-second iterations produce too few samples for reliable measurement.
+The bulk-insert benchmark caps at 10K rows per iteration because each iteration inserts all rows one-by-one in a single transaction. At higher row counts, Postgres iterations take tens of seconds (one TCP round-trip per INSERT), producing too few samples for reliable measurement.
 
 Example with custom settings:
 
@@ -274,7 +274,7 @@ Requires Python 3 with matplotlib and pandas (`pip install matplotlib pandas`).
 ### Interpreting results
 
 - A **speedup > 1** means Sirannon was faster than Postgres for that workload.
-- **CV > 10%** indicates high variance. Close background apps and re-run with a longer `BENCH_MEASURE_MS` for more stable numbers.
+- **CV > 10%** indicates high variance in per-engine latency samples. For Sirannon's sub-10-microsecond operations (point-select, YCSB reads), high CV is expected: most samples complete in 2us, but occasional GC pauses, OS scheduler interrupts, and CPU frequency transitions inject multi-millisecond spikes into the tail. These outliers inflate the standard deviation far beyond the mean, producing CV values of 200-600% even though the median latency is stable. The **speedup ratio and CI** are the reliable metrics because both engines experience the same OS-level disruptions, and the ratio cancels out shared noise. If CV is high on operations that take milliseconds or more, close background apps and re-run with a longer `BENCH_MEASURE_MS`.
 - Compare JSON files across runs to track regressions. System info is captured so you can account for hardware differences.
 - **Docker benchmarks on macOS** use Docker Desktop with a Linux VM, adding overhead to both sides equally. Linux gives more accurate absolute numbers due to native Docker execution. Relative speedups should be consistent across platforms.
 

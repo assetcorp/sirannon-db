@@ -32,15 +32,19 @@ async function main() {
     await sirannonEngine.setup(ycsbSchema)
     await postgresEngine.setup(ycsbSchema)
 
-    const rows = Array.from({ length: dataSize }, (_, i) => generateYcsbRow(`user${i}`))
-    await sirannonEngine.seed(
-      'INSERT INTO usertable (ycsb_key, field0, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      rows,
-    )
-    await postgresEngine.seed(
-      'INSERT INTO usertable (ycsb_key, field0, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-      rows,
-    )
+    const SEED_CHUNK = 50_000
+    for (let offset = 0; offset < dataSize; offset += SEED_CHUNK) {
+      const end = Math.min(offset + SEED_CHUNK, dataSize)
+      const chunk = Array.from({ length: end - offset }, (_, i) => generateYcsbRow(`user${offset + i}`))
+      await sirannonEngine.seed(
+        'INSERT INTO usertable (ycsb_key, field0, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        chunk,
+      )
+      await postgresEngine.seed(
+        'INSERT INTO usertable (ycsb_key, field0, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+        chunk,
+      )
+    }
 
     const pgInfo = await postgresEngine.getInfo()
     if (!systemInfo.postgresVersion) systemInfo.postgresVersion = pgInfo.version ?? ''

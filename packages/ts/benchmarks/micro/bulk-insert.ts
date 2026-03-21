@@ -23,7 +23,7 @@ async function main() {
   const driver = await loadBenchDriver()
   const pairs: ComparisonPair[] = []
 
-  const MAX_BULK_SIZE = 100_000
+  const MAX_BULK_SIZE = 10_000
   const bulkSizes = config.dataSizes.filter(s => s <= MAX_BULK_SIZE)
   if (bulkSizes.length < config.dataSizes.length) {
     const skipped = config.dataSizes.filter(s => s > MAX_BULK_SIZE)

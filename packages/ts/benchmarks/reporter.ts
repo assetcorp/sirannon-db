@@ -295,6 +295,12 @@ export function writeResults(category: string, systemInfo: SystemInfo, results: 
       if (r.postgres.cv > 0.1) which.push(`Postgres CV=${(r.postgres.cv * 100).toFixed(1)}%`)
       console.log(`  - ${r.workload} (${r.dataSize} rows): ${which.join(', ')}`)
     }
+    const hasFastOps = unreliable.some(r => r.sirannon.p50Ns < 10_000)
+    if (hasFastOps) {
+      console.log('\n    Note: High CV on sub-10us operations is expected. GC pauses and OS scheduling inject')
+      console.log('    occasional multi-ms spikes that inflate standard deviation. The speedup ratio and CI')
+      console.log('    cancel out shared noise and are the reliable metrics.')
+    }
   }
 }
 

@@ -1,0 +1,3 @@
+workload,dataSize,sirannonOpsPerSec,postgresOpsPerSec,speedup,sirannonP50Ns,sirannonP99Ns,postgresP50Ns,postgresP99Ns,sirannonCV,postgresCV,pValue,ciLower,ciUpper,runs
+bulk-insert-1000,1000,993.16,7.64,129.9124,936791,1751569,132556188,144970971,0.1620,0.0443,,,,2
+bulk-insert-10000,10000,94.50,0.77,123.5105,9697625,16819938,1298245333,1377271651,0.2695,0.0267,,,,2

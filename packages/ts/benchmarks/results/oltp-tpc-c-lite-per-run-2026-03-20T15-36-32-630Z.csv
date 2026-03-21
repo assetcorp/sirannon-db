@@ -1,0 +1,3 @@
+workload,dataSize,run,sirannonOpsPerSec,postgresOpsPerSec
+tpc-c-lite,100000,1,59306.83,1515.83
+tpc-c-lite,100000,2,59649.84,1490.57

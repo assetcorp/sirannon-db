@@ -1,0 +1,9 @@
+workload,dataSize,run,sirannonOpsPerSec,postgresOpsPerSec
+batch-update,1000,1,12525.43,68.35
+batch-update,1000,2,12858.83,66.94
+batch-update,10000,1,12233.04,68.75
+batch-update,10000,2,11636.28,67.69
+batch-update,100000,1,10845.85,65.41
+batch-update,100000,2,10741.53,69.51
+batch-update,1000000,1,4395.06,65.42
+batch-update,1000000,2,8059.71,66.16

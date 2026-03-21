@@ -1,0 +1,3 @@
+workload,dataSize,sirannonOpsPerSec,postgresOpsPerSec,speedup,sirannonP50Ns,sirannonP99Ns,postgresP50Ns,postgresP99Ns,sirannonCV,postgresCV,pValue,ciLower,ciUpper,runs
+batch-update,1000,13031.45,74.23,175.5651,77416,153602,13714042,16036036,0.2586,0.0607,0.000000,172.61,178.88,10
+batch-update,10000,12476.15,74.96,166.4482,81125,157000,13490375,14894979,0.2375,0.0614,0.000000,164.17,168.97,10

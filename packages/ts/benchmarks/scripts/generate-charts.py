@@ -19,6 +19,7 @@ try:
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    import numpy as np
     import pandas as pd
 except ImportError:
     print('Missing dependencies. Install them with:')
@@ -29,27 +30,51 @@ except ImportError:
 COLORS = {
     'sirannon': '#2563eb',
     'postgres': '#64748b',
+    'accent': '#f59e0b',
 }
 
 
 def find_csvs(results_dir: str) -> dict[str, list[str]]:
-    """Group CSV files by type (comparison, scaling, engine)."""
+    """Group CSV files by type."""
     groups: dict[str, list[str]] = {
         'comparison': [],
         'scaling': [],
         'engine': [],
+        'feature': [],
+        'per_run': [],
     }
     for path in sorted(glob(os.path.join(results_dir, '*.csv'))):
         name = os.path.basename(path)
         if 'per-run' in name:
+            groups['per_run'].append(path)
             continue
-        if 'scaling' in name:
+        if 'scaling' in name or 'concurrency' in name:
             groups['scaling'].append(path)
         elif 'engine-' in name and 'scaling' not in name:
             groups['engine'].append(path)
+        elif is_feature_csv(path):
+            groups['feature'].append(path)
         else:
             groups['comparison'].append(path)
     return groups
+
+
+def is_feature_csv(csv_path: str) -> bool:
+    """Check if a CSV uses the feature benchmark format."""
+    try:
+        df = pd.read_csv(csv_path, nrows=1)
+        return 'benchmarkType' in df.columns and df['benchmarkType'].iloc[0] == 'feature'
+    except Exception:
+        return False
+
+
+def format_ops(ops: float) -> str:
+    """Format ops/sec for chart labels."""
+    if ops >= 1_000_000:
+        return f'{ops / 1_000_000:.1f}M'
+    if ops >= 1_000:
+        return f'{ops / 1_000:.1f}K'
+    return f'{ops:.0f}'
 
 
 def generate_speedup_chart(csv_path: str, charts_dir: str) -> None:
@@ -67,7 +92,7 @@ def generate_speedup_chart(csv_path: str, charts_dir: str) -> None:
 
     label_col = 'workload'
     if 'dataSize' in df.columns:
-        df['label'] = df['workload'] + ' (' + df['dataSize'].astype(str) + ' rows)'
+        df['label'] = df['workload'] + ' (' + df['dataSize'].apply(lambda x: f'{x:,}') + ' rows)'
         label_col = 'label'
 
     fig, ax = plt.subplots(figsize=(10, max(4, len(df) * 0.45)))
@@ -185,7 +210,7 @@ def generate_latency_chart(csv_path: str, charts_dir: str) -> None:
 
     label_col = 'workload'
     if 'dataSize' in df.columns:
-        df['label'] = df['workload'] + ' (' + df['dataSize'].astype(str) + ')'
+        df['label'] = df['workload'] + ' (' + df['dataSize'].apply(lambda x: f'{x:,}') + ')'
         label_col = 'label'
 
     ns_to_us = 1 / 1_000
@@ -217,6 +242,161 @@ def generate_latency_chart(csv_path: str, charts_dir: str) -> None:
 
     stem = Path(csv_path).stem
     out_path = os.path.join(charts_dir, f'{stem}-latency.svg')
+    fig.savefig(out_path, format='svg', bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Created {out_path}')
+
+
+def generate_feature_chart(csv_path: str, charts_dir: str) -> None:
+    """Horizontal bar chart for Sirannon-only feature benchmarks."""
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f'  Warning: skipping {csv_path}: {e}')
+        return
+
+    required = {'workload', 'opsPerSec'}
+    if not required.issubset(df.columns):
+        print(f'  Warning: skipping {csv_path}: missing columns {required - set(df.columns)}')
+        return
+
+    fig, ax = plt.subplots(figsize=(10, max(3, len(df) * 0.6)))
+
+    y_pos = range(len(df))
+    bars = ax.barh(y_pos, df['opsPerSec'], color=COLORS['sirannon'], height=0.5)
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(df['workload'], fontsize=9)
+    ax.set_xlabel('ops/sec')
+
+    category = Path(csv_path).stem.rsplit('-', 6)[0]
+    ax.set_title(f'Sirannon Feature: {category}')
+    ax.invert_yaxis()
+    ax.grid(True, axis='x', alpha=0.3)
+
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(
+            width + max(df['opsPerSec']) * 0.01,
+            bar.get_y() + bar.get_height() / 2,
+            format_ops(width),
+            va='center', fontsize=9,
+        )
+
+    plt.tight_layout()
+    stem = Path(csv_path).stem
+    out_path = os.path.join(charts_dir, f'{stem}-feature.svg')
+    fig.savefig(out_path, format='svg', bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Created {out_path}')
+
+    if 'p50Ns' in df.columns and 'p99Ns' in df.columns:
+        non_zero = df[(df['p50Ns'] > 0) | (df['p99Ns'] > 0)]
+        if len(non_zero) > 0:
+            generate_feature_latency_chart(non_zero, csv_path, charts_dir)
+
+
+def generate_feature_latency_chart(df: pd.DataFrame, csv_path: str, charts_dir: str) -> None:
+    """P50/P99 bar chart for feature benchmarks that have latency data."""
+    ns_to_us = 1 / 1_000
+    fig, ax = plt.subplots(figsize=(10, max(3, len(df) * 0.6)))
+
+    x = np.arange(len(df))
+    width = 0.35
+
+    ax.barh(x - width/2, df['p50Ns'] * ns_to_us, width, label='P50', color=COLORS['sirannon'])
+    ax.barh(x + width/2, df['p99Ns'] * ns_to_us, width, label='P99', color=COLORS['accent'])
+
+    ax.set_yticks(x)
+    ax.set_yticklabels(df['workload'], fontsize=9)
+    ax.set_xlabel('Latency (us)')
+
+    category = Path(csv_path).stem.rsplit('-', 6)[0]
+    ax.set_title(f'Sirannon Feature Latency: {category}')
+    ax.legend(fontsize=8)
+    ax.invert_yaxis()
+    ax.grid(True, axis='x', alpha=0.3)
+
+    plt.tight_layout()
+    stem = Path(csv_path).stem
+    out_path = os.path.join(charts_dir, f'{stem}-feature-latency.svg')
+    fig.savefig(out_path, format='svg', bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Created {out_path}')
+
+
+def generate_per_run_boxplot(csv_path: str, charts_dir: str) -> None:
+    """Box plot showing ops/sec distribution across runs for each workload."""
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f'  Warning: skipping {csv_path}: {e}')
+        return
+
+    required = {'workload', 'sirannonOpsPerSec', 'postgresOpsPerSec'}
+    if not required.issubset(df.columns):
+        print(f'  Warning: skipping {csv_path}: missing columns {required - set(df.columns)}')
+        return
+
+    if 'dataSize' in df.columns:
+        df['label'] = df['workload'] + ' (' + df['dataSize'].apply(lambda x: f'{x:,}') + ')'
+    else:
+        df['label'] = df['workload']
+
+    workloads = df['label'].unique()
+    n_workloads = len(workloads)
+
+    fig, axes = plt.subplots(1, n_workloads, figsize=(5 * n_workloads, 5), squeeze=False)
+
+    for idx, wl in enumerate(workloads):
+        ax = axes[0][idx]
+        wl_df = df[df['label'] == wl]
+
+        sirannon_data = wl_df['sirannonOpsPerSec'].values
+        postgres_data = wl_df['postgresOpsPerSec'].values
+
+        bp = ax.boxplot(
+            [sirannon_data, postgres_data],
+            tick_labels=['Sirannon', 'Postgres'],
+            patch_artist=True,
+            widths=0.5,
+        )
+
+        bp['boxes'][0].set_facecolor(COLORS['sirannon'])
+        bp['boxes'][0].set_alpha(0.7)
+        bp['boxes'][1].set_facecolor(COLORS['postgres'])
+        bp['boxes'][1].set_alpha(0.7)
+
+        for box in bp['boxes']:
+            box.set_edgecolor('black')
+            box.set_linewidth(0.8)
+        for whisker in bp['whiskers']:
+            whisker.set_linewidth(0.8)
+        for median in bp['medians']:
+            median.set_color('black')
+            median.set_linewidth(1.5)
+
+        ax.set_ylabel('ops/sec')
+        ax.set_title(wl, fontsize=10)
+        ax.grid(True, axis='y', alpha=0.3)
+
+        ax.text(
+            1, sirannon_data.mean(),
+            f'  {format_ops(sirannon_data.mean())}',
+            va='center', fontsize=8, color=COLORS['sirannon'],
+        )
+        ax.text(
+            2, postgres_data.mean(),
+            f'  {format_ops(postgres_data.mean())}',
+            va='center', fontsize=8, color=COLORS['postgres'],
+        )
+
+    category = Path(csv_path).stem.replace('-per-run', '').rsplit('-', 6)[0]
+    plt.suptitle(f'{category}: Per-Run Distribution ({len(wl_df)} runs)', fontsize=13, y=1.02)
+    plt.tight_layout()
+
+    stem = Path(csv_path).stem
+    out_path = os.path.join(charts_dir, f'{stem}-boxplot.svg')
     fig.savefig(out_path, format='svg', bbox_inches='tight')
     plt.close(fig)
     print(f'  Created {out_path}')
@@ -260,6 +440,14 @@ def main() -> None:
         print(f'Processing scaling: {os.path.basename(csv_path)}')
         generate_scaling_chart(csv_path, charts_dir)
         generate_latency_chart(csv_path, charts_dir)
+
+    for csv_path in groups['feature']:
+        print(f'Processing feature: {os.path.basename(csv_path)}')
+        generate_feature_chart(csv_path, charts_dir)
+
+    for csv_path in groups['per_run']:
+        print(f'Processing per-run: {os.path.basename(csv_path)}')
+        generate_per_run_boxplot(csv_path, charts_dir)
 
     print(f'\nCharts written to {charts_dir}/')
 

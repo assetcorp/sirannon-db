@@ -1,0 +1,9 @@
+workload,dataSize,run,sirannonOpsPerSec,postgresOpsPerSec
+point-select,1000,1,522594.77,7265.76
+point-select,1000,2,520578.72,7256.76
+point-select,10000,1,506534.07,7249.66
+point-select,10000,2,502771.39,7525.87
+point-select,100000,1,477588.46,7267.94
+point-select,100000,2,479756.88,7321.28
+point-select,1000000,1,469647.15,7193.49
+point-select,1000000,2,466484.98,7251.21

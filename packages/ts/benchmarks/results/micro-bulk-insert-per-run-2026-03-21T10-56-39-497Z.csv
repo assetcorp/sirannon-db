@@ -1,0 +1,5 @@
+workload,dataSize,run,sirannonOpsPerSec,postgresOpsPerSec
+bulk-insert-1000,1000,1,981.03,7.76
+bulk-insert-1000,1000,2,1011.58,7.52
+bulk-insert-10000,10000,1,97.34,0.76
+bulk-insert-10000,10000,2,99.03,0.76

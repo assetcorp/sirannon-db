@@ -263,13 +263,89 @@ Generate SVG charts from CSV results:
 pnpm bench:charts
 ```
 
-This reads all CSV files from `benchmarks/results/` and writes charts to `benchmarks/results/charts/`. Three chart types are generated:
+This reads all CSV files from `benchmarks/results/` and writes charts to `benchmarks/results/charts/`. Five chart types are generated:
 
 - **Speedup bar chart** - Horizontal bars showing speedup ratio per workload, with CI error bars when available
 - **Scaling line chart** - Ops/sec vs concurrency level for event-loop and worker-thread models
 - **Latency comparison** - Grouped bars comparing P50 and P99 latencies between engines
+- **Feature bar chart** - Ops/sec for Sirannon-only benchmarks (CDC, connection pool, cold start, multi-tenant)
+- **Per-run box plot** - Distribution of ops/sec across runs, showing median, quartiles, and outliers for each workload
 
 Requires Python 3 with matplotlib and pandas (`pip install matplotlib pandas`).
+
+### Reference Results
+
+Results from a clean end-to-end run on Apple M3 Pro (11 cores, 18 GB RAM), Postgres 17.9 in Docker, matched durability mode. Statistical charts use 10 independent runs.
+
+#### Speedup by Workload (10 runs, with 95% CI error bars)
+
+**Point-Select** (primary key lookup, 1K and 10K rows):
+
+![Point-Select Speedup](results/charts/point-select-speedup.svg)
+
+**Batch-Update** (multi-row UPDATE in a transaction):
+
+![Batch-Update Speedup](results/charts/batch-update-speedup.svg)
+
+**YCSB Workload-A** (50/50 read/update, Zipfian distribution):
+
+![YCSB-A Speedup](results/charts/ycsb-a-speedup.svg)
+
+**TPC-C Lite** (mixed OLTP, 100K customers):
+
+![TPC-C Speedup](results/charts/tpc-c-lite-speedup.svg)
+
+#### Speedup at Scale (1K to 1M rows)
+
+**Point-Select across data sizes:**
+
+![Point-Select Scale](results/charts/point-select-scale-speedup.svg)
+
+**YCSB-A across data sizes:**
+
+![YCSB-A Scale](results/charts/ycsb-a-scale-speedup.svg)
+
+**Batch-Update across data sizes:**
+
+![Batch-Update Scale](results/charts/batch-update-scale-speedup.svg)
+
+#### Per-Run Distribution (10 runs)
+
+Box plots showing the spread of ops/sec across independent runs. Tight boxes indicate stable measurements.
+
+**Point-Select:**
+
+![Point-Select Box Plot](results/charts/point-select-boxplot.svg)
+
+**TPC-C Lite:**
+
+![TPC-C Box Plot](results/charts/tpc-c-lite-boxplot.svg)
+
+#### Latency Comparison
+
+**Point-Select P50/P99:**
+
+![Point-Select Latency](results/charts/point-select-latency.svg)
+
+#### Pool Size Sweep
+
+**Postgres pool size (5, 10, 20) vs Sirannon:**
+
+![Pool Sweep](results/charts/pool-sweep-speedup.svg)
+
+#### Sirannon Feature Benchmarks
+
+**CDC Throughput** (sustained write rate with real-time event delivery):
+
+![CDC Throughput](results/charts/cdc-throughput.svg)
+
+**Cold Start** (database open + first query):
+
+![Cold Start](results/charts/cold-start.svg)
+
+**Connection Pool** (internal pool throughput):
+
+![Connection Pool](results/charts/connection-pool.svg)
 
 ### Interpreting results
 

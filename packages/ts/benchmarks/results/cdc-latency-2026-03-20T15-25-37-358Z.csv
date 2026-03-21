@@ -1,3 +1,0 @@
-benchmarkType,workload,opsPerSec,meanNs,p50Ns,p99Ns,p999Ns,minNs,maxNs,sdNs,cv,samples
-feature,cdc-throughput,46199.00,1530136278,1493553833,2969752458,2998272167,171259250,3000830333,808210681,0.5282,10000
-feature,cdc-write-rate,46199.00,21645,0,0,0,0,0,0,0.0000,138597

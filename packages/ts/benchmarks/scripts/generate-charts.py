@@ -449,7 +449,122 @@ def main() -> None:
         print(f'Processing per-run: {os.path.basename(csv_path)}')
         generate_per_run_boxplot(csv_path, charts_dir)
 
+    create_stable_names(charts_dir)
     print(f'\nCharts written to {charts_dir}/')
+
+
+STABLE_NAME_MAP = {
+    'micro-point-select': {
+        'speedup': 'point-select-speedup.svg',
+        'latency': 'point-select-latency.svg',
+    },
+    'micro-point-select-per-run': {
+        'boxplot': 'point-select-boxplot.svg',
+    },
+    'micro-batch-update': {
+        'speedup': 'batch-update-speedup.svg',
+    },
+    'micro-batch-update-per-run': {
+        'boxplot': 'batch-update-boxplot.svg',
+    },
+    'micro-bulk-insert': {
+        'speedup': 'bulk-insert-speedup.svg',
+    },
+    'ycsb-a': {
+        'speedup': 'ycsb-a-speedup.svg',
+        'latency': 'ycsb-a-latency.svg',
+    },
+    'ycsb-a-per-run': {
+        'boxplot': 'ycsb-a-boxplot.svg',
+    },
+    'oltp-tpc-c-lite': {
+        'speedup': 'tpc-c-lite-speedup.svg',
+        'latency': 'tpc-c-lite-latency.svg',
+    },
+    'oltp-tpc-c-lite-per-run': {
+        'boxplot': 'tpc-c-lite-boxplot.svg',
+    },
+    'pool-sweep': {
+        'speedup': 'pool-sweep-speedup.svg',
+    },
+    'cdc-latency': {
+        'feature': 'cdc-throughput.svg',
+    },
+    'cold-start': {
+        'feature': 'cold-start.svg',
+    },
+    'connection-pool': {
+        'feature': 'connection-pool.svg',
+    },
+    'multi-tenant': {
+        'feature': 'multi-tenant.svg',
+    },
+}
+
+
+SCALE_STABLE_NAMES = {
+    'micro-point-select': 'point-select-scale-speedup.svg',
+    'micro-batch-update': 'batch-update-scale-speedup.svg',
+    'ycsb-a': 'ycsb-a-scale-speedup.svg',
+}
+
+
+def create_stable_names(charts_dir: str) -> None:
+    """Copy the latest timestamped chart for each category to a stable name.
+
+    BENCHMARKS.md references these stable names so the embedded images
+    survive chart regeneration without manual renaming.
+
+    For benchmarks with both statistical (10-run) and scale (2-run, more data sizes)
+    CSVs, the scale run gets a separate '-scale-speedup' stable name. The main
+    stable name maps to the run with the most data sizes (scale run), while the
+    statistical run's per-run boxplots get their own stable names.
+    """
+    import shutil
+
+    svg_files = sorted(glob(os.path.join(charts_dir, '*.svg')))
+
+    best: dict[tuple[str, str], str] = {}
+    for svg_path in svg_files:
+        name = os.path.basename(svg_path)
+        if '-2026' not in name:
+            continue
+        for prefix, chart_types in STABLE_NAME_MAP.items():
+            if not name.startswith(prefix + '-2026'):
+                continue
+            for chart_type in chart_types:
+                if name.endswith(f'-{chart_type}.svg'):
+                    key = (prefix, chart_type)
+                    if key not in best or svg_path > best[key]:
+                        best[key] = svg_path
+
+    if not best:
+        return
+
+    print('\nCreating stable-named charts:')
+    for (prefix, chart_type), src_path in sorted(best.items()):
+        stable_name = STABLE_NAME_MAP[prefix][chart_type]
+        dest_path = os.path.join(charts_dir, stable_name)
+        shutil.copy2(src_path, dest_path)
+        print(f'  {stable_name} <- {os.path.basename(src_path)}')
+
+    all_speedups: dict[str, list[str]] = {}
+    for svg_path in svg_files:
+        name = os.path.basename(svg_path)
+        if '-2026' not in name or not name.endswith('-speedup.svg'):
+            continue
+        for prefix in SCALE_STABLE_NAMES:
+            if name.startswith(prefix + '-2026'):
+                all_speedups.setdefault(prefix, []).append(svg_path)
+
+    for prefix, paths in all_speedups.items():
+        if len(paths) >= 2:
+            sorted_paths = sorted(paths)
+            scale_path = sorted_paths[-1]
+            stable_name = SCALE_STABLE_NAMES[prefix]
+            dest_path = os.path.join(charts_dir, stable_name)
+            shutil.copy2(scale_path, dest_path)
+            print(f'  {stable_name} <- {os.path.basename(scale_path)}')
 
 
 if __name__ == '__main__':

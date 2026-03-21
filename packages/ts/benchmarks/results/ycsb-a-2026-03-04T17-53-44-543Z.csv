@@ -1,3 +1,0 @@
-workload,dataSize,sirannonOpsPerSec,postgresOpsPerSec,speedup,sirannonP50Ns,sirannonP99Ns,postgresP50Ns,postgresP99Ns,sirannonCV,postgresCV,pValue,ciLower,ciUpper,runs
-ycsb-a,1000,158710.76,6928.96,22.9054,6625,15167,143834,229744,9.0491,0.2119,0.000000,22.47,23.34,10
-ycsb-a,10000,156950.10,7081.70,22.1628,7000,22208,141875,222096,10.2757,0.2562,0.000000,21.51,22.74,10

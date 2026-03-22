@@ -8,7 +8,7 @@ import { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { ReplicationEngine } from '../engine.js'
-import { BatchValidationError, TopologyError } from '../errors.js'
+import { BatchValidationError, ReplicationError, TopologyError } from '../errors.js'
 import { HLC } from '../hlc.js'
 import { MultiPrimaryTopology } from '../topology/multi-primary.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
@@ -27,7 +27,11 @@ import type {
 class MockTransport implements ReplicationTransport {
   private batchHandler: ((batch: ReplicationBatch, from: string) => Promise<void>) | null = null
   private ackHandler: ((ack: ReplicationAck, from: string) => void) | null = null
+  private forwardHandler:
+    | ((req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>)
+    | null = null
   private peerConnectedHandler: ((peer: NodeInfo) => void) | null = null
+  private peerDisconnectedHandler: ((peerId: string) => void) | null = null
 
   private readonly _peers = new Map<string, NodeInfo>()
   readonly sentBatches: Array<{ peerId: string; batch: ReplicationBatch }> = []
@@ -98,6 +102,13 @@ class MockTransport implements ReplicationTransport {
     if (this.ackHandler) {
       this.ackHandler(ack, from)
     }
+  }
+
+  triggerForwardReceived(request: ForwardedTransaction, from: string): Promise<ForwardedTransactionResult> {
+    if (this.forwardHandler) {
+      return this.forwardHandler(request, from)
+    }
+    return Promise.reject(new Error('No forward handler registered'))
   }
 }
 
@@ -366,6 +377,62 @@ describe('ReplicationEngine', () => {
 
       expect(result.results).toHaveLength(1)
       expect(result.results[0].changes).toBe(1)
+
+      await engine.stop()
+    })
+  })
+
+  describe('forward authorization', () => {
+    it('rejects forward from unknown peer', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+
+      await expect(
+        transport.triggerForwardReceived(
+          { requestId: 'fwd-1', statements: [{ sql: "INSERT INTO items VALUES (1, 'x')" }] },
+          'unknown-peer-id',
+        ),
+      ).rejects.toThrow(ReplicationError)
+
+      await engine.stop()
+    })
+
+    it('accepts forward from known peer', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+      transport.addPeer(NODE_B)
+
+      const result = await transport.triggerForwardReceived(
+        { requestId: 'fwd-2', statements: [{ sql: "INSERT INTO items VALUES (1, 'test')" }] },
+        NODE_B,
+      )
+
+      expect(result.results).toHaveLength(1)
+      expect(result.results[0].changes).toBe(1)
+
+      await engine.stop()
+    })
+
+    it('forward handler not registered on replica', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engine = new ReplicationEngine(
+        db,
+        conn,
+        makeConfig({ topology: new PrimaryReplicaTopology('replica') }),
+      )
+      await engine.start()
+
+      await expect(
+        transport.triggerForwardReceived(
+          { requestId: 'fwd-3', statements: [{ sql: "INSERT INTO items VALUES (1, 'x')" }] },
+          NODE_B,
+        ),
+      ).rejects.toThrow('No forward handler registered')
 
       await engine.stop()
     })

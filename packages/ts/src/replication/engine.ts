@@ -83,8 +83,8 @@ export class ReplicationEngine {
     }
   }
 
-  async query<T>(sql: string, params?: Params, _options?: QueryOptions): Promise<T[]> {
-    return this.database.query<T>(sql, params)
+  async query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
+    return this.database.query<T>(sql, params, options)
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {

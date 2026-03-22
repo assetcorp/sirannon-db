@@ -254,6 +254,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
           if (existingRow === undefined) {
             if (change.operation === 'insert' && change.newData) {
               await this.insertRow(tx, change)
+              await this.recordColumnVersions(tx, change, change.newData)
               txApplied += 1
             } else if (change.operation === 'delete') {
               txApplied += 1
@@ -276,9 +277,11 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
             if (resolution.action === 'accept_remote') {
               await this.applyRemoteChange(tx, change)
+              await this.recordColumnVersions(tx, change, change.newData)
               txApplied += 1
             } else if (resolution.action === 'merge' && resolution.mergedData) {
               await this.applyMergedData(tx, change, resolution.mergedData)
+              await this.recordColumnVersions(tx, change, resolution.mergedData)
               txApplied += 1
             } else {
               txSkipped += 1
@@ -575,5 +578,31 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
     const stmt = await tx.prepare(`DELETE FROM "${change.table}" WHERE ${conditions.join(' AND ')}`)
     await stmt.run(...values)
+  }
+
+  private async recordColumnVersions(
+    tx: SQLiteConnection,
+    change: ReplicationChange,
+    data: Record<string, unknown> | null,
+  ): Promise<void> {
+    if (change.operation === 'delete') {
+      const delStmt = await tx.prepare('DELETE FROM _sirannon_column_versions WHERE table_name = ? AND row_id = ?')
+      await delStmt.run(change.table, change.rowId)
+      return
+    }
+
+    if (!data) return
+
+    const upsertStmt = await tx.prepare(
+      `INSERT INTO _sirannon_column_versions (table_name, row_id, column_name, hlc, node_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(table_name, row_id, column_name)
+       DO UPDATE SET hlc = excluded.hlc, node_id = excluded.node_id`,
+    )
+
+    for (const col of Object.keys(data)) {
+      if (!validateIdentifier(col)) continue
+      await upsertStmt.run(change.table, change.rowId, col, change.hlc, change.nodeId)
+    }
   }
 }

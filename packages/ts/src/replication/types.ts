@@ -105,7 +105,14 @@ export interface ReplicationTransport {
   peers(): ReadonlyMap<string, NodeInfo>
 }
 
-export type RaftMessageType = 'request_vote' | 'vote_response' | 'append_entries' | 'append_response' | 'heartbeat'
+export type RaftMessageType =
+  | 'request_vote'
+  | 'vote_response'
+  | 'pre_vote'
+  | 'pre_vote_response'
+  | 'append_entries'
+  | 'append_response'
+  | 'heartbeat'
 
 export interface RaftMessage {
   type: RaftMessageType
@@ -133,6 +140,7 @@ export interface ReplicationConfig {
   nodeId?: string
   topology: Topology
   transport: ReplicationTransport
+  transportConfig?: TransportConfig
   writeForwarding?: boolean
   raft?: RaftConfig
   conflictResolvers?: Record<string, ConflictResolver>
@@ -171,16 +179,18 @@ export interface ApplyResult {
   conflicts: number
 }
 
+const BIGINT_PREFIX = '\x00sirannon:bigint:'
+
 function bigintReplacer(_key: string, value: unknown): unknown {
   if (typeof value === 'bigint') {
-    return `__bigint__${value.toString()}`
+    return `${BIGINT_PREFIX}${value.toString()}`
   }
   return value
 }
 
 function bigintReviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && value.startsWith('__bigint__')) {
-    return BigInt(value.slice(10))
+  if (typeof value === 'string' && value.startsWith(BIGINT_PREFIX)) {
+    return BigInt(value.slice(BIGINT_PREFIX.length))
   }
   return value
 }

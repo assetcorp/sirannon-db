@@ -166,7 +166,7 @@ describe('RaftNode', () => {
     node.start()
     vi.advanceTimersByTime(150)
 
-    const preVotes = transport.broadcastedRaftMessages.filter(m => m.type === 'request_vote')
+    const preVotes = transport.broadcastedRaftMessages.filter(m => m.type === 'pre_vote')
     expect(preVotes.length).toBeGreaterThan(0)
 
     node.stop()

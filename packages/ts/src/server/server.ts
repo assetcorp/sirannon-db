@@ -80,6 +80,9 @@ export class SirannonServer {
   private readonly port: number
   private readonly cors: ResolvedCors | null
   private readonly onRequestHook: OnRequestHook | undefined
+  private readonly getReplicationStatus:
+    | (() => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null)
+    | undefined
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
 
@@ -89,6 +92,7 @@ export class SirannonServer {
     this.port = options?.port ?? 9876
     this.cors = resolveCors(options?.cors)
     this.onRequestHook = options?.onRequest
+    this.getReplicationStatus = options?.getReplicationStatus
     this.wsHandler = new WSHandler(sirannon)
     this.app = uWS.App()
     this.registerRoutes()
@@ -141,7 +145,7 @@ export class SirannonServer {
     }
 
     this.app.get('/health', this.withCors(handleLiveness()))
-    this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon)))
+    this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
 
     this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon)))
     this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon)))

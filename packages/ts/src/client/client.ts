@@ -242,7 +242,9 @@ class TopologyAwareTransport implements Transport {
     try {
       return await transport.query(sql, params)
     } catch (err) {
-      if (this.currentReadUrl && this.currentReadUrl !== this.client._getWriteEndpoint()) {
+      const isServerError =
+        err instanceof Error && err.name === 'RemoteError' && (err as { code?: string }).code !== 'CONNECTION_ERROR'
+      if (!isServerError && this.currentReadUrl && this.currentReadUrl !== this.client._getWriteEndpoint()) {
         this.client._removeReplica(this.currentReadUrl)
         this.readTransport = null
         this.currentReadUrl = ''
@@ -296,12 +298,14 @@ class TopologyAwareTransport implements Transport {
       return this.readTransport
     }
 
-    if (this.readTransport) {
-      this.readTransport.close()
-    }
-
+    const oldTransport = this.readTransport
     this.currentReadUrl = endpoint
     this.readTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+
+    if (oldTransport) {
+      oldTransport.close()
+    }
+
     return this.readTransport
   }
 

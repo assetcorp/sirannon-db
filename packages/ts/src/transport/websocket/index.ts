@@ -67,16 +67,18 @@ interface ServerPeerData {
   nodeId: string
 }
 
+const BIGINT_PREFIX = '\x00sirannon:bigint:'
+
 function bigintReplacer(_key: string, value: unknown): unknown {
   if (typeof value === 'bigint') {
-    return `__bigint__${value.toString()}`
+    return `${BIGINT_PREFIX}${value.toString()}`
   }
   return value
 }
 
 function bigintReviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && value.startsWith('__bigint__')) {
-    return BigInt(value.slice(10))
+  if (typeof value === 'string' && value.startsWith(BIGINT_PREFIX)) {
+    return BigInt(value.slice(BIGINT_PREFIX.length))
   }
   return value
 }
@@ -199,9 +201,9 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     }
 
     this.localNodeId = localNodeId
-    this.connected = true
 
     await this.startServer()
+    this.connected = true
 
     const endpoints = config.endpoints ?? []
     for (const endpoint of endpoints) {
@@ -413,8 +415,10 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
         const userData = ws.getUserData()
         if (!userData.nodeId) return
 
-        this.serverPeerSockets.delete(userData.nodeId)
-        this.removePeer(userData.nodeId)
+        if (this.serverPeerSockets.get(userData.nodeId) === ws) {
+          this.serverPeerSockets.delete(userData.nodeId)
+          this.removePeer(userData.nodeId)
+        }
       },
     })
 
@@ -437,7 +441,17 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     let ws: WebSocket
     try {
       ws = new WebSocket(fullUrl)
-    } catch (_err) {
+    } catch {
+      const failedConn: PeerConnection = {
+        nodeId: '',
+        ws: null as unknown as WebSocket,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        endpoint,
+      }
+      if (this.connected) {
+        this.scheduleReconnect(failedConn)
+      }
       return
     }
 
@@ -501,7 +515,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     }
 
     ws.onclose = () => {
-      if (conn.nodeId) {
+      if (conn.nodeId && this.peerConnections.get(conn.nodeId) === conn) {
         this.peerConnections.delete(conn.nodeId)
         this.removePeer(conn.nodeId)
       }
@@ -602,6 +616,8 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
             pending.reject(new TransportError(resp.error))
           } else if (resp.result) {
             pending.resolve(resp.result)
+          } else {
+            pending.reject(new TransportError('Forward response contained neither result nor error'))
           }
         }
         break

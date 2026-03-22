@@ -12,11 +12,7 @@ export class FieldMergeResolver implements ConflictResolver {
     this.getColumnVersions = getColumnVersions
   }
 
-  resolve(ctx: ConflictContext): ConflictResolution {
-    return this.lww.resolve(ctx)
-  }
-
-  async resolveAsync(ctx: ConflictContext): Promise<ConflictResolution> {
+  async resolve(ctx: ConflictContext): Promise<ConflictResolution> {
     const columnVersions = await this.getColumnVersions(ctx.table, ctx.rowId)
 
     if (columnVersions.size === 0) {

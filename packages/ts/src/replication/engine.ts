@@ -15,6 +15,7 @@ const DEFAULT_BATCH_SIZE = 100
 const DEFAULT_BATCH_INTERVAL_MS = 100
 const DEFAULT_MAX_CLOCK_DRIFT_MS = 60_000
 const DEFAULT_MAX_PENDING_BATCHES = 10
+const DEFAULT_MAX_BATCH_CHANGES = 1000
 
 const DDL_PREFIX_RE = /^\s*(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
@@ -35,6 +36,7 @@ export class ReplicationEngine {
   private readonly batchIntervalMs: number
   private readonly maxClockDriftMs: number
   private readonly maxPendingBatches: number
+  private readonly maxBatchChanges: number
 
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
     this.database = database
@@ -48,6 +50,7 @@ export class ReplicationEngine {
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
     this.maxClockDriftMs = config.maxClockDriftMs ?? DEFAULT_MAX_CLOCK_DRIFT_MS
     this.maxPendingBatches = config.maxPendingBatches ?? DEFAULT_MAX_PENDING_BATCHES
+    this.maxBatchChanges = config.maxBatchChanges ?? DEFAULT_MAX_BATCH_CHANGES
   }
 
   async start(): Promise<void> {
@@ -163,23 +166,28 @@ export class ReplicationEngine {
 
   private async executeLocally(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     const isDdl = DDL_PREFIX_RE.test(sql)
-
-    const seqBefore = await this.log.getLocalSeq()
-    const result = await this.database.execute(sql, params)
-
     const txId = randomUUID()
-    await this.writerConn.transaction(async tx => {
+
+    const result = await this.writerConn.transaction(async tx => {
+      const seqBefore = await this.log.getLocalSeq()
+
+      const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
+      const stmt = await tx.prepare(sql)
+      const r = await stmt.run(...bindValues)
+
       if (isDdl) {
-        const stmt = await tx.prepare(
-          `INSERT INTO "${'_sirannon_changes'}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
+        const ddlStmt = await tx.prepare(
+          `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
 					 VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
         )
         const hlcVal = this.hlc.now()
-        await stmt.run(JSON.stringify({ ddlStatement: sql }), this.nodeId, txId, hlcVal)
+        await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), this.nodeId, txId, hlcVal)
       } else {
         await this.log.stampChanges(tx, Number(seqBefore), txId)
         await this.log.updateColumnVersions(tx, Number(seqBefore))
       }
+
+      return { changes: r.changes, lastInsertRowId: r.lastInsertRowId }
     })
 
     if (options?.writeConcern) {
@@ -195,14 +203,20 @@ export class ReplicationEngine {
   ): Promise<ForwardedTransactionResult> {
     const requestId = randomUUID()
     const results: Array<{ changes: number; lastInsertRowId: number | string }> = []
-
-    const seqBefore = await this.log.getLocalSeq()
     const txId = randomUUID()
+    const hook = this.config.onBeforeForwardedQuery
+
+    if (hook) {
+      for (const { sql, params } of statements) {
+        hook(sql, params)
+      }
+    }
 
     await this.writerConn.transaction(async tx => {
+      const seqBefore = await this.log.getLocalSeq()
+
       for (const { sql, params } of statements) {
         const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
-
         const stmt = await tx.prepare(sql)
         const r = await stmt.run(...bindValues)
         results.push({
@@ -221,8 +235,25 @@ export class ReplicationEngine {
     this.config.transport.onBatchReceived(async (batch, fromPeerId) => {
       if (!this.running) return
 
+      if (batch.sourceNodeId !== fromPeerId) {
+        throw new BatchValidationError(
+          `Batch sourceNodeId '${batch.sourceNodeId}' does not match sender '${fromPeerId}'`,
+        )
+      }
+
+      const knownPeers = this.config.transport.peers()
+      if (!knownPeers.has(fromPeerId)) {
+        throw new BatchValidationError(`Batch from unknown peer: ${fromPeerId}`)
+      }
+
       if (!this.config.topology.shouldAcceptFrom(fromPeerId, 'peer')) {
         throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
+      }
+
+      if (batch.changes.length > this.maxBatchChanges) {
+        throw new BatchValidationError(
+          `Batch too large: ${batch.changes.length} changes exceeds max ${this.maxBatchChanges}`,
+        )
       }
 
       const drift = this.checkClockDrift(batch.hlcRange.max)

@@ -67,7 +67,7 @@ export interface ConflictResolution {
 }
 
 export interface ConflictResolver {
-  resolve(ctx: ConflictContext): ConflictResolution
+  resolve(ctx: ConflictContext): ConflictResolution | Promise<ConflictResolution>
 }
 
 export type TopologyRole = 'primary' | 'replica' | 'peer'
@@ -142,7 +142,9 @@ export interface ReplicationConfig {
   maxPendingBatches?: number
   snapshotThreshold?: number
   maxClockDriftMs?: number
+  maxBatchChanges?: number
   batchSigningKey?: string
+  onBeforeForwardedQuery?: (sql: string, params?: unknown[] | Record<string, unknown>) => void
   flowControl?: {
     maxLagSeconds?: number
     onLagExceeded?: (peerId: string, lagMs: number) => void

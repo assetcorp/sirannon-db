@@ -9,6 +9,16 @@ const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 const SAFE_DDL_RE =
   /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
+function validateIdentifier(name: string): boolean {
+  return IDENTIFIER_RE.test(name)
+}
+
+function validateDdlSafety(sql: string): boolean {
+  if (!SAFE_DDL_RE.test(sql)) return false
+  if (sql.includes(';')) return false
+  return true
+}
+
 interface ChangeRow {
   seq: number
   table_name: string
@@ -228,7 +238,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
         for (const ddl of ddlChanges) {
           const ddlSql = ddl.ddlStatement
-          if (!ddlSql || !SAFE_DDL_RE.test(ddlSql)) {
+          if (!ddlSql || !validateDdlSafety(ddlSql)) {
             throw new BatchValidationError(`Unsafe or missing DDL statement: ${ddlSql ?? 'none'}`)
           }
           await tx.exec(ddlSql)
@@ -251,7 +261,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
             txConflicts += 1
             const localHlc = await this.getLocalHlcForRow(tx, change.table, change.rowId)
 
-            const resolution = resolver.resolve({
+            const resolution = await resolver.resolve({
               table: change.table,
               rowId: change.rowId,
               localChange: null,
@@ -437,6 +447,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     const values: unknown[] = []
 
     for (const col of pkColumns) {
+      if (!validateIdentifier(col)) return undefined
       if (!(col in sourceData)) return undefined
       conditions.push(`"${col}" = ?`)
       values.push(sourceData[col])
@@ -459,7 +470,9 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
   private async insertRow(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
     if (!change.newData) return
 
-    const columns = Object.keys(change.newData)
+    const columns = Object.keys(change.newData).filter(validateIdentifier)
+    if (columns.length === 0) return
+
     const placeholders = columns.map(() => '?').join(', ')
     const colNames = columns.map(c => `"${c}"`).join(', ')
     const values = columns.map(c => change.newData?.[c])
@@ -485,6 +498,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     const whereValues: unknown[] = []
 
     for (const [col, val] of Object.entries(sourceData)) {
+      if (!validateIdentifier(col)) continue
       if (!pkColumns.includes(col)) {
         setClauses.push(`"${col}" = ?`)
         setValues.push(val)
@@ -492,6 +506,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     }
 
     for (const col of pkColumns) {
+      if (!validateIdentifier(col)) continue
       whereConditions.push(`"${col}" = ?`)
       whereValues.push(sourceData[col])
     }
@@ -518,6 +533,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     const whereValues: unknown[] = []
 
     for (const [col, val] of Object.entries(mergedData)) {
+      if (!validateIdentifier(col)) continue
       if (!pkColumns.includes(col)) {
         setClauses.push(`"${col}" = ?`)
         setValues.push(val)
@@ -525,6 +541,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     }
 
     for (const col of pkColumns) {
+      if (!validateIdentifier(col)) continue
       whereConditions.push(`"${col}" = ?`)
       whereValues.push(sourceData[col])
     }
@@ -545,6 +562,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     const values: unknown[] = []
 
     for (const col of pkColumns) {
+      if (!validateIdentifier(col)) continue
       conditions.push(`"${col}" = ?`)
       values.push(sourceData[col])
     }

@@ -104,7 +104,7 @@ describe('FieldMergeResolver', () => {
       remoteHlc: '0000000f4241-0000-nodeB',
     }
 
-    const result = await resolver.resolveAsync(ctx)
+    const result = await resolver.resolve(ctx)
     expect(result.action).toBe('merge')
     expect(result.mergedData).toEqual({
       id: 1,
@@ -142,12 +142,12 @@ describe('FieldMergeResolver', () => {
       remoteHlc: '0000000f4241-0000-nodeB',
     }
 
-    const result = await resolver.resolveAsync(ctx)
+    const result = await resolver.resolve(ctx)
     expect(result.action).toBe('merge')
     expect(result.mergedData?.name).toBe('RemoteName')
   })
 
-  it('falls back to LWW when no column versions are available', () => {
+  it('falls back to LWW when no column versions are available', async () => {
     const getColumnVersions = async () => new Map<string, { hlc: string; nodeId: string }>()
     const resolver = new FieldMergeResolver(getColumnVersions)
 
@@ -160,7 +160,7 @@ describe('FieldMergeResolver', () => {
       remoteHlc: '0000000f4241-0000-nodeA',
     }
 
-    const result = resolver.resolve(ctx)
+    const result = await resolver.resolve(ctx)
     expect(result.action).toBe('accept_remote')
   })
 })

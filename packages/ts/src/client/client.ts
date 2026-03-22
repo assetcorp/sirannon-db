@@ -274,14 +274,15 @@ class TopologyAwareTransport implements Transport {
 
   close(): void {
     this.closed = true
+    const sameTransport = this.readTransport !== null && this.readTransport === this.writeTransport
     if (this.readTransport) {
       this.readTransport.close()
       this.readTransport = null
     }
-    if (this.writeTransport && this.writeTransport !== this.readTransport) {
+    if (this.writeTransport && !sameTransport) {
       this.writeTransport.close()
-      this.writeTransport = null
     }
+    this.writeTransport = null
   }
 
   private async getReadTransport(): Promise<Transport> {

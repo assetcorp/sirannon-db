@@ -48,6 +48,8 @@ export default defineConfig([
       'driver/node': 'src/drivers/node/index.ts',
       'file-migrations/index': 'src/utils/file-migrations/index.ts',
       'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
+      'replication/index': 'src/replication/index.ts',
+      'transport/websocket': 'src/transport/websocket/index.ts',
     },
     platform: 'node',
     dts: true,
@@ -80,6 +82,13 @@ export default defineConfig([
     },
     platform: 'browser',
     dts: false,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: { 'transport/memory': 'src/transport/memory/index.ts' },
+    platform: 'neutral',
+    dts: true,
     clean: false,
   },
 ])

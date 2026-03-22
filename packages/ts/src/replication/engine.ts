@@ -19,6 +19,27 @@ const DEFAULT_MAX_BATCH_CHANGES = 1000
 
 const DDL_PREFIX_RE = /^\s*(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
+/**
+ * The central coordinator for distributed replication in Sirannon.
+ *
+ * ReplicationEngine wraps a local Database and adds multi-node awareness: it
+ * stamps local writes with HLC timestamps, groups them into batches on a
+ * configurable interval, and ships those batches to connected peers through a
+ * pluggable transport layer. Inbound batches from remote peers are validated
+ * (checksum, clock-drift, topology authorization) and applied through the
+ * ReplicationLog, which delegates row-level conflicts to a per-table
+ * ConflictResolver.
+ *
+ * Write routing respects the configured Topology: on a replica node, writes
+ * are either rejected with a TopologyError or forwarded to the primary when
+ * writeForwarding is enabled. Read queries are passed through to the
+ * underlying Database unchanged.
+ *
+ * Each peer maintains an independent outbound cursor so that a slow or
+ * temporarily disconnected peer does not block delivery to others. Ack
+ * tracking feeds into optional write-concern levels (majority, all) that let
+ * callers await durable replication before returning.
+ */
 export class ReplicationEngine {
   private readonly database: Database
   private readonly writerConn: SQLiteConnection

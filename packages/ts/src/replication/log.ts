@@ -37,6 +37,26 @@ interface ColumnInfoRow {
   pk: number
 }
 
+/**
+ * Persistent change log that bridges CDC events and the replication protocol.
+ *
+ * On the outbound side, `readBatch` reads a window of local changes from the
+ * `_sirannon_changes` table (populated by the CDC triggers) and packages them
+ * into a signed ReplicationBatch ready for transport.
+ *
+ * On the inbound side, `applyBatch` validates an incoming batch (checksum,
+ * table names, deduplication via `_sirannon_applied_changes`), groups changes
+ * by transaction ID, and applies each group inside an atomic SQLite
+ * transaction. Row-level conflicts are delegated to the caller-supplied
+ * ConflictResolver (or resolver-lookup function for per-table policies).
+ * After each applied change, the per-column version table
+ * `_sirannon_column_versions` is updated so that future conflict comparisons
+ * use fresh HLC metadata.
+ *
+ * Helper methods `stampChanges` and `updateColumnVersions` are called by the
+ * ReplicationEngine after local writes to attach HLC timestamps and record
+ * per-column version info before the changes are shipped to peers.
+ */
 export class ReplicationLog {
   private readonly pkCache = new Map<string, string[]>()
 

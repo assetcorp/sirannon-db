@@ -1,5 +1,6 @@
 import { SirannonError } from '../core/errors.js'
 
+/** Base error for all replication-related failures. */
 export class ReplicationError extends SirannonError {
   constructor(message: string, code: string = 'REPLICATION_ERROR') {
     super(message, code)
@@ -7,6 +8,7 @@ export class ReplicationError extends SirannonError {
   }
 }
 
+/** Thrown when a write conflict cannot be resolved automatically. */
 export class ConflictError extends ReplicationError {
   constructor(
     message: string,
@@ -18,6 +20,7 @@ export class ConflictError extends ReplicationError {
   }
 }
 
+/** Thrown when inter-node communication fails. */
 export class TransportError extends ReplicationError {
   constructor(message: string) {
     super(message, 'TRANSPORT_ERROR')
@@ -25,6 +28,7 @@ export class TransportError extends ReplicationError {
   }
 }
 
+/** Thrown when an incoming replication batch fails integrity checks (checksum, schema, clock drift). */
 export class BatchValidationError extends ReplicationError {
   constructor(message: string) {
     super(message, 'BATCH_VALIDATION_ERROR')
@@ -32,6 +36,7 @@ export class BatchValidationError extends ReplicationError {
   }
 }
 
+/** Thrown when a write-concern quorum is not met within the configured timeout. */
 export class WriteConcernError extends ReplicationError {
   constructor(message: string) {
     super(message, 'WRITE_CONCERN_ERROR')
@@ -39,6 +44,7 @@ export class WriteConcernError extends ReplicationError {
   }
 }
 
+/** Thrown when a write or routing operation violates the configured topology rules. */
 export class TopologyError extends ReplicationError {
   constructor(message: string) {
     super(message, 'TOPOLOGY_ERROR')
@@ -46,6 +52,7 @@ export class TopologyError extends ReplicationError {
   }
 }
 
+/** Thrown for Raft consensus protocol failures. */
 export class RaftError extends ReplicationError {
   constructor(message: string) {
     super(message, 'RAFT_ERROR')

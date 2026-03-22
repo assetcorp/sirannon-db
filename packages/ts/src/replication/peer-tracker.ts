@@ -9,6 +9,21 @@ interface Waiter {
   timer: ReturnType<typeof setTimeout>
 }
 
+/**
+ * Maintains in-memory state for every peer the local node communicates with.
+ *
+ * For each peer, PeerTracker records the last acknowledged sequence number,
+ * the last sent sequence number, pending batch count, and connection status.
+ * This state drives two key mechanisms:
+ *
+ * - **Back-pressure**: the sender loop in ReplicationEngine checks
+ *   `pendingBatches` against the configured max before queuing more work
+ *   for a given peer.
+ * - **Write concern**: callers can await `waitForMajority` or `waitForAll`
+ *   with a sequence number and timeout. These methods resolve once enough
+ *   peers have acknowledged that sequence, or reject with a
+ *   WriteConcernError on timeout.
+ */
 export class PeerTracker {
   private readonly peers = new Map<string, PeerState>()
   private readonly waiters = new Set<Waiter>()

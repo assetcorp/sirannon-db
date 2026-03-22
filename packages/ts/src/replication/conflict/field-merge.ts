@@ -4,6 +4,18 @@ import { LWWResolver } from './lww.js'
 
 type ColumnVersionGetter = (table: string, rowId: string) => Promise<Map<string, { hlc: string; nodeId: string }>>
 
+/**
+ * Per-column conflict resolver that merges non-overlapping field changes.
+ *
+ * Given a conflict between a local and remote write on the same row, this
+ * resolver computes the set of columns each side changed relative to the
+ * common ancestor (oldData). If the changed column sets don't overlap, both
+ * sides' changes are merged into a single row, avoiding unnecessary data
+ * loss. When columns do overlap, per-column HLC versions (retrieved via the
+ * injected `getColumnVersions` callback) determine which side's value wins
+ * for each contested column. If no column version metadata exists, the
+ * resolver falls back to whole-row LWW.
+ */
 export class FieldMergeResolver implements ConflictResolver {
   private readonly getColumnVersions: ColumnVersionGetter
   private readonly lww = new LWWResolver()

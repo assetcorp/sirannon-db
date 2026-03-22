@@ -100,6 +100,34 @@ function isValidHello(payload: unknown): payload is HelloPayload {
   return typeof p.nodeId === 'string' && typeof p.role === 'string'
 }
 
+function isValidAck(payload: unknown): payload is ReplicationAck {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return (
+    typeof p.batchId === 'string' &&
+    typeof p.nodeId === 'string' &&
+    (typeof p.ackedSeq === 'bigint' || typeof p.ackedSeq === 'number')
+  )
+}
+
+function isValidForwardRequest(payload: unknown): payload is ForwardedTransaction {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.requestId === 'string' && Array.isArray(p.statements)
+}
+
+function isValidRaftMessage(payload: unknown): payload is RaftMessage {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.type === 'string' && typeof p.term === 'number'
+}
+
+function isValidForwardResponse(payload: unknown): payload is ForwardResponsePayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.requestId === 'string'
+}
+
 export class WebSocketReplicationTransport implements ReplicationTransport {
   private readonly options: Required<
     Pick<
@@ -481,15 +509,16 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
       }
 
       case 'ack': {
-        const ack = msg.payload as ReplicationAck
+        if (!isValidAck(msg.payload)) return
         if (this.ackHandler) {
-          this.ackHandler(ack, fromPeerId)
+          this.ackHandler(msg.payload, fromPeerId)
         }
         break
       }
 
       case 'forward_request': {
-        const request = msg.payload as ForwardedTransaction
+        if (!isValidForwardRequest(msg.payload)) return
+        const request = msg.payload
         if (this.forwardHandler) {
           this.forwardHandler(request, fromPeerId)
             .then(result => {
@@ -522,7 +551,8 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
       }
 
       case 'forward_response': {
-        const resp = msg.payload as ForwardResponsePayload
+        if (!isValidForwardResponse(msg.payload)) return
+        const resp = msg.payload
         const pending = this.pendingForwards.get(resp.requestId)
         if (pending) {
           clearTimeout(pending.timer)
@@ -537,9 +567,9 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
       }
 
       case 'raft': {
-        const raftMsg = msg.payload as RaftMessage
+        if (!isValidRaftMessage(msg.payload)) return
         if (this.raftHandler) {
-          this.raftHandler(raftMsg, fromPeerId)
+          this.raftHandler(msg.payload, fromPeerId)
         }
         break
       }

@@ -251,6 +251,7 @@ describe('ReplicationEngine', () => {
 
       const engine = new ReplicationEngine(db, conn, makeConfig())
       await engine.start()
+      transport.addPeer(NODE_B)
 
       const hlcB = new HLC(NODE_B)
       const hlcVal = hlcB.now()

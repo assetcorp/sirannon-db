@@ -17,7 +17,8 @@ const DEFAULT_MAX_CLOCK_DRIFT_MS = 60_000
 const DEFAULT_MAX_PENDING_BATCHES = 10
 const DEFAULT_MAX_BATCH_CHANGES = 1000
 
-const DDL_PREFIX_RE = /^\s*(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
+const DDL_PREFIX_RE =
+  /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
 /**
  * The central coordinator for distributed replication in Sirannon.
@@ -82,7 +83,7 @@ export class ReplicationEngine {
     this.lastSentSeq = await this.log.getLocalSeq()
 
     this.setupTransportHandlers()
-    await this.config.transport.connect(this.nodeId, {})
+    await this.config.transport.connect(this.nodeId, this.config.transportConfig ?? {})
     this.startSenderLoop()
   }
 
@@ -187,6 +188,9 @@ export class ReplicationEngine {
 
   private async executeLocally(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     const isDdl = DDL_PREFIX_RE.test(sql)
+    if (isDdl && sql.includes(';')) {
+      throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
+    }
     const txId = randomUUID()
 
     const result = await this.writerConn.transaction(async tx => {
@@ -235,8 +239,14 @@ export class ReplicationEngine {
 
     await this.writerConn.transaction(async tx => {
       const seqBefore = await this.log.getLocalSeq()
+      let hasDdl = false
 
       for (const { sql, params } of statements) {
+        const isDdl = DDL_PREFIX_RE.test(sql)
+        if (isDdl && sql.includes(';')) {
+          throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
+        }
+
         const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
         const stmt = await tx.prepare(sql)
         const r = await stmt.run(...bindValues)
@@ -244,9 +254,22 @@ export class ReplicationEngine {
           changes: r.changes,
           lastInsertRowId: typeof r.lastInsertRowId === 'bigint' ? r.lastInsertRowId.toString() : r.lastInsertRowId,
         })
+
+        if (isDdl) {
+          hasDdl = true
+          const ddlStmt = await tx.prepare(
+            `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
+             VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
+          )
+          const hlcVal = this.hlc.now()
+          await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), this.nodeId, txId, hlcVal)
+        }
       }
-      await this.log.stampChanges(tx, Number(seqBefore), txId)
-      await this.log.updateColumnVersions(tx, Number(seqBefore))
+
+      if (!hasDdl) {
+        await this.log.stampChanges(tx, Number(seqBefore), txId)
+        await this.log.updateColumnVersions(tx, Number(seqBefore))
+      }
     })
 
     return { results, requestId }
@@ -267,7 +290,8 @@ export class ReplicationEngine {
         throw new BatchValidationError(`Batch from unknown peer: ${fromPeerId}`)
       }
 
-      if (!this.config.topology.shouldAcceptFrom(fromPeerId, 'peer')) {
+      const peerInfo = knownPeers.get(fromPeerId)
+      if (!this.config.topology.shouldAcceptFrom(fromPeerId, peerInfo?.role ?? 'peer')) {
         throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
       }
 
@@ -286,11 +310,13 @@ export class ReplicationEngine {
 
       await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
 
-      this.config.transport.sendAck(fromPeerId, {
-        batchId: batch.batchId,
-        ackedSeq: batch.toSeq,
-        nodeId: this.nodeId,
-      })
+      this.config.transport
+        .sendAck(fromPeerId, {
+          batchId: batch.batchId,
+          ackedSeq: batch.toSeq,
+          nodeId: this.nodeId,
+        })
+        .catch(() => {})
     })
 
     this.config.transport.onAckReceived((ack, _fromPeerId) => {
@@ -364,12 +390,15 @@ export class ReplicationEngine {
         peerState.lastSentSeq = batch.toSeq
       }
 
+      const sentToSeq = batch.toSeq
       this.config.transport.send(peerId, batch).catch(() => {
         if (peerState) {
           if (peerState.pendingBatches > 0) {
             peerState.pendingBatches -= 1
           }
-          peerState.lastSentSeq = previousSeq
+          if (peerState.lastSentSeq === sentToSeq) {
+            peerState.lastSentSeq = previousSeq
+          }
         }
       })
 

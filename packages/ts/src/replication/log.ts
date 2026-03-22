@@ -285,11 +285,23 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
             txConflicts += 1
             const localHlc = await this.getLocalHlcForRow(tx, change.table, change.rowId)
 
+            const localChange: ReplicationChange = {
+              table: change.table,
+              operation: 'update',
+              rowId: change.rowId,
+              primaryKey: change.primaryKey,
+              hlc: localHlc ?? '',
+              txId: '',
+              nodeId: this.localNodeId,
+              newData: existingRow,
+              oldData: null,
+            }
+
             const changeResolver = typeof resolver === 'function' ? resolver(change.table) : resolver
             const resolution = await changeResolver.resolve({
               table: change.table,
               rowId: change.rowId,
-              localChange: null,
+              localChange,
               remoteChange: change,
               localHlc,
               remoteHlc: change.hlc,
@@ -325,7 +337,11 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
       await recordStmt.run(batch.sourceNodeId, Number(seq), nowSec)
     }
 
-    this.hlc.receive(batch.hlcRange.max)
+    try {
+      this.hlc.receive(batch.hlcRange.max)
+    } catch {
+      /* batch is already durable; HLC merge failure should not surface as a batch error */
+    }
 
     return { applied, skipped, conflicts }
   }
@@ -385,8 +401,13 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     let offset = 0
     let batchNum = 0
 
+    const needsRowid = pkColumns.length === 1 && pkColumns[0] === 'rowid'
+
     while (offset < total) {
-      const selectStmt = await this.conn.prepare(`SELECT * FROM "${table}" LIMIT ? OFFSET ?`)
+      const selectSql = needsRowid
+        ? `SELECT rowid, * FROM "${table}" LIMIT ? OFFSET ?`
+        : `SELECT * FROM "${table}" LIMIT ? OFFSET ?`
+      const selectStmt = await this.conn.prepare(selectSql)
       const rows = (await selectStmt.all(batchSize, offset)) as Record<string, unknown>[]
 
       if (rows.length === 0) break
@@ -421,8 +442,10 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
       const fromSeq = BigInt(offset)
       const toSeq = BigInt(offset + rows.length - 1)
 
+      const dumpNodeId = `dump-${this.localNodeId}`
+
       yield {
-        sourceNodeId: this.localNodeId,
+        sourceNodeId: dumpNodeId,
         batchId: `dump-${table}-${batchNum}`,
         fromSeq,
         toSeq,
@@ -468,8 +491,23 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     if (!IDENTIFIER_RE.test(change.table)) return undefined
 
     const pkColumns = await this.getPkColumns(change.table)
-    const sourceData = change.newData ?? change.oldData ?? {}
 
+    const result = await this.findRowByPk(tx, change.table, pkColumns, change.newData ?? change.oldData ?? {})
+    if (result) return result
+
+    if (change.operation === 'update' && change.oldData) {
+      return this.findRowByPk(tx, change.table, pkColumns, change.oldData)
+    }
+
+    return undefined
+  }
+
+  private async findRowByPk(
+    tx: SQLiteConnection,
+    table: string,
+    pkColumns: string[],
+    sourceData: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | undefined> {
     const conditions: string[] = []
     const values: unknown[] = []
 
@@ -482,7 +520,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
     if (conditions.length === 0) return undefined
 
-    const stmt = await tx.prepare(`SELECT * FROM "${change.table}" WHERE ${conditions.join(' AND ')} LIMIT 1`)
+    const stmt = await tx.prepare(`SELECT * FROM "${table}" WHERE ${conditions.join(' AND ')} LIMIT 1`)
     return stmt.get<Record<string, unknown>>(...values)
   }
 
@@ -518,6 +556,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
     const pkColumns = await this.getPkColumns(change.table)
     const sourceData = change.newData
+    const wherePkSource = change.oldData ?? sourceData
 
     const setClauses: string[] = []
     const setValues: unknown[] = []
@@ -526,16 +565,14 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 
     for (const [col, val] of Object.entries(sourceData)) {
       if (!validateIdentifier(col)) continue
-      if (!pkColumns.includes(col)) {
-        setClauses.push(`"${col}" = ?`)
-        setValues.push(val)
-      }
+      setClauses.push(`"${col}" = ?`)
+      setValues.push(val)
     }
 
     for (const col of pkColumns) {
       if (!validateIdentifier(col)) continue
       whereConditions.push(`"${col}" = ?`)
-      whereValues.push(sourceData[col])
+      whereValues.push(wherePkSource[col])
     }
 
     if (setClauses.length === 0 || whereConditions.length === 0) return

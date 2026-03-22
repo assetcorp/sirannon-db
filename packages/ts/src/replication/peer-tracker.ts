@@ -3,7 +3,7 @@ import type { PeerState } from './types.js'
 
 interface Waiter {
   seq: bigint
-  count: number
+  kind: 'majority' | 'all'
   resolve: () => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -51,6 +51,7 @@ export class PeerTracker {
     if (peer) {
       peer.connected = false
     }
+    this.checkWaiters()
   }
 
   onAckReceived(nodeId: string, ackedSeq: bigint): void {
@@ -93,7 +94,7 @@ export class PeerTracker {
       }, timeoutMs)
       timer.unref()
 
-      const waiter: Waiter = { seq, count: needed, resolve, reject, timer }
+      const waiter: Waiter = { seq, kind: 'majority', resolve, reject, timer }
       this.waiters.add(waiter)
     })
   }
@@ -112,7 +113,7 @@ export class PeerTracker {
       }, timeoutMs)
       timer.unref()
 
-      const waiter: Waiter = { seq, count: connected, resolve, reject, timer }
+      const waiter: Waiter = { seq, kind: 'all', resolve, reject, timer }
       this.waiters.add(waiter)
     })
   }
@@ -132,8 +133,15 @@ export class PeerTracker {
   }
 
   private checkWaiters(): void {
+    const connected = this.connectedPeerCount()
     for (const waiter of this.waiters) {
-      if (this.countAcked(waiter.seq) >= waiter.count) {
+      let needed: number
+      if (waiter.kind === 'majority') {
+        needed = Math.floor(connected / 2) + 1
+      } else {
+        needed = connected
+      }
+      if (connected === 0 || this.countAcked(waiter.seq) >= needed) {
         clearTimeout(waiter.timer)
         this.waiters.delete(waiter)
         waiter.resolve()

@@ -91,13 +91,21 @@ export class RaftNode {
   }
 
   handleMessage(message: RaftMessage, fromPeerId: string): void {
-    if (message.term > this._currentTerm) {
-      this.becomeFollower(message.term)
+    if (message.type !== 'pre_vote' && message.type !== 'pre_vote_response') {
+      if (message.term > this._currentTerm) {
+        this.becomeFollower(message.term)
+      }
     }
 
     this.peerCount = this.transport.peers().size
 
     switch (message.type) {
+      case 'pre_vote':
+        this.handlePreVote(message, fromPeerId)
+        break
+      case 'pre_vote_response':
+        this.handleVoteResponse(message, fromPeerId)
+        break
       case 'request_vote':
         this.handleRequestVote(message, fromPeerId)
         break
@@ -113,6 +121,18 @@ export class RaftNode {
       case 'append_response':
         break
     }
+  }
+
+  private handlePreVote(message: RaftMessage, fromPeerId: string): void {
+    const granted = message.term > this._currentTerm || (message.term >= this._currentTerm && this._leaderId === null)
+
+    this.transport
+      .sendRaftMessage(fromPeerId, {
+        type: 'pre_vote_response',
+        term: message.term,
+        voteGranted: granted,
+      })
+      .catch(() => {})
   }
 
   private handleRequestVote(message: RaftMessage, fromPeerId: string): void {
@@ -141,7 +161,7 @@ export class RaftNode {
 
     if (this._state === 'pre_candidate' && message.voteGranted) {
       this.preVoters.add(fromPeerId)
-      const majority = Math.floor(this.peerCount / 2) + 1
+      const majority = Math.floor((this.peerCount + 1) / 2) + 1
       if (this.preVoters.size >= majority) {
         this.becomeCandidate()
       }
@@ -192,10 +212,11 @@ export class RaftNode {
 
     this._state = 'pre_candidate'
     this.preVoters.clear()
+    this.preVoters.add(this.nodeId)
 
     this.transport
       .broadcastRaftMessage({
-        type: 'request_vote',
+        type: 'pre_vote',
         term: this._currentTerm + 1,
         candidateId: this.nodeId,
       })

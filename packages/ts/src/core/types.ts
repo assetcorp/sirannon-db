@@ -199,6 +199,7 @@ export interface ServerOptions {
   port?: number
   cors?: boolean | CorsOptions
   onRequest?: OnRequestHook
+  getReplicationStatus?: () => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null
 }
 
 /** CORS configuration. */

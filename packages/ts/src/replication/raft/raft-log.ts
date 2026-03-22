@@ -3,6 +3,19 @@ interface RaftEntry {
   data: unknown
 }
 
+/**
+ * In-memory append-only log for the Raft consensus protocol.
+ *
+ * Each entry carries a term number and an opaque data payload. The log is
+ * 1-indexed to match the Raft specification: index 0 is an implicit sentinel
+ * that does not exist in the entries array.
+ *
+ * `commitIndex` tracks the highest log index known to be replicated to a
+ * majority of nodes. It advances monotonically via `setCommitIndex` and is
+ * used by the state machine layer to decide which entries are safe to apply.
+ * `truncateFrom` supports log repair when a follower's log diverges from the
+ * leader's.
+ */
 export class RaftLog {
   private entries: RaftEntry[] = []
   private _commitIndex = 0

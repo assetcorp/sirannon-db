@@ -10,6 +10,12 @@ import type {
   TransportConfig,
 } from '../../replication/types.js'
 
+/**
+ * Shared message bus that connects InMemoryTransport instances within the
+ * same process. Each transport registers itself on `connect()` and messages
+ * are delivered via direct method calls on the target transport through
+ * microtask scheduling, simulating async network delivery without actual I/O.
+ */
 export class MemoryBus {
   private readonly transports = new Map<string, InMemoryTransport>()
 
@@ -74,6 +80,17 @@ function isValidForwardedTransaction(req: unknown): req is ForwardedTransaction 
   return typeof r.requestId === 'string' && Array.isArray(r.statements)
 }
 
+/**
+ * In-process ReplicationTransport for testing and single-process multi-node
+ * scenarios.
+ *
+ * Messages between peers are delivered through a shared MemoryBus via
+ * microtask scheduling (`queueMicrotask`), preserving the async delivery
+ * semantics of a real network transport while avoiding actual I/O. All
+ * message types (batches, acks, forwards, Raft messages) go through runtime
+ * validation before delivery, and malformed payloads are silently dropped
+ * to match the behavior of a lossy network.
+ */
 export class InMemoryTransport implements ReplicationTransport {
   private localNodeId = ''
   private connected = false

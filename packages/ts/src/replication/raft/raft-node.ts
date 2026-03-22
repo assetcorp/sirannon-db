@@ -6,6 +6,24 @@ const DEFAULT_ELECTION_TIMEOUT_MIN = 150
 const DEFAULT_ELECTION_TIMEOUT_MAX = 300
 const DEFAULT_HEARTBEAT_INTERVAL = 50
 
+/**
+ * Raft consensus node implementing leader election with the PreVote protocol.
+ *
+ * A RaftNode cycles through four states: follower, pre_candidate, candidate,
+ * and leader. When the election timer fires on a follower, it enters the
+ * pre_candidate phase and broadcasts a PreVote request at `currentTerm + 1`
+ * without incrementing the term, preventing disruptive elections from
+ * partitioned nodes. Only after receiving a majority of pre-votes does it
+ * advance to candidate (incrementing the real term) and run a standard
+ * RequestVote round.
+ *
+ * Vote deduplication uses a per-round `Set<string>` of voter IDs so that
+ * retransmitted vote responses from the same peer are counted once.
+ *
+ * The leader sends periodic heartbeats on a configurable interval. Receiving
+ * a heartbeat with a term >= the local term resets the election timer and
+ * updates the known leader. Subscribe to leader changes via `onLeaderChange`.
+ */
 export class RaftNode {
   private readonly nodeId: string
   private readonly transport: ReplicationTransport

@@ -131,6 +131,23 @@ function isValidForwardResponse(payload: unknown): payload is ForwardResponsePay
   return typeof p.requestId === 'string'
 }
 
+/**
+ * WebSocket-based ReplicationTransport for production multi-node replication.
+ *
+ * Runs a Bun WebSocket server that peers connect to. Outbound messages
+ * (batches, acks, Raft messages, forwards) are JSON-serialized with bigint
+ * support and sent to the target peer's socket. Inbound messages are
+ * validated, deserialized, and dispatched to the registered handlers.
+ *
+ * Peer identity is established during the WebSocket upgrade via the
+ * `x-node-id` and `x-node-role` headers. An optional `authToken` provides
+ * symmetric authentication: both sides must present matching tokens or the
+ * connection is rejected with a 401 during the upgrade handshake.
+ *
+ * Message payload size is bounded by `maxPayloadLength` (default 10 MB).
+ * Malformed or oversized messages are silently dropped to prevent a single
+ * misbehaving peer from crashing the node.
+ */
 export class WebSocketReplicationTransport implements ReplicationTransport {
   private readonly options: Required<
     Pick<

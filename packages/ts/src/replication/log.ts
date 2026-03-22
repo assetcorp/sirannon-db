@@ -194,7 +194,10 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
     }
   }
 
-  async applyBatch(batch: ReplicationBatch, resolver: ConflictResolver): Promise<ApplyResult> {
+  async applyBatch(
+    batch: ReplicationBatch,
+    resolver: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult> {
     const expectedChecksum = this.computeChecksum(batch.changes)
     if (batch.checksum !== expectedChecksum) {
       throw new BatchValidationError(`Checksum mismatch: expected ${expectedChecksum}, got ${batch.checksum}`)
@@ -261,7 +264,8 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
             txConflicts += 1
             const localHlc = await this.getLocalHlcForRow(tx, change.table, change.rowId)
 
-            const resolution = await resolver.resolve({
+            const changeResolver = typeof resolver === 'function' ? resolver(change.table) : resolver
+            const resolution = await changeResolver.resolve({
               table: change.table,
               rowId: change.rowId,
               localChange: null,

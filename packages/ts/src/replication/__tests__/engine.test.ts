@@ -27,9 +27,8 @@ import type {
 class MockTransport implements ReplicationTransport {
   private batchHandler: ((batch: ReplicationBatch, from: string) => Promise<void>) | null = null
   private ackHandler: ((ack: ReplicationAck, from: string) => void) | null = null
-  private forwardHandler:
-    | ((req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>)
-    | null = null
+  private forwardHandler: ((req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>) | null =
+    null
   private peerConnectedHandler: ((peer: NodeInfo) => void) | null = null
   private peerDisconnectedHandler: ((peerId: string) => void) | null = null
 
@@ -88,6 +87,13 @@ class MockTransport implements ReplicationTransport {
     })
     if (this.peerConnectedHandler) {
       this.peerConnectedHandler(this._peers.get(id) as NodeInfo)
+    }
+  }
+
+  removePeer(id: string): void {
+    this._peers.delete(id)
+    if (this.peerDisconnectedHandler) {
+      this.peerDisconnectedHandler(id)
     }
   }
 
@@ -420,11 +426,7 @@ describe('ReplicationEngine', () => {
     it('forward handler not registered on replica', async () => {
       const { db, conn } = await createDbAndConn('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
 
-      const engine = new ReplicationEngine(
-        db,
-        conn,
-        makeConfig({ topology: new PrimaryReplicaTopology('replica') }),
-      )
+      const engine = new ReplicationEngine(db, conn, makeConfig({ topology: new PrimaryReplicaTopology('replica') }))
       await engine.start()
 
       await expect(

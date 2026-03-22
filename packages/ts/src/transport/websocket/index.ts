@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto'
 import uWS from 'uWebSockets.js'
+import { timingSafeEqual } from 'node:crypto'
 import { TransportError } from '../../replication/errors.js'
 import type {
   ForwardedTransaction,

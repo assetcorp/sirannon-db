@@ -279,7 +279,11 @@ export class ReplicationEngine {
     })
 
     if (this.config.topology.canWrite()) {
-      this.config.transport.onForwardReceived(async (request, _fromPeerId) => {
+      this.config.transport.onForwardReceived(async (request, fromPeerId) => {
+        const knownPeers = this.config.transport.peers()
+        if (!knownPeers.has(fromPeerId)) {
+          throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
+        }
         return this.executeForwardedLocally(request.statements)
       })
     }

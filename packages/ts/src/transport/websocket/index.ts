@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import uWS from 'uWebSockets.js'
 import { TransportError } from '../../replication/errors.js'
 import type {
@@ -21,6 +22,7 @@ export interface WebSocketReplicationOptions {
   reconnectMaxDelay?: number
   reconnectMultiplier?: number
   forwardTimeout?: number
+  authToken?: string
 }
 
 interface ReplicationMessage {
@@ -31,6 +33,7 @@ interface ReplicationMessage {
 interface HelloPayload {
   nodeId: string
   role: 'primary' | 'replica' | 'peer'
+  authToken?: string
 }
 
 interface ForwardResponsePayload {
@@ -142,6 +145,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     >
   >
   private readonly tls: { key: string; cert: string } | undefined
+  private readonly authToken: string | undefined
 
   private localNodeId = ''
   private connected = false
@@ -169,6 +173,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
       forwardTimeout: options?.forwardTimeout ?? 30_000,
     }
     this.tls = options?.tls
+    this.authToken = options?.authToken
   }
 
   async connect(localNodeId: string, config: TransportConfig): Promise<void> {
@@ -349,6 +354,11 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
           if (!isValidHello(msg.payload)) return
           const hello = msg.payload
 
+          if (!this.validateAuthToken(hello.authToken)) {
+            ws.end(4001, 'Authentication failed')
+            return
+          }
+
           userData.nodeId = hello.nodeId
           this.serverPeerSockets.set(hello.nodeId, ws)
 
@@ -361,9 +371,13 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
           }
           this.connectedPeers.set(hello.nodeId, peerInfo)
 
+          const helloBackPayload: HelloPayload = { nodeId: this.localNodeId, role: 'peer' }
+          if (this.authToken) {
+            helloBackPayload.authToken = this.authToken
+          }
           const helloBack: ReplicationMessage = {
             type: 'hello',
-            payload: { nodeId: this.localNodeId, role: 'peer' } satisfies HelloPayload,
+            payload: helloBackPayload,
           }
           ws.send(serializeMessage(helloBack), false)
 
@@ -420,9 +434,13 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
 
     ws.onopen = () => {
       conn.reconnectAttempts = 0
+      const helloPayload: HelloPayload = { nodeId: this.localNodeId, role: 'peer' }
+      if (this.authToken) {
+        helloPayload.authToken = this.authToken
+      }
       const hello: ReplicationMessage = {
         type: 'hello',
-        payload: { nodeId: this.localNodeId, role: 'peer' } satisfies HelloPayload,
+        payload: helloPayload,
       }
       ws.send(serializeMessage(hello))
     }
@@ -436,6 +454,12 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
 
       if (msg.type === 'hello' && isValidHello(msg.payload)) {
         const hello = msg.payload
+
+        if (!this.validateAuthToken(hello.authToken)) {
+          ws.close(4001, 'Authentication failed')
+          return
+        }
+
         conn.nodeId = hello.nodeId
         this.peerConnections.set(hello.nodeId, conn)
 
@@ -600,6 +624,15 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     if (this.peerDisconnectedHandler) {
       this.peerDisconnectedHandler(peerId)
     }
+  }
+
+  private validateAuthToken(peerToken: string | undefined): boolean {
+    if (!this.authToken) return true
+    if (!peerToken) return false
+    const expected = Buffer.from(this.authToken)
+    const received = Buffer.from(peerToken)
+    if (expected.length !== received.length) return false
+    return timingSafeEqual(expected, received)
   }
 
   private ensureConnected(): void {

@@ -266,4 +266,94 @@ describe('WebSocketReplicationTransport', () => {
       expect(received[0].changes).toHaveLength(100)
     })
   })
+
+  describe('authentication', () => {
+    let authTransportA: WebSocketReplicationTransport
+    let authTransportB: WebSocketReplicationTransport
+
+    afterEach(async () => {
+      await authTransportB?.disconnect()
+      await authTransportA?.disconnect()
+    })
+
+    it('rejects peer with wrong authToken', async () => {
+      authTransportA = new WebSocketReplicationTransport({
+        port: 0,
+        authToken: 'correct-secret-token',
+      })
+      authTransportB = new WebSocketReplicationTransport({
+        port: 0,
+        authToken: 'wrong-secret-token',
+      })
+
+      await authTransportA.connect('auth-node-a', {})
+      const portA = authTransportA.listeningPort
+
+      await authTransportB.connect('auth-node-b', {
+        endpoints: [`http://127.0.0.1:${portA}`],
+      })
+
+      await sleep(300)
+
+      expect(authTransportA.peers().size).toBe(0)
+    })
+
+    it('accepts peer with correct authToken', async () => {
+      authTransportA = new WebSocketReplicationTransport({
+        port: 0,
+        authToken: 'shared-secret-token',
+      })
+      authTransportB = new WebSocketReplicationTransport({
+        port: 0,
+        authToken: 'shared-secret-token',
+      })
+
+      await authTransportA.connect('auth-node-a', {})
+      const portA = authTransportA.listeningPort
+
+      await authTransportB.connect('auth-node-b', {
+        endpoints: [`http://127.0.0.1:${portA}`],
+      })
+
+      await sleep(300)
+
+      expect(authTransportA.peers().size).toBe(1)
+      expect(authTransportA.peers().has('auth-node-b')).toBe(true)
+    })
+
+    it('allows connection when no authToken configured', async () => {
+      authTransportA = new WebSocketReplicationTransport({ port: 0 })
+      authTransportB = new WebSocketReplicationTransport({ port: 0 })
+
+      await authTransportA.connect('auth-node-a', {})
+      const portA = authTransportA.listeningPort
+
+      await authTransportB.connect('auth-node-b', {
+        endpoints: [`http://127.0.0.1:${portA}`],
+      })
+
+      await sleep(300)
+
+      expect(authTransportA.peers().size).toBe(1)
+    })
+
+    it('rejects peer when server has authToken but client sends none', async () => {
+      authTransportA = new WebSocketReplicationTransport({
+        port: 0,
+        authToken: 'server-only-token',
+      })
+      authTransportB = new WebSocketReplicationTransport({ port: 0 })
+
+      await authTransportA.connect('auth-node-a', {})
+      const portA = authTransportA.listeningPort
+
+      await authTransportB.connect('auth-node-b', {
+        endpoints: [`http://127.0.0.1:${portA}`],
+      })
+
+      await sleep(300)
+
+      expect(authTransportA.peers().size).toBe(0)
+    })
+  })
 })

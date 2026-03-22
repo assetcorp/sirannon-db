@@ -22,8 +22,8 @@ export class RaftNode {
   private electionTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
 
-  private preVotesReceived = 0
-  private votesReceived = 0
+  private preVoters = new Set<string>()
+  private voters = new Set<string>()
   private peerCount = 0
 
   private leaderChangeHandlers: Array<(leaderId: string | null) => void> = []
@@ -109,29 +109,31 @@ export class RaftNode {
       }
     }
 
-    this.transport.sendRaftMessage(fromPeerId, {
-      type: 'vote_response',
-      term: this._currentTerm,
-      voteGranted: granted,
-    })
+    this.transport
+      .sendRaftMessage(fromPeerId, {
+        type: 'vote_response',
+        term: this._currentTerm,
+        voteGranted: granted,
+      })
+      .catch(() => {})
   }
 
-  private handleVoteResponse(message: RaftMessage, _fromPeerId: string): void {
+  private handleVoteResponse(message: RaftMessage, fromPeerId: string): void {
     if (message.term < this._currentTerm) return
 
     if (this._state === 'pre_candidate' && message.voteGranted) {
-      this.preVotesReceived += 1
+      this.preVoters.add(fromPeerId)
       const majority = Math.floor(this.peerCount / 2) + 1
-      if (this.preVotesReceived >= majority) {
+      if (this.preVoters.size >= majority) {
         this.becomeCandidate()
       }
       return
     }
 
     if (this._state === 'candidate' && message.voteGranted) {
-      this.votesReceived += 1
+      this.voters.add(fromPeerId)
       const majority = Math.floor((this.peerCount + 1) / 2) + 1
-      if (this.votesReceived >= majority) {
+      if (this.voters.size >= majority) {
         this.becomeLeader()
       }
     }
@@ -171,13 +173,15 @@ export class RaftNode {
     }
 
     this._state = 'pre_candidate'
-    this.preVotesReceived = 0
+    this.preVoters.clear()
 
-    this.transport.broadcastRaftMessage({
-      type: 'request_vote',
-      term: this._currentTerm + 1,
-      candidateId: this.nodeId,
-    })
+    this.transport
+      .broadcastRaftMessage({
+        type: 'request_vote',
+        term: this._currentTerm + 1,
+        candidateId: this.nodeId,
+      })
+      .catch(() => {})
 
     this.resetElectionTimer()
   }
@@ -186,7 +190,8 @@ export class RaftNode {
     this._state = 'candidate'
     this._currentTerm += 1
     this._votedFor = this.nodeId
-    this.votesReceived = 1
+    this.voters.clear()
+    this.voters.add(this.nodeId)
 
     this.peerCount = this.transport.peers().size
 
@@ -195,11 +200,13 @@ export class RaftNode {
       return
     }
 
-    this.transport.broadcastRaftMessage({
-      type: 'request_vote',
-      term: this._currentTerm,
-      candidateId: this.nodeId,
-    })
+    this.transport
+      .broadcastRaftMessage({
+        type: 'request_vote',
+        term: this._currentTerm,
+        candidateId: this.nodeId,
+      })
+      .catch(() => {})
 
     this.resetElectionTimer()
   }
@@ -214,11 +221,13 @@ export class RaftNode {
   }
 
   private sendHeartbeat(): void {
-    this.transport.broadcastRaftMessage({
-      type: 'heartbeat',
-      term: this._currentTerm,
-      leaderId: this.nodeId,
-    })
+    this.transport
+      .broadcastRaftMessage({
+        type: 'heartbeat',
+        term: this._currentTerm,
+        leaderId: this.nodeId,
+      })
+      .catch(() => {})
   }
 
   private resetElectionTimer(): void {

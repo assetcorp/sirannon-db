@@ -261,8 +261,7 @@ export class ReplicationEngine {
         throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${this.maxClockDriftMs}ms`)
       }
 
-      const resolver = this.getResolver(batch.changes[0]?.table)
-      await this.log.applyBatch(batch, resolver)
+      await this.log.applyBatch(batch, table => this.getResolver(table))
 
       await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
 

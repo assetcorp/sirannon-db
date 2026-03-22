@@ -89,43 +89,84 @@ describe('TopologyAwareClientOptions', () => {
     client.close()
   })
 
-  it('executes writes via primary', async () => {
-    const client = new SirannonClient({
-      primary: baseUrl,
-      replicas: [baseUrl],
-      readPreference: 'replica',
-      transport: 'http',
-    })
-    const db = client.database('testdb')
-    const result = await db.execute("INSERT INTO users (name) VALUES ('Bob')")
-    expect(result.changes).toBe(1)
-    client.close()
-  })
+  describe('routing with distinct endpoints', () => {
+    let replicaTempDir: string
+    let replicaSirannon: Sirannon
+    let replicaServer: SirannonServer
+    let replicaUrl: string
 
-  it('routes reads to replica when readPreference is replica', async () => {
-    const client = new SirannonClient({
-      primary: baseUrl,
-      replicas: [baseUrl],
-      readPreference: 'replica',
-      transport: 'http',
-    })
-    const db = client.database('testdb')
-    const rows = await db.query<{ name: string }>('SELECT name FROM users')
-    expect(rows).toHaveLength(1)
-    client.close()
-  })
+    beforeEach(async () => {
+      replicaTempDir = mkdtempSync(join(tmpdir(), 'sirannon-topo-replica-'))
+      replicaSirannon = new Sirannon({ driver })
+      const replicaDb = await replicaSirannon.open('testdb', join(replicaTempDir, 'test.db'))
+      await replicaDb.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      await replicaDb.execute("INSERT INTO users (name) VALUES ('ReplicaUser')")
 
-  it('routes reads with readPreference nearest', async () => {
-    const client = new SirannonClient({
-      primary: baseUrl,
-      replicas: [baseUrl],
-      readPreference: 'nearest',
-      transport: 'http',
+      replicaServer = createServer(replicaSirannon, { port: 0 })
+      await replicaServer.listen()
+      replicaUrl = `http://127.0.0.1:${replicaServer.listeningPort}`
     })
-    const db = client.database('testdb')
-    const rows = await db.query<{ name: string }>('SELECT name FROM users')
-    expect(rows).toHaveLength(1)
-    client.close()
+
+    afterEach(async () => {
+      await replicaServer.close()
+      await replicaSirannon.shutdown()
+      rmSync(replicaTempDir, { recursive: true, force: true })
+    })
+
+    it('executes writes via primary', async () => {
+      const client = new SirannonClient({
+        primary: baseUrl,
+        replicas: [replicaUrl],
+        readPreference: 'replica',
+        transport: 'http',
+      })
+      const db = client.database('testdb')
+      await db.execute("INSERT INTO users (name) VALUES ('Bob')")
+
+      const primaryClient = new SirannonClient(baseUrl, { transport: 'http' })
+      const primaryRows = await primaryClient
+        .database('testdb')
+        .query<{ name: string }>("SELECT name FROM users WHERE name = 'Bob'")
+      expect(primaryRows).toHaveLength(1)
+
+      const replicaClient = new SirannonClient(replicaUrl, { transport: 'http' })
+      const replicaRows = await replicaClient
+        .database('testdb')
+        .query<{ name: string }>("SELECT name FROM users WHERE name = 'Bob'")
+      expect(replicaRows).toHaveLength(0)
+
+      client.close()
+      primaryClient.close()
+      replicaClient.close()
+    })
+
+    it('routes reads to replica when readPreference is replica', async () => {
+      const client = new SirannonClient({
+        primary: baseUrl,
+        replicas: [replicaUrl],
+        readPreference: 'replica',
+        transport: 'http',
+      })
+      const db = client.database('testdb')
+      const rows = await db.query<{ name: string }>('SELECT name FROM users')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].name).toBe('ReplicaUser')
+      client.close()
+    })
+
+    it('routes reads with readPreference nearest', async () => {
+      const client = new SirannonClient({
+        primary: baseUrl,
+        replicas: [replicaUrl],
+        readPreference: 'nearest',
+        transport: 'http',
+      })
+      const db = client.database('testdb')
+      const rows = await db.query<{ name: string }>('SELECT name FROM users')
+      expect(rows).toHaveLength(1)
+      expect(['Alice', 'ReplicaUser']).toContain(rows[0].name)
+      client.close()
+    })
   })
 
   it('falls back to primary when all replicas are unreachable', async () => {

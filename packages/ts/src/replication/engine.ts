@@ -20,6 +20,9 @@ const DEFAULT_MAX_BATCH_CHANGES = 1000
 const DDL_PREFIX_RE =
   /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
+const SAFE_SQL_PREFIX_RE =
+  /^\s*(INSERT|UPDATE|DELETE|SELECT|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
+
 /**
  * The central coordinator for distributed replication in Sirannon.
  *
@@ -231,6 +234,12 @@ export class ReplicationEngine {
     const txId = randomUUID()
     const hook = this.config.onBeforeForwardedQuery
 
+    for (const { sql } of statements) {
+      if (!SAFE_SQL_PREFIX_RE.test(sql)) {
+        throw new ReplicationError(`Forwarded statement rejected: only DML and safe DDL are allowed`)
+      }
+    }
+
     if (hook) {
       for (const { sql, params } of statements) {
         hook(sql, params)
@@ -239,7 +248,6 @@ export class ReplicationEngine {
 
     await this.writerConn.transaction(async tx => {
       const seqBefore = await this.log.getLocalSeq()
-      let hasDdl = false
 
       for (const { sql, params } of statements) {
         const isDdl = DDL_PREFIX_RE.test(sql)
@@ -256,7 +264,6 @@ export class ReplicationEngine {
         })
 
         if (isDdl) {
-          hasDdl = true
           const ddlStmt = await tx.prepare(
             `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
              VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
@@ -266,10 +273,8 @@ export class ReplicationEngine {
         }
       }
 
-      if (!hasDdl) {
-        await this.log.stampChanges(tx, Number(seqBefore), txId)
-        await this.log.updateColumnVersions(tx, Number(seqBefore))
-      }
+      await this.log.stampChanges(tx, Number(seqBefore), txId)
+      await this.log.updateColumnVersions(tx, Number(seqBefore))
     })
 
     return { results, requestId }

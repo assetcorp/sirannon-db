@@ -16,6 +16,7 @@ function validateIdentifier(name: string): boolean {
 function validateDdlSafety(sql: string): boolean {
   if (!SAFE_DDL_RE.test(sql)) return false
   if (sql.includes(';')) return false
+  if (/\bAS\s+SELECT\b/i.test(sql)) return false
   return true
 }
 

@@ -303,6 +303,7 @@ export class ReplicationEngine {
       if (!this.running) return
 
       try {
+        this.lastSentSeq = await this.log.getLocalSeq()
         await this.sendPendingBatches()
       } catch {
         /* sender loop failures are transient */
@@ -321,9 +322,6 @@ export class ReplicationEngine {
   }
 
   private async sendPendingBatches(): Promise<void> {
-    const batch = await this.log.readBatch(this.lastSentSeq, this.batchSize)
-    if (!batch) return
-
     const peers = this.config.transport.peers()
     for (const [peerId, peerInfo] of peers) {
       if (!this.config.topology.shouldReplicateTo(peerId, peerInfo.role)) {
@@ -335,14 +333,22 @@ export class ReplicationEngine {
         continue
       }
 
+      const fromSeq = peerState?.lastSentSeq ?? this.lastSentSeq
+      const batch = await this.log.readBatch(fromSeq, this.batchSize)
+      if (!batch) continue
+
+      const previousSeq = peerState?.lastSentSeq ?? 0n
       if (peerState) {
         peerState.pendingBatches += 1
         peerState.lastSentSeq = batch.toSeq
       }
 
       this.config.transport.send(peerId, batch).catch(() => {
-        if (peerState && peerState.pendingBatches > 0) {
-          peerState.pendingBatches -= 1
+        if (peerState) {
+          if (peerState.pendingBatches > 0) {
+            peerState.pendingBatches -= 1
+          }
+          peerState.lastSentSeq = previousSeq
         }
       })
 
@@ -354,8 +360,6 @@ export class ReplicationEngine {
         }
       }
     }
-
-    this.lastSentSeq = batch.toSeq
   }
 
   private async waitForWriteConcern(seq: bigint, wc: { level: string; timeoutMs?: number }): Promise<void> {

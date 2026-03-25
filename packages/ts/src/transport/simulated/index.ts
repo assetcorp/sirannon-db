@@ -80,7 +80,7 @@ export class SimulatedNetwork {
   connectedPeerTransports(excludingNodeId: string): Array<[string, SimulatedTransport]> {
     const peers: Array<[string, SimulatedTransport]> = []
     for (const [peerId, transport] of this.transports) {
-      if (peerId !== excludingNodeId && transport.connected) {
+      if (peerId !== excludingNodeId && transport.isConnected) {
         peers.push([peerId, transport])
       }
     }

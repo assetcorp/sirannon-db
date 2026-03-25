@@ -1,5 +1,5 @@
 import { WriteConcernError } from './errors.js'
-import type { PeerState } from './types.js'
+import type { InFlightBatch, PeerState } from './types.js'
 
 interface Waiter {
   seq: bigint
@@ -43,6 +43,7 @@ export class PeerTracker {
       lastReceivedHlc: '',
       connected: true,
       pendingBatches: 0,
+      inFlightBatches: [],
     })
   }
 
@@ -58,11 +59,43 @@ export class PeerTracker {
     const peer = this.peers.get(nodeId)
     if (peer && ackedSeq > peer.lastAckedSeq) {
       peer.lastAckedSeq = ackedSeq
-      if (peer.pendingBatches > 0) {
-        peer.pendingBatches -= 1
-      }
+      const ackedCount = peer.inFlightBatches.filter(b => b.toSeq <= ackedSeq).length
+      peer.inFlightBatches = peer.inFlightBatches.filter(b => b.toSeq > ackedSeq)
+      peer.pendingBatches = Math.max(0, peer.pendingBatches - Math.max(1, ackedCount))
     }
     this.checkWaiters()
+  }
+
+  recordInFlightBatch(nodeId: string, batch: InFlightBatch): void {
+    const peer = this.peers.get(nodeId)
+    if (peer) {
+      peer.inFlightBatches.push(batch)
+    }
+  }
+
+  expireTimedOutBatches(nodeId: string, nowMs: number, timeoutMs: number): boolean {
+    const peer = this.peers.get(nodeId)
+    if (!peer || peer.inFlightBatches.length === 0) return false
+
+    const timedOut = peer.inFlightBatches.filter(b => nowMs - b.sentAt >= timeoutMs)
+    if (timedOut.length === 0) return false
+
+    let earliestFromSeq = timedOut[0].fromSeq
+    for (let i = 1; i < timedOut.length; i++) {
+      if (timedOut[i].fromSeq < earliestFromSeq) {
+        earliestFromSeq = timedOut[i].fromSeq
+      }
+    }
+
+    peer.inFlightBatches = peer.inFlightBatches.filter(b => nowMs - b.sentAt < timeoutMs)
+    peer.pendingBatches = Math.max(0, peer.pendingBatches - timedOut.length)
+
+    const resetTarget = earliestFromSeq > 0n ? earliestFromSeq - 1n : 0n
+    if (peer.lastSentSeq > resetTarget) {
+      peer.lastSentSeq = resetTarget
+    }
+
+    return true
   }
 
   getPeerState(nodeId: string): PeerState | undefined {

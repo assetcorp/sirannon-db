@@ -127,6 +127,13 @@ export interface RaftMessage {
   success?: boolean
 }
 
+export interface InFlightBatch {
+  batchId: string
+  fromSeq: bigint
+  toSeq: bigint
+  sentAt: number
+}
+
 export interface PeerState {
   nodeId: string
   lastAckedSeq: bigint
@@ -134,6 +141,7 @@ export interface PeerState {
   lastReceivedHlc: string
   connected: boolean
   pendingBatches: number
+  inFlightBatches: InFlightBatch[]
 }
 
 export interface ReplicationConfig {
@@ -151,6 +159,7 @@ export interface ReplicationConfig {
   snapshotThreshold?: number
   maxClockDriftMs?: number
   maxBatchChanges?: number
+  ackTimeoutMs?: number
   batchSigningKey?: string
   onBeforeForwardedQuery?: (sql: string, params?: unknown[] | Record<string, unknown>) => void
   flowControl?: {
@@ -171,6 +180,7 @@ export interface RaftConfig {
   electionTimeoutMin?: number
   electionTimeoutMax?: number
   heartbeatInterval?: number
+  randomFn?: () => number
 }
 
 export interface ApplyResult {

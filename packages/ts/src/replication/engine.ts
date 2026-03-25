@@ -62,6 +62,7 @@ export class ReplicationEngine {
   private readonly maxClockDriftMs: number
   private readonly maxPendingBatches: number
   private readonly maxBatchChanges: number
+  private readonly ackTimeoutMs: number
 
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
     this.database = database
@@ -76,6 +77,7 @@ export class ReplicationEngine {
     this.maxClockDriftMs = config.maxClockDriftMs ?? DEFAULT_MAX_CLOCK_DRIFT_MS
     this.maxPendingBatches = config.maxPendingBatches ?? DEFAULT_MAX_PENDING_BATCHES
     this.maxBatchChanges = config.maxBatchChanges ?? DEFAULT_MAX_BATCH_CHANGES
+    this.ackTimeoutMs = config.ackTimeoutMs ?? 5000
   }
 
   async start(): Promise<void> {
@@ -375,12 +377,18 @@ export class ReplicationEngine {
 
   private async sendPendingBatches(): Promise<void> {
     const peers = this.config.transport.peers()
+    const nowMs = Date.now()
+
     for (const [peerId, peerInfo] of peers) {
       if (!this.config.topology.shouldReplicateTo(peerId, peerInfo.role)) {
         continue
       }
 
       const peerState = this.peerTracker.getPeerState(peerId)
+      if (peerState) {
+        this.peerTracker.expireTimedOutBatches(peerId, nowMs, this.ackTimeoutMs)
+      }
+
       if (peerState && peerState.pendingBatches >= this.maxPendingBatches) {
         continue
       }
@@ -393,11 +401,21 @@ export class ReplicationEngine {
       if (peerState) {
         peerState.pendingBatches += 1
         peerState.lastSentSeq = batch.toSeq
+        this.peerTracker.recordInFlightBatch(peerId, {
+          batchId: batch.batchId,
+          fromSeq: batch.fromSeq,
+          toSeq: batch.toSeq,
+          sentAt: nowMs,
+        })
       }
 
       const sentToSeq = batch.toSeq
       this.config.transport.send(peerId, batch).catch(() => {
         if (peerState) {
+          const idx = peerState.inFlightBatches.findIndex(b => b.batchId === batch.batchId)
+          if (idx >= 0) {
+            peerState.inFlightBatches.splice(idx, 1)
+          }
           if (peerState.pendingBatches > 0) {
             peerState.pendingBatches -= 1
           }

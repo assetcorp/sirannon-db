@@ -44,6 +44,7 @@ export class RaftNode {
   private voters = new Set<string>()
   private peerCount = 0
 
+  private readonly randomFn: () => number
   private leaderChangeHandlers: Array<(leaderId: string | null) => void> = []
 
   constructor(nodeId: string, transport: ReplicationTransport, config?: RaftConfig) {
@@ -52,6 +53,7 @@ export class RaftNode {
     this.electionTimeoutMin = config?.electionTimeoutMin ?? DEFAULT_ELECTION_TIMEOUT_MIN
     this.electionTimeoutMax = config?.electionTimeoutMax ?? DEFAULT_ELECTION_TIMEOUT_MAX
     this.heartbeatInterval = config?.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL
+    this.randomFn = config?.randomFn ?? Math.random
 
     this.transport.onRaftMessage((message, fromPeerId) => {
       if (this._running) {
@@ -275,7 +277,7 @@ export class RaftNode {
     if (!this._running) return
 
     const timeout =
-      this.electionTimeoutMin + Math.floor(Math.random() * (this.electionTimeoutMax - this.electionTimeoutMin))
+      this.electionTimeoutMin + Math.floor(this.randomFn() * (this.electionTimeoutMax - this.electionTimeoutMin))
 
     this.electionTimer = setTimeout(() => {
       if (!this._running) return

@@ -59,3 +59,14 @@ export class RaftError extends ReplicationError {
     this.name = 'RaftError'
   }
 }
+
+/** Thrown for initial sync failures. */
+export class SyncError extends ReplicationError {
+  constructor(
+    message: string,
+    public readonly requestId?: string,
+  ) {
+    super(message, 'SYNC_ERROR')
+    this.name = 'SyncError'
+  }
+}

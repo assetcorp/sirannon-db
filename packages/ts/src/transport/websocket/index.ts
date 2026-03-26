@@ -9,9 +9,18 @@ import type {
   ReplicationAck,
   ReplicationBatch,
   ReplicationTransport,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncRequest,
   TransportConfig,
 } from '../../replication/types.js'
-import { deserializeBatch, serializeBatch } from '../../replication/types.js'
+import {
+  deserializeBatch,
+  deserializeSyncComplete,
+  serializeBatch,
+  serializeSyncComplete,
+} from '../../replication/types.js'
 
 export interface WebSocketReplicationOptions {
   port?: number
@@ -26,7 +35,17 @@ export interface WebSocketReplicationOptions {
 }
 
 interface ReplicationMessage {
-  type: 'batch' | 'ack' | 'forward_request' | 'forward_response' | 'raft' | 'hello'
+  type:
+    | 'batch'
+    | 'ack'
+    | 'forward_request'
+    | 'forward_response'
+    | 'raft'
+    | 'hello'
+    | 'sync_request'
+    | 'sync_batch'
+    | 'sync_complete'
+    | 'sync_ack'
   payload: unknown
 }
 
@@ -133,6 +152,37 @@ function isValidForwardResponse(payload: unknown): payload is ForwardResponsePay
   return typeof p.requestId === 'string'
 }
 
+function isValidSyncRequest(payload: unknown): payload is SyncRequest {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.requestId === 'string' && typeof p.joinerNodeId === 'string' && Array.isArray(p.completedTables)
+}
+
+function isValidSyncBatch(payload: unknown): payload is SyncBatch {
+  if (typeof payload !== 'object' || payload === null) return false
+  const b = payload as Record<string, unknown>
+  return (
+    typeof b.requestId === 'string' &&
+    typeof b.table === 'string' &&
+    typeof b.batchIndex === 'number' &&
+    Array.isArray(b.rows) &&
+    typeof b.checksum === 'string' &&
+    typeof b.isLastBatchForTable === 'boolean'
+  )
+}
+
+function isValidSyncAck(payload: unknown): payload is SyncAck {
+  if (typeof payload !== 'object' || payload === null) return false
+  const a = payload as Record<string, unknown>
+  return (
+    typeof a.requestId === 'string' &&
+    typeof a.joinerNodeId === 'string' &&
+    typeof a.table === 'string' &&
+    typeof a.batchIndex === 'number' &&
+    typeof a.success === 'boolean'
+  )
+}
+
 /**
  * WebSocket-based ReplicationTransport for production multi-node replication.
  *
@@ -180,6 +230,10 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
   private raftHandler: RaftHandler | null = null
   private peerConnectedHandler: PeerConnectedHandler | null = null
   private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
+  private syncRequestHandler: ((request: SyncRequest, fromPeerId: string) => Promise<void>) | null = null
+  private syncBatchHandler: ((batch: SyncBatch, fromPeerId: string) => Promise<void>) | null = null
+  private syncCompleteHandler: ((complete: SyncComplete, fromPeerId: string) => Promise<void>) | null = null
+  private syncAckHandler: ((ack: SyncAck, fromPeerId: string) => void) | null = null
 
   constructor(options?: WebSocketReplicationOptions) {
     this.options = {
@@ -300,6 +354,31 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     })
   }
 
+  async requestSync(peerId: string, request: SyncRequest): Promise<void> {
+    this.ensureConnected()
+    const msg: ReplicationMessage = { type: 'sync_request', payload: request }
+    this.sendToPeer(peerId, serializeMessage(msg))
+  }
+
+  async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
+    this.ensureConnected()
+    const msg: ReplicationMessage = { type: 'sync_batch', payload: batch }
+    this.sendToPeer(peerId, serializeMessage(msg))
+  }
+
+  async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
+    this.ensureConnected()
+    const serialized = serializeSyncComplete(complete)
+    const msg: ReplicationMessage = { type: 'sync_complete', payload: serialized }
+    this.sendToPeer(peerId, serializeMessage(msg))
+  }
+
+  async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
+    this.ensureConnected()
+    const msg: ReplicationMessage = { type: 'sync_ack', payload: ack }
+    this.sendToPeer(peerId, serializeMessage(msg))
+  }
+
   onBatchReceived(handler: BatchHandler): void {
     this.batchHandler = handler
   }
@@ -310,6 +389,22 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
 
   onForwardReceived(handler: ForwardHandler): void {
     this.forwardHandler = handler
+  }
+
+  onSyncRequested(handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void {
+    this.syncRequestHandler = handler
+  }
+
+  onSyncBatchReceived(handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void {
+    this.syncBatchHandler = handler
+  }
+
+  onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void {
+    this.syncCompleteHandler = handler
+  }
+
+  onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void {
+    this.syncAckHandler = handler
   }
 
   async sendRaftMessage(peerId: string, message: RaftMessage): Promise<void> {
@@ -627,6 +722,43 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
         if (!isValidRaftMessage(msg.payload)) return
         if (this.raftHandler) {
           this.raftHandler(msg.payload, fromPeerId)
+        }
+        break
+      }
+
+      case 'sync_request': {
+        if (!isValidSyncRequest(msg.payload)) return
+        if (this.syncRequestHandler) {
+          this.syncRequestHandler(msg.payload, fromPeerId).catch(() => {})
+        }
+        break
+      }
+
+      case 'sync_batch': {
+        if (!isValidSyncBatch(msg.payload)) return
+        if (this.syncBatchHandler) {
+          this.syncBatchHandler(msg.payload, fromPeerId).catch(() => {})
+        }
+        break
+      }
+
+      case 'sync_complete': {
+        if (typeof msg.payload !== 'string') return
+        try {
+          const complete = deserializeSyncComplete(msg.payload)
+          if (this.syncCompleteHandler) {
+            this.syncCompleteHandler(complete, fromPeerId).catch(() => {})
+          }
+        } catch {
+          /* malformed sync complete, drop */
+        }
+        break
+      }
+
+      case 'sync_ack': {
+        if (!isValidSyncAck(msg.payload)) return
+        if (this.syncAckHandler) {
+          this.syncAckHandler(msg.payload, fromPeerId)
         }
         break
       }

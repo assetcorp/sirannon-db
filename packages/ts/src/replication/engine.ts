@@ -1,15 +1,27 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import type { Transaction } from '../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../core/types.js'
 import { LWWResolver } from './conflict/lww.js'
-import { BatchValidationError, ReplicationError, TopologyError } from './errors.js'
+import { BatchValidationError, ReplicationError, SyncError, TopologyError } from './errors.js'
 import { HLC } from './hlc.js'
 import { ReplicationLog } from './log.js'
 import { generateNodeId } from './node-id.js'
 import { PeerTracker } from './peer-tracker.js'
-import type { ConflictResolver, ForwardedTransactionResult, ReplicationConfig, ReplicationStatus } from './types.js'
+import type {
+  ConflictResolver,
+  ForwardedTransactionResult,
+  ReplicationConfig,
+  ReplicationStatus,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncRequest,
+  SyncState,
+  SyncTableManifest,
+} from './types.js'
 
 const DEFAULT_BATCH_SIZE = 100
 const DEFAULT_BATCH_INTERVAL_MS = 100
@@ -23,27 +35,22 @@ const DDL_PREFIX_RE =
 const SAFE_SQL_PREFIX_RE =
   /^\s*(INSERT|UPDATE|DELETE|SELECT|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 
-/**
- * The central coordinator for distributed replication in Sirannon.
- *
- * ReplicationEngine wraps a local Database and adds multi-node awareness: it
- * stamps local writes with HLC timestamps, groups them into batches on a
- * configurable interval, and ships those batches to connected peers through a
- * pluggable transport layer. Inbound batches from remote peers are validated
- * (checksum, clock-drift, topology authorization) and applied through the
- * ReplicationLog, which delegates row-level conflicts to a per-table
- * ConflictResolver.
- *
- * Write routing respects the configured Topology: on a replica node, writes
- * are either rejected with a TopologyError or forwarded to the primary when
- * writeForwarding is enabled. Read queries are passed through to the
- * underlying Database unchanged.
- *
- * Each peer maintains an independent outbound cursor so that a slow or
- * temporarily disconnected peer does not block delivery to others. Ack
- * tracking feeds into optional write-concern levels (majority, all) that let
- * callers await durable replication before returning.
- */
+const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+const DDL_DENY_RE = /\b(load_extension|ATTACH|randomblob|zeroblob|writefile|readfile|fts3_tokenizer)\b/i
+
+interface ActiveSyncSession {
+  requestId: string
+  joinerNodeId: string
+  readConn: SQLiteConnection
+  snapshotSeq: bigint
+  tables: string[]
+  completedTables: Set<string>
+  startedAt: number
+  timeoutTimer: ReturnType<typeof setTimeout>
+  aborted: boolean
+}
+
 export class ReplicationEngine {
   private readonly database: Database
   private readonly writerConn: SQLiteConnection
@@ -64,6 +71,33 @@ export class ReplicationEngine {
   private readonly maxBatchChanges: number
   private readonly ackTimeoutMs: number
 
+  private readonly initialSync: boolean
+  private readonly syncBatchSize: number
+  private readonly maxConcurrentSyncs: number
+  private readonly maxSyncDurationMs: number
+  private readonly maxSyncLagBeforeReady: number
+  private readonly syncAckTimeoutMs: number
+  private readonly catchUpDeadlineMs: number
+  private readonly resumeFromSeq: bigint | undefined
+  private readonly snapshotConnectionFactory: (() => Promise<SQLiteConnection>) | undefined
+  private readonly tracker: ChangeTracker | undefined
+
+  private syncState: SyncState = {
+    phase: 'ready',
+    sourcePeerId: null,
+    snapshotSeq: null,
+    completedTables: [],
+    totalTables: 0,
+    startedAt: null,
+    error: null,
+  }
+
+  private readonly activeSyncs = new Map<string, ActiveSyncSession>()
+  private readonly syncAckWaiters = new Map<string, { resolve: (ack: SyncAck) => void }>()
+  private highestSourceSeqSeen = 0n
+  private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
+  private readonly expectedBatchIndex = new Map<string, number>()
+
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
     this.database = database
     this.writerConn = writerConn
@@ -78,6 +112,16 @@ export class ReplicationEngine {
     this.maxPendingBatches = config.maxPendingBatches ?? DEFAULT_MAX_PENDING_BATCHES
     this.maxBatchChanges = config.maxBatchChanges ?? DEFAULT_MAX_BATCH_CHANGES
     this.ackTimeoutMs = config.ackTimeoutMs ?? 5000
+    this.initialSync = config.initialSync ?? true
+    this.syncBatchSize = config.syncBatchSize ?? 10_000
+    this.maxConcurrentSyncs = config.maxConcurrentSyncs ?? 2
+    this.maxSyncDurationMs = config.maxSyncDurationMs ?? 1_800_000
+    this.maxSyncLagBeforeReady = config.maxSyncLagBeforeReady ?? 100
+    this.syncAckTimeoutMs = config.syncAckTimeoutMs ?? 30_000
+    this.catchUpDeadlineMs = config.catchUpDeadlineMs ?? 600_000
+    this.resumeFromSeq = config.resumeFromSeq
+    this.snapshotConnectionFactory = config.snapshotConnectionFactory
+    this.tracker = config.changeTracker
   }
 
   async start(): Promise<void> {
@@ -89,12 +133,88 @@ export class ReplicationEngine {
 
     this.setupTransportHandlers()
     await this.config.transport.connect(this.nodeId, this.config.transportConfig ?? {})
+
+    const isPrimary = this.config.topology.role === 'primary'
+    const syncCompleted = await this.log.isSyncCompleted()
+
+    if (this.initialSync && !isPrimary && !syncCompleted) {
+      const savedState = await this.log.getSyncState()
+      if (savedState.phase === 'syncing') {
+        if (!this.tracker) {
+          throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
+        }
+        await this.log.wipeTables(this.writerConn, await this.log.getTablesInFkOrder(this.writerConn), this.tracker)
+      }
+      this.syncState = {
+        phase: 'pending',
+        sourcePeerId: null,
+        snapshotSeq: null,
+        completedTables: [],
+        totalTables: 0,
+        startedAt: null,
+        error: null,
+      }
+      await this.log.setSyncMeta('pending')
+      await this.initiateSync()
+      return
+    }
+
+    if (this.initialSync && !isPrimary && syncCompleted) {
+      const savedState = await this.log.getSyncState()
+      if (savedState.phase === 'catching-up') {
+        this.syncState = {
+          phase: 'catching-up',
+          sourcePeerId: savedState.sourcePeerId,
+          snapshotSeq: savedState.snapshotSeq,
+          completedTables: [],
+          totalTables: 0,
+          startedAt: null,
+          error: null,
+        }
+        this.startSenderLoop()
+        this.startCatchUpCheck()
+        return
+      }
+      this.syncState.phase = 'ready'
+    }
+
+    if (!this.initialSync && this.resumeFromSeq !== undefined) {
+      this.lastSentSeq = this.resumeFromSeq
+      await this.log.setSyncMeta('ready', this.resumeFromSeq)
+      this.syncState.phase = 'ready'
+    } else if (!this.initialSync && !syncCompleted) {
+      const localSeq = await this.log.getLocalSeq()
+      if (localSeq > 0n) {
+        await this.log.setSyncMeta('ready', localSeq)
+      }
+      this.syncState.phase = 'ready'
+    } else {
+      this.syncState.phase = 'ready'
+    }
+
     this.startSenderLoop()
   }
 
   async stop(): Promise<void> {
     if (!this.running) return
     this.running = false
+
+    if (this.catchUpCheckTimer) {
+      clearInterval(this.catchUpCheckTimer)
+      this.catchUpCheckTimer = null
+    }
+
+    for (const [requestId] of this.activeSyncs) {
+      this.abortSyncSession(requestId)
+    }
+
+    if (this.syncState.phase === 'syncing') {
+      try {
+        await this.writerConn.exec('PRAGMA foreign_keys = ON')
+      } catch {
+        /* best-effort */
+      }
+    }
 
     this.clearSenderTimer()
     await this.config.transport.disconnect()
@@ -107,14 +227,22 @@ export class ReplicationEngine {
       peers: this.peerTracker.allPeerStates(),
       localSeq: this.lastSentSeq,
       replicating: this.running,
+      syncState: { ...this.syncState },
     }
   }
 
   async query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
+    if (this.syncState.phase !== 'ready') {
+      throw new SyncError(`Node is in '${this.syncState.phase}' phase and cannot serve reads`)
+    }
     return this.database.query<T>(sql, params, options)
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
+    if (this.syncState.phase !== 'ready') {
+      throw new SyncError(`Node is in '${this.syncState.phase}' phase and cannot accept operations`)
+    }
+
     if (!this.config.topology.canWrite()) {
       if (this.config.writeForwarding) {
         const result = await this.forwardStatements([{ sql, params }], options)
@@ -135,6 +263,10 @@ export class ReplicationEngine {
   }
 
   async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
+    if (this.syncState.phase !== 'ready') {
+      throw new SyncError(`Node is in '${this.syncState.phase}' phase and cannot accept operations`)
+    }
+
     if (!this.config.topology.canWrite()) {
       if (this.config.writeForwarding) {
         const statements = paramsBatch.map(p => ({ sql, params: p }))
@@ -157,6 +289,9 @@ export class ReplicationEngine {
   }
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>, _options?: QueryOptions): Promise<T> {
+    if (this.syncState.phase !== 'ready') {
+      throw new SyncError(`Node is in '${this.syncState.phase}' phase and cannot accept operations`)
+    }
     if (!this.config.topology.canWrite()) {
       throw new TopologyError('This node cannot accept writes in transaction mode')
     }
@@ -285,6 +420,7 @@ export class ReplicationEngine {
   private setupTransportHandlers(): void {
     this.config.transport.onBatchReceived(async (batch, fromPeerId) => {
       if (!this.running) return
+      if (this.syncState.phase !== 'ready' && this.syncState.phase !== 'catching-up') return
 
       if (batch.sourceNodeId !== fromPeerId) {
         throw new BatchValidationError(
@@ -317,6 +453,10 @@ export class ReplicationEngine {
 
       await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
 
+      if (batch.toSeq > this.highestSourceSeqSeen) {
+        this.highestSourceSeqSeen = batch.toSeq
+      }
+
       this.config.transport
         .sendAck(fromPeerId, {
           batchId: batch.batchId,
@@ -328,11 +468,15 @@ export class ReplicationEngine {
 
     this.config.transport.onAckReceived((ack, _fromPeerId) => {
       if (!this.running) return
+      if (this.syncState.phase !== 'ready' && this.syncState.phase !== 'catching-up') return
       this.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
     })
 
     if (this.config.topology.canWrite()) {
       this.config.transport.onForwardReceived(async (request, fromPeerId) => {
+        if (this.syncState.phase !== 'ready' && this.syncState.phase !== 'catching-up') {
+          throw new ReplicationError('Node is not ready to handle forwarded requests')
+        }
         const knownPeers = this.config.transport.peers()
         if (!knownPeers.has(fromPeerId)) {
           throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
@@ -343,11 +487,584 @@ export class ReplicationEngine {
 
     this.config.transport.onPeerConnected(peer => {
       this.peerTracker.addPeer(peer.id)
+      if (this.syncState.phase === 'pending') {
+        this.initiateSync().catch(() => {})
+      }
     })
 
     this.config.transport.onPeerDisconnected(peerId => {
       this.peerTracker.removePeer(peerId)
+
+      for (const [requestId, session] of this.activeSyncs) {
+        if (session.joinerNodeId === peerId) {
+          this.abortSyncSession(requestId)
+        }
+      }
+
+      if (this.syncState.phase === 'syncing' && this.syncState.sourcePeerId === peerId) {
+        this.syncState.phase = 'pending'
+        this.syncState.sourcePeerId = null
+        this.writerConn.exec('PRAGMA foreign_keys = ON').catch(() => {})
+        this.expectedBatchIndex.clear()
+        this.log.setSyncMeta('pending').catch(() => {})
+      }
     })
+
+    this.config.transport.onSyncRequested(async (request, fromPeerId) => {
+      if (!this.running) return
+      await this.handleSyncRequest(request, fromPeerId)
+    })
+
+    this.config.transport.onSyncBatchReceived(async (batch, fromPeerId) => {
+      if (!this.running) return
+      await this.handleSyncBatchReceived(batch, fromPeerId)
+    })
+
+    this.config.transport.onSyncCompleteReceived(async (complete, fromPeerId) => {
+      if (!this.running) return
+      await this.handleSyncCompleteReceived(complete, fromPeerId)
+    })
+
+    this.config.transport.onSyncAckReceived((ack, _fromPeerId) => {
+      if (!this.running) return
+      this.handleSyncAckReceived(ack)
+    })
+  }
+
+  private async handleSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {
+    const knownPeers = this.config.transport.peers()
+    if (!knownPeers.has(fromPeerId)) return
+
+    if (!this.config.topology.canWrite() && this.config.topology.role !== 'peer') {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error: 'This node cannot serve syncs',
+      })
+      return
+    }
+
+    if (this.activeSyncs.has(request.requestId)) {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error: 'Duplicate requestId',
+      })
+      return
+    }
+
+    if (this.activeSyncs.size >= this.maxConcurrentSyncs) {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error: 'Sync capacity reached, retry later',
+      })
+      return
+    }
+
+    if (!this.snapshotConnectionFactory) {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error: 'No snapshot connection factory configured',
+      })
+      return
+    }
+
+    for (const table of request.completedTables) {
+      if (!IDENTIFIER_RE.test(table)) {
+        await this.config.transport.sendSyncAck(fromPeerId, {
+          requestId: request.requestId,
+          joinerNodeId: request.joinerNodeId,
+          table: '__schema__',
+          batchIndex: -1,
+          success: false,
+          error: `Invalid table name in completedTables: ${table}`,
+        })
+        return
+      }
+    }
+
+    let readConn: SQLiteConnection
+    try {
+      readConn = await this.snapshotConnectionFactory()
+    } catch (err) {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error: `Failed to open snapshot connection: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+
+    const snapshotSeq = await this.log.getLocalSeq()
+
+    await readConn.exec('BEGIN')
+    const lockStmt = await readConn.prepare('SELECT 1 FROM sqlite_master LIMIT 1')
+    await lockStmt.get()
+
+    this.log.registerActiveSyncSeq(snapshotSeq)
+
+    const allTables = await this.log.getTablesInFkOrder(readConn)
+    const completedSet = new Set(request.completedTables)
+    const tables = allTables.filter(t => !completedSet.has(t))
+
+    const timeoutTimer = setTimeout(() => this.abortSyncSession(request.requestId), this.maxSyncDurationMs)
+    timeoutTimer.unref()
+
+    const session: ActiveSyncSession = {
+      requestId: request.requestId,
+      joinerNodeId: request.joinerNodeId,
+      readConn,
+      snapshotSeq,
+      tables,
+      completedTables: new Set(request.completedTables),
+      startedAt: Date.now(),
+      timeoutTimer,
+      aborted: false,
+    }
+
+    this.activeSyncs.set(request.requestId, session)
+
+    this.serveSyncSession(session).catch(() => {
+      this.abortSyncSession(request.requestId)
+    })
+  }
+
+  private async serveSyncSession(session: ActiveSyncSession): Promise<void> {
+    const schemaDdl = await this.log.dumpSchema(session.readConn)
+    const schemaChecksum = createHash('sha256').update(JSON.stringify(schemaDdl)).digest('hex')
+
+    await this.config.transport.sendSyncBatch(session.joinerNodeId, {
+      requestId: session.requestId,
+      table: '__schema__',
+      batchIndex: 0,
+      rows: [],
+      schema: schemaDdl,
+      checksum: schemaChecksum,
+      isLastBatchForTable: true,
+    })
+
+    const schemaAck = await this.waitForSyncAck(session.requestId, '__schema__', 0)
+    if (!schemaAck.success) {
+      this.abortSyncSession(session.requestId)
+      return
+    }
+
+    for (const table of session.tables) {
+      if (session.aborted) return
+
+      let batchIndex = 0
+      for await (const { rows, checksum, isLast } of this.log.dumpTableOnConnection(
+        session.readConn,
+        table,
+        this.syncBatchSize,
+      )) {
+        if (session.aborted) return
+
+        await this.config.transport.sendSyncBatch(session.joinerNodeId, {
+          requestId: session.requestId,
+          table,
+          batchIndex,
+          rows,
+          checksum,
+          isLastBatchForTable: isLast,
+        })
+
+        const ack = await this.waitForSyncAck(session.requestId, table, batchIndex)
+        if (!ack.success) {
+          this.abortSyncSession(session.requestId)
+          return
+        }
+
+        batchIndex += 1
+      }
+
+      if (batchIndex === 0) {
+        await this.config.transport.sendSyncBatch(session.joinerNodeId, {
+          requestId: session.requestId,
+          table,
+          batchIndex: 0,
+          rows: [],
+          checksum: createHash('sha256').update(JSON.stringify([])).digest('hex'),
+          isLastBatchForTable: true,
+        })
+
+        const emptyAck = await this.waitForSyncAck(session.requestId, table, 0)
+        if (!emptyAck.success) {
+          this.abortSyncSession(session.requestId)
+          return
+        }
+      }
+
+      session.completedTables.add(table)
+    }
+
+    if (session.aborted) return
+
+    const manifests: SyncTableManifest[] = []
+    for (const table of session.tables) {
+      manifests.push(await this.log.generateManifest(session.readConn, table))
+    }
+
+    await this.config.transport.sendSyncComplete(session.joinerNodeId, {
+      requestId: session.requestId,
+      snapshotSeq: session.snapshotSeq,
+      manifests,
+    })
+
+    try {
+      await session.readConn.exec('COMMIT')
+    } catch {
+      /* may already be closed */
+    }
+    try {
+      await session.readConn.close()
+    } catch {
+      /* best-effort */
+    }
+    this.log.unregisterActiveSyncSeq(session.snapshotSeq)
+    clearTimeout(session.timeoutTimer)
+    this.activeSyncs.delete(session.requestId)
+  }
+
+  private waitForSyncAck(requestId: string, table: string, batchIndex: number): Promise<SyncAck> {
+    return new Promise((resolve, reject) => {
+      const key = `${requestId}:${table}:${batchIndex}`
+      const timer = setTimeout(() => {
+        this.syncAckWaiters.delete(key)
+        reject(new SyncError(`Sync ack timeout for ${table} batch ${batchIndex}`, requestId))
+      }, this.syncAckTimeoutMs)
+      timer.unref()
+      this.syncAckWaiters.set(key, {
+        resolve: (ack: SyncAck) => {
+          clearTimeout(timer)
+          resolve(ack)
+        },
+      })
+    })
+  }
+
+  private handleSyncAckReceived(ack: SyncAck): void {
+    const key = `${ack.requestId}:${ack.table}:${ack.batchIndex}`
+    const waiter = this.syncAckWaiters.get(key)
+    if (waiter) {
+      this.syncAckWaiters.delete(key)
+      waiter.resolve(ack)
+    }
+  }
+
+  private abortSyncSession(requestId: string): void {
+    const session = this.activeSyncs.get(requestId)
+    if (!session) return
+
+    session.aborted = true
+
+    for (const [key, waiter] of this.syncAckWaiters) {
+      if (key.startsWith(`${requestId}:`)) {
+        this.syncAckWaiters.delete(key)
+        waiter.resolve({
+          requestId,
+          joinerNodeId: session.joinerNodeId,
+          table: '',
+          batchIndex: -1,
+          success: false,
+          error: 'Session aborted',
+        })
+      }
+    }
+
+    try {
+      session.readConn.close().catch(() => {})
+    } catch {
+      /* best-effort */
+    }
+    this.log.unregisterActiveSyncSeq(session.snapshotSeq)
+    this.activeSyncs.delete(requestId)
+    clearTimeout(session.timeoutTimer)
+  }
+
+  private async initiateSync(): Promise<void> {
+    if (!this.tracker) {
+      throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
+    }
+
+    const peers = this.config.transport.peers()
+    let sourcePeerId: string | null = null
+
+    for (const [peerId, info] of peers) {
+      if (info.role === 'primary') {
+        sourcePeerId = peerId
+        break
+      }
+    }
+
+    if (sourcePeerId === null) {
+      for (const [peerId] of peers) {
+        sourcePeerId = peerId
+        break
+      }
+    }
+
+    if (sourcePeerId === null) {
+      return
+    }
+
+    const savedState = await this.log.getSyncState()
+    const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
+
+    const requestId = randomUUID()
+    await this.config.transport.requestSync(sourcePeerId, {
+      requestId,
+      joinerNodeId: this.nodeId,
+      completedTables,
+    })
+
+    this.syncState.phase = 'syncing'
+    this.syncState.sourcePeerId = sourcePeerId
+    this.syncState.startedAt = Date.now()
+    await this.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
+  }
+
+  private async handleSyncBatchReceived(batch: SyncBatch, fromPeerId: string): Promise<void> {
+    if (this.syncState.phase !== 'syncing') return
+    if (fromPeerId !== this.syncState.sourcePeerId) return
+
+    if (!this.tracker) {
+      throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
+    }
+
+    const expectedIndex = this.expectedBatchIndex.get(batch.table) ?? 0
+    if (batch.batchIndex !== expectedIndex) {
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: batch.requestId,
+        joinerNodeId: this.nodeId,
+        table: batch.table,
+        batchIndex: batch.batchIndex,
+        success: false,
+        error: `Out of order batch: expected ${expectedIndex}, got ${batch.batchIndex}`,
+      })
+      return
+    }
+    this.expectedBatchIndex.set(batch.table, expectedIndex + 1)
+
+    try {
+      if (batch.table === '__schema__') {
+        if (batch.schema) {
+          for (const ddl of batch.schema) {
+            if (!this.validateSyncDdl(ddl)) {
+              throw new SyncError(`Unsafe DDL in schema batch: ${ddl}`)
+            }
+          }
+          await this.writerConn.exec('PRAGMA foreign_keys = OFF')
+          for (const ddl of batch.schema) {
+            let saferDdl = ddl.replace(/^\s*CREATE\s+TABLE\b/i, 'CREATE TABLE IF NOT EXISTS')
+            saferDdl = saferDdl.replace(/^\s*CREATE\s+INDEX\b/i, 'CREATE INDEX IF NOT EXISTS')
+            await this.writerConn.exec(saferDdl)
+          }
+        }
+
+        await this.config.transport.sendSyncAck(fromPeerId, {
+          requestId: batch.requestId,
+          joinerNodeId: this.nodeId,
+          table: batch.table,
+          batchIndex: batch.batchIndex,
+          success: true,
+        })
+        return
+      }
+
+      if (!IDENTIFIER_RE.test(batch.table)) {
+        throw new SyncError(`Invalid table name in sync batch: ${batch.table}`)
+      }
+
+      const expectedChecksum = createHash('sha256').update(JSON.stringify(batch.rows)).digest('hex')
+      if (batch.checksum !== expectedChecksum) {
+        throw new SyncError(`Checksum mismatch for ${batch.table} batch ${batch.batchIndex}`)
+      }
+
+      if (batch.batchIndex === 0 && !this.syncState.completedTables.includes(batch.table)) {
+        await this.tracker.unwatch(this.writerConn, batch.table)
+        await this.writerConn.exec(`DELETE FROM "${batch.table}"`)
+      }
+
+      if (batch.rows.length > 0) {
+        const columns = Object.keys(batch.rows[0]).filter(c => IDENTIFIER_RE.test(c))
+        if (columns.length > 0) {
+          const placeholders = columns.map(() => '?').join(', ')
+          const colNames = columns.map(c => `"${c}"`).join(', ')
+          const insertSql = `INSERT INTO "${batch.table}" (${colNames}) VALUES (${placeholders})`
+
+          await this.writerConn.transaction(async tx => {
+            const stmt = await tx.prepare(insertSql)
+            for (const row of batch.rows) {
+              const values = columns.map(c => row[c])
+              await stmt.run(...values)
+            }
+          })
+        }
+      }
+
+      if (batch.isLastBatchForTable) {
+        await this.log.setSyncTableStatus(batch.table, 'completed')
+        this.syncState.completedTables.push(batch.table)
+        this.expectedBatchIndex.delete(batch.table)
+      }
+
+      await this.config.transport.sendSyncAck(fromPeerId, {
+        requestId: batch.requestId,
+        joinerNodeId: this.nodeId,
+        table: batch.table,
+        batchIndex: batch.batchIndex,
+        success: true,
+      })
+    } catch (err) {
+      await this.config.transport
+        .sendSyncAck(fromPeerId, {
+          requestId: batch.requestId,
+          joinerNodeId: this.nodeId,
+          table: batch.table,
+          batchIndex: batch.batchIndex,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        .catch(() => {})
+    }
+  }
+
+  private async handleSyncCompleteReceived(complete: SyncComplete, fromPeerId: string): Promise<void> {
+    if (this.syncState.phase !== 'syncing') return
+    if (fromPeerId !== this.syncState.sourcePeerId) return
+
+    if (!this.tracker) {
+      throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
+    }
+
+    try {
+      for (const manifest of complete.manifests) {
+        if (IDENTIFIER_RE.test(manifest.table)) {
+          await this.tracker.watch(this.writerConn, manifest.table)
+        }
+      }
+
+      await this.writerConn.exec('PRAGMA foreign_keys = ON')
+
+      for (const manifest of complete.manifests) {
+        const valid = await this.log.verifyManifest(manifest)
+        if (!valid) {
+          await this.log.wipeTables(
+            this.writerConn,
+            complete.manifests.map(m => m.table).filter(t => IDENTIFIER_RE.test(t)),
+            this.tracker,
+          )
+          this.syncState.phase = 'pending'
+          this.syncState.completedTables = []
+          this.expectedBatchIndex.clear()
+          await this.log.setSyncMeta('pending')
+          await this.initiateSync()
+          return
+        }
+      }
+
+      await this.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
+
+      const recordStmt = await this.writerConn.prepare(
+        'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
+      )
+      await recordStmt.run(fromPeerId, Number(complete.snapshotSeq), Date.now() / 1000)
+
+      this.syncState.phase = 'catching-up'
+      this.syncState.snapshotSeq = complete.snapshotSeq
+      await this.log.setSyncMeta('catching-up', complete.snapshotSeq)
+
+      this.startSenderLoop()
+      this.startCatchUpCheck()
+    } catch {
+      try {
+        await this.writerConn.exec('PRAGMA foreign_keys = ON')
+      } catch {
+        /* best-effort */
+      }
+      throw new SyncError('Failed during sync completion handling')
+    }
+  }
+
+  private startCatchUpCheck(): void {
+    const catchUpStartedAt = Date.now()
+    this.catchUpCheckTimer = setInterval(async () => {
+      if (this.syncState.phase !== 'catching-up') {
+        if (this.catchUpCheckTimer) clearInterval(this.catchUpCheckTimer)
+        this.catchUpCheckTimer = null
+        return
+      }
+
+      if (Date.now() - catchUpStartedAt > this.catchUpDeadlineMs) {
+        this.syncState.phase = 'ready'
+        await this.log.setSyncMeta('ready')
+        if (this.catchUpCheckTimer) clearInterval(this.catchUpCheckTimer)
+        this.catchUpCheckTimer = null
+        return
+      }
+
+      const sourcePeerId = this.syncState.sourcePeerId
+      if (!sourcePeerId) return
+
+      if (this.highestSourceSeqSeen === 0n) {
+        const snapshotSeq = this.syncState.snapshotSeq ?? 0n
+        if (snapshotSeq === 0n) {
+          this.syncState.phase = 'ready'
+          await this.log.setSyncMeta('ready')
+          if (this.catchUpCheckTimer) clearInterval(this.catchUpCheckTimer)
+          this.catchUpCheckTimer = null
+          return
+        }
+        const localSeq = await this.log.getLocalSeq()
+        if (localSeq === 0n) {
+          this.syncState.phase = 'ready'
+          await this.log.setSyncMeta('ready')
+          if (this.catchUpCheckTimer) clearInterval(this.catchUpCheckTimer)
+          this.catchUpCheckTimer = null
+          return
+        }
+        return
+      }
+
+      const appliedSeq = await this.log.getLastAppliedSeq(sourcePeerId)
+      const lag = this.highestSourceSeqSeen - appliedSeq
+      if (lag <= BigInt(this.maxSyncLagBeforeReady)) {
+        this.syncState.phase = 'ready'
+        await this.log.setSyncMeta('ready')
+        if (this.catchUpCheckTimer) clearInterval(this.catchUpCheckTimer)
+        this.catchUpCheckTimer = null
+      }
+    }, this.batchIntervalMs * 2)
+  }
+
+  private validateSyncDdl(sql: string): boolean {
+    const safePrefixRe =
+      /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
+    if (!safePrefixRe.test(sql)) return false
+    if (sql.includes(';')) return false
+    if (/\bAS\s+SELECT\b/i.test(sql)) return false
+    if (DDL_DENY_RE.test(sql)) return false
+    const body = sql.replace(safePrefixRe, '')
+    if (/\bSELECT\b/i.test(body)) return false
+    return true
   }
 
   private startSenderLoop(): void {

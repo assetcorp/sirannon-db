@@ -1,8 +1,16 @@
 import { createHash } from 'node:crypto'
+import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { BatchValidationError, ReplicationError } from './errors.js'
 import { HLC } from './hlc.js'
-import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
+import type {
+  ApplyResult,
+  ConflictResolver,
+  ReplicationBatch,
+  ReplicationChange,
+  SyncPhase,
+  SyncTableManifest,
+} from './types.js'
 
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
@@ -13,10 +21,15 @@ function validateIdentifier(name: string): boolean {
   return IDENTIFIER_RE.test(name)
 }
 
+const DDL_DENY_RE = /\b(load_extension|ATTACH|randomblob|zeroblob|writefile|readfile|fts3_tokenizer)\b/i
+
 function validateDdlSafety(sql: string): boolean {
   if (!SAFE_DDL_RE.test(sql)) return false
   if (sql.includes(';')) return false
   if (/\bAS\s+SELECT\b/i.test(sql)) return false
+  if (DDL_DENY_RE.test(sql)) return false
+  const body = sql.replace(SAFE_DDL_RE, '')
+  if (/\bSELECT\b/i.test(body)) return false
   return true
 }
 
@@ -60,6 +73,7 @@ interface ColumnInfoRow {
  */
 export class ReplicationLog {
   private readonly pkCache = new Map<string, string[]>()
+  private readonly activeSyncSnapshotSeqs = new Set<bigint>()
 
   constructor(
     private readonly conn: SQLiteConnection,
@@ -69,6 +83,20 @@ export class ReplicationLog {
   ) {}
 
   async ensureReplicationTables(): Promise<void> {
+    await this.conn.exec(`
+CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
+	seq INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_name TEXT NOT NULL,
+	operation TEXT NOT NULL,
+	row_id TEXT NOT NULL,
+	changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+	old_data TEXT,
+	new_data TEXT,
+	node_id TEXT NOT NULL DEFAULT '',
+	tx_id TEXT NOT NULL DEFAULT '',
+	hlc TEXT NOT NULL DEFAULT ''
+)`)
+
     await this.conn.exec(`
 CREATE TABLE IF NOT EXISTS _sirannon_peer_state (
 	peer_node_id TEXT PRIMARY KEY,
@@ -93,6 +121,19 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 	hlc TEXT NOT NULL,
 	node_id TEXT NOT NULL,
 	PRIMARY KEY (table_name, row_id, column_name)
+)`)
+
+    await this.conn.exec(`
+CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
+	table_name TEXT PRIMARY KEY,
+	status TEXT NOT NULL DEFAULT 'pending',
+	row_count INTEGER NOT NULL DEFAULT 0,
+	pk_hash TEXT NOT NULL DEFAULT '',
+	snapshot_seq INTEGER,
+	source_peer_id TEXT,
+	started_at REAL,
+	completed_at REAL,
+	request_id TEXT
 )`)
   }
 
@@ -380,10 +421,24 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
   async getMinAckedSeq(): Promise<bigint> {
     const stmt = await this.conn.prepare('SELECT MIN(last_acked_seq) as min_seq FROM _sirannon_peer_state')
     const row = (await stmt.get()) as { min_seq: number | null } | undefined
-    if (!row || row.min_seq === null) {
-      return 0n
+    let result = 0n
+    if (row && row.min_seq !== null) {
+      result = BigInt(row.min_seq)
     }
-    return BigInt(row.min_seq)
+    for (const syncSeq of this.activeSyncSnapshotSeqs) {
+      if (result === 0n || syncSeq < result) {
+        result = syncSeq
+      }
+    }
+    return result
+  }
+
+  registerActiveSyncSeq(seq: bigint): void {
+    this.activeSyncSnapshotSeqs.add(seq)
+  }
+
+  unregisterActiveSyncSeq(seq: bigint): void {
+    this.activeSyncSnapshotSeqs.delete(seq)
   }
 
   async *dumpTable(table: string, batchSize: number): AsyncGenerator<ReplicationBatch> {
@@ -458,6 +513,368 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
       offset += rows.length
       batchNum += 1
     }
+  }
+
+  async dumpSchema(conn: SQLiteConnection, excludePrefix: string = '_sirannon_'): Promise<string[]> {
+    const stmt = await conn.prepare(
+      `SELECT type, name, sql FROM sqlite_master
+       WHERE type IN ('table', 'index') AND name NOT LIKE ? AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL`,
+    )
+    const rows = (await stmt.all(`${excludePrefix}%`)) as Array<{ type: string; name: string; sql: string }>
+
+    const filtered = rows.filter(row => {
+      if (row.name.startsWith(excludePrefix)) return false
+      if (row.name.startsWith('sqlite_')) return false
+      return validateDdlSafety(row.sql)
+    })
+
+    const tables: Array<{ name: string; sql: string }> = []
+    const indexes: Array<{ sql: string }> = []
+
+    for (const row of filtered) {
+      if (row.type === 'table') {
+        tables.push({ name: row.name, sql: row.sql })
+      } else {
+        indexes.push({ sql: row.sql })
+      }
+    }
+
+    const tableOrder = await this.getTablesInFkOrder(conn)
+    const orderMap = new Map<string, number>()
+    for (let i = 0; i < tableOrder.length; i++) {
+      orderMap.set(tableOrder[i], i)
+    }
+
+    tables.sort((a, b) => (orderMap.get(a.name) ?? 999) - (orderMap.get(b.name) ?? 999))
+
+    const result: string[] = []
+    for (const t of tables) {
+      result.push(t.sql)
+    }
+    for (const idx of indexes) {
+      result.push(idx.sql)
+    }
+    return result
+  }
+
+  async getTablesInFkOrder(conn: SQLiteConnection): Promise<string[]> {
+    const stmt = await conn.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_sirannon_%' AND name NOT LIKE 'sqlite_%'`,
+    )
+    const tableRows = (await stmt.all()) as Array<{ name: string }>
+    const tableNames = tableRows.map(r => r.name)
+
+    const adjacency = new Map<string, Set<string>>()
+    const inDegree = new Map<string, number>()
+
+    for (const name of tableNames) {
+      adjacency.set(name, new Set())
+      inDegree.set(name, 0)
+    }
+
+    for (const name of tableNames) {
+      const fkStmt = await conn.prepare(`PRAGMA foreign_key_list("${name}")`)
+      const fks = (await fkStmt.all()) as Array<{ table: string }>
+      for (const fk of fks) {
+        if (tableNames.includes(fk.table) && fk.table !== name) {
+          const deps = adjacency.get(fk.table)
+          if (deps && !deps.has(name)) {
+            deps.add(name)
+            inDegree.set(name, (inDegree.get(name) ?? 0) + 1)
+          }
+        }
+      }
+    }
+
+    const queue: string[] = []
+    for (const name of tableNames) {
+      if ((inDegree.get(name) ?? 0) === 0) {
+        queue.push(name)
+      }
+    }
+
+    const sorted: string[] = []
+    while (queue.length > 0) {
+      const current = queue.shift()
+      if (current === undefined) break
+      sorted.push(current)
+      const deps = adjacency.get(current)
+      if (deps) {
+        for (const dep of deps) {
+          const newDeg = (inDegree.get(dep) ?? 1) - 1
+          inDegree.set(dep, newDeg)
+          if (newDeg === 0) {
+            queue.push(dep)
+          }
+        }
+      }
+    }
+
+    if (sorted.length < tableNames.length) {
+      const remaining = tableNames.filter(n => !sorted.includes(n)).sort()
+      sorted.push(...remaining)
+    }
+
+    return sorted
+  }
+
+  async *dumpTableOnConnection(
+    conn: SQLiteConnection,
+    table: string,
+    batchSize: number,
+  ): AsyncGenerator<{ rows: Record<string, unknown>[]; checksum: string; isLast: boolean }> {
+    if (!IDENTIFIER_RE.test(table)) {
+      throw new ReplicationError(`Invalid table name: ${table}`)
+    }
+
+    const pkColumns = await this.getPkColumnsOnConnection(conn, table)
+    const needsRowid = pkColumns.length === 1 && pkColumns[0] === 'rowid'
+
+    let lastPkValues: unknown[] | null = null
+    let done = false
+
+    while (!done) {
+      let selectSql: string
+      const params: unknown[] = []
+
+      if (lastPkValues === null) {
+        selectSql = needsRowid
+          ? `SELECT rowid, * FROM "${table}" ORDER BY rowid LIMIT ?`
+          : `SELECT * FROM "${table}" ORDER BY ${pkColumns.map(c => `"${c}"`).join(', ')} LIMIT ?`
+        params.push(batchSize)
+      } else if (needsRowid) {
+        selectSql = `SELECT rowid, * FROM "${table}" WHERE rowid > ? ORDER BY rowid LIMIT ?`
+        params.push(lastPkValues[0], batchSize)
+      } else if (pkColumns.length === 1) {
+        selectSql = `SELECT * FROM "${table}" WHERE "${pkColumns[0]}" > ? ORDER BY "${pkColumns[0]}" LIMIT ?`
+        params.push(lastPkValues[0], batchSize)
+      } else {
+        const colList = pkColumns.map(c => `"${c}"`).join(', ')
+        const placeholders = pkColumns.map(() => '?').join(', ')
+        selectSql = `SELECT * FROM "${table}" WHERE (${colList}) > (${placeholders}) ORDER BY ${colList} LIMIT ?`
+        params.push(...lastPkValues, batchSize)
+      }
+
+      const stmt = await conn.prepare(selectSql)
+      const rows = (await stmt.all(...params)) as Record<string, unknown>[]
+
+      if (rows.length === 0) {
+        break
+      }
+
+      const lastRow = rows[rows.length - 1]
+      lastPkValues = pkColumns.map(col => lastRow[col])
+
+      let isLast = rows.length < batchSize
+      if (!isLast) {
+        let peekSql: string
+        const peekParams: unknown[] = []
+        if (needsRowid) {
+          peekSql = `SELECT 1 FROM "${table}" WHERE rowid > ? LIMIT 1`
+          peekParams.push(lastPkValues[0])
+        } else if (pkColumns.length === 1) {
+          peekSql = `SELECT 1 FROM "${table}" WHERE "${pkColumns[0]}" > ? LIMIT 1`
+          peekParams.push(lastPkValues[0])
+        } else {
+          const colList = pkColumns.map(c => `"${c}"`).join(', ')
+          const placeholders = pkColumns.map(() => '?').join(', ')
+          peekSql = `SELECT 1 FROM "${table}" WHERE (${colList}) > (${placeholders}) LIMIT 1`
+          peekParams.push(...lastPkValues)
+        }
+        const peekStmt = await conn.prepare(peekSql)
+        const peekRow = await peekStmt.get(...peekParams)
+        if (!peekRow) {
+          isLast = true
+        }
+      }
+
+      done = isLast
+      const checksum = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+
+      yield { rows, checksum, isLast }
+    }
+  }
+
+  async wipeTables(conn: SQLiteConnection, tables: string[], tracker: ChangeTracker): Promise<void> {
+    for (const table of tables) {
+      if (!IDENTIFIER_RE.test(table)) {
+        throw new ReplicationError(`Invalid table name: ${table}`)
+      }
+    }
+
+    await conn.exec('PRAGMA foreign_keys = OFF')
+    try {
+      await conn.transaction(async tx => {
+        for (const table of tables) {
+          await tracker.unwatch(tx, table)
+        }
+        const reversed = [...tables].reverse()
+        for (const table of reversed) {
+          await tx.exec(`DELETE FROM "${table}"`)
+        }
+        await tx.exec(`DELETE FROM _sirannon_sync_state WHERE table_name != '__sync_meta__'`)
+      })
+    } finally {
+      await conn.exec('PRAGMA foreign_keys = ON')
+    }
+  }
+
+  async setSyncTableStatus(table: string, status: string, rowCount?: number, pkHash?: string): Promise<void> {
+    const stmt = await this.conn.prepare(
+      `INSERT INTO _sirannon_sync_state (table_name, status, row_count, pk_hash, completed_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(table_name) DO UPDATE SET
+         status = excluded.status,
+         row_count = COALESCE(excluded.row_count, row_count),
+         pk_hash = COALESCE(excluded.pk_hash, pk_hash),
+         completed_at = excluded.completed_at`,
+    )
+    await stmt.run(table, status, rowCount ?? 0, pkHash ?? '', status === 'completed' ? Date.now() / 1000 : null)
+  }
+
+  async setSyncMeta(phase: SyncPhase, snapshotSeq?: bigint, sourcePeerId?: string, requestId?: string): Promise<void> {
+    const stmt = await this.conn.prepare(
+      `INSERT INTO _sirannon_sync_state (table_name, status, snapshot_seq, source_peer_id, started_at, request_id)
+       VALUES ('__sync_meta__', ?, ?, ?, ?, ?)
+       ON CONFLICT(table_name) DO UPDATE SET
+         status = excluded.status,
+         snapshot_seq = COALESCE(excluded.snapshot_seq, snapshot_seq),
+         source_peer_id = COALESCE(excluded.source_peer_id, source_peer_id),
+         started_at = COALESCE(excluded.started_at, started_at),
+         request_id = COALESCE(excluded.request_id, request_id)`,
+    )
+    await stmt.run(
+      phase,
+      snapshotSeq !== undefined ? Number(snapshotSeq) : null,
+      sourcePeerId ?? null,
+      phase === 'syncing' ? Date.now() / 1000 : null,
+      requestId ?? null,
+    )
+  }
+
+  async getSyncState(): Promise<{
+    phase: SyncPhase
+    completedTables: string[]
+    snapshotSeq: bigint | null
+    sourcePeerId: string | null
+  }> {
+    const metaStmt = await this.conn.prepare(
+      `SELECT status, snapshot_seq, source_peer_id FROM _sirannon_sync_state WHERE table_name = '__sync_meta__'`,
+    )
+    const meta = (await metaStmt.get()) as
+      | { status: string; snapshot_seq: number | null; source_peer_id: string | null }
+      | undefined
+
+    if (!meta) {
+      return { phase: 'ready', completedTables: [], snapshotSeq: null, sourcePeerId: null }
+    }
+
+    const completedStmt = await this.conn.prepare(
+      `SELECT table_name FROM _sirannon_sync_state WHERE table_name != '__sync_meta__' AND status = 'completed'`,
+    )
+    const completedRows = (await completedStmt.all()) as Array<{ table_name: string }>
+
+    return {
+      phase: meta.status as SyncPhase,
+      completedTables: completedRows.map(r => r.table_name),
+      snapshotSeq: meta.snapshot_seq !== null ? BigInt(meta.snapshot_seq) : null,
+      sourcePeerId: meta.source_peer_id,
+    }
+  }
+
+  async isSyncCompleted(): Promise<boolean> {
+    const stmt = await this.conn.prepare(`SELECT status FROM _sirannon_sync_state WHERE table_name = '__sync_meta__'`)
+    const row = (await stmt.get()) as { status: string } | undefined
+    return row?.status === 'ready'
+  }
+
+  async generateManifest(conn: SQLiteConnection, table: string): Promise<SyncTableManifest> {
+    if (!IDENTIFIER_RE.test(table)) {
+      throw new ReplicationError(`Invalid table name: ${table}`)
+    }
+
+    const countStmt = await conn.prepare(`SELECT COUNT(*) as cnt FROM "${table}"`)
+    const countRow = (await countStmt.get()) as { cnt: number } | undefined
+    const rowCount = countRow?.cnt ?? 0
+
+    const hash = createHash('sha256')
+    const pkColumns = await this.getPkColumnsOnConnection(conn, table)
+    const needsRowid = pkColumns.length === 1 && pkColumns[0] === 'rowid'
+    let lastPkValues: unknown[] | null = null
+    const PK_BATCH_SIZE = 10_000
+
+    let hasRows = true
+    while (hasRows) {
+      let selectSql: string
+      const params: unknown[] = []
+
+      if (needsRowid) {
+        if (lastPkValues === null) {
+          selectSql = `SELECT rowid FROM "${table}" ORDER BY rowid LIMIT ?`
+        } else {
+          selectSql = `SELECT rowid FROM "${table}" WHERE rowid > ? ORDER BY rowid LIMIT ?`
+          params.push(lastPkValues[0])
+        }
+      } else if (pkColumns.length === 1) {
+        const col = pkColumns[0]
+        if (lastPkValues === null) {
+          selectSql = `SELECT "${col}" FROM "${table}" ORDER BY "${col}" LIMIT ?`
+        } else {
+          selectSql = `SELECT "${col}" FROM "${table}" WHERE "${col}" > ? ORDER BY "${col}" LIMIT ?`
+          params.push(lastPkValues[0])
+        }
+      } else {
+        const colList = pkColumns.map(c => `"${c}"`).join(', ')
+        if (lastPkValues === null) {
+          selectSql = `SELECT ${colList} FROM "${table}" ORDER BY ${colList} LIMIT ?`
+        } else {
+          const placeholders = pkColumns.map(() => '?').join(', ')
+          selectSql = `SELECT ${colList} FROM "${table}" WHERE (${colList}) > (${placeholders}) ORDER BY ${colList} LIMIT ?`
+          params.push(...lastPkValues)
+        }
+      }
+      params.push(PK_BATCH_SIZE)
+
+      const stmt = await conn.prepare(selectSql)
+      const rows = (await stmt.all(...params)) as Record<string, unknown>[]
+
+      if (rows.length === 0) {
+        hasRows = false
+        break
+      }
+
+      for (const row of rows) {
+        const pkVal = pkColumns.map(col => String(row[col] ?? '')).join('-')
+        hash.update(pkVal)
+      }
+
+      if (rows.length < PK_BATCH_SIZE) {
+        hasRows = false
+      } else {
+        const lastRow = rows[rows.length - 1]
+        lastPkValues = pkColumns.map(col => lastRow[col])
+      }
+    }
+
+    return { table, rowCount, pkHash: hash.digest('hex') }
+  }
+
+  async verifyManifest(manifest: SyncTableManifest): Promise<boolean> {
+    const local = await this.generateManifest(this.conn, manifest.table)
+    return local.rowCount === manifest.rowCount && local.pkHash === manifest.pkHash
+  }
+
+  private async getPkColumnsOnConnection(conn: SQLiteConnection, table: string): Promise<string[]> {
+    const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
+    const info = (await stmt.all()) as ColumnInfoRow[]
+    const pkCols = info
+      .filter(col => col.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map(col => col.name)
+    if (pkCols.length === 0) {
+      pkCols.push('rowid')
+    }
+    return pkCols
   }
 
   private async getPkColumns(table: string): Promise<string[]> {

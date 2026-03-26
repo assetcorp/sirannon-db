@@ -1,3 +1,6 @@
+import type { ChangeTracker } from '../core/cdc/change-tracker.js'
+import type { SQLiteConnection } from '../core/driver/types.js'
+
 export interface NodeInfo {
   id: string
   role: 'primary' | 'replica' | 'peer'
@@ -92,11 +95,19 @@ export interface ReplicationTransport {
   broadcast(batch: ReplicationBatch): Promise<void>
   sendAck(peerId: string, ack: ReplicationAck): Promise<void>
   forward(peerId: string, request: ForwardedTransaction): Promise<ForwardedTransactionResult>
+  requestSync(peerId: string, request: SyncRequest): Promise<void>
+  sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void>
+  sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void>
+  sendSyncAck(peerId: string, ack: SyncAck): Promise<void>
   onBatchReceived(handler: (batch: ReplicationBatch, fromPeerId: string) => Promise<void>): void
   onAckReceived(handler: (ack: ReplicationAck, fromPeerId: string) => void): void
   onForwardReceived(
     handler: (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>,
   ): void
+  onSyncRequested(handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void
+  onSyncBatchReceived(handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void
+  onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void
+  onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void
   sendRaftMessage(peerId: string, message: RaftMessage): Promise<void>
   broadcastRaftMessage(message: RaftMessage): Promise<void>
   onRaftMessage(handler: (message: RaftMessage, fromPeerId: string) => void): void
@@ -166,6 +177,16 @@ export interface ReplicationConfig {
     maxLagSeconds?: number
     onLagExceeded?: (peerId: string, lagMs: number) => void
   }
+  initialSync?: boolean
+  syncBatchSize?: number
+  maxConcurrentSyncs?: number
+  maxSyncDurationMs?: number
+  maxSyncLagBeforeReady?: number
+  syncAckTimeoutMs?: number
+  catchUpDeadlineMs?: number
+  resumeFromSeq?: bigint
+  snapshotConnectionFactory?: () => Promise<SQLiteConnection>
+  changeTracker?: ChangeTracker
 }
 
 export interface ReplicationStatus {
@@ -174,6 +195,7 @@ export interface ReplicationStatus {
   peers: PeerState[]
   localSeq: bigint
   replicating: boolean
+  syncState?: SyncState
 }
 
 export interface RaftConfig {
@@ -187,6 +209,55 @@ export interface ApplyResult {
   applied: number
   skipped: number
   conflicts: number
+}
+
+export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready'
+
+export interface SyncState {
+  phase: SyncPhase
+  sourcePeerId: string | null
+  snapshotSeq: bigint | null
+  completedTables: string[]
+  totalTables: number
+  startedAt: number | null
+  error: string | null
+}
+
+export interface SyncRequest {
+  requestId: string
+  joinerNodeId: string
+  completedTables: string[]
+}
+
+export interface SyncBatch {
+  requestId: string
+  table: string
+  batchIndex: number
+  rows: Record<string, unknown>[]
+  schema?: string[]
+  checksum: string
+  isLastBatchForTable: boolean
+}
+
+export interface SyncTableManifest {
+  table: string
+  rowCount: number
+  pkHash: string
+}
+
+export interface SyncComplete {
+  requestId: string
+  snapshotSeq: bigint
+  manifests: SyncTableManifest[]
+}
+
+export interface SyncAck {
+  requestId: string
+  joinerNodeId: string
+  table: string
+  batchIndex: number
+  success: boolean
+  error?: string
 }
 
 const BIGINT_PREFIX = '\x00sirannon:bigint:'
@@ -211,4 +282,12 @@ export function serializeBatch(batch: ReplicationBatch): string {
 
 export function deserializeBatch(raw: string): ReplicationBatch {
   return JSON.parse(raw, bigintReviver) as ReplicationBatch
+}
+
+export function serializeSyncComplete(complete: SyncComplete): string {
+  return JSON.stringify(complete, bigintReplacer)
+}
+
+export function deserializeSyncComplete(raw: string): SyncComplete {
+  return JSON.parse(raw, bigintReviver) as SyncComplete
 }

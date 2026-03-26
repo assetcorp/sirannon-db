@@ -7,6 +7,7 @@ export {
   ConflictError,
   RaftError,
   ReplicationError,
+  SyncError,
   TopologyError,
   TransportError,
   WriteConcernError,
@@ -38,8 +39,15 @@ export type {
   ReplicationConfig,
   ReplicationStatus,
   ReplicationTransport,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncPhase,
+  SyncRequest,
+  SyncState,
+  SyncTableManifest,
   Topology,
   TopologyRole,
   TransportConfig,
 } from './types.js'
-export { deserializeBatch, serializeBatch } from './types.js'
+export { deserializeBatch, deserializeSyncComplete, serializeBatch, serializeSyncComplete } from './types.js'

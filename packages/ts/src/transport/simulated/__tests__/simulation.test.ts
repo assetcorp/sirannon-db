@@ -109,6 +109,7 @@ describe('Simulation Scenarios', () => {
       transport,
       batchIntervalMs: 30,
       batchSize: 100,
+      initialSync: false,
       ...overrides,
     }
 

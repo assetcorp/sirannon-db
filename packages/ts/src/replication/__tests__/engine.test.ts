@@ -21,6 +21,10 @@ import type {
   ReplicationBatch,
   ReplicationConfig,
   ReplicationTransport,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncRequest,
   TransportConfig,
 } from '../types.js'
 
@@ -63,6 +67,14 @@ class MockTransport implements ReplicationTransport {
   onForwardReceived(handler: (req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>): void {
     this.forwardHandler = handler
   }
+  async requestSync(_peerId: string, _request: SyncRequest): Promise<void> {}
+  async sendSyncBatch(_peerId: string, _batch: SyncBatch): Promise<void> {}
+  async sendSyncComplete(_peerId: string, _complete: SyncComplete): Promise<void> {}
+  async sendSyncAck(_peerId: string, _ack: SyncAck): Promise<void> {}
+  onSyncRequested(_handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void {}
+  onSyncBatchReceived(_handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void {}
+  onSyncCompleteReceived(_handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void {}
+  onSyncAckReceived(_handler: (ack: SyncAck, fromPeerId: string) => void): void {}
   async sendRaftMessage(_peerId: string, _message: RaftMessage): Promise<void> {}
   async broadcastRaftMessage(_message: RaftMessage): Promise<void> {}
   onRaftMessage(_handler: (message: RaftMessage, fromPeerId: string) => void): void {}
@@ -180,6 +192,7 @@ describe('ReplicationEngine', () => {
       topology: new MultiPrimaryTopology(),
       transport,
       batchIntervalMs: 50,
+      initialSync: false,
       ...overrides,
     }
   }

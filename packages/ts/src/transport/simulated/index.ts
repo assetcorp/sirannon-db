@@ -7,6 +7,10 @@ import type {
   ReplicationAck,
   ReplicationBatch,
   ReplicationTransport,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncRequest,
   TransportConfig,
 } from '../../replication/types.js'
 import type { FaultPolicy } from './fault-policy.js'
@@ -45,12 +49,53 @@ function isValidForwardedTransaction(req: unknown): req is ForwardedTransaction 
   return typeof r.requestId === 'string' && Array.isArray(r.statements)
 }
 
+function isValidSyncRequest(req: unknown): req is SyncRequest {
+  if (typeof req !== 'object' || req === null) return false
+  const r = req as Record<string, unknown>
+  return typeof r.requestId === 'string' && typeof r.joinerNodeId === 'string' && Array.isArray(r.completedTables)
+}
+
+function isValidSyncBatch(batch: unknown): batch is SyncBatch {
+  if (typeof batch !== 'object' || batch === null) return false
+  const b = batch as Record<string, unknown>
+  return (
+    typeof b.requestId === 'string' &&
+    typeof b.table === 'string' &&
+    typeof b.batchIndex === 'number' &&
+    Array.isArray(b.rows) &&
+    typeof b.checksum === 'string' &&
+    typeof b.isLastBatchForTable === 'boolean'
+  )
+}
+
+function isValidSyncComplete(complete: unknown): complete is SyncComplete {
+  if (typeof complete !== 'object' || complete === null) return false
+  const c = complete as Record<string, unknown>
+  return typeof c.requestId === 'string' && typeof c.snapshotSeq === 'bigint' && Array.isArray(c.manifests)
+}
+
+function isValidSyncAck(ack: unknown): ack is SyncAck {
+  if (typeof ack !== 'object' || ack === null) return false
+  const a = ack as Record<string, unknown>
+  return (
+    typeof a.requestId === 'string' &&
+    typeof a.joinerNodeId === 'string' &&
+    typeof a.table === 'string' &&
+    typeof a.batchIndex === 'number' &&
+    typeof a.success === 'boolean'
+  )
+}
+
 type BatchHandler = (batch: ReplicationBatch, fromPeerId: string) => Promise<void>
 type AckHandler = (ack: ReplicationAck, fromPeerId: string) => void
 type ForwardHandler = (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>
 type RaftHandler = (message: RaftMessage, fromPeerId: string) => void
 type PeerConnectedHandler = (peer: NodeInfo) => void
 type PeerDisconnectedHandler = (peerId: string) => void
+type SyncRequestHandler = (request: SyncRequest, fromPeerId: string) => Promise<void>
+type SyncBatchHandler = (batch: SyncBatch, fromPeerId: string) => Promise<void>
+type SyncCompleteHandler = (complete: SyncComplete, fromPeerId: string) => Promise<void>
+type SyncAckHandler = (ack: SyncAck, fromPeerId: string) => void
 
 export class SimulatedNetwork {
   private readonly transports = new Map<string, SimulatedTransport>()
@@ -194,6 +239,38 @@ export class SimulatedNetwork {
         resp.resolve(resp.result)
         break
       }
+
+      case 'sync_request':
+        try {
+          await target.deliverSyncRequest(event.payload as SyncRequest, event.from)
+        } catch {
+          /* swallow */
+        }
+        break
+
+      case 'sync_batch':
+        try {
+          await target.deliverSyncBatch(event.payload as SyncBatch, event.from)
+        } catch {
+          /* swallow */
+        }
+        break
+
+      case 'sync_complete':
+        try {
+          await target.deliverSyncComplete(event.payload as SyncComplete, event.from)
+        } catch {
+          /* swallow */
+        }
+        break
+
+      case 'sync_ack':
+        try {
+          target.deliverSyncAck(event.payload as SyncAck, event.from)
+        } catch {
+          /* swallow */
+        }
+        break
     }
   }
 }
@@ -210,6 +287,10 @@ export class SimulatedTransport implements ReplicationTransport {
   private raftHandler: RaftHandler | null = null
   private peerConnectedHandler: PeerConnectedHandler | null = null
   private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
+  private syncRequestHandler: SyncRequestHandler | null = null
+  private syncBatchHandler: SyncBatchHandler | null = null
+  private syncCompleteHandler: SyncCompleteHandler | null = null
+  private syncAckHandler: SyncAckHandler | null = null
 
   constructor(network: SimulatedNetwork) {
     this.network = network
@@ -343,6 +424,38 @@ export class SimulatedTransport implements ReplicationTransport {
     }
   }
 
+  async requestSync(peerId: string, request: SyncRequest): Promise<void> {
+    this.ensureConnected()
+    if (!isValidSyncRequest(request)) throw new TransportError('Invalid sync request structure')
+    const peer = this.network.getTransport(peerId)
+    if (!peer || !peer.connected) throw new TransportError(`Peer '${peerId}' is not connected`)
+    this.network.scheduleMessage(this.localNodeId, peerId, 'sync_request', request)
+  }
+
+  async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
+    this.ensureConnected()
+    if (!isValidSyncBatch(batch)) throw new TransportError('Invalid sync batch structure')
+    const peer = this.network.getTransport(peerId)
+    if (!peer || !peer.connected) throw new TransportError(`Peer '${peerId}' is not connected`)
+    this.network.scheduleMessage(this.localNodeId, peerId, 'sync_batch', batch)
+  }
+
+  async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
+    this.ensureConnected()
+    if (!isValidSyncComplete(complete)) throw new TransportError('Invalid sync complete structure')
+    const peer = this.network.getTransport(peerId)
+    if (!peer || !peer.connected) throw new TransportError(`Peer '${peerId}' is not connected`)
+    this.network.scheduleMessage(this.localNodeId, peerId, 'sync_complete', complete)
+  }
+
+  async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
+    this.ensureConnected()
+    if (!isValidSyncAck(ack)) throw new TransportError('Invalid sync ack structure')
+    const peer = this.network.getTransport(peerId)
+    if (!peer || !peer.connected) throw new TransportError(`Peer '${peerId}' is not connected`)
+    this.network.scheduleMessage(this.localNodeId, peerId, 'sync_ack', ack)
+  }
+
   onBatchReceived(handler: BatchHandler): void {
     this.batchHandler = handler
   }
@@ -357,6 +470,22 @@ export class SimulatedTransport implements ReplicationTransport {
 
   onRaftMessage(handler: RaftHandler): void {
     this.raftHandler = handler
+  }
+
+  onSyncRequested(handler: SyncRequestHandler): void {
+    this.syncRequestHandler = handler
+  }
+
+  onSyncBatchReceived(handler: SyncBatchHandler): void {
+    this.syncBatchHandler = handler
+  }
+
+  onSyncCompleteReceived(handler: SyncCompleteHandler): void {
+    this.syncCompleteHandler = handler
+  }
+
+  onSyncAckReceived(handler: SyncAckHandler): void {
+    this.syncAckHandler = handler
   }
 
   onPeerConnected(handler: PeerConnectedHandler): void {
@@ -394,6 +523,22 @@ export class SimulatedTransport implements ReplicationTransport {
       throw new TransportError('No forward handler registered')
     }
     return this.forwardHandler(request, fromPeerId)
+  }
+
+  async deliverSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {
+    if (this.syncRequestHandler) await this.syncRequestHandler(request, fromPeerId)
+  }
+
+  async deliverSyncBatch(batch: SyncBatch, fromPeerId: string): Promise<void> {
+    if (this.syncBatchHandler) await this.syncBatchHandler(batch, fromPeerId)
+  }
+
+  async deliverSyncComplete(complete: SyncComplete, fromPeerId: string): Promise<void> {
+    if (this.syncCompleteHandler) await this.syncCompleteHandler(complete, fromPeerId)
+  }
+
+  deliverSyncAck(ack: SyncAck, fromPeerId: string): void {
+    if (this.syncAckHandler) this.syncAckHandler(ack, fromPeerId)
   }
 
   private ensureConnected(): void {

@@ -6,7 +6,7 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Turn any SQLite database into a networked data layer with real-time subscriptions. One library gives you connection pooling, change data capture, migrations, scheduled backups, and a client SDK that talks over HTTP or WebSocket.
+Turn any SQLite database into a distributed, networked data layer with real-time subscriptions and multi-node replication. One library gives you connection pooling, change data capture, migrations, scheduled backups, distributed replication with conflict resolution, and a client SDK that talks over HTTP or WebSocket.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
@@ -158,6 +158,9 @@ The package ships independent exports so you only bundle what you need:
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
+| `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, Raft, HLC |
+| `@delali/sirannon-db/transport/websocket` | WebSocket replication transport with TLS and auth |
+| `@delali/sirannon-db/transport/memory` | In-memory transport for testing |
 
 ## Core features
 
@@ -434,6 +437,179 @@ await httpDb.transaction([
 
 httpClient.close()
 ```
+
+## Distributed replication
+
+Sirannon can replicate a SQLite database across multiple nodes with automatic change propagation, conflict resolution, and new-node bootstrapping. The replication layer is transport-agnostic, topology-aware, and adds zero overhead when not enabled.
+
+```ts
+import { ReplicationEngine } from '@delali/sirannon-db/replication'
+import { InMemoryTransport, MemoryBus } from '@delali/sirannon-db/transport/memory'
+```
+
+### Primary-replica setup
+
+One node accepts writes and pushes changes to read replicas. Replicas forward writes to the primary when `writeForwarding` is enabled.
+
+```ts
+import { ReplicationEngine, PrimaryReplicaTopology } from '@delali/sirannon-db/replication'
+import { WebSocketReplicationTransport } from '@delali/sirannon-db/transport/websocket'
+
+const transport = new WebSocketReplicationTransport({
+  port: 4200,
+  authToken: process.env.REPLICATION_TOKEN,
+})
+
+const engine = new ReplicationEngine(db, writerConn, {
+  nodeId: 'primary-us-east-1',
+  topology: new PrimaryReplicaTopology('primary'),
+  transport,
+  snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
+  changeTracker: tracker,
+})
+
+await engine.start()
+
+await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999])
+
+const rows = await engine.query<{ id: number }>('SELECT * FROM orders')
+```
+
+On the replica side:
+
+```ts
+const replicaEngine = new ReplicationEngine(replicaDb, replicaConn, {
+  nodeId: 'replica-eu-west-1',
+  topology: new PrimaryReplicaTopology('replica'),
+  transport: replicaTransport,
+  transportConfig: { endpoints: ['ws://primary:4200'] },
+  writeForwarding: true,
+  changeTracker: replicaTracker,
+})
+
+await replicaEngine.start()
+```
+
+When `initialSync` is `true` (the default), a new replica automatically pulls a full snapshot from the primary before accepting reads. The replica blocks reads and writes until the sync completes and incremental catch-up reaches the configured lag threshold.
+
+### Multi-primary setup
+
+Every node accepts writes. Conflicts are resolved per-table using configurable strategies.
+
+```ts
+import { ReplicationEngine, MultiPrimaryTopology, LWWResolver, FieldMergeResolver } from '@delali/sirannon-db/replication'
+
+const engine = new ReplicationEngine(db, writerConn, {
+  nodeId: 'node-africa',
+  topology: new MultiPrimaryTopology(),
+  transport,
+  defaultConflictResolver: new LWWResolver(),
+  conflictResolvers: {
+    user_profiles: new FieldMergeResolver(),
+  },
+  changeTracker: tracker,
+  snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
+})
+```
+
+### Conflict resolution
+
+Three built-in strategies ship with the replication module:
+
+| Strategy | Class | Behavior |
+| --- | --- | --- |
+| Last-Writer-Wins | `LWWResolver` | The change with the higher HLC timestamp wins. Ties break by node ID. |
+| Field-Level Merge | `FieldMergeResolver` | Merges at the column level using per-column HLC tracking. Two nodes editing different columns on the same row both succeed. |
+| Primary Wins | `PrimaryWinsResolver` | The primary's version always wins. Useful for reference data that replicas should never override. |
+
+Custom resolvers can be built by creating a class with a `resolve(ctx: ConflictContext): ConflictResolution` method.
+
+### Initial sync
+
+When a new node joins a running cluster, it needs the full dataset before it can process incremental changes. The initial sync protocol handles this automatically:
+
+1. The joiner connects and sends a sync request to the source
+2. The source opens a consistent read-only snapshot and sends schema DDL (CREATE TABLE, CREATE INDEX)
+3. The source streams table data in configurable batches (default 10,000 rows) with per-batch checksums
+4. After all data is transferred, the source sends a manifest with row counts and primary-key hashes
+5. The joiner verifies the manifest, transitions to catch-up mode, and applies incremental changes accumulated during the transfer
+6. Once the replication lag drops below `maxSyncLagBeforeReady`, the joiner starts serving reads
+
+The state machine is: `pending` -> `syncing` -> `catching-up` -> `ready`. You can monitor it via `engine.status().syncState`.
+
+For large databases where a network transfer is impractical, the out-of-band path lets you copy the SQLite file directly and start from a known sequence:
+
+```ts
+const engine = new ReplicationEngine(db, writerConn, {
+  initialSync: false,
+  resumeFromSeq: 50000n,
+  // ...
+})
+```
+
+### Write concerns
+
+Control how many replicas must acknowledge a write before it returns:
+
+```ts
+await engine.execute(
+  'INSERT INTO orders (id, total) VALUES (?, ?)',
+  [1, 4999],
+  { writeConcern: { level: 'majority', timeoutMs: 5000 } },
+)
+```
+
+Levels: `'local'` (default, returns after local write), `'majority'` (waits for >50% of peers), `'all'` (waits for every peer).
+
+### Transport options
+
+| Transport | Import | Use case |
+| --- | --- | --- |
+| WebSocket | `@delali/sirannon-db/transport/websocket` | Production multi-node over the network. TLS support, automatic reconnection, configurable auth token. |
+| In-Memory | `@delali/sirannon-db/transport/memory` | Testing and single-process multi-node scenarios. Messages delivered via microtask scheduling. |
+| Simulated | `@delali/sirannon-db/transport/simulated` | Deterministic fault-injection testing. Configurable latency, packet loss, and network partitions. |
+| Custom | Build your own | Any transport that satisfies the `ReplicationTransport` interface (Redis, NATS, MQTT, TCP, etc). |
+
+### Replication configuration reference
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `nodeId` | `string` | auto-generated | Unique identifier for this node |
+| `topology` | `Topology` | required | `PrimaryReplicaTopology` or `MultiPrimaryTopology` |
+| `transport` | `ReplicationTransport` | required | Transport for inter-node communication |
+| `transportConfig` | `TransportConfig` | `{}` | Endpoints and metadata for the transport |
+| `writeForwarding` | `boolean` | `false` | Forward writes from replicas to the primary |
+| `defaultConflictResolver` | `ConflictResolver` | `LWWResolver` | Default conflict resolution strategy |
+| `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
+| `batchSize` | `number` | `100` | Changes per replication batch |
+| `batchIntervalMs` | `number` | `100` | Sender loop interval in ms |
+| `maxClockDriftMs` | `number` | `60000` | Maximum tolerated HLC drift before rejecting a batch |
+| `maxPendingBatches` | `number` | `10` | In-flight batches per peer before backpressure |
+| `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |
+| `initialSync` | `boolean` | `true` | Pull a full snapshot when joining a cluster |
+| `syncBatchSize` | `number` | `10000` | Rows per sync batch during initial sync |
+| `maxConcurrentSyncs` | `number` | `2` | Maximum simultaneous sync sessions on the source |
+| `maxSyncDurationMs` | `number` | `1800000` | Source aborts sync after this duration (30 min) |
+| `maxSyncLagBeforeReady` | `number` | `100` | Catch-up lag threshold (in sequences) to transition to ready |
+| `syncAckTimeoutMs` | `number` | `30000` | Per-batch ack timeout during sync (30s) |
+| `catchUpDeadlineMs` | `number` | `600000` | Max time in catch-up phase before transitioning to ready (10 min) |
+| `resumeFromSeq` | `bigint` | - | Start replication from a specific sequence (out-of-band sync) |
+| `snapshotConnectionFactory` | `() => Promise<SQLiteConnection>` | - | Factory for read-only connections used during sync serving |
+| `changeTracker` | `ChangeTracker` | - | CDC trigger manager, required for initial sync |
+| `flowControl` | `{ maxLagSeconds?, onLagExceeded? }` | - | Replication lag monitoring callbacks |
+
+### Replication errors
+
+| Error | Code | When |
+| --- | --- | --- |
+| `ReplicationError` | `REPLICATION_ERROR` | Base class for replication failures |
+| `SyncError` | `SYNC_ERROR` | Initial sync failures (node not ready, timeout, integrity mismatch) |
+| `ConflictError` | `CONFLICT_ERROR` | Unresolvable write conflict |
+| `TransportError` | `TRANSPORT_ERROR` | Inter-node communication failure |
+| `BatchValidationError` | `BATCH_VALIDATION_ERROR` | Checksum mismatch, clock drift, or oversized batch |
+| `TopologyError` | `TOPOLOGY_ERROR` | Write on a read-only node without forwarding |
+| `WriteConcernError` | `WRITE_CONCERN_ERROR` | Quorum not reached within timeout |
+| `RaftError` | `RAFT_ERROR` | Raft consensus protocol failure |
 
 ## Security
 

@@ -85,6 +85,7 @@ export interface Topology {
 
 export interface TransportConfig {
   endpoints?: string[]
+  localRole?: TopologyRole
   metadata?: Record<string, unknown>
 }
 

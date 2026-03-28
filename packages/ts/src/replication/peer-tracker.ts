@@ -178,6 +178,28 @@ export class PeerTracker {
         clearTimeout(waiter.timer)
         this.waiters.delete(waiter)
         waiter.resolve()
+        continue
+      }
+      if (waiter.kind === 'all' && connected < this.peers.size) {
+        clearTimeout(waiter.timer)
+        this.waiters.delete(waiter)
+        waiter.reject(
+          new WriteConcernError(
+            `Cannot satisfy 'all' write concern: only ${connected}/${this.peers.size} peers connected`,
+          ),
+        )
+        continue
+      }
+      const totalNodes = this.peers.size + 1
+      const majorityNeeded = Math.floor(totalNodes / 2) + 1
+      if (waiter.kind === 'majority' && connected + 1 < majorityNeeded) {
+        clearTimeout(waiter.timer)
+        this.waiters.delete(waiter)
+        waiter.reject(
+          new WriteConcernError(
+            `Cannot satisfy 'majority' write concern: only ${connected + 1}/${totalNodes} nodes reachable`,
+          ),
+        )
       }
     }
   }

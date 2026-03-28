@@ -132,7 +132,11 @@ export class ReplicationEngine {
     this.lastSentSeq = await this.log.getLocalSeq()
 
     this.setupTransportHandlers()
-    await this.config.transport.connect(this.nodeId, this.config.transportConfig ?? {})
+    const transportConfig = {
+      ...this.config.transportConfig,
+      localRole: this.config.topology.role,
+    }
+    await this.config.transport.connect(this.nodeId, transportConfig)
 
     const isPrimary = this.config.topology.role === 'primary'
     const syncCompleted = await this.log.isSyncCompleted()
@@ -348,8 +352,8 @@ export class ReplicationEngine {
         const hlcVal = this.hlc.now()
         await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), this.nodeId, txId, hlcVal)
       } else {
-        await this.log.stampChanges(tx, Number(seqBefore), txId)
-        await this.log.updateColumnVersions(tx, Number(seqBefore))
+        await this.log.stampChanges(tx, seqBefore, txId)
+        await this.log.updateColumnVersions(tx, seqBefore)
       }
 
       return { changes: r.changes, lastInsertRowId: r.lastInsertRowId }
@@ -410,8 +414,8 @@ export class ReplicationEngine {
         }
       }
 
-      await this.log.stampChanges(tx, Number(seqBefore), txId)
-      await this.log.updateColumnVersions(tx, Number(seqBefore))
+      await this.log.stampChanges(tx, seqBefore, txId)
+      await this.log.updateColumnVersions(tx, seqBefore)
     })
 
     return { results, requestId }
@@ -434,7 +438,7 @@ export class ReplicationEngine {
       }
 
       const peerInfo = knownPeers.get(fromPeerId)
-      if (!this.config.topology.shouldAcceptFrom(fromPeerId, peerInfo?.role ?? 'peer')) {
+      if (!peerInfo || !this.config.topology.shouldAcceptFrom(fromPeerId, peerInfo.role)) {
         throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
       }
 
@@ -457,13 +461,11 @@ export class ReplicationEngine {
         this.highestSourceSeqSeen = batch.toSeq
       }
 
-      this.config.transport
-        .sendAck(fromPeerId, {
-          batchId: batch.batchId,
-          ackedSeq: batch.toSeq,
-          nodeId: this.nodeId,
-        })
-        .catch(() => {})
+      await this.config.transport.sendAck(fromPeerId, {
+        batchId: batch.batchId,
+        ackedSeq: batch.toSeq,
+        nodeId: this.nodeId,
+      })
     })
 
     this.config.transport.onAckReceived((ack, _fromPeerId) => {
@@ -986,7 +988,7 @@ export class ReplicationEngine {
       const recordStmt = await this.writerConn.prepare(
         'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
       )
-      await recordStmt.run(fromPeerId, Number(complete.snapshotSeq), Date.now() / 1000)
+      await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
 
       this.syncState.phase = 'catching-up'
       this.syncState.snapshotSeq = complete.snapshotSeq
@@ -1126,7 +1128,6 @@ export class ReplicationEngine {
         })
       }
 
-      const sentToSeq = batch.toSeq
       this.config.transport.send(peerId, batch).catch(() => {
         if (peerState) {
           const idx = peerState.inFlightBatches.findIndex(b => b.batchId === batch.batchId)
@@ -1136,7 +1137,7 @@ export class ReplicationEngine {
           if (peerState.pendingBatches > 0) {
             peerState.pendingBatches -= 1
           }
-          if (peerState.lastSentSeq === sentToSeq) {
+          if (previousSeq < peerState.lastSentSeq) {
             peerState.lastSentSeq = previousSeq
           }
         }

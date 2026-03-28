@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
 			 ORDER BY seq ASC
 			 LIMIT ?`,
     )
-    const rows = (await stmt.all(Number(afterSeq), this.localNodeId, batchSize)) as ChangeRow[]
+    const rows = (await stmt.all(afterSeq.toString(), this.localNodeId, batchSize)) as ChangeRow[]
 
     if (rows.length === 0) {
       return null
@@ -203,22 +203,22 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     }
   }
 
-  async stampChanges(tx: SQLiteConnection, afterSeq: number, txId: string): Promise<void> {
+  async stampChanges(tx: SQLiteConnection, afterSeq: bigint, txId: string): Promise<void> {
     const hlcValue = this.hlc.now()
     const stmt = await tx.prepare(
       `UPDATE "${this.changesTable}" SET node_id = ?, tx_id = ?, hlc = ? WHERE seq > ? AND node_id = ''`,
     )
-    await stmt.run(this.localNodeId, txId, hlcValue, afterSeq)
+    await stmt.run(this.localNodeId, txId, hlcValue, afterSeq.toString())
   }
 
-  async updateColumnVersions(tx: SQLiteConnection, afterSeq: number): Promise<void> {
+  async updateColumnVersions(tx: SQLiteConnection, afterSeq: bigint): Promise<void> {
     const selectStmt = await tx.prepare(
       `SELECT seq, table_name, operation, row_id, old_data, new_data, hlc, node_id
 			 FROM "${this.changesTable}"
 			 WHERE seq > ? AND node_id = ?
 			 ORDER BY seq ASC`,
     )
-    const rows = (await selectStmt.all(afterSeq, this.localNodeId)) as ChangeRow[]
+    const rows = (await selectStmt.all(afterSeq.toString(), this.localNodeId)) as ChangeRow[]
 
     for (const row of rows) {
       if (row.operation === 'DELETE') {
@@ -276,6 +276,23 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     const lastApplied = await this.getLastAppliedSeq(batch.sourceNodeId)
     if (batch.toSeq <= lastApplied) {
       return { applied: 0, skipped: batch.changes.length, conflicts: 0 }
+    }
+
+    const needsPartialDedup = batch.fromSeq <= lastApplied
+    let appliedSeqSet: Set<string> | null = null
+    if (needsPartialDedup) {
+      appliedSeqSet = new Set<string>()
+      const checkStmt = await this.conn.prepare(
+        'SELECT source_seq FROM _sirannon_applied_changes WHERE source_node_id = ? AND source_seq >= ? AND source_seq <= ?',
+      )
+      const applied = (await checkStmt.all(
+        batch.sourceNodeId,
+        batch.fromSeq.toString(),
+        batch.toSeq.toString(),
+      )) as Array<{ source_seq: number }>
+      for (const row of applied) {
+        appliedSeqSet.add(String(row.source_seq))
+      }
     }
 
     let applied = 0
@@ -376,7 +393,8 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     )
     const nowSec = Date.now() / 1000
     for (let seq = batch.fromSeq; seq <= batch.toSeq; seq += 1n) {
-      await recordStmt.run(batch.sourceNodeId, Number(seq), nowSec)
+      if (appliedSeqSet?.has(seq.toString())) continue
+      await recordStmt.run(batch.sourceNodeId, seq.toString(), nowSec)
     }
 
     try {
@@ -406,7 +424,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
 			 ON CONFLICT(peer_node_id)
 			 DO UPDATE SET last_acked_seq = excluded.last_acked_seq, updated_at = excluded.updated_at`,
     )
-    await stmt.run(fromNodeId, Number(seq), Date.now() / 1000)
+    await stmt.run(fromNodeId, seq.toString(), Date.now() / 1000)
   }
 
   async getLocalSeq(): Promise<bigint> {
@@ -495,8 +513,9 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
       }
 
       const checksum = this.computeChecksum(changes)
-      const fromSeq = BigInt(offset)
-      const toSeq = BigInt(offset + rows.length - 1)
+      const dumpEpoch = BigInt(Date.now()) * 1_000_000n
+      const fromSeq = dumpEpoch + BigInt(offset)
+      const toSeq = dumpEpoch + BigInt(offset + rows.length - 1)
 
       const dumpNodeId = `dump-${this.localNodeId}`
 
@@ -745,7 +764,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     )
     await stmt.run(
       phase,
-      snapshotSeq !== undefined ? Number(snapshotSeq) : null,
+      snapshotSeq !== undefined ? snapshotSeq.toString() : null,
       sourcePeerId ?? null,
       phase === 'syncing' ? Date.now() / 1000 : null,
       requestId ?? null,
@@ -981,8 +1000,11 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     const whereConditions: string[] = []
     const whereValues: unknown[] = []
 
+    const pkSet = new Set(pkColumns)
+
     for (const [col, val] of Object.entries(sourceData)) {
       if (!validateIdentifier(col)) continue
+      if (pkSet.has(col)) continue
       setClauses.push(`"${col}" = ?`)
       setValues.push(val)
     }

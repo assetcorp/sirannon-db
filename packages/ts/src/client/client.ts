@@ -17,7 +17,11 @@ interface EndpointLatency {
 }
 
 function isTopologyConfig(urlOrOpts: string | TopologyAwareClientOptions): urlOrOpts is TopologyAwareClientOptions {
-  return typeof urlOrOpts === 'object'
+  return (
+    typeof urlOrOpts === 'object' &&
+    ('primary' in urlOrOpts ||
+      ('replicas' in urlOrOpts && Array.isArray(urlOrOpts.replicas) && urlOrOpts.replicas.length > 0))
+  )
 }
 
 function toBaseUrl(url: string): string {
@@ -200,15 +204,21 @@ export class SirannonClient {
     const results = await Promise.all(
       allEndpoints.map(async (url): Promise<EndpointLatency> => {
         const start = performance.now()
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5_000)
+        if (typeof (timeout as { unref?: () => void }).unref === 'function') {
+          ;(timeout as { unref: () => void }).unref()
+        }
         try {
-          const controller = new AbortController()
-          const timeout = setTimeout(() => controller.abort(), 5_000)
-          timeout.unref()
-          await fetch(`${url}/health`, { signal: controller.signal })
-          clearTimeout(timeout)
+          const response = await fetch(`${url}/health`, { signal: controller.signal })
+          if (!response.ok) {
+            return { url, latencyMs: Number.MAX_SAFE_INTEGER, reachable: false }
+          }
           return { url, latencyMs: performance.now() - start, reachable: true }
         } catch {
           return { url, latencyMs: Number.MAX_SAFE_INTEGER, reachable: false }
+        } finally {
+          clearTimeout(timeout)
         }
       }),
     )
@@ -239,15 +249,18 @@ class TopologyAwareTransport implements Transport {
 
   async query(sql: string, params?: Params): Promise<QueryResponse> {
     const transport = await this.getReadTransport()
+    const endpointUsed = this.currentReadUrl
     try {
       return await transport.query(sql, params)
     } catch (err) {
-      const isServerError =
-        err instanceof Error && err.name === 'RemoteError' && (err as { code?: string }).code !== 'CONNECTION_ERROR'
-      if (!isServerError && this.currentReadUrl && this.currentReadUrl !== this.client._getWriteEndpoint()) {
-        this.client._removeReplica(this.currentReadUrl)
-        this.readTransport = null
-        this.currentReadUrl = ''
+      const isTransportError =
+        err instanceof Error && (err.name !== 'RemoteError' || (err as { code?: string }).code === 'CONNECTION_ERROR')
+      if (isTransportError && endpointUsed && endpointUsed !== this.client._getWriteEndpoint()) {
+        this.client._removeReplica(endpointUsed)
+        if (this.currentReadUrl === endpointUsed) {
+          this.readTransport = null
+          this.currentReadUrl = ''
+        }
         const fallback = await this.getReadTransport()
         return fallback.query(sql, params)
       }

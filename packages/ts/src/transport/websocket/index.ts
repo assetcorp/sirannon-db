@@ -13,6 +13,7 @@ import type {
   SyncBatch,
   SyncComplete,
   SyncRequest,
+  TopologyRole,
   TransportConfig,
 } from '../../replication/types.js'
 import {
@@ -217,6 +218,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
   private readonly authToken: string | undefined
 
   private localNodeId = ''
+  private localRole: TopologyRole = 'peer'
   private connected = false
   private listenSocket: uWS.us_listen_socket | null = null
   private readonly connectedPeers = new Map<string, NodeInfo>()
@@ -255,6 +257,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     }
 
     this.localNodeId = localNodeId
+    this.localRole = config.localRole ?? 'peer'
 
     await this.startServer()
     this.connected = true
@@ -485,7 +488,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
           }
           this.connectedPeers.set(hello.nodeId, peerInfo)
 
-          const helloBackPayload: HelloPayload = { nodeId: this.localNodeId, role: 'peer' }
+          const helloBackPayload: HelloPayload = { nodeId: this.localNodeId, role: this.localRole }
           if (this.authToken) {
             helloBackPayload.authToken = this.authToken
           }
@@ -536,7 +539,11 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     let ws: WebSocket
     try {
       ws = new WebSocket(fullUrl)
-    } catch {
+    } catch (err) {
+      console.error(
+        `[sirannon] WebSocket constructor failed for ${endpoint}:`,
+        err instanceof Error ? err.message : err,
+      )
       const failedConn: PeerConnection = {
         nodeId: '',
         ws: null as unknown as WebSocket,
@@ -560,7 +567,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
 
     ws.onopen = () => {
       conn.reconnectAttempts = 0
-      const helloPayload: HelloPayload = { nodeId: this.localNodeId, role: 'peer' }
+      const helloPayload: HelloPayload = { nodeId: this.localNodeId, role: this.localRole }
       if (this.authToken) {
         helloPayload.authToken = this.authToken
       }

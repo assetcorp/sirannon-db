@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",
-    "better-sqlite3": "12.6.2",
+    "better-sqlite3": "12.8.0",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0"
   },
   "devDependencies": {

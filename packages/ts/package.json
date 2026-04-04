@@ -125,7 +125,7 @@
     "@types/node": "25.3.3",
     "@types/pg": "8.20.0",
     "@vitest/coverage-v8": "4.0.18",
-    "better-sqlite3": "12.6.2",
+    "better-sqlite3": "12.8.0",
     "croner": "10.0.1",
     "pg": "8.20.0",
     "simple-statistics": "7.8.7",

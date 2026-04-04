@@ -146,7 +146,6 @@ export interface ReplicationConfig {
   maxClockDriftMs?: number
   maxBatchChanges?: number
   ackTimeoutMs?: number
-  batchSigningKey?: string
   onBeforeForwardedQuery?: (sql: string, params?: unknown[] | Record<string, unknown>) => void
   flowControl?: {
     maxLagSeconds?: number

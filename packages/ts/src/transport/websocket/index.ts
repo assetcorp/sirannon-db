@@ -119,7 +119,7 @@ function deserializeMessage(raw: string): ReplicationMessage | null {
 function isValidHello(payload: unknown): payload is HelloPayload {
   if (typeof payload !== 'object' || payload === null) return false
   const p = payload as Record<string, unknown>
-  return typeof p.nodeId === 'string' && typeof p.role === 'string'
+  return typeof p.nodeId === 'string' && (p.role === 'primary' || p.role === 'replica')
 }
 
 function isValidAck(payload: unknown): payload is ReplicationAck {
@@ -179,7 +179,7 @@ function isValidSyncAck(payload: unknown): payload is SyncAck {
  * WebSocket-based ReplicationTransport for production multi-node replication.
  *
  * Runs a Bun WebSocket server that peers connect to. Outbound messages
- * (batches, acks, Raft messages, forwards) are JSON-serialized with bigint
+ * (batches, acks, forwards) are JSON-serialized with bigint
  * support and sent to the target peer's socket. Inbound messages are
  * validated, deserialized, and dispatched to the registered handlers.
  *

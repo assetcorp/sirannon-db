@@ -93,7 +93,7 @@ describe('SimulatedTransport', () => {
 
     it('throws on send when not connected', async () => {
       const t = network.createTransport()
-      await expect(t.send('peer', makeBatch('x'))).rejects.toThrow('not connected')
+      await expect(t.send('target-node', makeBatch('x'))).rejects.toThrow('not connected')
     })
   })
 

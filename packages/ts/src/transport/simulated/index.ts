@@ -12,7 +12,7 @@ import type {
   SyncRequest,
   TransportConfig,
 } from '../../replication/types.js'
-import type { FaultPolicy } from './fault-policy.js'
+import type { EventKind, FaultPolicy } from './fault-policy.js'
 import type { DeterministicScheduler, ScheduledEvent } from './scheduler.js'
 
 function isValidBatch(batch: unknown): batch is ReplicationBatch {
@@ -132,9 +132,9 @@ export class SimulatedNetwork {
     this.transports.delete(nodeId)
   }
 
-  scheduleMessage(from: string, to: string, kind: string, payload: unknown): void {
-    if (this.faultPolicy.shouldDrop(from, to, kind as 'batch' | 'ack')) return
-    const latency = this.faultPolicy.sampleLatency(from, to, kind as 'batch' | 'ack')
+  scheduleMessage(from: string, to: string, kind: EventKind, payload: unknown): void {
+    if (this.faultPolicy.shouldDrop(from, to, kind)) return
+    const latency = this.faultPolicy.sampleLatency(from, to, kind)
     this.scheduler.enqueue({
       deliverAt: this.scheduler.now + latency,
       from,

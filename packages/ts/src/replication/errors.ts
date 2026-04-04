@@ -52,14 +52,6 @@ export class TopologyError extends ReplicationError {
   }
 }
 
-/** Thrown for Raft consensus protocol failures. */
-export class RaftError extends ReplicationError {
-  constructor(message: string) {
-    super(message, 'RAFT_ERROR')
-    this.name = 'RaftError'
-  }
-}
-
 /** Thrown for initial sync failures. */
 export class SyncError extends ReplicationError {
   constructor(

@@ -10,13 +10,11 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { ReplicationEngine } from '../engine.js'
 import { BatchValidationError, ReplicationError, TopologyError } from '../errors.js'
 import { HLC } from '../hlc.js'
-import { MultiPrimaryTopology } from '../topology/multi-primary.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
 import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
   NodeInfo,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
   ReplicationConfig,
@@ -75,9 +73,6 @@ class MockTransport implements ReplicationTransport {
   onSyncBatchReceived(_handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void {}
   onSyncCompleteReceived(_handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void {}
   onSyncAckReceived(_handler: (ack: SyncAck, fromPeerId: string) => void): void {}
-  async sendRaftMessage(_peerId: string, _message: RaftMessage): Promise<void> {}
-  async broadcastRaftMessage(_message: RaftMessage): Promise<void> {}
-  onRaftMessage(_handler: (message: RaftMessage, fromPeerId: string) => void): void {}
   onPeerConnected(handler: (peer: NodeInfo) => void): void {
     this.peerConnectedHandler = handler
   }
@@ -89,7 +84,7 @@ class MockTransport implements ReplicationTransport {
     return this._peers
   }
 
-  addPeer(id: string, role: 'primary' | 'replica' | 'peer' = 'peer'): void {
+  addPeer(id: string, role: 'primary' | 'replica' = 'replica'): void {
     this._peers.set(id, {
       id,
       role,
@@ -189,7 +184,7 @@ describe('ReplicationEngine', () => {
   function makeConfig(overrides: Partial<ReplicationConfig> = {}): ReplicationConfig {
     return {
       nodeId: NODE_A,
-      topology: new MultiPrimaryTopology(),
+      topology: new PrimaryReplicaTopology('primary'),
       transport,
       batchIntervalMs: 50,
       initialSync: false,
@@ -279,9 +274,9 @@ describe('ReplicationEngine', () => {
     it('applies incoming batches and sends ACK', async () => {
       const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-      const engine = new ReplicationEngine(db, conn, makeConfig())
+      const engine = new ReplicationEngine(db, conn, makeConfig({ topology: new PrimaryReplicaTopology('replica') }))
       await engine.start()
-      transport.addPeer(NODE_B)
+      transport.addPeer(NODE_B, 'primary')
 
       const hlcB = new HLC(NODE_B)
       const hlcVal = hlcB.now()
@@ -325,8 +320,13 @@ describe('ReplicationEngine', () => {
     it('rejects batches with excessive clock drift', async () => {
       const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-      const engine = new ReplicationEngine(db, conn, makeConfig({ maxClockDriftMs: 1000 }))
+      const engine = new ReplicationEngine(
+        db,
+        conn,
+        makeConfig({ topology: new PrimaryReplicaTopology('replica'), maxClockDriftMs: 1000 }),
+      )
       await engine.start()
+      transport.addPeer(NODE_B, 'primary')
 
       const farFutureMs = Date.now() + 100_000
       const wallHex = farFutureMs.toString(16).padStart(12, '0')

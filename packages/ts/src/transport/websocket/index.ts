@@ -5,7 +5,6 @@ import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
   NodeInfo,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
   ReplicationTransport,
@@ -41,7 +40,6 @@ interface ReplicationMessage {
     | 'ack'
     | 'forward_request'
     | 'forward_response'
-    | 'raft'
     | 'hello'
     | 'sync_request'
     | 'sync_batch'
@@ -52,7 +50,7 @@ interface ReplicationMessage {
 
 interface HelloPayload {
   nodeId: string
-  role: 'primary' | 'replica' | 'peer'
+  role: 'primary' | 'replica'
   authToken?: string
 }
 
@@ -65,7 +63,6 @@ interface ForwardResponsePayload {
 type BatchHandler = (batch: ReplicationBatch, fromPeerId: string) => Promise<void>
 type AckHandler = (ack: ReplicationAck, fromPeerId: string) => void
 type ForwardHandler = (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>
-type RaftHandler = (message: RaftMessage, fromPeerId: string) => void
 type PeerConnectedHandler = (peer: NodeInfo) => void
 type PeerDisconnectedHandler = (peerId: string) => void
 
@@ -141,12 +138,6 @@ function isValidForwardRequest(payload: unknown): payload is ForwardedTransactio
   return typeof p.requestId === 'string' && Array.isArray(p.statements)
 }
 
-function isValidRaftMessage(payload: unknown): payload is RaftMessage {
-  if (typeof payload !== 'object' || payload === null) return false
-  const p = payload as Record<string, unknown>
-  return typeof p.type === 'string' && typeof p.term === 'number'
-}
-
 function isValidForwardResponse(payload: unknown): payload is ForwardResponsePayload {
   if (typeof payload !== 'object' || payload === null) return false
   const p = payload as Record<string, unknown>
@@ -218,7 +209,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
   private readonly authToken: string | undefined
 
   private localNodeId = ''
-  private localRole: TopologyRole = 'peer'
+  private localRole: TopologyRole = 'replica'
   private connected = false
   private listenSocket: uWS.us_listen_socket | null = null
   private readonly connectedPeers = new Map<string, NodeInfo>()
@@ -229,7 +220,6 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
   private batchHandler: BatchHandler | null = null
   private ackHandler: AckHandler | null = null
   private forwardHandler: ForwardHandler | null = null
-  private raftHandler: RaftHandler | null = null
   private peerConnectedHandler: PeerConnectedHandler | null = null
   private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
   private syncRequestHandler: ((request: SyncRequest, fromPeerId: string) => Promise<void>) | null = null
@@ -257,7 +247,7 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
     }
 
     this.localNodeId = localNodeId
-    this.localRole = config.localRole ?? 'peer'
+    this.localRole = config.localRole ?? 'replica'
 
     await this.startServer()
     this.connected = true
@@ -408,29 +398,6 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
 
   onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void {
     this.syncAckHandler = handler
-  }
-
-  async sendRaftMessage(peerId: string, message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-    const msg: ReplicationMessage = { type: 'raft', payload: message }
-    this.sendToPeer(peerId, serializeMessage(msg))
-  }
-
-  async broadcastRaftMessage(message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-    const msg: ReplicationMessage = { type: 'raft', payload: message }
-    const raw = serializeMessage(msg)
-    for (const [peerId] of this.connectedPeers) {
-      try {
-        this.sendToPeer(peerId, raw)
-      } catch {
-        /* peer may have disconnected */
-      }
-    }
-  }
-
-  onRaftMessage(handler: RaftHandler): void {
-    this.raftHandler = handler
   }
 
   onPeerConnected(handler: PeerConnectedHandler): void {
@@ -721,14 +688,6 @@ export class WebSocketReplicationTransport implements ReplicationTransport {
           } else {
             pending.reject(new TransportError('Forward response contained neither result nor error'))
           }
-        }
-        break
-      }
-
-      case 'raft': {
-        if (!isValidRaftMessage(msg.payload)) return
-        if (this.raftHandler) {
-          this.raftHandler(msg.payload, fromPeerId)
         }
         break
       }

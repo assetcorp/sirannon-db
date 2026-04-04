@@ -1,6 +1,6 @@
 import type { SeededPRNG } from './prng.js'
 
-export type EventKind = 'batch' | 'ack' | 'raft' | 'forward_request' | 'forward_response'
+export type EventKind = 'batch' | 'ack' | 'forward_request' | 'forward_response'
 
 export interface FaultPolicyConfig {
   dropRate?: number

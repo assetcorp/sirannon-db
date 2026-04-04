@@ -173,45 +173,6 @@ describe('SimulatedTransport', () => {
     })
   })
 
-  describe('raft messages', () => {
-    it('sends and receives raft messages', async () => {
-      const tA = network.createTransport()
-      const tB = network.createTransport()
-      await tA.connect('nodeA', {})
-      await tB.connect('nodeB', {})
-
-      const msgs: Array<{ type: string; from: string }> = []
-      tB.onRaftMessage((msg, from) => msgs.push({ type: msg.type, from }))
-
-      await tA.sendRaftMessage('nodeB', { type: 'heartbeat', term: 1, leaderId: 'nodeA' })
-      await scheduler.runUntilQuiet()
-
-      expect(msgs).toHaveLength(1)
-      expect(msgs[0].type).toBe('heartbeat')
-      expect(msgs[0].from).toBe('nodeA')
-    })
-
-    it('broadcasts raft messages', async () => {
-      const tA = network.createTransport()
-      const tB = network.createTransport()
-      const tC = network.createTransport()
-      await tA.connect('nodeA', {})
-      await tB.connect('nodeB', {})
-      await tC.connect('nodeC', {})
-
-      let countB = 0
-      let countC = 0
-      tB.onRaftMessage(() => countB++)
-      tC.onRaftMessage(() => countC++)
-
-      await tA.broadcastRaftMessage({ type: 'pre_vote', term: 1, candidateId: 'nodeA' })
-      await scheduler.runUntilQuiet()
-
-      expect(countB).toBe(1)
-      expect(countC).toBe(1)
-    })
-  })
-
   describe('forward requests', () => {
     it('forwards a request and receives a response', async () => {
       const tA = network.createTransport()
@@ -314,20 +275,6 @@ describe('SimulatedTransport', () => {
       })
 
       await tA.send('nodeB', makeBatch('nodeA'))
-      await scheduler.runUntilQuiet()
-    })
-
-    it('swallows raft handler errors', async () => {
-      const tA = network.createTransport()
-      const tB = network.createTransport()
-      await tA.connect('nodeA', {})
-      await tB.connect('nodeB', {})
-
-      tB.onRaftMessage(() => {
-        throw new Error('raft handler exploded')
-      })
-
-      await tA.sendRaftMessage('nodeB', { type: 'heartbeat', term: 1 })
       await scheduler.runUntilQuiet()
     })
   })

@@ -128,8 +128,12 @@ describe('SimulatedTransport', () => {
 
       const receivedB: string[] = []
       const receivedC: string[] = []
-      tB.onBatchReceived(async batch => { receivedB.push(batch.batchId) })
-      tC.onBatchReceived(async batch => { receivedC.push(batch.batchId) })
+      tB.onBatchReceived(async batch => {
+        receivedB.push(batch.batchId)
+      })
+      tC.onBatchReceived(async batch => {
+        receivedC.push(batch.batchId)
+      })
 
       await tA.broadcast(makeBatch('nodeA'))
       await scheduler.runUntilQuiet()
@@ -216,7 +220,9 @@ describe('SimulatedTransport', () => {
       await tB.connect('nodeB', {})
 
       const received: ReplicationBatch[] = []
-      tB.onBatchReceived(async batch => { received.push(batch) })
+      tB.onBatchReceived(async batch => {
+        received.push(batch)
+      })
 
       await tA.send('nodeB', makeBatch('nodeA'))
       await scheduler.runUntilQuiet()
@@ -233,7 +239,9 @@ describe('SimulatedTransport', () => {
       await tB.connect('nodeB', {})
 
       const received: ReplicationBatch[] = []
-      tB.onBatchReceived(async batch => { received.push(batch) })
+      tB.onBatchReceived(async batch => {
+        received.push(batch)
+      })
 
       await tA.send('nodeB', makeBatch('nodeA'))
       await scheduler.runUntilQuiet()
@@ -250,7 +258,9 @@ describe('SimulatedTransport', () => {
       await tB.connect('nodeB', {})
 
       const received: ReplicationBatch[] = []
-      tB.onBatchReceived(async batch => { received.push(batch) })
+      tB.onBatchReceived(async batch => {
+        received.push(batch)
+      })
 
       await tA.send('nodeB', makeBatch('nodeA', 1n))
       await scheduler.runUntilQuiet()
@@ -287,7 +297,9 @@ describe('SimulatedTransport', () => {
       await tB.connect('nodeB', {})
 
       const received: ReplicationBatch[] = []
-      tB.onBatchReceived(async batch => { received.push(batch) })
+      tB.onBatchReceived(async batch => {
+        received.push(batch)
+      })
 
       await tA.send('nodeB', makeBatch('nodeA'))
       await tB.disconnect()

@@ -277,8 +277,8 @@ describe('InMemoryTransport', () => {
       const receivedOnBus1: ReplicationBatch[] = []
       const receivedOnBus2: ReplicationBatch[] = []
 
-      transportB.onBatchReceived(async batch => receivedOnBus1.push(batch))
-      isolated2.onBatchReceived(async batch => receivedOnBus2.push(batch))
+      transportB.onBatchReceived(async batch => { receivedOnBus1.push(batch) })
+      isolated2.onBatchReceived(async batch => { receivedOnBus2.push(batch) })
 
       await transportA.send('node-b', makeBatch({ batchId: 'bus1-batch' }))
       await isolated1.send('iso-2', makeBatch({ batchId: 'bus2-batch' }))

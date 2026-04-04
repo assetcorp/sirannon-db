@@ -227,6 +227,13 @@ export interface SyncAck {
   error?: string
 }
 
+export interface ReplicationErrorEvent {
+  error: Error
+  operation: string
+  peerId?: string
+  recoverable: boolean
+}
+
 const BIGINT_PREFIX = '\x00sirannon:bigint:'
 
 function bigintReplacer(_key: string, value: unknown): unknown {

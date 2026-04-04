@@ -436,18 +436,27 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     return BigInt(row.max_seq)
   }
 
-  async getMinAckedSeq(): Promise<bigint> {
-    const stmt = await this.conn.prepare('SELECT MIN(last_acked_seq) as min_seq FROM _sirannon_peer_state')
-    const row = (await stmt.get()) as { min_seq: number | null } | undefined
-    let result = 0n
-    if (row && row.min_seq !== null) {
+  async getMinAckedSeq(): Promise<bigint | null> {
+    const stmt = await this.conn.prepare(
+      'SELECT MIN(last_acked_seq) as min_seq, COUNT(*) as cnt FROM _sirannon_peer_state',
+    )
+    const row = (await stmt.get()) as { min_seq: number | null; cnt: number } | undefined
+
+    const hasPeers = row !== undefined && row.cnt > 0
+    let result: bigint | null = null
+
+    if (hasPeers && row.min_seq !== null) {
       result = BigInt(row.min_seq)
+    } else if (hasPeers) {
+      result = 0n
     }
+
     for (const syncSeq of this.activeSyncSnapshotSeqs) {
-      if (result === 0n || syncSeq < result) {
+      if (result === null || syncSeq < result) {
         result = syncSeq
       }
     }
+
     return result
   }
 

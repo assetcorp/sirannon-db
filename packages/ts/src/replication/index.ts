@@ -30,6 +30,7 @@ export type {
   ReplicationBatch,
   ReplicationChange,
   ReplicationConfig,
+  ReplicationErrorEvent,
   ReplicationStatus,
   ReplicationTransport,
   SyncAck,

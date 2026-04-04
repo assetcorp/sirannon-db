@@ -18,6 +18,7 @@ import type {
   ReplicationAck,
   ReplicationBatch,
   ReplicationConfig,
+  ReplicationErrorEvent,
   ReplicationTransport,
   SyncAck,
   SyncBatch,
@@ -347,20 +348,29 @@ describe('ReplicationEngine', () => {
       ]
       const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
 
-      await expect(
-        transport.triggerBatchReceived(
-          {
-            sourceNodeId: NODE_B,
-            batchId: `${NODE_B}-50-50`,
-            fromSeq: 50n,
-            toSeq: 50n,
-            hlcRange: { min: hlcVal, max: hlcVal },
-            changes,
-            checksum,
-          },
-          NODE_B,
-        ),
-      ).rejects.toThrow(BatchValidationError)
+      const errorEvents: ReplicationErrorEvent[] = []
+      engine.on('replication-error', (event: ReplicationErrorEvent) => {
+        errorEvents.push(event)
+      })
+
+      await transport.triggerBatchReceived(
+        {
+          sourceNodeId: NODE_B,
+          batchId: `${NODE_B}-50-50`,
+          fromSeq: 50n,
+          toSeq: 50n,
+          hlcRange: { min: hlcVal, max: hlcVal },
+          changes,
+          checksum,
+        },
+        NODE_B,
+      )
+
+      expect(errorEvents.length).toBe(1)
+      expect(errorEvents[0].error).toBeInstanceOf(BatchValidationError)
+      expect(errorEvents[0].operation).toBe('batch-received')
+      expect(errorEvents[0].peerId).toBe(NODE_B)
+      expect(errorEvents[0].recoverable).toBe(true)
 
       await engine.stop()
     })

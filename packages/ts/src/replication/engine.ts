@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
@@ -14,6 +15,7 @@ import type {
   ConflictResolver,
   ForwardedTransactionResult,
   ReplicationConfig,
+  ReplicationErrorEvent,
   ReplicationStatus,
   SyncAck,
   SyncBatch,
@@ -51,7 +53,7 @@ interface ActiveSyncSession {
   aborted: boolean
 }
 
-export class ReplicationEngine {
+export class ReplicationEngine extends EventEmitter {
   private readonly database: Database
   private readonly writerConn: SQLiteConnection
   private readonly config: ReplicationConfig
@@ -99,6 +101,7 @@ export class ReplicationEngine {
   private readonly expectedBatchIndex = new Map<string, number>()
 
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
+    super()
     this.database = database
     this.writerConn = writerConn
     this.config = config
@@ -122,6 +125,16 @@ export class ReplicationEngine {
     this.resumeFromSeq = config.resumeFromSeq
     this.snapshotConnectionFactory = config.snapshotConnectionFactory
     this.tracker = config.changeTracker
+  }
+
+  private emitError(event: ReplicationErrorEvent): void {
+    if (this.listenerCount('replication-error') > 0) {
+      try {
+        this.emit('replication-error', event)
+      } catch {
+        /* Listener failures must not disrupt engine operation */
+      }
+    }
   }
 
   async start(): Promise<void> {
@@ -215,12 +228,16 @@ export class ReplicationEngine {
     if (this.syncState.phase === 'syncing') {
       try {
         await this.writerConn.exec('PRAGMA foreign_keys = ON')
-      } catch {
-        /* best-effort */
+      } catch (err: unknown) {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })
       }
     }
 
     this.clearSenderTimer()
+    if (this.tracker) {
+      this.tracker.clearPruneBoundary()
+    }
     await this.config.transport.disconnect()
   }
 
@@ -426,46 +443,51 @@ export class ReplicationEngine {
       if (!this.running) return
       if (this.syncState.phase !== 'ready' && this.syncState.phase !== 'catching-up') return
 
-      if (batch.sourceNodeId !== fromPeerId) {
-        throw new BatchValidationError(
-          `Batch sourceNodeId '${batch.sourceNodeId}' does not match sender '${fromPeerId}'`,
-        )
+      try {
+        if (batch.sourceNodeId !== fromPeerId) {
+          throw new BatchValidationError(
+            `Batch sourceNodeId '${batch.sourceNodeId}' does not match sender '${fromPeerId}'`,
+          )
+        }
+
+        const knownPeers = this.config.transport.peers()
+        if (!knownPeers.has(fromPeerId)) {
+          throw new BatchValidationError(`Batch from unknown peer: ${fromPeerId}`)
+        }
+
+        const peerInfo = knownPeers.get(fromPeerId)
+        if (!peerInfo || !this.config.topology.shouldAcceptFrom(fromPeerId, peerInfo.role)) {
+          throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
+        }
+
+        if (batch.changes.length > this.maxBatchChanges) {
+          throw new BatchValidationError(
+            `Batch too large: ${batch.changes.length} changes exceeds max ${this.maxBatchChanges}`,
+          )
+        }
+
+        const drift = this.checkClockDrift(batch.hlcRange.max)
+        if (drift > this.maxClockDriftMs) {
+          throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${this.maxClockDriftMs}ms`)
+        }
+
+        await this.log.applyBatch(batch, table => this.getResolver(table))
+
+        await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
+
+        if (batch.toSeq > this.highestSourceSeqSeen) {
+          this.highestSourceSeqSeen = batch.toSeq
+        }
+
+        await this.config.transport.sendAck(fromPeerId, {
+          batchId: batch.batchId,
+          ackedSeq: batch.toSeq,
+          nodeId: this.nodeId,
+        })
+      } catch (err: unknown) {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'batch-received', peerId: fromPeerId, recoverable: true })
       }
-
-      const knownPeers = this.config.transport.peers()
-      if (!knownPeers.has(fromPeerId)) {
-        throw new BatchValidationError(`Batch from unknown peer: ${fromPeerId}`)
-      }
-
-      const peerInfo = knownPeers.get(fromPeerId)
-      if (!peerInfo || !this.config.topology.shouldAcceptFrom(fromPeerId, peerInfo.role)) {
-        throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
-      }
-
-      if (batch.changes.length > this.maxBatchChanges) {
-        throw new BatchValidationError(
-          `Batch too large: ${batch.changes.length} changes exceeds max ${this.maxBatchChanges}`,
-        )
-      }
-
-      const drift = this.checkClockDrift(batch.hlcRange.max)
-      if (drift > this.maxClockDriftMs) {
-        throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${this.maxClockDriftMs}ms`)
-      }
-
-      await this.log.applyBatch(batch, table => this.getResolver(table))
-
-      await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
-
-      if (batch.toSeq > this.highestSourceSeqSeen) {
-        this.highestSourceSeqSeen = batch.toSeq
-      }
-
-      await this.config.transport.sendAck(fromPeerId, {
-        batchId: batch.batchId,
-        ackedSeq: batch.toSeq,
-        nodeId: this.nodeId,
-      })
     })
 
     this.config.transport.onAckReceived((ack, _fromPeerId) => {
@@ -483,14 +505,23 @@ export class ReplicationEngine {
         if (!knownPeers.has(fromPeerId)) {
           throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
         }
-        return this.executeForwardedLocally(request.statements)
+        try {
+          return await this.executeForwardedLocally(request.statements)
+        } catch (err: unknown) {
+          const wrappedErr = err instanceof Error ? err : new Error(String(err))
+          this.emitError({ error: wrappedErr, operation: 'forward-execution', peerId: fromPeerId, recoverable: true })
+          throw wrappedErr
+        }
       })
     }
 
     this.config.transport.onPeerConnected(peer => {
       this.peerTracker.addPeer(peer.id)
       if (this.syncState.phase === 'pending') {
-        this.initiateSync().catch(() => {})
+        this.initiateSync().catch((err: unknown) => {
+          const wrappedErr = err instanceof Error ? err : new Error(String(err))
+          this.emitError({ error: wrappedErr, operation: 'sync-initiation', peerId: peer.id, recoverable: true })
+        })
       }
     })
 
@@ -506,9 +537,15 @@ export class ReplicationEngine {
       if (this.syncState.phase === 'syncing' && this.syncState.sourcePeerId === peerId) {
         this.syncState.phase = 'pending'
         this.syncState.sourcePeerId = null
-        this.writerConn.exec('PRAGMA foreign_keys = ON').catch(() => {})
+        this.writerConn.exec('PRAGMA foreign_keys = ON').catch((err: unknown) => {
+          const wrappedErr = err instanceof Error ? err : new Error(String(err))
+          this.emitError({ error: wrappedErr, operation: 'peer-disconnect-pragma-restore', peerId, recoverable: false })
+        })
         this.expectedBatchIndex.clear()
-        this.log.setSyncMeta('pending').catch(() => {})
+        this.log.setSyncMeta('pending').catch((err: unknown) => {
+          const wrappedErr = err instanceof Error ? err : new Error(String(err))
+          this.emitError({ error: wrappedErr, operation: 'sync-meta-write', peerId, recoverable: false })
+        })
       }
     })
 
@@ -643,7 +680,9 @@ export class ReplicationEngine {
 
     this.activeSyncs.set(request.requestId, session)
 
-    this.serveSyncSession(session).catch(() => {
+    this.serveSyncSession(session).catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.emitError({ error: wrappedErr, operation: 'sync-session-serve', peerId: fromPeerId, recoverable: true })
       this.abortSyncSession(request.requestId)
     })
   }
@@ -732,13 +771,25 @@ export class ReplicationEngine {
 
     try {
       await session.readConn.exec('COMMIT')
-    } catch {
-      /* may already be closed */
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.emitError({
+        error: wrappedErr,
+        operation: 'sync-session-commit',
+        peerId: session.joinerNodeId,
+        recoverable: true,
+      })
     }
     try {
       await session.readConn.close()
-    } catch {
-      /* best-effort */
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.emitError({
+        error: wrappedErr,
+        operation: 'sync-session-close',
+        peerId: session.joinerNodeId,
+        recoverable: true,
+      })
     }
     this.log.unregisterActiveSyncSeq(session.snapshotSeq)
     clearTimeout(session.timeoutTimer)
@@ -792,9 +843,23 @@ export class ReplicationEngine {
     }
 
     try {
-      session.readConn.close().catch(() => {})
-    } catch {
-      /* best-effort */
+      session.readConn.close().catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({
+          error: wrappedErr,
+          operation: 'sync-session-abort-close',
+          peerId: session.joinerNodeId,
+          recoverable: true,
+        })
+      })
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.emitError({
+        error: wrappedErr,
+        operation: 'sync-session-abort-close',
+        peerId: session.joinerNodeId,
+        recoverable: true,
+      })
     }
     this.log.unregisterActiveSyncSeq(session.snapshotSeq)
     this.activeSyncs.delete(requestId)
@@ -936,6 +1001,8 @@ export class ReplicationEngine {
         success: true,
       })
     } catch (err) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.emitError({ error: wrappedErr, operation: 'sync-batch-processing', peerId: fromPeerId, recoverable: true })
       await this.config.transport
         .sendSyncAck(fromPeerId, {
           requestId: batch.requestId,
@@ -943,9 +1010,12 @@ export class ReplicationEngine {
           table: batch.table,
           batchIndex: batch.batchIndex,
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: wrappedErr.message,
         })
-        .catch(() => {})
+        .catch((ackErr: unknown) => {
+          const ackWrapped = ackErr instanceof Error ? ackErr : new Error(String(ackErr))
+          this.emitError({ error: ackWrapped, operation: 'sync-ack-send', peerId: fromPeerId, recoverable: true })
+        })
     }
   }
 
@@ -999,10 +1069,16 @@ export class ReplicationEngine {
     } catch {
       try {
         await this.writerConn.exec('PRAGMA foreign_keys = ON')
-      } catch {
-        /* best-effort */
+      } catch (pragmaErr: unknown) {
+        const wrappedErr = pragmaErr instanceof Error ? pragmaErr : new Error(String(pragmaErr))
+        this.emitError({ error: wrappedErr, operation: 'sync-complete-pragma-restore', recoverable: false })
       }
-      throw new SyncError('Failed during sync completion handling')
+      this.emitError({
+        error: new SyncError('Failed during sync completion handling'),
+        operation: 'sync-complete-handling',
+        recoverable: false,
+      })
+      return
     }
   }
 
@@ -1078,8 +1154,10 @@ export class ReplicationEngine {
       try {
         this.lastSentSeq = await this.log.getLocalSeq()
         await this.sendPendingBatches()
-      } catch {
-        /* sender loop failures are transient */
+        await this.updatePruneBoundary()
+      } catch (err: unknown) {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'sender-loop', recoverable: true })
       }
 
       this.startSenderLoop()
@@ -1091,6 +1169,16 @@ export class ReplicationEngine {
     if (this.senderTimer !== null) {
       clearTimeout(this.senderTimer)
       this.senderTimer = null
+    }
+  }
+
+  private async updatePruneBoundary(): Promise<void> {
+    if (!this.tracker) return
+    const minAcked = await this.log.getMinAckedSeq()
+    if (minAcked === null) {
+      this.tracker.clearPruneBoundary()
+    } else {
+      this.tracker.setPruneBoundary(minAcked)
     }
   }
 
@@ -1128,7 +1216,9 @@ export class ReplicationEngine {
         })
       }
 
-      this.config.transport.send(peerId, batch).catch(() => {
+      this.config.transport.send(peerId, batch).catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'transport-send', peerId, recoverable: true })
         if (peerState) {
           const idx = peerState.inFlightBatches.findIndex(b => b.batchId === batch.batchId)
           if (idx >= 0) {

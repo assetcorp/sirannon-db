@@ -10,7 +10,7 @@ const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 export class ChangeTracker {
   private readonly watched = new Map<string, WatchedTableInfo>()
-  private lastSeq = 0
+  private lastSeq = 0n
   private readonly retentionMs: number
   private readonly changesTable: string
   private readonly pollBatchSize: number
@@ -18,6 +18,7 @@ export class ChangeTracker {
   private changesTableReady = false
   private watchedTablesCache: ReadonlySet<string> | null = null
   private readonly stmtCache = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
+  private pruneBoundary: bigint | null = null
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
@@ -88,7 +89,7 @@ export class ChangeTracker {
 			 LIMIT ?`,
     )
 
-    const rows = (await stmt.all(this.lastSeq, this.pollBatchSize)) as ChangeRow[]
+    const rows = (await stmt.all(this.lastSeq.toString(), this.pollBatchSize)) as ChangeRow[]
 
     if (rows.length === 0) {
       return []
@@ -107,7 +108,7 @@ export class ChangeTracker {
       })
     }
 
-    this.lastSeq = rows[rows.length - 1].seq
+    this.lastSeq = BigInt(rows[rows.length - 1].seq)
 
     return events
   }
@@ -121,14 +122,15 @@ export class ChangeTracker {
     }
 
     const cutoff = Date.now() / 1000 - this.retentionMs / 1000
+    const seqBound = this.computeSeqBound()
 
-    if (this.lastSeq > 0) {
+    if (seqBound !== null) {
       const stmt = await this.getStmt(
         conn,
         'cleanup_coordinated',
         `DELETE FROM "${this.changesTable}" WHERE changed_at < ? AND seq <= ?`,
       )
-      const result = await stmt.run(cutoff, this.lastSeq)
+      const result = await stmt.run(cutoff, seqBound.toString())
       return result.changes
     }
 
@@ -137,11 +139,37 @@ export class ChangeTracker {
     return result.changes
   }
 
+  setPruneBoundary(seq: bigint): void {
+    this.pruneBoundary = seq
+  }
+
+  clearPruneBoundary(): void {
+    this.pruneBoundary = null
+  }
+
   get watchedTables(): ReadonlySet<string> {
     if (!this.watchedTablesCache) {
       this.watchedTablesCache = new Set(this.watched.keys())
     }
     return this.watchedTablesCache
+  }
+
+  private computeSeqBound(): bigint | null {
+    const boundary = this.pruneBoundary
+
+    if (this.lastSeq > 0n && boundary !== null) {
+      return this.lastSeq < boundary ? this.lastSeq : boundary
+    }
+
+    if (boundary !== null) {
+      return boundary
+    }
+
+    if (this.lastSeq > 0n) {
+      return this.lastSeq
+    }
+
+    return null
   }
 
   private assertIdentifier(name: string, label: string): void {

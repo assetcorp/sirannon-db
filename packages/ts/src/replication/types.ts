@@ -3,7 +3,7 @@ import type { SQLiteConnection } from '../core/driver/types.js'
 
 export interface NodeInfo {
   id: string
-  role: 'primary' | 'replica' | 'peer'
+  role: 'primary' | 'replica'
   joinedAt: number
   lastSeenAt: number
   lastAckedSeq: bigint
@@ -73,7 +73,7 @@ export interface ConflictResolver {
   resolve(ctx: ConflictContext): ConflictResolution | Promise<ConflictResolution>
 }
 
-export type TopologyRole = 'primary' | 'replica' | 'peer'
+export type TopologyRole = 'primary' | 'replica'
 
 export interface Topology {
   role: TopologyRole
@@ -109,34 +109,9 @@ export interface ReplicationTransport {
   onSyncBatchReceived(handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void
   onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void
   onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void
-  sendRaftMessage(peerId: string, message: RaftMessage): Promise<void>
-  broadcastRaftMessage(message: RaftMessage): Promise<void>
-  onRaftMessage(handler: (message: RaftMessage, fromPeerId: string) => void): void
   onPeerConnected(handler: (peer: NodeInfo) => void): void
   onPeerDisconnected(handler: (peerId: string) => void): void
   peers(): ReadonlyMap<string, NodeInfo>
-}
-
-export type RaftMessageType =
-  | 'request_vote'
-  | 'vote_response'
-  | 'pre_vote'
-  | 'pre_vote_response'
-  | 'append_entries'
-  | 'append_response'
-  | 'heartbeat'
-
-export interface RaftMessage {
-  type: RaftMessageType
-  term: number
-  candidateId?: string
-  leaderId?: string
-  voteGranted?: boolean
-  entries?: unknown[]
-  commitIndex?: number
-  prevLogIndex?: number
-  prevLogTerm?: number
-  success?: boolean
 }
 
 export interface InFlightBatch {
@@ -162,7 +137,6 @@ export interface ReplicationConfig {
   transport: ReplicationTransport
   transportConfig?: TransportConfig
   writeForwarding?: boolean
-  raft?: RaftConfig
   conflictResolvers?: Record<string, ConflictResolver>
   defaultConflictResolver?: ConflictResolver
   batchSize?: number
@@ -197,13 +171,6 @@ export interface ReplicationStatus {
   localSeq: bigint
   replicating: boolean
   syncState?: SyncState
-}
-
-export interface RaftConfig {
-  electionTimeoutMin?: number
-  electionTimeoutMax?: number
-  heartbeatInterval?: number
-  randomFn?: () => number
 }
 
 export interface ApplyResult {

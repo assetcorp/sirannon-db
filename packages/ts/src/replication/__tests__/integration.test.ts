@@ -9,7 +9,6 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { InMemoryTransport, MemoryBus } from '../../transport/memory/index.js'
 import { ReplicationEngine } from '../engine.js'
 import { TopologyError } from '../errors.js'
-import { MultiPrimaryTopology } from '../topology/multi-primary.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
 import type { ReplicationConfig } from '../types.js'
 
@@ -93,7 +92,7 @@ describe('Replication Integration', () => {
     const transport = new InMemoryTransport(bus)
     const config: ReplicationConfig = {
       nodeId,
-      topology: new MultiPrimaryTopology(),
+      topology: new PrimaryReplicaTopology('primary'),
       transport,
       batchIntervalMs: 30,
       batchSize: 100,
@@ -122,8 +121,8 @@ describe('Replication Integration', () => {
 
   describe('two-node replication via sender loop', () => {
     it('replicates data from writer to peer through InMemoryTransport', async () => {
-      const nodeA = await createNode(NODE_A)
-      const nodeB = await createNode(NODE_B)
+      const nodeA = await createNode(NODE_A, { topology: new PrimaryReplicaTopology('primary') })
+      const nodeB = await createNode(NODE_B, { topology: new PrimaryReplicaTopology('replica') })
 
       await nodeA.engine.start()
       await nodeB.engine.start()
@@ -145,7 +144,7 @@ describe('Replication Integration', () => {
   describe('write forwarding via transport', () => {
     it('forwards a single write from replica transport to primary engine', async () => {
       const primary = await createNode(NODE_A, {
-        topology: new MultiPrimaryTopology(),
+        topology: new PrimaryReplicaTopology('primary'),
       })
       const replica = await createNode(NODE_B, {
         topology: new PrimaryReplicaTopology('replica'),
@@ -173,7 +172,7 @@ describe('Replication Integration', () => {
   describe('statement forwarding via transport', () => {
     it('forwards multiple statements atomically through the transport layer', async () => {
       const primary = await createNode(NODE_A, {
-        topology: new MultiPrimaryTopology(),
+        topology: new PrimaryReplicaTopology('primary'),
       })
       const replica = await createNode(NODE_B, {
         topology: new PrimaryReplicaTopology('replica'),
@@ -223,10 +222,10 @@ describe('Replication Integration', () => {
     })
   })
 
-  describe('two-node multi-primary with LWW', () => {
-    it('resolves concurrent writes consistently on both nodes', async () => {
-      const nodeA = await createNode(NODE_A)
-      const nodeB = await createNode(NODE_B)
+  describe('primary-replica consistency', () => {
+    it('replicates sequential writes consistently to the replica', async () => {
+      const nodeA = await createNode(NODE_A, { topology: new PrimaryReplicaTopology('primary') })
+      const nodeB = await createNode(NODE_B, { topology: new PrimaryReplicaTopology('replica') })
 
       await nodeA.engine.start()
       await nodeB.engine.start()
@@ -234,11 +233,10 @@ describe('Replication Integration', () => {
       await nodeA.engine.execute("INSERT INTO items (id, name, value) VALUES (1, 'seed-a', 0)")
       await wait(300)
 
-      await wait(10)
       await nodeA.engine.execute("UPDATE items SET name = 'updated-a', value = 111 WHERE id = 1")
-      await wait(10)
-      await nodeB.engine.execute("UPDATE items SET name = 'updated-b', value = 222 WHERE id = 1")
+      await wait(300)
 
+      await nodeA.engine.execute("UPDATE items SET name = 'updated-b', value = 222 WHERE id = 1")
       await wait(500)
 
       const itemA = await queryItem(nodeA.conn, 1)
@@ -252,9 +250,9 @@ describe('Replication Integration', () => {
 
   describe('three-node majority writeConcern', () => {
     it('resolves after majority of peers ACK', async () => {
-      const nodeA = await createNode(NODE_A)
-      const nodeB = await createNode(NODE_B)
-      const nodeC = await createNode(NODE_C)
+      const nodeA = await createNode(NODE_A, { topology: new PrimaryReplicaTopology('primary') })
+      const nodeB = await createNode(NODE_B, { topology: new PrimaryReplicaTopology('replica') })
+      const nodeC = await createNode(NODE_C, { topology: new PrimaryReplicaTopology('replica') })
 
       await nodeA.engine.start()
       await nodeB.engine.start()
@@ -273,8 +271,8 @@ describe('Replication Integration', () => {
 
   describe('idempotency', () => {
     it('does not duplicate rows when the sender loop retries delivery windows', async () => {
-      const nodeA = await createNode(NODE_A)
-      const nodeB = await createNode(NODE_B)
+      const nodeA = await createNode(NODE_A, { topology: new PrimaryReplicaTopology('primary') })
+      const nodeB = await createNode(NODE_B, { topology: new PrimaryReplicaTopology('replica') })
 
       await nodeA.engine.start()
       await nodeB.engine.start()
@@ -296,8 +294,8 @@ describe('Replication Integration', () => {
 
   describe('transport disconnect and reconnect', () => {
     it('syncs new writes made after reconnection', async () => {
-      const nodeA = await createNode(NODE_A)
-      const nodeB = await createNode(NODE_B)
+      const nodeA = await createNode(NODE_A, { topology: new PrimaryReplicaTopology('primary') })
+      const nodeB = await createNode(NODE_B, { topology: new PrimaryReplicaTopology('replica') })
 
       await nodeA.engine.start()
       await nodeB.engine.start()

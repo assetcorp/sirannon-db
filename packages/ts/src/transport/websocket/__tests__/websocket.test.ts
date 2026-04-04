@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
 } from '../../../replication/types.js'
@@ -162,26 +161,6 @@ describe('WebSocketReplicationTransport', () => {
     })
   })
 
-  describe('raft messages', () => {
-    it('sends and receives raft messages', async () => {
-      await connectBtoA()
-
-      const received: { msg: RaftMessage; from: string }[] = []
-      transportA.onRaftMessage((message, fromPeerId) => {
-        received.push({ msg: message, from: fromPeerId })
-      })
-
-      const raftMsg: RaftMessage = { type: 'request_vote', term: 5, candidateId: 'node-b' }
-      await transportB.sendRaftMessage('node-a', raftMsg)
-      await sleep(100)
-
-      expect(received).toHaveLength(1)
-      expect(received[0].msg.type).toBe('request_vote')
-      expect(received[0].msg.term).toBe(5)
-      expect(received[0].from).toBe('node-b')
-    })
-  })
-
   describe('malformed message handling', () => {
     it('drops malformed messages without crashing', async () => {
       await connectBtoA()
@@ -196,7 +175,7 @@ describe('WebSocketReplicationTransport', () => {
 
       await new Promise<void>(resolve => {
         ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'hello', payload: { nodeId: 'bad-node', role: 'peer' } }))
+          ws.send(JSON.stringify({ type: 'hello', payload: { nodeId: 'bad-node', role: 'replica' } }))
           setTimeout(() => {
             ws.send('this is not json at all')
             ws.send(JSON.stringify({ type: 'batch', payload: 'not-a-real-batch' }))

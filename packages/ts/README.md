@@ -158,7 +158,7 @@ The package ships independent exports so you only bundle what you need:
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
-| `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, Raft, HLC |
+| `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, HLC |
 | `@delali/sirannon-db/transport/websocket` | WebSocket replication transport with TLS and auth |
 | `@delali/sirannon-db/transport/memory` | In-memory transport for testing |
 
@@ -492,26 +492,6 @@ await replicaEngine.start()
 
 When `initialSync` is `true` (the default), a new replica automatically pulls a full snapshot from the primary before accepting reads. The replica blocks reads and writes until the sync completes and incremental catch-up reaches the configured lag threshold.
 
-### Multi-primary setup
-
-Every node accepts writes. Conflicts are resolved per-table using configurable strategies.
-
-```ts
-import { ReplicationEngine, MultiPrimaryTopology, LWWResolver, FieldMergeResolver } from '@delali/sirannon-db/replication'
-
-const engine = new ReplicationEngine(db, writerConn, {
-  nodeId: 'node-africa',
-  topology: new MultiPrimaryTopology(),
-  transport,
-  defaultConflictResolver: new LWWResolver(),
-  conflictResolvers: {
-    user_profiles: new FieldMergeResolver(),
-  },
-  changeTracker: tracker,
-  snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
-})
-```
-
 ### Conflict resolution
 
 Three built-in strategies ship with the replication module:
@@ -575,7 +555,7 @@ Levels: `'local'` (default, returns after local write), `'majority'` (waits for 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `nodeId` | `string` | auto-generated | Unique identifier for this node |
-| `topology` | `Topology` | required | `PrimaryReplicaTopology` or `MultiPrimaryTopology` |
+| `topology` | `Topology` | required | `PrimaryReplicaTopology` |
 | `transport` | `ReplicationTransport` | required | Transport for inter-node communication |
 | `transportConfig` | `TransportConfig` | `{}` | Endpoints and metadata for the transport |
 | `writeForwarding` | `boolean` | `false` | Forward writes from replicas to the primary |
@@ -609,7 +589,6 @@ Levels: `'local'` (default, returns after local write), `'majority'` (waits for 
 | `BatchValidationError` | `BATCH_VALIDATION_ERROR` | Checksum mismatch, clock drift, or oversized batch |
 | `TopologyError` | `TOPOLOGY_ERROR` | Write on a read-only node without forwarding |
 | `WriteConcernError` | `WRITE_CONCERN_ERROR` | Quorum not reached within timeout |
-| `RaftError` | `RAFT_ERROR` | Raft consensus protocol failure |
 
 ## Security
 

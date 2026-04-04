@@ -3,7 +3,6 @@ import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
   NodeInfo,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
   ReplicationTransport,
@@ -35,12 +34,6 @@ function isValidAck(ack: unknown): ack is ReplicationAck {
   if (typeof ack !== 'object' || ack === null) return false
   const a = ack as Record<string, unknown>
   return typeof a.batchId === 'string' && typeof a.ackedSeq === 'bigint' && typeof a.nodeId === 'string'
-}
-
-function isValidRaftMessage(msg: unknown): msg is RaftMessage {
-  if (typeof msg !== 'object' || msg === null) return false
-  const m = msg as Record<string, unknown>
-  return typeof m.type === 'string' && typeof m.term === 'number'
 }
 
 function isValidForwardedTransaction(req: unknown): req is ForwardedTransaction {
@@ -89,7 +82,6 @@ function isValidSyncAck(ack: unknown): ack is SyncAck {
 type BatchHandler = (batch: ReplicationBatch, fromPeerId: string) => Promise<void>
 type AckHandler = (ack: ReplicationAck, fromPeerId: string) => void
 type ForwardHandler = (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>
-type RaftHandler = (message: RaftMessage, fromPeerId: string) => void
 type PeerConnectedHandler = (peer: NodeInfo) => void
 type PeerDisconnectedHandler = (peerId: string) => void
 type SyncRequestHandler = (request: SyncRequest, fromPeerId: string) => Promise<void>
@@ -141,8 +133,8 @@ export class SimulatedNetwork {
   }
 
   scheduleMessage(from: string, to: string, kind: string, payload: unknown): void {
-    if (this.faultPolicy.shouldDrop(from, to, kind as 'batch' | 'ack' | 'raft')) return
-    const latency = this.faultPolicy.sampleLatency(from, to, kind as 'batch' | 'ack' | 'raft')
+    if (this.faultPolicy.shouldDrop(from, to, kind as 'batch' | 'ack')) return
+    const latency = this.faultPolicy.sampleLatency(from, to, kind as 'batch' | 'ack')
     this.scheduler.enqueue({
       deliverAt: this.scheduler.now + latency,
       from,
@@ -189,14 +181,6 @@ export class SimulatedNetwork {
       case 'ack':
         try {
           target.deliverAck(event.payload as ReplicationAck, event.from)
-        } catch {
-          /* swallow */
-        }
-        break
-
-      case 'raft':
-        try {
-          target.deliverRaftMessage(event.payload as RaftMessage, event.from)
         } catch {
           /* swallow */
         }
@@ -277,6 +261,7 @@ export class SimulatedNetwork {
 
 export class SimulatedTransport implements ReplicationTransport {
   private localNodeId = ''
+  localRole: 'primary' | 'replica' = 'replica'
   private connected = false
   private readonly network: SimulatedNetwork
   private readonly connectedPeers = new Map<string, NodeInfo>()
@@ -284,7 +269,6 @@ export class SimulatedTransport implements ReplicationTransport {
   private batchHandler: BatchHandler | null = null
   private ackHandler: AckHandler | null = null
   private forwardHandler: ForwardHandler | null = null
-  private raftHandler: RaftHandler | null = null
   private peerConnectedHandler: PeerConnectedHandler | null = null
   private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
   private syncRequestHandler: SyncRequestHandler | null = null
@@ -304,19 +288,20 @@ export class SimulatedTransport implements ReplicationTransport {
     return this.localNodeId
   }
 
-  async connect(localNodeId: string, _config: TransportConfig): Promise<void> {
+  async connect(localNodeId: string, config: TransportConfig): Promise<void> {
     if (this.connected) {
       throw new TransportError('Transport is already connected')
     }
 
     this.localNodeId = localNodeId
+    this.localRole = config.localRole ?? 'replica'
     this.connected = true
     this.network.register(localNodeId, this)
 
     for (const [peerId, peerTransport] of this.allPeerTransports()) {
       const peerInfo: NodeInfo = {
         id: peerId,
-        role: 'peer',
+        role: peerTransport.localRole,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -325,7 +310,7 @@ export class SimulatedTransport implements ReplicationTransport {
 
       const localInfo: NodeInfo = {
         id: localNodeId,
-        role: 'peer',
+        role: this.localRole,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -402,28 +387,6 @@ export class SimulatedTransport implements ReplicationTransport {
     return this.network.scheduleForward(this.localNodeId, peerId, request)
   }
 
-  async sendRaftMessage(peerId: string, message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-    if (!isValidRaftMessage(message)) throw new TransportError('Invalid raft message structure')
-
-    const peer = this.network.getTransport(peerId)
-    if (!peer || !peer.connected) throw new TransportError(`Peer '${peerId}' is not connected`)
-
-    this.network.scheduleMessage(this.localNodeId, peerId, 'raft', message)
-  }
-
-  async broadcastRaftMessage(message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-    if (!isValidRaftMessage(message)) throw new TransportError('Invalid raft message structure')
-
-    for (const [peerId] of this.connectedPeers) {
-      const peer = this.network.getTransport(peerId)
-      if (peer?.connected) {
-        this.network.scheduleMessage(this.localNodeId, peerId, 'raft', message)
-      }
-    }
-  }
-
   async requestSync(peerId: string, request: SyncRequest): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncRequest(request)) throw new TransportError('Invalid sync request structure')
@@ -468,10 +431,6 @@ export class SimulatedTransport implements ReplicationTransport {
     this.forwardHandler = handler
   }
 
-  onRaftMessage(handler: RaftHandler): void {
-    this.raftHandler = handler
-  }
-
   onSyncRequested(handler: SyncRequestHandler): void {
     this.syncRequestHandler = handler
   }
@@ -509,12 +468,6 @@ export class SimulatedTransport implements ReplicationTransport {
   deliverAck(ack: ReplicationAck, fromPeerId: string): void {
     if (this.ackHandler) {
       this.ackHandler(ack, fromPeerId)
-    }
-  }
-
-  deliverRaftMessage(message: RaftMessage, fromPeerId: string): void {
-    if (this.raftHandler) {
-      this.raftHandler(message, fromPeerId)
     }
   }
 

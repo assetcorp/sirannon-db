@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { MultiPrimaryTopology } from '../topology/multi-primary.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
 
 describe('PrimaryReplicaTopology', () => {
@@ -48,29 +47,5 @@ describe('PrimaryReplicaTopology', () => {
     it('does not require conflict resolution', () => {
       expect(topology.requiresConflictResolution()).toBe(false)
     })
-  })
-})
-
-describe('MultiPrimaryTopology', () => {
-  const topology = new MultiPrimaryTopology()
-
-  it('can write', () => {
-    expect(topology.canWrite()).toBe(true)
-  })
-
-  it('replicates to all peer roles', () => {
-    expect(topology.shouldReplicateTo('peer1', 'peer')).toBe(true)
-    expect(topology.shouldReplicateTo('peer1', 'primary')).toBe(true)
-    expect(topology.shouldReplicateTo('peer1', 'replica')).toBe(true)
-  })
-
-  it('accepts from all peer roles', () => {
-    expect(topology.shouldAcceptFrom('peer1', 'peer')).toBe(true)
-    expect(topology.shouldAcceptFrom('peer1', 'primary')).toBe(true)
-    expect(topology.shouldAcceptFrom('peer1', 'replica')).toBe(true)
-  })
-
-  it('requires conflict resolution', () => {
-    expect(topology.requiresConflictResolution()).toBe(true)
   })
 })

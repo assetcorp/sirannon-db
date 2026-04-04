@@ -5,7 +5,6 @@ export { ReplicationEngine } from './engine.js'
 export {
   BatchValidationError,
   ConflictError,
-  RaftError,
   ReplicationError,
   SyncError,
   TopologyError,
@@ -16,9 +15,6 @@ export { HLC } from './hlc.js'
 export { ReplicationLog } from './log.js'
 export { generateNodeId, validateNodeId } from './node-id.js'
 export { PeerTracker } from './peer-tracker.js'
-export { RaftLog } from './raft/raft-log.js'
-export { RaftNode } from './raft/raft-node.js'
-export { MultiPrimaryTopology } from './topology/multi-primary.js'
 export { PrimaryReplicaTopology } from './topology/primary-replica.js'
 export type {
   ApplyResult,
@@ -30,9 +26,6 @@ export type {
   HLCTimestamp,
   NodeInfo,
   PeerState,
-  RaftConfig,
-  RaftMessage,
-  RaftMessageType,
   ReplicationAck,
   ReplicationBatch,
   ReplicationChange,

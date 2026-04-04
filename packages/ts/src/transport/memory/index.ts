@@ -3,7 +3,6 @@ import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
   NodeInfo,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
   ReplicationTransport,
@@ -47,7 +46,6 @@ export class MemoryBus {
 type BatchHandler = (batch: ReplicationBatch, fromPeerId: string) => Promise<void>
 type AckHandler = (ack: ReplicationAck, fromPeerId: string) => void
 type ForwardHandler = (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>
-type RaftHandler = (message: RaftMessage, fromPeerId: string) => void
 type PeerConnectedHandler = (peer: NodeInfo) => void
 type PeerDisconnectedHandler = (peerId: string) => void
 type SyncRequestHandler = (request: SyncRequest, fromPeerId: string) => Promise<void>
@@ -74,12 +72,6 @@ function isValidAck(ack: unknown): ack is ReplicationAck {
   if (typeof ack !== 'object' || ack === null) return false
   const a = ack as Record<string, unknown>
   return typeof a.batchId === 'string' && typeof a.ackedSeq === 'bigint' && typeof a.nodeId === 'string'
-}
-
-function isValidRaftMessage(msg: unknown): msg is RaftMessage {
-  if (typeof msg !== 'object' || msg === null) return false
-  const m = msg as Record<string, unknown>
-  return typeof m.type === 'string' && typeof m.term === 'number'
 }
 
 function isValidForwardedTransaction(req: unknown): req is ForwardedTransaction {
@@ -132,12 +124,13 @@ function isValidSyncAck(ack: unknown): ack is SyncAck {
  * Messages between peers are delivered through a shared MemoryBus via
  * microtask scheduling (`queueMicrotask`), preserving the async delivery
  * semantics of a real network transport while avoiding actual I/O. All
- * message types (batches, acks, forwards, Raft messages) go through runtime
+ * message types (batches, acks, forwards) go through runtime
  * validation before delivery, and malformed payloads are silently dropped
  * to match the behavior of a lossy network.
  */
 export class InMemoryTransport implements ReplicationTransport {
   private localNodeId = ''
+  private localRole: 'primary' | 'replica' = 'replica'
   private connected = false
   private readonly bus: MemoryBus
   private readonly connectedPeers = new Map<string, NodeInfo>()
@@ -145,7 +138,6 @@ export class InMemoryTransport implements ReplicationTransport {
   private batchHandler: BatchHandler | null = null
   private ackHandler: AckHandler | null = null
   private forwardHandler: ForwardHandler | null = null
-  private raftHandler: RaftHandler | null = null
   private peerConnectedHandler: PeerConnectedHandler | null = null
   private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
   private syncRequestHandler: SyncRequestHandler | null = null
@@ -157,12 +149,13 @@ export class InMemoryTransport implements ReplicationTransport {
     this.bus = bus
   }
 
-  async connect(localNodeId: string, _config: TransportConfig): Promise<void> {
+  async connect(localNodeId: string, config: TransportConfig): Promise<void> {
     if (this.connected) {
       throw new TransportError('Transport is already connected')
     }
 
     this.localNodeId = localNodeId
+    this.localRole = config.localRole ?? 'replica'
     this.connected = true
     this.bus.join(localNodeId, this)
 
@@ -174,7 +167,7 @@ export class InMemoryTransport implements ReplicationTransport {
 
       const peerInfo: NodeInfo = {
         id: peerId,
-        role: 'peer',
+        role: peerTransport.localRole,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -183,7 +176,7 @@ export class InMemoryTransport implements ReplicationTransport {
 
       const localInfo: NodeInfo = {
         id: localNodeId,
-        role: 'peer',
+        role: this.localRole,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -359,46 +352,6 @@ export class InMemoryTransport implements ReplicationTransport {
     this.syncAckHandler = handler
   }
 
-  async sendRaftMessage(peerId: string, message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-
-    if (!isValidRaftMessage(message)) {
-      throw new TransportError('Invalid raft message structure')
-    }
-
-    const peer = this.bus.getTransport(peerId)
-    if (!peer || !peer.connected) {
-      throw new TransportError(`Peer '${peerId}' is not connected`)
-    }
-
-    const fromPeerId = this.localNodeId
-    queueMicrotask(() => {
-      peer._receiveRaftMessage(message, fromPeerId)
-    })
-  }
-
-  async broadcastRaftMessage(message: RaftMessage): Promise<void> {
-    this.ensureConnected()
-
-    if (!isValidRaftMessage(message)) {
-      throw new TransportError('Invalid raft message structure')
-    }
-
-    const fromPeerId = this.localNodeId
-    for (const [peerId] of this.connectedPeers) {
-      const peer = this.bus.getTransport(peerId)
-      if (peer?.connected) {
-        queueMicrotask(() => {
-          peer._receiveRaftMessage(message, fromPeerId)
-        })
-      }
-    }
-  }
-
-  onRaftMessage(handler: RaftHandler): void {
-    this.raftHandler = handler
-  }
-
   onPeerConnected(handler: PeerConnectedHandler): void {
     this.peerConnectedHandler = handler
   }
@@ -428,12 +381,6 @@ export class InMemoryTransport implements ReplicationTransport {
       throw new TransportError('No forward handler registered')
     }
     return this.forwardHandler(request, fromPeerId)
-  }
-
-  _receiveRaftMessage(message: RaftMessage, fromPeerId: string): void {
-    if (this.raftHandler) {
-      this.raftHandler(message, fromPeerId)
-    }
   }
 
   async _receiveSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {

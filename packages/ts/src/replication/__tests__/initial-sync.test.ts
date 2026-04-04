@@ -9,7 +9,6 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { InMemoryTransport, MemoryBus } from '../../transport/memory/index.js'
 import { ReplicationEngine } from '../engine.js'
 import { SyncError } from '../errors.js'
-import { MultiPrimaryTopology } from '../topology/multi-primary.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
 import type { ReplicationConfig } from '../types.js'
 
@@ -143,7 +142,7 @@ describe('Initial Sync', () => {
     return { db, conn, dbPath, engine, transport, tracker }
   }
 
-  async function createMultiPrimaryNode(
+  async function createSyncSourceNode(
     nodeId: string,
     tableSqls: string[],
     configOverrides: Partial<ReplicationConfig> = {},
@@ -168,7 +167,7 @@ describe('Initial Sync', () => {
     const transport = new InMemoryTransport(bus)
     const config: ReplicationConfig = {
       nodeId,
-      topology: new MultiPrimaryTopology(),
+      topology: new PrimaryReplicaTopology('primary'),
       transport,
       batchIntervalMs: 30,
       batchSize: 100,
@@ -502,9 +501,9 @@ describe('Initial Sync', () => {
     })
   })
 
-  describe('multi-primary sync', () => {
-    it('syncs data from peer A to joining peer B', async () => {
-      const nodeA = await createMultiPrimaryNode(NODE_A, ['CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)'])
+  describe('primary-to-replica sync', () => {
+    it('syncs data from primary A to joining replica B', async () => {
+      const nodeA = await createSyncSourceNode(NODE_A, ['CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)'])
       await nodeA.engine.start()
 
       for (let i = 1; i <= 20; i++) {
@@ -523,7 +522,7 @@ describe('Initial Sync', () => {
       const transportB = new InMemoryTransport(bus)
       const engineB = new ReplicationEngine(dbB, connB, {
         nodeId: NODE_B,
-        topology: new MultiPrimaryTopology(),
+        topology: new PrimaryReplicaTopology('replica'),
         transport: transportB,
         batchIntervalMs: 30,
         initialSync: true,

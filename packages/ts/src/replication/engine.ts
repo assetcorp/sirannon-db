@@ -537,7 +537,7 @@ export class ReplicationEngine {
     const knownPeers = this.config.transport.peers()
     if (!knownPeers.has(fromPeerId)) return
 
-    if (!this.config.topology.canWrite() && this.config.topology.role !== 'peer') {
+    if (!this.config.topology.canWrite()) {
       await this.config.transport.sendSyncAck(fromPeerId, {
         requestId: request.requestId,
         joinerNodeId: request.joinerNodeId,

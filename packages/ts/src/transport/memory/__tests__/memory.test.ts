@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type {
   ForwardedTransaction,
   ForwardedTransactionResult,
-  RaftMessage,
   ReplicationAck,
   ReplicationBatch,
 } from '../../../replication/types.js'
@@ -26,14 +25,6 @@ function makeAck(overrides?: Partial<ReplicationAck>): ReplicationAck {
     batchId: 'batch-1',
     ackedSeq: 5n,
     nodeId: 'node-b',
-    ...overrides,
-  }
-}
-
-function makeRaftMessage(overrides?: Partial<RaftMessage>): RaftMessage {
-  return {
-    type: 'heartbeat',
-    term: 1,
     ...overrides,
   }
 }
@@ -169,42 +160,6 @@ describe('InMemoryTransport', () => {
     })
   })
 
-  describe('raft messages', () => {
-    it('sends and receives raft messages', async () => {
-      const received: { msg: RaftMessage; from: string }[] = []
-      transportB.onRaftMessage((message, fromPeerId) => {
-        received.push({ msg: message, from: fromPeerId })
-      })
-
-      await transportA.sendRaftMessage('node-b', makeRaftMessage({ type: 'request_vote', term: 3 }))
-      await flushMicrotasks()
-
-      expect(received).toHaveLength(1)
-      expect(received[0].msg.type).toBe('request_vote')
-      expect(received[0].msg.term).toBe(3)
-      expect(received[0].from).toBe('node-a')
-    })
-
-    it('broadcasts raft messages to all peers', async () => {
-      const transportC = new InMemoryTransport(bus)
-      await transportC.connect('node-c', {})
-
-      const receivedB: RaftMessage[] = []
-      const receivedC: RaftMessage[] = []
-
-      transportB.onRaftMessage(msg => receivedB.push(msg))
-      transportC.onRaftMessage(msg => receivedC.push(msg))
-
-      await transportA.broadcastRaftMessage(makeRaftMessage({ type: 'heartbeat', term: 2 }))
-      await flushMicrotasks()
-
-      expect(receivedB).toHaveLength(1)
-      expect(receivedC).toHaveLength(1)
-
-      await transportC.disconnect()
-    })
-  })
-
   describe('peer lifecycle', () => {
     it('notifies on peer connect', async () => {
       const bus2 = new MemoryBus()
@@ -273,22 +228,6 @@ describe('InMemoryTransport', () => {
       deliveryOrder.push('after-flush')
 
       expect(deliveryOrder).toContain('ack-received')
-      expect(deliveryOrder).toContain('after-flush')
-    })
-
-    it('delivers raft message via microtask after sendRaftMessage resolves', async () => {
-      const deliveryOrder: string[] = []
-      transportB.onRaftMessage(() => {
-        deliveryOrder.push('raft-received')
-      })
-
-      await transportA.sendRaftMessage('node-b', makeRaftMessage())
-      deliveryOrder.push('after-send-raft')
-
-      await flushMicrotasks()
-      deliveryOrder.push('after-flush')
-
-      expect(deliveryOrder).toContain('raft-received')
       expect(deliveryOrder).toContain('after-flush')
     })
   })

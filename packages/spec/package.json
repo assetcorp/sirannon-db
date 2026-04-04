@@ -1,0 +1,17 @@
+{
+  "name": "@delali/sirannon-spec",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Language-agnostic specifications for Sirannon.",
+  "author": "Delali (https://sondelali.com)",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/assetcorp/sirannon-db.git",
+    "directory": "packages/spec"
+  },
+  "bugs": {
+    "url": "https://github.com/assetcorp/sirannon-db/issues"
+  }
+}

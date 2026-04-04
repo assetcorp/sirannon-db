@@ -550,6 +550,8 @@ Levels: `'local'` (default, returns after local write), `'majority'` (waits for 
 | Simulated | `@delali/sirannon-db/transport/simulated` | Deterministic fault-injection testing. Configurable latency, packet loss, and network partitions. |
 | Custom | Build your own | Any transport that satisfies the `ReplicationTransport` interface (Redis, NATS, MQTT, TCP, etc). |
 
+The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'primary'` when configuring the primary node. Only two roles exist: `'primary'` and `'replica'`.
+
 ### Replication configuration reference
 
 | Option | Type | Default | Description |

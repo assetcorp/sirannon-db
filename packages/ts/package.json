@@ -128,7 +128,7 @@
     "better-sqlite3": "12.6.2",
     "croner": "10.0.1",
     "pg": "8.20.0",
-    "simple-statistics": "7.8.7",
+    "simple-statistics": "7.8.9",
     "tinybench": "6.0.0",
     "tsup": "8.5.1",
     "tsx": "4.21.0",

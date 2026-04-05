@@ -678,6 +678,54 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return null
   }
 
+  private extractTlsCN(call: { getAuthContext(): unknown }): string | null {
+    if (this.options.insecure) return null
+    if (!this.options.tlsCaCert) return null
+
+    const authCtx = call.getAuthContext() as { sslPeerCertificate?: { subject?: { CN?: string | string[] } } } | null
+    if (!authCtx) return null
+    const peerCert = authCtx.sslPeerCertificate
+    if (!peerCert) return null
+    const certCN = peerCert.subject?.CN
+    if (!certCN) return null
+
+    if (Array.isArray(certCN)) return certCN[0] ?? null
+    return certCN
+  }
+
+  private validateTlsIdentity(call: { getAuthContext(): unknown }, claimedNodeId: string): boolean {
+    if (this.options.insecure) return true
+    if (!this.options.tlsCaCert) return true
+
+    const cn = this.extractTlsCN(call)
+    return cn === claimedNodeId
+  }
+
+  private resolveForwardPeerId(call: { getPeer(): string; getAuthContext(): unknown }): string | null {
+    const cn = this.extractTlsCN(call)
+    if (cn) {
+      return this.connectedPeers.has(cn) ? cn : null
+    }
+
+    if (!this.options.insecure) return null
+
+    const peerAddr = call.getPeer()
+    for (const [, entry] of this.serverPeerStreams) {
+      if (entry.replicateStream?.getPeer() === peerAddr) {
+        const streamPeerId = this.findPeerIdForStream(entry)
+        if (streamPeerId) return streamPeerId
+      }
+    }
+    return null
+  }
+
+  private findPeerIdForStream(entry: PeerStreamEntry): string | null {
+    for (const [peerId, ps] of this.serverPeerStreams) {
+      if (ps === entry) return peerId
+    }
+    return null
+  }
+
   private registerPeer(nodeId: string, role: TopologyRole): void {
     if (this.connectedPeers.has(nodeId)) return
     const peerInfo: NodeInfo = {
@@ -716,10 +764,10 @@ export class GrpcReplicationTransport implements ReplicationTransport {
         this.handleServerSyncStream(call)
       },
       forward: (
-        call: { request: ProtoForwardRequest },
+        call: { request: ProtoForwardRequest; getPeer(): string; getAuthContext(): unknown },
         callback: (err: { code: number; message: string } | null, response?: ProtoForwardResponse) => void,
       ) => {
-        this.handleForwardCall(call.request, callback)
+        this.handleForwardCall(call, callback)
       },
     })
 
@@ -751,6 +799,12 @@ export class GrpcReplicationTransport implements ReplicationTransport {
           call.destroy(new Error('First message must be Hello'))
           return
         }
+
+        if (!this.validateTlsIdentity(call, msg.hello.nodeId)) {
+          call.destroy(new Error(`TLS certificate CN does not match claimed nodeId '${msg.hello.nodeId}'`))
+          return
+        }
+
         peerId = msg.hello.nodeId
         const peerRole = msg.hello.role as TopologyRole
 
@@ -822,6 +876,12 @@ export class GrpcReplicationTransport implements ReplicationTransport {
           call.destroy(new Error('First message must be Hello'))
           return
         }
+
+        if (!this.validateTlsIdentity(call, msg.hello.nodeId)) {
+          call.destroy(new Error(`TLS certificate CN does not match claimed nodeId '${msg.hello.nodeId}'`))
+          return
+        }
+
         peerId = msg.hello.nodeId
         const peerRole = msg.hello.role as TopologyRole
 
@@ -886,7 +946,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   }
 
   private handleForwardCall(
-    request: ProtoForwardRequest,
+    call: { request: ProtoForwardRequest; getPeer(): string; getAuthContext(): unknown },
     callback: (err: { code: number; message: string } | null, response?: ProtoForwardResponse) => void,
   ): void {
     if (!this.forwardHandler) {
@@ -897,8 +957,17 @@ export class GrpcReplicationTransport implements ReplicationTransport {
       return
     }
 
-    const appReq = fromForwardRequest(request)
-    this.forwardHandler(appReq, 'unknown')
+    const peerId = this.resolveForwardPeerId(call)
+    if (!peerId) {
+      callback({
+        code: status.UNAUTHENTICATED,
+        message: 'Forward request from unidentified peer',
+      })
+      return
+    }
+
+    const appReq = fromForwardRequest(call.request)
+    this.forwardHandler(appReq, peerId)
       .then(result => {
         callback(null, {
           requestId: result.requestId,
@@ -911,7 +980,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
       })
       .catch((err: Error) => {
         callback(null, {
-          requestId: request.requestId,
+          requestId: call.request.requestId,
           results: [],
           error: err.message,
         })

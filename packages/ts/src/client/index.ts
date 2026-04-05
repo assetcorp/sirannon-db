@@ -1,4 +1,4 @@
-export { SirannonClient } from './client.js'
+export { SirannonClient, type TopologyAwareClientOptions } from './client.js'
 export { RemoteDatabase } from './database-proxy.js'
 export { RemoteSubscriptionBuilderImpl } from './subscription.js'
 export { HttpTransport } from './transport/http.js'

@@ -99,22 +99,22 @@ pnpm bench:charts      # Generate SVG charts from CSV results
 
 Override defaults with environment variables:
 
-| Variable                   | Default             | Description                                                           |
-|----------------------------|---------------------|-----------------------------------------------------------------------|
-| `BENCH_PG_HOST`            | `127.0.0.1`         | Postgres host                                                         |
-| `BENCH_PG_PORT`            | `5433`              | Postgres port                                                         |
-| `BENCH_PG_USER`            | `benchmark`         | Postgres user                                                         |
-| `BENCH_PG_PASSWORD`        | `benchmark`         | Postgres password                                                     |
-| `BENCH_PG_DATABASE`        | `benchmark`         | Postgres database                                                     |
-| `BENCH_PG_MAX_CONNECTIONS` | `10`                | Postgres connection pool size                                         |
-| `BENCH_DURABILITY`         | `matched`           | `matched` (SQLite NORMAL) or `full` (SQLite + fsync)                  |
-| `BENCH_DATA_SIZES`         | `1000,10000,100000,1000000` | Comma-separated row counts to test at each scale                      |
-| `BENCH_WARMUP_MS`          | `5000`              | Warmup duration per task in milliseconds                              |
-| `BENCH_MEASURE_MS`         | `10000`             | Measurement duration per task in milliseconds                         |
-| `BENCH_SEED`               | `42`                | PRNG seed for reproducible data generation                            |
-| `BENCH_RUNS`               | `5`                 | Number of runs per comparison (statistical analysis activates at 5+ runs) |
-| `BENCH_RUN_ORDER`          | `random`            | Engine run order: `random`, `sirannon-first`, or `postgres-first`     |
-| `BENCH_SHUFFLE`            | `true`              | Randomize benchmark execution order in the full suite                 |
+| Variable                   | Default                     | Description                                                               |
+|----------------------------|-----------------------------|---------------------------------------------------------------------------|
+| `BENCH_PG_HOST`            | `127.0.0.1`                 | Postgres host                                                             |
+| `BENCH_PG_PORT`            | `5433`                      | Postgres port                                                             |
+| `BENCH_PG_USER`            | `benchmark`                 | Postgres user                                                             |
+| `BENCH_PG_PASSWORD`        | `benchmark`                 | Postgres password                                                         |
+| `BENCH_PG_DATABASE`        | `benchmark`                 | Postgres database                                                         |
+| `BENCH_PG_MAX_CONNECTIONS` | `10`                        | Postgres connection pool size                                             |
+| `BENCH_DURABILITY`         | `matched`                   | `matched` (SQLite NORMAL) or `full` (SQLite + fsync)                      |
+| `BENCH_DATA_SIZES`         | `1000,10000,100000,1000000` | Comma-separated row counts to test at each scale                          |
+| `BENCH_WARMUP_MS`          | `5000`                      | Warmup duration per task in milliseconds                                  |
+| `BENCH_MEASURE_MS`         | `10000`                     | Measurement duration per task in milliseconds                             |
+| `BENCH_SEED`               | `42`                        | PRNG seed for reproducible data generation                                |
+| `BENCH_RUNS`               | `5`                         | Number of runs per comparison (statistical analysis activates at 5+ runs) |
+| `BENCH_RUN_ORDER`          | `random`                    | Engine run order: `random`, `sirannon-first`, or `postgres-first`         |
+| `BENCH_SHUFFLE`            | `true`                      | Randomize benchmark execution order in the full suite                     |
 
 The default pool size of 10 connections follows standard Postgres sizing guidance, which recommends roughly 2x CPU cores plus disk spindles. Most production deployments use pools of 5-20 connections. Postgres performance degrades beyond this range because each connection is a separate OS process consuming memory and adding context-switch overhead. Tools like PgBouncer exist to multiplex thousands of application requests through a small connection pool.
 

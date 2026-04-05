@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package sirannon.replication.v1;
+
+service Replication {
+  rpc Replicate(stream ReplicationMessage) returns (stream ReplicationMessage);
+  rpc Sync(stream SyncMessage) returns (stream SyncMessage);
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+}
+
+message ColumnValue {
+  oneof kind {
+    bool null_value = 1;
+    string string_value = 2;
+    int64 int_value = 3;
+    double float_value = 4;
+    bytes blob_value = 5;
+    bool bool_value = 6;
+  }
+}
+
+message RowData {
+  map<string, ColumnValue> fields = 1;
+}
+
+message HlcRange {
+  string min = 1;
+  string max = 2;
+}
+
+message ReplicationChange {
+  string table = 1;
+  string operation = 2;
+  string row_id = 3;
+  RowData primary_key = 4;
+  string hlc = 5;
+  string tx_id = 6;
+  string node_id = 7;
+  RowData new_data = 8;
+  RowData old_data = 9;
+  string ddl_statement = 10;
+}
+
+message BatchPayload {
+  string source_node_id = 1;
+  string batch_id = 2;
+  int64 from_seq = 3;
+  int64 to_seq = 4;
+  HlcRange hlc_range = 5;
+  repeated ReplicationChange changes = 6;
+  string checksum = 7;
+}
+
+message AckPayload {
+  string batch_id = 1;
+  int64 acked_seq = 2;
+  string node_id = 3;
+}
+
+message Hello {
+  string node_id = 1;
+  string role = 2;
+}
+
+message ReplicationMessage {
+  oneof payload {
+    Hello hello = 1;
+    BatchPayload batch = 2;
+    AckPayload ack = 3;
+  }
+}
+
+message SyncRequestPayload {
+  string request_id = 1;
+  string joiner_node_id = 2;
+  repeated string completed_tables = 3;
+}
+
+message SyncBatchPayload {
+  string request_id = 1;
+  string table = 2;
+  int32 batch_index = 3;
+  repeated RowData rows = 4;
+  repeated string schema = 5;
+  string checksum = 6;
+  bool is_last_batch_for_table = 7;
+}
+
+message SyncCompletePayload {
+  string request_id = 1;
+  int64 snapshot_seq = 2;
+  repeated SyncTableManifest manifests = 3;
+}
+
+message SyncTableManifest {
+  string table = 1;
+  int32 row_count = 2;
+  string pk_hash = 3;
+}
+
+message SyncAckPayload {
+  string request_id = 1;
+  string joiner_node_id = 2;
+  string table = 3;
+  int32 batch_index = 4;
+  bool success = 5;
+  string error = 6;
+}
+
+message SyncMessage {
+  oneof payload {
+    Hello hello = 1;
+    SyncRequestPayload sync_request = 2;
+    SyncBatchPayload sync_batch = 3;
+    SyncCompletePayload sync_complete = 4;
+    SyncAckPayload sync_ack = 5;
+  }
+}
+
+message Statement {
+  string sql = 1;
+  map<string, ColumnValue> named_params = 2;
+  repeated ColumnValue positional_params = 3;
+}
+
+message ForwardRequest {
+  string request_id = 1;
+  repeated Statement statements = 2;
+}
+
+message StatementResult {
+  int32 changes = 1;
+  int64 last_insert_row_id = 2;
+}
+
+message ForwardResponse {
+  string request_id = 1;
+  repeated StatementResult results = 2;
+  string error = 3;
+}

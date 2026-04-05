@@ -233,35 +233,3 @@ export interface ReplicationErrorEvent {
   peerId?: string
   recoverable: boolean
 }
-
-const BIGINT_PREFIX = '\x00sirannon:bigint:'
-
-function bigintReplacer(_key: string, value: unknown): unknown {
-  if (typeof value === 'bigint') {
-    return `${BIGINT_PREFIX}${value.toString()}`
-  }
-  return value
-}
-
-function bigintReviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && value.startsWith(BIGINT_PREFIX)) {
-    return BigInt(value.slice(BIGINT_PREFIX.length))
-  }
-  return value
-}
-
-export function serializeBatch(batch: ReplicationBatch): string {
-  return JSON.stringify(batch, bigintReplacer)
-}
-
-export function deserializeBatch(raw: string): ReplicationBatch {
-  return JSON.parse(raw, bigintReviver) as ReplicationBatch
-}
-
-export function serializeSyncComplete(complete: SyncComplete): string {
-  return JSON.stringify(complete, bigintReplacer)
-}
-
-export function deserializeSyncComplete(raw: string): SyncComplete {
-  return JSON.parse(raw, bigintReviver) as SyncComplete
-}

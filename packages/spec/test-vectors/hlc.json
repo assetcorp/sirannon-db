@@ -15,7 +15,11 @@
       "expected": "018bcfe56800-00ff-node-b"
     },
     {
-      "input": { "wallMs": 1700000000000, "logical": 65535, "nodeId": "node-a" },
+      "input": {
+        "wallMs": 1700000000000,
+        "logical": 65535,
+        "nodeId": "node-a"
+      },
       "expected": "018bcfe56800-ffff-node-a",
       "note": "Maximum logical counter value (0xffff)"
     },
@@ -25,7 +29,11 @@
       "note": "Zero wall clock"
     },
     {
-      "input": { "wallMs": 1700000000000, "logical": 0, "nodeId": "region-us-east-1" },
+      "input": {
+        "wallMs": 1700000000000,
+        "logical": 0,
+        "nodeId": "region-us-east-1"
+      },
       "expected": "018bcfe56800-0000-region-us-east-1",
       "note": "Node ID with multiple hyphens"
     }
@@ -38,11 +46,19 @@
     },
     {
       "input": "018bcfe56800-00ff-node-b",
-      "expected": { "wallMs": 1700000000000, "logical": 255, "nodeId": "node-b" }
+      "expected": {
+        "wallMs": 1700000000000,
+        "logical": 255,
+        "nodeId": "node-b"
+      }
     },
     {
       "input": "018bcfe56800-0000-region-us-east-1",
-      "expected": { "wallMs": 1700000000000, "logical": 0, "nodeId": "region-us-east-1" },
+      "expected": {
+        "wallMs": 1700000000000,
+        "logical": 0,
+        "nodeId": "region-us-east-1"
+      },
       "note": "Node ID reassembled from parts after the second dash"
     },
     {

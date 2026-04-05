@@ -132,24 +132,24 @@ A prepared statement bound to a specific SQL string.
 
 ```text
 SQLiteStatement {
-  all<T>(...params: unknown[]): async -> Array<T>
-  get<T>(...params: unknown[]): async -> T | undefined
-  run(...params: unknown[]): async -> RunResult
+  all<T>(params: List<any>): async -> List<T>
+  get<T>(params: List<any>): async -> T or null
+  run(params: List<any>): async -> RunResult
 }
 ```
 
-### all(...params)
+### all(params)
 
-Executes the statement and returns all matching rows as an array
-of objects. Column names become object keys. Returns an empty array
+Executes the statement and returns all matching rows as a list
+of objects. Column names become object keys. Returns an empty list
 if no rows match.
 
-### get(...params)
+### get(params)
 
 Executes the statement and returns the first matching row, or
-`undefined` if no rows match.
+`null` if no rows match.
 
-### run(...params)
+### run(params)
 
 Executes the statement for its side effects (INSERT, UPDATE,
 DELETE). Returns a `RunResult`.
@@ -159,7 +159,7 @@ DELETE). Returns a `RunResult`.
 ```text
 RunResult {
   changes: number
-  lastInsertRowId: number | bigint
+  lastInsertRowId: number or bigint
 }
 ```
 

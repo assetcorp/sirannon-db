@@ -122,7 +122,11 @@
         "localChange": {
           "nodeId": "node-a",
           "oldData": { "name": "Alice", "email": "alice@old.com", "age": 30 },
-          "newData": { "name": "Alice Updated", "email": "alice@old.com", "age": 30 }
+          "newData": {
+            "name": "Alice Updated",
+            "email": "alice@old.com",
+            "age": 30
+          }
         },
         "remoteChange": {
           "nodeId": "node-b",
@@ -137,7 +141,11 @@
       },
       "expected": {
         "action": "merge",
-        "mergedData": { "name": "Alice Updated", "email": "alice@new.com", "age": 30 }
+        "mergedData": {
+          "name": "Alice Updated",
+          "email": "alice@new.com",
+          "age": 30
+        }
       },
       "reason": "name changed locally, email changed remotely; no overlap, both preserved"
     },

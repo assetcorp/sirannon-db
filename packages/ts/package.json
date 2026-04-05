@@ -46,7 +46,8 @@
     "bench:docker:e2e": "node --import tsx benchmarks/run-e2e.ts",
     "bench:docker:engine": "node --expose-gc --import tsx benchmarks/run-engine.ts",
     "bench:statistical": "node --expose-gc --import tsx benchmarks/run-statistical.ts",
-    "bench:charts": "python3 benchmarks/scripts/generate-charts.py benchmarks/results/"
+    "bench:charts": "python3 benchmarks/scripts/generate-charts.py benchmarks/results/",
+    "proto:gen": "grpc_tools_node_protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/transport/grpc/generated --ts_proto_opt=forceLong=bigint --ts_proto_opt=esModuleInterop=true --ts_proto_opt=outputServices=grpc-js --ts_proto_opt=env=node -I src/transport/grpc/proto src/transport/grpc/proto/replication.proto"
   },
   "exports": {
     ".": {
@@ -95,9 +96,9 @@
       "types": "./dist/transport/memory.d.ts",
       "import": "./dist/transport/memory.mjs"
     },
-    "./transport/websocket": {
-      "types": "./dist/transport/websocket.d.ts",
-      "import": "./dist/transport/websocket.mjs"
+    "./transport/grpc": {
+      "types": "./dist/transport/grpc.d.ts",
+      "import": "./dist/transport/grpc.mjs"
     }
   },
   "files": [
@@ -109,39 +110,57 @@
     "node": ">=22"
   },
   "peerDependencies": {
+    "@bufbuild/protobuf": ">=2.0.0",
+    "@grpc/grpc-js": ">=1.10.0",
     "better-sqlite3": ">=12.0.0",
-    "wa-sqlite": ">=1.0.0",
-    "expo-sqlite": ">=14.0.0",
     "croner": ">=10.0.0",
-    "uWebSockets.js": ">=20.0.0"
+    "expo-sqlite": ">=14.0.0",
+    "grpc-health-check": ">=2.0.0",
+    "uWebSockets.js": ">=20.0.0",
+    "wa-sqlite": ">=1.0.0"
   },
   "peerDependenciesMeta": {
+    "@bufbuild/protobuf": {
+      "optional": true
+    },
+    "@grpc/grpc-js": {
+      "optional": true
+    },
     "better-sqlite3": {
-      "optional": true
-    },
-    "wa-sqlite": {
-      "optional": true
-    },
-    "expo-sqlite": {
       "optional": true
     },
     "croner": {
       "optional": true
     },
+    "expo-sqlite": {
+      "optional": true
+    },
+    "grpc-health-check": {
+      "optional": true
+    },
     "uWebSockets.js": {
+      "optional": true
+    },
+    "wa-sqlite": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@bufbuild/protobuf": "2.11.0",
+    "@grpc/grpc-js": "1.14.3",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.3.3",
     "@types/pg": "8.20.0",
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "12.6.2",
     "croner": "10.0.1",
+    "grpc-health-check": "2.1.0",
+    "grpc-tools": "1.13.1",
     "pg": "8.20.0",
+    "selfsigned": "5.5.0",
     "simple-statistics": "7.8.7",
     "tinybench": "6.0.0",
+    "ts-proto": "2.11.6",
     "tsup": "8.5.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",

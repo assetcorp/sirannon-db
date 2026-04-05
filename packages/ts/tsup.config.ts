@@ -2,7 +2,16 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineConfig, type Options } from 'tsup'
 
-const peerDeps = ['better-sqlite3', 'uWebSockets.js', 'wa-sqlite', 'expo-sqlite', 'croner']
+const peerDeps = [
+  'better-sqlite3',
+  'uWebSockets.js',
+  'wa-sqlite',
+  'expo-sqlite',
+  'croner',
+  '@grpc/grpc-js',
+  'grpc-health-check',
+  '@bufbuild/protobuf',
+]
 
 async function restoreNodePrefix() {
   const distDir = join(import.meta.dirname, 'dist')
@@ -49,7 +58,7 @@ export default defineConfig([
       'file-migrations/index': 'src/utils/file-migrations/index.ts',
       'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
       'replication/index': 'src/replication/index.ts',
-      'transport/websocket': 'src/transport/websocket/index.ts',
+      'transport/grpc': 'src/transport/grpc/index.ts',
     },
     platform: 'node',
     dts: true,

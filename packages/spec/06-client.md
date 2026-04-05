@@ -28,7 +28,7 @@ SirannonClient {
 ```text
 ClientOptions {
   transport?:         'websocket' | 'http'   (default: 'websocket')
-  headers?:           Record<string, string>
+  headers?:           Map<string, string>
   autoReconnect?:     boolean                (default: true)
   reconnectInterval?: number                 (default: 1000, milliseconds)
 }
@@ -39,7 +39,7 @@ ClientOptions {
 ```text
 TopologyAwareClientOptions extends ClientOptions {
   primary?:        string
-  replicas?:       Array<string>
+  replicas?:       List<string>
   readPreference?: 'primary' | 'replica' | 'nearest'   (default: 'primary')
 }
 ```
@@ -67,10 +67,10 @@ accepts a statement array instead of a callback function.
 
 ```text
 RemoteDatabase {
-  query<T>(sql: string, params?: Params): async -> Array<T>
+  query<T>(sql: string, params?: Params): async -> List<T>
   execute(sql: string, params?: Params): async -> ExecuteResponse
-  transaction(statements: Array<{ sql: string, params?: Params }>):
-    async -> Array<ExecuteResponse>
+  transaction(statements: List<{ sql: string, params?: Params }>):
+    async -> List<ExecuteResponse>
   on(table: string): RemoteSubscriptionBuilder
   close(): void
 }
@@ -107,7 +107,7 @@ error code `TRANSPORT_ERROR`.
 
 ```text
 RemoteSubscriptionBuilder {
-  filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
+  filter(conditions: Map<string, any>): RemoteSubscriptionBuilder
   subscribe(callback: (event: ChangeEvent) -> void): async -> RemoteSubscription
 }
 

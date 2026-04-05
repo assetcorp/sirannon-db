@@ -18,13 +18,13 @@ ServerOptions {
   port?:                  number    (default: 9876)
   cors?:                  boolean | CorsOptions
   onRequest?:             OnRequestHook
-  getReplicationStatus?:  () -> ReplicationStatusInfo | null
+  getReplicationStatus?:  () -> ReplicationStatusInfo or null
 }
 
 CorsOptions {
-  origin?:  string | Array<string>
-  methods?: Array<string>
-  headers?: Array<string>
+  origin?:  string or List<string>
+  methods?: List<string>
+  headers?: List<string>
 }
 ```
 
@@ -37,10 +37,10 @@ CorsOptions {
 ### Request Hook
 
 ```text
-OnRequestHook = (ctx: RequestContext) -> undefined | RequestDenial | async (undefined | RequestDenial)
+OnRequestHook = (ctx: RequestContext) -> null or RequestDenial or async (null or RequestDenial)
 
 RequestContext {
-  headers:       Record<string, string>
+  headers:       Map<string, string>
   method:        string
   path:          string
   databaseId?:   string
@@ -70,16 +70,16 @@ is the URL-encoded database identifier.
 
 ```text
 QueryResponse {
-  rows: Array<Record<string, unknown>>
+  rows: List<Map<string, any>>
 }
 
 ExecuteResponse {
   changes:         number
-  lastInsertRowId: number | string
+  lastInsertRowId: number or string
 }
 
 TransactionResponse {
-  results: Array<ExecuteResponse>
+  results: List<ExecuteResponse>
 }
 ```
 
@@ -203,7 +203,7 @@ WSSubscribeMessage {
   type:    'subscribe'
   id:      string
   table:   string
-  filter?: Record<string, unknown>
+  filter?: Map<string, any>
 }
 
 WSUnsubscribeMessage {
@@ -215,14 +215,14 @@ WSQueryMessage {
   type:    'query'
   id:      string
   sql:     string
-  params?: Record<string, unknown> | Array<unknown>
+  params?: Map<string, any> or List<any>
 }
 
 WSExecuteMessage {
   type:    'execute'
   id:      string
   sql:     string
-  params?: Record<string, unknown> | Array<unknown>
+  params?: Map<string, any> or List<any>
 }
 ```
 
@@ -245,8 +245,8 @@ WSChangeMessage {
   event: {
     type:       'insert' | 'update' | 'delete'
     table:      string
-    row:        Record<string, unknown>
-    oldRow?:    Record<string, unknown>
+    row:        Map<string, any>
+    oldRow?:    Map<string, any>
     seq:        string
     timestamp:  number
   }

@@ -44,4 +44,3 @@ export type {
   TopologyRole,
   TransportConfig,
 } from './types.js'
-export { deserializeBatch, deserializeSyncComplete, serializeBatch, serializeSyncComplete } from './types.js'

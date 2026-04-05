@@ -19,6 +19,7 @@ import type {
   ExecuteResult,
   Params,
   QueryHookContext,
+  QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
 
@@ -87,9 +88,9 @@ export class Database {
     return new Database(id, path, pool, driver, options, internals)
   }
 
-  async query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
+  async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    this.fireBeforeQueryHooks(sql, params)
+    this.fireBeforeQueryHooks(sql, params, options)
 
     const start = performance.now()
     try {
@@ -106,9 +107,13 @@ export class Database {
     }
   }
 
-  async queryOne<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T | undefined> {
+  async queryOne<T = Record<string, unknown>>(
+    sql: string,
+    params?: Params,
+    options?: QueryOptions,
+  ): Promise<T | undefined> {
     this.ensureOpen()
-    this.fireBeforeQueryHooks(sql, params)
+    this.fireBeforeQueryHooks(sql, params, options)
 
     const start = performance.now()
     try {
@@ -125,10 +130,10 @@ export class Database {
     }
   }
 
-  async execute(sql: string, params?: Params): Promise<ExecuteResult> {
+  async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    this.fireBeforeQueryHooks(sql, params)
+    this.fireBeforeQueryHooks(sql, params, options)
 
     const start = performance.now()
     try {
@@ -145,10 +150,10 @@ export class Database {
     }
   }
 
-  async executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
+  async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    this.fireBeforeQueryHooks(sql)
+    this.fireBeforeQueryHooks(sql, undefined, options)
 
     const start = performance.now()
     try {
@@ -350,12 +355,18 @@ export class Database {
     }
   }
 
-  private fireBeforeQueryHooks(sql: string, params?: Params): void {
+  private fireBeforeQueryHooks(sql: string, params?: Params, options?: QueryOptions): void {
     const hasParent = this.parentHooks?.has('beforeQuery')
     const hasLocal = this.hookRegistry.has('beforeQuery')
     if (!hasParent && !hasLocal) return
 
-    const ctx: QueryHookContext = { databaseId: this.id, sql, params }
+    const ctx: QueryHookContext = {
+      databaseId: this.id,
+      sql,
+      params,
+      writeConcern: options?.writeConcern,
+      readConcern: options?.readConcern,
+    }
     this.parentHooks?.invokeSync('beforeQuery', ctx)
     this.hookRegistry.invokeSync('beforeQuery', ctx)
   }

@@ -1,0 +1,87 @@
+{
+  "description": "Test vectors for HLC encoding, decoding, and comparison. All implementations must produce identical results for these inputs.",
+
+  "encoding": [
+    {
+      "input": { "wallMs": 1700000000000, "logical": 0, "nodeId": "node-a" },
+      "expected": "018bcfe56800-0000-node-a"
+    },
+    {
+      "input": { "wallMs": 1700000000000, "logical": 1, "nodeId": "node-a" },
+      "expected": "018bcfe56800-0001-node-a"
+    },
+    {
+      "input": { "wallMs": 1700000000000, "logical": 255, "nodeId": "node-b" },
+      "expected": "018bcfe56800-00ff-node-b"
+    },
+    {
+      "input": { "wallMs": 1700000000000, "logical": 65535, "nodeId": "node-a" },
+      "expected": "018bcfe56800-ffff-node-a",
+      "note": "Maximum logical counter value (0xffff)"
+    },
+    {
+      "input": { "wallMs": 0, "logical": 0, "nodeId": "node-a" },
+      "expected": "000000000000-0000-node-a",
+      "note": "Zero wall clock"
+    },
+    {
+      "input": { "wallMs": 1700000000000, "logical": 0, "nodeId": "region-us-east-1" },
+      "expected": "018bcfe56800-0000-region-us-east-1",
+      "note": "Node ID with multiple hyphens"
+    }
+  ],
+
+  "decoding": [
+    {
+      "input": "018bcfe56800-0001-node-a",
+      "expected": { "wallMs": 1700000000000, "logical": 1, "nodeId": "node-a" }
+    },
+    {
+      "input": "018bcfe56800-00ff-node-b",
+      "expected": { "wallMs": 1700000000000, "logical": 255, "nodeId": "node-b" }
+    },
+    {
+      "input": "018bcfe56800-0000-region-us-east-1",
+      "expected": { "wallMs": 1700000000000, "logical": 0, "nodeId": "region-us-east-1" },
+      "note": "Node ID reassembled from parts after the second dash"
+    },
+    {
+      "input": "ab",
+      "expected_error": true,
+      "note": "Invalid format: fewer than 3 dash-separated parts"
+    }
+  ],
+
+  "comparison": [
+    {
+      "a": "018bcfe56800-0002-node-a",
+      "b": "018bcfe56800-0001-node-b",
+      "expected": 1,
+      "reason": "Higher logical counter wins regardless of nodeId"
+    },
+    {
+      "a": "018bcfe56800-0001-node-b",
+      "b": "018bcfe56801-0000-node-a",
+      "expected": -1,
+      "reason": "Lower wall clock loses even with higher logical counter"
+    },
+    {
+      "a": "018bcfe56800-0002-node-a",
+      "b": "018bcfe56800-0002-node-b",
+      "expected": -1,
+      "reason": "Same wall and logical; node-a < node-b lexicographically"
+    },
+    {
+      "a": "018bcfe56800-0000-node-a",
+      "b": "018bcfe56800-0000-node-a",
+      "expected": 0,
+      "reason": "Identical timestamps"
+    },
+    {
+      "a": "000000000001-0000-z",
+      "b": "000000000000-ffff-a",
+      "expected": 1,
+      "reason": "Wall clock difference of 1ms outweighs max logical counter"
+    }
+  ]
+}

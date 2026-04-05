@@ -1,0 +1,195 @@
+{
+  "description": "Test vectors for conflict resolution. All implementations must produce identical resolution outcomes for these inputs.",
+
+  "lww": [
+    {
+      "name": "Remote wins by higher HLC",
+      "input": {
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0001-node-a",
+        "remoteHlc": "018bcfe56800-0002-node-b",
+        "localChange": { "nodeId": "node-a" },
+        "remoteChange": { "nodeId": "node-b" }
+      },
+      "expected": { "action": "accept_remote" }
+    },
+    {
+      "name": "Local wins by higher HLC",
+      "input": {
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0003-node-a",
+        "remoteHlc": "018bcfe56800-0002-node-b",
+        "localChange": { "nodeId": "node-a" },
+        "remoteChange": { "nodeId": "node-b" }
+      },
+      "expected": { "action": "keep_local" }
+    },
+    {
+      "name": "Tie-break: remote nodeId wins lexicographically",
+      "input": {
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0002-node-a",
+        "remoteHlc": "018bcfe56800-0002-node-b",
+        "localChange": { "nodeId": "node-a" },
+        "remoteChange": { "nodeId": "node-b" }
+      },
+      "expected": { "action": "accept_remote" },
+      "reason": "Same HLC timestamp; node-b > node-a lexicographically"
+    },
+    {
+      "name": "Tie-break: local nodeId wins lexicographically",
+      "input": {
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0002-node-z",
+        "remoteHlc": "018bcfe56800-0002-node-a",
+        "localChange": { "nodeId": "node-z" },
+        "remoteChange": { "nodeId": "node-a" }
+      },
+      "expected": { "action": "keep_local" },
+      "reason": "Same HLC timestamp; node-a < node-z lexicographically"
+    },
+    {
+      "name": "No local HLC means remote always wins",
+      "input": {
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": null,
+        "remoteHlc": "018bcfe56800-0001-node-b",
+        "localChange": null,
+        "remoteChange": { "nodeId": "node-b" }
+      },
+      "expected": { "action": "accept_remote" }
+    }
+  ],
+
+  "primary_wins": [
+    {
+      "name": "Remote is primary, always wins",
+      "input": {
+        "primaryNodeId": "node-primary",
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0005-node-replica",
+        "remoteHlc": "018bcfe56800-0001-node-primary",
+        "localChange": { "nodeId": "node-replica" },
+        "remoteChange": { "nodeId": "node-primary" }
+      },
+      "expected": { "action": "accept_remote" },
+      "reason": "Primary wins regardless of HLC comparison"
+    },
+    {
+      "name": "Local is primary, always wins",
+      "input": {
+        "primaryNodeId": "node-primary",
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0001-node-primary",
+        "remoteHlc": "018bcfe56800-0005-node-replica",
+        "localChange": { "nodeId": "node-primary" },
+        "remoteChange": { "nodeId": "node-replica" }
+      },
+      "expected": { "action": "keep_local" },
+      "reason": "Primary wins regardless of HLC comparison"
+    },
+    {
+      "name": "Neither is primary, falls back to LWW",
+      "input": {
+        "primaryNodeId": "node-primary",
+        "table": "orders",
+        "rowId": "42",
+        "localHlc": "018bcfe56800-0001-node-replica-1",
+        "remoteHlc": "018bcfe56800-0002-node-replica-2",
+        "localChange": { "nodeId": "node-replica-1" },
+        "remoteChange": { "nodeId": "node-replica-2" }
+      },
+      "expected": { "action": "accept_remote" },
+      "reason": "Neither side is primary; LWW picks remote (higher logical)"
+    }
+  ],
+
+  "field_merge": [
+    {
+      "name": "Non-overlapping changes merge both sides",
+      "input": {
+        "table": "users",
+        "rowId": "1",
+        "localHlc": "018bcfe56800-0001-node-a",
+        "remoteHlc": "018bcfe56800-0001-node-b",
+        "localChange": {
+          "nodeId": "node-a",
+          "oldData": { "name": "Alice", "email": "alice@old.com", "age": 30 },
+          "newData": { "name": "Alice Updated", "email": "alice@old.com", "age": 30 }
+        },
+        "remoteChange": {
+          "nodeId": "node-b",
+          "oldData": { "name": "Alice", "email": "alice@old.com", "age": 30 },
+          "newData": { "name": "Alice", "email": "alice@new.com", "age": 30 }
+        },
+        "columnVersions": {
+          "name": { "hlc": "018bcfe56800-0000-node-a", "nodeId": "node-a" },
+          "email": { "hlc": "018bcfe56800-0000-node-a", "nodeId": "node-a" },
+          "age": { "hlc": "018bcfe56800-0000-node-a", "nodeId": "node-a" }
+        }
+      },
+      "expected": {
+        "action": "merge",
+        "mergedData": { "name": "Alice Updated", "email": "alice@new.com", "age": 30 }
+      },
+      "reason": "name changed locally, email changed remotely; no overlap, both preserved"
+    },
+    {
+      "name": "Overlapping change resolved by per-column HLC",
+      "input": {
+        "table": "users",
+        "rowId": "1",
+        "localHlc": "018bcfe56800-0001-node-a",
+        "remoteHlc": "018bcfe56800-0002-node-b",
+        "localChange": {
+          "nodeId": "node-a",
+          "oldData": { "name": "Alice", "email": "alice@old.com" },
+          "newData": { "name": "Alice Local", "email": "alice@old.com" }
+        },
+        "remoteChange": {
+          "nodeId": "node-b",
+          "oldData": { "name": "Alice", "email": "alice@old.com" },
+          "newData": { "name": "Alice Remote", "email": "alice@new.com" }
+        },
+        "columnVersions": {
+          "name": { "hlc": "018bcfe56800-0000-node-a", "nodeId": "node-a" },
+          "email": { "hlc": "018bcfe56800-0000-node-a", "nodeId": "node-a" }
+        }
+      },
+      "expected": {
+        "action": "merge",
+        "mergedData": { "name": "Alice Remote", "email": "alice@new.com" }
+      },
+      "reason": "Both changed name (overlap); remote HLC 0002 > column version HLC 0000, so remote wins for name; email only changed remotely"
+    },
+    {
+      "name": "No column versions, falls back to LWW",
+      "input": {
+        "table": "users",
+        "rowId": "1",
+        "localHlc": "018bcfe56800-0001-node-a",
+        "remoteHlc": "018bcfe56800-0002-node-b",
+        "localChange": {
+          "nodeId": "node-a",
+          "oldData": { "name": "Alice" },
+          "newData": { "name": "Alice Local" }
+        },
+        "remoteChange": {
+          "nodeId": "node-b",
+          "oldData": { "name": "Alice" },
+          "newData": { "name": "Alice Remote" }
+        },
+        "columnVersions": {}
+      },
+      "expected": { "action": "accept_remote" },
+      "reason": "Empty column versions triggers LWW fallback; remote HLC wins"
+    }
+  ]
+}

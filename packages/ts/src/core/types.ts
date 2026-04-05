@@ -3,6 +3,20 @@ import type { SQLiteDriver } from './driver/types.js'
 /** Query parameter types: named (object) or positional (array). */
 export type Params = Record<string, unknown> | unknown[]
 
+export type WriteConcernLevel = 'local' | 'majority' | 'all'
+export interface WriteConcern {
+  level: WriteConcernLevel
+  timeoutMs?: number
+}
+export type ReadConcernLevel = 'local' | 'majority' | 'linearizable'
+export interface ReadConcern {
+  level: ReadConcernLevel
+}
+export interface QueryOptions {
+  writeConcern?: WriteConcern
+  readConcern?: ReadConcern
+}
+
 /** Result returned by mutation statements (INSERT, UPDATE, DELETE). */
 export interface ExecuteResult {
   changes: number
@@ -28,6 +42,8 @@ export interface QueryHookContext {
   sql: string
   params?: Params
   metadata?: Record<string, unknown>
+  writeConcern?: WriteConcern
+  readConcern?: ReadConcern
 }
 
 /** Hook invoked before a query is executed. Throw to deny. */
@@ -183,6 +199,7 @@ export interface ServerOptions {
   port?: number
   cors?: boolean | CorsOptions
   onRequest?: OnRequestHook
+  getReplicationStatus?: () => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null
 }
 
 /** CORS configuration. */

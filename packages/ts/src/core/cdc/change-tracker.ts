@@ -10,18 +10,21 @@ const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 export class ChangeTracker {
   private readonly watched = new Map<string, WatchedTableInfo>()
-  private lastSeq = 0
+  private lastSeq = 0n
   private readonly retentionMs: number
   private readonly changesTable: string
   private readonly pollBatchSize: number
+  private readonly replication: boolean
   private changesTableReady = false
   private watchedTablesCache: ReadonlySet<string> | null = null
   private readonly stmtCache = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
+  private pruneBoundary: bigint | null = null
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
     this.changesTable = options?.changesTable ?? DEFAULT_CHANGES_TABLE
     this.pollBatchSize = options?.pollBatchSize ?? DEFAULT_POLL_BATCH_SIZE
+    this.replication = options?.replication ?? false
 
     this.assertIdentifier(this.changesTable, 'changes table name')
   }
@@ -86,7 +89,7 @@ export class ChangeTracker {
 			 LIMIT ?`,
     )
 
-    const rows = (await stmt.all(this.lastSeq, this.pollBatchSize)) as ChangeRow[]
+    const rows = (await stmt.all(this.lastSeq.toString(), this.pollBatchSize)) as ChangeRow[]
 
     if (rows.length === 0) {
       return []
@@ -105,7 +108,7 @@ export class ChangeTracker {
       })
     }
 
-    this.lastSeq = rows[rows.length - 1].seq
+    this.lastSeq = BigInt(rows[rows.length - 1].seq)
 
     return events
   }
@@ -119,14 +122,15 @@ export class ChangeTracker {
     }
 
     const cutoff = Date.now() / 1000 - this.retentionMs / 1000
+    const seqBound = this.computeSeqBound()
 
-    if (this.lastSeq > 0) {
+    if (seqBound !== null) {
       const stmt = await this.getStmt(
         conn,
         'cleanup_coordinated',
         `DELETE FROM "${this.changesTable}" WHERE changed_at < ? AND seq <= ?`,
       )
-      const result = await stmt.run(cutoff, this.lastSeq)
+      const result = await stmt.run(cutoff, seqBound.toString())
       return result.changes
     }
 
@@ -135,11 +139,37 @@ export class ChangeTracker {
     return result.changes
   }
 
+  setPruneBoundary(seq: bigint): void {
+    this.pruneBoundary = seq
+  }
+
+  clearPruneBoundary(): void {
+    this.pruneBoundary = null
+  }
+
   get watchedTables(): ReadonlySet<string> {
     if (!this.watchedTablesCache) {
       this.watchedTablesCache = new Set(this.watched.keys())
     }
     return this.watchedTablesCache
+  }
+
+  private computeSeqBound(): bigint | null {
+    const boundary = this.pruneBoundary
+
+    if (this.lastSeq > 0n && boundary !== null) {
+      return this.lastSeq < boundary ? this.lastSeq : boundary
+    }
+
+    if (boundary !== null) {
+      return boundary
+    }
+
+    if (this.lastSeq > 0n) {
+      return this.lastSeq
+    }
+
+    return null
   }
 
   private assertIdentifier(name: string, label: string): void {
@@ -163,7 +193,29 @@ export class ChangeTracker {
       return
     }
 
-    await conn.exec(`
+    if (this.replication) {
+      await conn.exec(`
+CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  table_name TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+  old_data TEXT,
+  new_data TEXT,
+  node_id TEXT NOT NULL DEFAULT '',
+  tx_id TEXT NOT NULL DEFAULT '',
+  hlc TEXT NOT NULL DEFAULT ''
+)`)
+      await conn.exec(
+        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
+      )
+      await conn.exec(
+        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_node_id" ON "${this.changesTable}" (node_id)`,
+      )
+      await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_hlc" ON "${this.changesTable}" (hlc)`)
+    } else {
+      await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   table_name TEXT NOT NULL,
@@ -173,9 +225,10 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   old_data TEXT,
   new_data TEXT
 )`)
-    await conn.exec(
-      `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
-    )
+      await conn.exec(
+        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
+      )
+    }
     this.changesTableReady = true
   }
 
@@ -242,12 +295,15 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
     const newPk = this.buildPkRef(pkColumns, 'NEW')
     const oldPk = this.buildPkRef(pkColumns, 'OLD')
 
+    const replCols = this.replication ? ', node_id, tx_id, hlc' : ''
+    const replVals = this.replication ? ", '', '', ''" : ''
+
     await conn.exec(`
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_insert"
 			AFTER INSERT ON "${table}"
 			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, new_data)
-				VALUES ('${table}', 'INSERT', ${newPk}, ${newJson});
+				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, new_data${replCols})
+				VALUES ('${table}', 'INSERT', ${newPk}, ${newJson}${replVals});
 			END
 		`)
 
@@ -255,8 +311,8 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_update"
 			AFTER UPDATE ON "${table}"
 			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data, new_data)
-				VALUES ('${table}', 'UPDATE', ${newPk}, ${oldJson}, ${newJson});
+				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data, new_data${replCols})
+				VALUES ('${table}', 'UPDATE', ${newPk}, ${oldJson}, ${newJson}${replVals});
 			END
 		`)
 
@@ -264,8 +320,8 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_delete"
 			AFTER DELETE ON "${table}"
 			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data)
-				VALUES ('${table}', 'DELETE', ${oldPk}, ${oldJson});
+				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data${replCols})
+				VALUES ('${table}', 'DELETE', ${oldPk}, ${oldJson}${replVals});
 			END
 		`)
   }

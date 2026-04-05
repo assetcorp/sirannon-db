@@ -1,0 +1,53 @@
+{
+  "description": "Test vectors for batch and sync checksums. Checksums are SHA-256 hex digests of the JSON-serialised payload. All implementations must produce identical checksums for identical JSON input.",
+
+  "algorithm": "sha256",
+  "input_encoding": "JSON.stringify(payload) as UTF-8 bytes",
+  "output_encoding": "lowercase hexadecimal",
+
+  "batch_checksum": [
+    {
+      "name": "Single INSERT change",
+      "changes": [
+        {
+          "table": "orders",
+          "operation": "insert",
+          "rowId": "1",
+          "primaryKey": { "id": 1 },
+          "hlc": "018bcfe56800-0001-node-a",
+          "txId": "tx-001",
+          "nodeId": "node-a",
+          "newData": { "id": 1, "status": "pending", "total": 42.5 },
+          "oldData": null
+        }
+      ],
+      "expected": "3ac63372c4dc13de3cc530117ec7995ec1fa81cde06980f6965659714b564206",
+      "note": "Checksum is computed over JSON.stringify(changes), not per-change"
+    },
+    {
+      "name": "Empty changes array",
+      "changes": [],
+      "expected": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "note": "SHA-256 of the string '[]'"
+    }
+  ],
+
+  "sync_batch_checksum": [
+    {
+      "name": "Two rows of user data",
+      "rows": [
+        { "id": 1, "name": "Alice", "email": "alice@example.com" },
+        { "id": 2, "name": "Bob", "email": "bob@example.com" }
+      ],
+      "expected": "cb21b8e35df6c436a16477624efdadcb6d5e6c32459f1ae88d3aef03833dc60c",
+      "note": "Sync batch checksums use the same algorithm over JSON.stringify(rows)"
+    }
+  ],
+
+  "notes": [
+    "JSON serialisation must produce deterministic output. Field order in objects must match the insertion order of the source language's map/object type.",
+    "Floating-point numbers serialise per JSON spec (42.5 not 42.50).",
+    "null values are preserved in serialisation.",
+    "Implementations that use a different JSON serialisation library must verify output matches these vectors exactly."
+  ]
+}

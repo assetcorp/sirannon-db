@@ -13,6 +13,9 @@ export interface ChangeRow {
   changed_at: number
   old_data: string | null
   new_data: string | null
+  node_id?: string
+  tx_id?: string
+  hlc?: string
 }
 
 export interface ColumnInfo {
@@ -34,4 +37,5 @@ export interface ChangeTrackerOptions {
   retention?: number
   changesTable?: string
   pollBatchSize?: number
+  replication?: boolean
 }

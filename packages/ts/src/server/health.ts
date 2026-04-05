@@ -14,12 +14,22 @@ interface DatabaseStatus {
 interface ReadinessResponse {
   status: 'ok' | 'degraded'
   databases: DatabaseStatus[]
+  replication?: {
+    role: string
+    writeForwarding: boolean
+    peers: number
+    localSeq: string
+  }
 }
 
-/**
- * Returns a handler that responds with a simple `{ status: 'ok' }` payload.
- * This endpoint confirms the process is running and able to serve requests.
- */
+export interface ReplicationHealthInfo {
+  role: string
+  writeForwarding: boolean
+  peers: number
+  localSeq: bigint
+}
+
+/** Returns a handler that responds with a static 200 OK JSON payload for liveness probes. */
 export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void {
   const payload = JSON.stringify({ status: 'ok' } satisfies LivenessResponse)
 
@@ -30,13 +40,11 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
   }
 }
 
-/**
- * Returns a handler that responds with the readiness status of every
- * registered database. If any database is closed, the overall status
- * is `degraded` (still 200, so load balancers can decide based on the
- * body).
- */
-export function handleReadiness(sirannon: Sirannon): (res: HttpResponse, req: HttpRequest) => void {
+/** Returns a handler that reports database and replication status for readiness probes. */
+export function handleReadiness(
+  sirannon: Sirannon,
+  getReplicationStatus?: () => ReplicationHealthInfo | null,
+): (res: HttpResponse, req: HttpRequest) => void {
   return res => {
     const dbs = sirannon.databases()
     const databases: DatabaseStatus[] = []
@@ -55,6 +63,18 @@ export function handleReadiness(sirannon: Sirannon): (res: HttpResponse, req: Ht
     const body: ReadinessResponse = {
       status: degraded ? 'degraded' : 'ok',
       databases,
+    }
+
+    if (getReplicationStatus) {
+      const replStatus = getReplicationStatus()
+      if (replStatus) {
+        body.replication = {
+          role: replStatus.role,
+          writeForwarding: replStatus.writeForwarding,
+          peers: replStatus.peers,
+          localSeq: replStatus.localSeq.toString(),
+        }
+      }
     }
 
     const payload = JSON.stringify(body)

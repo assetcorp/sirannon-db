@@ -4,6 +4,8 @@ updates:
     directory: "/packages/ts"
     schedule:
       interval: "monthly"
+    cooldown:
+      default-days: 4
     groups:
       production:
         dependency-type: "production"
@@ -17,5 +19,7 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    cooldown:
+      default-days: 4
     commit-message:
       prefix: "ci"

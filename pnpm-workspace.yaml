@@ -9,3 +9,5 @@ onlyBuiltDependencies:
   - grpc-tools
   - nx
   - protobufjs
+
+minimumReleaseAge: 5760

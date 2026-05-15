@@ -28,24 +28,33 @@ const main = async () => {
   const metadataByName = new Map()
 
   for (const pkg of addedPackages) {
-    const metadata = await fetchMetadata(pkg.name, metadataByName)
+    const packageKey = createPackageKey(pkg)
+    let metadata
+
+    try {
+      metadata = await fetchMetadata(pkg.name, metadataByName)
+    } catch (error) {
+      failures.push(`${packageKey}: npm metadata lookup failed: ${formatError(error)}`)
+      continue
+    }
+
     const publishedAt = metadata.time?.[pkg.version]
 
     if (typeof publishedAt !== 'string') {
-      failures.push(`${createPackageKey(pkg)}: publish timestamp was not available from the npm registry`)
+      failures.push(`${packageKey}: publish timestamp was not available from the npm registry`)
       continue
     }
 
     const publishedTime = Date.parse(publishedAt)
 
     if (Number.isNaN(publishedTime)) {
-      failures.push(`${createPackageKey(pkg)}: publish timestamp is invalid: ${publishedAt}`)
+      failures.push(`${packageKey}: publish timestamp is invalid: ${publishedAt}`)
       continue
     }
 
     if (publishedTime > minimumPublishedAt) {
       const ageDays = Math.max(0, (Date.now() - publishedTime) / DAY_MS).toFixed(2)
-      failures.push(`${createPackageKey(pkg)}: published ${ageDays} day(s) ago, below the ${minAgeDays} day minimum`)
+      failures.push(`${packageKey}: published ${ageDays} day(s) ago, below the ${minAgeDays} day minimum`)
     }
   }
 
@@ -209,6 +218,8 @@ const fetchMetadata = async (name, cache) => {
     clearTimeout(timeout)
   }
 }
+
+const formatError = error => (error instanceof Error ? error.message : String(error))
 
 const createPackageKey = pkg => `${pkg.name}@${pkg.version}`
 

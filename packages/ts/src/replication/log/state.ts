@@ -1,10 +1,55 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { HLC } from '../hlc.js'
 import type { SyncPhase } from '../types.js'
 
 export class StateOps {
   private readonly activeSyncSnapshotSeqs = new Set<bigint>()
 
   constructor(private readonly conn: SQLiteConnection) {}
+
+  /**
+   * Returns the highest valid HLC observed in this database, or `null` when
+   * no replication evidence exists yet.
+   *
+   * Reads two durable sources and takes the lexicographic maximum:
+   * - `MAX(hlc) FROM <changes table>` covers HLCs stamped onto local writes.
+   * - `MAX(hlc) FROM _sirannon_column_versions` covers HLCs applied from
+   *   remote batches and persisted alongside per-column versions.
+   *
+   * Combining both is necessary: a primary that has never received remote
+   * batches has no rows in `_sirannon_column_versions` for inbound HLCs, and
+   * a replica that has never written locally has no rows in the changes
+   * table. Either source can independently hold the highest value depending
+   * on traffic patterns.
+   *
+   * The changes table is subject to retention pruning by `ChangeTracker`,
+   * which means its `MAX(hlc)` can lag behind the highest HLC ever emitted.
+   * Cross-checking against `_sirannon_column_versions` (which is upserted
+   * per `(table, row, column)` and not subject to time-based retention)
+   * keeps the recovered value above any HLC currently still observable by
+   * any peer's conflict-resolution decisions.
+   *
+   * Filters out the empty-string sentinel that the CDC triggers write before
+   * the local-stamp pass fills in a real HLC, and rejects any decoded
+   * timestamp whose components are not finite, non-negative integers. The
+   * SQL filter narrows the result set; the JavaScript-level guard catches a
+   * future producer that writes a malformed HLC.
+   */
+  async recoverMaxObservedHlc(changesTable: string): Promise<string | null> {
+    let best: string | null = null
+
+    const changesStmt = await this.conn.prepare(`SELECT MAX(hlc) AS max_hlc FROM "${changesTable}" WHERE hlc != ''`)
+    const changesRow = (await changesStmt.get()) as { max_hlc: string | null } | undefined
+    best = mergeCandidate(best, changesRow?.max_hlc ?? null)
+
+    const versionsStmt = await this.conn.prepare(
+      `SELECT MAX(hlc) AS max_hlc FROM _sirannon_column_versions WHERE hlc != ''`,
+    )
+    const versionsRow = (await versionsStmt.get()) as { max_hlc: string | null } | undefined
+    best = mergeCandidate(best, versionsRow?.max_hlc ?? null)
+
+    return best
+  }
 
   async getLastAppliedSeq(fromNodeId: string): Promise<bigint> {
     const stmt = await this.conn.prepare(
@@ -136,4 +181,25 @@ export class StateOps {
     const row = (await stmt.get()) as { status: string } | undefined
     return row?.status === 'ready'
   }
+}
+
+function isWellFormedHlc(candidate: string): boolean {
+  if (candidate.length === 0) return false
+  let decoded: ReturnType<typeof HLC.decode>
+  try {
+    decoded = HLC.decode(candidate)
+  } catch {
+    return false
+  }
+  if (!Number.isInteger(decoded.wallMs) || decoded.wallMs < 0) return false
+  if (!Number.isInteger(decoded.logical) || decoded.logical < 0) return false
+  if (decoded.nodeId.length === 0) return false
+  return true
+}
+
+function mergeCandidate(current: string | null, candidate: string | null): string | null {
+  if (candidate === null || candidate.length === 0) return current
+  if (!isWellFormedHlc(candidate)) return current
+  if (current === null) return candidate
+  return HLC.compare(candidate, current) > 0 ? candidate : current
 }

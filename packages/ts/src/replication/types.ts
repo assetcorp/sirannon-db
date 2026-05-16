@@ -176,6 +176,7 @@ export interface ApplyResult {
   applied: number
   skipped: number
   conflicts: number
+  droppedTables: string[]
 }
 
 export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready'

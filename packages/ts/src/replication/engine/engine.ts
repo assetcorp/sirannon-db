@@ -103,7 +103,8 @@ export class ReplicationEngine extends EventEmitter {
     this.config = config
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
-    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc)
+    this.tracker = config.changeTracker
+    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, '_sirannon_changes', this.tracker)
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
     this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
@@ -120,7 +121,6 @@ export class ReplicationEngine extends EventEmitter {
     this.catchUpDeadlineMs = config.catchUpDeadlineMs ?? DEFAULT_CATCH_UP_DEADLINE_MS
     this.resumeFromSeq = config.resumeFromSeq
     this.snapshotConnectionFactory = config.snapshotConnectionFactory
-    this.tracker = config.changeTracker
 
     this.localExecutor = new LocalExecutor(this)
     this.syncServer = new SyncServer(this)
@@ -231,14 +231,14 @@ export class ReplicationEngine extends EventEmitter {
     return results
   }
 
-  async transaction<T>(fn: (tx: Transaction) => Promise<T>, _options?: QueryOptions): Promise<T> {
+  async transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T> {
     if (this.syncState.phase !== 'ready') {
       throw new SyncError(`Node is in '${this.syncState.phase}' phase and cannot accept operations`)
     }
     if (!this.config.topology.canWrite()) {
       throw new TopologyError('This node cannot accept writes in transaction mode')
     }
-    return this.database.transaction(fn)
+    return this.localExecutor.executeTransactionLocally(fn, options)
   }
 
   async forwardStatements(

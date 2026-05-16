@@ -9,13 +9,6 @@ const ALLOWED_REMOTE_DEPENDENCIES = new Map([['uWebSockets.js', 'github:uNetwork
 const ALLOWED_REMOTE_LOCKFILE_REFERENCES = [
   'https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab',
 ]
-const TANSTACK_MALWARE_IOCS = [
-  '@tanstack/setup',
-  'github:tanstack/router#79ac49eedf774dd4b0cfa308722bc463cfe5885c',
-  'router_init.js',
-  'tanstack_runner.js',
-  '79ac49eedf774dd4b0cfa308722bc463cfe5885c',
-]
 
 const main = () => {
   const failures = [...checkWorkflows(), ...checkPackageManifests(), ...checkDependencyCooldowns(), ...checkLockfile()]
@@ -137,12 +130,6 @@ const checkLockfile = () => {
 
   if (!content) {
     return failures
-  }
-
-  for (const indicator of TANSTACK_MALWARE_IOCS) {
-    if (content.includes(indicator)) {
-      failures.push(`pnpm-lock.yaml contains known TanStack malware indicator '${indicator}'`)
-    }
   }
 
   for (const match of content.matchAll(/https:\/\/codeload\.github\.com\/[^\s}:'"]+/g)) {

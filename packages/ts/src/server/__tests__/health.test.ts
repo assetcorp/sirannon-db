@@ -33,7 +33,10 @@ describe('GET /health', () => {
     const res = await fetch(`${baseUrl}/health`)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/json')
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body).toEqual({ status: 'ok' })
   })
 
@@ -47,7 +50,10 @@ describe('GET /health/ready', () => {
   it('returns ok status with no databases', async () => {
     const res = await fetch(`${baseUrl}/health/ready`)
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body.status).toBe('ok')
     expect(body.databases).toEqual([])
   })
@@ -58,7 +64,10 @@ describe('GET /health/ready', () => {
 
     const res = await fetch(`${baseUrl}/health/ready`)
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body.status).toBe('ok')
     expect(body.databases).toHaveLength(1)
     expect(body.databases[0].id).toBe('mydb')
@@ -71,7 +80,10 @@ describe('GET /health/ready', () => {
     await sirannon.open('db2', join(tempDir, 'db2.db'))
 
     const res = await fetch(`${baseUrl}/health/ready`)
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body.databases).toHaveLength(2)
     const ids = body.databases.map((d: { id: string }) => d.id)
     expect(ids).toContain('db1')
@@ -85,7 +97,10 @@ describe('GET /health/ready', () => {
     const db2 = await sirannon.open('remaining', join(tempDir, 'remaining.db'))
 
     const res = await fetch(`${baseUrl}/health/ready`)
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body.status).toBe('ok')
     await db2.close()
   })
@@ -99,11 +114,14 @@ describe('GET /health/ready', () => {
     await sirannon.open('readonly', dbPath, { readOnly: true })
 
     const res = await fetch(`${baseUrl}/health/ready`)
-    const body = await res.json()
+    const body = (await res.json()) as {
+      status: string
+      databases: Array<{ id: string; readOnly: boolean; closed: boolean }>
+    }
     expect(body.status).toBe('ok')
-    const rodb = body.databases.find((d: { id: string }) => d.id === 'readonly')
+    const rodb = body.databases.find(d => d.id === 'readonly')
     expect(rodb).toBeDefined()
-    expect(rodb.readOnly).toBe(true)
+    expect(rodb?.readOnly).toBe(true)
   })
 })
 

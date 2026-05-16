@@ -269,6 +269,7 @@ describe('E2E WebSocket', () => {
       port: 0,
       onRequest: async () => {
         await new Promise(resolve => setTimeout(resolve, 50))
+        return undefined
       },
     })
     await hookServer.listen()

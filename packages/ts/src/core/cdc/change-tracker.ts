@@ -1,6 +1,7 @@
 import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import type { ChangeEvent } from '../types.js'
+import { decodeTaggedValues, SAFE_INT_BOUND_TEXT } from './encoding.js'
 import type { ChangeRow, ChangeTrackerOptions, ColumnInfo, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
@@ -101,8 +102,8 @@ export class ChangeTracker {
       events.push({
         type: row.operation.toLowerCase() as 'insert' | 'update' | 'delete',
         table: row.table_name,
-        row: row.new_data ? JSON.parse(row.new_data) : {},
-        oldRow: row.old_data ? JSON.parse(row.old_data) : undefined,
+        row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
+        oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
         seq: BigInt(row.seq),
         timestamp: row.changed_at,
       })
@@ -327,7 +328,21 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   }
 
   private buildJsonObject(columns: string[], ref: 'NEW' | 'OLD'): string {
-    const pairs = columns.map(col => `'${this.escStr(col)}', ${ref}."${this.escId(col)}"`).join(', ')
+    const pairs = columns
+      .map(col => {
+        const ident = `${ref}."${this.escId(col)}"`
+        return (
+          `'${this.escStr(col)}', ` +
+          `CASE typeof(${ident}) ` +
+          `WHEN 'blob' THEN json(json_object('__sirannon_blob', hex(${ident}))) ` +
+          `WHEN 'integer' THEN ` +
+          `CASE WHEN ${ident} > ${SAFE_INT_BOUND_TEXT} OR ${ident} < -${SAFE_INT_BOUND_TEXT} ` +
+          `THEN json(json_object('__sirannon_int', printf('%d', ${ident}))) ` +
+          `ELSE ${ident} END ` +
+          `ELSE ${ident} END`
+        )
+      })
+      .join(', ')
     return `json_object(${pairs})`
   }
 

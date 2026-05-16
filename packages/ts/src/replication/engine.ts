@@ -8,7 +8,7 @@ import type { ExecuteResult, Params, QueryOptions } from '../core/types.js'
 import { LWWResolver } from './conflict/lww.js'
 import { BatchValidationError, ReplicationError, SyncError, TopologyError } from './errors.js'
 import { HLC } from './hlc.js'
-import { ReplicationLog } from './log.js'
+import { canonicaliseForChecksum, ReplicationLog } from './log.js'
 import { generateNodeId } from './node-id.js'
 import { PeerTracker } from './peer-tracker.js'
 import type {
@@ -65,6 +65,8 @@ export class ReplicationEngine extends EventEmitter {
 
   private senderTimer: ReturnType<typeof setTimeout> | null = null
   private lastSentSeq = 0n
+  private lastLocalSeq = 0n
+  private readonly appliedSeqByPeer = new Map<string, bigint>()
   private running = false
   private readonly batchSize: number
   private readonly batchIntervalMs: number
@@ -143,6 +145,8 @@ export class ReplicationEngine extends EventEmitter {
 
     await this.log.ensureReplicationTables()
     this.lastSentSeq = await this.log.getLocalSeq()
+    this.lastLocalSeq = this.lastSentSeq
+    await this.loadAppliedSeqs()
 
     this.setupTransportHandlers()
     const transportConfig = {
@@ -249,6 +253,25 @@ export class ReplicationEngine extends EventEmitter {
       localSeq: this.lastSentSeq,
       replicating: this.running,
       syncState: { ...this.syncState },
+    }
+  }
+
+  getCurrentSeq(): bigint {
+    return this.lastLocalSeq
+  }
+
+  getAppliedSeq(peerId: string): bigint {
+    return this.appliedSeqByPeer.get(peerId) ?? 0n
+  }
+
+  private async loadAppliedSeqs(): Promise<void> {
+    const stmt = await this.writerConn.prepare(
+      'SELECT source_node_id, MAX(source_seq) AS max_seq FROM _sirannon_applied_changes GROUP BY source_node_id',
+    )
+    const rows = (await stmt.all()) as Array<{ source_node_id: string; max_seq: number | string | null }>
+    for (const row of rows) {
+      if (row.max_seq === null) continue
+      this.appliedSeqByPeer.set(row.source_node_id, BigInt(row.max_seq))
     }
   }
 
@@ -376,8 +399,16 @@ export class ReplicationEngine extends EventEmitter {
       return { changes: r.changes, lastInsertRowId: r.lastInsertRowId }
     })
 
+    const newSeq = await this.log.getLocalSeq()
+    if (newSeq > this.lastLocalSeq) {
+      this.lastLocalSeq = newSeq
+    }
+
+    if (isDdl) {
+      await this.refreshTriggersAfterDdl()
+    }
+
     if (options?.writeConcern) {
-      const newSeq = await this.log.getLocalSeq()
       await this.waitForWriteConcern(newSeq, options.writeConcern)
     }
 
@@ -404,6 +435,8 @@ export class ReplicationEngine extends EventEmitter {
       }
     }
 
+    let sawDdl = false
+
     await this.writerConn.transaction(async tx => {
       const seqBefore = await this.log.getLocalSeq()
 
@@ -422,6 +455,7 @@ export class ReplicationEngine extends EventEmitter {
         })
 
         if (isDdl) {
+          sawDdl = true
           const ddlStmt = await tx.prepare(
             `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
              VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
@@ -434,6 +468,15 @@ export class ReplicationEngine extends EventEmitter {
       await this.log.stampChanges(tx, seqBefore, txId)
       await this.log.updateColumnVersions(tx, seqBefore)
     })
+
+    const newSeq = await this.log.getLocalSeq()
+    if (newSeq > this.lastLocalSeq) {
+      this.lastLocalSeq = newSeq
+    }
+
+    if (sawDdl) {
+      await this.refreshTriggersAfterDdl()
+    }
 
     return { results, requestId }
   }
@@ -473,7 +516,17 @@ export class ReplicationEngine extends EventEmitter {
 
         await this.log.applyBatch(batch, table => this.getResolver(table))
 
+        const batchContainedDdl = batch.changes.some(c => c.operation === 'ddl')
+        if (batchContainedDdl) {
+          await this.refreshTriggersAfterDdl()
+        }
+
         await this.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
+
+        const previousApplied = this.appliedSeqByPeer.get(fromPeerId) ?? 0n
+        if (batch.toSeq > previousApplied) {
+          this.appliedSeqByPeer.set(fromPeerId, batch.toSeq)
+        }
 
         if (batch.toSeq > this.highestSourceSeqSeen) {
           this.highestSourceSeqSeen = batch.toSeq
@@ -689,7 +742,7 @@ export class ReplicationEngine extends EventEmitter {
 
   private async serveSyncSession(session: ActiveSyncSession): Promise<void> {
     const schemaDdl = await this.log.dumpSchema(session.readConn)
-    const schemaChecksum = createHash('sha256').update(JSON.stringify(schemaDdl)).digest('hex')
+    const schemaChecksum = createHash('sha256').update(canonicaliseForChecksum(schemaDdl)).digest('hex')
 
     await this.config.transport.sendSyncBatch(session.joinerNodeId, {
       requestId: session.requestId,
@@ -742,7 +795,7 @@ export class ReplicationEngine extends EventEmitter {
           table,
           batchIndex: 0,
           rows: [],
-          checksum: createHash('sha256').update(JSON.stringify([])).digest('hex'),
+          checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
           isLastBatchForTable: true,
         })
 
@@ -960,7 +1013,7 @@ export class ReplicationEngine extends EventEmitter {
         throw new SyncError(`Invalid table name in sync batch: ${batch.table}`)
       }
 
-      const expectedChecksum = createHash('sha256').update(JSON.stringify(batch.rows)).digest('hex')
+      const expectedChecksum = createHash('sha256').update(canonicaliseForChecksum(batch.rows)).digest('hex')
       if (batch.checksum !== expectedChecksum) {
         throw new SyncError(`Checksum mismatch for ${batch.table} batch ${batch.batchIndex}`)
       }
@@ -1059,6 +1112,11 @@ export class ReplicationEngine extends EventEmitter {
         'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
       )
       await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
+
+      const previousApplied = this.appliedSeqByPeer.get(fromPeerId) ?? 0n
+      if (complete.snapshotSeq > previousApplied) {
+        this.appliedSeqByPeer.set(fromPeerId, complete.snapshotSeq)
+      }
 
       this.syncState.phase = 'catching-up'
       this.syncState.snapshotSeq = complete.snapshotSeq
@@ -1179,6 +1237,18 @@ export class ReplicationEngine extends EventEmitter {
       this.tracker.clearPruneBoundary()
     } else {
       this.tracker.setPruneBoundary(minAcked)
+    }
+  }
+
+  private async refreshTriggersAfterDdl(): Promise<void> {
+    if (!this.tracker) return
+    const tables = Array.from(this.tracker.watchedTables)
+    for (const table of tables) {
+      try {
+        await this.tracker.watch(this.writerConn, table)
+      } catch {
+        /* Table may have been dropped by the DDL; the tracker entry will be cleaned up on next unwatch */
+      }
     }
   }
 

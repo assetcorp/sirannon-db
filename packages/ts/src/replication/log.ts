@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
+import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { BatchValidationError, ReplicationError } from './errors.js'
 import { HLC } from './hlc.js'
@@ -31,6 +32,43 @@ function validateDdlSafety(sql: string): boolean {
   const body = sql.replace(SAFE_DDL_RE, '')
   if (/\bSELECT\b/i.test(body)) return false
   return true
+}
+
+export function canonicaliseForChecksum(value: unknown): string {
+  return canonicaliseValue(value)
+}
+
+function canonicaliseValue(v: unknown): string {
+  if (v === null || v === undefined) return 'null'
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  if (typeof v === 'string') return JSON.stringify(v)
+  if (typeof v === 'bigint') return `{"__sint":"${v.toString()}"}`
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return `{"__sint":"${v.toString()}"}`
+    if (Number.isFinite(v)) return JSON.stringify(v)
+    return 'null'
+  }
+  if (typeof v === 'object') {
+    if (v instanceof Uint8Array) {
+      const buf = Buffer.isBuffer(v) ? (v as Buffer) : Buffer.from(v)
+      return `{"__blob":"${buf.toString('base64')}"}`
+    }
+    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(v)) {
+      return `{"__blob":"${(v as Buffer).toString('base64')}"}`
+    }
+    if (Array.isArray(v)) {
+      return `[${v.map(canonicaliseValue).join(',')}]`
+    }
+    const obj = v as Record<string, unknown>
+    const parts: string[] = []
+    for (const key of Object.keys(obj).sort()) {
+      const val = obj[key]
+      if (val === undefined) continue
+      parts.push(`${JSON.stringify(key)}:${canonicaliseValue(val)}`)
+    }
+    return `{${parts.join(',')}}`
+  }
+  return 'null'
 }
 
 interface ChangeRow {
@@ -156,21 +194,38 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
     let maxHlc = rows[0].hlc
 
     for (const row of rows) {
-      const pkColumns = await this.getPkColumns(row.table_name)
-      const newData = row.new_data ? (JSON.parse(row.new_data) as Record<string, unknown>) : null
-      const oldData = row.old_data ? (JSON.parse(row.old_data) as Record<string, unknown>) : null
+      const operation = row.operation.toLowerCase() as ReplicationChange['operation']
+      const isDdl = operation === 'ddl'
+      const rawNewData = row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : null
+      const rawOldData = row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : null
+
+      let ddlStatement: string | undefined
+      let newData: Record<string, unknown> | null = rawNewData
+      let oldData: Record<string, unknown> | null = rawOldData
+      if (isDdl) {
+        const candidate = rawNewData?.ddlStatement
+        if (typeof candidate === 'string') {
+          ddlStatement = candidate
+        }
+        newData = null
+        oldData = null
+      }
+
+      const pkColumns = isDdl ? [] : await this.getPkColumns(row.table_name)
 
       const primaryKey: Record<string, unknown> = {}
-      const sourceData = newData ?? oldData ?? {}
-      for (const col of pkColumns) {
-        if (col in sourceData) {
-          primaryKey[col] = sourceData[col]
+      if (!isDdl) {
+        const sourceData = rawNewData ?? rawOldData ?? {}
+        for (const col of pkColumns) {
+          if (col in sourceData) {
+            primaryKey[col] = sourceData[col]
+          }
         }
       }
 
-      changes.push({
+      const change: ReplicationChange = {
         table: row.table_name,
-        operation: row.operation.toLowerCase() as ReplicationChange['operation'],
+        operation,
         rowId: String(row.row_id),
         primaryKey,
         hlc: row.hlc,
@@ -178,7 +233,11 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
         nodeId: row.node_id,
         newData,
         oldData,
-      })
+      }
+      if (ddlStatement !== undefined) {
+        change.ddlStatement = ddlStatement
+      }
+      changes.push(change)
 
       if (HLC.compare(row.hlc, minHlc) < 0) {
         minHlc = row.hlc
@@ -227,8 +286,8 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
         continue
       }
 
-      const oldData = row.old_data ? (JSON.parse(row.old_data) as Record<string, unknown>) : {}
-      const newData = row.new_data ? (JSON.parse(row.new_data) as Record<string, unknown>) : {}
+      const oldData = row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : {}
+      const newData = row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {}
       const changedCols: string[] = []
 
       if (row.operation === 'INSERT') {
@@ -237,7 +296,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
         }
       } else {
         for (const key of Object.keys(newData)) {
-          if (JSON.stringify(newData[key]) !== JSON.stringify(oldData[key])) {
+          if (canonicaliseForChecksum(newData[key]) !== canonicaliseForChecksum(oldData[key])) {
             changedCols.push(key)
           }
         }
@@ -717,7 +776,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
       }
 
       done = isLast
-      const checksum = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(rows)).digest('hex')
 
       yield { rows, checksum, isLast }
     }
@@ -926,7 +985,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
 
   private computeChecksum(changes: ReplicationChange[]): string {
     const hash = createHash('sha256')
-    hash.update(JSON.stringify(changes))
+    hash.update(canonicaliseForChecksum(changes))
     return hash.digest('hex')
   }
 

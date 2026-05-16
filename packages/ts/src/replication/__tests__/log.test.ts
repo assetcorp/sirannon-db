@@ -6,7 +6,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { LWWResolver } from '../conflict/lww.js'
 import { BatchValidationError } from '../errors.js'
 import { HLC } from '../hlc.js'
-import { ReplicationLog } from '../log.js'
+import { canonicaliseForChecksum, ReplicationLog } from '../log.js'
 import type { ReplicationBatch, ReplicationChange } from '../types.js'
 
 const NODE_A = 'aaaa0000aaaa0000aaaa0000aaaa0000'
@@ -128,13 +128,57 @@ describe('ReplicationLog', () => {
       expect(batch?.checksum).toBeTruthy()
 
       const hash = createHash('sha256')
-      hash.update(JSON.stringify(batch?.changes))
+      hash.update(canonicaliseForChecksum(batch?.changes))
       expect(batch?.checksum).toBe(hash.digest('hex'))
     })
 
     it('returns null when no changes exist', async () => {
       const batch = await log.readBatch(0n, 100)
       expect(batch).toBeNull()
+    })
+
+    it('decodes large integers from the __sirannon_int envelope back to BigInt', async () => {
+      await conn.exec('CREATE TABLE counters (id INTEGER PRIMARY KEY, big INTEGER)')
+      const intTracker = new ChangeTracker({ replication: true })
+      await intTracker.watch(conn, 'counters')
+
+      const big = 9007199254740993n
+      const insertStmt = await conn.prepare('INSERT INTO counters (id, big) VALUES (?, ?)')
+      await insertStmt.run(1, big)
+
+      await conn.transaction(async tx => {
+        await log.stampChanges(tx, 0, 'tx-int')
+      })
+
+      const batch = await log.readBatch(0n, 100)
+      expect(batch).not.toBeNull()
+      const change = batch?.changes.find(c => c.table === 'counters')
+      expect(change).toBeDefined()
+      const decodedBig = change?.newData?.big
+      expect(typeof decodedBig).toBe('bigint')
+      expect(decodedBig).toBe(big)
+    })
+
+    it('decodes BLOB columns from the tagged hex envelope back to Buffer', async () => {
+      await conn.exec('CREATE TABLE files (id INTEGER PRIMARY KEY, payload BLOB)')
+      const blobTracker = new ChangeTracker({ replication: true })
+      await blobTracker.watch(conn, 'files')
+
+      const payload = Buffer.from([0x10, 0x20, 0x30, 0x00, 0xff])
+      const insertStmt = await conn.prepare('INSERT INTO files (id, payload) VALUES (?, ?)')
+      await insertStmt.run(1, payload)
+
+      await conn.transaction(async tx => {
+        await log.stampChanges(tx, 0, 'tx-blob')
+      })
+
+      const batch = await log.readBatch(0n, 100)
+      expect(batch).not.toBeNull()
+      const change = batch?.changes.find(c => c.table === 'files')
+      expect(change).toBeDefined()
+      const decodedPayload = change?.newData?.payload
+      expect(Buffer.isBuffer(decodedPayload)).toBe(true)
+      expect((decodedPayload as Buffer).equals(payload)).toBe(true)
     })
 
     it('respects the afterSeq parameter', async () => {
@@ -200,7 +244,7 @@ describe('ReplicationLog', () => {
         },
       ]
 
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const batch: ReplicationBatch = {
         sourceNodeId: NODE_B,
@@ -239,7 +283,7 @@ describe('ReplicationLog', () => {
         },
       ]
 
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const batch: ReplicationBatch = {
         sourceNodeId: NODE_B,
@@ -314,7 +358,7 @@ describe('ReplicationLog', () => {
         },
       ]
 
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const batch: ReplicationBatch = {
         sourceNodeId: NODE_B,
@@ -349,7 +393,7 @@ describe('ReplicationLog', () => {
         },
       ]
 
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const batch: ReplicationBatch = {
         sourceNodeId: NODE_B,
@@ -383,7 +427,7 @@ describe('ReplicationLog', () => {
         },
       ]
 
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const batch: ReplicationBatch = {
         sourceNodeId: NODE_B,
@@ -427,6 +471,136 @@ describe('ReplicationLog', () => {
 
       const minSeq = await log.getMinAckedSeq()
       expect(minSeq).toBe(10n)
+    })
+  })
+
+  describe('canonicaliseForChecksum', () => {
+    it('does not throw on BigInt values (unlike raw JSON.stringify)', () => {
+      const value = { id: 1n, label: 'x' }
+      expect(() => JSON.stringify(value)).toThrow()
+      expect(() => canonicaliseForChecksum(value)).not.toThrow()
+    })
+
+    it('produces the same string for an integer number and the equivalent BigInt', () => {
+      const numberInput = { id: 42, count: 7 }
+      const bigintInput = { id: 42n, count: 7n }
+      expect(canonicaliseForChecksum(numberInput)).toBe(canonicaliseForChecksum(bigintInput))
+    })
+
+    it('produces the same string for a mixed number-and-BigInt object as for the all-BigInt equivalent', () => {
+      const mixed = { id: 1, count: 99n, label: 'x' }
+      const allBigint = { id: 1n, count: 99n, label: 'x' }
+      expect(canonicaliseForChecksum(mixed)).toBe(canonicaliseForChecksum(allBigint))
+    })
+
+    it('produces the same string for Uint8Array and Buffer with identical bytes', () => {
+      const bytes = [0xde, 0xad, 0xbe, 0xef]
+      const arr = new Uint8Array(bytes)
+      const buf = Buffer.from(bytes)
+      expect(canonicaliseForChecksum({ blob: arr })).toBe(canonicaliseForChecksum({ blob: buf }))
+    })
+
+    it('preserves float values as-is (non-integer numbers)', () => {
+      const value = { ratio: 3.14 }
+      expect(canonicaliseForChecksum(value)).toBe('{"ratio":3.14}')
+    })
+
+    it('preserves strings, booleans, and null without alteration', () => {
+      const value = { name: 'alice', active: true, ghost: null }
+      expect(canonicaliseForChecksum(value)).toBe('{"active":true,"ghost":null,"name":"alice"}')
+    })
+
+    it('omits properties with undefined values to match JSON.stringify semantics', () => {
+      const withUndefined = { a: 1n, b: undefined }
+      const without = { a: 1n }
+      expect(canonicaliseForChecksum(withUndefined)).toBe(canonicaliseForChecksum(without))
+    })
+
+    it('produces stable output regardless of property insertion order', () => {
+      const a = { x: 'first', y: 'second', z: 'third' }
+      const b = { z: 'third', y: 'second', x: 'first' }
+      expect(canonicaliseForChecksum(a)).toBe(canonicaliseForChecksum(b))
+    })
+
+    it('represents undefined elements inside arrays as null (matches JSON.stringify)', () => {
+      const value = ['a', undefined, 'c']
+      expect(canonicaliseForChecksum(value)).toBe('["a",null,"c"]')
+    })
+  })
+
+  describe('checksum stability across wire-format round-trip', () => {
+    it('produces matching checksums for primary-side and replica-side representations', async () => {
+      const hlcVal = hlcA.now()
+
+      const primarySideChange: ReplicationChange = {
+        table: 'users',
+        operation: 'insert',
+        rowId: '1',
+        primaryKey: { id: 1 },
+        hlc: hlcVal,
+        txId: 'tx-1',
+        nodeId: NODE_A,
+        newData: { id: 1, name: 'Alice', email: null },
+        oldData: null,
+      }
+      const replicaSideChange: ReplicationChange = {
+        table: 'users',
+        operation: 'insert',
+        rowId: '1',
+        primaryKey: { id: 1n },
+        hlc: hlcVal,
+        txId: 'tx-1',
+        nodeId: NODE_A,
+        newData: { id: 1n, name: 'Alice', email: null },
+        oldData: null,
+      }
+
+      const primaryChecksum = createHash('sha256')
+        .update(canonicaliseForChecksum([primarySideChange]))
+        .digest('hex')
+      const replicaChecksum = createHash('sha256')
+        .update(canonicaliseForChecksum([replicaSideChange]))
+        .digest('hex')
+
+      expect(primaryChecksum).toBe(replicaChecksum)
+    })
+
+    it('applyBatch accepts a batch whose values have been coerced to BigInt by the wire layer', async () => {
+      const remoteHlc = new HLC(NODE_B).now()
+      const changes: ReplicationChange[] = [
+        {
+          table: 'users',
+          operation: 'insert',
+          rowId: '7',
+          primaryKey: { id: 7 },
+          hlc: remoteHlc,
+          txId: 'tx-remote',
+          nodeId: NODE_B,
+          newData: { id: 7, name: 'Remote', email: null },
+          oldData: null,
+        },
+      ]
+      const primaryChecksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
+
+      const wireRoundtripped: ReplicationChange[] = changes.map(c => ({
+        ...c,
+        primaryKey: { id: 7n },
+        newData: { id: 7n, name: 'Remote', email: null },
+      }))
+
+      const batch: ReplicationBatch = {
+        sourceNodeId: NODE_B,
+        batchId: `${NODE_B}-1-1`,
+        fromSeq: 1n,
+        toSeq: 1n,
+        hlcRange: { min: remoteHlc, max: remoteHlc },
+        changes: wireRoundtripped,
+        checksum: primaryChecksum,
+      }
+
+      const result = await log.applyBatch(batch, new LWWResolver())
+      expect(result.applied).toBe(1)
+      expect(result.conflicts).toBe(0)
     })
   })
 })

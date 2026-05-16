@@ -10,6 +10,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { ReplicationEngine } from '../engine.js'
 import { BatchValidationError, ReplicationError, TopologyError } from '../errors.js'
 import { HLC } from '../hlc.js'
+import { canonicaliseForChecksum } from '../log.js'
 import { PrimaryReplicaTopology } from '../topology/primary-replica.js'
 import type {
   ForwardedTransaction,
@@ -294,7 +295,7 @@ describe('ReplicationEngine', () => {
           oldData: null,
         },
       ]
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       await transport.triggerBatchReceived(
         {
@@ -346,7 +347,7 @@ describe('ReplicationEngine', () => {
           oldData: null,
         },
       ]
-      const checksum = createHash('sha256').update(JSON.stringify(changes)).digest('hex')
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
 
       const errorEvents: ReplicationErrorEvent[] = []
       engine.on('replication-error', (event: ReplicationErrorEvent) => {
@@ -458,6 +459,203 @@ describe('ReplicationEngine', () => {
           NODE_B,
         ),
       ).rejects.toThrow('No forward handler registered')
+
+      await engine.stop()
+    })
+  })
+
+  describe('observability', () => {
+    it('returns 0 from getCurrentSeq before start', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+
+      expect(engine.getCurrentSeq()).toBe(0n)
+    })
+
+    it('returns 0 from getAppliedSeq for unknown peers', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+
+      expect(engine.getAppliedSeq('unknown-peer')).toBe(0n)
+      expect(engine.getAppliedSeq(NODE_B)).toBe(0n)
+
+      await engine.stop()
+    })
+
+    it('advances getCurrentSeq after a local write', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+
+      const before = engine.getCurrentSeq()
+      await engine.execute("INSERT INTO users (id, name) VALUES (1, 'alice')")
+      const after = engine.getCurrentSeq()
+
+      expect(after).toBeGreaterThan(before)
+
+      await engine.stop()
+    })
+
+    it('reports the same seq for the same write across repeated reads', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+
+      await engine.execute("INSERT INTO users (id, name) VALUES (1, 'alice')")
+      const first = engine.getCurrentSeq()
+      const second = engine.getCurrentSeq()
+      const third = engine.getCurrentSeq()
+
+      expect(first).toBe(second)
+      expect(second).toBe(third)
+
+      await engine.stop()
+    })
+
+    it('updates getAppliedSeq after a remote batch is applied', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig({ topology: new PrimaryReplicaTopology('replica') }))
+      await engine.start()
+      transport.addPeer(NODE_B, 'primary')
+
+      expect(engine.getAppliedSeq(NODE_B)).toBe(0n)
+
+      const hlcB = new HLC(NODE_B)
+      const hlcVal = hlcB.now()
+      const changes = [
+        {
+          table: 'users',
+          operation: 'insert' as const,
+          rowId: '7',
+          primaryKey: { id: 7 },
+          hlc: hlcVal,
+          txId: 'remote-tx',
+          nodeId: NODE_B,
+          newData: { id: 7, name: 'Remote' },
+          oldData: null,
+        },
+      ]
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
+
+      await transport.triggerBatchReceived(
+        {
+          sourceNodeId: NODE_B,
+          batchId: `${NODE_B}-1-1`,
+          fromSeq: 1n,
+          toSeq: 1n,
+          hlcRange: { min: hlcVal, max: hlcVal },
+          changes,
+          checksum,
+        },
+        NODE_B,
+      )
+
+      expect(engine.getAppliedSeq(NODE_B)).toBe(1n)
+      expect(engine.getAppliedSeq('different-peer')).toBe(0n)
+
+      await engine.stop()
+    })
+
+    it('does not regress getCurrentSeq if reads are interleaved with writes', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      const engine = new ReplicationEngine(db, conn, makeConfig())
+      await engine.start()
+
+      const seqs: bigint[] = []
+      for (let i = 1; i <= 5; i++) {
+        await engine.execute(`INSERT INTO users (id, name) VALUES (${i}, 'u${i}')`)
+        seqs.push(engine.getCurrentSeq())
+      }
+
+      for (let i = 1; i < seqs.length; i++) {
+        expect(seqs[i]).toBeGreaterThanOrEqual(seqs[i - 1])
+      }
+      expect(seqs[seqs.length - 1]).toBeGreaterThan(0n)
+
+      await engine.stop()
+    })
+
+    it('preserves getCurrentSeq across restart by reading from durable state', async () => {
+      const { db, conn } = await createDbAndConn('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engineA = new ReplicationEngine(db, conn, makeConfig())
+      await engineA.start()
+      await engineA.execute("INSERT INTO users (id, name) VALUES (1, 'alice')")
+      const seqA = engineA.getCurrentSeq()
+      await engineA.stop()
+
+      expect(seqA).toBeGreaterThan(0n)
+
+      const engineB = new ReplicationEngine(db, conn, makeConfig())
+      await engineB.start()
+      const seqB = engineB.getCurrentSeq()
+      await engineB.stop()
+
+      expect(seqB).toBe(seqA)
+    })
+  })
+
+  describe('DDL trigger refresh', () => {
+    it('captures new columns in CDC after ALTER TABLE ADD COLUMN', async () => {
+      const dbPath = join(tempDir, `ddl-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+      const conn = await testDriver.open(dbPath)
+      await conn.exec('PRAGMA journal_mode = WAL')
+      writerConn = conn
+
+      await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
+      const tracker = new ChangeTracker({ replication: true })
+      await tracker.watch(conn, 'inventory')
+
+      const db = await Database.create('ddl', dbPath, testDriver)
+      openDbs.push(db)
+
+      const engine = new ReplicationEngine(db, conn, makeConfig({ changeTracker: tracker }))
+      await engine.start()
+
+      await engine.execute("INSERT INTO inventory (id, sku) VALUES (1, 'sku-001')")
+      await engine.execute('ALTER TABLE inventory ADD COLUMN quantity INTEGER')
+      await engine.execute('UPDATE inventory SET quantity = 42 WHERE id = 1')
+
+      const stmt = await conn.prepare(
+        "SELECT new_data FROM _sirannon_changes WHERE table_name = 'inventory' AND operation = 'UPDATE' ORDER BY seq DESC LIMIT 1",
+      )
+      const row = (await stmt.get()) as { new_data: string } | undefined
+      expect(row).toBeDefined()
+      const parsed = JSON.parse(row?.new_data ?? '{}') as { id: number; sku: string; quantity: number }
+      expect(parsed.quantity).toBe(42)
+      expect(parsed.sku).toBe('sku-001')
+
+      await engine.stop()
+    })
+
+    it('captures new columns after DDL forwarded as a separate transaction', async () => {
+      const dbPath = join(tempDir, `ddl-fwd-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+      const conn = await testDriver.open(dbPath)
+      await conn.exec('PRAGMA journal_mode = WAL')
+      writerConn = conn
+
+      await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
+      const tracker = new ChangeTracker({ replication: true })
+      await tracker.watch(conn, 'inventory')
+
+      const db = await Database.create('ddl-fwd', dbPath, testDriver)
+      openDbs.push(db)
+
+      const engine = new ReplicationEngine(db, conn, makeConfig({ changeTracker: tracker }))
+      await engine.start()
+
+      await engine.forwardStatements([{ sql: "INSERT INTO inventory (id, sku) VALUES (1, 'sku-001')" }])
+      await engine.forwardStatements([{ sql: 'ALTER TABLE inventory ADD COLUMN quantity INTEGER' }])
+      await engine.forwardStatements([{ sql: 'UPDATE inventory SET quantity = 99 WHERE id = 1' }])
+
+      const stmt = await conn.prepare(
+        "SELECT new_data FROM _sirannon_changes WHERE table_name = 'inventory' AND operation = 'UPDATE' ORDER BY seq DESC LIMIT 1",
+      )
+      const row = (await stmt.get()) as { new_data: string } | undefined
+      expect(row).toBeDefined()
+      const parsed = JSON.parse(row?.new_data ?? '{}') as { quantity: number }
+      expect(parsed.quantity).toBe(99)
 
       await engine.stop()
     })

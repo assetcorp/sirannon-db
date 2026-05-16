@@ -1,4 +1,6 @@
+import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { extractDroppedTable } from '../engine/constants.js'
 import { BatchValidationError } from '../errors.js'
 import type { HLC } from '../hlc.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from '../types.js'
@@ -13,6 +15,7 @@ export class BatchApplier {
     private readonly hlc: HLC,
     private readonly pkResolver: PkResolver,
     private readonly getLastAppliedSeq: (fromNodeId: string) => Promise<bigint>,
+    private readonly tracker?: ChangeTracker,
   ) {}
 
   async applyBatch(
@@ -34,7 +37,7 @@ export class BatchApplier {
 
     const lastApplied = await this.getLastAppliedSeq(batch.sourceNodeId)
     if (batch.toSeq <= lastApplied) {
-      return { applied: 0, skipped: batch.changes.length, conflicts: 0 }
+      return { applied: 0, skipped: batch.changes.length, conflicts: 0, droppedTables: [] }
     }
 
     const needsPartialDedup = batch.fromSeq <= lastApplied
@@ -57,6 +60,7 @@ export class BatchApplier {
     let applied = 0
     let skipped = 0
     let conflicts = 0
+    const droppedTables: string[] = []
 
     const changesByTx = new Map<string, ReplicationChange[]>()
     for (const change of batch.changes) {
@@ -69,6 +73,7 @@ export class BatchApplier {
     }
 
     for (const [_txId, txChanges] of changesByTx) {
+      const txDroppedTables: string[] = []
       const result = await this.conn.transaction(async tx => {
         let txApplied = 0
         let txSkipped = 0
@@ -83,6 +88,13 @@ export class BatchApplier {
             throw new BatchValidationError(`Unsafe or missing DDL statement: ${ddlSql ?? 'none'}`)
           }
           await tx.exec(ddlSql)
+          const droppedTable = extractDroppedTable(ddlSql)
+          if (droppedTable !== null) {
+            txDroppedTables.push(droppedTable)
+          }
+          if (this.tracker) {
+            await this.tracker.refreshAllTriggersUsingConnection(tx)
+          }
           txApplied += 1
         }
 
@@ -145,6 +157,9 @@ export class BatchApplier {
       applied += result.txApplied
       skipped += result.txSkipped
       conflicts += result.txConflicts
+      if (txDroppedTables.length > 0) {
+        droppedTables.push(...txDroppedTables)
+      }
     }
 
     const recordStmt = await this.conn.prepare(
@@ -162,7 +177,7 @@ export class BatchApplier {
       /* batch is already durable; HLC merge failure should not surface as a batch error */
     }
 
-    return { applied, skipped, conflicts }
+    return { applied, skipped, conflicts, droppedTables }
   }
 
   private async findExistingRow(

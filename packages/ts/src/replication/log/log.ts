@@ -31,13 +31,19 @@ export class ReplicationLog {
     localNodeId: string,
     hlc: HLC,
     private readonly changesTable: string = '_sirannon_changes',
+    tracker?: ChangeTracker,
   ) {
     this.pkResolver = new PkResolver(conn)
     this.state = new StateOps(conn)
     this.schema = new SchemaOps(conn, changesTable)
     this.batchReader = new BatchReader(conn, localNodeId, hlc, changesTable, this.pkResolver)
-    this.batchApplier = new BatchApplier(conn, localNodeId, hlc, this.pkResolver, fromNodeId =>
-      this.state.getLastAppliedSeq(fromNodeId),
+    this.batchApplier = new BatchApplier(
+      conn,
+      localNodeId,
+      hlc,
+      this.pkResolver,
+      fromNodeId => this.state.getLastAppliedSeq(fromNodeId),
+      tracker,
     )
     this.dump = new DumpOps(conn, localNodeId, hlc, this.pkResolver)
   }
@@ -75,6 +81,10 @@ export class ReplicationLog {
 
   getLocalSeq(): Promise<bigint> {
     return this.state.getLocalSeq(this.changesTable)
+  }
+
+  recoverMaxObservedHlc(): Promise<string | null> {
+    return this.state.recoverMaxObservedHlc(this.changesTable)
   }
 
   getMinAckedSeq(): Promise<bigint | null> {

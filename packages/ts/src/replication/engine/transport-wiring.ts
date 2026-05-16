@@ -34,10 +34,13 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${engine.maxClockDriftMs}ms`)
       }
 
-      await engine.log.applyBatch(batch, table => engine.getResolver(table))
+      const applyResult = await engine.log.applyBatch(batch, table => engine.getResolver(table))
 
       const batchContainedDdl = batch.changes.some(c => c.operation === 'ddl')
       if (batchContainedDdl) {
+        if (applyResult.droppedTables.length > 0 && engine.tracker) {
+          await engine.tracker.pruneDroppedTables(engine.writerConn, applyResult.droppedTables)
+        }
         await engine.refreshTriggersAfterDdl()
       }
 

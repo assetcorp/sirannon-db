@@ -24,12 +24,11 @@ export class LifecycleManager {
     const timeout = config.idleTimeout
     if (timeout && timeout > 0) {
       const interval = Math.min(Math.max(Math.floor(timeout / 2), 100), 60_000)
-      this.idleTimer = setInterval(async () => {
+      const timer = setInterval(async () => {
         await this.#runIdleCheck()
-      }, interval)
-      if (typeof this.idleTimer === 'object' && 'unref' in this.idleTimer) {
-        this.idleTimer.unref()
-      }
+      }, interval) as ReturnType<typeof setInterval> & { unref?: () => void }
+      timer.unref?.()
+      this.idleTimer = timer
     }
   }
 

@@ -337,10 +337,10 @@ export class WSHandler {
         polling = false
       }
     }
-    const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS)
-    if (typeof interval === 'object' && 'unref' in interval && typeof interval.unref === 'function') {
-      interval.unref()
+    const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
+      unref?: () => void
     }
+    interval.unref?.()
 
     return { cdcConn, tracker, manager, stopPolling }
   }

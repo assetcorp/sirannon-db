@@ -206,11 +206,13 @@ export class SirannonClient {
         const start = performance.now()
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 5_000)
-        if (typeof (timeout as { unref?: () => void }).unref === 'function') {
-          ;(timeout as { unref: () => void }).unref()
+        const unrefable = timeout as unknown as { unref?: () => void }
+        if (typeof unrefable.unref === 'function') {
+          unrefable.unref()
         }
         try {
-          const response = await fetch(`${url}/health`, { signal: controller.signal })
+          const init: RequestInit = { signal: controller.signal as RequestInit['signal'] }
+          const response = await fetch(`${url}/health`, init)
           if (!response.ok) {
             return { url, latencyMs: Number.MAX_SAFE_INTEGER, reachable: false }
           }

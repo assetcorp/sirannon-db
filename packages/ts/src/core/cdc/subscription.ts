@@ -133,10 +133,8 @@ export function startPolling(
     }
   }
 
-  const interval = setInterval(tick, intervalMs)
-  if (typeof interval === 'object' && 'unref' in interval) {
-    interval.unref()
-  }
+  const interval = setInterval(tick, intervalMs) as ReturnType<typeof setInterval> & { unref?: () => void }
+  interval.unref?.()
 
   const stop = () => {
     clearInterval(interval)

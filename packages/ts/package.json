@@ -32,6 +32,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:soak": "vitest run --config vitest.soak.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

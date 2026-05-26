@@ -38,6 +38,7 @@ import { SenderLoop } from './sender-loop.js'
 import { startEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
+import { installTestHooks } from './test-hooks.js'
 
 /**
  * Coordinates replication for a single database node.
@@ -126,6 +127,7 @@ export class ReplicationEngine extends EventEmitter {
     this.syncServer = new SyncServer(this)
     this.syncJoiner = new SyncJoiner(this)
     this.senderLoop = new SenderLoop(this)
+    installTestHooks(this)
   }
 
   start(): Promise<void> {

@@ -67,7 +67,12 @@ export class StateOps {
       `INSERT INTO _sirannon_peer_state (peer_node_id, last_acked_seq, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(peer_node_id)
-       DO UPDATE SET last_acked_seq = excluded.last_acked_seq, updated_at = excluded.updated_at`,
+       DO UPDATE SET
+         last_acked_seq = max(_sirannon_peer_state.last_acked_seq, excluded.last_acked_seq),
+         updated_at = CASE
+           WHEN excluded.last_acked_seq >= _sirannon_peer_state.last_acked_seq THEN excluded.updated_at
+           ELSE _sirannon_peer_state.updated_at
+         END`,
     )
     await stmt.run(fromNodeId, seq.toString(), Date.now() / 1000)
   }

@@ -1,5 +1,6 @@
 import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { ReplicationEngine } from './engine.js'
+import { delayAckIfConfigured } from './test-hooks.js'
 
 export function wireTransportHandlers(engine: ReplicationEngine): void {
   engine.config.transport.onBatchReceived(async (batch, fromPeerId) => {
@@ -55,6 +56,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.highestSourceSeqSeen = batch.toSeq
       }
 
+      await delayAckIfConfigured(engine)
       await engine.config.transport.sendAck(fromPeerId, {
         batchId: batch.batchId,
         ackedSeq: batch.toSeq,
@@ -70,6 +72,10 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
     if (!engine.running) return
     if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') return
     engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
+    engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: ack.nodeId, recoverable: true })
+    })
   })
 
   if (engine.config.topology.canWrite()) {
@@ -93,6 +99,10 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onPeerConnected(peer => {
     engine.peerTracker.addPeer(peer.id)
+    engine.log.setLastAppliedSeq(peer.id, 0n).catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'peer-state-initialise', peerId: peer.id, recoverable: true })
+    })
     if (engine.syncState.phase === 'pending') {
       engine.syncJoiner.initiateSync().catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))

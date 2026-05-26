@@ -73,7 +73,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
     port: 0,
-    host: '127.0.0.1',
+    host: 'localhost',
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,
@@ -128,7 +128,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
 
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
-    host: '127.0.0.1',
+    host: 'localhost',
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,

@@ -54,7 +54,9 @@ function createMockResponse() {
       abortHandler?.()
     },
     data(payload: string, isLast: boolean) {
-      dataHandler?.(Buffer.from(payload), isLast)
+      const buf = Buffer.from(payload)
+      const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+      dataHandler?.(arrayBuffer, isLast)
     },
   }
 }

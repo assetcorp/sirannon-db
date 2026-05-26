@@ -66,7 +66,7 @@ with subscriptions and topology-aware read routing.
 | [01-driver.md](01-driver.md) | Driver contract, connection, statement, capabilities |
 | [02-core.md](02-core.md) | Registry, database, connection pool, query execution, CDC, hooks, lifecycle, migrations, backups, metrics |
 | [03-replication.md](03-replication.md) | Replication engine, HLC, replication log, primary-replica topology, conflict resolution, peer tracking, first sync, write forwarding |
-| [04-transport.md](04-transport.md) | Transport interface, message types, wire format, WebSocket protocol |
+| [04-transport.md](04-transport.md) | Transport interface, message types, gRPC wire protocol, authentication |
 | [05-server.md](05-server.md) | HTTP endpoints, WebSocket protocol, health endpoints |
 | [06-client.md](06-client.md) | Client SDK, remote database proxy, subscriptions, topology-aware routing |
 | [07-errors.md](07-errors.md) | Error taxonomy, wire protocol error codes |
@@ -94,6 +94,24 @@ queries, but does not prescribe the eviction strategy.
 TypeScript reference implementation uses. Other implementations
 may choose different values. Recommended items are marked with
 the word "recommended" and include a concrete default value.
+
+---
+
+## Pseudocode Convention
+
+Type definitions in this specification use a language-neutral
+pseudocode. The notation is illustrative, not prescriptive;
+implementations use their language's native type system.
+
+| Notation | Meaning |
+|----------|---------|
+| `Map<K, V>` | A mapping from keys of type K to values of type V |
+| `List<T>` | An ordered collection of elements of type T |
+| `any` | A value of any type |
+| `T or null` | A value that is either T or absent |
+| `<T>` | A generic type parameter |
+| `async -> T` | An asynchronous operation returning T |
+| `readonly` | A value that must not be mutated after construction |
 
 ---
 

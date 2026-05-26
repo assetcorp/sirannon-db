@@ -46,5 +46,17 @@ describe('ReplicationLog', () => {
       const minSeq = await log.getMinAckedSeq()
       expect(minSeq).toBe(10n)
     })
+
+    it('setLastAppliedSeq does not regress peer state', async () => {
+      await log.setLastAppliedSeq(NODE_B, 10n)
+      await log.setLastAppliedSeq(NODE_B, 3n)
+
+      const stmt = await conn.prepare('SELECT last_acked_seq FROM _sirannon_peer_state WHERE peer_node_id = ?')
+      const row = (await stmt.get(NODE_B)) as { last_acked_seq: number } | undefined
+      expect(row?.last_acked_seq).toBe(10)
+
+      const minSeq = await log.getMinAckedSeq()
+      expect(minSeq).toBe(10n)
+    })
   })
 })

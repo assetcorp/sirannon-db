@@ -50,7 +50,7 @@ describe('E2E: peer-replicated DDL+DML batch refreshes replica CDC triggers', ()
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
     })
     diagnostics = attachDiagnostics(primary, replica)

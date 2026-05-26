@@ -74,7 +74,7 @@ describe('E2E: initial sync of schema and data', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
     })
     diagnostics = attachDiagnostics(primary, replica)
@@ -99,7 +99,7 @@ describe('E2E: initial sync of schema and data', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
     })
     diagnostics = attachDiagnostics(primary, replica)

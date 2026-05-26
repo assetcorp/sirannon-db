@@ -76,7 +76,7 @@ describe('E2E soak: sustained gRPC replication over mTLS', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
       configOverrides: {
         batchIntervalMs: 20,

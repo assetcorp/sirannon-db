@@ -282,21 +282,21 @@ results for identical inputs across all languages.
 
 ```text
 ConflictResolver {
-  resolve(ctx: ConflictContext): ConflictResolution | async ConflictResolution
+  resolve(ctx: ConflictContext): ConflictResolution or async ConflictResolution
 }
 
 ConflictContext {
   table:        string
   rowId:        string
-  localChange:  ReplicationChange | null
+  localChange:  ReplicationChange or null
   remoteChange: ReplicationChange
-  localHlc:     string | null
+  localHlc:     string or null
   remoteHlc:    string
 }
 
 ConflictResolution {
   action:      'accept_remote' | 'keep_local' | 'merge'
-  mergedData?: Record<string, unknown>
+  mergedData?: Map<string, any>
 }
 ```
 
@@ -415,7 +415,7 @@ ReplicationBatch {
   fromSeq:       bigint
   toSeq:         bigint
   hlcRange:      { min: string, max: string }
-  changes:       Array<ReplicationChange>
+  changes:       List<ReplicationChange>
   checksum:      string
 }
 
@@ -423,12 +423,12 @@ ReplicationChange {
   table:         string
   operation:     'insert' | 'update' | 'delete' | 'ddl'
   rowId:         string
-  primaryKey:    Record<string, unknown>
+  primaryKey:    Map<string, any>
   hlc:           string
   txId:          string
   nodeId:        string
-  newData:       Record<string, unknown> | null
-  oldData:       Record<string, unknown> | null
+  newData:       Map<string, any> or null
+  oldData:       Map<string, any> or null
   ddlStatement?: string
 }
 ```
@@ -442,7 +442,9 @@ ReplicationChange {
 ### Checksum
 
 The checksum is computed as the SHA-256 hex digest of the
-JSON-serialised changes array. Both the sender and receiver must
+deterministic protobuf encoding of the changes list. Deterministic
+encoding means fields are serialised in field-number order and map
+entries are sorted by key. Both the sender and receiver must
 compute and compare this checksum. A mismatch must result in error
 code `BATCH_VALIDATION_ERROR`.
 
@@ -479,7 +481,7 @@ ReplicationConfig {
   transport:                ReplicationTransport
   transportConfig?:         TransportConfig
   writeForwarding?:         boolean
-  conflictResolvers?:       Record<string, ConflictResolver>
+  conflictResolvers?:       Map<string, ConflictResolver>
   defaultConflictResolver?: ConflictResolver
   batchSize?:               number
   batchIntervalMs?:         number
@@ -569,12 +571,12 @@ primary is connected, throw with error code `TOPOLOGY_ERROR`.
 
 ```text
 ForwardedTransaction {
-  statements:  Array<{ sql: string, params?: Params }>
+  statements:  List<{ sql: string, params?: Params }>
   requestId:   string
 }
 
 ForwardedTransactionResult {
-  results:    Array<{ changes: number, lastInsertRowId: number | string }>
+  results:    List<{ changes: number, lastInsertRowId: number or string }>
   requestId:  string
 }
 ```
@@ -593,7 +595,7 @@ PeerState {
   lastReceivedHlc: string
   connected:       boolean
   pendingBatches:  number
-  inFlightBatches: Array<InFlightBatch>
+  inFlightBatches: List<InFlightBatch>
 }
 
 InFlightBatch {
@@ -641,15 +643,15 @@ pending -> syncing -> catching-up -> ready
 SyncRequest {
   requestId:       string
   joinerNodeId:    string
-  completedTables: Array<string>
+  completedTables: List<string>
 }
 
 SyncBatch {
   requestId:          string
   table:              string
   batchIndex:         number
-  rows:               Array<Record<string, unknown>>
-  schema?:            Array<string>
+  rows:               List<Map<string, any>>
+  schema?:            List<string>
   checksum:           string
   isLastBatchForTable: boolean
 }
@@ -657,7 +659,7 @@ SyncBatch {
 SyncComplete {
   requestId:   string
   snapshotSeq: bigint
-  manifests:   Array<SyncTableManifest>
+  manifests:   List<SyncTableManifest>
 }
 
 SyncTableManifest {
@@ -726,19 +728,3 @@ must validate them against an allowlist:
 
 Implementations must reject any DDL that does not pass validation
 with error code `BATCH_VALIDATION_ERROR`.
-
----
-
-## Bigint Serialisation (Normative)
-
-Replication messages are serialised as JSON. Because JSON does not
-natively support bigint values, implementations must use a prefix
-convention for round-trip fidelity:
-
-```text
-Encoding: '\x00sirannon:bigint:{value}'
-Decoding: detect the prefix and parse the value as bigint
-```
-
-This applies to `fromSeq`, `toSeq`, `ackedSeq`, `snapshotSeq`,
-and any other bigint fields in wire messages.

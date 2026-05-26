@@ -21,8 +21,8 @@ Sirannon {
 
   open(id: string, path: string, options?: DatabaseOptions): async -> Database
   close(id: string): async -> void
-  get(id: string): Database | undefined
-  resolve(id: string): async -> Database | undefined
+  get(id: string): Database or null
+  resolve(id: string): async -> Database or null
   has(id: string): boolean
   databases(): Map<string, Database>
   shutdown(): async -> void
@@ -99,18 +99,18 @@ Database {
   readonly closed: boolean
   readonly readerCount: number
 
-  query<T>(sql: string, params?: Params, options?: QueryOptions): async -> Array<T>
-  queryOne<T>(sql: string, params?: Params, options?: QueryOptions): async -> T | undefined
+  query<T>(sql: string, params?: Params, options?: QueryOptions): async -> List<T>
+  queryOne<T>(sql: string, params?: Params, options?: QueryOptions): async -> T or null
   execute(sql: string, params?: Params, options?: QueryOptions): async -> ExecuteResult
-  executeBatch(sql: string, paramsBatch: Array<Params>, options?: QueryOptions): async -> Array<ExecuteResult>
+  executeBatch(sql: string, paramsBatch: List<Params>, options?: QueryOptions): async -> List<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) -> async T): async -> T
 
   watch(table: string): async -> void
   unwatch(table: string): async -> void
   on(table: string): SubscriptionBuilder
 
-  migrate(migrations: Array<Migration>): async -> MigrationResult
-  rollback(migrations: Array<Migration>, version?: number): async -> RollbackResult
+  migrate(migrations: List<Migration>): async -> MigrationResult
+  rollback(migrations: List<Migration>, version?: number): async -> RollbackResult
 
   backup(destPath: string): async -> void
   scheduleBackup(options: BackupScheduleOptions): void
@@ -138,7 +138,7 @@ DatabaseOptions {
 ### Query Parameters
 
 ```text
-Params = Record<string, unknown> | Array<unknown>
+Params = Map<string, any> or List<any>
 ```
 
 Named parameters (object) or positional parameters (array). See
@@ -170,7 +170,7 @@ Read concern levels are reserved for future use.
 ```text
 ExecuteResult {
   changes:          number
-  lastInsertRowId:  number | bigint
+  lastInsertRowId:  number or bigint
 }
 ```
 
@@ -397,7 +397,7 @@ table with optional filtering.
 
 ```text
 SubscriptionBuilder {
-  filter(conditions: Record<string, unknown>): SubscriptionBuilder
+  filter(conditions: Map<string, any>): SubscriptionBuilder
   subscribe(callback: (event: ChangeEvent) -> void): Subscription
 }
 
@@ -473,7 +473,7 @@ eviction for databases.
 ```text
 LifecycleConfig {
   autoOpen?: {
-    resolver: (id: string) -> { path: string, options?: DatabaseOptions } | undefined
+    resolver: (id: string) -> { path: string, options?: DatabaseOptions } or null
   }
   idleTimeout?: number    (0 = disabled, milliseconds)
   maxOpen?:     number    (0 = unlimited)

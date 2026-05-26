@@ -26,6 +26,13 @@
         "cwd": "packages/ts"
       }
     },
+    "test:e2e": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm vitest run --config vitest.e2e.config.ts",
+        "cwd": "packages/ts"
+      }
+    },
     "lint": {
       "executor": "nx:run-commands",
       "options": {

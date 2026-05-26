@@ -124,8 +124,8 @@ export class PeerTracker {
       const timer = setTimeout(() => {
         this.waiters.delete(waiter)
         reject(new WriteConcernError(`Timed out waiting for majority ACK of seq ${seq}`))
-      }, timeoutMs)
-      timer.unref()
+      }, timeoutMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+      timer.unref?.()
 
       const waiter: Waiter = { seq, kind: 'majority', resolve, reject, timer }
       this.waiters.add(waiter)
@@ -143,8 +143,8 @@ export class PeerTracker {
       const timer = setTimeout(() => {
         this.waiters.delete(waiter)
         reject(new WriteConcernError(`Timed out waiting for all peers to ACK seq ${seq}`))
-      }, timeoutMs)
-      timer.unref()
+      }, timeoutMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+      timer.unref?.()
 
       const waiter: Waiter = { seq, kind: 'all', resolve, reject, timer }
       this.waiters.add(waiter)

@@ -35,8 +35,10 @@ interface ActiveSubscription {
  * Transactions are not supported over WebSocket; use
  * {@link HttpTransport} for batch transactions.
  */
+type ClientWebSocket = InstanceType<typeof WebSocket>
+
 export class WebSocketTransport implements Transport {
-  private ws: WebSocket | null = null
+  private ws: ClientWebSocket | null = null
   private readonly url: string
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number

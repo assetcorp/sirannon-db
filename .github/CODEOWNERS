@@ -1,0 +1,12 @@
+# Default repository ownership.
+* @assetcorp
+
+# Repository automation and dependency policy.
+/.github/CODEOWNERS @assetcorp
+/.github/dependabot.yml @assetcorp
+/.github/workflows/ @assetcorp
+/.github/scripts/ @assetcorp
+/package.json @assetcorp
+/pnpm-lock.yaml @assetcorp
+/pnpm-workspace.yaml @assetcorp
+/packages/**/package.json @assetcorp

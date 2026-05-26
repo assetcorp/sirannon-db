@@ -1,6 +1,8 @@
 import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import type { ChangeEvent } from '../types.js'
+import { decodeTaggedValues } from './encoding.js'
+import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeRow, ChangeTrackerOptions, ColumnInfo, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
@@ -71,6 +73,98 @@ export class ChangeTracker {
     this.watchedTablesCache = null
   }
 
+  /**
+   * Rebuilds CDC triggers for every watched table directly on the supplied
+   * connection, without opening a nested transaction.
+   *
+   * Required when a caller has already issued `BEGIN` on `conn` and runs a
+   * DDL statement that changes a watched table's column list: the next DML
+   * inside the same transaction must see triggers compiled against the new
+   * columns, otherwise CDC `new_data` silently omits them. Callers that are
+   * not inside an active transaction may also use this method; CREATE
+   * TRIGGER and DROP TRIGGER statements are committed individually by the
+   * driver in that case.
+   *
+   * Failure semantics:
+   * - If a watched table no longer exists (e.g. it was just dropped by the
+   *   DDL), it is skipped. The watched-map entry is left alone so a separate
+   *   cleanup path can handle it; throwing here would roll back the user's
+   *   transaction over a benign condition.
+   * - If reading column metadata succeeds but the column list is unchanged,
+   *   no triggers are touched.
+   * - If reading column metadata succeeds and the column list differs from
+   *   the cached one, the existing triggers are dropped and reinstalled on
+   *   `conn`. The cached column list is updated on success.
+   * - Any other error (driver failure, identifier validation failure) is
+   *   rethrown so the caller's transaction can roll back deterministically.
+   */
+  async refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void> {
+    const tables = Array.from(this.watched.keys())
+    let anyMutated = false
+    for (const table of tables) {
+      const existing = this.watched.get(table)
+      if (!existing) continue
+
+      const columns = await this.getColumns(conn, table)
+      if (columns.length === 0) {
+        continue
+      }
+
+      for (const col of columns) {
+        this.assertIdentifier(col, `column name in table '${table}'`)
+      }
+
+      const same = existing.columns.length === columns.length && existing.columns.every((col, i) => col === columns[i])
+      if (same) {
+        continue
+      }
+
+      const pkColumns = await this.getPkColumns(conn, table)
+      await this.dropTriggers(conn, table)
+      await this.installTriggers(conn, table, columns, pkColumns)
+      this.watched.set(table, { table, columns, pkColumns })
+      anyMutated = true
+    }
+    if (anyMutated) {
+      this.watchedTablesCache = null
+    }
+  }
+
+  /**
+   * Removes the supplied tables from the watched map and drops any leftover
+   * CDC triggers carrying their identifier on the supplied connection.
+   *
+   * Intended to be called after a DDL transaction that dropped one or more
+   * watched tables has committed. On rollback the caller must not invoke
+   * this method; the rollback semantics rely on the caller discarding its
+   * captured drop list before reaching this call.
+   *
+   * Idempotent: tables not currently in the watched map are silently
+   * skipped. `dropCdcTriggers` issues `DROP TRIGGER IF EXISTS` so calling
+   * twice in succession produces the same state.
+   *
+   * Defence in depth: even after a `DROP TABLE`, the in-transaction trigger
+   * refresh path may have observed a freshly-created table of the same name
+   * (the DROP and CREATE happened inside the same transaction) and
+   * re-installed triggers compiled against the new schema. Those triggers
+   * are dropped here so the recreated table starts with a clean slate and
+   * the caller must explicitly `watch` it again.
+   */
+  async pruneDroppedTables(conn: SQLiteConnection, tables: readonly string[]): Promise<void> {
+    let mutated = false
+    for (const table of tables) {
+      if (!this.watched.has(table)) {
+        continue
+      }
+      await this.dropTriggers(conn, table)
+      this.watched.delete(table)
+      mutated = true
+    }
+    if (mutated) {
+      this.watchedTablesCache = null
+    }
+  }
+
   async poll(conn: SQLiteConnection): Promise<ChangeEvent[]> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)
@@ -101,8 +195,8 @@ export class ChangeTracker {
       events.push({
         type: row.operation.toLowerCase() as 'insert' | 'update' | 'delete',
         table: row.table_name,
-        row: row.new_data ? JSON.parse(row.new_data) : {},
-        oldRow: row.old_data ? JSON.parse(row.old_data) : undefined,
+        row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
+        oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
         seq: BigInt(row.seq),
         timestamp: row.changed_at,
       })
@@ -248,9 +342,7 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
   }
 
   private async dropTriggers(conn: SQLiteConnection, table: string): Promise<void> {
-    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_insert"`)
-    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_update"`)
-    await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_delete"`)
+    await dropCdcTriggers(conn, table)
   }
 
   private async getStmt(conn: SQLiteConnection, key: string, sql: string): Promise<SQLiteStatement> {
@@ -274,68 +366,12 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
     }
   }
 
-  private buildPkRef(pkColumns: string[], ref: 'NEW' | 'OLD'): string {
-    if (pkColumns.length === 0) {
-      return `${ref}.rowid`
-    }
-    if (pkColumns.length === 1) {
-      return `${ref}."${this.escId(pkColumns[0])}"`
-    }
-    return pkColumns.map(col => `${ref}."${this.escId(col)}"`).join(" || '-' || ")
-  }
-
   private async installTriggers(
     conn: SQLiteConnection,
     table: string,
     columns: string[],
     pkColumns: string[],
   ): Promise<void> {
-    const newJson = this.buildJsonObject(columns, 'NEW')
-    const oldJson = this.buildJsonObject(columns, 'OLD')
-    const newPk = this.buildPkRef(pkColumns, 'NEW')
-    const oldPk = this.buildPkRef(pkColumns, 'OLD')
-
-    const replCols = this.replication ? ', node_id, tx_id, hlc' : ''
-    const replVals = this.replication ? ", '', '', ''" : ''
-
-    await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_insert"
-			AFTER INSERT ON "${table}"
-			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, new_data${replCols})
-				VALUES ('${table}', 'INSERT', ${newPk}, ${newJson}${replVals});
-			END
-		`)
-
-    await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_update"
-			AFTER UPDATE ON "${table}"
-			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data, new_data${replCols})
-				VALUES ('${table}', 'UPDATE', ${newPk}, ${oldJson}, ${newJson}${replVals});
-			END
-		`)
-
-    await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_delete"
-			AFTER DELETE ON "${table}"
-			BEGIN
-				INSERT INTO "${this.changesTable}" (table_name, operation, row_id, old_data${replCols})
-				VALUES ('${table}', 'DELETE', ${oldPk}, ${oldJson}${replVals});
-			END
-		`)
-  }
-
-  private buildJsonObject(columns: string[], ref: 'NEW' | 'OLD'): string {
-    const pairs = columns.map(col => `'${this.escStr(col)}', ${ref}."${this.escId(col)}"`).join(', ')
-    return `json_object(${pairs})`
-  }
-
-  private escId(name: string): string {
-    return name.replace(/"/g, '""')
-  }
-
-  private escStr(name: string): string {
-    return name.replace(/'/g, "''")
+    await installCdcTriggers(conn, this.changesTable, table, columns, pkColumns, this.replication)
   }
 }

@@ -1,10 +1,13 @@
 import { BackupManager } from './backup/backup.js'
 import { BackupScheduler } from './backup/scheduler.js'
+import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
+import { applyDdlSideEffects, isCdcRelevantDdl } from './cdc/ddl-handler.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import { ConnectionPool } from './connection-pool.js'
-import type { SQLiteDriver } from './driver/types.js'
-import { ExtensionError, ReadOnlyError, SirannonError } from './errors.js'
+import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
+import { ReadOnlyError, SirannonError } from './errors.js'
+import { loadExtension as loadExtensionImpl } from './extension-loader.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
@@ -138,13 +141,14 @@ export class Database {
     const start = performance.now()
     try {
       const writer = this.pool.acquireWriter()
-      if (this.metricsCollector) {
-        return await this.metricsCollector.trackQuery(() => execute(writer, sql, params), {
-          databaseId: this.id,
-          sql,
-        })
-      }
-      return await execute(writer, sql, params)
+      const result = this.metricsCollector
+        ? await this.metricsCollector.trackQuery(() => execute(writer, sql, params), {
+            databaseId: this.id,
+            sql,
+          })
+        : await execute(writer, sql, params)
+      await this.maybeApplyDdlSideEffects(writer, sql)
+      return result
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -159,13 +163,14 @@ export class Database {
     try {
       const writer = this.pool.acquireWriter()
       const batchFn = () => writer.transaction(async txConn => executeBatch(txConn, sql, paramsBatch))
-      if (this.metricsCollector) {
-        return await this.metricsCollector.trackQuery(batchFn, {
-          databaseId: this.id,
-          sql,
-        })
-      }
-      return await batchFn()
+      const results = this.metricsCollector
+        ? await this.metricsCollector.trackQuery(batchFn, {
+            databaseId: this.id,
+            sql,
+          })
+        : await batchFn()
+      await this.maybeApplyDdlSideEffects(writer, sql)
+      return results
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
     }
@@ -175,7 +180,30 @@ export class Database {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
     const writer = this.pool.acquireWriter()
-    return Transaction.run(writer, fn)
+    const tracker = this.changeTracker
+
+    if (!tracker) {
+      return Transaction.run(writer, fn)
+    }
+
+    const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
+    const result = await writer.transaction(async txConn => {
+      const tx = new CdcAwareTransaction(txConn, tracker, state)
+      return fn(tx)
+    })
+
+    if (state.sawDdl && state.droppedTables.length > 0) {
+      await tracker.pruneDroppedTables(writer, state.droppedTables)
+    }
+
+    return result
+  }
+
+  private async maybeApplyDdlSideEffects(writer: SQLiteConnection, sql: string): Promise<void> {
+    const tracker = this.changeTracker
+    if (!tracker) return
+    if (!isCdcRelevantDdl(sql)) return
+    await applyDdlSideEffects(tracker, writer, sql)
   }
 
   async watch(table: string): Promise<void> {
@@ -237,36 +265,8 @@ export class Database {
 
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
-
-    if (!this.driver.capabilities.extensions) {
-      throw new ExtensionError(extensionPath, 'Extensions are not supported by the current driver')
-    }
-
-    if (!extensionPath || extensionPath.includes('\0')) {
-      throw new ExtensionError(extensionPath || '', 'Extension path is empty or contains null bytes')
-    }
-
-    for (let i = 0; i < extensionPath.length; i++) {
-      if (extensionPath.charCodeAt(i) <= 0x1f) {
-        throw new ExtensionError(extensionPath, 'Extension path contains control characters')
-      }
-    }
-
-    const segments = extensionPath.split(/[/\\]/)
-    if (segments.includes('..')) {
-      throw new ExtensionError(extensionPath, 'Extension path must not contain directory traversal segments')
-    }
-
-    const { resolve } = await import('node:path')
-    const resolved = resolve(extensionPath)
-
-    try {
-      const writer = this.pool.acquireWriter()
-      const escaped = resolved.replace(/'/g, "''")
-      await writer.exec(`SELECT load_extension('${escaped}')`)
-    } catch (err) {
-      throw new ExtensionError(extensionPath, err instanceof Error ? err.message : String(err))
-    }
+    const writer = this.pool.acquireWriter()
+    await loadExtensionImpl(this.driver, writer, extensionPath)
   }
 
   onBeforeQuery(hook: BeforeQueryHook): void {

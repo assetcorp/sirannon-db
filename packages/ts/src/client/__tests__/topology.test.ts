@@ -75,6 +75,49 @@ describe('TopologyAwareClientOptions', () => {
     client.close()
   })
 
+  it('rejects unsafe configured endpoint URLs', () => {
+    expect(
+      () =>
+        new SirannonClient({
+          primary: 'file:///tmp/test.db',
+          transport: 'http',
+        }),
+    ).toThrow('must use http or https')
+
+    expect(
+      () =>
+        new SirannonClient({
+          primary: 'https://user:password@example.com',
+          transport: 'http',
+        }),
+    ).toThrow('must not contain credentials')
+  })
+
+  it('rejects unsafe coordinator-discovered endpoint URLs', async () => {
+    await server.close()
+    server = createServer(sirannon, {
+      port: 0,
+      getClusterStatus: databaseId => ({
+        databaseId,
+        currentPrimary: { nodeId: 'node-a', endpoint: 'file:///tmp/test.db' },
+        primaryTerm: 1n,
+        readEndpoints: [],
+        health: 'healthy',
+      }),
+    })
+    await server.listen()
+    baseUrl = `http://127.0.0.1:${server.listeningPort}`
+
+    const client = new SirannonClient({
+      endpoints: [baseUrl],
+      discovery: 'coordinator',
+      transport: 'http',
+    })
+
+    await expect(client._refreshClusterRouting('testdb')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    client.close()
+  })
+
   it('queries via primary with readPreference primary', async () => {
     const client = new SirannonClient({
       primary: baseUrl,

@@ -1,10 +1,26 @@
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { CorsOptions, OnRequestHook, RequestContext, RequestDenial, ServerOptions } from '../core/types.js'
+import type {
+  ClusterStatusInfo,
+  CorsOptions,
+  OnRequestHook,
+  ReplicationStatusInfo,
+  RequestContext,
+  RequestDenial,
+  ServerOptions,
+} from '../core/types.js'
 import { handleLiveness, handleReadiness } from './health.js'
 import type { DbRouteHandler } from './http-handler.js'
-import { handleExecute, handleQuery, handleTransaction, initAbortHandler, readBody, sendError } from './http-handler.js'
+import {
+  handleClusterStatus,
+  handleExecute,
+  handleQuery,
+  handleTransaction,
+  initAbortHandler,
+  readBody,
+  sendError,
+} from './http-handler.js'
 import type { WSConnection } from './ws-handler.js'
 import { WSHandler } from './ws-handler.js'
 
@@ -80,9 +96,8 @@ export class SirannonServer {
   private readonly port: number
   private readonly cors: ResolvedCors | null
   private readonly onRequestHook: OnRequestHook | undefined
-  private readonly getReplicationStatus:
-    | (() => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null)
-    | undefined
+  private readonly getReplicationStatus: (() => ReplicationStatusInfo | null) | undefined
+  private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
 
@@ -93,6 +108,7 @@ export class SirannonServer {
     this.cors = resolveCors(options?.cors)
     this.onRequestHook = options?.onRequest
     this.getReplicationStatus = options?.getReplicationStatus
+    this.getClusterStatus = options?.getClusterStatus
     this.wsHandler = new WSHandler(sirannon)
     this.app = uWS.App()
     this.registerRoutes()
@@ -146,6 +162,7 @@ export class SirannonServer {
 
     this.app.get('/health', this.withCors(handleLiveness()))
     this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
+    this.app.get('/db/:id/cluster', this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus)))
 
     this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon)))
     this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon)))
@@ -329,6 +346,49 @@ export class SirannonServer {
             if (!abort.aborted) {
               sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
             }
+          }
+        })
+        .catch(() => {})
+    }
+  }
+
+  private wrapDbGetRoute(
+    handler: (res: uWS.HttpResponse, dbId: string) => void,
+  ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
+    const onRequestHook = this.onRequestHook
+    const corsHeaders = this.cors
+
+    return (res, req) => {
+      const dbId = req.getParameter(0) ?? ''
+      const method = req.getMethod()
+      const path = req.getUrl()
+
+      if (corsHeaders) {
+        writeCorsOrigin(res, corsHeaders, req.getHeader('origin'))
+      }
+
+      if (!onRequestHook) {
+        handler(res, dbId)
+        return
+      }
+
+      const headers: Record<string, string> = {}
+      req.forEach((key, value) => {
+        headers[key] = value
+      })
+
+      const ctx: RequestContext = {
+        headers,
+        method,
+        path,
+        databaseId: dbId,
+        remoteAddress: decodeRemoteAddress(res),
+      }
+
+      runOnRequest(res, ctx, onRequestHook)
+        .then(allowed => {
+          if (allowed) {
+            handler(res, dbId)
           }
         })
         .catch(() => {})

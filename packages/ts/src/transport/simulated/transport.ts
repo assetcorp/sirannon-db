@@ -37,6 +37,9 @@ import {
 export class SimulatedTransport implements ReplicationTransport {
   private localNodeId = ''
   localRole: 'primary' | 'replica' = 'replica'
+  private localGroupId: string | undefined
+  private localPrimaryTerm: bigint | undefined
+  private localProtocolVersion: string | undefined
   private connected = false
   private readonly network: SimulatedNetwork
   readonly connectedPeers = new Map<string, NodeInfo>()
@@ -70,13 +73,19 @@ export class SimulatedTransport implements ReplicationTransport {
 
     this.localNodeId = localNodeId
     this.localRole = config.localRole ?? 'replica'
+    this.localGroupId = config.groupId
+    this.localPrimaryTerm = config.primaryTerm
+    this.localProtocolVersion = config.protocolVersion
     this.connected = true
     this.network.register(localNodeId, this)
 
     for (const [peerId, peerTransport] of this.allPeerTransports()) {
       const peerInfo: NodeInfo = {
         id: peerId,
+        groupId: peerTransport.localGroupId,
         role: peerTransport.localRole,
+        primaryTerm: peerTransport.localPrimaryTerm,
+        protocolVersion: peerTransport.localProtocolVersion,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -85,7 +94,10 @@ export class SimulatedTransport implements ReplicationTransport {
 
       const localInfo: NodeInfo = {
         id: localNodeId,
+        groupId: this.localGroupId,
         role: this.localRole,
+        primaryTerm: this.localPrimaryTerm,
+        protocolVersion: this.localProtocolVersion,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,

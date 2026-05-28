@@ -68,8 +68,9 @@ export class LocalExecutor {
       await engine.refreshTriggersAfterDdl()
     }
 
-    if (options?.writeConcern) {
-      await engine.waitForWriteConcern(newSeq, options.writeConcern)
+    const writeConcern = engine.resolveWriteConcern(options?.writeConcern)
+    if (writeConcern) {
+      await engine.waitForWriteConcern(newSeq, writeConcern)
     }
 
     return result
@@ -214,8 +215,9 @@ export class LocalExecutor {
       await engine.refreshTriggersAfterDdl()
     }
 
-    if (options?.writeConcern) {
-      await engine.waitForWriteConcern(newSeq, options.writeConcern)
+    const writeConcern = engine.resolveWriteConcern(options?.writeConcern)
+    if (writeConcern) {
+      await engine.waitForWriteConcern(newSeq, writeConcern)
     }
 
     return userResult

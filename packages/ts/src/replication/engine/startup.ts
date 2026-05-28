@@ -25,11 +25,16 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   engine.lastSentSeq = await engine.log.getLocalSeq()
   engine.lastLocalSeq = engine.lastSentSeq
   await engine.loadAppliedSeqs()
+  await engine.startCoordinatorMode()
 
   wireTransportHandlers(engine)
   const transportConfig = {
     ...engine.config.transportConfig,
     localRole: engine.config.topology.role,
+    groupId: engine.config.coordinator?.groupId ?? engine.config.transportConfig?.groupId,
+    primaryTerm: engine.coordinatorState?.primaryTerm ?? engine.config.transportConfig?.primaryTerm,
+    protocolVersion:
+      engine.config.coordinator?.compatibility?.protocolVersion ?? engine.config.transportConfig?.protocolVersion,
   }
   await engine.config.transport.connect(engine.nodeId, transportConfig)
 

@@ -48,6 +48,9 @@ import type { MemoryBus } from './bus.js'
 export class InMemoryTransport implements ReplicationTransport {
   private localNodeId = ''
   private localRole: 'primary' | 'replica' = 'replica'
+  private localGroupId: string | undefined
+  private localPrimaryTerm: bigint | undefined
+  private localProtocolVersion: string | undefined
   connected = false
   private readonly bus: MemoryBus
   readonly connectedPeers = new Map<string, NodeInfo>()
@@ -77,6 +80,9 @@ export class InMemoryTransport implements ReplicationTransport {
 
     this.localNodeId = localNodeId
     this.localRole = config.localRole ?? 'replica'
+    this.localGroupId = config.groupId
+    this.localPrimaryTerm = config.primaryTerm
+    this.localProtocolVersion = config.protocolVersion
     this.connected = true
     this.bus.join(localNodeId, this)
 
@@ -88,7 +94,10 @@ export class InMemoryTransport implements ReplicationTransport {
 
       const peerInfo: NodeInfo = {
         id: peerId,
+        groupId: peerTransport.localGroupId,
         role: peerTransport.role,
+        primaryTerm: peerTransport.localPrimaryTerm,
+        protocolVersion: peerTransport.localProtocolVersion,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -97,7 +106,10 @@ export class InMemoryTransport implements ReplicationTransport {
 
       const localInfo: NodeInfo = {
         id: localNodeId,
+        groupId: this.localGroupId,
         role: this.localRole,
+        primaryTerm: this.localPrimaryTerm,
+        protocolVersion: this.localProtocolVersion,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,

@@ -18,12 +18,14 @@ export class SyncJoiner {
     }
 
     const peers = engine.config.transport.peers()
-    let sourcePeerId: string | null = null
+    let sourcePeerId: string | null = engine.isCoordinatorMode() ? engine.getCurrentPrimaryPeerId() : null
 
-    for (const [peerId, info] of peers) {
-      if (info.role === 'primary') {
-        sourcePeerId = peerId
-        break
+    if (sourcePeerId === null) {
+      for (const [peerId, info] of peers) {
+        if (info.role === 'primary') {
+          sourcePeerId = peerId
+          break
+        }
       }
     }
 
@@ -42,11 +44,14 @@ export class SyncJoiner {
     const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
 
     const requestId = randomUUID()
-    await engine.config.transport.requestSync(sourcePeerId, {
-      requestId,
-      joinerNodeId: engine.nodeId,
-      completedTables,
-    })
+    await engine.config.transport.requestSync(
+      sourcePeerId,
+      engine.decorateSyncRequest({
+        requestId,
+        joinerNodeId: engine.nodeId,
+        completedTables,
+      }),
+    )
 
     engine.syncState.phase = 'syncing'
     engine.syncState.sourcePeerId = sourcePeerId
@@ -289,6 +294,6 @@ export class SyncJoiner {
 
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     await delayAckIfConfigured(this.engine)
-    await this.engine.config.transport.sendSyncAck(peerId, ack)
+    await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
   }
 }

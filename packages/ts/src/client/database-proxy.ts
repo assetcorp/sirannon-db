@@ -1,4 +1,4 @@
-import type { Params } from '../core/types.js'
+import type { Params, QueryOptions } from '../core/types.js'
 import type { ExecuteResponse } from '../server/protocol.js'
 import { RemoteSubscriptionBuilderImpl } from './subscription.js'
 import type { RemoteSubscriptionBuilder, Transport } from './types.js'
@@ -25,8 +25,8 @@ export class RemoteDatabase {
    * )
    * ```
    */
-  async query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
-    const response = await this.transport.query(sql, params)
+  async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
+    const response = await this.transport.query(sql, params, options?.readConcern)
     return response.rows as T[]
   }
 

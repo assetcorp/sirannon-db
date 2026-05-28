@@ -17,6 +17,22 @@ export interface QueryOptions {
   readConcern?: ReadConcern
 }
 
+export interface ClusterReadEndpointInfo {
+  nodeId: string
+  endpoint: string
+  readConcerns: ReadConcernLevel[]
+}
+
+export interface ClusterStatusInfo {
+  databaseId: string
+  replicationGroupId?: string
+  role?: 'primary' | 'replica'
+  currentPrimary?: { nodeId: string; endpoint?: string } | null
+  primaryTerm?: bigint
+  readEndpoints?: ClusterReadEndpointInfo[]
+  health: 'healthy' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
+}
+
 /** Result returned by mutation statements (INSERT, UPDATE, DELETE). */
 export interface ExecuteResult {
   changes: number
@@ -199,7 +215,30 @@ export interface ServerOptions {
   port?: number
   cors?: boolean | CorsOptions
   onRequest?: OnRequestHook
-  getReplicationStatus?: () => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null
+  getReplicationStatus?: () => ReplicationStatusInfo | null
+  getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
+}
+
+export interface ReplicationStatusInfo {
+  role: string
+  writeForwarding: boolean
+  peers: number
+  localSeq: bigint
+  replicationGroupId?: string
+  primaryTerm?: bigint
+  currentPrimary?: string
+  coordinator?: {
+    connected: boolean
+    authority: boolean
+  }
+  controller?: {
+    state: 'disabled' | 'standby' | 'active' | 'lost'
+  }
+  inSyncReplicas?: string[]
+  laggingReplicas?: string[]
+  syncState?: string
+  readAvailability?: 'available' | 'unavailable'
+  writeAvailability?: 'available' | 'unavailable'
 }
 
 /** CORS configuration. */

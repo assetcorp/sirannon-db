@@ -57,6 +57,8 @@ ReplicationTransport {
 TransportConfig {
   endpoints?: List<string>
   localRole?:  'primary' | 'replica'
+  groupId?:    string
+  primaryTerm?: bigint
   metadata?:   Map<string, any>
 }
 ```
@@ -66,7 +68,10 @@ TransportConfig {
 ```text
 NodeInfo {
   id:            string
+  groupId?:      string
   role:          'primary' | 'replica'
+  primaryTerm?:  bigint
+  protocolVersion?: string
   joinedAt:      number
   lastSeenAt:    number
   lastAckedSeq:  bigint
@@ -153,6 +158,9 @@ message SyncMessage {
 message Hello {
   string node_id = 1;
   string role = 2;
+  string group_id = 3;
+  int64 primary_term = 4;
+  string protocol_version = 5;
 }
 
 message ColumnValue {
@@ -196,12 +204,16 @@ message BatchPayload {
   HlcRange hlc_range = 5;
   repeated ReplicationChange changes = 6;
   string checksum = 7;
+  string group_id = 8;
+  int64 primary_term = 9;
 }
 
 message AckPayload {
   string batch_id = 1;
   int64 acked_seq = 2;
   string node_id = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message Statement {
@@ -213,6 +225,8 @@ message Statement {
 message ForwardRequest {
   repeated Statement statements = 1;
   string request_id = 2;
+  string group_id = 3;
+  int64 primary_term = 4;
 }
 
 message ForwardResult {
@@ -224,12 +238,16 @@ message ForwardResponse {
   string request_id = 1;
   repeated ForwardResult results = 2;
   string error = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message SyncRequestPayload {
   string request_id = 1;
   string joiner_node_id = 2;
   repeated string completed_tables = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message SyncBatchPayload {
@@ -240,6 +258,8 @@ message SyncBatchPayload {
   repeated string schema = 5;
   string checksum = 6;
   bool is_last_batch_for_table = 7;
+  string group_id = 8;
+  int64 primary_term = 9;
 }
 
 message SyncTableManifest {
@@ -252,6 +272,8 @@ message SyncCompletePayload {
   string request_id = 1;
   int64 snapshot_seq = 2;
   repeated SyncTableManifest manifests = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message SyncAckPayload {
@@ -261,8 +283,14 @@ message SyncAckPayload {
   int32 batch_index = 4;
   bool success = 5;
   string error = 6;
+  string group_id = 7;
+  int64 primary_term = 8;
 }
 ```
+
+`group_id` and `primary_term` are required when coordinator mode
+is enabled. Static mode senders may leave them empty. Coordinator
+mode receivers must reject stale terms with `STALE_PRIMARY`.
 
 ### Statement Parameters
 
@@ -271,11 +299,29 @@ both. If both `named_params` and `positional_params` are populated,
 the receiver must reject the statement with error code
 `BATCH_VALIDATION_ERROR`.
 
+### Term Fencing
+
+Coordinator-mode receivers must compare `group_id` and
+`primary_term` on every batch, acknowledgement, forwarded write,
+and sync message.
+
+- A replica must accept replication only from the current primary
+  for the current primary term.
+- A primary must accept acknowledgements only for its current
+  primary term.
+- A forwarding target must reject writes when it is not the
+  current primary for the term in the request.
+- A sync target must restart sync if the term changes before the
+  sync completes.
+
+Term failures must use error code `STALE_PRIMARY`.
+
 ---
 
 ## Connection Model
 
-The primary runs the gRPC server. Replicas connect as gRPC clients.
+In static mode, the primary runs the gRPC server and replicas
+connect as gRPC clients.
 
 - Replicas initiate the `Replicate` bidirectional stream. The
   primary writes batches; the replica writes acks.
@@ -283,15 +329,28 @@ The primary runs the gRPC server. Replicas connect as gRPC clients.
 - Replicas initiate the `Sync` bidirectional stream for first
   snapshot transfer.
 
+In coordinator mode, every data-bearing node may expose the gRPC
+server. Replicas replicate from the current primary recorded for
+the replication group. When the primary changes, replicas must
+close stale streams and connect to the new current primary for the
+new primary term.
+
 ---
 
 ## Peer Identity
 
 The first message on every `Replicate` or `Sync` stream must be a
-`Hello` message carrying the sender's `node_id` and `role`. A node
-must not send or accept any other message type before the `Hello`
-exchange completes. If the first message is not a `Hello`, the
-receiving side must terminate the stream.
+`Hello` message carrying the sender's `node_id` and `role`. In
+coordinator mode, `Hello` must also carry `group_id`,
+`primary_term`, and `protocol_version`. A node must not send or
+accept any other message type before the `Hello` exchange
+completes. If the first message is not a `Hello`, the receiving
+side must terminate the stream.
+
+When mutual TLS is enabled, the authenticated peer identity must
+match the stable Sirannon node identity, either through the
+certificate common name or a configured subject alternative name
+mapping.
 
 ---
 
@@ -316,6 +375,15 @@ explicit opt-in (for example, a configuration flag).
 
 TLS is enabled by default. Disabling TLS requires an explicit
 insecure flag.
+
+### Coordinator Access Security
+
+Production coordinator mode must use authenticated coordinator
+access. The coordinator connection must use TLS, authenticated
+Sirannon identities, a dedicated key prefix per Sirannon cluster,
+and credentials limited to that prefix. Insecure coordinator
+access is allowed only for explicit development and test
+configuration.
 
 ---
 
@@ -397,3 +465,5 @@ Its behaviour is implementation-defined.
 | `reconnectInitialDelay` | 100 ms (recommended) | First reconnect delay |
 | `reconnectMaxDelay` | 30,000 ms (recommended) | Maximum reconnect delay |
 | `reconnectMultiplier` | 2 (recommended) | Exponential backoff multiplier |
+| `groupId` | none | Replication group identifier for coordinator mode |
+| `primaryTerm` | none | Current primary term for coordinator mode |

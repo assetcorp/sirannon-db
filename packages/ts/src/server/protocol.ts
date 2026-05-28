@@ -1,15 +1,17 @@
-import type { ExecuteResult } from '../core/types.js'
+import type { ClusterStatusInfo, ExecuteResult, ReadConcern, WriteConcern } from '../core/types.js'
 
 /** Body for POST /db/:id/query */
 export interface QueryRequest {
   sql: string
   params?: Record<string, unknown> | unknown[]
+  readConcern?: ReadConcern
 }
 
 /** Body for POST /db/:id/execute */
 export interface ExecuteRequest {
   sql: string
   params?: Record<string, unknown> | unknown[]
+  writeConcern?: WriteConcern
 }
 
 /** A single statement within a transaction batch. */
@@ -21,6 +23,7 @@ export interface TransactionStatement {
 /** Body for POST /db/:id/transaction */
 export interface TransactionRequest {
   statements: TransactionStatement[]
+  writeConcern?: WriteConcern
 }
 
 /** Response for a successful query. */
@@ -44,7 +47,12 @@ export interface ErrorResponse {
   error: {
     code: string
     message: string
+    details?: Record<string, unknown>
   }
+}
+
+export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
+  primaryTerm?: string
 }
 
 /** Inbound WS message types. */

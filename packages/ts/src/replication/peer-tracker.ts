@@ -3,7 +3,9 @@ import type { InFlightBatch, PeerState } from './types.js'
 
 interface Waiter {
   seq: bigint
-  kind: 'majority' | 'all'
+  kind: 'majority' | 'all' | 'configured-majority' | 'configured-all'
+  localNodeId?: string
+  votingNodeIds?: string[]
   resolve: () => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -151,6 +153,77 @@ export class PeerTracker {
     })
   }
 
+  waitForConfiguredMajority(
+    seq: bigint,
+    localNodeId: string,
+    votingNodeIds: string[],
+    timeoutMs: number,
+  ): Promise<void> {
+    const needed = Math.floor(votingNodeIds.length / 2) + 1
+
+    if (this.countAckedConfigured(seq, localNodeId, votingNodeIds) >= needed) {
+      return Promise.resolve()
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(waiter)
+        reject(new WriteConcernError(`Timed out waiting for configured majority ACK of seq ${seq}`))
+      }, timeoutMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+      timer.unref?.()
+
+      const waiter: Waiter = {
+        seq,
+        kind: 'configured-majority',
+        localNodeId,
+        votingNodeIds: [...votingNodeIds],
+        resolve,
+        reject,
+        timer,
+      }
+      this.waiters.add(waiter)
+    })
+  }
+
+  waitForConfiguredAll(seq: bigint, localNodeId: string, votingNodeIds: string[], timeoutMs: number): Promise<void> {
+    if (this.countAckedConfigured(seq, localNodeId, votingNodeIds) >= votingNodeIds.length) {
+      return Promise.resolve()
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(waiter)
+        reject(new WriteConcernError(`Timed out waiting for all configured voters to ACK seq ${seq}`))
+      }, timeoutMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+      timer.unref?.()
+
+      const waiter: Waiter = {
+        seq,
+        kind: 'configured-all',
+        localNodeId,
+        votingNodeIds: [...votingNodeIds],
+        resolve,
+        reject,
+        timer,
+      }
+      this.waiters.add(waiter)
+    })
+  }
+
+  ackedConfiguredNodeIds(seq: bigint, localNodeId: string, votingNodeIds: string[]): string[] {
+    const acked = new Set<string>()
+    if (votingNodeIds.includes(localNodeId)) {
+      acked.add(localNodeId)
+    }
+    for (const nodeId of votingNodeIds) {
+      const peer = this.peers.get(nodeId)
+      if (peer && peer.lastAckedSeq >= seq) {
+        acked.add(nodeId)
+      }
+    }
+    return votingNodeIds.filter(nodeId => acked.has(nodeId))
+  }
+
   allPeerStates(): PeerState[] {
     return Array.from(this.peers.values())
   }
@@ -165,12 +238,36 @@ export class PeerTracker {
     return count
   }
 
+  private countAckedConfigured(seq: bigint, localNodeId: string, votingNodeIds: string[]): number {
+    return this.ackedConfiguredNodeIds(seq, localNodeId, votingNodeIds).length
+  }
+
   private checkWaiters(): void {
     const connected = this.connectedPeerCount()
     for (const waiter of this.waiters) {
       let needed: number
       if (waiter.kind === 'majority') {
         needed = Math.floor(connected / 2) + 1
+      } else if (waiter.kind === 'configured-majority') {
+        const votingNodeIds = waiter.votingNodeIds ?? []
+        const localNodeId = waiter.localNodeId ?? ''
+        needed = Math.floor(votingNodeIds.length / 2) + 1
+        if (this.countAckedConfigured(waiter.seq, localNodeId, votingNodeIds) >= needed) {
+          clearTimeout(waiter.timer)
+          this.waiters.delete(waiter)
+          waiter.resolve()
+        }
+        continue
+      } else if (waiter.kind === 'configured-all') {
+        const votingNodeIds = waiter.votingNodeIds ?? []
+        const localNodeId = waiter.localNodeId ?? ''
+        needed = votingNodeIds.length
+        if (this.countAckedConfigured(waiter.seq, localNodeId, votingNodeIds) >= needed) {
+          clearTimeout(waiter.timer)
+          this.waiters.delete(waiter)
+          waiter.resolve()
+        }
+        continue
       } else {
         needed = connected
       }

@@ -1,4 +1,4 @@
-import type { ChangeEvent, Params } from '../core/types.js'
+import type { ChangeEvent, Params, ReadConcern } from '../core/types.js'
 import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../server/protocol.js'
 
 /**
@@ -6,7 +6,7 @@ import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../ser
  * Each transport instance is bound to a specific database.
  */
 export interface Transport {
-  query(sql: string, params?: Params): Promise<QueryResponse>
+  query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
   subscribe(

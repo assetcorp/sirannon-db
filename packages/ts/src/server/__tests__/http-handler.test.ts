@@ -282,6 +282,56 @@ describe('http-handler status mapping and catch branches', () => {
     expect(body.error?.code).toBe('INVALID_JSON')
   })
 
+  it('rejects invalid read concern before query execution', async () => {
+    const mock = createMockResponse()
+    const db = {
+      query: () => {
+        throw new Error('query should not run')
+      },
+    }
+    const sirannon = {
+      resolve: () => Promise.resolve(db),
+    } as unknown as Sirannon
+    const handler = handleQuery(sirannon)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'SELECT 1', readConcern: { level: 'eventual' } })),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_REQUEST')
+  })
+
+  it('rejects invalid write concern before execute', async () => {
+    const mock = createMockResponse()
+    const db = {
+      execute: () => {
+        throw new Error('execute should not run')
+      },
+    }
+    const sirannon = {
+      resolve: () => Promise.resolve(db),
+    } as unknown as Sirannon
+    const handler = handleExecute(sirannon)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(
+        JSON.stringify({ sql: 'INSERT INTO t VALUES (1)', writeConcern: { level: 'majority', timeoutMs: 0 } }),
+      ),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_REQUEST')
+  })
+
   it('returns INTERNAL_ERROR for unexpected transaction errors', async () => {
     const mock = createMockResponse()
     const db = {

@@ -43,11 +43,15 @@ export function registerPeer(
   peerConnectedHandler: PeerConnectedHandler | null,
   nodeId: string,
   role: TopologyRole,
+  metadata: Pick<NodeInfo, 'groupId' | 'primaryTerm' | 'protocolVersion'> = {},
 ): void {
   if (connectedPeers.has(nodeId)) return
   const peerInfo: NodeInfo = {
     id: nodeId,
+    groupId: metadata.groupId,
     role,
+    primaryTerm: metadata.primaryTerm,
+    protocolVersion: metadata.protocolVersion,
     joinedAt: Date.now(),
     lastSeenAt: Date.now(),
     lastAckedSeq: 0n,

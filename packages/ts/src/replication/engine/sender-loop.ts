@@ -51,7 +51,7 @@ export class SenderLoop {
     const nowMs = Date.now()
 
     for (const [peerId, peerInfo] of peers) {
-      if (!engine.config.topology.shouldReplicateTo(peerId, peerInfo.role)) {
+      if (!this.shouldReplicateTo(peerId, peerInfo.role)) {
         continue
       }
 
@@ -65,8 +65,9 @@ export class SenderLoop {
       }
 
       const fromSeq = peerState?.lastSentSeq ?? engine.lastSentSeq
-      const batch = await engine.log.readBatch(fromSeq, engine.batchSize)
-      if (!batch) continue
+      const rawBatch = await engine.log.readBatch(fromSeq, engine.batchSize)
+      if (!rawBatch) continue
+      const batch = engine.decorateBatch(rawBatch)
 
       const previousSeq = peerState?.lastSentSeq ?? 0n
       if (peerState) {
@@ -105,5 +106,13 @@ export class SenderLoop {
         }
       }
     }
+  }
+
+  private shouldReplicateTo(peerId: string, peerRole: 'primary' | 'replica'): boolean {
+    const engine = this.engine
+    if (!engine.isCoordinatorMode()) {
+      return engine.config.topology.shouldReplicateTo(peerId, peerRole)
+    }
+    return engine.coordinatorAuthority && peerId !== engine.nodeId
   }
 }

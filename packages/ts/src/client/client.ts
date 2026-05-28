@@ -1,13 +1,17 @@
-import type { ClientOptions } from '../core/types.js'
+import type { ClientOptions, ReadConcernLevel } from '../core/types.js'
+import type { ClusterStatusResponse } from '../server/protocol.js'
 import { RemoteDatabase } from './database-proxy.js'
 import { HttpTransport } from './transport/http.js'
 import { WebSocketTransport } from './transport/ws.js'
-import type { Transport } from './types.js'
+import { RemoteError, type Transport } from './types.js'
 
 export interface TopologyAwareClientOptions extends ClientOptions {
+  endpoints?: string[]
   primary?: string
   replicas?: string[]
   readPreference?: 'primary' | 'replica' | 'nearest'
+  discovery?: 'static' | 'coordinator'
+  readConcern?: ReadConcernLevel
 }
 
 interface EndpointLatency {
@@ -16,20 +20,142 @@ interface EndpointLatency {
   reachable: boolean
 }
 
+interface ClusterRoutingState {
+  currentPrimary: string | null
+  primaryTerm: string | null
+  readEndpoints: Array<{ url: string; readConcerns: ReadConcernLevel[] }>
+}
+
 function isTopologyConfig(urlOrOpts: string | TopologyAwareClientOptions): urlOrOpts is TopologyAwareClientOptions {
+  if (typeof urlOrOpts !== 'object') {
+    return false
+  }
   return (
-    typeof urlOrOpts === 'object' &&
-    ('primary' in urlOrOpts ||
-      ('replicas' in urlOrOpts && Array.isArray(urlOrOpts.replicas) && urlOrOpts.replicas.length > 0))
+    'primary' in urlOrOpts ||
+    ('replicas' in urlOrOpts && Array.isArray(urlOrOpts.replicas) && urlOrOpts.replicas.length > 0) ||
+    ('endpoints' in urlOrOpts && Array.isArray(urlOrOpts.endpoints) && urlOrOpts.endpoints.length > 0) ||
+    urlOrOpts.discovery === 'coordinator'
   )
 }
 
 function toBaseUrl(url: string): string {
-  return url.replace(/\/$/, '')
+  return normaliseEndpointUrl(url)
+}
+
+function toServerBaseUrl(url: string, databaseId?: string): string {
+  const base = toBaseUrl(url)
+  if (!databaseId) return base.replace(/\/db\/[^/]+$/i, '')
+  return base.replace(new RegExp(`/db/${escapeRegExp(encodeURIComponent(databaseId))}$`, 'i'), '')
 }
 
 function toWsUrl(baseUrl: string): string {
   return baseUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://')
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normaliseEndpointUrl(rawUrl: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    throw new TypeError(`Endpoint URL '${rawUrl}' is invalid`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new TypeError(`Endpoint URL '${rawUrl}' must use http or https`)
+  }
+  if (parsed.username || parsed.password) {
+    throw new TypeError(`Endpoint URL '${rawUrl}' must not contain credentials`)
+  }
+  if (parsed.hash) {
+    throw new TypeError(`Endpoint URL '${rawUrl}' must not contain a fragment`)
+  }
+  if (parsed.search) {
+    throw new TypeError(`Endpoint URL '${rawUrl}' must not contain a query string`)
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '')
+  return parsed.toString().replace(/\/$/, '')
+}
+
+function isReadConcernLevel(value: unknown): value is ReadConcernLevel {
+  return value === 'local' || value === 'majority' || value === 'linearizable'
+}
+
+function parseDiscoveredReadConcerns(value: unknown): ReadConcernLevel[] {
+  if (!Array.isArray(value)) {
+    throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata readConcerns must be an array')
+  }
+  const concerns: ReadConcernLevel[] = []
+  for (const concern of value) {
+    if (!isReadConcernLevel(concern)) {
+      throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata contains an invalid read concern')
+    }
+    if (!concerns.includes(concern)) {
+      concerns.push(concern)
+    }
+  }
+  return concerns
+}
+
+function toDiscoveredServerBaseUrl(endpoint: string, databaseId: string): string {
+  try {
+    return toServerBaseUrl(endpoint, databaseId)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new RemoteError('INVALID_RESPONSE', `Cluster metadata contains an unsafe endpoint: ${message}`)
+  }
+}
+
+function parseClusterRouting(data: unknown, databaseId: string): ClusterRoutingState {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata must be an object')
+  }
+  const record = data as Record<string, unknown>
+  if (record.databaseId !== databaseId) {
+    throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata database id does not match the request')
+  }
+  if (record.primaryTerm !== undefined && typeof record.primaryTerm !== 'string') {
+    throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata primaryTerm must be a string')
+  }
+
+  let currentPrimary: string | null = null
+  if (record.currentPrimary !== undefined && record.currentPrimary !== null) {
+    if (typeof record.currentPrimary !== 'object' || Array.isArray(record.currentPrimary)) {
+      throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata currentPrimary must be an object or null')
+    }
+    const primary = record.currentPrimary as Record<string, unknown>
+    if (typeof primary.endpoint !== 'string') {
+      throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata currentPrimary.endpoint must be a string')
+    }
+    currentPrimary = toDiscoveredServerBaseUrl(primary.endpoint, databaseId)
+  }
+
+  const readEndpointsRaw = record.readEndpoints
+  if (readEndpointsRaw !== undefined && !Array.isArray(readEndpointsRaw)) {
+    throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata readEndpoints must be an array')
+  }
+
+  const readEndpoints = (readEndpointsRaw ?? []).map(endpointInfo => {
+    if (typeof endpointInfo !== 'object' || endpointInfo === null || Array.isArray(endpointInfo)) {
+      throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata read endpoint must be an object')
+    }
+    const endpoint = endpointInfo as Record<string, unknown>
+    if (typeof endpoint.endpoint !== 'string') {
+      throw new RemoteError('INVALID_RESPONSE', 'Cluster metadata read endpoint URL must be a string')
+    }
+    return {
+      url: toDiscoveredServerBaseUrl(endpoint.endpoint, databaseId),
+      readConcerns: parseDiscoveredReadConcerns(endpoint.readConcerns),
+    }
+  })
+
+  return {
+    currentPrimary,
+    primaryTerm: record.primaryTerm ?? null,
+    readEndpoints,
+  }
 }
 
 export class SirannonClient {
@@ -46,6 +172,10 @@ export class SirannonClient {
   private readonly primaryUrl: string | undefined
   private readonly replicaUrls: string[]
   private readonly readPreference: 'primary' | 'replica' | 'nearest'
+  private readonly discovery: 'static' | 'coordinator'
+  private readonly readConcern: ReadConcernLevel | undefined
+  private readonly starterEndpoints: string[]
+  private readonly clusterRouting = new Map<string, ClusterRoutingState>()
   private latencies: EndpointLatency[] = []
   private latencyMeasuredAt = 0
   private latencyMeasuring: Promise<void> | null = null
@@ -61,8 +191,11 @@ export class SirannonClient {
       this.primaryUrl = topoOpts.primary ? toBaseUrl(topoOpts.primary) : undefined
       this.replicaUrls = (topoOpts.replicas ?? []).map(toBaseUrl)
       this.readPreference = topoOpts.readPreference ?? 'primary'
+      this.discovery = topoOpts.discovery ?? 'static'
+      this.readConcern = topoOpts.readConcern
+      this.starterEndpoints = (topoOpts.endpoints ?? []).map(toBaseUrl)
 
-      this.baseUrl = this.primaryUrl ?? this.replicaUrls[0] ?? ''
+      this.baseUrl = this.primaryUrl ?? this.replicaUrls[0] ?? this.starterEndpoints[0] ?? ''
       this.wsBaseUrl = toWsUrl(this.baseUrl)
       this.transport = topoOpts.transport ?? 'websocket'
       this.headers = topoOpts.headers
@@ -73,6 +206,9 @@ export class SirannonClient {
       this.primaryUrl = undefined
       this.replicaUrls = []
       this.readPreference = 'primary'
+      this.discovery = 'static'
+      this.readConcern = undefined
+      this.starterEndpoints = []
 
       this.baseUrl = toBaseUrl(urlOrOpts)
       this.wsBaseUrl = toWsUrl(this.baseUrl)
@@ -137,7 +273,28 @@ export class SirannonClient {
     return this.createTransportForUrl(base, ws, databaseId)
   }
 
-  async _getReadEndpoint(): Promise<string> {
+  async _getReadEndpoint(databaseId?: string, readConcern?: ReadConcernLevel): Promise<string> {
+    if (this.discovery === 'coordinator' && databaseId) {
+      const routing = await this.ensureClusterRouting(databaseId)
+      const concern = readConcern ?? this.readConcern ?? 'majority'
+      if (concern === 'linearizable') {
+        if (routing.currentPrimary) return routing.currentPrimary
+        throw new RemoteError('NO_SAFE_PRIMARY', 'No current primary is available for linearizable reads')
+      }
+      const readable = routing.readEndpoints.filter(endpoint => endpoint.readConcerns.includes(concern))
+      if (this.readPreference !== 'primary' && readable.length > 0) {
+        if (this.readPreference === 'nearest') {
+          return readable[0].url
+        }
+        const idx = Math.floor(Math.random() * readable.length)
+        return readable[idx].url
+      }
+      if (routing.currentPrimary) return routing.currentPrimary
+      const localReadable = routing.readEndpoints.find(endpoint => endpoint.readConcerns.includes('local'))
+      if (localReadable) return localReadable.url
+      throw new RemoteError('ROUTING_ERROR', 'No usable read endpoint is available')
+    }
+
     if (this.readPreference === 'primary') {
       return this.primaryUrl ?? this.baseUrl
     }
@@ -165,8 +322,23 @@ export class SirannonClient {
     return this.primaryUrl ?? this.baseUrl
   }
 
-  _getWriteEndpoint(): string {
+  async _getWriteEndpoint(databaseId?: string): Promise<string> {
+    if (this.discovery === 'coordinator' && databaseId) {
+      const routing = await this.ensureClusterRouting(databaseId)
+      if (!routing.currentPrimary) {
+        throw new RemoteError('NO_SAFE_PRIMARY', 'No current primary is available')
+      }
+      return routing.currentPrimary
+    }
     return this.primaryUrl ?? this.baseUrl
+  }
+
+  _getReadConcern(): ReadConcernLevel | undefined {
+    return this.readConcern
+  }
+
+  _usesCoordinatorDiscovery(): boolean {
+    return this.discovery === 'coordinator'
   }
 
   _removeReplica(url: string): void {
@@ -228,6 +400,51 @@ export class SirannonClient {
     this.latencies = results
     this.latencyMeasuredAt = Date.now()
   }
+
+  async _refreshClusterRouting(databaseId: string): Promise<void> {
+    const candidates = this.clusterDiscoveryCandidates(databaseId)
+    const encodedId = encodeURIComponent(databaseId)
+    for (const endpoint of candidates) {
+      const base = toServerBaseUrl(endpoint, databaseId)
+      try {
+        const response = await fetch(`${base}/db/${encodedId}/cluster`, { headers: this.headers })
+        if (!response.ok) {
+          continue
+        }
+        const data = (await response.json()) as ClusterStatusResponse
+        this.clusterRouting.set(databaseId, parseClusterRouting(data, databaseId))
+        return
+      } catch (err) {
+        if (err instanceof RemoteError && err.code === 'INVALID_RESPONSE') {
+          throw err
+        }
+      }
+    }
+    throw new RemoteError('ROUTING_ERROR', `Could not discover cluster routing for database '${databaseId}'`)
+  }
+
+  private async ensureClusterRouting(databaseId: string): Promise<ClusterRoutingState> {
+    const existing = this.clusterRouting.get(databaseId)
+    if (existing) return existing
+    await this._refreshClusterRouting(databaseId)
+    const refreshed = this.clusterRouting.get(databaseId)
+    if (!refreshed) {
+      throw new RemoteError('ROUTING_ERROR', `Could not discover cluster routing for database '${databaseId}'`)
+    }
+    return refreshed
+  }
+
+  private clusterDiscoveryCandidates(databaseId: string): string[] {
+    const candidates = new Set<string>()
+    for (const endpoint of this.starterEndpoints) candidates.add(endpoint)
+    if (this.primaryUrl) candidates.add(this.primaryUrl)
+    for (const endpoint of this.replicaUrls) candidates.add(endpoint)
+    const existing = this.clusterRouting.get(databaseId)
+    if (existing?.currentPrimary) candidates.add(existing.currentPrimary)
+    for (const endpoint of existing?.readEndpoints ?? []) candidates.add(endpoint.url)
+    if (this.baseUrl) candidates.add(this.baseUrl)
+    return [...candidates]
+  }
 }
 
 import type { ChangeEvent, Params } from '../core/types.js'
@@ -250,14 +467,23 @@ class TopologyAwareTransport implements Transport {
   }
 
   async query(sql: string, params?: Params): Promise<QueryResponse> {
-    const transport = await this.getReadTransport()
+    const readConcern = this.client._getReadConcern()
+    const transport = await this.getReadTransport(readConcern)
     const endpointUsed = this.currentReadUrl
     try {
-      return await transport.query(sql, params)
+      return await transport.query(sql, params, readConcern ? { level: readConcern } : undefined)
     } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.readTransport = null
+        this.currentReadUrl = ''
+        const refreshed = await this.getReadTransport(readConcern)
+        return refreshed.query(sql, params, readConcern ? { level: readConcern } : undefined)
+      }
       const isTransportError =
         err instanceof Error && (err.name !== 'RemoteError' || (err as { code?: string }).code === 'CONNECTION_ERROR')
-      if (isTransportError && endpointUsed && endpointUsed !== this.client._getWriteEndpoint()) {
+      const writeEndpoint = await this.client._getWriteEndpoint(this.databaseId)
+      if (isTransportError && endpointUsed && endpointUsed !== writeEndpoint) {
         this.client._removeReplica(endpointUsed)
         if (this.currentReadUrl === endpointUsed) {
           this.readTransport = null
@@ -271,13 +497,31 @@ class TopologyAwareTransport implements Transport {
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
-    const transport = this.getWriteTransport()
-    return transport.execute(sql, params)
+    const transport = await this.getWriteTransport()
+    try {
+      return await transport.execute(sql, params)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.writeTransport = null
+        this.currentWriteUrl = ''
+      }
+      throw err
+    }
   }
 
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
-    const transport = this.getWriteTransport()
-    return transport.transaction(statements)
+    const transport = await this.getWriteTransport()
+    try {
+      return await transport.transaction(statements)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.writeTransport = null
+        this.currentWriteUrl = ''
+      }
+      throw err
+    }
   }
 
   async subscribe(
@@ -285,7 +529,7 @@ class TopologyAwareTransport implements Transport {
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
   ): Promise<RemoteSubscription> {
-    const transport = await this.getReadTransport()
+    const transport = await this.getReadTransport(this.client._getReadConcern())
     return transport.subscribe(table, filter, callback)
   }
 
@@ -302,13 +546,13 @@ class TopologyAwareTransport implements Transport {
     this.writeTransport = null
   }
 
-  private async getReadTransport(): Promise<Transport> {
+  private async getReadTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
     if (this.closed) {
       const { RemoteError } = await import('./types.js')
       throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
     }
 
-    const endpoint = await this.client._getReadEndpoint()
+    const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
     if (this.readTransport && this.currentReadUrl === endpoint) {
       return this.readTransport
     }
@@ -324,12 +568,12 @@ class TopologyAwareTransport implements Transport {
     return this.readTransport
   }
 
-  private getWriteTransport(): Transport {
+  private async getWriteTransport(): Promise<Transport> {
     if (this.closed) {
       throw new Error('Transport is closed')
     }
 
-    const endpoint = this.client._getWriteEndpoint()
+    const endpoint = await this.client._getWriteEndpoint(this.databaseId)
     if (this.writeTransport && this.currentWriteUrl === endpoint) {
       return this.writeTransport
     }
@@ -342,4 +586,17 @@ class TopologyAwareTransport implements Transport {
     this.writeTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
     return this.writeTransport
   }
+}
+
+function shouldRefreshRouting(err: unknown): boolean {
+  if (!(err instanceof RemoteError)) {
+    return false
+  }
+  return (
+    err.code === 'STALE_PRIMARY' ||
+    err.code === 'AUTHORITY_LOST' ||
+    err.code === 'COORDINATOR_UNAVAILABLE' ||
+    err.code === 'NO_SAFE_PRIMARY' ||
+    err.code === 'CONNECTION_ERROR'
+  )
 }

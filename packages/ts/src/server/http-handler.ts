@@ -1,7 +1,14 @@
 import type { HttpResponse } from 'uWebSockets.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ErrorResponse, ExecuteRequest, QueryRequest, TransactionRequest } from './protocol.js'
+import type { ClusterStatusInfo, ReadConcern, WriteConcern } from '../core/types.js'
+import type {
+  ClusterStatusResponse,
+  ErrorResponse,
+  ExecuteRequest,
+  QueryRequest,
+  TransactionRequest,
+} from './protocol.js'
 import { toExecuteResponse } from './protocol.js'
 
 export interface ResponseAbort {
@@ -93,8 +100,14 @@ function sendJson(res: HttpResponse, data: unknown): void {
   })
 }
 
-export function sendError(res: HttpResponse, status: number, code: string, message: string): void {
-  const body: ErrorResponse = { error: { code, message } }
+export function sendError(
+  res: HttpResponse,
+  status: number,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): void {
+  const body: ErrorResponse = { error: details ? { code, message, details } : { code, message } }
   const payload = JSON.stringify(body)
   res.cork(() => {
     res.writeStatus(`${status}`).writeHeader('Content-Type', 'application/json').end(payload)
@@ -110,10 +123,20 @@ function httpStatusForError(err: SirannonError): number {
     case 'QUERY_ERROR':
     case 'TRANSACTION_ERROR':
       return 400
+    case 'STALE_PRIMARY':
+    case 'PROTOCOL_VERSION_MISMATCH':
+      return 409
     case 'HOOK_DENIED':
       return 403
     case 'DATABASE_CLOSED':
     case 'SHUTDOWN':
+    case 'READ_CONCERN_ERROR':
+    case 'COORDINATOR_UNAVAILABLE':
+    case 'AUTHORITY_LOST':
+    case 'NO_SAFE_PRIMARY':
+    case 'NODE_NOT_IN_SYNC':
+    case 'NODE_DRAINING':
+    case 'UNSAFE_RECOVERY_REQUIRED':
       return 503
     default:
       return 500
@@ -141,6 +164,8 @@ async function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string
 
 export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
 
+type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
+
 export function handleQuery(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
     const body = parseBody<QueryRequest>(res, rawBody)
@@ -151,17 +176,24 @@ export function handleQuery(sirannon: Sirannon): DbRouteHandler {
       return
     }
 
+    const readConcern = parseReadConcern(res, body.readConcern)
+    if (!readConcern.ok) return
+
     const db = await resolveDatabase(res, sirannon, dbId)
     if (!db) return
 
     try {
-      const rows = await db.query(body.sql, body.params)
+      const rows = await db.query(
+        body.sql,
+        body.params,
+        readConcern.value ? { readConcern: readConcern.value } : undefined,
+      )
       if (abort.aborted) return
       sendJson(res, { rows })
     } catch (err) {
       if (abort.aborted) return
       if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message)
+        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
       } else {
         sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
       }
@@ -179,17 +211,24 @@ export function handleExecute(sirannon: Sirannon): DbRouteHandler {
       return
     }
 
+    const writeConcern = parseWriteConcern(res, body.writeConcern)
+    if (!writeConcern.ok) return
+
     const db = await resolveDatabase(res, sirannon, dbId)
     if (!db) return
 
     try {
-      const result = await db.execute(body.sql, body.params)
+      const result = await db.execute(
+        body.sql,
+        body.params,
+        writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
+      )
       if (abort.aborted) return
       sendJson(res, toExecuteResponse(result))
     } catch (err) {
       if (abort.aborted) return
       if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message)
+        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
       } else {
         sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
       }
@@ -211,6 +250,9 @@ export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
       sendError(res, 400, 'INVALID_REQUEST', 'Transaction requires at least one statement')
       return
     }
+
+    const writeConcern = parseWriteConcern(res, body.writeConcern)
+    if (!writeConcern.ok) return
 
     for (let i = 0; i < body.statements.length; i++) {
       const stmt = body.statements[i]
@@ -239,10 +281,101 @@ export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
     } catch (err) {
       if (abort.aborted) return
       if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message)
+        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
       } else {
         sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
       }
     }
   }
+}
+
+function parseReadConcern(res: HttpResponse, value: unknown): ParseResult<ReadConcern> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isPlainRecord(value)) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern" must be an object when provided')
+    return { ok: false }
+  }
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || !keys.includes('level')) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern" must contain only "level"')
+    return { ok: false }
+  }
+  if (!isReadConcernLevel(value.level)) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern.level" is invalid')
+    return { ok: false }
+  }
+  return { ok: true, value: { level: value.level } }
+}
+
+function parseWriteConcern(res: HttpResponse, value: unknown): ParseResult<WriteConcern> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isPlainRecord(value)) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern" must be an object when provided')
+    return { ok: false }
+  }
+  const allowedKeys = new Set(['level', 'timeoutMs'])
+  if (!Object.keys(value).every(key => allowedKeys.has(key))) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern" contains unsupported keys')
+    return { ok: false }
+  }
+  if (!isWriteConcernLevel(value.level)) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern.level" is invalid')
+    return { ok: false }
+  }
+  const timeoutMs = value.timeoutMs
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+  ) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern.timeoutMs" must be a positive safe integer')
+    return { ok: false }
+  }
+  return {
+    ok: true,
+    value: timeoutMs === undefined ? { level: value.level } : { level: value.level, timeoutMs },
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
+  return value === 'local' || value === 'majority' || value === 'linearizable'
+}
+
+function isWriteConcernLevel(value: unknown): value is WriteConcern['level'] {
+  return value === 'local' || value === 'majority' || value === 'all'
+}
+
+export function handleClusterStatus(getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null) {
+  return (res: HttpResponse, dbId: string): void => {
+    if (!getClusterStatus) {
+      sendError(res, 404, 'NOT_FOUND', 'Cluster status is not configured')
+      return
+    }
+    const status = getClusterStatus(dbId)
+    if (!status) {
+      sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${dbId}' not found`)
+      return
+    }
+    sendJson(res, toClusterStatusResponse(status))
+  }
+}
+
+function toClusterStatusResponse(status: ClusterStatusInfo): ClusterStatusResponse {
+  return {
+    ...status,
+    currentPrimary: status.currentPrimary ? { ...status.currentPrimary } : status.currentPrimary,
+    readEndpoints: status.readEndpoints?.map(endpoint => ({
+      ...endpoint,
+      readConcerns: [...endpoint.readConcerns],
+    })),
+    primaryTerm: status.primaryTerm?.toString(),
+  }
+}
+
+function errorDetails(err: SirannonError): Record<string, unknown> | undefined {
+  const details = (err as SirannonError & { details?: Record<string, unknown> }).details
+  return details && Object.keys(details).length > 0 ? details : undefined
 }

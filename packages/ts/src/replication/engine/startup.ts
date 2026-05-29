@@ -26,6 +26,7 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   engine.lastLocalSeq = engine.lastSentSeq
   await engine.loadAppliedSeqs()
   await engine.startCoordinatorMode()
+  await engine.prepareCoordinatorRejoinIfNeeded()
 
   wireTransportHandlers(engine)
   const transportConfig = {
@@ -38,10 +39,13 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   }
   await engine.config.transport.connect(engine.nodeId, transportConfig)
 
-  const isPrimary = engine.config.topology.role === 'primary'
+  const isPrimary = engine.isCoordinatorMode()
+    ? engine.hasCoordinatorWriteAuthority()
+    : engine.config.topology.role === 'primary'
   const syncCompleted = await engine.log.isSyncCompleted()
+  const requiresCoordinatorRejoinSync = engine.requiresCoordinatorRejoinSync()
 
-  if (engine.initialSync && !isPrimary && !syncCompleted) {
+  if (engine.initialSync && !isPrimary && (!syncCompleted || requiresCoordinatorRejoinSync)) {
     const savedState = await engine.log.getSyncState()
     if (savedState.phase === 'syncing') {
       if (!engine.tracker) {

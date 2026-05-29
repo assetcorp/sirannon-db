@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { NoSafePrimaryError } from '../errors.js'
+import { compatibilityAllowsPromotion } from './compatibility.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
@@ -17,6 +18,8 @@ import type {
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
 } from './types.js'
+
+const MIN_AUTOMATIC_FAILOVER_VOTERS = 3
 
 export interface InMemoryClusterCoordinatorOptions {
   now?: () => number
@@ -227,8 +230,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     }
     assertPrimaryInGroup(input.nextPrimary, state.votingDataBearingNodeIds)
 
-    state.primaryTerm += 1n
-    state.currentPrimary = { ...input.nextPrimary }
+    movePrimary(state, input.nextPrimary)
     state.updatedAtMs = this.now()
     this.notifyReplicationGroupWatchers(state)
 
@@ -268,6 +270,9 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     state.drainingNodeIds = setMembership(state.drainingNodeIds, input.nodeId, input.draining)
     state.repairingNodeIds = setMembership(state.repairingNodeIds, input.nodeId, input.repairing)
     state.faultedNodeIds = setMembership(state.faultedNodeIds, input.nodeId, input.faulted)
+    if (input.draining === true || input.repairing === true || input.faulted === true) {
+      state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, input.nodeId)
+    }
     state.updatedAtMs = this.now()
     this.notifyReplicationGroupWatchers(state)
     return cloneReplicationGroupState(state)
@@ -281,6 +286,11 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     if (!state) {
       throw new NoSafePrimaryError(`No replication group '${input.groupId}' is registered`)
     }
+    if (state.votingDataBearingNodeIds.length < MIN_AUTOMATIC_FAILOVER_VOTERS) {
+      throw new NoSafePrimaryError(
+        `Automatic promotion requires at least ${MIN_AUTOMATIC_FAILOVER_VOTERS} voting data-bearing nodes`,
+      )
+    }
 
     for (const nodeId of state.votingDataBearingNodeIds) {
       if (nodeId === state.currentPrimary?.nodeId || excludedNodeIds.has(nodeId)) {
@@ -291,8 +301,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
         continue
       }
 
-      state.primaryTerm += 1n
-      state.currentPrimary = session.endpoint ? { nodeId, endpoint: session.endpoint } : { nodeId }
+      movePrimary(state, session.endpoint ? { nodeId, endpoint: session.endpoint } : { nodeId })
       state.updatedAtMs = this.now()
       this.notifyReplicationGroupWatchers(state)
       return cloneReplicationGroupState(state)
@@ -345,6 +354,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
       session.dataBearing &&
       session.voting &&
       state.inSyncNodeIds.includes(nodeId) &&
+      compatibilityAllowsPromotion(state.compatibility, session.compatibility) &&
       !state.drainingNodeIds.includes(nodeId) &&
       !state.repairingNodeIds.includes(nodeId) &&
       !state.faultedNodeIds.includes(nodeId)
@@ -372,6 +382,16 @@ function cloneReplicationGroupState(state: ReplicationGroupState): ReplicationGr
     repairingNodeIds: [...state.repairingNodeIds],
     faultedNodeIds: [...state.faultedNodeIds],
     compatibility: cloneCompatibility(state.compatibility),
+  }
+}
+
+function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {
+  const displacedPrimaryId = state.currentPrimary?.nodeId
+  state.primaryTerm += 1n
+  state.currentPrimary = { ...nextPrimary }
+  if (displacedPrimaryId && displacedPrimaryId !== nextPrimary.nodeId) {
+    state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, displacedPrimaryId)
+    state.repairingNodeIds = setMembership(state.repairingNodeIds, displacedPrimaryId, true)
   }
 }
 
@@ -417,6 +437,10 @@ function setMembership(values: string[], nodeId: string, enabled: boolean | unde
     next.push(nodeId)
   }
   return next
+}
+
+function removeNodeId(values: string[], nodeId: string): string[] {
+  return values.filter(value => value !== nodeId)
 }
 
 function assertSubset(values: string[], allowed: string[], name: string): void {

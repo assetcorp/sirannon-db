@@ -248,9 +248,7 @@ export class SyncJoiner {
       }
 
       if (Date.now() - catchUpStartedAt > engine.catchUpDeadlineMs) {
-        engine.syncState.phase = 'ready'
-        await engine.log.setSyncMeta('ready')
-        this.stopCatchUpCheck()
+        await this.finishCatchUpAsReady()
         return
       }
 
@@ -260,16 +258,12 @@ export class SyncJoiner {
       if (engine.highestSourceSeqSeen === 0n) {
         const snapshotSeq = engine.syncState.snapshotSeq ?? 0n
         if (snapshotSeq === 0n) {
-          engine.syncState.phase = 'ready'
-          await engine.log.setSyncMeta('ready')
-          this.stopCatchUpCheck()
+          await this.finishCatchUpAsReady()
           return
         }
         const localSeq = await engine.log.getLocalSeq()
         if (localSeq === 0n) {
-          engine.syncState.phase = 'ready'
-          await engine.log.setSyncMeta('ready')
-          this.stopCatchUpCheck()
+          await this.finishCatchUpAsReady()
           return
         }
         return
@@ -278,9 +272,7 @@ export class SyncJoiner {
       const appliedSeq = await engine.log.getLastAppliedSeq(sourcePeerId)
       const lag = engine.highestSourceSeqSeen - appliedSeq
       if (lag <= BigInt(engine.maxSyncLagBeforeReady)) {
-        engine.syncState.phase = 'ready'
-        await engine.log.setSyncMeta('ready')
-        this.stopCatchUpCheck()
+        await this.finishCatchUpAsReady()
       }
     }, engine.batchIntervalMs * 2)
   }
@@ -295,5 +287,13 @@ export class SyncJoiner {
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     await delayAckIfConfigured(this.engine)
     await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
+  }
+
+  private async finishCatchUpAsReady(): Promise<void> {
+    const engine = this.engine
+    engine.syncState.phase = 'ready'
+    await engine.log.setSyncMeta('ready')
+    await engine.markCoordinatorRejoinComplete()
+    this.stopCatchUpCheck()
   }
 }

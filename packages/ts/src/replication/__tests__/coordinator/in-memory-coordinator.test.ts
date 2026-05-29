@@ -156,7 +156,8 @@ describe('InMemoryClusterCoordinator', () => {
     expect(promoted.state.currentPrimary?.nodeId).toBe('node-b')
 
     const stored = await coordinator.getReplicationGroupState('cluster-a', 'orders')
-    expect(stored?.inSyncNodeIds).toEqual(['node-a', 'node-b'])
+    expect(stored?.inSyncNodeIds).toEqual(['node-b'])
+    expect(stored?.repairingNodeIds).toEqual(['node-a'])
     expect(observedTerms).toEqual([1n, 2n])
 
     unsubscribe()
@@ -198,7 +199,7 @@ describe('InMemoryClusterCoordinator', () => {
       votingDataBearingNodeIds: ['node-a', 'node-b', 'node-c'],
       currentPrimary: { nodeId: 'node-a', endpoint: 'https://node-a.example.com' },
       primaryTerm: 8n,
-      inSyncNodeIds: ['node-b'],
+      inSyncNodeIds: ['node-a', 'node-b'],
     })
 
     const promoted = await coordinator.promoteEligibleReplica({
@@ -207,6 +208,8 @@ describe('InMemoryClusterCoordinator', () => {
     })
     expect(promoted.primaryTerm).toBe(9n)
     expect(promoted.currentPrimary).toEqual({ nodeId: 'node-b', endpoint: 'https://node-b.example.com' })
+    expect(promoted.inSyncNodeIds).toEqual(['node-b'])
+    expect(promoted.repairingNodeIds).toContain('node-a')
 
     await coordinator.updateInSyncSet({
       clusterId: 'cluster-a',
@@ -221,5 +224,98 @@ describe('InMemoryClusterCoordinator', () => {
         groupId: 'orders',
       }),
     ).rejects.toMatchObject({ code: 'NO_SAFE_PRIMARY' })
+  })
+
+  it('fails closed for automatic promotion with fewer than three voting data-bearing nodes', async () => {
+    const coordinator = new InMemoryClusterCoordinator({ now: () => 6_000 })
+    await coordinator.registerNodeSession({
+      clusterId: 'cluster-a',
+      nodeId: 'node-b',
+      ttlMs: 500,
+      endpoint: 'https://node-b.example.com',
+    })
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: ['node-a', 'node-b'],
+      currentPrimary: { nodeId: 'node-a', endpoint: 'https://node-a.example.com' },
+      primaryTerm: 2n,
+      inSyncNodeIds: ['node-b'],
+    })
+
+    await expect(
+      coordinator.promoteEligibleReplica({
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+      }),
+    ).rejects.toMatchObject({ code: 'NO_SAFE_PRIMARY' })
+  })
+
+  it('skips candidates with incompatible major compatibility metadata', async () => {
+    const coordinator = new InMemoryClusterCoordinator({ now: () => 7_000 })
+    await coordinator.registerNodeSession({
+      clusterId: 'cluster-a',
+      nodeId: 'node-b',
+      ttlMs: 500,
+      endpoint: 'https://node-b.example.com',
+      compatibility: {
+        packageVersion: '1.1.0',
+        protocolVersion: '2.0.0',
+        specVersion: '1.0.0',
+      },
+    })
+    await coordinator.registerNodeSession({
+      clusterId: 'cluster-a',
+      nodeId: 'node-c',
+      ttlMs: 500,
+      endpoint: 'https://node-c.example.com',
+      compatibility: {
+        packageVersion: '1.2.0',
+        protocolVersion: '1.5.0',
+        specVersion: '1.1.0',
+      },
+    })
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: ['node-a', 'node-b', 'node-c'],
+      currentPrimary: { nodeId: 'node-a', endpoint: 'https://node-a.example.com' },
+      primaryTerm: 2n,
+      inSyncNodeIds: ['node-b', 'node-c'],
+      compatibility: {
+        packageVersion: '1.0.0',
+        protocolVersion: '1.0.0',
+        specVersion: '1.0.0',
+      },
+    })
+
+    const promoted = await coordinator.promoteEligibleReplica({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+    })
+
+    expect(promoted.currentPrimary).toEqual({ nodeId: 'node-c', endpoint: 'https://node-c.example.com' })
+  })
+
+  it('removes nodes from the safe set when maintenance state starts', async () => {
+    const coordinator = new InMemoryClusterCoordinator({ now: () => 8_000 })
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: ['node-a', 'node-b', 'node-c'],
+      currentPrimary: { nodeId: 'node-a', endpoint: 'https://node-a.example.com' },
+      primaryTerm: 2n,
+      inSyncNodeIds: ['node-a', 'node-b', 'node-c'],
+    })
+
+    const drained = await coordinator.updateNodeMaintenance({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      nodeId: 'node-b',
+      draining: true,
+    })
+
+    expect(drained?.drainingNodeIds).toEqual(['node-b'])
+    expect(drained?.inSyncNodeIds).toEqual(['node-a', 'node-c'])
   })
 })

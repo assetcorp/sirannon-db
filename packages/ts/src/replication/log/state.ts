@@ -77,6 +77,15 @@ export class StateOps {
     await stmt.run(fromNodeId, seq.toString(), Date.now() / 1000)
   }
 
+  async getPeerAckedSeq(peerNodeId: string): Promise<bigint> {
+    const stmt = await this.conn.prepare('SELECT last_acked_seq FROM _sirannon_peer_state WHERE peer_node_id = ?')
+    const row = (await stmt.get(peerNodeId)) as { last_acked_seq: number | string | null } | undefined
+    if (!row || row.last_acked_seq === null) {
+      return 0n
+    }
+    return BigInt(row.last_acked_seq)
+  }
+
   async getLocalSeq(changesTable: string): Promise<bigint> {
     const stmt = await this.conn.prepare(`SELECT MAX(seq) as max_seq FROM "${changesTable}"`)
     const row = (await stmt.get()) as { max_seq: number | null } | undefined

@@ -6,12 +6,14 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import { LWWResolver } from '../conflict/lww.js'
+import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import {
   AuthorityError,
   CoordinatorError,
   NodeDrainingError,
   NodeNotInSyncError,
+  ProtocolVersionMismatchError,
   ReadConcernError,
   StalePrimaryError,
   SyncError,
@@ -413,12 +415,62 @@ export class ReplicationEngine extends EventEmitter {
     this.nodeSessionLeaseId = session.lease.id
 
     this.coordinatorWatchDisposer = await coordinator.watchReplicationGroup(config.clusterId, config.groupId, next => {
-      this.coordinatorState = next
-      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(next)
+      this.handleCoordinatorStateUpdate(next)
     })
 
     this.startCoordinatorLeaseRenewal()
     this.startControllerLoop()
+  }
+
+  async prepareCoordinatorRejoinIfNeeded(): Promise<void> {
+    const state = this.coordinatorState ?? (await this.refreshCoordinatorState())
+    if (!state || !this.requiresCoordinatorRejoin(state)) return
+    await this.evaluateFormerPrimaryHistory(state)
+  }
+
+  hasCoordinatorWriteAuthority(): boolean {
+    return this.coordinatorAuthority
+  }
+
+  requiresCoordinatorRejoinSync(state: ReplicationGroupState | null = this.coordinatorState): boolean {
+    if (!state || state.currentPrimary?.nodeId === this.nodeId) return false
+    if (state.faultedNodeIds.includes(this.nodeId)) return false
+    return state.repairingNodeIds.includes(this.nodeId)
+  }
+
+  async markCoordinatorRejoinComplete(): Promise<void> {
+    const config = this.config.coordinator
+    const state = this.coordinatorState
+    if (!config || !state || !this.requiresCoordinatorRejoinSync(state)) return
+
+    const canReturnToSafeSet = !state.drainingNodeIds.includes(this.nodeId)
+    const inSyncNodeIds = canReturnToSafeSet
+      ? state.inSyncNodeIds.includes(this.nodeId)
+        ? state.inSyncNodeIds
+        : [...state.inSyncNodeIds, this.nodeId]
+      : state.inSyncNodeIds.filter(nodeId => nodeId !== this.nodeId)
+    let nextState = state
+    if (!arraysEqual(inSyncNodeIds, state.inSyncNodeIds)) {
+      const updated = await config.coordinator.updateInSyncSet({
+        clusterId: config.clusterId,
+        groupId: config.groupId,
+        inSyncNodeIds,
+      })
+      if (!updated) {
+        throw new CoordinatorError('Failed to mark repaired node as in sync')
+      }
+      nextState = updated
+    }
+
+    const repaired = await config.coordinator.updateNodeMaintenance({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId: this.nodeId,
+      repairing: false,
+      faulted: false,
+    })
+    this.coordinatorState = repaired ?? nextState
+    this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
   }
 
   async verifyPrimaryAuthority(): Promise<ReplicationGroupState> {
@@ -432,6 +484,7 @@ export class ReplicationEngine extends EventEmitter {
         this.errorDetails(state),
       )
     }
+    this.assertLocalCompatibility(state)
     if (state.drainingNodeIds.includes(this.nodeId)) {
       throw new NodeDrainingError('Node is draining and cannot accept writes', this.errorDetails(state))
     }
@@ -532,6 +585,7 @@ export class ReplicationEngine extends EventEmitter {
     if (!this.hasCurrentPrimaryAuthorityFor(state)) {
       return false
     }
+    this.assertLocalCompatibility(state)
     if (state.drainingNodeIds.includes(this.nodeId)) {
       throw new NodeDrainingError('Node is draining and cannot accept writes', this.errorDetails(state))
     }
@@ -726,7 +780,14 @@ export class ReplicationEngine extends EventEmitter {
     const primaryLive = primaryNodeId
       ? await config.coordinator.getLiveNodeSession(config.clusterId, primaryNodeId)
       : null
-    if (primaryNodeId && primaryLive) {
+    const primaryCanKeepDuty =
+      primaryNodeId &&
+      primaryLive &&
+      compatibilityAllowsPromotion(state.compatibility, primaryLive.compatibility) &&
+      !state.drainingNodeIds.includes(primaryNodeId) &&
+      !state.repairingNodeIds.includes(primaryNodeId) &&
+      !state.faultedNodeIds.includes(primaryNodeId)
+    if (primaryCanKeepDuty) {
       return
     }
     try {
@@ -741,6 +802,122 @@ export class ReplicationEngine extends EventEmitter {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       this.emitError({ error: wrappedErr, operation: 'coordinator-promotion', recoverable: true })
     }
+  }
+
+  private handleCoordinatorStateUpdate(next: ReplicationGroupState): void {
+    const previous = this.coordinatorState
+    const wasPrimary = previous ? this.hasCurrentPrimaryAuthorityFor(previous) : this.coordinatorAuthority
+    this.coordinatorState = next
+    this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(next)
+
+    if (wasPrimary && !this.coordinatorAuthority && next.primaryTerm > (previous?.primaryTerm ?? 0n)) {
+      this.handleFormerPrimaryDemotion(next).catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'coordinator-former-primary-demotion', recoverable: false })
+      })
+    }
+  }
+
+  private async handleFormerPrimaryDemotion(state: ReplicationGroupState): Promise<void> {
+    const repairingState = await this.markLocalNodeRepairing(state)
+    const evaluatedState = await this.evaluateFormerPrimaryHistory(repairingState)
+    if (!this.requiresCoordinatorRejoinSync(evaluatedState)) return
+    if (!this.running || this.syncState.phase === 'syncing' || this.syncState.phase === 'catching-up') return
+    this.syncState = {
+      phase: 'pending',
+      sourcePeerId: null,
+      snapshotSeq: null,
+      completedTables: [],
+      totalTables: 0,
+      startedAt: null,
+      error: null,
+    }
+    await this.log.setSyncMeta('pending')
+    await this.syncJoiner.initiateSync()
+  }
+
+  private async markLocalNodeRepairing(state: ReplicationGroupState): Promise<ReplicationGroupState> {
+    const config = this.config.coordinator
+    if (!config || state.repairingNodeIds.includes(this.nodeId) || state.faultedNodeIds.includes(this.nodeId)) {
+      return state
+    }
+    const updated = await config.coordinator.updateNodeMaintenance({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId: this.nodeId,
+      repairing: true,
+    })
+    if (!updated) {
+      throw new CoordinatorError('Failed to mark former primary for repair')
+    }
+    this.coordinatorState = updated
+    this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(updated)
+    return updated
+  }
+
+  private requiresCoordinatorRejoin(state: ReplicationGroupState): boolean {
+    if (state.currentPrimary?.nodeId === this.nodeId) return false
+    return state.repairingNodeIds.includes(this.nodeId) || state.faultedNodeIds.includes(this.nodeId)
+  }
+
+  private assertLocalCompatibility(state: ReplicationGroupState): void {
+    if (compatibilityAllowsPromotion(state.compatibility, this.config.coordinator?.compatibility)) return
+    throw new ProtocolVersionMismatchError('Node compatibility metadata is incompatible with the replication group', {
+      ...this.errorDetails(state),
+      groupCompatibility: state.compatibility,
+      localCompatibility: this.config.coordinator?.compatibility,
+    })
+  }
+
+  private async evaluateFormerPrimaryHistory(state: ReplicationGroupState): Promise<ReplicationGroupState> {
+    const config = this.config.coordinator
+    const currentPrimary = state.currentPrimary
+    if (!config || !currentPrimary || state.faultedNodeIds.includes(this.nodeId)) return state
+
+    const localSeq = await this.log.getLocalSeq()
+    const currentPrimaryAckedSeq = await this.log.getPeerAckedSeq(currentPrimary.nodeId)
+    if (localSeq <= currentPrimaryAckedSeq) {
+      return state
+    }
+
+    const inSyncNodeIds = state.inSyncNodeIds.filter(nodeId => nodeId !== this.nodeId)
+    let nextState = state
+    if (inSyncNodeIds.length !== state.inSyncNodeIds.length) {
+      const updated = await config.coordinator.updateInSyncSet({
+        clusterId: config.clusterId,
+        groupId: config.groupId,
+        inSyncNodeIds,
+      })
+      if (!updated) {
+        throw new CoordinatorError('Failed to remove divergent former primary from in-sync set')
+      }
+      nextState = updated
+    }
+
+    const faulted = await config.coordinator.updateNodeMaintenance({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId: this.nodeId,
+      repairing: false,
+      faulted: true,
+    })
+    nextState = faulted ?? nextState
+    this.coordinatorState = nextState
+    this.coordinatorAuthority = false
+    this.emitError({
+      error: new AuthorityError(
+        'Former primary returned with local-only writes and was quarantined',
+        'AUTHORITY_LOST',
+        {
+          ...this.errorDetails(nextState),
+          localSeq: localSeq.toString(),
+          currentPrimaryAckedSeq: currentPrimaryAckedSeq.toString(),
+        },
+      ),
+      operation: 'coordinator-former-primary-divergence',
+      recoverable: false,
+    })
+    return nextState
   }
 
   private stopCoordinatorTimers(): void {

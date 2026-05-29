@@ -1,5 +1,6 @@
 import { Etcd3, type IOptions, type Lease, type Namespace, type Watcher } from 'etcd3'
 import { CoordinatorError, NoSafePrimaryError } from '../errors.js'
+import { compatibilityAllowsPromotion } from './compatibility.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
@@ -19,6 +20,8 @@ import type {
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
 } from './types.js'
+
+const MIN_AUTOMATIC_FAILOVER_VOTERS = 3
 
 export interface EtcdClusterCoordinatorOptions {
   hosts: string | string[]
@@ -336,6 +339,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       primaryTerm: current.primaryTerm + 1n,
       updatedAtMs: Date.now(),
     }
+    markDisplacedPrimaryForRepair(next, current.currentPrimary?.nodeId, input.nextPrimary.nodeId)
     const nextRaw = serializeGroupState(next)
     const result = await this.namespace
       .if(key, 'Value', '==', currentRaw)
@@ -373,6 +377,10 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
         drainingNodeIds: setMembership(state.drainingNodeIds, input.nodeId, input.draining),
         repairingNodeIds: setMembership(state.repairingNodeIds, input.nodeId, input.repairing),
         faultedNodeIds: setMembership(state.faultedNodeIds, input.nodeId, input.faulted),
+        inSyncNodeIds:
+          input.draining === true || input.repairing === true || input.faulted === true
+            ? removeNodeId(state.inSyncNodeIds, input.nodeId)
+            : state.inSyncNodeIds,
         updatedAtMs: Date.now(),
       }
     })
@@ -387,6 +395,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       const state = await this.getReplicationGroupState(input.clusterId, input.groupId)
       if (!state) {
         throw new NoSafePrimaryError(`No replication group '${input.groupId}' is registered`)
+      }
+      if (state.votingDataBearingNodeIds.length < MIN_AUTOMATIC_FAILOVER_VOTERS) {
+        throw new NoSafePrimaryError(
+          `Automatic promotion requires at least ${MIN_AUTOMATIC_FAILOVER_VOTERS} voting data-bearing nodes`,
+        )
       }
 
       for (const nodeId of state.votingDataBearingNodeIds) {
@@ -665,6 +678,7 @@ function isEligiblePromotionSession(
     session.dataBearing &&
     session.voting &&
     state.inSyncNodeIds.includes(nodeId) &&
+    compatibilityAllowsPromotion(state.compatibility, session.compatibility) &&
     !state.drainingNodeIds.includes(nodeId) &&
     !state.repairingNodeIds.includes(nodeId) &&
     !state.faultedNodeIds.includes(nodeId)
@@ -692,6 +706,20 @@ function setMembership(values: string[], nodeId: string, enabled: boolean | unde
     next.push(nodeId)
   }
   return next
+}
+
+function markDisplacedPrimaryForRepair(
+  state: ReplicationGroupState,
+  displacedPrimaryId: string | undefined,
+  nextPrimaryId: string,
+): void {
+  if (!displacedPrimaryId || displacedPrimaryId === nextPrimaryId) return
+  state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, displacedPrimaryId)
+  state.repairingNodeIds = setMembership(state.repairingNodeIds, displacedPrimaryId, true)
+}
+
+function removeNodeId(values: string[], nodeId: string): string[] {
+  return values.filter(value => value !== nodeId)
 }
 
 function assertSubset(values: string[], allowed: string[], name: string): void {

@@ -438,10 +438,12 @@ export class ReplicationEngine extends EventEmitter {
     return state.repairingNodeIds.includes(this.nodeId)
   }
 
-  async markCoordinatorRejoinComplete(): Promise<void> {
+  async markCoordinatorSyncReady(): Promise<void> {
     const config = this.config.coordinator
-    const state = this.coordinatorState
-    if (!config || !state || !this.requiresCoordinatorRejoinSync(state)) return
+    const state = this.coordinatorState ?? (await this.refreshCoordinatorState())
+    if (!config || !state || state.currentPrimary?.nodeId === this.nodeId) return
+    if (!state.votingDataBearingNodeIds.includes(this.nodeId)) return
+    if (state.faultedNodeIds.includes(this.nodeId)) return
 
     const canReturnToSafeSet = !state.drainingNodeIds.includes(this.nodeId)
     const inSyncNodeIds = canReturnToSafeSet
@@ -460,6 +462,12 @@ export class ReplicationEngine extends EventEmitter {
         throw new CoordinatorError('Failed to mark repaired node as in sync')
       }
       nextState = updated
+    }
+
+    if (!state.repairingNodeIds.includes(this.nodeId)) {
+      this.coordinatorState = nextState
+      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
+      return
     }
 
     const repaired = await config.coordinator.updateNodeMaintenance({
@@ -636,10 +644,18 @@ export class ReplicationEngine extends EventEmitter {
   private async refreshCoordinatorState(): Promise<ReplicationGroupState | null> {
     const config = this.config.coordinator
     if (!config) return null
-    const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
-    this.coordinatorState = state
-    this.coordinatorAuthority = state ? this.hasCurrentPrimaryAuthorityFor(state) : false
-    return state
+    try {
+      const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
+      this.coordinatorState = state
+      this.coordinatorAuthority = state ? this.hasCurrentPrimaryAuthorityFor(state) : false
+      return state
+    } catch {
+      this.coordinatorAuthority = false
+      throw new CoordinatorError(
+        'Coordinator is unavailable while refreshing replication-group authority',
+        this.errorDetails(this.coordinatorState),
+      )
+    }
   }
 
   private hasCurrentPrimaryAuthorityFor(state: ReplicationGroupState): boolean {

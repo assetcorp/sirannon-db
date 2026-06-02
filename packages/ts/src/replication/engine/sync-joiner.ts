@@ -20,6 +20,10 @@ export class SyncJoiner {
     const peers = engine.config.transport.peers()
     let sourcePeerId: string | null = engine.isCoordinatorMode() ? engine.getCurrentPrimaryPeerId() : null
 
+    if (engine.isCoordinatorMode() && sourcePeerId === null) {
+      return
+    }
+
     if (sourcePeerId === null) {
       for (const [peerId, info] of peers) {
         if (info.role === 'primary') {
@@ -293,7 +297,7 @@ export class SyncJoiner {
     const engine = this.engine
     engine.syncState.phase = 'ready'
     await engine.log.setSyncMeta('ready')
-    await engine.markCoordinatorRejoinComplete()
+    await engine.markCoordinatorSyncReady()
     this.stopCatchUpCheck()
   }
 }

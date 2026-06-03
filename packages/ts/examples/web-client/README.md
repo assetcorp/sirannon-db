@@ -1,42 +1,56 @@
-# Sirannon DB - Product Inventory Demo
+# Sirannon Fulfillment Operations Demo
 
-A live product inventory that demonstrates real-time reactivity using CDC, HTTP mutations, WebSocket subscriptions, and transactions working together.
+A fulfillment operations app that demonstrates Sirannon as a networked SQLite data layer with HTTP operations, WebSocket subscriptions, CDC updates, and transactions working together.
 
 ## Run
 
-Start both server and client:
+Start the Sirannon data server and application server together:
 
 ```bash
 cd packages/ts/examples/web-client
-pnpm start
+pnpm run dev
 ```
 
 Or run them separately:
 
 ```bash
-pnpm run server   # starts Sirannon server on port 9876
-pnpm dev          # starts Vite dev server on port 5174
+pnpm run server   # Sirannon data server on port 9876
+pnpm run app:dev  # application server on port 3000
 ```
 
-Open the Vite URL in your browser to see the product table and live activity feed.
+Open `http://localhost:3000`.
 
 ## Architecture
 
-The demo uses two `SirannonClient` instances, each handling a specific transport:
+The demo has two UI modes:
 
-- **HTTP client** handles mutations (sell, restock, add product) and initial data fetches. Transactions ensure stock changes and activity logs are written atomically.
-- **WebSocket client** powers CDC subscriptions that push live updates to the UI whenever products or activity records change.
+- **Application API**: the browser calls server-side domain actions. Those actions validate inputs and call the Sirannon HTTP API from the server.
+- **Direct Data API**: the browser calls the Sirannon HTTP API directly. The data server limits this mode with loopback binding, restricted CORS, bearer auth for HTTP, and a demo SQL allowlist.
 
-This two-client pattern mirrors how a production app would wire up Sirannon DB: HTTP for request/response operations, WebSocket for real-time streaming.
+Both modes keep WebSocket subscriptions in the browser for live CDC events. The UI loads one initial snapshot, then applies product and activity changes from the stream instead of refetching after every mutation.
+
+## Environment
+
+Optional configuration:
+
+```bash
+PORT=9876
+HOST=127.0.0.1
+APP_ORIGIN=http://localhost:3000
+SIRANNON_ENDPOINT=http://localhost:9876
+SIRANNON_DEMO_TOKEN=sirannon-demo-token
+VITE_SIRANNON_ENDPOINT=http://localhost:9876
+VITE_SIRANNON_DEMO_TOKEN=sirannon-demo-token
+```
 
 ## Features
 
-- **Product table** with inline Sell and Restock buttons
-- **Add Product form** for creating new inventory items
-- **Live activity feed** updated through CDC (no polling)
-- **Atomic transactions** that pair stock changes with activity logs
-- **Connection status** indicator in the header
-- **CDC-driven UI** where product rows update in place without full reloads
+- Inventory ledger with Allocate and Receive actions
+- Create Item form for adding catalog records
+- Live activity feed updated through CDC
+- Reset Database action that clears rows and resets SQLite autoincrement IDs
+- Mode switcher for server-function actions versus direct driver access
+- Manual refresh for explicit snapshot resync
 
 ## Server schema
 
@@ -58,3 +72,7 @@ From the monorepo root:
 pnpm install
 pnpm --filter @delali/sirannon-db build
 ```
+
+## Production notes
+
+This is still an example. For an internet-facing application, keep arbitrary SQL away from public browsers, enforce real user authentication on domain endpoints, and authenticate WebSocket upgrades through an auth layer that the deployment platform supports.

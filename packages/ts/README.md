@@ -159,7 +159,7 @@ The package ships independent exports so you only bundle what you need:
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
 | `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, HLC |
-| `@delali/sirannon-db/transport/websocket` | WebSocket replication transport with TLS and auth |
+| `@delali/sirannon-db/transport/grpc` | gRPC replication transport with TLS support |
 | `@delali/sirannon-db/transport/memory` | In-memory transport for testing |
 
 ## Core features
@@ -445,6 +445,7 @@ Sirannon can replicate a SQLite database across multiple nodes with automatic ch
 ```ts
 import { ReplicationEngine } from '@delali/sirannon-db/replication'
 import { InMemoryTransport, MemoryBus } from '@delali/sirannon-db/transport/memory'
+import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
 ```
 
 ### Primary-replica setup
@@ -453,11 +454,14 @@ One node accepts writes and pushes changes to read replicas. Replicas forward wr
 
 ```ts
 import { ReplicationEngine, PrimaryReplicaTopology } from '@delali/sirannon-db/replication'
-import { WebSocketReplicationTransport } from '@delali/sirannon-db/transport/websocket'
+import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
 
-const transport = new WebSocketReplicationTransport({
+const transport = new GrpcReplicationTransport({
+  host: '0.0.0.0',
   port: 4200,
-  authToken: process.env.REPLICATION_TOKEN,
+  tlsCert: './certs/primary.crt',
+  tlsKey: './certs/primary.key',
+  tlsCaCert: './certs/ca.crt',
 })
 
 const engine = new ReplicationEngine(db, writerConn, {
@@ -482,7 +486,7 @@ const replicaEngine = new ReplicationEngine(replicaDb, replicaConn, {
   nodeId: 'replica-eu-west-1',
   topology: new PrimaryReplicaTopology('replica'),
   transport: replicaTransport,
-  transportConfig: { endpoints: ['ws://primary:4200'] },
+  transportConfig: { endpoints: ['primary.example.com:4200'] },
   writeForwarding: true,
   changeTracker: replicaTracker,
 })
@@ -545,9 +549,8 @@ Levels: `'local'` (default, returns after local write), `'majority'` (waits for 
 
 | Transport | Import | Use case |
 | --- | --- | --- |
-| WebSocket | `@delali/sirannon-db/transport/websocket` | Production multi-node over the network. TLS support, automatic reconnection, configurable auth token. |
+| gRPC | `@delali/sirannon-db/transport/grpc` | Production Node.js multi-node replication over the network with TLS support. |
 | In-Memory | `@delali/sirannon-db/transport/memory` | Testing and single-process multi-node scenarios. Messages delivered via microtask scheduling. |
-| Simulated | `@delali/sirannon-db/transport/simulated` | Deterministic fault-injection testing. Configurable latency, packet loss, and network partitions. |
 | Custom | Build your own | Any transport that satisfies the `ReplicationTransport` interface (Redis, NATS, MQTT, TCP, etc). |
 
 The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'primary'` when configuring the primary node. Only two roles exist: `'primary'` and `'replica'`.
@@ -723,12 +726,11 @@ try {
 
 ## Examples
 
-Self-contained example projects live in [`examples/`](examples/) and cover every runtime target:
+Self-contained example projects live in [`examples/`](examples/) and cover the current runnable Node.js, browser, and client-server paths:
 
 | Example | Runtime | Driver | What it demonstrates |
 | --- | --- | --- | --- |
-| [`node-better-sqlite3`](examples/node-better-sqlite3/) | Node.js | better-sqlite3 | All core features: schema, migrations, CRUD, transactions, CDC, connection pools, metrics, multi-tenant, hooks, backup, shutdown |
-| [`node-native`](examples/node-native/) | Node.js >= 22 | built-in `node:sqlite` | Same features as above using the zero-dependency Node driver |
+| [`node`](examples/node/) | Node.js >= 22 | better-sqlite3 or built-in `node:sqlite` | All core features: schema, migrations, CRUD, transactions, CDC, connection pools, metrics, multi-tenant, hooks, backup, shutdown |
 | [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser (Vite) | wa-sqlite + IndexedDB | CRUD, transactions, CDC subscriptions in the browser |
 | [`web-client`](examples/web-client/) | Browser + Node.js | better-sqlite3 (server) | Client SDK connecting to a Sirannon server over HTTP and WebSocket |
 
@@ -744,13 +746,13 @@ pnpm --filter @delali/sirannon-db build
 Then pick an example:
 
 ```bash
-# Node.js with better-sqlite3
-cd packages/ts/examples/node-better-sqlite3
+# Node.js with better-sqlite3, the default driver
+cd packages/ts/examples/node
 pnpm start
 
 # Node.js with built-in sqlite
-cd packages/ts/examples/node-native
-pnpm start
+cd packages/ts/examples/node
+pnpm run start:node-native
 
 # Browser with wa-sqlite (opens Vite dev server)
 cd packages/ts/examples/web-wa-sqlite

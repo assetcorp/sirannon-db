@@ -75,12 +75,11 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 
 ## Examples
 
-Self-contained example projects in [`packages/ts/examples/`](packages/ts/examples/) cover every runtime target:
+Self-contained example projects in [`packages/ts/examples/`](packages/ts/examples/) cover the current runnable Node.js, browser, and client-server paths:
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
-| [`node-better-sqlite3`](packages/ts/examples/node-better-sqlite3/) | Node.js | All core features: migrations, CRUD, transactions, CDC, multi-tenant, hooks, backup |
-| [`node-native`](packages/ts/examples/node-native/) | Node.js >= 22 | Same features using the zero-dependency Node driver |
+| [`node`](packages/ts/examples/node/) | Node.js >= 22 | All core features with either `better-sqlite3` or Node's built-in SQLite driver |
 | [`web-wa-sqlite`](packages/ts/examples/web-wa-sqlite/) | Browser (Vite) | CRUD, transactions, and CDC in the browser |
 | [`web-client`](packages/ts/examples/web-client/) | Browser + Node.js | Client SDK connecting to a Sirannon server over HTTP and WebSocket |
 
@@ -88,8 +87,8 @@ Self-contained example projects in [`packages/ts/examples/`](packages/ts/example
 pnpm install && pnpm --filter @delali/sirannon-db build
 
 # then pick one:
-cd packages/ts/examples/node-better-sqlite3 && pnpm start
-cd packages/ts/examples/node-native && pnpm start
+cd packages/ts/examples/node && pnpm start
+cd packages/ts/examples/node && pnpm run start:node-native
 cd packages/ts/examples/web-wa-sqlite && pnpm dev
 cd packages/ts/examples/web-client && pnpm start
 ```

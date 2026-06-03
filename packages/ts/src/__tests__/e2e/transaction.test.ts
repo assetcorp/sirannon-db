@@ -61,7 +61,7 @@ describe('E2E: engine.transaction over real gRPC + mTLS', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
     })
 

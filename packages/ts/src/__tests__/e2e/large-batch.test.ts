@@ -57,7 +57,7 @@ describe('E2E: large batch of writes in a single transaction', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
       configOverrides: {
         maxBatchChanges: 5000,

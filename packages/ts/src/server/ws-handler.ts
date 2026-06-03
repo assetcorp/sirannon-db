@@ -4,7 +4,7 @@ import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ChangeEvent, Subscription, WSHandlerOptions } from '../core/types.js'
+import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
 import { toExecuteResponse } from './protocol.js'
 
@@ -19,6 +19,7 @@ export interface WSConnection {
 interface ConnectionState {
   databaseId: string
   database: Database
+  executionTarget: ServerExecutionTarget
   subscriptions: Map<string, Subscription>
 }
 
@@ -32,6 +33,7 @@ interface CDCContext {
 export class WSHandler {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
+  private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdcContexts = new Map<string, CDCContext>()
   private readonly cdcPending = new Map<string, Promise<CDCContext>>()
@@ -40,6 +42,7 @@ export class WSHandler {
   constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
+    this.resolveExecutionTarget = options?.resolveExecutionTarget
   }
 
   async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
@@ -62,9 +65,24 @@ export class WSHandler {
       return
     }
 
+    let executionTarget: ServerExecutionTarget | null
+    try {
+      executionTarget = await this.resolveTarget(databaseId)
+    } catch (err) {
+      this.sendSirannonError(conn, '', err)
+      conn.close(1011, 'Execution target resolution failed')
+      return
+    }
+    if (!executionTarget) {
+      this.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
+      conn.close(1008, 'Database not found')
+      return
+    }
+
     this.connections.set(conn, {
       databaseId,
       database,
+      executionTarget,
       subscriptions: new Map(),
     })
   }
@@ -180,7 +198,7 @@ export class WSHandler {
 
     try {
       const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const rows = await state.database.query(msg.sql, params)
+      const rows = await state.executionTarget.query(msg.sql, params)
       this.send(conn, { type: 'result', id, data: { rows } })
     } catch (err) {
       this.sendSirannonError(conn, id, err)
@@ -205,7 +223,7 @@ export class WSHandler {
 
     try {
       const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const result = await state.database.execute(msg.sql, params)
+      const result = await state.executionTarget.execute(msg.sql, params)
       this.send(conn, {
         type: 'result',
         id,
@@ -359,6 +377,13 @@ export class WSHandler {
   private isValidParams(params: unknown): boolean {
     if (params === undefined || params === null) return true
     return typeof params === 'object'
+  }
+
+  private async resolveTarget(databaseId: string): Promise<ServerExecutionTarget | null> {
+    if (!this.resolveExecutionTarget) {
+      return (await this.sirannon.resolve(databaseId)) ?? null
+    }
+    return (await this.resolveExecutionTarget(databaseId)) ?? null
   }
 
   private send(conn: WSConnection, msg: WSServerMessage): void {

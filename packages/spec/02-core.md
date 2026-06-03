@@ -163,7 +163,29 @@ ReadConcern {
 ```
 
 Write concern levels control replication durability guarantees.
-Read concern levels are reserved for future use.
+Read concern levels control which durability point a read may
+observe.
+
+In static primary-replica mode, `majority` and `all` are evaluated
+against connected replication peers, as defined in
+[03-replication.md](03-replication.md#write-concern). In
+coordinator mode, `majority` is evaluated against the configured
+voting data-bearing nodes in the replication group. It is not
+calculated from the peers currently connected to the primary.
+
+Read concern levels have these meanings:
+
+- `local`: Read from the selected node's local state. This can
+  return data that is not yet majority durable and must be an
+  explicit opt-in when coordinator mode is enabled.
+- `majority`: Read data that has reached the group's majority
+  commit point.
+- `linearizable`: Read from the current primary after the primary
+  proves live authority for the current primary term.
+
+When a read concern cannot be satisfied, the operation must fail
+with `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, or
+`STALE_PRIMARY`, depending on the failing condition.
 
 ### ExecuteResult
 
@@ -271,7 +293,7 @@ read-only.
 
 Sirannon caches prepared statements to avoid repeated parsing.
 
-### Cache Behavior
+### Cache Behaviour
 
 - Each connection maintains its own statement cache.
 - The recommended cache capacity is 128 statements.

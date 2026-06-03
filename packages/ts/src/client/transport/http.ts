@@ -1,4 +1,4 @@
-import type { ChangeEvent, Params } from '../../core/types.js'
+import type { ChangeEvent, Params, ReadConcern } from '../../core/types.js'
 import type { ErrorResponse, ExecuteResponse, QueryResponse, TransactionResponse } from '../../server/protocol.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
@@ -22,8 +22,8 @@ export class HttpTransport implements Transport {
     }
   }
 
-  async query(sql: string, params?: Params): Promise<QueryResponse> {
-    return this.post<QueryResponse>('/query', { sql, params })
+  async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
+    return this.post<QueryResponse>('/query', { sql, params, readConcern })
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {

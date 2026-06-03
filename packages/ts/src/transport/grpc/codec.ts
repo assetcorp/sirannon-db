@@ -118,6 +118,8 @@ export function toBatchPayload(batch: ReplicationBatch): BatchPayload {
     hlcRange: { min: batch.hlcRange.min, max: batch.hlcRange.max },
     changes: batch.changes.map(toProtoChange),
     checksum: batch.checksum,
+    groupId: batch.groupId ?? '',
+    primaryTerm: batch.primaryTerm ?? 0n,
   }
 }
 
@@ -133,6 +135,8 @@ export function fromBatchPayload(payload: BatchPayload): ReplicationBatch {
     },
     changes: payload.changes.map(fromProtoChange),
     checksum: payload.checksum,
+    groupId: payload.groupId || undefined,
+    primaryTerm: payload.primaryTerm === 0n ? undefined : payload.primaryTerm,
   }
 }
 
@@ -141,6 +145,8 @@ export function toAckPayload(ack: ReplicationAck): AckPayload {
     batchId: ack.batchId,
     ackedSeq: ack.ackedSeq,
     nodeId: ack.nodeId,
+    groupId: ack.groupId ?? '',
+    primaryTerm: ack.primaryTerm ?? 0n,
   }
 }
 
@@ -149,6 +155,8 @@ export function fromAckPayload(payload: AckPayload): ReplicationAck {
     batchId: payload.batchId,
     ackedSeq: payload.ackedSeq,
     nodeId: payload.nodeId,
+    groupId: payload.groupId || undefined,
+    primaryTerm: payload.primaryTerm === 0n ? undefined : payload.primaryTerm,
   }
 }
 
@@ -157,6 +165,8 @@ export function toSyncRequestPayload(req: SyncRequest): SyncRequestPayload {
     requestId: req.requestId,
     joinerNodeId: req.joinerNodeId,
     completedTables: req.completedTables,
+    groupId: req.groupId ?? '',
+    primaryTerm: req.primaryTerm ?? 0n,
   }
 }
 
@@ -165,6 +175,8 @@ export function fromSyncRequestPayload(p: SyncRequestPayload): SyncRequest {
     requestId: p.requestId,
     joinerNodeId: p.joinerNodeId,
     completedTables: p.completedTables,
+    groupId: p.groupId || undefined,
+    primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
   }
 }
 
@@ -177,6 +189,8 @@ export function toSyncBatchPayload(batch: SyncBatch): SyncBatchPayload {
     schema: batch.schema ?? [],
     checksum: batch.checksum,
     isLastBatchForTable: batch.isLastBatchForTable,
+    groupId: batch.groupId ?? '',
+    primaryTerm: batch.primaryTerm ?? 0n,
   }
 }
 
@@ -189,6 +203,8 @@ export function fromSyncBatchPayload(p: SyncBatchPayload): SyncBatch {
     schema: p.schema.length > 0 ? p.schema : undefined,
     checksum: p.checksum,
     isLastBatchForTable: p.isLastBatchForTable,
+    groupId: p.groupId || undefined,
+    primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
   }
 }
 
@@ -201,6 +217,8 @@ export function toSyncCompletePayload(complete: SyncComplete): SyncCompletePaylo
       rowCount: m.rowCount,
       pkHash: m.pkHash,
     })),
+    groupId: complete.groupId ?? '',
+    primaryTerm: complete.primaryTerm ?? 0n,
   }
 }
 
@@ -215,6 +233,8 @@ export function fromSyncCompletePayload(p: SyncCompletePayload): SyncComplete {
         pkHash: m.pkHash,
       }),
     ),
+    groupId: p.groupId || undefined,
+    primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
   }
 }
 
@@ -226,6 +246,8 @@ export function toSyncAckPayload(ack: SyncAck): SyncAckPayload {
     batchIndex: ack.batchIndex,
     success: ack.success,
     error: ack.error ?? '',
+    groupId: ack.groupId ?? '',
+    primaryTerm: ack.primaryTerm ?? 0n,
   }
 }
 
@@ -237,6 +259,8 @@ export function fromSyncAckPayload(p: SyncAckPayload): SyncAck {
     batchIndex: p.batchIndex,
     success: p.success,
     error: p.error || undefined,
+    groupId: p.groupId || undefined,
+    primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
   }
 }
 
@@ -257,7 +281,7 @@ export function toForwardRequest(req: ForwardedTransaction): ProtoForwardRequest
     }
     return { sql: s.sql, namedParams, positionalParams }
   })
-  return { requestId: req.requestId, statements }
+  return { requestId: req.requestId, statements, groupId: req.groupId ?? '', primaryTerm: req.primaryTerm ?? 0n }
 }
 
 export function fromForwardRequest(proto: ProtoForwardRequest): ForwardedTransaction {
@@ -276,5 +300,10 @@ export function fromForwardRequest(proto: ProtoForwardRequest): ForwardedTransac
     }
     return { sql: s.sql, params }
   })
-  return { requestId: proto.requestId, statements }
+  return {
+    requestId: proto.requestId,
+    statements,
+    groupId: proto.groupId || undefined,
+    primaryTerm: proto.primaryTerm === 0n ? undefined : proto.primaryTerm,
+  }
 }

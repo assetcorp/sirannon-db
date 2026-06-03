@@ -18,7 +18,10 @@ ServerOptions {
   port?:                  number    (default: 9876)
   cors?:                  boolean | CorsOptions
   onRequest?:             OnRequestHook
+  resolveExecutionTarget?: (databaseId: string) ->
+                            ServerExecutionTarget or null
   getReplicationStatus?:  () -> ReplicationStatusInfo or null
+  getClusterStatus?:      (databaseId: string) -> ClusterStatusInfo or null
 }
 
 CorsOptions {
@@ -59,6 +62,25 @@ Returning a `RequestDenial` rejects the request with the specified
 status code and error body. Returning `undefined` allows the
 request to proceed.
 
+### Replication Execution Target
+
+```text
+TransactionFunction<T> = (tx: Transaction) -> async T
+
+ServerExecutionTarget {
+  query(sql: string, params?: Params, options?: QueryOptions): async -> List<Map<string, any>>
+  execute(sql: string, params?: Params, options?: QueryOptions): async -> ExecuteResult
+  transaction<T>(fn: TransactionFunction<T>, options?: QueryOptions): async -> T
+}
+```
+
+In coordinator mode, the server must send `query`, `execute`, and
+`transaction` requests to the database's replication execution
+target. The target enforces primary authority checks, sync
+readiness checks, forwarding, and production write concern
+semantics. If the resolver returns `null`, the server responds
+with `DATABASE_NOT_FOUND`.
+
 ---
 
 ## HTTP Endpoints (Normative)
@@ -81,6 +103,21 @@ ExecuteResponse {
 TransactionResponse {
   results: List<ExecuteResponse>
 }
+
+ClusterStatusInfo {
+  databaseId:         string
+  replicationGroupId?: string
+  role?:             'primary' | 'replica'
+  currentPrimary?:   { nodeId: string, endpoint: string } or null
+  primaryTerm?:      bigint
+  readEndpoints?:    List<{
+    nodeId: string,
+    endpoint: string,
+    readConcerns: List<'local' | 'majority' | 'linearizable'>
+  }>
+  health:            'healthy' | 'degraded' | 'failing_over' |
+                     'unavailable' | 'repairing' | 'syncing'
+}
 ```
 
 The `lastInsertRowId` field is a number when it fits in a JSON
@@ -91,6 +128,7 @@ number, or a string for large 64-bit values.
 Executes a read query and returns matching rows.
 
 **Request:**
+
 ```json
 {
   "sql": "SELECT * FROM orders WHERE status = ?",
@@ -99,6 +137,7 @@ Executes a read query and returns matching rows.
 ```
 
 **Response (200):**
+
 ```json
 {
   "rows": [
@@ -112,6 +151,7 @@ Executes a read query and returns matching rows.
 Executes a write statement.
 
 **Request:**
+
 ```json
 {
   "sql": "INSERT INTO orders (status, total) VALUES (?, ?)",
@@ -120,6 +160,7 @@ Executes a write statement.
 ```
 
 **Response (200):**
+
 ```json
 {
   "changes": 1,
@@ -132,6 +173,7 @@ Executes a write statement.
 Executes multiple statements as a single atomic transaction.
 
 **Request:**
+
 ```json
 {
   "statements": [
@@ -142,6 +184,7 @@ Executes multiple statements as a single atomic transaction.
 ```
 
 **Response (200):**
+
 ```json
 {
   "results": [
@@ -151,6 +194,39 @@ Executes multiple statements as a single atomic transaction.
 }
 ```
 
+### GET /db/{id}/cluster
+
+Returns routing and authority metadata for the database. This
+endpoint is required when coordinator mode is enabled and optional
+in static mode.
+
+**Response (200):**
+
+```json
+{
+  "databaseId": "orders",
+  "replicationGroupId": "orders-group",
+  "role": "replica",
+  "currentPrimary": {
+    "nodeId": "node-a",
+    "endpoint": "https://node-a.example.com/db/orders"
+  },
+  "primaryTerm": "42",
+  "readEndpoints": [
+    {
+      "nodeId": "node-b",
+      "endpoint": "https://node-b.example.com/db/orders",
+      "readConcerns": ["local", "majority"]
+    }
+  ],
+  "health": "healthy"
+}
+```
+
+`primaryTerm` is encoded as a string to preserve 64-bit precision
+in JSON. If no safe primary exists, `currentPrimary` is `null` and
+the response health is `unavailable`.
+
 ### Error Response Format
 
 All error responses use this format:
@@ -159,10 +235,15 @@ All error responses use this format:
 {
   "error": {
     "code": "QUERY_ERROR",
-    "message": "no such table: orders"
+    "message": "no such table: orders",
+    "details": {}
   }
 }
 ```
+
+`details` is optional. Coordinator-mode errors should use it for
+machine-readable routing context, such as `currentPrimary`,
+`primaryTerm`, or `replicationGroupId`.
 
 ### HTTP Status Code Mapping
 
@@ -170,10 +251,17 @@ All error responses use this format:
 |--------|-------------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR` |
 | 403 | `READ_ONLY`, `HOOK_DENIED` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH` |
 | 404 | `DATABASE_NOT_FOUND` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR` |
-| 503 | `DATABASE_CLOSED`, `SHUTDOWN` |
+| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED` |
+
+When a coordinator-mode server receives a write but is not the
+current primary, it must either forward the write to the current
+primary under the current term or reject the request with
+`STALE_PRIMARY`. If it knows the current primary endpoint, the
+error response should include that endpoint as structured context.
 
 ### Request Size Limit
 
@@ -290,6 +378,13 @@ in subsequent change events and unsubscribe requests.
 | `SUBSCRIPTION_NOT_FOUND` | Unsubscribe target does not exist |
 | `READ_ONLY` | Write or subscription on read-only database |
 | `CDC_UNSUPPORTED` | Subscriptions require file-based databases |
+| `STALE_PRIMARY` | Request reached a stale or non-primary node |
+| `COORDINATOR_UNAVAILABLE` | Coordinator authority cannot be proven |
+| `AUTHORITY_LOST` | Node lost authority while handling the request |
+| `NO_SAFE_PRIMARY` | No safe primary exists for the replication group |
+| `READ_CONCERN_ERROR` | Requested read concern cannot be satisfied |
+| `NODE_NOT_IN_SYNC` | Node is not safe for the requested read or promotion |
+| `NODE_DRAINING` | Node is in maintenance drain mode |
 
 ### Payload Size
 
@@ -310,6 +405,7 @@ automatic ping/pong keepalives.
 Liveness probe. Returns 200 if the server process is running.
 
 **Response:**
+
 ```json
 {
   "status": "ok"
@@ -319,9 +415,10 @@ Liveness probe. Returns 200 if the server process is running.
 ### GET /health/ready
 
 Readiness probe. Returns database status and optional replication
-information.
+and cluster information.
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -332,17 +429,46 @@ information.
     "role": "primary",
     "writeForwarding": false,
     "peers": 2,
-    "localSeq": "1547"
+    "localSeq": "1547",
+    "replicationGroupId": "orders-group",
+    "primaryTerm": "42",
+    "currentPrimary": "node-a",
+    "coordinator": {
+      "connected": true,
+      "authority": true
+    },
+    "controller": {
+      "state": "standby"
+    },
+    "inSyncReplicas": ["node-b", "node-c"],
+    "laggingReplicas": [],
+    "syncState": "ready",
+    "readAvailability": "available",
+    "writeAvailability": "available"
   }
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `status` | `'ok'` if all databases are open; `'degraded'` if any database is closed |
+| `status` | `'ok'`, `'degraded'`, `'failing_over'`, `'unavailable'`, `'repairing'`, or `'syncing'` |
 | `databases` | Array of database status entries |
 | `replication` | Present only when `getReplicationStatus` is configured |
 | `localSeq` | String representation of the bigint sequence number |
+
+Coordinator-mode readiness must distinguish these states:
+
+- `ok`: the node can serve its advertised read and write roles;
+- `degraded`: the node can serve traffic, but one or more peers
+  are lagging, draining, or unavailable;
+- `failing_over`: the controller is moving primary authority or
+  clients must refresh routing;
+- `unavailable`: the node cannot satisfy its advertised read or
+  write role;
+- `repairing`: the node is quarantining divergent writes or
+  waiting for operator recovery;
+- `syncing`: the node is copying data or catching up before it can
+  serve its advertised role.
 
 ---
 

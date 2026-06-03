@@ -20,14 +20,16 @@ format:
 {
   "error": {
     "code": "ERROR_CODE",
-    "message": "Human-readable description"
+    "message": "Human-readable description",
+    "details": {}
   }
 }
 ```
 
 The `code` field is a stable, machine-readable string. The
 `message` field is informational and may vary across
-implementations.
+implementations. The `details` field is optional and carries
+machine-readable context.
 
 ### Internal Errors
 
@@ -87,8 +89,17 @@ resolution, and sync protocol.
 | `TRANSPORT_ERROR` | TransportError | Transport-level failure (peer unreachable, send failed). |
 | `BATCH_VALIDATION_ERROR` | BatchValidationError | Batch checksum mismatch, schema violation, clock drift exceeded, or unsafe DDL. |
 | `WRITE_CONCERN_ERROR` | WriteConcernError | Write concern quorum not met within the timeout. |
+| `READ_CONCERN_ERROR` | ReadConcernError | Requested read concern cannot be satisfied. |
 | `TOPOLOGY_ERROR` | TopologyError | Write on a replica without forwarding, no primary available, or unauthorised peer. |
 | `SYNC_ERROR` | SyncError | First sync failure (timeout, manifest mismatch, batch ordering). |
+| `COORDINATOR_UNAVAILABLE` | CoordinatorError | Coordinator cannot be reached or cannot prove quorum authority. |
+| `AUTHORITY_LOST` | AuthorityError | Node lost current primary or controller authority while handling work. |
+| `STALE_PRIMARY` | AuthorityError | Request, batch, sync message, or forwarded write used a stale primary term. |
+| `NO_SAFE_PRIMARY` | FailoverError | No eligible in-sync replica can be promoted safely. |
+| `NODE_NOT_IN_SYNC` | ReplicationError | Node is alive but not in the replication group's in-sync set. |
+| `NODE_DRAINING` | ReplicationError | Node is in maintenance drain mode and rejects the operation. |
+| `PROTOCOL_VERSION_MISMATCH` | ReplicationError | Node protocol or spec compatibility metadata is incompatible with the cluster. |
+| `UNSAFE_RECOVERY_REQUIRED` | FailoverError | Automatic recovery cannot proceed without explicit operator action. |
 
 ---
 
@@ -122,6 +133,7 @@ Errors originating from the client SDK.
 | `TIMEOUT` | RemoteError | Request exceeded the configured timeout. |
 | `TRANSPORT_ERROR` | RemoteError | Operation not supported by the current transport (e.g., subscriptions over HTTP). |
 | `INVALID_RESPONSE` | RemoteError | Server returned a response that could not be parsed as JSON. |
+| `ROUTING_ERROR` | RemoteError | Client could not discover a usable primary or read endpoint. |
 
 ---
 

@@ -123,7 +123,7 @@ describe('GrpcReplicationTransport', () => {
       })
       await r1.connect('replica-1', {
         localRole: 'replica',
-        endpoints: [`127.0.0.1:${port}`],
+        endpoints: [`localhost:${port}`],
       })
 
       const r2 = new GrpcReplicationTransport({ insecure: true })
@@ -133,7 +133,7 @@ describe('GrpcReplicationTransport', () => {
       })
       await r2.connect('replica-2', {
         localRole: 'replica',
-        endpoints: [`127.0.0.1:${port}`],
+        endpoints: [`localhost:${port}`],
       })
 
       await waitFor(() => primary.peers().size >= 2)

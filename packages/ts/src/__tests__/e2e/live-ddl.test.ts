@@ -50,7 +50,7 @@ describe('E2E: live DDL replicated to replica after initial sync', () => {
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
     })
     diagnostics = attachDiagnostics(primary, replica)

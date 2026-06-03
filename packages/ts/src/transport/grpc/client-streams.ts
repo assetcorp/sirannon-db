@@ -28,10 +28,22 @@ export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: s
   }
 
   replicateStream.write({
-    hello: { nodeId: t.localNodeId, role: t.localRole },
+    hello: {
+      nodeId: t.localNodeId,
+      role: t.localRole,
+      groupId: t.localGroupId ?? '',
+      primaryTerm: t.localPrimaryTerm ?? 0n,
+      protocolVersion: t.localProtocolVersion ?? '',
+    },
   })
   syncStream.write({
-    hello: { nodeId: t.localNodeId, role: t.localRole },
+    hello: {
+      nodeId: t.localNodeId,
+      role: t.localRole,
+      groupId: t.localGroupId ?? '',
+      primaryTerm: t.localPrimaryTerm ?? 0n,
+      protocolVersion: t.localProtocolVersion ?? '',
+    },
   })
 
   let replicatePeerId: string | null = null
@@ -45,7 +57,11 @@ export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: s
       replicatePeerId = msg.hello.nodeId
       const peerRole = msg.hello.role as TopologyRole
       t.clientPeerStreams.set(replicatePeerId, entry)
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole)
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole, {
+        groupId: msg.hello.groupId || undefined,
+        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
+        protocolVersion: msg.hello.protocolVersion || undefined,
+      })
       return
     }
 

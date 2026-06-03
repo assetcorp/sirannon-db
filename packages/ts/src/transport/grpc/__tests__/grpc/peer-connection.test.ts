@@ -43,7 +43,7 @@ describe('GrpcReplicationTransport', () => {
 
       await replica.connect('replica-node', {
         localRole: 'replica',
-        endpoints: [`127.0.0.1:${port}`],
+        endpoints: [`localhost:${port}`],
       })
 
       await waitFor(() => primaryConnected.length > 0 && replicaConnected.length > 0)
@@ -79,7 +79,7 @@ describe('GrpcReplicationTransport', () => {
       transports.push(replica1)
       await replica1.connect('replica-node', {
         localRole: 'replica',
-        endpoints: [`127.0.0.1:${port}`],
+        endpoints: [`localhost:${port}`],
       })
 
       await waitFor(() => connectedPeers.length >= 1)
@@ -92,7 +92,7 @@ describe('GrpcReplicationTransport', () => {
       transports.push(replica2)
       await replica2.connect('replica-node', {
         localRole: 'replica',
-        endpoints: [`127.0.0.1:${port}`],
+        endpoints: [`localhost:${port}`],
       })
 
       await waitFor(() => connectedPeers.length >= 2)

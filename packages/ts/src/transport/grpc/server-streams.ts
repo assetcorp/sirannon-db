@@ -104,12 +104,22 @@ export function handleServerReplicateStream(
 
       if (!helloSent) {
         call.write({
-          hello: { nodeId: t.localNodeId, role: t.localRole },
+          hello: {
+            nodeId: t.localNodeId,
+            role: t.localRole,
+            groupId: t.localGroupId ?? '',
+            primaryTerm: t.localPrimaryTerm ?? 0n,
+            protocolVersion: t.localProtocolVersion ?? '',
+          },
         })
         helloSent = true
       }
 
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole)
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, {
+        groupId: msg.hello.groupId || undefined,
+        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
+        protocolVersion: msg.hello.protocolVersion || undefined,
+      })
       return
     }
 
@@ -184,12 +194,22 @@ export function handleServerSyncStream(
 
       if (!helloSent) {
         call.write({
-          hello: { nodeId: t.localNodeId, role: t.localRole },
+          hello: {
+            nodeId: t.localNodeId,
+            role: t.localRole,
+            groupId: t.localGroupId ?? '',
+            primaryTerm: t.localPrimaryTerm ?? 0n,
+            protocolVersion: t.localProtocolVersion ?? '',
+          },
         })
         helloSent = true
       }
 
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole)
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, {
+        groupId: msg.hello.groupId || undefined,
+        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
+        protocolVersion: msg.hello.protocolVersion || undefined,
+      })
       return
     }
 
@@ -262,6 +282,8 @@ export function handleForwardCall(
           lastInsertRowId: BigInt(typeof r.lastInsertRowId === 'string' ? r.lastInsertRowId : r.lastInsertRowId),
         })),
         error: '',
+        groupId: result.groupId ?? '',
+        primaryTerm: result.primaryTerm ?? 0n,
       })
     })
     .catch((err: Error) => {
@@ -269,6 +291,8 @@ export function handleForwardCall(
         requestId: call.request.requestId,
         results: [],
         error: err.message,
+        groupId: call.request.groupId ?? '',
+        primaryTerm: call.request.primaryTerm ?? 0n,
       })
     })
 }

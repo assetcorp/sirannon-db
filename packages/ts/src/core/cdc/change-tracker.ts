@@ -207,6 +207,27 @@ export class ChangeTracker {
     return events
   }
 
+  async advanceToLatest(conn: SQLiteConnection): Promise<void> {
+    if (!this.changesTableReady) {
+      await this.detectChangesTable(conn)
+      if (!this.changesTableReady) {
+        return
+      }
+    }
+
+    const stmt = await this.getStmt(conn, 'latest_seq', `SELECT MAX(seq) AS seq FROM "${this.changesTable}"`)
+    const row = (await stmt.get()) as { seq?: unknown } | undefined
+    const seq = row?.seq
+    if (seq === undefined || seq === null) {
+      return
+    }
+
+    const latestSeq = typeof seq === 'bigint' ? seq : BigInt(String(seq))
+    if (latestSeq > this.lastSeq) {
+      this.lastSeq = latestSeq
+    }
+  }
+
   async cleanup(conn: SQLiteConnection): Promise<number> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)

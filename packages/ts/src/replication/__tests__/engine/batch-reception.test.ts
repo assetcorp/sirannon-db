@@ -11,9 +11,12 @@ import {
   createHarness,
   type EngineTestHarness,
   makeConfig,
+  NODE_A,
   NODE_B,
   teardownHarness,
 } from './helpers.js'
+
+const NODE_C = 'cccc0000cccc0000cccc0000cccc0000'
 
 describe('ReplicationEngine', () => {
   let harness: EngineTestHarness
@@ -152,6 +155,60 @@ describe('ReplicationEngine', () => {
       const status = engine.status()
       const peer = status.peers.find(p => p.nodeId === NODE_B)
       expect(peer?.lastAckedSeq).toBe(5n)
+
+      await engine.stop()
+    })
+
+    it('rejects static-mode ACKs whose payload identity does not match the sender', async () => {
+      const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engine = new ReplicationEngine(db, conn, makeConfig(harness.transport))
+      const errorEvents: ReplicationErrorEvent[] = []
+      engine.on('replication-error', (event: ReplicationErrorEvent) => {
+        errorEvents.push(event)
+      })
+      await engine.start()
+
+      harness.transport.addPeer(NODE_B)
+      harness.transport.addPeer(NODE_C)
+      harness.transport.triggerAckReceived({ batchId: 'spoofed-batch', ackedSeq: 5n, nodeId: NODE_C }, NODE_B)
+
+      const status = engine.status()
+      const claimedPeer = status.peers.find(p => p.nodeId === NODE_C)
+      expect(claimedPeer?.lastAckedSeq).toBe(0n)
+      expect(errorEvents).toHaveLength(1)
+      expect(errorEvents[0].operation).toBe('ack-identity-mismatch')
+      expect(errorEvents[0].peerId).toBe(NODE_B)
+      expect((errorEvents[0].error as { code?: string }).code).toBe('ACK_NODE_ID_MISMATCH')
+
+      await engine.stop()
+    })
+
+    it('rejects static-mode sync ACKs whose payload identity does not match the sender', async () => {
+      const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const engine = new ReplicationEngine(db, conn, makeConfig(harness.transport))
+      const errorEvents: ReplicationErrorEvent[] = []
+      engine.on('replication-error', (event: ReplicationErrorEvent) => {
+        errorEvents.push(event)
+      })
+      await engine.start()
+
+      harness.transport.triggerSyncAckReceived(
+        {
+          requestId: 'sync-1',
+          joinerNodeId: NODE_A,
+          table: 'users',
+          batchIndex: 0,
+          success: true,
+        },
+        NODE_B,
+      )
+
+      expect(errorEvents).toHaveLength(1)
+      expect(errorEvents[0].operation).toBe('sync-ack-identity-mismatch')
+      expect(errorEvents[0].peerId).toBe(NODE_B)
+      expect((errorEvents[0].error as { code?: string }).code).toBe('SYNC_ACK_NODE_ID_MISMATCH')
 
       await engine.stop()
     })

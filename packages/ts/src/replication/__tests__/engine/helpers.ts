@@ -24,6 +24,10 @@ import type {
 export class MockTransport implements ReplicationTransport {
   private batchHandler: ((batch: ReplicationBatch, from: string) => Promise<void>) | null = null
   private ackHandler: ((ack: ReplicationAck, from: string) => void) | null = null
+  private syncRequestHandler: ((request: SyncRequest, fromPeerId: string) => Promise<void>) | null = null
+  private syncBatchHandler: ((batch: SyncBatch, fromPeerId: string) => Promise<void>) | null = null
+  private syncCompleteHandler: ((complete: SyncComplete, fromPeerId: string) => Promise<void>) | null = null
+  private syncAckHandler: ((ack: SyncAck, fromPeerId: string) => void) | null = null
   private forwardHandler: ((req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>) | null =
     null
   private peerConnectedHandler: ((peer: NodeInfo) => void) | null = null
@@ -32,6 +36,10 @@ export class MockTransport implements ReplicationTransport {
   private readonly _peers = new Map<string, NodeInfo>()
   readonly sentBatches: Array<{ peerId: string; batch: ReplicationBatch }> = []
   readonly sentAcks: Array<{ peerId: string; ack: ReplicationAck }> = []
+  readonly sentSyncRequests: Array<{ peerId: string; request: SyncRequest }> = []
+  readonly sentSyncBatches: Array<{ peerId: string; batch: SyncBatch }> = []
+  readonly sentSyncCompletes: Array<{ peerId: string; complete: SyncComplete }> = []
+  readonly sentSyncAcks: Array<{ peerId: string; ack: SyncAck }> = []
   connected = false
 
   async connect(_localNodeId: string, _config: TransportConfig): Promise<void> {
@@ -60,14 +68,30 @@ export class MockTransport implements ReplicationTransport {
   onForwardReceived(handler: (req: ForwardedTransaction, from: string) => Promise<ForwardedTransactionResult>): void {
     this.forwardHandler = handler
   }
-  async requestSync(_peerId: string, _request: SyncRequest): Promise<void> {}
-  async sendSyncBatch(_peerId: string, _batch: SyncBatch): Promise<void> {}
-  async sendSyncComplete(_peerId: string, _complete: SyncComplete): Promise<void> {}
-  async sendSyncAck(_peerId: string, _ack: SyncAck): Promise<void> {}
-  onSyncRequested(_handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void {}
-  onSyncBatchReceived(_handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void {}
-  onSyncCompleteReceived(_handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void {}
-  onSyncAckReceived(_handler: (ack: SyncAck, fromPeerId: string) => void): void {}
+  async requestSync(peerId: string, request: SyncRequest): Promise<void> {
+    this.sentSyncRequests.push({ peerId, request })
+  }
+  async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
+    this.sentSyncBatches.push({ peerId, batch })
+  }
+  async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
+    this.sentSyncCompletes.push({ peerId, complete })
+  }
+  async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
+    this.sentSyncAcks.push({ peerId, ack })
+  }
+  onSyncRequested(handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void {
+    this.syncRequestHandler = handler
+  }
+  onSyncBatchReceived(handler: (batch: SyncBatch, fromPeerId: string) => Promise<void>): void {
+    this.syncBatchHandler = handler
+  }
+  onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void {
+    this.syncCompleteHandler = handler
+  }
+  onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void {
+    this.syncAckHandler = handler
+  }
   onPeerConnected(handler: (peer: NodeInfo) => void): void {
     this.peerConnectedHandler = handler
   }
@@ -109,6 +133,33 @@ export class MockTransport implements ReplicationTransport {
   triggerAckReceived(ack: ReplicationAck, from: string): void {
     if (this.ackHandler) {
       this.ackHandler(ack, from)
+    }
+  }
+
+  triggerSyncRequested(request: SyncRequest, from: string): Promise<void> {
+    if (this.syncRequestHandler) {
+      return this.syncRequestHandler(request, from)
+    }
+    return Promise.reject(new Error('No sync request handler registered'))
+  }
+
+  triggerSyncBatchReceived(batch: SyncBatch, from: string): Promise<void> {
+    if (this.syncBatchHandler) {
+      return this.syncBatchHandler(batch, from)
+    }
+    return Promise.reject(new Error('No sync batch handler registered'))
+  }
+
+  triggerSyncCompleteReceived(complete: SyncComplete, from: string): Promise<void> {
+    if (this.syncCompleteHandler) {
+      return this.syncCompleteHandler(complete, from)
+    }
+    return Promise.reject(new Error('No sync complete handler registered'))
+  }
+
+  triggerSyncAckReceived(ack: SyncAck, from: string): void {
+    if (this.syncAckHandler) {
+      this.syncAckHandler(ack, from)
     }
   }
 

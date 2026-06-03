@@ -295,9 +295,9 @@ export class SyncJoiner {
 
   private async finishCatchUpAsReady(): Promise<void> {
     const engine = this.engine
-    engine.syncState.phase = 'ready'
     await engine.log.setSyncMeta('ready')
     await engine.markCoordinatorSyncReady()
+    engine.syncState.phase = 'ready'
     this.stopCatchUpCheck()
   }
 }

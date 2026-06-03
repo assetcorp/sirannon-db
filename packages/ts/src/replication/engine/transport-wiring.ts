@@ -79,6 +79,18 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
     if (!engine.running) return
     if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') return
     if (!engine.isCoordinatorMode()) {
+      if (ack.nodeId !== fromPeerId) {
+        engine.emitError({
+          error: new ReplicationError(
+            `Ack nodeId '${ack.nodeId}' does not match sender '${fromPeerId}'`,
+            'ACK_NODE_ID_MISMATCH',
+          ),
+          operation: 'ack-identity-mismatch',
+          peerId: fromPeerId,
+          recoverable: true,
+        })
+        return
+      }
       engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
       engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
@@ -177,6 +189,18 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
   engine.config.transport.onSyncAckReceived((ack, fromPeerId) => {
     if (!engine.running) return
     if (!engine.isCoordinatorMode()) {
+      if (ack.joinerNodeId !== fromPeerId) {
+        engine.emitError({
+          error: new ReplicationError(
+            `SyncAck joinerNodeId '${ack.joinerNodeId}' does not match sender '${fromPeerId}'`,
+            'SYNC_ACK_NODE_ID_MISMATCH',
+          ),
+          operation: 'sync-ack-identity-mismatch',
+          peerId: fromPeerId,
+          recoverable: true,
+        })
+        return
+      }
       engine.syncServer.handleSyncAckReceived(ack)
       return
     }

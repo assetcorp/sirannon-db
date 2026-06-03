@@ -408,8 +408,14 @@ async function restartReplicaThroughRepair(
     faulted: false,
   })
   const existing = environment.nodes.get(nodeId)
-  existing?.kill()
-  environment.nodes.delete(nodeId)
+  if (existing) {
+    existing.kill()
+    environment.nodes.delete(nodeId)
+    await waitForCondition(async () => {
+      const session = await environment.coordinator.getLiveNodeSession(CLUSTER_ID, nodeId)
+      return session === null
+    }, 5_000)
+  }
   await healNodeSirannonLinks(environment, nodeId)
   const restarted = await startNode(
     environment,

@@ -352,7 +352,8 @@ export class ReplicationEngine extends EventEmitter {
         await this.peerTracker.waitForConfiguredMajority(seq, this.nodeId, state.votingDataBearingNodeIds, timeout)
         await this.updateCoordinatorProgressAfterWrite(seq, state)
       } else if (wc.level === 'all') {
-        await this.peerTracker.waitForConfiguredAll(seq, this.nodeId, state.votingDataBearingNodeIds, timeout)
+        const eligibleVoters = state.votingDataBearingNodeIds.filter(nodeId => !state.drainingNodeIds.includes(nodeId))
+        await this.peerTracker.waitForConfiguredAll(seq, this.nodeId, eligibleVoters, timeout)
         await this.updateCoordinatorProgressAfterWrite(seq, state)
       }
       return

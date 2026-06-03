@@ -237,11 +237,11 @@ function readPositiveInteger(name: string, fallback: number): number {
   }
 
   const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`)
   }
 
-  return Math.floor(parsed)
+  return parsed
 }
 
 function readNonNegativeInteger(name: string, fallback: number): number {
@@ -251,11 +251,11 @@ function readNonNegativeInteger(name: string, fallback: number): number {
   }
 
   const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative integer`)
   }
 
-  return Math.floor(parsed)
+  return parsed
 }
 
 function sleep(ms: number): Promise<void> {

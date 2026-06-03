@@ -51,6 +51,12 @@ TopologyAwareClientOptions extends ClientOptions {
 have to contain the current primary, but at least one endpoint
 must be reachable for discovery to succeed.
 
+`readConcern` is the client-level default for remote query
+operations. A `QueryOptions.readConcern` value supplied to
+`RemoteDatabase.query` overrides this default for that query. If
+neither value is supplied, the client uses the normal server or
+routing default for the selected mode.
+
 ### database(id)
 
 Returns a `RemoteDatabase` proxy for the named database. The
@@ -90,7 +96,11 @@ HTTP, this maps to `POST /db/{id}/query`. Over WebSocket, this
 sends a `query` message and waits for a `result` response.
 `options` uses the shared `QueryOptions` contract from
 [02-core.md](02-core.md#queryoptions). For remote queries,
-`readConcern` selects the required read guarantee.
+`readConcern` selects the required read guarantee. A per-query
+`readConcern` overrides the client-level
+`TopologyAwareClientOptions.readConcern`; if neither is supplied,
+the client uses the normal server or routing default for the
+selected mode.
 
 ### execute(sql, params?)
 
@@ -236,7 +246,9 @@ when retry is safe for the operation. Non-idempotent writes must
 not be retried automatically unless the runtime can prove that the
 server did not commit the operation.
 
-Reads must honour both read preference and read concern:
+Reads must honour both read preference and the effective read
+concern selected by the precedence rule in
+[`query(sql, params?, options?)`](#querysql-params-options):
 
 - `linearizable` reads route to the current primary and require
   live primary authority.

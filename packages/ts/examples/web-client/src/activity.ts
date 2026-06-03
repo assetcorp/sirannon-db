@@ -1,7 +1,9 @@
+import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import type { ActivityRecord, CDCEvent } from './api.js'
 import { fetchRecentActivity, subscribeActivity } from './api.js'
 
-let feedList: HTMLUListElement
+let feedList: HTMLUListElement | null = null
+let subscription: RemoteSubscription | null = null
 const displayedIds = new Set<number>()
 
 function escapeHtml(text: string): string {
@@ -25,8 +27,40 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleTimeString()
 }
 
+function toSafeInteger(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+function normaliseActivityRecord(row: Record<string, unknown> | undefined): ActivityRecord | null {
+  const id = toSafeInteger(row?.id)
+  const quantity = toSafeInteger(row?.quantity)
+  const productName = row?.product_name
+  const action = row?.action
+  const createdAt = row?.created_at
+
+  if (
+    id === null ||
+    quantity === null ||
+    typeof productName !== 'string' ||
+    (action !== 'sale' && action !== 'restock' && action !== 'added') ||
+    typeof createdAt !== 'string'
+  ) {
+    return null
+  }
+
+  return {
+    id,
+    product_name: productName,
+    action,
+    quantity,
+    created_at: createdAt,
+  }
+}
+
 function createEntry(record: ActivityRecord): HTMLLIElement {
   const li = document.createElement('li')
+  li.dataset.id = String(record.id)
   const safeAction = /^[a-z]+$/.test(record.action) ? record.action : 'unknown'
   li.className = `activity-entry activity-${safeAction}`
   li.innerHTML = `
@@ -37,9 +71,21 @@ function createEntry(record: ActivityRecord): HTMLLIElement {
 }
 
 function handleCDCEvent(event: CDCEvent): void {
+  if (!feedList) return
+
+  if (event.type === 'delete') {
+    const record = normaliseActivityRecord(event.oldRow ?? event.row)
+    if (!record) return
+
+    displayedIds.delete(record.id)
+    feedList.querySelector(`li[data-id="${record.id}"]`)?.remove()
+    return
+  }
+
   if (event.type !== 'insert') return
 
-  const record = event.row as unknown as ActivityRecord
+  const record = normaliseActivityRecord(event.row)
+  if (!record) return
   if (displayedIds.has(record.id)) return
 
   displayedIds.add(record.id)
@@ -54,19 +100,39 @@ export function clearActivityFeed(): void {
   }
 }
 
+function renderActivity(records: ActivityRecord[]): void {
+  displayedIds.clear()
+  if (!feedList) return
+
+  feedList.innerHTML = ''
+  for (const record of records) {
+    displayedIds.add(record.id)
+    feedList.appendChild(createEntry(record))
+  }
+}
+
+export async function refreshActivityFeed(): Promise<void> {
+  const recentActivity = await fetchRecentActivity()
+  renderActivity(recentActivity)
+}
+
+export function disposeActivity(): void {
+  subscription?.unsubscribe()
+  subscription = null
+}
+
 export async function initActivity(container: HTMLElement): Promise<void> {
+  disposeActivity()
+  displayedIds.clear()
+
   container.innerHTML = `
     <h3>Activity Feed</h3>
     <ul class="activity-list"></ul>
   `
 
-  feedList = container.querySelector('.activity-list') as HTMLUListElement
+  feedList = container.querySelector<HTMLUListElement>('.activity-list')
 
-  const recentActivity = await fetchRecentActivity()
-  for (const record of recentActivity) {
-    displayedIds.add(record.id)
-    feedList.appendChild(createEntry(record))
-  }
+  await refreshActivityFeed()
 
-  await subscribeActivity(handleCDCEvent)
+  subscription = await subscribeActivity(handleCDCEvent)
 }

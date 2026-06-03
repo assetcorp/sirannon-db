@@ -1,6 +1,7 @@
 export const DATABASE_ID = 'main'
 export const DEFAULT_DATA_ENDPOINT = 'http://localhost:9876'
 export const DEFAULT_DEMO_TOKEN = 'sirannon-demo-token'
+export const WEBSOCKET_AUTH_PROTOCOL_PREFIX = 'sirannon.demo.auth.'
 
 export const PRODUCT_LIST_SQL = 'SELECT * FROM products ORDER BY id'
 export const ACTIVITY_LIST_SQL = 'SELECT * FROM activity ORDER BY id DESC LIMIT 20'
@@ -20,3 +21,15 @@ export const SEED_PRODUCTS = [
   { name: 'Field Service Tablet T-8', price: 575, stock: 18 },
   { name: 'Secure Access Badge Pack', price: 32.75, stock: 240 },
 ] as const
+
+export function toWebSocketAuthProtocol(token: string): string {
+  const bytes = new TextEncoder().encode(token)
+  let binary = ''
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+  return `${WEBSOCKET_AUTH_PROTOCOL_PREFIX}${encoded}`
+}

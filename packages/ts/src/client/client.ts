@@ -165,6 +165,7 @@ export class SirannonClient {
   private readonly wsBaseUrl: string
   private readonly transport: 'websocket' | 'http'
   private readonly headers: Record<string, string> | undefined
+  private readonly webSocketProtocols: string | string[] | undefined
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
   private readonly databases = new Map<string, RemoteDatabase>()
@@ -201,6 +202,7 @@ export class SirannonClient {
       this.wsBaseUrl = toWsUrl(this.baseUrl)
       this.transport = topoOpts.transport ?? 'websocket'
       this.headers = topoOpts.headers
+      this.webSocketProtocols = topoOpts.webSocketProtocols
       this.autoReconnect = topoOpts.autoReconnect ?? true
       this.reconnectInterval = topoOpts.reconnectInterval ?? 1000
     } else {
@@ -216,6 +218,7 @@ export class SirannonClient {
       this.wsBaseUrl = toWsUrl(this.baseUrl)
       this.transport = options?.transport ?? 'websocket'
       this.headers = options?.headers
+      this.webSocketProtocols = options?.webSocketProtocols
       this.autoReconnect = options?.autoReconnect ?? true
       this.reconnectInterval = options?.reconnectInterval ?? 1000
     }
@@ -266,6 +269,7 @@ export class SirannonClient {
     return new WebSocketTransport(`${wsBaseUrl}/db/${encodedId}`, {
       autoReconnect: this.autoReconnect,
       reconnectInterval: this.reconnectInterval,
+      protocols: this.webSocketProtocols,
     })
   }
 

@@ -300,6 +300,53 @@ describe('WebSocket subscription integration', () => {
 })
 
 describe('WebSocketTransport', () => {
+  it('passes configured WebSocket protocols during the handshake', async () => {
+    const originalWebSocket = globalThis.WebSocket
+    const protocols = ['sirannon.demo.auth.token']
+    const capturedConnections: Array<{ url: string; protocols?: string | string[] }> = []
+
+    class ProtocolWebSocket extends EventTarget {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+
+      readyState = ProtocolWebSocket.CONNECTING
+
+      constructor(url: string | URL, requestedProtocols?: string | string[]) {
+        super()
+        capturedConnections.push({ url: String(url), protocols: requestedProtocols })
+        queueMicrotask(() => {
+          this.readyState = ProtocolWebSocket.OPEN
+          this.dispatchEvent(new Event('open'))
+        })
+      }
+
+      send(): void {}
+
+      close(): void {
+        this.readyState = ProtocolWebSocket.CLOSED
+        this.dispatchEvent(new Event('close'))
+      }
+    }
+
+    vi.stubGlobal('WebSocket', ProtocolWebSocket)
+
+    try {
+      const transport = new WebSocketTransport('ws://localhost:1234/db/test', {
+        autoReconnect: false,
+        protocols,
+        requestTimeout: 1,
+      })
+
+      await expect(transport.query('SELECT 1')).rejects.toThrow('Request timed out after 1ms')
+      expect(capturedConnections).toEqual([{ url: 'ws://localhost:1234/db/test', protocols }])
+      transport.close()
+    } finally {
+      vi.stubGlobal('WebSocket', originalWebSocket)
+    }
+  })
+
   it('rejects transactions', async () => {
     const transport = new WebSocketTransport('ws://localhost:1234/db/test')
     await expect(transport.transaction([{ sql: 'SELECT 1' }])).rejects.toThrow(

@@ -63,6 +63,11 @@ function writeCorsOrigin(res: uWS.HttpResponse, cors: ResolvedCors, requestOrigi
   }
 }
 
+function selectWebSocketProtocol(header: string): string {
+  const [firstProtocol] = header.split(',')
+  return firstProtocol?.trim() ?? ''
+}
+
 function decodeRemoteAddress(res: uWS.HttpResponse): string {
   return Buffer.from(res.getRemoteAddressAsText()).toString()
 }
@@ -196,6 +201,7 @@ export class SirannonServer {
         const method = req.getMethod()
         const secWebSocketKey = req.getHeader('sec-websocket-key')
         const secWebSocketProtocol = req.getHeader('sec-websocket-protocol')
+        const selectedWebSocketProtocol = selectWebSocketProtocol(secWebSocketProtocol)
         const secWebSocketExtensions = req.getHeader('sec-websocket-extensions')
 
         const headers: Record<string, string> = {}
@@ -214,7 +220,7 @@ export class SirannonServer {
             res.upgrade<WSUserData>(
               { databaseId: dbId },
               secWebSocketKey,
-              secWebSocketProtocol,
+              selectedWebSocketProtocol,
               secWebSocketExtensions,
               context,
             )
@@ -236,7 +242,7 @@ export class SirannonServer {
             res.upgrade<WSUserData>(
               { databaseId: dbId },
               secWebSocketKey,
-              secWebSocketProtocol,
+              selectedWebSocketProtocol,
               secWebSocketExtensions,
               context,
             )

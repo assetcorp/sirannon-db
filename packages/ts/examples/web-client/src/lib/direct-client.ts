@@ -24,10 +24,12 @@ import {
   RECEIVE_PRODUCT_SQL,
   RESET_SEQUENCE_SQL,
   SEED_PRODUCTS,
+  toWebSocketAuthProtocol,
 } from './sql'
 
 const DATA_ENDPOINT = import.meta.env.VITE_SIRANNON_ENDPOINT ?? DEFAULT_DATA_ENDPOINT
 const DEMO_TOKEN = import.meta.env.VITE_SIRANNON_DEMO_TOKEN ?? DEFAULT_DEMO_TOKEN
+const WEBSOCKET_AUTH_PROTOCOL = toWebSocketAuthProtocol(DEMO_TOKEN)
 
 const httpClient = new SirannonClient(DATA_ENDPOINT, {
   transport: 'http',
@@ -36,7 +38,10 @@ const httpClient = new SirannonClient(DATA_ENDPOINT, {
   },
 })
 
-const wsClient = new SirannonClient(DATA_ENDPOINT, { transport: 'websocket' })
+const wsClient = new SirannonClient(DATA_ENDPOINT, {
+  transport: 'websocket',
+  webSocketProtocols: [WEBSOCKET_AUTH_PROTOCOL],
+})
 
 const httpDb = httpClient.database(DATABASE_ID)
 const wsDb = wsClient.database(DATABASE_ID)

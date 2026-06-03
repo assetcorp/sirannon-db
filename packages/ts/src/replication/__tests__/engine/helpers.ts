@@ -160,7 +160,9 @@ export class MockTransport implements ReplicationTransport {
   triggerSyncAckReceived(ack: SyncAck, from: string): void {
     if (this.syncAckHandler) {
       this.syncAckHandler(ack, from)
+      return
     }
+    throw new Error('No sync ACK handler registered')
   }
 
   triggerForwardReceived(request: ForwardedTransaction, from: string): Promise<ForwardedTransactionResult> {

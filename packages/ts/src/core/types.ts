@@ -1,4 +1,5 @@
 import type { SQLiteDriver } from './driver/types.js'
+import type { Transaction } from './transaction.js'
 
 /** Query parameter types: named (object) or positional (array). */
 export type Params = Record<string, unknown> | unknown[]
@@ -209,12 +210,23 @@ export interface RequestDenial {
 /** Middleware hook for auth, rate limiting, and request validation. */
 export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
+export interface ServerExecutionTarget {
+  query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
+  execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
+  transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
+}
+
+export type ServerExecutionTargetResolver = (
+  databaseId: string,
+) => ServerExecutionTarget | null | undefined | Promise<ServerExecutionTarget | null | undefined>
+
 /** Options for the standalone HTTP + WS server. */
 export interface ServerOptions {
   host?: string
   port?: number
   cors?: boolean | CorsOptions
   onRequest?: OnRequestHook
+  resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
 }
@@ -252,6 +264,7 @@ export interface CorsOptions {
 export interface WSHandlerOptions {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
+  resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 
 /** Options for the client SDK. */

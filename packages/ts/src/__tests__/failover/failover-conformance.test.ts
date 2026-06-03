@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { SirannonClient } from '../../client/index.js'
 import { createEtcdCoordinator, type EtcdClusterCoordinator } from '../../replication/coordinator/etcd.js'
 import { canonicaliseForChecksum } from '../../replication/log.js'
 import type {
@@ -127,6 +128,8 @@ describe('batch two failover conformance gate', () => {
 
     await executeMajority(nodeA, 1, 'majority-before-failover')
     await waitForRows(env, [NODE_A, NODE_B, NODE_C], 1, 30_000)
+    await executePublicHttp(env, NODE_A, "UPDATE failover_items SET note = 'public-http' WHERE id = 1")
+    await waitForItemNote(env, [NODE_A, NODE_B, NODE_C], 1, 'public-http', 30_000)
     await assertHealth(env, NODE_A, '1', 'available', 'available')
 
     await setEtcdLink(env, NODE_A, false)
@@ -134,7 +137,14 @@ describe('batch two failover conformance gate', () => {
       nodeA.execute("INSERT INTO failover_items (id, owner, value, note) VALUES (99, 'a', 99, 'stale')"),
       ['COORDINATOR_UNAVAILABLE', 'STALE_PRIMARY'],
     )
+    await expectPublicHttpRejectsWith(
+      env,
+      NODE_A,
+      "INSERT INTO failover_items (id, owner, value, note) VALUES (98, 'a', 98, 'public-stale')",
+      ['COORDINATOR_UNAVAILABLE', 'STALE_PRIMARY'],
+    )
     await assertItemAbsent(env, [NODE_A, NODE_B, NODE_C], 99, 10_000)
+    await assertItemAbsent(env, [NODE_A, NODE_B, NODE_C], 98, 10_000)
 
     nodeA.kill()
     env.nodes.delete(NODE_A)
@@ -163,12 +173,24 @@ describe('batch two failover conformance gate', () => {
       "INSERT INTO failover_events (id, item_id, kind, detail) VALUES (10, 1, 'forwarded', 'after-failover')",
     )
     await waitForEvent(env, [promotedNodeId, forwardingNodeId], 10, 20_000)
+    await executePublicClient(
+      env,
+      forwardingNodeId,
+      "INSERT INTO failover_events (id, item_id, kind, detail) VALUES (11, 1, 'public-client', 'after-failover')",
+    )
+    await waitForEvent(env, [promotedNodeId, forwardingNodeId], 11, 20_000)
+    await executePublicWebSocket(
+      env,
+      forwardingNodeId,
+      "INSERT INTO failover_events (id, item_id, kind, detail) VALUES (12, 1, 'public-ws', 'after-failover')",
+    )
+    await waitForEvent(env, [promotedNodeId, forwardingNodeId], 12, 20_000)
     await assertItemVisible(forwardingNode, 1)
 
     await healNodeSirannonLinks(env, NODE_A)
     const restartedA = await startNode(env, NODE_A, 'primary', [NODE_B, NODE_C], false, false)
     await waitForNodeReady(restartedA, 30_000)
-    await waitForInSyncSet(env, [NODE_A, promotedNodeId], 30_000)
+    await waitForInSyncSet(env, [NODE_A, promotedNodeId, forwardingNodeId], 30_000)
     await waitForEvent(env, [NODE_A], 10, 20_000)
     await assertHealth(env, promotedNodeId, '2', 'available', 'available')
 
@@ -473,6 +495,111 @@ async function executeMajority(node: FailoverNodeProcess, id: number, note: stri
   )
 }
 
+async function executePublicHttp(environment: GateEnvironment, nodeId: string, sql: string): Promise<void> {
+  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sql,
+      writeConcern: { level: 'majority', timeoutMs: 15_000 },
+    }),
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Public HTTP execute on ${nodeId} returned ${response.status}: ${body}`)
+  }
+}
+
+async function expectPublicHttpRejectsWith(
+  environment: GateEnvironment,
+  nodeId: string,
+  sql: string,
+  codes: string[],
+): Promise<void> {
+  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sql,
+      writeConcern: { level: 'majority', timeoutMs: 15_000 },
+    }),
+  })
+  const data = (await response.json()) as { error?: { code?: string } }
+  expect(response.ok).toBe(false)
+  expect(codes).toContain(data.error?.code)
+}
+
+async function executePublicClient(environment: GateEnvironment, starterNodeId: string, sql: string): Promise<void> {
+  const client = new SirannonClient({
+    endpoints: [serverBaseUrlFor(environment, starterNodeId)],
+    discovery: 'coordinator',
+    transport: 'http',
+  })
+  try {
+    const db = client.database(GROUP_ID)
+    await db.execute(sql)
+  } finally {
+    client.close()
+  }
+}
+
+async function executePublicWebSocket(environment: GateEnvironment, nodeId: string, sql: string): Promise<void> {
+  const wsUrl = `ws://127.0.0.1:${httpPortFor(environment, nodeId)}/db/${GROUP_ID}`
+  const ws = new WebSocket(wsUrl)
+  try {
+    await waitForWebSocketOpen(ws)
+    const result = await sendWebSocketExecute(ws, sql)
+    expect(result.changes).toBe(1)
+  } finally {
+    ws.close()
+  }
+}
+
+function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for public WebSocket open')), 10_000)
+    ws.addEventListener('open', () => {
+      clearTimeout(timeout)
+      resolve()
+    })
+    ws.addEventListener('error', () => {
+      clearTimeout(timeout)
+      reject(new Error('Public WebSocket failed to open'))
+    })
+  })
+}
+
+function sendWebSocketExecute(ws: WebSocket, sql: string): Promise<{ changes: number }> {
+  return new Promise((resolve, reject) => {
+    const requestId = `public-ws-${Date.now()}`
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for public WebSocket execute')), 20_000)
+    const onMessage = (event: MessageEvent) => {
+      const data = JSON.parse(String(event.data)) as {
+        type: string
+        id: string
+        data?: { changes?: number }
+        error?: { code?: string; message?: string }
+      }
+      if (data.id !== requestId) return
+      clearTimeout(timeout)
+      ws.removeEventListener('message', onMessage)
+      if (data.type === 'error') {
+        reject(new Error(`Public WebSocket execute failed with ${data.error?.code}: ${data.error?.message}`))
+        return
+      }
+      resolve({ changes: Number(data.data?.changes ?? 0) })
+    }
+    ws.addEventListener('message', onMessage)
+    ws.send(
+      JSON.stringify({
+        id: requestId,
+        type: 'execute',
+        sql,
+      }),
+    )
+  })
+}
+
 async function waitForRows(
   environment: GateEnvironment,
   nodeIds: readonly string[],
@@ -501,6 +628,43 @@ async function waitForRows(
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(
       `Timed out waiting for ${expectedRows} failover_items rows on ${nodeIds.join(
+        ',',
+      )}: ${message}\nlatest=${JSON.stringify(latest, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
+        diagnostics,
+        jsonReplacer,
+        2,
+      )}`,
+    )
+  }
+}
+
+async function waitForItemNote(
+  environment: GateEnvironment,
+  nodeIds: readonly string[],
+  itemId: number,
+  note: string,
+  timeoutMs: number,
+): Promise<void> {
+  const latest: Record<string, unknown> = {}
+  try {
+    await waitForCondition(async () => {
+      for (const nodeId of nodeIds) {
+        const node = requireNode(environment, nodeId)
+        const rows = await queryRowsWhenReady(node, 'SELECT note FROM failover_items WHERE id = ?', [itemId])
+        if (rows === null) {
+          latest[nodeId] = await statusOf(node)
+          return false
+        }
+        latest[nodeId] = rows
+        if (rows[0]?.note !== note) return false
+      }
+      return true
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const diagnostics = await collectNodeDiagnostics(environment)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Timed out waiting for failover_items id ${itemId} note '${note}' on ${nodeIds.join(
         ',',
       )}: ${message}\nlatest=${JSON.stringify(latest, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
         diagnostics,
@@ -961,8 +1125,12 @@ function httpPortFor(environment: GateEnvironment, nodeId: string): number {
   return port
 }
 
+function serverBaseUrlFor(environment: GateEnvironment, nodeId: string): string {
+  return `http://127.0.0.1:${httpPortFor(environment, nodeId)}`
+}
+
 function httpEndpointFor(environment: GateEnvironment, nodeId: string): string {
-  return `http://127.0.0.1:${httpPortFor(environment, nodeId)}/db/failover-${nodeId}`
+  return `${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}`
 }
 
 function etcdEndpointsFor(environment: GateEnvironment, nodeId: string): string[] {

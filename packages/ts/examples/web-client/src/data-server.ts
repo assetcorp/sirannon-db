@@ -6,6 +6,8 @@ import {
   HookDeniedError,
   type Params,
   type QueryOptions,
+  type RequestContext,
+  type RequestDenial,
   type ServerExecutionTarget,
   Sirannon,
   type Transaction,
@@ -24,11 +26,13 @@ import {
   RECEIVE_PRODUCT_SQL,
   RESET_SEQUENCE_SQL,
   SEED_PRODUCTS,
+  toWebSocketAuthProtocol,
 } from './lib/sql'
 
 const HOST = process.env.HOST ?? '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 9876)
 const DEMO_TOKEN = process.env.SIRANNON_DEMO_TOKEN ?? DEFAULT_DEMO_TOKEN
+const WEBSOCKET_AUTH_PROTOCOL = toWebSocketAuthProtocol(DEMO_TOKEN)
 const APP_ORIGINS = (process.env.APP_ORIGIN ?? 'http://localhost:3000')
   .split(',')
   .map(origin => origin.trim())
@@ -178,6 +182,54 @@ function isAuthorizedHeader(value: string | undefined): boolean {
   return value === `Bearer ${DEMO_TOKEN}`
 }
 
+function getHeader(headers: Record<string, string>, name: string): string | undefined {
+  const direct = headers[name] ?? headers[name.toLowerCase()]
+  if (direct !== undefined) {
+    return direct
+  }
+
+  const lowerName = name.toLowerCase()
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName) {
+      return value
+    }
+  }
+
+  return undefined
+}
+
+function isAllowedOrigin(value: string | undefined): boolean {
+  return value !== undefined && APP_ORIGINS.includes(value)
+}
+
+function hasWebSocketAuthProtocol(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false
+  }
+
+  return value.split(',').some(protocol => protocol.trim() === WEBSOCKET_AUTH_PROTOCOL)
+}
+
+function validateWebSocketUpgrade(ctx: RequestContext): RequestDenial | undefined {
+  if (!isAllowedOrigin(getHeader(ctx.headers, 'origin'))) {
+    return {
+      status: 403,
+      code: 'FORBIDDEN_ORIGIN',
+      message: 'The demo data server rejects WebSocket upgrades from untrusted origins.',
+    }
+  }
+
+  if (!hasWebSocketAuthProtocol(getHeader(ctx.headers, 'sec-websocket-protocol'))) {
+    return {
+      status: 401,
+      code: 'UNAUTHORIZED',
+      message: 'The demo data server requires the configured WebSocket auth protocol.',
+    }
+  }
+
+  return undefined
+}
+
 const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-inventory-'))
 
 const driver = betterSqlite3()
@@ -235,10 +287,10 @@ const server = createServer(sirannon, {
   onRequest: ctx => {
     const websocketUpgrade = ctx.method.toUpperCase() === 'GET' && ctx.path === '/db/main'
     if (websocketUpgrade) {
-      return undefined
+      return validateWebSocketUpgrade(ctx)
     }
 
-    const authorization = ctx.headers.authorization ?? ctx.headers.Authorization
+    const authorization = getHeader(ctx.headers, 'authorization')
     if (isAuthorizedHeader(authorization)) {
       return undefined
     }

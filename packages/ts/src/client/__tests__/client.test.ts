@@ -209,6 +209,34 @@ describe('RemoteDatabase via HTTP', () => {
     expect(rows).toHaveLength(1)
     authClient.close()
   })
+
+  it('sends WebSocket protocols during the upgrade handshake', async () => {
+    const protocol = 'sirannon.auth.valid'
+    const hookServer = createServer(sirannon, {
+      port: 0,
+      onRequest: ({ headers }) => {
+        if (headers['sec-websocket-protocol'] !== protocol) {
+          return { status: 401, code: 'UNAUTHORIZED', message: 'Bad protocol' }
+        }
+      },
+    })
+    await hookServer.listen()
+
+    const authClient = new SirannonClient(`http://127.0.0.1:${hookServer.listeningPort}`, {
+      autoReconnect: false,
+      transport: 'websocket',
+      webSocketProtocols: [protocol],
+    })
+
+    try {
+      const db = authClient.database('testdb')
+      const rows = await db.query<{ result: number }>('SELECT 1 as result')
+      expect(rows[0].result).toBe(1)
+    } finally {
+      authClient.close()
+      await hookServer.close()
+    }
+  })
 })
 
 describe('RemoteDatabase', () => {

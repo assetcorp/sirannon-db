@@ -597,50 +597,97 @@ The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'prima
 
 ## Security
 
-Sirannon-db is designed to be secure by default in its core operations. This section covers what the library handles for you and what you're responsible for when deploying to production.
+Sirannon-db gives you secure primitives, but the network server is intentionally low-level: it can execute SQL sent by a client. Treat the server like a database endpoint, not like a public application API, unless you add an explicit application security boundary around it.
 
 ### Built-in protections
 
-- **Parameterized queries** - All SQL execution uses parameter binding through the driver layer, preventing SQL injection. User input never touches query strings directly.
-- **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), and identifiers are escaped with double-quote wrapping.
-- **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters before any filesystem access.
-- **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB, preventing memory exhaustion from oversized requests.
-- **Error isolation** - Errors returned to clients contain a machine-readable code and message. Stack traces and internal details are never leaked.
+- **Parameterized values** - Query and execute calls pass parameters through the driver layer. Keep user input in `params`; never concatenate user input into SQL strings.
+- **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) and escaped with double quotes.
+- **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters before filesystem access.
+- **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB to reduce memory-exhaustion risk.
+- **Error isolation** - Remote errors use a machine-readable code and message. Stack traces and internal details are not returned to clients.
 - **Connection isolation** - Read and write operations use separate connection pools. Read-only databases enforce immutability at the connection level.
 
-### Authentication and authorization
+### Deployment boundary
 
-The server accepts arbitrary SQL from clients. When you expose it beyond localhost, always use the `onRequest` hook to authenticate and authorize requests.
+For production, put Sirannon behind one of these boundaries:
+
+- A server-side application layer that exposes domain actions, not arbitrary SQL.
+- A private network boundary where only trusted services can reach the Sirannon server.
+- A custom `resolveExecutionTarget` or hook layer that allows only specific statements, tenants, and tables.
+
+Do not expose unrestricted `/db/:id/query`, `/db/:id/execute`, `/db/:id/transaction`, or `/db/:id` WebSocket routes directly to untrusted browsers.
+
+### HTTP authentication
+
+Use `onRequest` to authenticate HTTP database routes. The hook runs before database routes and can deny requests by returning `{ status, code, message }`. Health endpoints bypass this hook.
 
 ```ts
 const server = createServer(sirannon, {
   port: 9876,
-  onRequest: ({ headers, path, method, remoteAddress }) => {
-    if (headers.authorization !== `Bearer ${process.env.API_TOKEN}`) {
+  onRequest: ({ headers }) => {
+    if (headers.authorization !== `Bearer ${process.env.SIRANNON_API_TOKEN}`) {
       return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid or missing token' }
     }
   },
 })
 ```
 
-The hook runs before every database route (HTTP and WebSocket upgrade). Return `void` to allow the request, or return a `{ status, code, message }` object to deny it. Health endpoints (`/health`, `/health/ready`) bypass this hook.
-
-### TLS and transport security
-
-> **Warning:** The built-in server binds plain HTTP and WebSocket without TLS. When you serve traffic outside a trusted network, terminate TLS upstream with a reverse proxy (nginx, Caddy, a cloud load balancer) or your clients' bearer tokens and query payloads will travel in cleartext.
-
-Once TLS is in place, update your client URLs to use `https://` and `wss://`:
+Send HTTP credentials through `headers` on the client:
 
 ```ts
 const client = new SirannonClient('https://db.example.com', {
-  transport: 'websocket',
+  transport: 'http',
   headers: { Authorization: `Bearer ${token}` },
 })
 ```
 
-### CORS
+### WebSocket authentication
 
-CORS is disabled by default. Enable it only if browser clients need direct access, and restrict origins to trusted domains:
+Browsers cannot attach arbitrary `Authorization` headers to `new WebSocket(...)`. For browser clients, authenticate the upgrade with a mechanism the browser can send, such as same-site cookies or a short-lived value in `Sec-WebSocket-Protocol`. Also validate the `Origin` header during the upgrade.
+
+```ts
+const expectedOrigin = 'https://app.example.com'
+const expectedProtocol = process.env.SIRANNON_WS_PROTOCOL
+
+const server = createServer(sirannon, {
+  port: 9876,
+  onRequest: ({ headers, method, path }) => {
+    const isWebSocketUpgrade = method === 'GET' && path.startsWith('/db/')
+    if (!isWebSocketUpgrade) {
+      return undefined
+    }
+
+    if (headers.origin !== expectedOrigin) {
+      return { status: 403, code: 'FORBIDDEN_ORIGIN', message: 'Forbidden origin' }
+    }
+
+    const protocols = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+    if (!expectedProtocol || !protocols.includes(expectedProtocol)) {
+      return { status: 401, code: 'UNAUTHORIZED', message: 'Invalid WebSocket credentials' }
+    }
+  },
+})
+```
+
+Then pass the browser-compatible protocol through the client:
+
+```ts
+const client = new SirannonClient('https://db.example.com', {
+  transport: 'websocket',
+  webSocketProtocols: [wsProtocol],
+})
+```
+
+Protocol values must be valid `Sec-WebSocket-Protocol` tokens. If you derive them from secrets or signed data, encode them with a URL-safe format and keep them short-lived.
+
+### TLS and transport security
+
+The built-in server binds plain HTTP and WebSocket. For any traffic outside a trusted local network, terminate TLS upstream with a reverse proxy, load balancer, or platform edge and use `https://` and `wss://` client URLs. Without TLS, credentials, SQL text, parameters, and CDC payloads travel in cleartext.
+
+### CORS and browser access
+
+CORS is disabled by default. Enable it only if browser clients need direct HTTP access, and restrict origins to trusted domains:
 
 ```ts
 const server = createServer(sirannon, {
@@ -651,7 +698,36 @@ const server = createServer(sirannon, {
 })
 ```
 
-Passing `cors: true` allows all origins, which is fine for local development but should be avoided in production.
+Passing `cors: true` allows all origins and should be limited to local development. CORS does not protect WebSocket upgrades; validate WebSocket `Origin` in `onRequest`.
+
+### SQL access control
+
+Authentication only identifies the caller. It does not make arbitrary SQL safe. For internet-facing systems, enforce one of these patterns:
+
+- Prefer application endpoints that perform domain operations such as `createOrder`, `reserveInventory`, or `markPaid`.
+- If clients must use the Sirannon data API, wrap the database with `resolveExecutionTarget` and allow only known SQL statements and parameter shapes.
+- Use hooks for additional query checks, but do not rely on naive substring matching as a SQL firewall.
+- Keep tenant identifiers and ownership rules on the server side.
+
+### Secrets and logging
+
+- Do not place long-lived secrets in browser-visible configuration such as Vite `VITE_*` variables.
+- Prefer short-lived WebSocket credentials minted by your application server.
+- Redact `Authorization`, cookies, and WebSocket auth protocol values from access logs.
+- Avoid logging full SQL statements when they can contain sensitive data.
+
+### Security checklist
+
+- Bind the server to `127.0.0.1` or a private interface unless a proxy is enforcing TLS and access control.
+- Use HTTPS/WSS for non-local traffic.
+- Authenticate every HTTP database route and every WebSocket upgrade.
+- Validate WebSocket `Origin` against an explicit allowlist.
+- Keep SQL behind application actions or a strict allowlist.
+- Keep user input in SQL parameters, not interpolated strings.
+- Restrict CORS to known origins.
+- Add rate limits, audit logs, and abuse monitoring at the application or edge layer for public deployments.
+
+Further reading: [OWASP REST Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html), [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html), and [MDN WebSocket constructor](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/WebSocket).
 
 ## Error handling
 
@@ -720,7 +796,8 @@ try {
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `transport` | `'websocket' \| 'http'` | `'websocket'` | Transport protocol |
-| `headers` | `Record<string, string>` | - | Custom HTTP headers |
+| `headers` | `Record<string, string>` | - | Custom HTTP headers; browser WebSocket handshakes do not use this option |
+| `webSocketProtocols` | `string \| string[]` | - | WebSocket subprotocols sent during the upgrade handshake |
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
 | `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
 
@@ -756,11 +833,11 @@ pnpm run start:node-native
 
 # Browser with wa-sqlite (opens Vite dev server)
 cd packages/ts/examples/web-wa-sqlite
-pnpm dev
+pnpm run dev
 
 # Client-server (starts both Sirannon server and Vite client)
 cd packages/ts/examples/web-client
-pnpm start
+pnpm run dev
 ```
 
 ## Benchmarks

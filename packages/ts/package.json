@@ -32,6 +32,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:failover": "vitest run --config vitest.failover.config.ts",
+    "test:soak": "vitest run --config vitest.soak.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -93,6 +95,10 @@
       "types": "./dist/replication/index.d.ts",
       "import": "./dist/replication/index.mjs"
     },
+    "./replication/coordinator/etcd": {
+      "types": "./dist/replication/coordinator/etcd.d.ts",
+      "import": "./dist/replication/coordinator/etcd.mjs"
+    },
     "./transport/memory": {
       "types": "./dist/transport/memory.d.ts",
       "import": "./dist/transport/memory.mjs"
@@ -116,6 +122,7 @@
     "better-sqlite3": ">=12.0.0",
     "croner": ">=10.0.0",
     "expo-sqlite": ">=14.0.0",
+    "etcd3": ">=1.1.2",
     "grpc-health-check": ">=2.0.0",
     "uWebSockets.js": ">=20.0.0",
     "wa-sqlite": ">=1.0.0"
@@ -134,6 +141,9 @@
       "optional": true
     },
     "expo-sqlite": {
+      "optional": true
+    },
+    "etcd3": {
       "optional": true
     },
     "grpc-health-check": {
@@ -155,6 +165,7 @@
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "12.6.2",
     "croner": "10.0.1",
+    "etcd3": "1.1.2",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "pg": "8.20.0",

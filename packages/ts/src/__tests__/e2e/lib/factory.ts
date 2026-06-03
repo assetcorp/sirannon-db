@@ -24,11 +24,18 @@ export interface ManagedNode {
   recentErrors: readonly ReplicationErrorEvent[]
 }
 
+export interface NodeStorage {
+  tempDir: string
+  dbPath: string
+}
+
 export interface CreatePrimaryArgs {
   nodeId: string
   certs: MtlsCerts
   initialize?: (conn: SQLiteConnection, tracker: ChangeTracker) => Promise<void>
   configOverrides?: Partial<ReplicationConfig>
+  listenPort?: number
+  storage?: NodeStorage
 }
 
 export interface CreateReplicaArgs {
@@ -37,12 +44,25 @@ export interface CreateReplicaArgs {
   primaryHost: string
   primaryPort: number
   configOverrides?: Partial<ReplicationConfig>
+  storage?: NodeStorage
 }
 
 const ERROR_BUFFER_LIMIT = 20
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'sirannon-e2e-'))
+}
+
+function createNodeStorage(nodeId: string, storage?: NodeStorage): NodeStorage {
+  if (storage) {
+    return storage
+  }
+
+  const tempDir = createTempDir()
+  return {
+    tempDir,
+    dbPath: join(tempDir, `${nodeId}.db`),
+  }
 }
 
 function attachErrorBuffer(engine: ReplicationEngine): { recent: readonly ReplicationErrorEvent[] } {
@@ -57,8 +77,8 @@ function attachErrorBuffer(engine: ReplicationEngine): { recent: readonly Replic
 }
 
 export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNode> {
-  const tempDir = createTempDir()
-  const dbPath = join(tempDir, `${args.nodeId}.db`)
+  const storage = createNodeStorage(args.nodeId, args.storage)
+  const { tempDir, dbPath } = storage
 
   const conn = await testDriver.open(dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
@@ -72,8 +92,8 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
 
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
-    port: 0,
-    host: '127.0.0.1',
+    port: args.listenPort ?? 0,
+    host: 'localhost',
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,
@@ -117,8 +137,8 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
 }
 
 export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNode> {
-  const tempDir = createTempDir()
-  const dbPath = join(tempDir, `${args.nodeId}.db`)
+  const storage = createNodeStorage(args.nodeId, args.storage)
+  const { tempDir, dbPath } = storage
 
   const conn = await testDriver.open(dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
@@ -128,7 +148,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
 
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
-    host: '127.0.0.1',
+    host: 'localhost',
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,

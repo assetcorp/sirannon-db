@@ -10,6 +10,7 @@ export {
   createPrimary,
   createReplica,
   type ManagedNode,
+  type NodeStorage,
   stopNode,
 } from './factory.js'
 export { waitForPeerConnected, waitForReady, waitForReplica } from './waitForReplica.js'

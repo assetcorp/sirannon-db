@@ -1,5 +1,6 @@
 import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { ReplicationEngine } from './engine.js'
+import { delayAckIfConfigured } from './test-hooks.js'
 
 export function wireTransportHandlers(engine: ReplicationEngine): void {
   engine.config.transport.onBatchReceived(async (batch, fromPeerId) => {
@@ -20,8 +21,12 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
       const peerInfo = knownPeers.get(fromPeerId)
       if (!peerInfo || !engine.config.topology.shouldAcceptFrom(fromPeerId, peerInfo.role)) {
-        throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
+        if (!engine.isCoordinatorMode()) {
+          throw new ReplicationError(`Rejected batch from unauthorized peer: ${fromPeerId}`)
+        }
       }
+
+      await engine.assertInboundCoordinatorMessage(batch, fromPeerId, 'batch')
 
       if (batch.changes.length > engine.maxBatchChanges) {
         throw new BatchValidationError(
@@ -55,34 +60,72 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.highestSourceSeqSeen = batch.toSeq
       }
 
-      await engine.config.transport.sendAck(fromPeerId, {
-        batchId: batch.batchId,
-        ackedSeq: batch.toSeq,
-        nodeId: engine.nodeId,
-      })
+      await delayAckIfConfigured(engine)
+      await engine.config.transport.sendAck(
+        fromPeerId,
+        engine.decorateAck({
+          batchId: batch.batchId,
+          ackedSeq: batch.toSeq,
+          nodeId: engine.nodeId,
+        }),
+      )
     } catch (err: unknown) {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'batch-received', peerId: fromPeerId, recoverable: true })
     }
   })
 
-  engine.config.transport.onAckReceived((ack, _fromPeerId) => {
+  engine.config.transport.onAckReceived((ack, fromPeerId) => {
     if (!engine.running) return
     if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') return
-    engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
+    if (!engine.isCoordinatorMode()) {
+      if (ack.nodeId !== fromPeerId) {
+        engine.emitError({
+          error: new ReplicationError(
+            `Ack nodeId '${ack.nodeId}' does not match sender '${fromPeerId}'`,
+            'ACK_NODE_ID_MISMATCH',
+          ),
+          operation: 'ack-identity-mismatch',
+          peerId: fromPeerId,
+          recoverable: true,
+        })
+        return
+      }
+      engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
+      engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: ack.nodeId, recoverable: true })
+      })
+      return
+    }
+    engine
+      .assertInboundCoordinatorMessage(ack, fromPeerId, 'ack')
+      .then(() => {
+        engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
+        engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
+          const wrappedErr = err instanceof Error ? err : new Error(String(err))
+          engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: ack.nodeId, recoverable: true })
+        })
+      })
+      .catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        engine.emitError({ error: wrappedErr, operation: 'ack-received', peerId: fromPeerId, recoverable: true })
+      })
   })
 
-  if (engine.config.topology.canWrite()) {
+  if (engine.config.topology.canWrite() || engine.isCoordinatorMode()) {
     engine.config.transport.onForwardReceived(async (request, fromPeerId) => {
       if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') {
         throw new ReplicationError('Node is not ready to handle forwarded requests')
       }
+      await engine.assertInboundCoordinatorMessage(request, fromPeerId, 'forward')
       const knownPeers = engine.config.transport.peers()
       if (!knownPeers.has(fromPeerId)) {
         throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
       }
       try {
-        return await engine.localExecutor.executeForwardedLocally(request.statements)
+        const result = await engine.localExecutor.executeForwardedLocally(request.statements)
+        return engine.decorateForwardResult(result)
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         engine.emitError({ error: wrappedErr, operation: 'forward-execution', peerId: fromPeerId, recoverable: true })
@@ -93,6 +136,10 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onPeerConnected(peer => {
     engine.peerTracker.addPeer(peer.id)
+    engine.log.setLastAppliedSeq(peer.id, 0n).catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'peer-state-initialise', peerId: peer.id, recoverable: true })
+    })
     if (engine.syncState.phase === 'pending') {
       engine.syncJoiner.initiateSync().catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
@@ -123,21 +170,48 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onSyncRequested(async (request, fromPeerId) => {
     if (!engine.running) return
+    await engine.assertInboundCoordinatorMessage(request, fromPeerId, 'sync-request')
     await engine.syncServer.handleSyncRequest(request, fromPeerId)
   })
 
   engine.config.transport.onSyncBatchReceived(async (batch, fromPeerId) => {
     if (!engine.running) return
+    await engine.assertInboundCoordinatorMessage(batch, fromPeerId, 'sync-data')
     await engine.syncJoiner.handleSyncBatchReceived(batch, fromPeerId)
   })
 
   engine.config.transport.onSyncCompleteReceived(async (complete, fromPeerId) => {
     if (!engine.running) return
+    await engine.assertInboundCoordinatorMessage(complete, fromPeerId, 'sync-data')
     await engine.syncJoiner.handleSyncCompleteReceived(complete, fromPeerId)
   })
 
-  engine.config.transport.onSyncAckReceived((ack, _fromPeerId) => {
+  engine.config.transport.onSyncAckReceived((ack, fromPeerId) => {
     if (!engine.running) return
-    engine.syncServer.handleSyncAckReceived(ack)
+    if (!engine.isCoordinatorMode()) {
+      if (ack.joinerNodeId !== fromPeerId) {
+        engine.emitError({
+          error: new ReplicationError(
+            `SyncAck joinerNodeId '${ack.joinerNodeId}' does not match sender '${fromPeerId}'`,
+            'SYNC_ACK_NODE_ID_MISMATCH',
+          ),
+          operation: 'sync-ack-identity-mismatch',
+          peerId: fromPeerId,
+          recoverable: true,
+        })
+        return
+      }
+      engine.syncServer.handleSyncAckReceived(ack)
+      return
+    }
+    engine
+      .assertInboundCoordinatorMessage(ack, fromPeerId, 'ack')
+      .then(() => {
+        engine.syncServer.handleSyncAckReceived(ack)
+      })
+      .catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        engine.emitError({ error: wrappedErr, operation: 'sync-ack-received', peerId: fromPeerId, recoverable: true })
+      })
   })
 }

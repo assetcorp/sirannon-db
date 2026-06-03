@@ -79,6 +79,10 @@ export class ReplicationLog {
     return this.state.setLastAppliedSeq(fromNodeId, seq)
   }
 
+  getPeerAckedSeq(peerNodeId: string): Promise<bigint> {
+    return this.state.getPeerAckedSeq(peerNodeId)
+  }
+
   getLocalSeq(): Promise<bigint> {
     return this.state.getLocalSeq(this.changesTable)
   }

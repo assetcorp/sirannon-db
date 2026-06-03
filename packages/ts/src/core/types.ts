@@ -1,4 +1,5 @@
 import type { SQLiteDriver } from './driver/types.js'
+import type { Transaction } from './transaction.js'
 
 /** Query parameter types: named (object) or positional (array). */
 export type Params = Record<string, unknown> | unknown[]
@@ -15,6 +16,22 @@ export interface ReadConcern {
 export interface QueryOptions {
   writeConcern?: WriteConcern
   readConcern?: ReadConcern
+}
+
+export interface ClusterReadEndpointInfo {
+  nodeId: string
+  endpoint: string
+  readConcerns: ReadConcernLevel[]
+}
+
+export interface ClusterStatusInfo {
+  databaseId: string
+  replicationGroupId?: string
+  role?: 'primary' | 'replica'
+  currentPrimary?: { nodeId: string; endpoint?: string } | null
+  primaryTerm?: bigint
+  readEndpoints?: ClusterReadEndpointInfo[]
+  health: 'healthy' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
 }
 
 /** Result returned by mutation statements (INSERT, UPDATE, DELETE). */
@@ -193,13 +210,47 @@ export interface RequestDenial {
 /** Middleware hook for auth, rate limiting, and request validation. */
 export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
+export interface ServerExecutionTarget {
+  query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
+  execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
+  transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
+}
+
+export type ServerExecutionTargetResolver = (
+  databaseId: string,
+) => ServerExecutionTarget | null | undefined | Promise<ServerExecutionTarget | null | undefined>
+
 /** Options for the standalone HTTP + WS server. */
 export interface ServerOptions {
   host?: string
   port?: number
   cors?: boolean | CorsOptions
   onRequest?: OnRequestHook
-  getReplicationStatus?: () => { role: string; writeForwarding: boolean; peers: number; localSeq: bigint } | null
+  resolveExecutionTarget?: ServerExecutionTargetResolver
+  getReplicationStatus?: () => ReplicationStatusInfo | null
+  getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
+}
+
+export interface ReplicationStatusInfo {
+  role: string
+  writeForwarding: boolean
+  peers: number
+  localSeq: bigint
+  replicationGroupId?: string
+  primaryTerm?: bigint
+  currentPrimary?: string
+  coordinator?: {
+    connected: boolean
+    authority: boolean
+  }
+  controller?: {
+    state: 'disabled' | 'standby' | 'active' | 'lost'
+  }
+  inSyncReplicas?: string[]
+  laggingReplicas?: string[]
+  syncState?: string
+  readAvailability?: 'available' | 'unavailable'
+  writeAvailability?: 'available' | 'unavailable'
 }
 
 /** CORS configuration. */
@@ -213,6 +264,7 @@ export interface CorsOptions {
 export interface WSHandlerOptions {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
+  resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 
 /** Options for the client SDK. */

@@ -67,17 +67,24 @@ export interface BatchPayload {
   hlcRange: HlcRange | undefined;
   changes: ReplicationChange[];
   checksum: string;
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface AckPayload {
   batchId: string;
   ackedSeq: bigint;
   nodeId: string;
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface Hello {
   nodeId: string;
   role: string;
+  groupId: string;
+  primaryTerm: bigint;
+  protocolVersion: string;
 }
 
 export interface ReplicationMessage {
@@ -90,6 +97,8 @@ export interface SyncRequestPayload {
   requestId: string;
   joinerNodeId: string;
   completedTables: string[];
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface SyncBatchPayload {
@@ -100,12 +109,16 @@ export interface SyncBatchPayload {
   schema: string[];
   checksum: string;
   isLastBatchForTable: boolean;
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface SyncCompletePayload {
   requestId: string;
   snapshotSeq: bigint;
   manifests: SyncTableManifest[];
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface SyncTableManifest {
@@ -121,6 +134,8 @@ export interface SyncAckPayload {
   batchIndex: number;
   success: boolean;
   error: string;
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface SyncMessage {
@@ -145,6 +160,8 @@ export interface Statement_NamedParamsEntry {
 export interface ForwardRequest {
   requestId: string;
   statements: Statement[];
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 export interface StatementResult {
@@ -156,6 +173,8 @@ export interface ForwardResponse {
   requestId: string;
   results: StatementResult[];
   error: string;
+  groupId: string;
+  primaryTerm: bigint;
 }
 
 function createBaseColumnValue(): ColumnValue {
@@ -821,7 +840,17 @@ export const ReplicationChange: MessageFns<ReplicationChange> = {
 };
 
 function createBaseBatchPayload(): BatchPayload {
-  return { sourceNodeId: "", batchId: "", fromSeq: 0n, toSeq: 0n, hlcRange: undefined, changes: [], checksum: "" };
+  return {
+    sourceNodeId: "",
+    batchId: "",
+    fromSeq: 0n,
+    toSeq: 0n,
+    hlcRange: undefined,
+    changes: [],
+    checksum: "",
+    groupId: "",
+    primaryTerm: 0n,
+  };
 }
 
 export const BatchPayload: MessageFns<BatchPayload> = {
@@ -852,6 +881,15 @@ export const BatchPayload: MessageFns<BatchPayload> = {
     }
     if (message.checksum !== "") {
       writer.uint32(58).string(message.checksum);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(66).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(72).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -919,6 +957,22 @@ export const BatchPayload: MessageFns<BatchPayload> = {
           message.checksum = reader.string();
           continue;
         }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -951,6 +1005,16 @@ export const BatchPayload: MessageFns<BatchPayload> = {
         ? object.changes.map((e: any) => ReplicationChange.fromJSON(e))
         : [],
       checksum: isSet(object.checksum) ? globalThis.String(object.checksum) : "",
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -977,6 +1041,12 @@ export const BatchPayload: MessageFns<BatchPayload> = {
     if (message.checksum !== "") {
       obj.checksum = message.checksum;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -994,12 +1064,14 @@ export const BatchPayload: MessageFns<BatchPayload> = {
       : undefined;
     message.changes = object.changes?.map((e) => ReplicationChange.fromPartial(e)) || [];
     message.checksum = object.checksum ?? "";
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
 
 function createBaseAckPayload(): AckPayload {
-  return { batchId: "", ackedSeq: 0n, nodeId: "" };
+  return { batchId: "", ackedSeq: 0n, nodeId: "", groupId: "", primaryTerm: 0n };
 }
 
 export const AckPayload: MessageFns<AckPayload> = {
@@ -1015,6 +1087,15 @@ export const AckPayload: MessageFns<AckPayload> = {
     }
     if (message.nodeId !== "") {
       writer.uint32(26).string(message.nodeId);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(34).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(40).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -1050,6 +1131,22 @@ export const AckPayload: MessageFns<AckPayload> = {
           message.nodeId = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1076,6 +1173,16 @@ export const AckPayload: MessageFns<AckPayload> = {
         : isSet(object.node_id)
         ? globalThis.String(object.node_id)
         : "",
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -1090,6 +1197,12 @@ export const AckPayload: MessageFns<AckPayload> = {
     if (message.nodeId !== "") {
       obj.nodeId = message.nodeId;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -1101,12 +1214,14 @@ export const AckPayload: MessageFns<AckPayload> = {
     message.batchId = object.batchId ?? "";
     message.ackedSeq = object.ackedSeq ?? 0n;
     message.nodeId = object.nodeId ?? "";
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
 
 function createBaseHello(): Hello {
-  return { nodeId: "", role: "" };
+  return { nodeId: "", role: "", groupId: "", primaryTerm: 0n, protocolVersion: "" };
 }
 
 export const Hello: MessageFns<Hello> = {
@@ -1116,6 +1231,18 @@ export const Hello: MessageFns<Hello> = {
     }
     if (message.role !== "") {
       writer.uint32(18).string(message.role);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(26).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(32).int64(message.primaryTerm);
+    }
+    if (message.protocolVersion !== "") {
+      writer.uint32(42).string(message.protocolVersion);
     }
     return writer;
   },
@@ -1143,6 +1270,30 @@ export const Hello: MessageFns<Hello> = {
           message.role = reader.string();
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.protocolVersion = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1160,6 +1311,21 @@ export const Hello: MessageFns<Hello> = {
         ? globalThis.String(object.node_id)
         : "",
       role: isSet(object.role) ? globalThis.String(object.role) : "",
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
+      protocolVersion: isSet(object.protocolVersion)
+        ? globalThis.String(object.protocolVersion)
+        : isSet(object.protocol_version)
+        ? globalThis.String(object.protocol_version)
+        : "",
     };
   },
 
@@ -1171,6 +1337,15 @@ export const Hello: MessageFns<Hello> = {
     if (message.role !== "") {
       obj.role = message.role;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
+    if (message.protocolVersion !== "") {
+      obj.protocolVersion = message.protocolVersion;
+    }
     return obj;
   },
 
@@ -1181,6 +1356,9 @@ export const Hello: MessageFns<Hello> = {
     const message = createBaseHello();
     message.nodeId = object.nodeId ?? "";
     message.role = object.role ?? "";
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
+    message.protocolVersion = object.protocolVersion ?? "";
     return message;
   },
 };
@@ -1280,7 +1458,7 @@ export const ReplicationMessage: MessageFns<ReplicationMessage> = {
 };
 
 function createBaseSyncRequestPayload(): SyncRequestPayload {
-  return { requestId: "", joinerNodeId: "", completedTables: [] };
+  return { requestId: "", joinerNodeId: "", completedTables: [], groupId: "", primaryTerm: 0n };
 }
 
 export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
@@ -1293,6 +1471,15 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     }
     for (const v of message.completedTables) {
       writer.uint32(26).string(v!);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(34).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(40).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -1328,6 +1515,22 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
           message.completedTables.push(reader.string());
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1354,6 +1557,16 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
         : globalThis.Array.isArray(object?.completed_tables)
         ? object.completed_tables.map((e: any) => globalThis.String(e))
         : [],
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -1368,6 +1581,12 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     if (message.completedTables?.length) {
       obj.completedTables = message.completedTables;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -1379,12 +1598,24 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     message.requestId = object.requestId ?? "";
     message.joinerNodeId = object.joinerNodeId ?? "";
     message.completedTables = object.completedTables?.map((e) => e) || [];
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
 
 function createBaseSyncBatchPayload(): SyncBatchPayload {
-  return { requestId: "", table: "", batchIndex: 0, rows: [], schema: [], checksum: "", isLastBatchForTable: false };
+  return {
+    requestId: "",
+    table: "",
+    batchIndex: 0,
+    rows: [],
+    schema: [],
+    checksum: "",
+    isLastBatchForTable: false,
+    groupId: "",
+    primaryTerm: 0n,
+  };
 }
 
 export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
@@ -1409,6 +1640,15 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
     }
     if (message.isLastBatchForTable !== false) {
       writer.uint32(56).bool(message.isLastBatchForTable);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(66).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(72).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -1476,6 +1716,22 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
           message.isLastBatchForTable = reader.bool();
           continue;
         }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 9: {
+          if (tag !== 72) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1506,6 +1762,16 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
         : isSet(object.is_last_batch_for_table)
         ? globalThis.Boolean(object.is_last_batch_for_table)
         : false,
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -1532,6 +1798,12 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
     if (message.isLastBatchForTable !== false) {
       obj.isLastBatchForTable = message.isLastBatchForTable;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -1547,12 +1819,14 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
     message.schema = object.schema?.map((e) => e) || [];
     message.checksum = object.checksum ?? "";
     message.isLastBatchForTable = object.isLastBatchForTable ?? false;
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
 
 function createBaseSyncCompletePayload(): SyncCompletePayload {
-  return { requestId: "", snapshotSeq: 0n, manifests: [] };
+  return { requestId: "", snapshotSeq: 0n, manifests: [], groupId: "", primaryTerm: 0n };
 }
 
 export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
@@ -1568,6 +1842,15 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
     }
     for (const v of message.manifests) {
       SyncTableManifest.encode(v!, writer.uint32(26).fork()).join();
+    }
+    if (message.groupId !== "") {
+      writer.uint32(34).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(40).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -1603,6 +1886,22 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
           message.manifests.push(SyncTableManifest.decode(reader, reader.uint32()));
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1627,6 +1926,16 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
       manifests: globalThis.Array.isArray(object?.manifests)
         ? object.manifests.map((e: any) => SyncTableManifest.fromJSON(e))
         : [],
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -1641,6 +1950,12 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
     if (message.manifests?.length) {
       obj.manifests = message.manifests.map((e) => SyncTableManifest.toJSON(e));
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -1652,6 +1967,8 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
     message.requestId = object.requestId ?? "";
     message.snapshotSeq = object.snapshotSeq ?? 0n;
     message.manifests = object.manifests?.map((e) => SyncTableManifest.fromPartial(e)) || [];
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
@@ -1757,7 +2074,16 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
 };
 
 function createBaseSyncAckPayload(): SyncAckPayload {
-  return { requestId: "", joinerNodeId: "", table: "", batchIndex: 0, success: false, error: "" };
+  return {
+    requestId: "",
+    joinerNodeId: "",
+    table: "",
+    batchIndex: 0,
+    success: false,
+    error: "",
+    groupId: "",
+    primaryTerm: 0n,
+  };
 }
 
 export const SyncAckPayload: MessageFns<SyncAckPayload> = {
@@ -1779,6 +2105,15 @@ export const SyncAckPayload: MessageFns<SyncAckPayload> = {
     }
     if (message.error !== "") {
       writer.uint32(50).string(message.error);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(58).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(64).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -1838,6 +2173,22 @@ export const SyncAckPayload: MessageFns<SyncAckPayload> = {
           message.error = reader.string();
           continue;
         }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 8: {
+          if (tag !== 64) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1867,6 +2218,16 @@ export const SyncAckPayload: MessageFns<SyncAckPayload> = {
         : 0,
       success: isSet(object.success) ? globalThis.Boolean(object.success) : false,
       error: isSet(object.error) ? globalThis.String(object.error) : "",
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -1890,6 +2251,12 @@ export const SyncAckPayload: MessageFns<SyncAckPayload> = {
     if (message.error !== "") {
       obj.error = message.error;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -1904,6 +2271,8 @@ export const SyncAckPayload: MessageFns<SyncAckPayload> = {
     message.batchIndex = object.batchIndex ?? 0;
     message.success = object.success ?? false;
     message.error = object.error ?? "";
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
@@ -2270,7 +2639,7 @@ export const Statement_NamedParamsEntry: MessageFns<Statement_NamedParamsEntry> 
 };
 
 function createBaseForwardRequest(): ForwardRequest {
-  return { requestId: "", statements: [] };
+  return { requestId: "", statements: [], groupId: "", primaryTerm: 0n };
 }
 
 export const ForwardRequest: MessageFns<ForwardRequest> = {
@@ -2280,6 +2649,15 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
     }
     for (const v of message.statements) {
       Statement.encode(v!, writer.uint32(18).fork()).join();
+    }
+    if (message.groupId !== "") {
+      writer.uint32(26).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(32).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -2307,6 +2685,22 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
           message.statements.push(Statement.decode(reader, reader.uint32()));
           continue;
         }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2326,6 +2720,16 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
       statements: globalThis.Array.isArray(object?.statements)
         ? object.statements.map((e: any) => Statement.fromJSON(e))
         : [],
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -2337,6 +2741,12 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
     if (message.statements?.length) {
       obj.statements = message.statements.map((e) => Statement.toJSON(e));
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -2347,6 +2757,8 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
     const message = createBaseForwardRequest();
     message.requestId = object.requestId ?? "";
     message.statements = object.statements?.map((e) => Statement.fromPartial(e)) || [];
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };
@@ -2435,7 +2847,7 @@ export const StatementResult: MessageFns<StatementResult> = {
 };
 
 function createBaseForwardResponse(): ForwardResponse {
-  return { requestId: "", results: [], error: "" };
+  return { requestId: "", results: [], error: "", groupId: "", primaryTerm: 0n };
 }
 
 export const ForwardResponse: MessageFns<ForwardResponse> = {
@@ -2448,6 +2860,15 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
     }
     if (message.error !== "") {
       writer.uint32(26).string(message.error);
+    }
+    if (message.groupId !== "") {
+      writer.uint32(34).string(message.groupId);
+    }
+    if (message.primaryTerm !== 0n) {
+      if (BigInt.asIntN(64, message.primaryTerm) !== message.primaryTerm) {
+        throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
+      }
+      writer.uint32(40).int64(message.primaryTerm);
     }
     return writer;
   },
@@ -2483,6 +2904,22 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
           message.error = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.groupId = reader.string();
+          continue;
+        }
+        case 5: {
+          if (tag !== 40) {
+            break;
+          }
+
+          message.primaryTerm = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2503,6 +2940,16 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
         ? object.results.map((e: any) => StatementResult.fromJSON(e))
         : [],
       error: isSet(object.error) ? globalThis.String(object.error) : "",
+      groupId: isSet(object.groupId)
+        ? globalThis.String(object.groupId)
+        : isSet(object.group_id)
+        ? globalThis.String(object.group_id)
+        : "",
+      primaryTerm: isSet(object.primaryTerm)
+        ? BigInt(object.primaryTerm)
+        : isSet(object.primary_term)
+        ? BigInt(object.primary_term)
+        : 0n,
     };
   },
 
@@ -2517,6 +2964,12 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
     if (message.error !== "") {
       obj.error = message.error;
     }
+    if (message.groupId !== "") {
+      obj.groupId = message.groupId;
+    }
+    if (message.primaryTerm !== 0n) {
+      obj.primaryTerm = message.primaryTerm.toString();
+    }
     return obj;
   },
 
@@ -2528,6 +2981,8 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
     message.requestId = object.requestId ?? "";
     message.results = object.results?.map((e) => StatementResult.fromPartial(e)) || [];
     message.error = object.error ?? "";
+    message.groupId = object.groupId ?? "";
+    message.primaryTerm = object.primaryTerm ?? 0n;
     return message;
   },
 };

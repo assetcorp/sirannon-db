@@ -38,11 +38,24 @@ ClientOptions {
 
 ```text
 TopologyAwareClientOptions extends ClientOptions {
+  endpoints?:      List<string>
   primary?:        string
   replicas?:       List<string>
   readPreference?: 'primary' | 'replica' | 'nearest'   (default: 'primary')
+  discovery?:      'static' | 'coordinator'            (default: 'static')
+  readConcern?:    'local' | 'majority' | 'linearizable'
 }
 ```
+
+`endpoints` is a starter list in coordinator mode. It does not
+have to contain the current primary, but at least one endpoint
+must be reachable for discovery to succeed.
+
+`readConcern` is the client-level default for remote query
+operations. A `QueryOptions.readConcern` value supplied to
+`RemoteDatabase.query` overrides this default for that query. If
+neither value is supplied, the client uses the normal server or
+routing default for the selected mode.
 
 ### database(id)
 
@@ -67,7 +80,7 @@ accepts a statement array instead of a callback function.
 
 ```text
 RemoteDatabase {
-  query<T>(sql: string, params?: Params): async -> List<T>
+  query<T>(sql: string, params?: Params, options?: QueryOptions): async -> List<T>
   execute(sql: string, params?: Params): async -> ExecuteResponse
   transaction(statements: List<{ sql: string, params?: Params }>):
     async -> List<ExecuteResponse>
@@ -76,11 +89,18 @@ RemoteDatabase {
 }
 ```
 
-### query(sql, params?)
+### query(sql, params?, options?)
 
 Sends a query request to the server and returns the rows. Over
 HTTP, this maps to `POST /db/{id}/query`. Over WebSocket, this
 sends a `query` message and waits for a `result` response.
+`options` uses the shared `QueryOptions` contract from
+[02-core.md](02-core.md#queryoptions). For remote queries,
+`readConcern` selects the required read guarantee. A per-query
+`readConcern` overrides the client-level
+`TopologyAwareClientOptions.readConcern`; if neither is supplied,
+the client uses the normal server or routing default for the
+selected mode.
 
 ### execute(sql, params?)
 
@@ -186,7 +206,11 @@ the client routes operations based on the read preference.
 
 ### Read Preference
 
-| Value | Behavior |
+In static mode, the configured `primary` and `replicas` endpoints
+are used directly. In coordinator mode, these choices are made
+from discovered routing metadata.
+
+| Value | Behaviour |
 |-------|----------|
 | `primary` | All operations go to the primary endpoint. |
 | `replica` | Reads go to a randomly selected replica. Writes go to the primary. Falls back to primary if no replicas are available. |
@@ -205,6 +229,45 @@ latency to each endpoint. The recommended measurement approach:
 
 Write operations (`execute`, `transaction`) always route to the
 primary endpoint, regardless of read preference.
+
+### Coordinator-Mode Discovery
+
+When `discovery` is `coordinator`, the client must treat configured
+endpoints as a starter list. Before the first operation for a
+database, it must call `GET /db/{id}/cluster` on one reachable
+starter endpoint and cache the returned `currentPrimary`,
+`primaryTerm`, and readable endpoints.
+
+Writes must be sent to the discovered current primary. If a write
+fails with `STALE_PRIMARY`, `AUTHORITY_LOST`,
+`COORDINATOR_UNAVAILABLE`, `NO_SAFE_PRIMARY`, or a connection
+failure, the client must refresh cluster metadata before retrying
+when retry is safe for the operation. Non-idempotent writes must
+not be retried automatically unless the runtime can prove that the
+server did not commit the operation.
+
+Reads must honour both read preference and the effective read
+concern selected by the precedence rule in
+[`query(sql, params?, options?)`](#querysql-params-options):
+
+- `linearizable` reads route to the current primary and require
+  live primary authority.
+- `majority` reads may route to the primary or to an endpoint
+  advertised for `majority` reads.
+- `local` reads may route according to read preference and can
+  observe stale data.
+
+If discovery cannot find a current primary, writes fail with
+`NO_SAFE_PRIMARY` or `COORDINATOR_UNAVAILABLE`. If no configured
+or discovered endpoint can be reached, the client fails with
+`ROUTING_ERROR`.
+
+### Subscriptions in Coordinator Mode
+
+Subscriptions attach to the endpoint selected for the requested
+read concern. When routing metadata changes, the client must
+re-establish active subscriptions on a valid endpoint or surface a
+clear remote error to the subscriber.
 
 ---
 
@@ -228,3 +291,4 @@ mismatches) use these codes:
 | `TIMEOUT` | Request exceeded the configured timeout |
 | `TRANSPORT_ERROR` | Operation not supported by the current transport |
 | `INVALID_RESPONSE` | Server returned a non-JSON response |
+| `ROUTING_ERROR` | Client could not discover a usable primary or read endpoint |

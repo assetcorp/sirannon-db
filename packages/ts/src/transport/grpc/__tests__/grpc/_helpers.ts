@@ -78,7 +78,7 @@ export async function setupPrimaryReplica(
 
   await replica.connect('replica-node', {
     localRole: 'replica',
-    endpoints: [`127.0.0.1:${port}`],
+    endpoints: [`localhost:${port}`],
   })
 
   await waitFor(() => primary.peers().size > 0 && replica.peers().size > 0)

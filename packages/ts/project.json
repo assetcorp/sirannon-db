@@ -33,17 +33,24 @@
         "cwd": "packages/ts"
       }
     },
+    "test:soak": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm vitest run --config vitest.soak.config.ts",
+        "cwd": "packages/ts"
+      }
+    },
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm biome check src/",
+        "command": "pnpm run lint",
         "cwd": "packages/ts"
       }
     },
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm tsc --noEmit",
+        "command": "pnpm run typecheck",
         "cwd": "packages/ts"
       }
     },

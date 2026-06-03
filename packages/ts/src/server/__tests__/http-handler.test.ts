@@ -1,7 +1,8 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SirannonError } from '../../core/errors.js'
 import type { Sirannon } from '../../core/sirannon.js'
+import type { ServerExecutionTarget } from '../../core/types.js'
 import { handleExecute, handleQuery, handleTransaction, initAbortHandler, readBody } from '../http-handler.js'
 
 interface MockResponseState {
@@ -282,6 +283,56 @@ describe('http-handler status mapping and catch branches', () => {
     expect(body.error?.code).toBe('INVALID_JSON')
   })
 
+  it('rejects invalid read concern before query execution', async () => {
+    const mock = createMockResponse()
+    const db = {
+      query: () => {
+        throw new Error('query should not run')
+      },
+    }
+    const sirannon = {
+      resolve: () => Promise.resolve(db),
+    } as unknown as Sirannon
+    const handler = handleQuery(sirannon)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'SELECT 1', readConcern: { level: 'eventual' } })),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_REQUEST')
+  })
+
+  it('rejects invalid write concern before execute', async () => {
+    const mock = createMockResponse()
+    const db = {
+      execute: () => {
+        throw new Error('execute should not run')
+      },
+    }
+    const sirannon = {
+      resolve: () => Promise.resolve(db),
+    } as unknown as Sirannon
+    const handler = handleExecute(sirannon)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(
+        JSON.stringify({ sql: 'INSERT INTO t VALUES (1)', writeConcern: { level: 'majority', timeoutMs: 0 } }),
+      ),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(mock.state.status).toBe('400')
+    const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
+    expect(body.error?.code).toBe('INVALID_REQUEST')
+  })
+
   it('returns INTERNAL_ERROR for unexpected transaction errors', async () => {
     const mock = createMockResponse()
     const db = {
@@ -325,5 +376,103 @@ describe('http-handler status mapping and catch branches', () => {
     expect(mock.state.status).toBe('400')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
     expect(body.error?.code).toBe('INVALID_JSON')
+  })
+})
+
+describe('http-handler execution target routing', () => {
+  it('routes queries through the configured execution target', async () => {
+    const mock = createMockResponse()
+    const query = vi.fn(async (_sql: string, _params?: unknown, _options?: unknown) => [{ id: 1 }])
+    const target: ServerExecutionTarget = {
+      query: async <T = Record<string, unknown>>(...args: Parameters<ServerExecutionTarget['query']>) =>
+        (await query(...args)) as T[],
+      execute: vi.fn(),
+      transaction: vi.fn(),
+    }
+    const sirannon = {
+      resolve: vi.fn(async () => {
+        throw new Error('raw database should not resolve')
+      }),
+    } as unknown as Sirannon
+    const handler = handleQuery(sirannon, () => target)
+
+    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
+      aborted: false,
+      onAbort: () => {},
+    })
+
+    expect(query).toHaveBeenCalledWith('SELECT 1', undefined, undefined)
+    expect(mock.state.status).toBe('200 OK')
+    const body = JSON.parse(mock.state.body ?? '{}') as { rows?: unknown[] }
+    expect(body.rows).toEqual([{ id: 1 }])
+  })
+
+  it('routes execute through the configured execution target with write concern', async () => {
+    const mock = createMockResponse()
+    const target: ServerExecutionTarget = {
+      query: vi.fn(),
+      execute: vi.fn(async () => ({ changes: 1, lastInsertRowId: 5n })),
+      transaction: vi.fn(),
+    }
+    const sirannon = {
+      resolve: vi.fn(async () => {
+        throw new Error('raw database should not resolve')
+      }),
+    } as unknown as Sirannon
+    const handler = handleExecute(sirannon, () => target)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(
+        JSON.stringify({
+          sql: 'INSERT INTO users (name) VALUES (?)',
+          params: ['Alice'],
+          writeConcern: { level: 'majority', timeoutMs: 1000 },
+        }),
+      ),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(target.execute).toHaveBeenCalledWith('INSERT INTO users (name) VALUES (?)', ['Alice'], {
+      writeConcern: { level: 'majority', timeoutMs: 1000 },
+    })
+    expect(mock.state.status).toBe('200 OK')
+    const body = JSON.parse(mock.state.body ?? '{}') as { changes?: number; lastInsertRowId?: string }
+    expect(body).toMatchObject({ changes: 1, lastInsertRowId: '5' })
+  })
+
+  it('routes transactions through the configured execution target with write concern', async () => {
+    const mock = createMockResponse()
+    const tx = {
+      execute: vi.fn(async () => ({ changes: 1, lastInsertRowId: 0 })),
+    }
+    const target: ServerExecutionTarget = {
+      query: vi.fn(),
+      execute: vi.fn(),
+      transaction: vi.fn(async fn => fn(tx as never)),
+    }
+    const sirannon = {
+      resolve: vi.fn(async () => {
+        throw new Error('raw database should not resolve')
+      }),
+    } as unknown as Sirannon
+    const handler = handleTransaction(sirannon, () => target)
+
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(
+        JSON.stringify({
+          statements: [{ sql: 'UPDATE users SET name = ?', params: ['Alice'] }],
+          writeConcern: { level: 'majority' },
+        }),
+      ),
+      { aborted: false, onAbort: () => {} },
+    )
+
+    expect(target.transaction).toHaveBeenCalledWith(expect.any(Function), { writeConcern: { level: 'majority' } })
+    expect(tx.execute).toHaveBeenCalledWith('UPDATE users SET name = ?', ['Alice'])
+    expect(mock.state.status).toBe('200 OK')
   })
 })

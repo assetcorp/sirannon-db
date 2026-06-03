@@ -49,17 +49,24 @@ message BatchPayload {
   HlcRange hlc_range = 5;
   repeated ReplicationChange changes = 6;
   string checksum = 7;
+  string group_id = 8;
+  int64 primary_term = 9;
 }
 
 message AckPayload {
   string batch_id = 1;
   int64 acked_seq = 2;
   string node_id = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message Hello {
   string node_id = 1;
   string role = 2;
+  string group_id = 3;
+  int64 primary_term = 4;
+  string protocol_version = 5;
 }
 
 message ReplicationMessage {
@@ -74,6 +81,8 @@ message SyncRequestPayload {
   string request_id = 1;
   string joiner_node_id = 2;
   repeated string completed_tables = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message SyncBatchPayload {
@@ -84,12 +93,16 @@ message SyncBatchPayload {
   repeated string schema = 5;
   string checksum = 6;
   bool is_last_batch_for_table = 7;
+  string group_id = 8;
+  int64 primary_term = 9;
 }
 
 message SyncCompletePayload {
   string request_id = 1;
   int64 snapshot_seq = 2;
   repeated SyncTableManifest manifests = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }
 
 message SyncTableManifest {
@@ -105,6 +118,8 @@ message SyncAckPayload {
   int32 batch_index = 4;
   bool success = 5;
   string error = 6;
+  string group_id = 7;
+  int64 primary_term = 8;
 }
 
 message SyncMessage {
@@ -126,6 +141,8 @@ message Statement {
 message ForwardRequest {
   string request_id = 1;
   repeated Statement statements = 2;
+  string group_id = 3;
+  int64 primary_term = 4;
 }
 
 message StatementResult {
@@ -137,4 +154,6 @@ message ForwardResponse {
   string request_id = 1;
   repeated StatementResult results = 2;
   string error = 3;
+  string group_id = 4;
+  int64 primary_term = 5;
 }

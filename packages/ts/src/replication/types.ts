@@ -1,9 +1,17 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
+import type {
+  ClusterCoordinator,
+  CoordinatorCompatibilityMetadata,
+  ReplicationGroupState,
+} from './coordinator/types.js'
 
 export interface NodeInfo {
   id: string
+  groupId?: string
   role: 'primary' | 'replica'
+  primaryTerm?: bigint
+  protocolVersion?: string
   joinedAt: number
   lastSeenAt: number
   lastAckedSeq: bigint
@@ -37,22 +45,30 @@ export interface ReplicationBatch {
   hlcRange: { min: string; max: string }
   changes: ReplicationChange[]
   checksum: string
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface ReplicationAck {
   batchId: string
   ackedSeq: bigint
   nodeId: string
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface ForwardedTransaction {
   statements: Array<{ sql: string; params?: Record<string, unknown> | unknown[] }>
   requestId: string
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface ForwardedTransactionResult {
   results: Array<{ changes: number; lastInsertRowId: number | string }>
   requestId: string
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface ConflictContext {
@@ -86,6 +102,9 @@ export interface Topology {
 export interface TransportConfig {
   endpoints?: string[]
   localRole?: TopologyRole
+  groupId?: string
+  primaryTerm?: bigint
+  protocolVersion?: string
   metadata?: Record<string, unknown>
 }
 
@@ -131,6 +150,24 @@ export interface PeerState {
   inFlightBatches: InFlightBatch[]
 }
 
+export interface CoordinatorControllerConfig {
+  enabled?: boolean
+  holderId?: string
+  leaseTtlMs?: number
+  tickIntervalMs?: number
+}
+
+export interface CoordinatorModeConfig {
+  clusterId: string
+  groupId: string
+  endpoint?: string
+  votingDataBearingNodeIds?: string[]
+  coordinator: ClusterCoordinator
+  sessionTtlMs?: number
+  controller?: boolean | CoordinatorControllerConfig
+  compatibility?: CoordinatorCompatibilityMetadata
+}
+
 export interface ReplicationConfig {
   nodeId?: string
   topology: Topology
@@ -161,6 +198,7 @@ export interface ReplicationConfig {
   resumeFromSeq?: bigint
   snapshotConnectionFactory?: () => Promise<SQLiteConnection>
   changeTracker?: ChangeTracker
+  coordinator?: CoordinatorModeConfig
 }
 
 export interface ReplicationStatus {
@@ -170,6 +208,21 @@ export interface ReplicationStatus {
   localSeq: bigint
   replicating: boolean
   syncState?: SyncState
+  coordinator?: CoordinatorRuntimeStatus
+}
+
+export interface CoordinatorRuntimeStatus {
+  clusterId: string
+  groupId: string
+  currentPrimary: ReplicationGroupState['currentPrimary']
+  primaryTerm: bigint
+  inSyncNodeIds: string[]
+  drainingNodeIds: string[]
+  repairingNodeIds: string[]
+  faultedNodeIds: string[]
+  votingDataBearingNodeIds: string[]
+  authority: boolean
+  controllerState: 'disabled' | 'standby' | 'active' | 'lost'
 }
 
 export interface ApplyResult {
@@ -195,6 +248,8 @@ export interface SyncRequest {
   requestId: string
   joinerNodeId: string
   completedTables: string[]
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface SyncBatch {
@@ -205,6 +260,8 @@ export interface SyncBatch {
   schema?: string[]
   checksum: string
   isLastBatchForTable: boolean
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface SyncTableManifest {
@@ -217,6 +274,8 @@ export interface SyncComplete {
   requestId: string
   snapshotSeq: bigint
   manifests: SyncTableManifest[]
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface SyncAck {
@@ -226,6 +285,8 @@ export interface SyncAck {
   batchIndex: number
   success: boolean
   error?: string
+  groupId?: string
+  primaryTerm?: bigint
 }
 
 export interface ReplicationErrorEvent {

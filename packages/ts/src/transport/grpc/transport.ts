@@ -57,6 +57,9 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   readonly options: GrpcReplicationOptions
   localNodeId = ''
   localRole: TopologyRole = 'replica'
+  localGroupId: string | undefined
+  localPrimaryTerm: bigint | undefined
+  localProtocolVersion: string | undefined
   connected = false
   server: Server | null = null
   boundPort = 0
@@ -94,9 +97,12 @@ export class GrpcReplicationTransport implements ReplicationTransport {
 
     this.localNodeId = localNodeId
     this.localRole = config.localRole ?? 'replica'
+    this.localGroupId = config.groupId
+    this.localPrimaryTerm = config.primaryTerm
+    this.localProtocolVersion = config.protocolVersion
     this.connected = true
 
-    if (this.localRole === 'primary') {
+    if (this.localRole === 'primary' || config.groupId) {
       await startServer(this)
     }
 
@@ -220,6 +226,8 @@ export class GrpcReplicationTransport implements ReplicationTransport {
               changes: r.changes,
               lastInsertRowId: Number(r.lastInsertRowId),
             })),
+            groupId: response.groupId || undefined,
+            primaryTerm: response.primaryTerm === 0n ? undefined : response.primaryTerm,
           })
         },
       )

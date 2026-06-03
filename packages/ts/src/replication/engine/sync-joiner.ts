@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
-import type { SyncBatch, SyncComplete } from '../types.js'
+import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
+import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
@@ -17,12 +18,18 @@ export class SyncJoiner {
     }
 
     const peers = engine.config.transport.peers()
-    let sourcePeerId: string | null = null
+    let sourcePeerId: string | null = engine.isCoordinatorMode() ? engine.getCurrentPrimaryPeerId() : null
 
-    for (const [peerId, info] of peers) {
-      if (info.role === 'primary') {
-        sourcePeerId = peerId
-        break
+    if (engine.isCoordinatorMode() && sourcePeerId === null) {
+      return
+    }
+
+    if (sourcePeerId === null) {
+      for (const [peerId, info] of peers) {
+        if (info.role === 'primary') {
+          sourcePeerId = peerId
+          break
+        }
       }
     }
 
@@ -41,11 +48,14 @@ export class SyncJoiner {
     const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
 
     const requestId = randomUUID()
-    await engine.config.transport.requestSync(sourcePeerId, {
-      requestId,
-      joinerNodeId: engine.nodeId,
-      completedTables,
-    })
+    await engine.config.transport.requestSync(
+      sourcePeerId,
+      engine.decorateSyncRequest({
+        requestId,
+        joinerNodeId: engine.nodeId,
+        completedTables,
+      }),
+    )
 
     engine.syncState.phase = 'syncing'
     engine.syncState.sourcePeerId = sourcePeerId
@@ -64,7 +74,7 @@ export class SyncJoiner {
 
     const expectedIndex = engine.expectedBatchIndex.get(batch.table) ?? 0
     if (batch.batchIndex !== expectedIndex) {
-      await engine.config.transport.sendSyncAck(fromPeerId, {
+      await this.sendSyncAck(fromPeerId, {
         requestId: batch.requestId,
         joinerNodeId: engine.nodeId,
         table: batch.table,
@@ -92,7 +102,7 @@ export class SyncJoiner {
           }
         }
 
-        await engine.config.transport.sendSyncAck(fromPeerId, {
+        await this.sendSyncAck(fromPeerId, {
           requestId: batch.requestId,
           joinerNodeId: engine.nodeId,
           table: batch.table,
@@ -139,7 +149,7 @@ export class SyncJoiner {
         engine.expectedBatchIndex.delete(batch.table)
       }
 
-      await engine.config.transport.sendSyncAck(fromPeerId, {
+      await this.sendSyncAck(fromPeerId, {
         requestId: batch.requestId,
         joinerNodeId: engine.nodeId,
         table: batch.table,
@@ -149,19 +159,17 @@ export class SyncJoiner {
     } catch (err) {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'sync-batch-processing', peerId: fromPeerId, recoverable: true })
-      await engine.config.transport
-        .sendSyncAck(fromPeerId, {
-          requestId: batch.requestId,
-          joinerNodeId: engine.nodeId,
-          table: batch.table,
-          batchIndex: batch.batchIndex,
-          success: false,
-          error: wrappedErr.message,
-        })
-        .catch((ackErr: unknown) => {
-          const ackWrapped = ackErr instanceof Error ? ackErr : new Error(String(ackErr))
-          engine.emitError({ error: ackWrapped, operation: 'sync-ack-send', peerId: fromPeerId, recoverable: true })
-        })
+      await this.sendSyncAck(fromPeerId, {
+        requestId: batch.requestId,
+        joinerNodeId: engine.nodeId,
+        table: batch.table,
+        batchIndex: batch.batchIndex,
+        success: false,
+        error: wrappedErr.message,
+      }).catch((ackErr: unknown) => {
+        const ackWrapped = ackErr instanceof Error ? ackErr : new Error(String(ackErr))
+        engine.emitError({ error: ackWrapped, operation: 'sync-ack-send', peerId: fromPeerId, recoverable: true })
+      })
     }
   }
 
@@ -244,9 +252,7 @@ export class SyncJoiner {
       }
 
       if (Date.now() - catchUpStartedAt > engine.catchUpDeadlineMs) {
-        engine.syncState.phase = 'ready'
-        await engine.log.setSyncMeta('ready')
-        this.stopCatchUpCheck()
+        await this.finishCatchUpAsReady()
         return
       }
 
@@ -256,16 +262,12 @@ export class SyncJoiner {
       if (engine.highestSourceSeqSeen === 0n) {
         const snapshotSeq = engine.syncState.snapshotSeq ?? 0n
         if (snapshotSeq === 0n) {
-          engine.syncState.phase = 'ready'
-          await engine.log.setSyncMeta('ready')
-          this.stopCatchUpCheck()
+          await this.finishCatchUpAsReady()
           return
         }
         const localSeq = await engine.log.getLocalSeq()
         if (localSeq === 0n) {
-          engine.syncState.phase = 'ready'
-          await engine.log.setSyncMeta('ready')
-          this.stopCatchUpCheck()
+          await this.finishCatchUpAsReady()
           return
         }
         return
@@ -274,9 +276,7 @@ export class SyncJoiner {
       const appliedSeq = await engine.log.getLastAppliedSeq(sourcePeerId)
       const lag = engine.highestSourceSeqSeen - appliedSeq
       if (lag <= BigInt(engine.maxSyncLagBeforeReady)) {
-        engine.syncState.phase = 'ready'
-        await engine.log.setSyncMeta('ready')
-        this.stopCatchUpCheck()
+        await this.finishCatchUpAsReady()
       }
     }, engine.batchIntervalMs * 2)
   }
@@ -286,5 +286,18 @@ export class SyncJoiner {
       clearInterval(this.catchUpCheckTimer)
       this.catchUpCheckTimer = null
     }
+  }
+
+  private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
+    await delayAckIfConfigured(this.engine)
+    await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
+  }
+
+  private async finishCatchUpAsReady(): Promise<void> {
+    const engine = this.engine
+    await engine.log.setSyncMeta('ready')
+    await engine.markCoordinatorSyncReady()
+    engine.syncState.phase = 'ready'
+    this.stopCatchUpCheck()
   }
 }

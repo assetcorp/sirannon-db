@@ -51,7 +51,7 @@ describe('E2E: write forwarding from replica to primary via Forward RPC', () => 
     replica = await createReplica({
       nodeId: REPLICA_ID,
       certs,
-      primaryHost: '127.0.0.1',
+      primaryHost: 'localhost',
       primaryPort: primary.port,
       configOverrides: { writeForwarding: true },
     })

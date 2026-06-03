@@ -93,7 +93,7 @@ importers:
         specifier: 4.0.18
         version: 4.0.18(@types/node@25.3.3)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2)
 
-  packages/ts/examples/node-better-sqlite3:
+  packages/ts/examples/node:
     dependencies:
       '@delali/sirannon-db':
         specifier: workspace:*
@@ -105,22 +105,6 @@ importers:
       '@types/better-sqlite3':
         specifier: 7.6.13
         version: 7.6.13
-      '@types/node':
-        specifier: 25.5.0
-        version: 25.5.0
-      tsx:
-        specifier: 4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
-
-  packages/ts/examples/node-native:
-    dependencies:
-      '@delali/sirannon-db':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
       '@types/node':
         specifier: 25.5.0
         version: 25.5.0

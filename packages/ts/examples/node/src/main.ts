@@ -2,16 +2,105 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
-import { createTenantResolver, Database, Sirannon, sanitizeTenantId, tenantPath } from '@delali/sirannon-db'
-import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import {
+  createTenantResolver,
+  Database,
+  Sirannon,
+  type SQLiteDriver,
+  sanitizeTenantId,
+  tenantPath,
+} from '@delali/sirannon-db'
 import { loadMigrations } from '@delali/sirannon-db/file-migrations'
 
-const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-example-'))
+type NodeDriverName = 'better-sqlite3' | 'node'
+
+interface DriverSelection {
+  driver: SQLiteDriver
+  label: string
+  tempPrefix: string
+}
+
+function printUsage(): void {
+  console.log(`Usage: pnpm start -- --driver=<driver>
+
+Drivers:
+  better-sqlite3   Use the better-sqlite3 package
+  better           Alias for better-sqlite3
+  node             Use Node's built-in node:sqlite driver
+  node-native      Alias for node
+`)
+}
+
+function parseDriverName(args: readonly string[]): NodeDriverName | 'help' {
+  let driverName: NodeDriverName = 'better-sqlite3'
+
+  for (const arg of args) {
+    if (arg === '--help' || arg === '-h') {
+      return 'help'
+    }
+
+    if (!arg.startsWith('--driver=')) {
+      throw new Error(`Unsupported argument '${arg}'. Use --help to see supported options.`)
+    }
+
+    const value = arg.slice('--driver='.length)
+    if (value === 'better-sqlite3' || value === 'better') {
+      driverName = 'better-sqlite3'
+      continue
+    }
+
+    if (value === 'node' || value === 'node-native') {
+      driverName = 'node'
+      continue
+    }
+
+    throw new Error(`Unsupported driver '${value}'. Use --help to see supported drivers.`)
+  }
+
+  return driverName
+}
+
+async function loadDriver(driverName: NodeDriverName): Promise<DriverSelection> {
+  if (driverName === 'better-sqlite3') {
+    const { betterSqlite3 } = await import('@delali/sirannon-db/driver/better-sqlite3')
+    return {
+      driver: betterSqlite3(),
+      label: 'better-sqlite3',
+      tempPrefix: 'sirannon-example-node-better-',
+    }
+  }
+
+  const { nodeSqlite } = await import('@delali/sirannon-db/driver/node')
+  return {
+    driver: nodeSqlite(),
+    label: 'built-in sqlite',
+    tempPrefix: 'sirannon-example-node-native-',
+  }
+}
+
+let tempDir: string | undefined
+
+function cleanupTempDir(): void {
+  if (!tempDir) {
+    return
+  }
+
+  const dir = tempDir
+  tempDir = undefined
+  rmSync(dir, { recursive: true, force: true })
+}
 
 async function main() {
-  console.log('=== Sirannon DB: better-sqlite3 driver example ===\n')
+  const parsedDriverName = parseDriverName(process.argv.slice(2))
+  if (parsedDriverName === 'help') {
+    printUsage()
+    return
+  }
 
-  const driver = betterSqlite3()
+  const { driver, label, tempPrefix } = await loadDriver(parsedDriverName)
+  tempDir = mkdtempSync(join(tmpdir(), tempPrefix))
+
+  console.log(`=== Sirannon DB: Node.js ${label} driver example ===\n`)
 
   console.log('1. Creating database with Database.create()...')
   const dbPath = join(tempDir, 'example.db')
@@ -165,8 +254,8 @@ async function main() {
   console.log('11. Hooks: beforeQuery and afterQuery...')
   const hookSirannon = new Sirannon({ driver })
   hookSirannon.onBeforeQuery(ctx => {
-    if (ctx.sql.includes('DROP')) {
-      throw new Error('DROP statements are blocked by hook')
+    if (ctx.sql.trim() === 'DROP TABLE test') {
+      throw new Error('DROP TABLE test is blocked by hook')
     }
   })
   hookSirannon.onDatabaseOpen(ctx => {
@@ -205,7 +294,7 @@ async function main() {
   await db.close()
   console.log('   Main database closed.')
   console.log('   Cleaning up temp directory...')
-  rmSync(tempDir, { recursive: true, force: true })
+  cleanupTempDir()
   console.log('   Done.\n')
 
   console.log('=== All features demonstrated ===')
@@ -213,6 +302,10 @@ async function main() {
 
 main().catch(err => {
   console.error('Fatal error:', err)
-  rmSync(tempDir, { recursive: true, force: true })
-  process.exit(1)
+  try {
+    cleanupTempDir()
+  } catch (cleanupError) {
+    console.error('Cleanup error:', cleanupError)
+  }
+  process.exitCode = 1
 })

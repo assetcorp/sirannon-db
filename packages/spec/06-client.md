@@ -74,7 +74,7 @@ accepts a statement array instead of a callback function.
 
 ```text
 RemoteDatabase {
-  query<T>(sql: string, params?: Params): async -> List<T>
+  query<T>(sql: string, params?: Params, options?: QueryOptions): async -> List<T>
   execute(sql: string, params?: Params): async -> ExecuteResponse
   transaction(statements: List<{ sql: string, params?: Params }>):
     async -> List<ExecuteResponse>
@@ -83,11 +83,14 @@ RemoteDatabase {
 }
 ```
 
-### query(sql, params?)
+### query(sql, params?, options?)
 
 Sends a query request to the server and returns the rows. Over
 HTTP, this maps to `POST /db/{id}/query`. Over WebSocket, this
 sends a `query` message and waits for a `result` response.
+`options` uses the shared `QueryOptions` contract from
+[02-core.md](02-core.md#queryoptions). For remote queries,
+`readConcern` selects the required read guarantee.
 
 ### execute(sql, params?)
 

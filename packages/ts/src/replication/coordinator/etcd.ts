@@ -196,11 +196,16 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.leases.delete(leaseId)
     const currentValue = await this.namespace.get(entry.key).string()
     const currentLeaseId = currentValue ? parseLeaseIdForEntry(entry.kind, currentValue) : null
-    if (currentLeaseId === leaseId) {
-      await this.namespace.delete().key(entry.key)
+    let released = false
+    if (currentLeaseId === leaseId && currentValue) {
+      const result = await this.namespace
+        .if(entry.key, 'Value', '==', currentValue)
+        .then(this.namespace.delete().key(entry.key))
+        .commit()
+      released = result.succeeded === true
     }
     await revokeLeaseQuietly(entry.lease)
-    return currentLeaseId === leaseId
+    return released
   }
 
   async registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession> {
@@ -209,6 +214,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     assertPositiveTtl(input.ttlMs)
 
     const key = nodeSessionKey(input.clusterId, input.nodeId)
+    const existingRawSession = await this.namespace.get(key).string()
+    if (existingRawSession) {
+      const existingSession = parseNodeSession(existingRawSession)
+      if (existingSession.lease.expiresAtMs > Date.now()) {
+        throw new CoordinatorError(`Node session '${input.nodeId}' is already registered`)
+      }
+    }
+
     const lease = this.namespace.lease(ttlMsToSeconds(input.ttlMs))
     const leaseId = await lease.grant()
     const grantedAtMs = Date.now()
@@ -233,7 +246,16 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       metadata: cloneMetadata(input.metadata),
     }
 
-    await this.namespace.put(key).value(JSON.stringify(session)).lease(leaseId)
+    const rawSession = JSON.stringify(session)
+    const transaction = existingRawSession
+      ? this.namespace.if(key, 'Value', '==', existingRawSession)
+      : this.namespace.if(key, 'Create', '==', 0)
+    const result = await transaction.then(this.namespace.put(key).value(rawSession).lease(leaseId)).commit()
+    if (!result.succeeded) {
+      await revokeLeaseQuietly(lease)
+      throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
+    }
+
     this.trackLease(lease, {
       leaseId,
       key,
@@ -255,7 +277,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       },
     })
 
-    return parseNodeSession(JSON.stringify(session))
+    return parseNodeSession(rawSession)
   }
 
   async getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null> {

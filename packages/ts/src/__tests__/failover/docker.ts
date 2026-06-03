@@ -137,11 +137,11 @@ export async function cleanupDockerResources(handles: { containers: string[]; ne
 }
 
 export async function allocatePorts(count: number): Promise<number[]> {
-  const ports: number[] = []
-  for (let index = 0; index < count; index++) {
-    ports.push(await allocatePort())
+  const ports = new Set<number>()
+  while (ports.size < count) {
+    ports.add(await allocatePort())
   }
-  return ports
+  return [...ports]
 }
 
 export async function allocatePort(): Promise<number> {

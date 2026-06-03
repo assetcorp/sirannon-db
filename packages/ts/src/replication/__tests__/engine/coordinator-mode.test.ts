@@ -111,6 +111,47 @@ describe('ReplicationEngine coordinator mode', () => {
     await engine.stop()
   })
 
+  it('excludes drained voters from coordinator all writes', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_A, endpoint: 'https://node-a.example.com' },
+      primaryTerm: 3n,
+      inSyncNodeIds: [NODE_A, NODE_B, NODE_C],
+      drainingNodeIds: [NODE_C],
+    })
+
+    const engine = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('primary'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await engine.start()
+    engine.peerTracker.addPeer(NODE_B)
+    engine.peerTracker.addPeer(NODE_C)
+    engine.peerTracker.onAckReceived(NODE_B, 1n)
+
+    await engine.execute("INSERT INTO items (name) VALUES ('alpha')", undefined, {
+      writeConcern: { level: 'all', timeoutMs: 5 },
+    })
+
+    const state = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    expect(state?.durabilityPointSeq).toBe(1n)
+    expect(state?.inSyncNodeIds).toEqual([NODE_A, NODE_B])
+
+    await engine.stop()
+  })
+
   it('admits ACKing voters at the advanced durability point after alternating majority writes', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
     const coordinator = new InMemoryClusterCoordinator()

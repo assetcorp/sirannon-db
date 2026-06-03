@@ -106,16 +106,21 @@ export class FailoverNodeProcess {
     this.child.on('message', message => {
       this.handleMessage(message as ChildMessage)
     })
+    this.child.on('error', err => {
+      this.readyReject?.(err)
+      this.rejectPendingRequests(err)
+    })
+    this.child.on('disconnect', () => {
+      const err = new Error(`failover node ${config.nodeId} IPC channel disconnected\n${this.logs()}`)
+      this.readyReject?.(err)
+      this.rejectPendingRequests(err)
+    })
     this.child.on('exit', (code, signal) => {
       const err = new Error(
         `failover node ${config.nodeId} exited code=${code ?? 'null'} signal=${signal ?? 'null'}\n${this.logs()}`,
       )
       this.readyReject?.(err)
-      for (const [id, pending] of this.pending) {
-        clearTimeout(pending.timer)
-        pending.reject(err)
-        this.pending.delete(id)
-      }
+      this.rejectPendingRequests(err)
     })
   }
 
@@ -178,8 +183,7 @@ export class FailoverNodeProcess {
   }
 
   private request(command: string, payload: Record<string, unknown>, timeoutMs: number): Promise<JsonValue> {
-    const send = this.child.send
-    if (!send || this.child.exitCode !== null || this.child.signalCode !== null) {
+    if (!this.child.send || this.child.exitCode !== null || this.child.signalCode !== null) {
       return Promise.reject(new Error(`failover node ${this.config.nodeId} is not running\n${this.logs()}`))
     }
 
@@ -191,8 +195,33 @@ export class FailoverNodeProcess {
       }, timeoutMs)
       timer.unref?.()
       this.pending.set(id, { command, payload, resolve, reject, timer })
-      this.child.send?.({ id, command, payload })
+      try {
+        this.child.send({ id, command, payload }, (sendErr: Error | null) => {
+          if (!sendErr) return
+          const pending = this.pending.get(id)
+          if (!pending) return
+          clearTimeout(pending.timer)
+          this.pending.delete(id)
+          pending.reject(withRequestContext(sendErr, this.config.nodeId, command, payload))
+        })
+      } catch (err: unknown) {
+        const pending = this.pending.get(id)
+        if (!pending) return
+        clearTimeout(pending.timer)
+        this.pending.delete(id)
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        pending.reject(withRequestContext(wrappedErr, this.config.nodeId, command, payload))
+      }
     })
+  }
+
+  private rejectPendingRequests(err: Error): void {
+    const pendingRequests = [...this.pending.values()]
+    this.pending.clear()
+    for (const pending of pendingRequests) {
+      clearTimeout(pending.timer)
+      pending.reject(err)
+    }
   }
 
   private handleMessage(message: ChildMessage): void {

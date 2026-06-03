@@ -26,6 +26,8 @@ interface ClusterRoutingState {
   readEndpoints: Array<{ url: string; readConcerns: ReadConcernLevel[] }>
 }
 
+const CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS = 2_000
+
 function isTopologyConfig(urlOrOpts: string | TopologyAwareClientOptions): urlOrOpts is TopologyAwareClientOptions {
   if (typeof urlOrOpts !== 'object') {
     return false
@@ -282,12 +284,16 @@ export class SirannonClient {
         throw new RemoteError('NO_SAFE_PRIMARY', 'No current primary is available for linearizable reads')
       }
       const readable = routing.readEndpoints.filter(endpoint => endpoint.readConcerns.includes(concern))
-      if (this.readPreference !== 'primary' && readable.length > 0) {
+      const preferredReadable =
+        this.readPreference === 'replica' && routing.currentPrimary
+          ? readable.filter(endpoint => endpoint.url !== routing.currentPrimary)
+          : readable
+      if (this.readPreference !== 'primary' && preferredReadable.length > 0) {
         if (this.readPreference === 'nearest') {
-          return readable[0].url
+          return preferredReadable[0].url
         }
-        const idx = Math.floor(Math.random() * readable.length)
-        return readable[idx].url
+        const idx = Math.floor(Math.random() * preferredReadable.length)
+        return preferredReadable[idx].url
       }
       if (routing.currentPrimary) return routing.currentPrimary
       const localReadable = routing.readEndpoints.find(endpoint => endpoint.readConcerns.includes('local'))
@@ -406,8 +412,15 @@ export class SirannonClient {
     const encodedId = encodeURIComponent(databaseId)
     for (const endpoint of candidates) {
       const base = toServerBaseUrl(endpoint, databaseId)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS)
+      const unrefable = timeout as unknown as { unref?: () => void }
+      unrefable.unref?.()
       try {
-        const response = await fetch(`${base}/db/${encodedId}/cluster`, { headers: this.headers })
+        const response = await fetch(`${base}/db/${encodedId}/cluster`, {
+          headers: this.headers,
+          signal: controller.signal,
+        })
         if (!response.ok) {
           continue
         }
@@ -418,6 +431,8 @@ export class SirannonClient {
         if (err instanceof RemoteError && err.code === 'INVALID_RESPONSE') {
           throw err
         }
+      } finally {
+        clearTimeout(timeout)
       }
     }
     throw new RemoteError('ROUTING_ERROR', `Could not discover cluster routing for database '${databaseId}'`)

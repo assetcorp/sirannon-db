@@ -10,11 +10,11 @@ function readPositiveInteger(name: string, fallback: number): number {
   }
 
   const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`)
   }
 
-  return Math.floor(parsed)
+  return parsed
 }
 
 const durationMs = readPositiveInteger('SIRANNON_SOAK_DURATION_MS', DEFAULT_DURATION_MS)

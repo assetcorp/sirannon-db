@@ -197,6 +197,37 @@ describe('TopologyAwareClientOptions', () => {
       client.close()
     })
 
+    it('routes coordinator replica reads away from a readable current primary', async () => {
+      await server.close()
+      server = createServer(sirannon, {
+        port: 0,
+        getClusterStatus: databaseId => ({
+          databaseId,
+          currentPrimary: { nodeId: 'node-a', endpoint: baseUrl },
+          primaryTerm: 1n,
+          readEndpoints: [
+            { nodeId: 'node-a', endpoint: baseUrl, readConcerns: ['local', 'majority', 'linearizable'] },
+            { nodeId: 'node-b', endpoint: replicaUrl, readConcerns: ['local', 'majority'] },
+          ],
+          health: 'healthy',
+        }),
+      })
+      await server.listen()
+      baseUrl = `http://127.0.0.1:${server.listeningPort}`
+
+      const client = new SirannonClient({
+        endpoints: [baseUrl],
+        discovery: 'coordinator',
+        readPreference: 'replica',
+        transport: 'http',
+      })
+      const db = client.database('testdb')
+      const rows = await db.query<{ name: string }>('SELECT name FROM users')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].name).toBe('ReplicaUser')
+      client.close()
+    })
+
     it('routes reads with readPreference nearest', async () => {
       const client = new SirannonClient({
         primary: baseUrl,

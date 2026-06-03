@@ -2,7 +2,13 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { QueryOptions } from '../../core/types.js'
-import type { ReplicationBatch, ReplicationStatus, SyncBatch, SyncRequest } from '../../replication/types.js'
+import type {
+  ForwardedTransaction,
+  ReplicationBatch,
+  ReplicationStatus,
+  SyncBatch,
+  SyncRequest,
+} from '../../replication/types.js'
 
 export type FailoverNodeRole = 'primary' | 'replica'
 
@@ -10,11 +16,13 @@ export interface FailoverNodeConfig {
   nodeId: string
   dbPath: string
   grpcPort: number
+  httpPort: number
   certPath: string
   keyPath: string
   caCertPath: string
   initialRole: FailoverNodeRole
   endpoints: string[]
+  httpEndpoints: Record<string, string>
   etcdHosts: string[]
   keyPrefix: string
   clusterId: string
@@ -58,6 +66,8 @@ interface ResponseMessage {
 type ChildMessage = ReadyMessage | ResponseMessage
 
 interface PendingRequest {
+  command: string
+  payload: Record<string, unknown>
   resolve: (value: JsonValue) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -121,6 +131,10 @@ export class FailoverNodeProcess {
     return this.request('executeBatch', { sql, paramsBatch, options }, 20_000)
   }
 
+  async localWriteProbe(id: number, note: string): Promise<JsonValue> {
+    return this.request('localWriteProbe', { id, note }, 20_000)
+  }
+
   async query(sql: string, params?: unknown[], options?: QueryOptions): Promise<JsonValue> {
     return this.request('query', { sql, params, options }, 20_000)
   }
@@ -143,6 +157,10 @@ export class FailoverNodeProcess {
 
   async sendRawSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
     await this.request('sendRawSyncBatch', { peerId, batch: serializeJson(batch) }, 20_000)
+  }
+
+  async sendRawForward(peerId: string, request: ForwardedTransaction): Promise<void> {
+    await this.request('sendRawForward', { peerId, request: serializeJson(request) }, 20_000)
   }
 
   async shutdown(): Promise<void> {
@@ -172,7 +190,7 @@ export class FailoverNodeProcess {
         reject(new Error(`Timed out waiting for ${command} on ${this.config.nodeId}\n${this.logs()}`))
       }, timeoutMs)
       timer.unref?.()
-      this.pending.set(id, { resolve, reject, timer })
+      this.pending.set(id, { command, payload, resolve, reject, timer })
       this.child.send?.({ id, command, payload })
     })
   }
@@ -193,7 +211,9 @@ export class FailoverNodeProcess {
       pending.resolve(message.result ?? null)
       return
     }
-    pending.reject(deserializeError(message.error))
+    pending.reject(
+      withRequestContext(deserializeError(message.error), this.config.nodeId, pending.command, pending.payload),
+    )
   }
 }
 
@@ -215,6 +235,25 @@ export function deserializeError(error: SerializedError | undefined): Error {
   result.code = error?.code
   result.details = error?.details
   return result
+}
+
+function withRequestContext(err: Error, nodeId: string, command: string, payload: Record<string, unknown>): Error {
+  const withCode = err as Error & {
+    code?: string
+    details?: Record<string, unknown>
+  }
+  const contextual = new Error(
+    `failover node ${nodeId} command '${command}' failed: ${err.message}\npayload=${JSON.stringify(
+      serializeJson(payload),
+    )}`,
+  ) as Error & {
+    code?: string
+    details?: Record<string, unknown>
+  }
+  contextual.name = err.name
+  contextual.code = withCode.code
+  contextual.details = withCode.details
+  return contextual
 }
 
 export function replicationStatus(value: SerializedReplicationStatus): ReplicationStatus {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
+import type { SQLiteConnection } from '../../../core/driver/types.js'
 import { InMemoryClusterCoordinator } from '../../coordinator/in-memory.js'
 import { ReplicationEngine } from '../../engine.js'
 import { PrimaryReplicaTopology } from '../../topology/primary-replica.js'
@@ -254,6 +255,107 @@ describe('ReplicationEngine coordinator mode', () => {
     await returningPrimary.stop()
   })
 
+  it('does not mark a deadline-ready coordinator replica in sync without durability proof', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_B, endpoint: 'https://node-b.example.com' },
+      primaryTerm: 2n,
+      durabilityPointSeq: 10n,
+      inSyncNodeIds: [NODE_B],
+      repairingNodeIds: [NODE_A],
+    })
+
+    const replica = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('replica'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await replica.start()
+    await recordAppliedSeq(conn, NODE_B, 5n)
+    replica.syncState = {
+      phase: 'ready',
+      sourcePeerId: NODE_B,
+      snapshotSeq: 5n,
+      completedTables: [],
+      totalTables: 0,
+      startedAt: null,
+      error: null,
+    }
+
+    await replica.markCoordinatorSyncReady()
+
+    const state = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    expect(state?.inSyncNodeIds).toEqual([NODE_B])
+    expect(state?.repairingNodeIds).toEqual([NODE_A])
+    await expect(
+      coordinator.promoteEligibleReplica({
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        excludeNodeIds: [NODE_B],
+      }),
+    ).rejects.toMatchObject({ code: 'NO_SAFE_PRIMARY' })
+
+    await replica.stop()
+  })
+
+  it('marks a coordinator replica in sync after durable catch-up reaches the durability point', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_B, endpoint: 'https://node-b.example.com' },
+      primaryTerm: 2n,
+      durabilityPointSeq: 10n,
+      inSyncNodeIds: [NODE_B],
+      repairingNodeIds: [NODE_A],
+    })
+
+    const replica = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('replica'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await replica.start()
+    await recordAppliedSeq(conn, NODE_B, 10n)
+    replica.syncState = {
+      phase: 'ready',
+      sourcePeerId: NODE_B,
+      snapshotSeq: 10n,
+      completedTables: [],
+      totalTables: 0,
+      startedAt: null,
+      error: null,
+    }
+
+    await replica.markCoordinatorSyncReady()
+
+    const state = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    expect(state?.inSyncNodeIds).toEqual([NODE_B, NODE_A])
+    expect(state?.repairingNodeIds).toEqual([])
+
+    await replica.stop()
+  })
+
   it('moves primary duty away from a draining live primary', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
     const coordinator = new InMemoryClusterCoordinator()
@@ -313,4 +415,11 @@ async function waitForCurrentPrimary(coordinator: InMemoryClusterCoordinator, no
     await new Promise(resolve => setTimeout(resolve, 5))
   }
   throw new Error(`Timed out waiting for primary '${nodeId}'`)
+}
+
+async function recordAppliedSeq(conn: SQLiteConnection, sourceNodeId: string, seq: bigint) {
+  const stmt = await conn.prepare(
+    'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
+  )
+  await stmt.run(sourceNodeId, seq.toString(), Date.now() / 1000)
 }

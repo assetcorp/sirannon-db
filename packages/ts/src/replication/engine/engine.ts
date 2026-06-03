@@ -350,9 +350,10 @@ export class ReplicationEngine extends EventEmitter {
       }
       if (wc.level === 'majority') {
         await this.peerTracker.waitForConfiguredMajority(seq, this.nodeId, state.votingDataBearingNodeIds, timeout)
-        await this.updateCoordinatorInSyncAfterWrite(seq, state)
+        await this.updateCoordinatorProgressAfterWrite(seq, state)
       } else if (wc.level === 'all') {
         await this.peerTracker.waitForConfiguredAll(seq, this.nodeId, state.votingDataBearingNodeIds, timeout)
+        await this.updateCoordinatorProgressAfterWrite(seq, state)
       }
       return
     }
@@ -445,12 +446,47 @@ export class ReplicationEngine extends EventEmitter {
     if (!state.votingDataBearingNodeIds.includes(this.nodeId)) return
     if (state.faultedNodeIds.includes(this.nodeId)) return
 
-    const canReturnToSafeSet = !state.drainingNodeIds.includes(this.nodeId)
-    const inSyncNodeIds = canReturnToSafeSet
-      ? state.inSyncNodeIds.includes(this.nodeId)
-        ? state.inSyncNodeIds
-        : [...state.inSyncNodeIds, this.nodeId]
-      : state.inSyncNodeIds.filter(nodeId => nodeId !== this.nodeId)
+    if (state.drainingNodeIds.includes(this.nodeId)) {
+      await this.removeLocalNodeFromCoordinatorInSyncSet(state)
+      return
+    }
+
+    const needsAdmission = !state.inSyncNodeIds.includes(this.nodeId) || state.repairingNodeIds.includes(this.nodeId)
+    if (!needsAdmission) {
+      this.coordinatorState = state
+      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(state)
+      return
+    }
+
+    const sourceNodeId = state.currentPrimary?.nodeId
+    if (!sourceNodeId || this.syncState.sourcePeerId !== sourceNodeId) {
+      this.coordinatorState = state
+      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(state)
+      return
+    }
+
+    const appliedSeq = await this.log.getLastAppliedSeq(sourceNodeId)
+    if (appliedSeq < state.durabilityPointSeq) {
+      this.coordinatorState = state
+      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(state)
+      return
+    }
+
+    const admitted = await config.coordinator.admitNodeToInSyncSet({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId: this.nodeId,
+      sourceNodeId,
+      appliedSeq,
+    })
+    this.coordinatorState = admitted ?? state
+    this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
+  }
+
+  private async removeLocalNodeFromCoordinatorInSyncSet(state: ReplicationGroupState): Promise<void> {
+    const config = this.config.coordinator
+    if (!config) return
+    const inSyncNodeIds = state.inSyncNodeIds.filter(nodeId => nodeId !== this.nodeId)
     let nextState = state
     if (!arraysEqual(inSyncNodeIds, state.inSyncNodeIds)) {
       const updated = await config.coordinator.updateInSyncSet({
@@ -464,20 +500,7 @@ export class ReplicationEngine extends EventEmitter {
       nextState = updated
     }
 
-    if (!state.repairingNodeIds.includes(this.nodeId)) {
-      this.coordinatorState = nextState
-      this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
-      return
-    }
-
-    const repaired = await config.coordinator.updateNodeMaintenance({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      nodeId: this.nodeId,
-      repairing: false,
-      faulted: false,
-    })
-    this.coordinatorState = repaired ?? nextState
+    this.coordinatorState = nextState
     this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
   }
 
@@ -688,18 +711,19 @@ export class ReplicationEngine extends EventEmitter {
     return null
   }
 
-  private async updateCoordinatorInSyncAfterWrite(seq: bigint, state: ReplicationGroupState): Promise<void> {
+  private async updateCoordinatorProgressAfterWrite(seq: bigint, state: ReplicationGroupState): Promise<void> {
     const config = this.config.coordinator
     if (!config) return
     const ackedNodeIds = this.peerTracker.ackedConfiguredNodeIds(seq, this.nodeId, state.votingDataBearingNodeIds)
     const nextInSync = state.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
-    if (arraysEqual(nextInSync, state.inSyncNodeIds)) {
+    if (arraysEqual(nextInSync, state.inSyncNodeIds) && state.durabilityPointSeq >= seq) {
       return
     }
     const updated = await config.coordinator.updateInSyncSet({
       clusterId: config.clusterId,
       groupId: config.groupId,
       inSyncNodeIds: nextInSync,
+      durabilityPointSeq: seq,
     })
     if (!updated) {
       throw new CoordinatorError('Failed to update in-sync set before acknowledging majority write')

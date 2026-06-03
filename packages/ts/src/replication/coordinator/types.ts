@@ -65,6 +65,7 @@ export interface ReplicationGroupState {
   votingDataBearingNodeIds: string[]
   currentPrimary: CoordinatorPrimary | null
   primaryTerm: bigint
+  durabilityPointSeq: bigint
   inSyncNodeIds: string[]
   drainingNodeIds: string[]
   repairingNodeIds: string[]
@@ -79,6 +80,7 @@ export interface SetReplicationGroupStateInput {
   votingDataBearingNodeIds: string[]
   currentPrimary?: CoordinatorPrimary | null
   primaryTerm?: bigint
+  durabilityPointSeq?: bigint
   inSyncNodeIds?: string[]
   drainingNodeIds?: string[]
   repairingNodeIds?: string[]
@@ -102,6 +104,15 @@ export interface UpdateInSyncSetInput {
   clusterId: string
   groupId: string
   inSyncNodeIds: string[]
+  durabilityPointSeq?: bigint
+}
+
+export interface AdmitNodeToInSyncSetInput {
+  clusterId: string
+  groupId: string
+  nodeId: string
+  sourceNodeId: string
+  appliedSeq: bigint
 }
 
 export interface UpdateNodeMaintenanceInput {
@@ -137,6 +148,7 @@ export interface ClusterCoordinator {
   ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
   compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult>
   updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>
+  admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
   close?(): Promise<void>

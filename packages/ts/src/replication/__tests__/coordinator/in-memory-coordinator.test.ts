@@ -164,12 +164,54 @@ describe('InMemoryClusterCoordinator', () => {
     await coordinator.updateInSyncSet({
       clusterId: 'cluster-a',
       groupId: 'orders',
-      inSyncNodeIds: ['node-b', 'node-c'],
+      inSyncNodeIds: ['node-b'],
     })
 
     const updated = await coordinator.getReplicationGroupState('cluster-a', 'orders')
-    expect(updated?.inSyncNodeIds).toEqual(['node-b', 'node-c'])
+    expect(updated?.inSyncNodeIds).toEqual(['node-b'])
     expect(observedTerms).toEqual([1n, 2n])
+  })
+
+  it('admits a node to the in-sync set only with catch-up proof for the durability point', async () => {
+    const coordinator = new InMemoryClusterCoordinator({ now: () => 4_500 })
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: ['node-a', 'node-b', 'node-c'],
+      currentPrimary: { nodeId: 'node-a', endpoint: 'https://node-a.example.com' },
+      primaryTerm: 1n,
+      durabilityPointSeq: 10n,
+      inSyncNodeIds: ['node-a'],
+      repairingNodeIds: ['node-b'],
+    })
+
+    await expect(
+      coordinator.updateInSyncSet({
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        inSyncNodeIds: ['node-a', 'node-b'],
+      }),
+    ).rejects.toThrow(/catch-up proof/)
+
+    const staleProof = await coordinator.admitNodeToInSyncSet({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      nodeId: 'node-b',
+      sourceNodeId: 'node-a',
+      appliedSeq: 9n,
+    })
+    expect(staleProof?.inSyncNodeIds).toEqual(['node-a'])
+    expect(staleProof?.repairingNodeIds).toEqual(['node-b'])
+
+    const admitted = await coordinator.admitNodeToInSyncSet({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      nodeId: 'node-b',
+      sourceNodeId: 'node-a',
+      appliedSeq: 10n,
+    })
+    expect(admitted?.inSyncNodeIds).toEqual(['node-a', 'node-b'])
+    expect(admitted?.repairingNodeIds).toEqual([])
   })
 
   it('promotes only a live in-sync configured voter and fails closed when none is safe', async () => {

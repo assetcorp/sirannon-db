@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeTracker } from '../../cdc/change-tracker.js'
+import { decodeTaggedValues } from '../../cdc/encoding.js'
 import type { SQLiteConnection } from '../../driver/types.js'
 import { createTestDb, insertUser } from './_helpers.js'
 
@@ -133,6 +134,23 @@ describe('ChangeTracker', () => {
       const decoded = events[0].row.big
       expect(typeof decoded).toBe('bigint')
       expect(decoded).toBe(big)
+    })
+
+    it('decodes tagged BLOB values without a Node Buffer global', () => {
+      const globalWithBuffer = globalThis as unknown as { Buffer: typeof Buffer | undefined }
+      const originalBuffer = globalWithBuffer.Buffer
+
+      try {
+        globalWithBuffer.Buffer = undefined
+        const decoded = decodeTaggedValues({ payload: { __sirannon_blob: '0001FFABCDEF' } }) as {
+          payload: Uint8Array
+        }
+
+        expect(decoded.payload).toBeInstanceOf(Uint8Array)
+        expect(Array.from(decoded.payload)).toEqual([0x00, 0x01, 0xff, 0xab, 0xcd, 0xef])
+      } finally {
+        globalWithBuffer.Buffer = originalBuffer
+      }
     })
   })
 })

@@ -111,6 +111,57 @@ describe('ReplicationEngine coordinator mode', () => {
     await engine.stop()
   })
 
+  it('admits ACKing voters at the advanced durability point after alternating majority writes', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_A, endpoint: 'https://node-a.example.com' },
+      primaryTerm: 3n,
+      inSyncNodeIds: [NODE_A, NODE_B, NODE_C],
+    })
+
+    const engine = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('primary'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await engine.start()
+    engine.peerTracker.addPeer(NODE_B)
+    engine.peerTracker.addPeer(NODE_C)
+
+    engine.peerTracker.onAckReceived(NODE_B, 1n)
+    await engine.execute("INSERT INTO items (id, name) VALUES (1, 'first')", undefined, {
+      writeConcern: { level: 'majority', timeoutMs: 5 },
+    })
+    let state = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    expect(state?.durabilityPointSeq).toBe(1n)
+    expect(state?.inSyncNodeIds).toEqual([NODE_A, NODE_B])
+
+    const nodeB = engine.peerTracker.getPeerState(NODE_B)
+    if (!nodeB) throw new Error('node B peer state missing')
+    nodeB.lastAckedSeq = 1n
+    engine.peerTracker.onAckReceived(NODE_C, 2n)
+
+    await engine.execute("UPDATE items SET name = 'second' WHERE id = 1", undefined, {
+      writeConcern: { level: 'majority', timeoutMs: 5 },
+    })
+    state = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    expect(state?.durabilityPointSeq).toBe(2n)
+    expect(state?.inSyncNodeIds).toEqual([NODE_A, NODE_C])
+
+    await engine.stop()
+  })
+
   it('rejects current-primary writes when local compatibility metadata is incompatible', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
     const coordinator = new InMemoryClusterCoordinator()

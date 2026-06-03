@@ -46,7 +46,7 @@ if (!rawConfig) {
 }
 
 const config = JSON.parse(rawConfig) as FailoverNodeConfig
-const databaseId = `failover-${config.nodeId}`
+const databaseId = config.groupId
 const conn = await testDriver.open(config.dbPath)
 await conn.exec('PRAGMA journal_mode = WAL')
 
@@ -122,6 +122,7 @@ await engine.start()
 server = createServer(sirannon, {
   host: '127.0.0.1',
   port: config.httpPort,
+  resolveExecutionTarget: id => (id === databaseId ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
   getClusterStatus: id => toClusterStatusInfo(id, engine.status()),
 })

@@ -1,7 +1,13 @@
 import type { HttpResponse } from 'uWebSockets.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ClusterStatusInfo, ReadConcern, WriteConcern } from '../core/types.js'
+import type {
+  ClusterStatusInfo,
+  ReadConcern,
+  ServerExecutionTarget,
+  ServerExecutionTargetResolver,
+  WriteConcern,
+} from '../core/types.js'
 import type {
   ClusterStatusResponse,
   ErrorResponse,
@@ -143,10 +149,19 @@ function httpStatusForError(err: SirannonError): number {
   }
 }
 
-async function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string) {
-  let db: Awaited<ReturnType<Sirannon['resolve']>>
+export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
+
+type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
+
+async function resolveExecutionTarget(
+  res: HttpResponse,
+  sirannon: Sirannon,
+  id: string,
+  resolver?: ServerExecutionTargetResolver,
+): Promise<ServerExecutionTarget | null> {
+  let target: ServerExecutionTarget | null | undefined
   try {
-    db = await sirannon.resolve(id)
+    target = resolver ? await resolver(id) : await sirannon.resolve(id)
   } catch (err) {
     if (err instanceof SirannonError) {
       sendError(res, httpStatusForError(err), err.code, err.message)
@@ -155,18 +170,14 @@ async function resolveDatabase(res: HttpResponse, sirannon: Sirannon, id: string
     }
     return null
   }
-  if (!db) {
+  if (!target) {
     sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${id}' not found`)
     return null
   }
-  return db
+  return target
 }
 
-export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
-
-type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
-
-export function handleQuery(sirannon: Sirannon): DbRouteHandler {
+export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
     const body = parseBody<QueryRequest>(res, rawBody)
     if (!body) return
@@ -179,11 +190,11 @@ export function handleQuery(sirannon: Sirannon): DbRouteHandler {
     const readConcern = parseReadConcern(res, body.readConcern)
     if (!readConcern.ok) return
 
-    const db = await resolveDatabase(res, sirannon, dbId)
-    if (!db) return
+    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    if (!target) return
 
     try {
-      const rows = await db.query(
+      const rows = await target.query(
         body.sql,
         body.params,
         readConcern.value ? { readConcern: readConcern.value } : undefined,
@@ -201,7 +212,7 @@ export function handleQuery(sirannon: Sirannon): DbRouteHandler {
   }
 }
 
-export function handleExecute(sirannon: Sirannon): DbRouteHandler {
+export function handleExecute(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
     const body = parseBody<ExecuteRequest>(res, rawBody)
     if (!body) return
@@ -214,11 +225,11 @@ export function handleExecute(sirannon: Sirannon): DbRouteHandler {
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
-    const db = await resolveDatabase(res, sirannon, dbId)
-    if (!db) return
+    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    if (!target) return
 
     try {
-      const result = await db.execute(
+      const result = await target.execute(
         body.sql,
         body.params,
         writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
@@ -236,7 +247,7 @@ export function handleExecute(sirannon: Sirannon): DbRouteHandler {
   }
 }
 
-export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
+export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
     const body = parseBody<TransactionRequest>(res, rawBody)
     if (!body) return
@@ -262,18 +273,21 @@ export function handleTransaction(sirannon: Sirannon): DbRouteHandler {
       }
     }
 
-    const db = await resolveDatabase(res, sirannon, dbId)
-    if (!db) return
+    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    if (!target) return
 
     try {
-      const results = await db.transaction(async tx => {
-        const txResults = []
-        for (const stmt of body.statements) {
-          if (abort.aborted) throw new Error('Request aborted')
-          txResults.push(await tx.execute(stmt.sql, stmt.params))
-        }
-        return txResults
-      })
+      const results = await target.transaction(
+        async tx => {
+          const txResults = []
+          for (const stmt of body.statements) {
+            if (abort.aborted) throw new Error('Request aborted')
+            txResults.push(await tx.execute(stmt.sql, stmt.params))
+          }
+          return txResults
+        },
+        writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
+      )
       if (abort.aborted) return
       sendJson(res, {
         results: results.map(toExecuteResponse),

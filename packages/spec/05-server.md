@@ -18,6 +18,8 @@ ServerOptions {
   port?:                  number    (default: 9876)
   cors?:                  boolean | CorsOptions
   onRequest?:             OnRequestHook
+  resolveExecutionTarget?: (databaseId: string) ->
+                            ServerExecutionTarget or null
   getReplicationStatus?:  () -> ReplicationStatusInfo or null
   getClusterStatus?:      (databaseId: string) -> ClusterStatusInfo or null
 }
@@ -59,6 +61,25 @@ The `onRequest` hook runs before every HTTP and WebSocket request.
 Returning a `RequestDenial` rejects the request with the specified
 status code and error body. Returning `undefined` allows the
 request to proceed.
+
+### Replication Execution Target
+
+```text
+TransactionFunction<T> = (tx: Transaction) -> async T
+
+ServerExecutionTarget {
+  query(sql: string, params?: Params, options?: QueryOptions): async -> List<Map<string, any>>
+  execute(sql: string, params?: Params, options?: QueryOptions): async -> ExecuteResult
+  transaction<T>(fn: TransactionFunction<T>, options?: QueryOptions): async -> T
+}
+```
+
+In coordinator mode, the server must send `query`, `execute`, and
+`transaction` requests to the database's replication execution
+target. The target enforces primary authority checks, sync
+readiness checks, forwarding, and production write concern
+semantics. If the resolver returns `null`, the server responds
+with `DATABASE_NOT_FOUND`.
 
 ---
 

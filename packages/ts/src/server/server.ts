@@ -8,6 +8,7 @@ import type {
   ReplicationStatusInfo,
   RequestContext,
   RequestDenial,
+  ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
 import { handleLiveness, handleReadiness } from './health.js'
@@ -96,6 +97,7 @@ export class SirannonServer {
   private readonly port: number
   private readonly cors: ResolvedCors | null
   private readonly onRequestHook: OnRequestHook | undefined
+  private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
   private readonly getReplicationStatus: (() => ReplicationStatusInfo | null) | undefined
   private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
   private readonly sirannon: Sirannon
@@ -107,9 +109,10 @@ export class SirannonServer {
     this.port = options?.port ?? 9876
     this.cors = resolveCors(options?.cors)
     this.onRequestHook = options?.onRequest
+    this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
-    this.wsHandler = new WSHandler(sirannon)
+    this.wsHandler = new WSHandler(sirannon, { resolveExecutionTarget: this.resolveExecutionTarget })
     this.app = uWS.App()
     this.registerRoutes()
   }
@@ -164,9 +167,12 @@ export class SirannonServer {
     this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
     this.app.get('/db/:id/cluster', this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus)))
 
-    this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon)))
-    this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon)))
-    this.app.post('/db/:id/transaction', this.wrapDbRoute(handleTransaction(this.sirannon)))
+    this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post(
+      '/db/:id/transaction',
+      this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
+    )
 
     this.registerWebSocketRoute()
 

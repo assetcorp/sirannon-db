@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sirannon } from '../../../core/sirannon.js'
+import type { ServerExecutionTarget } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { createWSHandler } from '../../ws-handler.js'
 import { createMockConnection, lastMessage, type MockWSConnection } from '../helpers.js'
@@ -62,6 +63,41 @@ describe('WSHandler', () => {
       const data = msg.data as Record<string, unknown>
       expect(data.changes).toBe(1)
       expect(data.lastInsertRowId).toBeDefined()
+      await handler.close()
+    })
+
+    it('executes through the configured execution target', async () => {
+      const target: ServerExecutionTarget = {
+        query: vi.fn(),
+        execute: vi.fn(async () => ({ changes: 1, lastInsertRowId: 42 })),
+        transaction: vi.fn(),
+      }
+      const handler = createWSHandler(sirannon, {
+        resolveExecutionTarget: () => target,
+      })
+      const db = await sirannon.open('mydb', join(tempDir, 'target-exec.db'))
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+
+      const conn = createMockConnection()
+      await handler.handleOpen(conn, 'mydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'r1',
+          type: 'execute',
+          sql: "INSERT INTO users (name) VALUES ('Alice')",
+        }),
+      )
+
+      await flushAsync(hasMessageCount(conn, 1))
+
+      expect(target.execute).toHaveBeenCalledWith("INSERT INTO users (name) VALUES ('Alice')", undefined)
+      const msg = lastMessage(conn)
+      expect(msg.id).toBe('r1')
+      expect(msg.type).toBe('result')
+      const data = msg.data as Record<string, unknown>
+      expect(data.changes).toBe(1)
+      expect(data.lastInsertRowId).toBe(42)
       await handler.close()
     })
 

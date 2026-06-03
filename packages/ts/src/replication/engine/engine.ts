@@ -715,20 +715,39 @@ export class ReplicationEngine extends EventEmitter {
     const config = this.config.coordinator
     if (!config) return
     const ackedNodeIds = this.peerTracker.ackedConfiguredNodeIds(seq, this.nodeId, state.votingDataBearingNodeIds)
-    const nextInSync = state.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
-    if (arraysEqual(nextInSync, state.inSyncNodeIds) && state.durabilityPointSeq >= seq) {
-      return
+    const retainedInSync = state.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
+    let nextState = state
+
+    if (!arraysEqual(retainedInSync, state.inSyncNodeIds) || state.durabilityPointSeq < seq) {
+      const updated = await config.coordinator.updateInSyncSet({
+        clusterId: config.clusterId,
+        groupId: config.groupId,
+        inSyncNodeIds: retainedInSync,
+        durabilityPointSeq: seq,
+      })
+      if (!updated) {
+        throw new CoordinatorError('Failed to update in-sync set before acknowledging majority write')
+      }
+      nextState = updated
     }
-    const updated = await config.coordinator.updateInSyncSet({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      inSyncNodeIds: nextInSync,
-      durabilityPointSeq: seq,
-    })
-    if (!updated) {
-      throw new CoordinatorError('Failed to update in-sync set before acknowledging majority write')
+
+    for (const nodeId of ackedNodeIds) {
+      if (nextState.inSyncNodeIds.includes(nodeId)) continue
+      if (nodeId === this.nodeId) continue
+      const admitted = await config.coordinator.admitNodeToInSyncSet({
+        clusterId: config.clusterId,
+        groupId: config.groupId,
+        nodeId,
+        sourceNodeId: this.nodeId,
+        appliedSeq: seq,
+      })
+      if (!admitted) {
+        throw new CoordinatorError('Failed to admit ACKing node to in-sync set before acknowledging majority write')
+      }
+      nextState = admitted
     }
-    this.coordinatorState = updated
+
+    this.coordinatorState = nextState
   }
 
   private startCoordinatorLeaseRenewal(): void {

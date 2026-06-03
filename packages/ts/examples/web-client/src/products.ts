@@ -1,10 +1,12 @@
+import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import type { CDCEvent, Product } from './api.js'
 import { addProduct, fetchProducts, restockProduct, sellProduct, subscribeProducts } from './api.js'
 
 const products = new Map<number, Product>()
 
-let tableBody: HTMLTableSectionElement
-let form: HTMLFormElement
+let tableBody: HTMLTableSectionElement | null = null
+let form: HTMLFormElement | null = null
+let subscription: RemoteSubscription | null = null
 
 function escapeHtml(text: string): string {
   const el = document.createElement('span')
@@ -14,6 +16,29 @@ function escapeHtml(text: string): string {
 
 function formatPrice(price: number): string {
   return `$${price.toFixed(2)}`
+}
+
+function toSafeInteger(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normaliseProduct(row: Record<string, unknown> | undefined): Product | null {
+  const id = toSafeInteger(row?.id)
+  const price = toFiniteNumber(row?.price)
+  const stock = toSafeInteger(row?.stock)
+  const name = row?.name
+
+  if (id === null || price === null || stock === null || typeof name !== 'string') {
+    return null
+  }
+
+  return { id, name, price, stock }
 }
 
 function createRow(product: Product): HTMLTableRowElement {
@@ -33,23 +58,26 @@ function createRow(product: Product): HTMLTableRowElement {
     </td>
   `
 
-  const sellBtn = row.querySelector('.btn-sell') as HTMLButtonElement
-  const restockBtn = row.querySelector('.btn-restock') as HTMLButtonElement
+  const sellBtn = row.querySelector<HTMLButtonElement>('.btn-sell')
+  const restockBtn = row.querySelector<HTMLButtonElement>('.btn-restock')
 
-  sellBtn.addEventListener('click', async () => {
+  sellBtn?.addEventListener('click', async () => {
     sellBtn.disabled = true
     try {
-      await sellProduct(product.id, product.name)
+      const current = products.get(product.id) ?? product
+      await sellProduct(product.id, current.name)
     } catch (err) {
       console.error('Sell failed:', err)
-      sellBtn.disabled = product.stock <= 1
+      const current = products.get(product.id) ?? product
+      sellBtn.disabled = current.stock <= 0
     }
   })
 
-  restockBtn.addEventListener('click', async () => {
+  restockBtn?.addEventListener('click', async () => {
     restockBtn.disabled = true
     try {
-      await restockProduct(product.id, product.name, 10)
+      const current = products.get(product.id) ?? product
+      await restockProduct(product.id, current.name, 10)
     } catch (err) {
       console.error('Restock failed:', err)
     } finally {
@@ -61,6 +89,8 @@ function createRow(product: Product): HTMLTableRowElement {
 }
 
 function updateRow(product: Product): void {
+  if (!tableBody) return
+
   const row = tableBody.querySelector(`tr[data-id="${product.id}"]`)
   if (!row) {
     tableBody.appendChild(createRow(product))
@@ -68,12 +98,15 @@ function updateRow(product: Product): void {
   }
 
   const cells = row.querySelectorAll('td')
-  cells[1].textContent = product.name
-  cells[2].textContent = formatPrice(product.price)
-  cells[3].textContent = String(product.stock)
+  const nameCell = cells.item(1)
+  const priceCell = cells.item(2)
+  const stockCell = cells.item(3)
+  if (nameCell) nameCell.textContent = product.name
+  if (priceCell) priceCell.textContent = formatPrice(product.price)
+  if (stockCell) stockCell.textContent = String(product.stock)
 
-  const sellBtn = row.querySelector('.btn-sell') as HTMLButtonElement
-  sellBtn.disabled = product.stock <= 0
+  const sellBtn = row.querySelector<HTMLButtonElement>('.btn-sell')
+  if (sellBtn) sellBtn.disabled = product.stock <= 0
 }
 
 export function clearProductsTable(): void {
@@ -84,6 +117,8 @@ export function clearProductsTable(): void {
 }
 
 function removeRow(id: number): void {
+  if (!tableBody) return
+
   const row = tableBody.querySelector(`tr[data-id="${id}"]`)
   if (row) {
     row.remove()
@@ -91,25 +126,33 @@ function removeRow(id: number): void {
 }
 
 function handleCDCEvent(event: CDCEvent): void {
-  const row = event.row as unknown as Product
-
   if (event.type === 'delete') {
-    products.delete(row.id)
-    removeRow(row.id)
+    const product = normaliseProduct(event.oldRow ?? event.row)
+    if (!product) return
+
+    products.delete(product.id)
+    removeRow(product.id)
     return
   }
 
-  products.set(row.id, row)
-  updateRow(row)
+  const product = normaliseProduct(event.row)
+  if (!product) return
+
+  products.set(product.id, product)
+  updateRow(product)
 }
 
 function setupForm(): void {
-  form.addEventListener('submit', async e => {
+  if (!form) return
+
+  const activeForm = form
+
+  activeForm.addEventListener('submit', async e => {
     e.preventDefault()
 
-    const nameInput = form.querySelector<HTMLInputElement>('[name="product-name"]')
-    const priceInput = form.querySelector<HTMLInputElement>('[name="product-price"]')
-    const stockInput = form.querySelector<HTMLInputElement>('[name="product-stock"]')
+    const nameInput = activeForm.querySelector<HTMLInputElement>('[name="product-name"]')
+    const priceInput = activeForm.querySelector<HTMLInputElement>('[name="product-price"]')
+    const stockInput = activeForm.querySelector<HTMLInputElement>('[name="product-stock"]')
 
     if (!nameInput || !priceInput || !stockInput) return
 
@@ -119,12 +162,12 @@ function setupForm(): void {
 
     if (!name || Number.isNaN(price) || Number.isNaN(stock) || price <= 0 || stock < 0) return
 
-    const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]')
+    const submitBtn = activeForm.querySelector<HTMLButtonElement>('button[type="submit"]')
     if (submitBtn) submitBtn.disabled = true
 
     try {
       await addProduct(name, price, stock)
-      form.reset()
+      activeForm.reset()
     } catch (err) {
       console.error('Add product failed:', err)
     } finally {
@@ -133,7 +176,31 @@ function setupForm(): void {
   })
 }
 
+function renderProducts(nextProducts: Product[]): void {
+  products.clear()
+  if (!tableBody) return
+
+  tableBody.innerHTML = ''
+  for (const product of nextProducts) {
+    products.set(product.id, product)
+    tableBody.appendChild(createRow(product))
+  }
+}
+
+export async function refreshProducts(): Promise<void> {
+  const nextProducts = await fetchProducts()
+  renderProducts(nextProducts)
+}
+
+export function disposeProducts(): void {
+  subscription?.unsubscribe()
+  subscription = null
+}
+
 export async function initProducts(container: HTMLElement): Promise<void> {
+  disposeProducts()
+  products.clear()
+
   container.innerHTML = `
     <form class="add-product-form" autocomplete="off">
       <h3>Add Product</h3>
@@ -158,15 +225,11 @@ export async function initProducts(container: HTMLElement): Promise<void> {
     </table>
   `
 
-  tableBody = container.querySelector('tbody') as HTMLTableSectionElement
-  form = container.querySelector('form') as HTMLFormElement
+  tableBody = container.querySelector<HTMLTableSectionElement>('tbody')
+  form = container.querySelector<HTMLFormElement>('form')
   setupForm()
 
-  const initialProducts = await fetchProducts()
-  for (const product of initialProducts) {
-    products.set(product.id, product)
-    tableBody.appendChild(createRow(product))
-  }
+  await refreshProducts()
 
-  await subscribeProducts(handleCDCEvent)
+  subscription = await subscribeProducts(handleCDCEvent)
 }

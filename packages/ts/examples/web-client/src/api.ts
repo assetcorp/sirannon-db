@@ -85,6 +85,10 @@ export async function resetDatabase(): Promise<void> {
     { sql: 'DELETE FROM activity' },
     { sql: 'DELETE FROM products' },
     {
+      sql: 'DELETE FROM sqlite_sequence WHERE name IN (?, ?)',
+      params: ['activity', 'products'],
+    },
+    {
       sql: 'INSERT INTO products (name, price, stock) VALUES (?, ?, ?)',
       params: ['Wireless Keyboard', 49.99, 25],
     },

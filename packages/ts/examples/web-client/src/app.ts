@@ -1,6 +1,6 @@
-import { clearActivityFeed, initActivity } from './activity.js'
+import { disposeActivity, initActivity, refreshActivityFeed } from './activity.js'
 import { resetDatabase } from './api.js'
-import { clearProductsTable, initProducts } from './products.js'
+import { disposeProducts, initProducts, refreshProducts } from './products.js'
 
 const statusEl = document.getElementById('connection-status') as HTMLSpanElement
 const resetBtn = document.getElementById('btn-reset') as HTMLButtonElement
@@ -23,17 +23,34 @@ async function init(): Promise<void> {
   }
 }
 
-resetBtn.addEventListener('click', async () => {
+async function handleResetClick(): Promise<void> {
   resetBtn.disabled = true
   try {
-    clearActivityFeed()
-    clearProductsTable()
     await resetDatabase()
+    await Promise.all([refreshProducts(), refreshActivityFeed()])
   } catch (err) {
     console.error('Reset failed:', err)
   } finally {
     resetBtn.disabled = false
   }
-})
+}
+
+function dispose(): void {
+  disposeProducts()
+  disposeActivity()
+}
+
+type HotContext = {
+  dispose(callback: () => void): void
+}
+
+type ImportMetaWithHot = ImportMeta & {
+  hot?: HotContext
+}
+
+resetBtn.addEventListener('click', handleResetClick)
+
+const hot = (import.meta as ImportMetaWithHot).hot
+hot?.dispose(dispose)
 
 init()

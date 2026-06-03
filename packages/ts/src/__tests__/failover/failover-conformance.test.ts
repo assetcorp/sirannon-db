@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createEtcdCoordinator, type EtcdClusterCoordinator } from '../../replication/coordinator/etcd.js'
 import { canonicaliseForChecksum } from '../../replication/log.js'
-import type { ReplicationBatch, SyncBatch, SyncRequest } from '../../replication/types.js'
+import type {
+  ForwardedTransaction,
+  ReplicationBatch,
+  ReplicationChange,
+  SyncBatch,
+  SyncRequest,
+} from '../../replication/types.js'
 import { createMtlsCerts, type MtlsCerts } from '../e2e/lib/certs.js'
 import {
   allocatePorts,
@@ -41,6 +47,7 @@ interface GateEnvironment {
   toxiproxy: ToxiproxyClient
   coordinator: EtcdClusterCoordinator
   grpcPorts: Map<string, number>
+  httpPorts: Map<string, number>
   etcdProxyPorts: Map<string, number[]>
   grpcProxyPorts: Map<string, Map<string, number>>
   nodes: Map<string, FailoverNodeProcess>
@@ -75,7 +82,25 @@ interface FailoverStatus {
   }>
 }
 
+interface ReadinessResponse {
+  status: string
+  replication?: {
+    primaryTerm?: string
+    currentPrimary?: string
+    readAvailability?: 'available' | 'unavailable'
+    writeAvailability?: 'available' | 'unavailable'
+    syncState?: string
+    coordinator?: {
+      authority: boolean
+    }
+    controller?: {
+      state: string
+    }
+  }
+}
+
 let env: GateEnvironment | null = null
+let writeProbeId = 1_000
 
 describe('batch two failover conformance gate', () => {
   afterEach(async () => {
@@ -109,6 +134,7 @@ describe('batch two failover conformance gate', () => {
       nodeA.execute("INSERT INTO failover_items (id, owner, value, note) VALUES (99, 'a', 99, 'stale')"),
       ['COORDINATOR_UNAVAILABLE', 'STALE_PRIMARY'],
     )
+    await assertItemAbsent(env, [NODE_A, NODE_B, NODE_C], 99, 10_000)
 
     nodeA.kill()
     env.nodes.delete(NODE_A)
@@ -121,15 +147,23 @@ describe('batch two failover conformance gate', () => {
     await forwardingNode.reconnectTransport()
     await waitForPeerConnected(forwardingNode, promotedNodeId, 10_000)
 
-    await forwardingNode.sendRawBatch(promotedNodeId, staleBatch(forwardingNodeId, 1n)).catch(() => undefined)
-    await forwardingNode.requestRawSync(promotedNodeId, staleSyncRequest(forwardingNodeId, 1n)).catch(() => undefined)
-    await forwardingNode.sendRawSyncBatch(promotedNodeId, staleSyncBatch(1n)).catch(() => undefined)
-    await waitForRecentErrorCode(promotedNode, 'STALE_PRIMARY', 10_000)
+    await expectStaleBatchRejectedWithoutMutation(
+      env,
+      forwardingNode,
+      promotedNode,
+      promotedNodeId,
+      forwardingNodeId,
+      70,
+    )
+    await expectStaleForwardRejectedWithoutMutation(env, forwardingNode, promotedNodeId, 71)
+    await expectStaleSyncRequestRejectedWithoutMutation(env, forwardingNode, promotedNodeId, forwardingNodeId, 72)
+    await expectStaleSyncBatchRejectedWithoutMutation(env, forwardingNode, promotedNodeId, 73)
 
     await forwardingNode.execute(
       "INSERT INTO failover_events (id, item_id, kind, detail) VALUES (10, 1, 'forwarded', 'after-failover')",
     )
     await waitForEvent(env, [promotedNodeId, forwardingNodeId], 10, 20_000)
+    await assertItemVisible(forwardingNode, 1)
 
     await healNodeSirannonLinks(env, NODE_A)
     const restartedA = await startNode(env, NODE_A, 'primary', [NODE_B, NODE_C], false, false)
@@ -148,41 +182,42 @@ describe('batch two failover conformance gate', () => {
     await expectExactlyOneWritablePrimary(env, NODE_A, '3')
     await assertHealth(env, NODE_A, '3', 'available', 'available')
 
-    await runSeededSoak(env, NODE_A)
+    const safeReplicaAfterMaintenance = promotedNodeId === NODE_B ? NODE_C : NODE_B
+    await runSeededSoak(env, NODE_A, [NODE_A, safeReplicaAfterMaintenance])
+    await restartReplicaThroughRepair(env, safeReplicaAfterMaintenance, NODE_A)
     await expectResourceUseBelow(env, 256 * 1024 * 1024)
 
     await env.coordinator.updateInSyncSet({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
-      inSyncNodeIds: [NODE_A],
+      inSyncNodeIds: [NODE_A, safeReplicaAfterMaintenance],
     })
     restartedA.kill()
     env.nodes.delete(NODE_A)
-    await waitForCondition(async () => {
-      const state = await env?.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-      return state?.currentPrimary?.nodeId === NODE_A
-    }, 10_000)
-    await expectRejectsWith(
-      nodeC.execute("INSERT INTO failover_items (id, owner, value, note) VALUES (80, 'c', 80, 'unsafe')"),
-      ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY'],
-    )
+    await waitForCurrentPrimary(env, safeReplicaAfterMaintenance, 30_000)
+    await expectExactlyOneWritablePrimary(env, safeReplicaAfterMaintenance, '4')
+    await waitForRows(env, [safeReplicaAfterMaintenance], 13, 30_000)
 
     await env.coordinator.setReplicationGroupState({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
       votingDataBearingNodeIds: [...NODE_IDS],
-      currentPrimary: { nodeId: NODE_C, endpoint: `127.0.0.1:${env.grpcPorts.get(NODE_C) ?? 0}` },
-      primaryTerm: 4n,
-      inSyncNodeIds: [NODE_C],
+      currentPrimary: {
+        nodeId: safeReplicaAfterMaintenance,
+        endpoint: httpEndpointFor(env, safeReplicaAfterMaintenance),
+      },
+      primaryTerm: 5n,
+      inSyncNodeIds: [safeReplicaAfterMaintenance],
       compatibility: {
         packageVersion: '2.0.0',
         specVersion: '2.0.0',
         protocolVersion: '2.0.0',
       },
     })
-    await waitForCurrentPrimary(env, NODE_C, 10_000)
+    await waitForCurrentPrimary(env, safeReplicaAfterMaintenance, 10_000)
+    const finalPrimary = requireNode(env, safeReplicaAfterMaintenance)
     await expectRejectsWith(
-      nodeC.execute(
+      finalPrimary.execute(
         "INSERT INTO failover_items (id, owner, value, note) VALUES (90, 'c', 90, 'incompatible')",
         undefined,
         {
@@ -191,6 +226,19 @@ describe('batch two failover conformance gate', () => {
       ),
       ['PROTOCOL_VERSION_MISMATCH'],
     )
+
+    finalPrimary.kill()
+    env.nodes.delete(safeReplicaAfterMaintenance)
+    const survivors = [...env.nodes.keys()]
+    await waitForNoSafePrimary(env, survivors, 30_000)
+    for (const survivorId of survivors) {
+      await expectRejectsWith(
+        requireNode(env, survivorId).execute(
+          "INSERT INTO failover_items (id, owner, value, note) VALUES (80, 'survivor', 80, 'unsafe')",
+        ),
+        ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY', 'PROTOCOL_VERSION_MISMATCH', 'SYNC_ERROR'],
+      )
+    }
   })
 })
 
@@ -201,6 +249,7 @@ async function startEnvironment(): Promise<GateEnvironment> {
   const certs = await createMtlsCerts(NODE_IDS)
   const etcd = await startEtcdCluster(runPrefix)
   const grpcPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
+  const httpPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
   const etcdProxyPorts = await allocateEtcdProxyPorts()
   const grpcProxyPorts = await allocateGrpcProxyPorts()
   const allProxyPorts = [
@@ -260,6 +309,7 @@ async function startEnvironment(): Promise<GateEnvironment> {
     toxiproxy,
     coordinator,
     grpcPorts,
+    httpPorts,
     etcdProxyPorts,
     grpcProxyPorts,
     nodes: new Map(),
@@ -282,11 +332,13 @@ async function startNode(
     nodeId,
     dbPath: join(environment.tempDir, `${nodeId}.db`),
     grpcPort,
+    httpPort: httpPortFor(environment, nodeId),
     certPath: cert.certPath,
     keyPath: cert.keyPath,
     caCertPath: environment.certs.caCertPath,
     initialRole: role,
     endpoints: endpointTargets.map(target => endpointFor(environment, nodeId, target)),
+    httpEndpoints: Object.fromEntries(NODE_IDS.map(target => [target, httpEndpointFor(environment, target)])),
     etcdHosts: etcdEndpointsFor(environment, nodeId),
     keyPrefix: environment.runPrefix,
     clusterId: CLUSTER_ID,
@@ -318,6 +370,53 @@ async function cleanupEnvironment(environment: GateEnvironment): Promise<void> {
     containers: [...environment.etcd.containerNames, environment.toxiproxyContainer.containerName],
     networks: [environment.etcd.networkName],
   })
+}
+
+async function restartReplicaThroughRepair(
+  environment: GateEnvironment,
+  nodeId: string,
+  currentPrimaryNodeId: string,
+): Promise<FailoverNodeProcess> {
+  await environment.coordinator.updateNodeMaintenance({
+    clusterId: CLUSTER_ID,
+    groupId: GROUP_ID,
+    nodeId,
+    draining: false,
+    repairing: true,
+    faulted: false,
+  })
+  const existing = environment.nodes.get(nodeId)
+  existing?.kill()
+  environment.nodes.delete(nodeId)
+  await healNodeSirannonLinks(environment, nodeId)
+  const restarted = await startNode(
+    environment,
+    nodeId,
+    'replica',
+    NODE_IDS.filter(targetNodeId => targetNodeId !== nodeId),
+    false,
+    false,
+  )
+  await waitForNodeReady(restarted, 30_000)
+  await waitForPeerConnected(restarted, currentPrimaryNodeId, 10_000)
+  let latestState: unknown = null
+  try {
+    await waitForCondition(async () => {
+      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
+      return (latestState as { inSyncNodeIds?: string[] } | null)?.inSyncNodeIds?.includes(nodeId) ?? false
+    }, 30_000)
+  } catch (err: unknown) {
+    const diagnostics = await collectNodeDiagnostics(environment)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Timed out waiting for repaired replica ${nodeId} to re-enter in-sync set: ${message}\nstate=${JSON.stringify(
+        latestState,
+        jsonReplacer,
+        2,
+      )}\ndiagnostics=${JSON.stringify(diagnostics, jsonReplacer, 2)}`,
+    )
+  }
+  return restarted
 }
 
 async function allocateEtcdProxyPorts(): Promise<Map<string, number[]>> {
@@ -380,16 +479,36 @@ async function waitForRows(
   expectedRows: number,
   timeoutMs: number,
 ): Promise<void> {
-  await waitForCondition(async () => {
-    for (const nodeId of nodeIds) {
-      const node = requireNode(environment, nodeId)
-      const rows = await queryRows(node, 'SELECT COUNT(*) AS count FROM failover_items')
-      if (Number(rows[0]?.count ?? 0) < expectedRows) {
-        return false
+  const latest: Record<string, unknown> = {}
+  try {
+    await waitForCondition(async () => {
+      for (const nodeId of nodeIds) {
+        const node = requireNode(environment, nodeId)
+        const rows = await queryRowsWhenReady(node, 'SELECT COUNT(*) AS count FROM failover_items')
+        if (rows === null) {
+          latest[nodeId] = await statusOf(node)
+          return false
+        }
+        latest[nodeId] = rows[0] ?? null
+        if (Number(rows[0]?.count ?? 0) < expectedRows) {
+          return false
+        }
       }
-    }
-    return true
-  }, timeoutMs)
+      return true
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const diagnostics = await collectNodeDiagnostics(environment)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Timed out waiting for ${expectedRows} failover_items rows on ${nodeIds.join(
+        ',',
+      )}: ${message}\nlatest=${JSON.stringify(latest, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
+        diagnostics,
+        jsonReplacer,
+        2,
+      )}`,
+    )
+  }
 }
 
 async function assertItemVisible(node: FailoverNodeProcess, id: number): Promise<void> {
@@ -403,20 +522,44 @@ async function waitForEvent(
   eventId: number,
   timeoutMs: number,
 ): Promise<void> {
-  await waitForCondition(async () => {
-    for (const nodeId of nodeIds) {
-      const rows = await queryRows(requireNode(environment, nodeId), 'SELECT id FROM failover_events WHERE id = ?', [
-        eventId,
-      ])
-      if (rows.length === 0) return false
-    }
-    return true
-  }, timeoutMs)
+  const latest: Record<string, unknown> = {}
+  try {
+    await waitForCondition(async () => {
+      for (const nodeId of nodeIds) {
+        const node = requireNode(environment, nodeId)
+        const rows = await queryRowsWhenReady(node, 'SELECT id FROM failover_events WHERE id = ?', [eventId])
+        if (rows === null) {
+          latest[nodeId] = await statusOf(node)
+          return false
+        }
+        latest[nodeId] = rows
+        if (rows.length === 0) return false
+      }
+      return true
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const diagnostics = await collectNodeDiagnostics(environment)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Timed out waiting for failover_events id ${eventId} on ${nodeIds.join(
+        ',',
+      )}: ${message}\nlatest=${JSON.stringify(latest, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
+        diagnostics,
+        jsonReplacer,
+        2,
+      )}`,
+    )
+  }
 }
 
-async function runSeededSoak(environment: GateEnvironment, primaryNodeId: string): Promise<void> {
+async function runSeededSoak(
+  environment: GateEnvironment,
+  primaryNodeId: string,
+  expectedNodeIds: readonly string[],
+): Promise<void> {
   const primary = requireNode(environment, primaryNodeId)
-  const proxyName = grpcProxyName(NODE_C, primaryNodeId)
+  const latencyNodeId = expectedNodeIds.find(nodeId => nodeId !== primaryNodeId) ?? primaryNodeId
+  const proxyName = grpcProxyName(latencyNodeId, primaryNodeId)
   await environment.toxiproxy.addLatency(proxyName, 'seeded-soak-latency', 40)
   try {
     for (let index = 0; index < 12; index++) {
@@ -431,12 +574,7 @@ async function runSeededSoak(environment: GateEnvironment, primaryNodeId: string
   } finally {
     await environment.toxiproxy.clearToxic(proxyName, 'seeded-soak-latency').catch(() => undefined)
   }
-  await waitForRows(
-    environment,
-    [NODE_A, NODE_B, NODE_C].filter(nodeId => environment.nodes.has(nodeId)),
-    13,
-    30_000,
-  )
+  await waitForRows(environment, expectedNodeIds, 13, 30_000)
 }
 
 async function expectResourceUseBelow(environment: GateEnvironment, maxStorageBytes: number): Promise<void> {
@@ -453,15 +591,44 @@ async function expectExactlyOneWritablePrimary(
   expectedPrimary: string,
   expectedTerm: string,
 ): Promise<void> {
-  await waitForCondition(async () => {
-    const statuses = await Promise.all([...environment.nodes.values()].map(statusOf))
-    const authoritative = statuses.filter(status => status.coordinator?.authority)
-    return (
-      authoritative.length === 1 &&
-      authoritative[0]?.nodeId === expectedPrimary &&
-      authoritative[0]?.coordinator?.primaryTerm === expectedTerm
+  let latestStatuses: FailoverStatus[] = []
+  try {
+    await waitForCondition(async () => {
+      latestStatuses = await Promise.all([...environment.nodes.values()].map(statusOf))
+      const authoritative = latestStatuses.filter(status => status.coordinator?.authority)
+      return (
+        authoritative.length === 1 &&
+        authoritative[0]?.nodeId === expectedPrimary &&
+        authoritative[0]?.coordinator?.primaryTerm === expectedTerm
+      )
+    }, 20_000)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Did not observe exactly one authoritative primary ${expectedPrimary} term ${expectedTerm}: ${message}\nstatuses=${JSON.stringify(
+        latestStatuses,
+        jsonReplacer,
+        2,
+      )}`,
     )
-  }, 20_000)
+  }
+
+  const probeResults: Array<{ nodeId: string; ok: boolean; code?: string; message?: string }> = []
+  const nodes = [...environment.nodes.entries()].sort(([left], [right]) => left.localeCompare(right))
+  for (const [nodeId, node] of nodes) {
+    try {
+      await node.localWriteProbe(nextWriteProbeId(), `primary-probe-term-${expectedTerm}-${nodeId}`)
+      probeResults.push({ nodeId, ok: true })
+    } catch (err: unknown) {
+      const error = err as Error & { code?: string }
+      probeResults.push({ nodeId, ok: false, code: error.code, message: error.message })
+    }
+  }
+
+  const writable = probeResults.filter(result => result.ok)
+  expect(writable, `local write probe results=${JSON.stringify(probeResults, null, 2)}`).toEqual([
+    { nodeId: expectedPrimary, ok: true },
+  ])
 }
 
 async function assertHealth(
@@ -471,13 +638,18 @@ async function assertHealth(
   expectedReadAvailability: 'available' | 'unavailable',
   expectedWriteAvailability: 'available' | 'unavailable',
 ): Promise<void> {
-  const primary = await statusOf(requireNode(environment, expectedPrimary))
-  expect(primary.coordinator?.currentPrimary?.nodeId).toBe(expectedPrimary)
-  expect(primary.coordinator?.primaryTerm).toBe(expectedTerm)
-  expect(readAvailability(primary)).toBe(expectedReadAvailability)
-  expect(writeAvailability(primary)).toBe(expectedWriteAvailability)
-  expect(primary.coordinator?.repairingNodeIds ?? []).toEqual(expect.any(Array))
-  expect(primary.coordinator?.faultedNodeIds ?? []).toEqual(expect.any(Array))
+  const primaryStatus = await statusOf(requireNode(environment, expectedPrimary))
+  expect(primaryStatus.coordinator?.currentPrimary?.nodeId).toBe(expectedPrimary)
+  expect(primaryStatus.coordinator?.primaryTerm).toBe(expectedTerm)
+  const ready = await readinessOf(environment, expectedPrimary)
+  expect(ready.replication?.currentPrimary).toBe(expectedPrimary)
+  expect(ready.replication?.primaryTerm).toBe(expectedTerm)
+  expect(ready.replication?.readAvailability).toBe(expectedReadAvailability)
+  expect(ready.replication?.writeAvailability).toBe(expectedWriteAvailability)
+  expect(ready.replication?.syncState).toBe('ready')
+  expect(ready.replication?.coordinator?.authority).toBe(true)
+  expect(primaryStatus.coordinator?.repairingNodeIds ?? []).toEqual(expect.any(Array))
+  expect(primaryStatus.coordinator?.faultedNodeIds ?? []).toEqual(expect.any(Array))
 }
 
 async function waitForInSyncSet(
@@ -556,11 +728,34 @@ async function waitForAnyCurrentPrimary(
   timeoutMs: number,
 ): Promise<string> {
   let currentPrimary: string | null = null
-  await waitForCondition(async () => {
-    const state = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-    currentPrimary = state?.currentPrimary?.nodeId ?? null
-    return currentPrimary !== null && expectedNodeIds.includes(currentPrimary)
-  }, timeoutMs)
+  let latestState: unknown = null
+  try {
+    await waitForCondition(async () => {
+      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
+      currentPrimary = (latestState as { currentPrimary?: { nodeId?: string } } | null)?.currentPrimary?.nodeId ?? null
+      return currentPrimary !== null && expectedNodeIds.includes(currentPrimary)
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const liveSessions: Record<string, unknown> = {}
+    for (const nodeId of NODE_IDS) {
+      liveSessions[nodeId] = await environment.coordinator.getLiveNodeSession(CLUSTER_ID, nodeId).catch(sessionErr => ({
+        error: sessionErr instanceof Error ? sessionErr.message : String(sessionErr),
+      }))
+    }
+    const diagnostics = await collectNodeDiagnostics(environment)
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Timed out waiting for any primary in ${expectedNodeIds.join(',')}: ${message}\nstate=${JSON.stringify(
+        latestState,
+        jsonReplacer,
+        2,
+      )}\nliveSessions=${JSON.stringify(liveSessions, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
+        diagnostics,
+        jsonReplacer,
+        2,
+      )}`,
+    )
+  }
   if (currentPrimary === null) {
     throw new Error(`No current primary matched ${expectedNodeIds.join(',')}`)
   }
@@ -582,10 +777,96 @@ async function setEtcdLink(environment: GateEnvironment, nodeId: string, enabled
   }
 }
 
-async function waitForRecentErrorCode(node: FailoverNodeProcess, code: string, timeoutMs: number): Promise<void> {
+async function waitForRecentErrorCountAbove(
+  node: FailoverNodeProcess,
+  code: string,
+  previousCount: number,
+  timeoutMs: number,
+): Promise<void> {
+  await waitForCondition(async () => recentErrorCount(node, code).then(count => count > previousCount), timeoutMs)
+}
+
+async function recentErrorCount(node: FailoverNodeProcess, code: string): Promise<number> {
+  const status = await statusOf(node)
+  return (status.recentErrors ?? []).filter(event => event.error?.code === code).length
+}
+
+async function expectStaleBatchRejectedWithoutMutation(
+  environment: GateEnvironment,
+  sender: FailoverNodeProcess,
+  receiver: FailoverNodeProcess,
+  receiverNodeId: string,
+  senderNodeId: string,
+  rowId: number,
+): Promise<void> {
+  const previousStaleErrors = await recentErrorCount(receiver, 'STALE_PRIMARY')
+  await sender.sendRawBatch(receiverNodeId, staleBatch(senderNodeId, 1n, rowId))
+  await waitForRecentErrorCountAbove(receiver, 'STALE_PRIMARY', previousStaleErrors, 10_000)
+  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+}
+
+async function expectStaleForwardRejectedWithoutMutation(
+  environment: GateEnvironment,
+  sender: FailoverNodeProcess,
+  receiverNodeId: string,
+  rowId: number,
+): Promise<void> {
+  await expectRejectsWith(sender.sendRawForward(receiverNodeId, staleForwardedTransaction(rowId, 1n)), [
+    'TRANSPORT_ERROR',
+  ])
+  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+}
+
+async function expectStaleSyncRequestRejectedWithoutMutation(
+  environment: GateEnvironment,
+  sender: FailoverNodeProcess,
+  receiverNodeId: string,
+  senderNodeId: string,
+  rowId: number,
+): Promise<void> {
+  await sender.requestRawSync(receiverNodeId, staleSyncRequest(senderNodeId, 1n))
+  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+}
+
+async function expectStaleSyncBatchRejectedWithoutMutation(
+  environment: GateEnvironment,
+  sender: FailoverNodeProcess,
+  receiverNodeId: string,
+  rowId: number,
+): Promise<void> {
+  await sender.sendRawSyncBatch(receiverNodeId, staleSyncBatch(1n, rowId))
+  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+}
+
+async function waitForNoSafePrimary(
+  environment: GateEnvironment,
+  nodeIds: readonly string[],
+  timeoutMs: number,
+): Promise<void> {
   await waitForCondition(async () => {
-    const status = await statusOf(node)
-    return (status.recentErrors ?? []).some(event => event.error?.code === code)
+    for (const nodeId of nodeIds) {
+      const node = requireNode(environment, nodeId)
+      if ((await recentErrorCount(node, 'NO_SAFE_PRIMARY')) > 0) {
+        return true
+      }
+    }
+    return false
+  }, timeoutMs)
+}
+
+async function assertItemAbsent(
+  environment: GateEnvironment,
+  nodeIds: readonly string[],
+  itemId: number,
+  timeoutMs: number,
+): Promise<void> {
+  await waitForCondition(async () => {
+    for (const nodeId of nodeIds) {
+      const node = requireNode(environment, nodeId)
+      const rows = await queryRowsWhenReady(node, 'SELECT id FROM failover_items WHERE id = ?', [itemId])
+      if (rows === null || rows.length > 0) return false
+    }
+    return true
   }, timeoutMs)
 }
 
@@ -612,8 +893,50 @@ async function queryRows(
   return value as Array<Record<string, unknown>>
 }
 
+async function queryRowsWhenReady(
+  node: FailoverNodeProcess,
+  sql: string,
+  params?: unknown[],
+): Promise<Array<Record<string, unknown>> | null> {
+  const status = await statusOf(node)
+  if (status.syncState?.phase !== 'ready') {
+    return null
+  }
+  try {
+    return await queryRows(node, sql, params)
+  } catch (err: unknown) {
+    if (isSyncPhaseReadError(err)) return null
+    throw err
+  }
+}
+
 async function statusOf(node: FailoverNodeProcess): Promise<FailoverStatus> {
   return (await node.status()) as unknown as FailoverStatus
+}
+
+async function collectNodeDiagnostics(environment: GateEnvironment): Promise<Record<string, unknown>> {
+  const diagnostics: Record<string, unknown> = {}
+  for (const [nodeId, node] of environment.nodes) {
+    diagnostics[nodeId] = await statusOf(node).catch(err => ({
+      error: err instanceof Error ? err.message : String(err),
+      logs: node.logs(),
+    }))
+  }
+  return diagnostics
+}
+
+async function readinessOf(environment: GateEnvironment, nodeId: string): Promise<ReadinessResponse> {
+  const response = await fetch(`http://127.0.0.1:${httpPortFor(environment, nodeId)}/health/ready`)
+  const text = await response.text()
+  if (!response.ok) {
+    throw new Error(`Readiness for ${nodeId} returned ${response.status}: ${text}`)
+  }
+  return JSON.parse(text) as ReadinessResponse
+}
+
+function isSyncPhaseReadError(err: unknown): boolean {
+  const error = err as Error & { code?: string }
+  return error.code === 'SYNC_ERROR' && error.message.includes('cannot serve reads')
 }
 
 function requireNode(environment: GateEnvironment, nodeId: string): FailoverNodeProcess {
@@ -630,6 +953,18 @@ function endpointFor(environment: GateEnvironment, fromNodeId: string, toNodeId:
   return `127.0.0.1:${proxyPort}`
 }
 
+function httpPortFor(environment: GateEnvironment, nodeId: string): number {
+  const port = environment.httpPorts.get(nodeId)
+  if (port === undefined) {
+    throw new Error(`Missing HTTP port for ${nodeId}`)
+  }
+  return port
+}
+
+function httpEndpointFor(environment: GateEnvironment, nodeId: string): string {
+  return `http://127.0.0.1:${httpPortFor(environment, nodeId)}/db/failover-${nodeId}`
+}
+
 function etcdEndpointsFor(environment: GateEnvironment, nodeId: string): string[] {
   const ports = environment.etcdProxyPorts.get(nodeId)
   if (!ports) throw new Error(`Missing etcd endpoints for ${nodeId}`)
@@ -644,7 +979,9 @@ function grpcProxyName(fromNodeId: string, toNodeId: string): string {
   return `${fromNodeId}-to-${toNodeId}`
 }
 
-function staleBatch(sourceNodeId: string, primaryTerm: bigint): ReplicationBatch {
+function staleBatch(sourceNodeId: string, primaryTerm: bigint, rowId: number): ReplicationBatch {
+  const change = staleInsertChange(sourceNodeId, rowId, 'stale-batch')
+  const changes = [change]
   return {
     sourceNodeId,
     batchId: `${sourceNodeId}-1-1`,
@@ -654,8 +991,22 @@ function staleBatch(sourceNodeId: string, primaryTerm: bigint): ReplicationBatch
       min: `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`,
       max: `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`,
     },
-    changes: [],
-    checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
+    changes,
+    checksum: createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex'),
+    groupId: GROUP_ID,
+    primaryTerm,
+  }
+}
+
+function staleForwardedTransaction(rowId: number, primaryTerm: bigint): ForwardedTransaction {
+  return {
+    requestId: `stale-forward-${rowId}`,
+    statements: [
+      {
+        sql: 'INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)',
+        params: [rowId, 'forward-stale', rowId, 'stale-forward'],
+      },
+    ],
     groupId: GROUP_ID,
     primaryTerm,
   }
@@ -671,38 +1022,45 @@ function staleSyncRequest(joinerNodeId: string, primaryTerm: bigint): SyncReques
   }
 }
 
-function staleSyncBatch(primaryTerm: bigint): SyncBatch {
+function staleSyncBatch(primaryTerm: bigint, rowId: number): SyncBatch {
+  const rows = [
+    {
+      id: rowId,
+      owner: 'sync-stale',
+      value: rowId,
+      note: 'stale-sync-batch',
+    },
+  ]
   return {
     requestId: 'stale-sync-batch',
     table: 'failover_items',
     batchIndex: 0,
-    rows: [],
-    checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
+    rows,
+    checksum: createHash('sha256').update(canonicaliseForChecksum(rows)).digest('hex'),
     isLastBatchForTable: true,
     groupId: GROUP_ID,
     primaryTerm,
   }
 }
 
-function readAvailability(status: FailoverStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return coordinator.inSyncNodeIds.includes(status.nodeId) ? 'available' : 'unavailable'
-}
-
-function writeAvailability(status: FailoverStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (!coordinator.authority) return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
+function staleInsertChange(sourceNodeId: string, rowId: number, note: string): ReplicationChange {
+  const hlc = `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`
+  return {
+    table: 'failover_items',
+    operation: 'insert',
+    rowId: String(rowId),
+    primaryKey: { id: rowId },
+    hlc,
+    txId: `${sourceNodeId}-stale-${rowId}`,
+    nodeId: sourceNodeId,
+    newData: {
+      id: rowId,
+      owner: sourceNodeId,
+      value: rowId,
+      note,
+    },
+    oldData: null,
+  }
 }
 
 function sameMembers(actual: readonly string[], expected: readonly string[]): boolean {
@@ -723,6 +1081,11 @@ function zip<T, U>(left: readonly T[], right: readonly U[]): Array<[T, U]> {
 
 function fileSize(path: string): number {
   return existsSync(path) ? statSync(path).size : 0
+}
+
+function nextWriteProbeId(): number {
+  writeProbeId += 1
+  return writeProbeId
 }
 
 function jsonReplacer(_key: string, value: unknown): unknown {

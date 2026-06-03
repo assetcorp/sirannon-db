@@ -4,6 +4,7 @@ import { compatibilityAllowsPromotion } from './compatibility.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
+  AdmitNodeToInSyncSetInput,
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
@@ -77,6 +78,7 @@ interface SerializedReplicationGroupState {
   votingDataBearingNodeIds: string[]
   currentPrimary: CoordinatorPrimary | null
   primaryTerm: string
+  durabilityPointSeq?: string
   inSyncNodeIds: string[]
   drainingNodeIds: string[]
   repairingNodeIds: string[]
@@ -355,11 +357,52 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   async updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.groupId, 'groupId')
+    if (input.durabilityPointSeq !== undefined) {
+      assertNonNegativeSeq(input.durabilityPointSeq, 'durabilityPointSeq')
+    }
     const inSyncNodeIds = normaliseNodeIds(input.inSyncNodeIds, 'inSyncNodeIds')
 
     return this.updateGroupStateWithRetry(input.clusterId, input.groupId, state => {
       assertSubset(inSyncNodeIds, state.votingDataBearingNodeIds, 'inSyncNodeIds')
-      return { ...state, inSyncNodeIds, updatedAtMs: Date.now() }
+      assertNoInSyncAdditions(state.inSyncNodeIds, inSyncNodeIds)
+      const durabilityPointSeq =
+        input.durabilityPointSeq !== undefined && input.durabilityPointSeq > state.durabilityPointSeq
+          ? input.durabilityPointSeq
+          : state.durabilityPointSeq
+      if (arraysEqual(inSyncNodeIds, state.inSyncNodeIds) && durabilityPointSeq === state.durabilityPointSeq) {
+        return state
+      }
+      return { ...state, durabilityPointSeq, inSyncNodeIds, updatedAtMs: Date.now() }
+    })
+  }
+
+  async admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
+    assertNonEmpty(input.clusterId, 'clusterId')
+    assertNonEmpty(input.groupId, 'groupId')
+    assertNonEmpty(input.nodeId, 'nodeId')
+    assertNonEmpty(input.sourceNodeId, 'sourceNodeId')
+    assertNonNegativeSeq(input.appliedSeq, 'appliedSeq')
+
+    return this.updateGroupStateWithRetry(input.clusterId, input.groupId, state => {
+      if (!state.votingDataBearingNodeIds.includes(input.nodeId)) {
+        throw new RangeError(`Node '${input.nodeId}' is not configured for the replication group`)
+      }
+      if (
+        state.currentPrimary?.nodeId !== input.sourceNodeId ||
+        state.drainingNodeIds.includes(input.nodeId) ||
+        state.faultedNodeIds.includes(input.nodeId) ||
+        input.appliedSeq < state.durabilityPointSeq
+      ) {
+        return state
+      }
+      const inSyncNodeIds = state.inSyncNodeIds.includes(input.nodeId)
+        ? state.inSyncNodeIds
+        : [...state.inSyncNodeIds, input.nodeId]
+      const repairingNodeIds = removeNodeId(state.repairingNodeIds, input.nodeId)
+      if (arraysEqual(inSyncNodeIds, state.inSyncNodeIds) && arraysEqual(repairingNodeIds, state.repairingNodeIds)) {
+        return state
+      }
+      return { ...state, inSyncNodeIds, repairingNodeIds, updatedAtMs: Date.now() }
     })
   }
 
@@ -466,7 +509,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       if (!state) {
         return null
       }
-      const result = await this.casGroupState(state, mutate(state))
+      const next = mutate(state)
+      if (next === state) {
+        return cloneReplicationGroupState(state)
+      }
+      const result = await this.casGroupState(state, next)
       if (result.updated) {
         return result.state
       }
@@ -568,6 +615,7 @@ function buildReplicationGroupState(input: SetReplicationGroupStateInput): Repli
   const repairingNodeIds = normaliseNodeIds(input.repairingNodeIds ?? [], 'repairingNodeIds')
   const faultedNodeIds = normaliseNodeIds(input.faultedNodeIds ?? [], 'faultedNodeIds')
   assertNonNegativeTerm(input.primaryTerm ?? 0n)
+  assertNonNegativeSeq(input.durabilityPointSeq ?? 0n, 'durabilityPointSeq')
   assertPrimaryInGroup(input.currentPrimary ?? null, votingDataBearingNodeIds)
   assertSubset(inSyncNodeIds, votingDataBearingNodeIds, 'inSyncNodeIds')
   assertSubset(drainingNodeIds, votingDataBearingNodeIds, 'drainingNodeIds')
@@ -580,6 +628,7 @@ function buildReplicationGroupState(input: SetReplicationGroupStateInput): Repli
     votingDataBearingNodeIds,
     currentPrimary: input.currentPrimary ? { ...input.currentPrimary } : null,
     primaryTerm: input.primaryTerm ?? 0n,
+    durabilityPointSeq: input.durabilityPointSeq ?? 0n,
     inSyncNodeIds,
     drainingNodeIds,
     repairingNodeIds,
@@ -629,6 +678,7 @@ function serializeGroupState(state: ReplicationGroupState): string {
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
     primaryTerm: state.primaryTerm.toString(),
+    durabilityPointSeq: state.durabilityPointSeq.toString(),
     inSyncNodeIds: [...state.inSyncNodeIds],
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],
@@ -645,6 +695,7 @@ function parseGroupState(raw: string): ReplicationGroupState {
     currentPrimary: value.currentPrimary ? { ...value.currentPrimary } : null,
     votingDataBearingNodeIds: [...value.votingDataBearingNodeIds],
     primaryTerm: BigInt(value.primaryTerm),
+    durabilityPointSeq: value.durabilityPointSeq !== undefined ? BigInt(value.durabilityPointSeq) : 0n,
     inSyncNodeIds: [...value.inSyncNodeIds],
     drainingNodeIds: [...value.drainingNodeIds],
     repairingNodeIds: [...value.repairingNodeIds],
@@ -658,6 +709,7 @@ function cloneReplicationGroupState(state: ReplicationGroupState): ReplicationGr
     ...state,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
+    durabilityPointSeq: state.durabilityPointSeq,
     inSyncNodeIds: [...state.inSyncNodeIds],
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],
@@ -743,6 +795,29 @@ function assertNonNegativeTerm(term: bigint): void {
   if (term < 0n) {
     throw new RangeError('primaryTerm must not be negative')
   }
+}
+
+function assertNonNegativeSeq(seq: bigint, name: string): void {
+  if (seq < 0n) {
+    throw new RangeError(`${name} must not be negative`)
+  }
+}
+
+function assertNoInSyncAdditions(previous: string[], next: string[]): void {
+  const previousSet = new Set(previous)
+  for (const nodeId of next) {
+    if (!previousSet.has(nodeId)) {
+      throw new RangeError(`Node '${nodeId}' cannot be added to the in-sync set without catch-up proof`)
+    }
+  }
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false
+  }
+  return true
 }
 
 function cloneCompatibility(

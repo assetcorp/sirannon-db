@@ -4,6 +4,7 @@ export { PrimaryWinsResolver } from './conflict/primary-wins.js'
 export type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
+  AdmitNodeToInSyncSetInput,
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,

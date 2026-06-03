@@ -123,6 +123,17 @@ export async function cleanupDockerResources(handles: { containers: string[]; ne
   for (const network of handles.networks) {
     await docker(['network', 'rm', network], 30_000).catch(() => undefined)
   }
+  const [leftoverContainers, leftoverNetworks] = await Promise.all([
+    existingContainers(handles.containers),
+    existingNetworks(handles.networks),
+  ])
+  if (leftoverContainers.length > 0 || leftoverNetworks.length > 0) {
+    throw new Error(
+      `Docker cleanup left resources: containers=[${leftoverContainers.join(', ')}] networks=[${leftoverNetworks.join(
+        ', ',
+      )}]`,
+    )
+  }
 }
 
 export async function allocatePorts(count: number): Promise<number[]> {
@@ -165,6 +176,26 @@ async function ensureImage(image: string): Promise<void> {
   if (!localImages.has(image)) {
     await docker(['pull', image], 180_000)
   }
+}
+
+async function existingContainers(containerNames: readonly string[]): Promise<string[]> {
+  if (containerNames.length === 0) return []
+  const expected = new Set(containerNames)
+  const result = await docker(['ps', '--all', '--format', '{{.Names}}'], 15_000)
+  return result.stdout
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line !== '' && expected.has(line))
+}
+
+async function existingNetworks(networkNames: readonly string[]): Promise<string[]> {
+  if (networkNames.length === 0) return []
+  const expected = new Set(networkNames)
+  const result = await docker(['network', 'ls', '--format', '{{.Name}}'], 15_000)
+  return result.stdout
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line !== '' && expected.has(line))
 }
 
 async function waitForHttpOk(url: string, timeoutMs: number): Promise<void> {

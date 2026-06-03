@@ -1,11 +1,10 @@
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import { SirannonClient } from '@delali/sirannon-db/client'
 
-const HTTP_URL = 'http://localhost:9876'
-const WS_URL = 'ws://localhost:9876'
+const SERVER_URL = 'http://localhost:9876'
 
-const httpClient = new SirannonClient(HTTP_URL, { transport: 'http' })
-const wsClient = new SirannonClient(WS_URL, { transport: 'websocket' })
+const httpClient = new SirannonClient(SERVER_URL, { transport: 'http' })
+const wsClient = new SirannonClient(SERVER_URL, { transport: 'websocket' })
 
 const httpDb = httpClient.database('main')
 const wsDb = wsClient.database('main')

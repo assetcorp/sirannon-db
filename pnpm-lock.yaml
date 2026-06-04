@@ -93,6 +93,76 @@ importers:
         specifier: 4.0.18
         version: 4.0.18(@types/node@25.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/ts/examples/distributed-entitlements:
+    dependencies:
+      '@delali/sirannon-db':
+        specifier: workspace:*
+        version: link:../..
+      '@grpc/grpc-js':
+        specifier: 1.14.3
+        version: 1.14.3
+      '@tanstack/react-router':
+        specifier: 1.170.10
+        version: 1.170.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@tanstack/react-start':
+        specifier: 1.168.18
+        version: 1.168.18(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vite@8.0.0(@types/node@25.5.0)(esbuild@0.27.3)(jiti@2.7.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2))
+      better-sqlite3:
+        specifier: 12.6.2
+        version: 12.6.2
+      etcd3:
+        specifier: 1.1.2
+        version: 1.1.2
+      grpc-health-check:
+        specifier: 2.1.0
+        version: 2.1.0
+      lucide-react:
+        specifier: 1.17.0
+        version: 1.17.0(react@19.2.6)
+      react:
+        specifier: 19.2.6
+        version: 19.2.6
+      react-dom:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
+      selfsigned:
+        specifier: 5.5.0
+        version: 5.5.0
+      uWebSockets.js:
+        specifier: github:uNetworking/uWebSockets.js#v20.58.0
+        version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: 7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: 25.5.0
+        version: 25.5.0
+      '@types/react':
+        specifier: 19.2.15
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.15)
+      '@vitejs/plugin-react':
+        specifier: 6.0.2
+        version: 6.0.2(babel-plugin-react-compiler@1.0.0)(vite@8.0.0(@types/node@25.5.0)(esbuild@0.27.3)(jiti@2.7.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2))
+      concurrently:
+        specifier: 9.2.1
+        version: 9.2.1
+      tsx:
+        specifier: 4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vite:
+        specifier: 8.0.0
+        version: 8.0.0(@types/node@25.5.0)(esbuild@0.27.3)(jiti@2.7.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/ts/examples/node:
     dependencies:
       '@delali/sirannon-db':
@@ -4489,7 +4559,7 @@ packages:
     hasBin: true
 
   uWebSockets.js@https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab:
-    resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab}
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab}
     version: 20.58.0
 
   ufo@1.6.3:

@@ -11,3 +11,10 @@ onlyBuiltDependencies:
   - protobufjs
 
 minimumReleaseAge: 5760
+
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  grpc-tools: true
+  nx: true
+  protobufjs: true

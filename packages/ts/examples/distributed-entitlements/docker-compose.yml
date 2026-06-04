@@ -1,0 +1,154 @@
+services:
+  certs:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
+    command: pnpm run certs
+    environment:
+      CERT_DIR: /certs
+    volumes:
+      - sirannon-entitlements-certs:/certs
+
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.6.0
+    command:
+      - /usr/local/bin/etcd
+      - --name
+      - entitlements-etcd
+      - --data-dir
+      - /etcd-data
+      - --listen-client-urls
+      - http://0.0.0.0:2379
+      - --advertise-client-urls
+      - http://etcd:2379
+      - --listen-peer-urls
+      - http://0.0.0.0:2380
+      - --initial-advertise-peer-urls
+      - http://etcd:2380
+      - --initial-cluster
+      - entitlements-etcd=http://etcd:2380
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - sirannon-entitlements-etcd:/etcd-data
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - "127.0.0.1:8474:8474"
+
+  proxy-setup:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
+    command: pnpm run proxy:setup
+    depends_on:
+      etcd:
+        condition: service_healthy
+      toxiproxy:
+        condition: service_started
+    environment:
+      TOXIPROXY_URL: http://toxiproxy:8474
+
+  node-a:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      proxy-setup:
+        condition: service_completed_successfully
+    environment:
+      NODE_ID: node-a
+      INITIAL_ROLE: primary
+      SEED_SCHEMA: "true"
+      DB_PATH: /data/entitlements.db
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "7301"
+      HTTP_PUBLIC_ENDPOINT: http://127.0.0.1:7301/db/entitlements
+      GRPC_HOST: 0.0.0.0
+      GRPC_PORT: "7401"
+      GRPC_ENDPOINTS: toxiproxy:5102,toxiproxy:5103
+      ETCD_ENDPOINTS: http://toxiproxy:4101
+      SIRANNON_CLUSTER_TOKEN: sirannon-entitlements-local-token
+      TLS_CA_CERT: /certs/ca.pem
+      TLS_CERT: /certs/node-a.pem
+      TLS_KEY: /certs/node-a-key.pem
+    ports:
+      - "127.0.0.1:7301:7301"
+    volumes:
+      - sirannon-entitlements-certs:/certs:ro
+      - sirannon-entitlements-node-a:/data
+
+  node-b:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      proxy-setup:
+        condition: service_completed_successfully
+    environment:
+      NODE_ID: node-b
+      INITIAL_ROLE: replica
+      SEED_SCHEMA: "false"
+      DB_PATH: /data/entitlements.db
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "7302"
+      HTTP_PUBLIC_ENDPOINT: http://127.0.0.1:7302/db/entitlements
+      GRPC_HOST: 0.0.0.0
+      GRPC_PORT: "7402"
+      GRPC_ENDPOINTS: toxiproxy:5101,toxiproxy:5103
+      ETCD_ENDPOINTS: http://toxiproxy:4102
+      SIRANNON_CLUSTER_TOKEN: sirannon-entitlements-local-token
+      TLS_CA_CERT: /certs/ca.pem
+      TLS_CERT: /certs/node-b.pem
+      TLS_KEY: /certs/node-b-key.pem
+    ports:
+      - "127.0.0.1:7302:7302"
+    volumes:
+      - sirannon-entitlements-certs:/certs:ro
+      - sirannon-entitlements-node-b:/data
+
+  node-c:
+    build:
+      context: ../../../..
+      dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      proxy-setup:
+        condition: service_completed_successfully
+    environment:
+      NODE_ID: node-c
+      INITIAL_ROLE: replica
+      SEED_SCHEMA: "false"
+      DB_PATH: /data/entitlements.db
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "7303"
+      HTTP_PUBLIC_ENDPOINT: http://127.0.0.1:7303/db/entitlements
+      GRPC_HOST: 0.0.0.0
+      GRPC_PORT: "7403"
+      GRPC_ENDPOINTS: toxiproxy:5101,toxiproxy:5102
+      ETCD_ENDPOINTS: http://toxiproxy:4103
+      SIRANNON_CLUSTER_TOKEN: sirannon-entitlements-local-token
+      TLS_CA_CERT: /certs/ca.pem
+      TLS_CERT: /certs/node-c.pem
+      TLS_KEY: /certs/node-c-key.pem
+    ports:
+      - "127.0.0.1:7303:7303"
+    volumes:
+      - sirannon-entitlements-certs:/certs:ro
+      - sirannon-entitlements-node-c:/data
+
+volumes:
+  sirannon-entitlements-certs:
+  sirannon-entitlements-etcd:
+  sirannon-entitlements-node-a:
+  sirannon-entitlements-node-b:
+  sirannon-entitlements-node-c:

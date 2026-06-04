@@ -1,5 +1,7 @@
 export { BackupManager } from './backup/backup.js'
 export { BackupScheduler } from './backup/scheduler.js'
+export { ChangeTracker } from './cdc/change-tracker.js'
+export type { ChangeTrackerOptions } from './cdc/types.js'
 export type { ConnectionPoolOptions } from './connection-pool.js'
 export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'

@@ -4,10 +4,10 @@ export function LiveSignal({ lastEvent, pendingAction }: { lastEvent: string; pe
   return (
     <div className="live-signal">
       <RadioTower size={18} />
-      <div>
+      <output aria-live="polite">
         <strong>{pendingAction ?? 'CDC stream online'}</strong>
         <span>{lastEvent}</span>
-      </div>
+      </output>
     </div>
   )
 }

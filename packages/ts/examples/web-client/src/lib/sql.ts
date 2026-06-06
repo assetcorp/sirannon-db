@@ -9,7 +9,24 @@ export const ACTIVITY_LIST_SQL = 'SELECT * FROM activity ORDER BY id DESC LIMIT 
 export const ALLOCATE_PRODUCT_SQL = 'UPDATE products SET stock = stock - 1 WHERE id = ? AND stock > 0'
 export const RECEIVE_PRODUCT_SQL = 'UPDATE products SET stock = stock + ? WHERE id = ?'
 export const INSERT_PRODUCT_SQL = 'INSERT INTO products (name, price, stock) VALUES (?, ?, ?)'
-export const INSERT_ACTIVITY_SQL = 'INSERT INTO activity (product_name, action, quantity) VALUES (?, ?, ?)'
+export const INSERT_ALLOCATE_ACTIVITY_SQL = `
+  INSERT INTO activity (product_name, action, quantity)
+  SELECT name, 'allocated', 1
+  FROM products
+  WHERE id = ? AND changes() > 0
+`
+export const INSERT_RECEIVE_ACTIVITY_SQL = `
+  INSERT INTO activity (product_name, action, quantity)
+  SELECT name, 'received', ?
+  FROM products
+  WHERE id = ? AND changes() > 0
+`
+export const INSERT_CREATED_ACTIVITY_SQL = `
+  INSERT INTO activity (product_name, action, quantity)
+  SELECT name, 'created', stock
+  FROM products
+  WHERE id = last_insert_rowid() AND changes() > 0
+`
 export const DELETE_ACTIVITY_SQL = 'DELETE FROM activity'
 export const DELETE_PRODUCTS_SQL = 'DELETE FROM products'
 export const RESET_SEQUENCE_SQL = 'DELETE FROM sqlite_sequence WHERE name IN (?, ?)'

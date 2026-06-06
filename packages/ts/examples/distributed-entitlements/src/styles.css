@@ -36,8 +36,8 @@ body {
   color: var(--text);
   background: var(--bg);
   font-family:
-    "IBM Plex Sans", "Aptos", "Segoe UI", ui-sans-serif, system-ui,
-    -apple-system, BlinkMacSystemFont, sans-serif;
+    "IBM Plex Sans", Aptos, "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
   font-size: 14px;
 }
 

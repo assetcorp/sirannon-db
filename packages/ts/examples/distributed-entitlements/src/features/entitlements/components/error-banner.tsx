@@ -7,9 +7,9 @@ export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss
   }, [onDismiss])
 
   return (
-    <div className="error-banner">
+    <div className="error-banner" role="alert" aria-live="assertive" aria-atomic="true">
       <span>{message}</span>
-      <button type="button" onClick={handleDismiss} title="Dismiss error">
+      <button type="button" onClick={handleDismiss} aria-label="Dismiss error" title="Dismiss error">
         <X size={16} />
       </button>
     </div>

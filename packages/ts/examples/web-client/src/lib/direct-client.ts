@@ -18,8 +18,10 @@ import {
   DEFAULT_DEMO_TOKEN,
   DELETE_ACTIVITY_SQL,
   DELETE_PRODUCTS_SQL,
-  INSERT_ACTIVITY_SQL,
+  INSERT_ALLOCATE_ACTIVITY_SQL,
+  INSERT_CREATED_ACTIVITY_SQL,
   INSERT_PRODUCT_SQL,
+  INSERT_RECEIVE_ACTIVITY_SQL,
   PRODUCT_LIST_SQL,
   RECEIVE_PRODUCT_SQL,
   RESET_SEQUENCE_SQL,
@@ -61,8 +63,8 @@ export async function allocateProductDirect(input: ProductActionInput): Promise<
       params: [input.id],
     },
     {
-      sql: INSERT_ACTIVITY_SQL,
-      params: [input.name, 'allocated', 1],
+      sql: INSERT_ALLOCATE_ACTIVITY_SQL,
+      params: [input.id],
     },
   ])
 }
@@ -74,8 +76,8 @@ export async function receiveInventoryDirect(input: ReceiveInventoryInput): Prom
       params: [input.quantity, input.id],
     },
     {
-      sql: INSERT_ACTIVITY_SQL,
-      params: [input.name, 'received', input.quantity],
+      sql: INSERT_RECEIVE_ACTIVITY_SQL,
+      params: [input.quantity, input.id],
     },
   ])
 }
@@ -87,8 +89,7 @@ export async function addProductDirect(input: AddProductInput): Promise<void> {
       params: [input.name, input.price, input.stock],
     },
     {
-      sql: INSERT_ACTIVITY_SQL,
-      params: [input.name, 'created', input.stock],
+      sql: INSERT_CREATED_ACTIVITY_SQL,
     },
   ])
 }

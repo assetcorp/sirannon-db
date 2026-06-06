@@ -27,7 +27,12 @@ function ModeOption({
   const icon = option.mode === 'app-actions' ? <ServerCog size={18} /> : <Database size={18} />
 
   return (
-    <button type="button" className={active ? 'mode-option active' : 'mode-option'} onClick={handleClick}>
+    <button
+      type="button"
+      className={active ? 'mode-option active' : 'mode-option'}
+      onClick={handleClick}
+      aria-pressed={active}
+    >
       <span className="mode-icon">{icon}</span>
       <span className="mode-copy">
         <strong>{option.title}</strong>

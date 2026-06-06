@@ -48,26 +48,39 @@ export function useInventoryController(initialData: LoaderData) {
 
     setConnectionState('connecting')
 
-    Promise.all([subscribeProducts(handleProductEvent), subscribeActivity(handleActivityEvent)])
-      .then(([productsSubscription, activitySubscription]) => {
+    Promise.allSettled([subscribeProducts(handleProductEvent), subscribeActivity(handleActivityEvent)]).then(
+      results => {
+        const [productsResult, activityResult] = results
+        const failedResult = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+        if (productsResult.status === 'fulfilled') {
+          disposeProducts = productsResult.value.unsubscribe
+        }
+
+        if (activityResult.status === 'fulfilled') {
+          disposeActivity = activityResult.value.unsubscribe
+        }
+
+        if (disposed || failedResult) {
+          disposeProducts()
+          disposeActivity()
+          disposeProducts = createEmptyDispose()
+          disposeActivity = createEmptyDispose()
+        }
+
         if (disposed) {
-          productsSubscription.unsubscribe()
-          activitySubscription.unsubscribe()
           return
         }
 
-        disposeProducts = productsSubscription.unsubscribe
-        disposeActivity = activitySubscription.unsubscribe
+        if (failedResult) {
+          setConnectionState('offline')
+          setError(toErrorMessage(failedResult.reason))
+          return
+        }
+
         setConnectionState('live')
-      })
-      .catch(subscriptionError => {
-        if (disposed) {
-          return
-        }
-
-        setConnectionState('offline')
-        setError(toErrorMessage(subscriptionError))
-      })
+      },
+    )
 
     return () => {
       disposed = true

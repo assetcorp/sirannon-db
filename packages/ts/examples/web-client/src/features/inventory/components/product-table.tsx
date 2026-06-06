@@ -29,11 +29,11 @@ export function ProductTable({
       <table className="product-table">
         <thead>
           <tr>
-            <th>Record</th>
-            <th>Item</th>
-            <th>Unit cost</th>
-            <th>Available</th>
-            <th>Workflow</th>
+            <th scope="col">Record</th>
+            <th scope="col">Item</th>
+            <th scope="col">Unit cost</th>
+            <th scope="col">Available</th>
+            <th scope="col">Workflow</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>

@@ -95,6 +95,10 @@ export const UPDATE_CUSTOMER_FROM_BILLING_SQL = `
   SET plan = ?, status = ?
   WHERE external_id = ?
     AND id IN (SELECT customer_id FROM entitlements WHERE version < ?)
+    AND EXISTS (
+      SELECT 1 FROM billing_events
+      WHERE provider_event_id = ? AND payload = ?
+    )
 `
 export const UPDATE_ENTITLEMENT_FROM_BILLING_SQL = `
   UPDATE entitlements
@@ -106,6 +110,10 @@ export const UPDATE_ENTITLEMENT_FROM_BILLING_SQL = `
       updated_at = datetime('now')
   WHERE customer_id = (SELECT id FROM customers WHERE external_id = ?)
     AND version < ?
+    AND EXISTS (
+      SELECT 1 FROM billing_events
+      WHERE provider_event_id = ? AND payload = ?
+    )
 `
 export const INSERT_BILLING_AUDIT_SQL = `
   INSERT INTO audit_log (actor, action, target, detail)
@@ -162,7 +170,10 @@ export function clusterEndpointsFromEnv(value: string | undefined): string[] {
 }
 
 export function toServerBaseUrl(endpoint: string): string {
-  return endpoint.replace(new RegExp(`/db/${DATABASE_ID}$`, 'i'), '').replace(/\/$/, '')
+  return endpoint
+    .replace(/\/+$/, '')
+    .replace(new RegExp(`/db/${DATABASE_ID}$`, 'i'), '')
+    .replace(/\/+$/, '')
 }
 
 export function toWebSocketAuthProtocol(token: string): string {

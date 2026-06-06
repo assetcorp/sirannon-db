@@ -47,6 +47,7 @@ export function AppHeader({
           type="button"
           disabled={refreshing}
           onClick={handleRefreshClick}
+          aria-label="Refresh"
           title="Refresh"
         >
           <RefreshCw size={17} />
@@ -56,6 +57,7 @@ export function AppHeader({
           type="button"
           disabled={pendingAction !== null}
           onClick={handleResetClick}
+          aria-label="Reset"
           title="Reset"
         >
           <RotateCcw size={17} />

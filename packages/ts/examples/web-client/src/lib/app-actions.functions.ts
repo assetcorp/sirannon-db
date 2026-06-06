@@ -16,8 +16,10 @@ import {
   DEFAULT_DEMO_TOKEN,
   DELETE_ACTIVITY_SQL,
   DELETE_PRODUCTS_SQL,
-  INSERT_ACTIVITY_SQL,
+  INSERT_ALLOCATE_ACTIVITY_SQL,
+  INSERT_CREATED_ACTIVITY_SQL,
   INSERT_PRODUCT_SQL,
+  INSERT_RECEIVE_ACTIVITY_SQL,
   PRODUCT_LIST_SQL,
   RECEIVE_PRODUCT_SQL,
   RESET_SEQUENCE_SQL,
@@ -67,8 +69,8 @@ export const allocateProduct = createServerFn({
         params: [data.id],
       },
       {
-        sql: INSERT_ACTIVITY_SQL,
-        params: [data.name, 'allocated', 1],
+        sql: INSERT_ALLOCATE_ACTIVITY_SQL,
+        params: [data.id],
       },
     ])
   })
@@ -85,8 +87,8 @@ export const receiveInventory = createServerFn({
         params: [data.quantity, data.id],
       },
       {
-        sql: INSERT_ACTIVITY_SQL,
-        params: [data.name, 'received', data.quantity],
+        sql: INSERT_RECEIVE_ACTIVITY_SQL,
+        params: [data.quantity, data.id],
       },
     ])
   })
@@ -103,8 +105,7 @@ export const addProduct = createServerFn({
         params: [data.name, data.price, data.stock],
       },
       {
-        sql: INSERT_ACTIVITY_SQL,
-        params: [data.name, 'created', data.stock],
+        sql: INSERT_CREATED_ACTIVITY_SQL,
       },
     ])
   })

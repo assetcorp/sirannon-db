@@ -23,7 +23,6 @@ export const addProductInputSchema = z.object({
 
 export const productIdInputSchema = z.object({
   id: z.number().int().positive(),
-  name: z.string().min(1).max(80),
 })
 
 export const receiveInventoryInputSchema = productIdInputSchema.extend({

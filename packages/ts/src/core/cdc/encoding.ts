@@ -2,6 +2,7 @@ export const BLOB_TAG = '__sirannon_blob'
 export const INT_TAG = '__sirannon_int'
 
 export const SAFE_INT_BOUND_TEXT = '9007199254740991'
+const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
 
 export function decodeTaggedValues(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
@@ -33,7 +34,7 @@ function isBinaryValue(value: unknown): value is Uint8Array | Buffer {
 }
 
 function decodeHexBytes(hex: string): Uint8Array | Buffer {
-  if (hex.length % 2 !== 0) {
+  if (hex.length % 2 !== 0 || !HEX_BYTES_RE.test(hex)) {
     throw new Error('Invalid CDC BLOB hex payload')
   }
 

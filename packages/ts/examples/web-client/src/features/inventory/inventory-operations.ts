@@ -34,7 +34,7 @@ export async function resetRecordsForMode(mode: DemoMode): Promise<void> {
 }
 
 export async function allocateProductForMode(mode: DemoMode, product: Product): Promise<void> {
-  const input = { id: product.id, name: product.name }
+  const input = { id: product.id }
   if (mode === 'driver-access') {
     await allocateProductDirect(input)
     return
@@ -46,7 +46,6 @@ export async function allocateProductForMode(mode: DemoMode, product: Product): 
 export async function receiveInventoryForMode(mode: DemoMode, product: Product): Promise<void> {
   const input: ReceiveInventoryInput = {
     id: product.id,
-    name: product.name,
     quantity: RECEIVE_QUANTITY,
   }
 

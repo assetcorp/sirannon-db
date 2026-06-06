@@ -20,8 +20,10 @@ import {
   DEFAULT_DEMO_TOKEN,
   DELETE_ACTIVITY_SQL,
   DELETE_PRODUCTS_SQL,
-  INSERT_ACTIVITY_SQL,
+  INSERT_ALLOCATE_ACTIVITY_SQL,
+  INSERT_CREATED_ACTIVITY_SQL,
   INSERT_PRODUCT_SQL,
+  INSERT_RECEIVE_ACTIVITY_SQL,
   PRODUCT_LIST_SQL,
   RECEIVE_PRODUCT_SQL,
   RESET_SEQUENCE_SQL,
@@ -29,8 +31,9 @@ import {
   toWebSocketAuthProtocol,
 } from './lib/sql'
 
+const DEFAULT_PORT = 9876
 const HOST = process.env.HOST ?? '127.0.0.1'
-const PORT = Number(process.env.PORT ?? 9876)
+const PORT = parsePort(process.env.PORT)
 const DEMO_TOKEN = process.env.SIRANNON_DEMO_TOKEN ?? DEFAULT_DEMO_TOKEN
 const WEBSOCKET_AUTH_PROTOCOL = toWebSocketAuthProtocol(DEMO_TOKEN)
 const APP_ORIGINS = (process.env.APP_ORIGIN ?? 'http://localhost:3000')
@@ -44,7 +47,9 @@ const WRITE_SQL = new Set([
   normaliseSql(ALLOCATE_PRODUCT_SQL),
   normaliseSql(RECEIVE_PRODUCT_SQL),
   normaliseSql(INSERT_PRODUCT_SQL),
-  normaliseSql(INSERT_ACTIVITY_SQL),
+  normaliseSql(INSERT_ALLOCATE_ACTIVITY_SQL),
+  normaliseSql(INSERT_RECEIVE_ACTIVITY_SQL),
+  normaliseSql(INSERT_CREATED_ACTIVITY_SQL),
   normaliseSql(DELETE_ACTIVITY_SQL),
   normaliseSql(DELETE_PRODUCTS_SQL),
   normaliseSql(RESET_SEQUENCE_SQL),
@@ -52,6 +57,19 @@ const WRITE_SQL = new Set([
 
 function normaliseSql(sql: string): string {
   return sql.trim().replace(/\s+/g, ' ')
+}
+
+function parsePort(value: string | undefined): number {
+  if (value === undefined || value.trim().length === 0) {
+    return DEFAULT_PORT
+  }
+
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be an integer TCP port between 1 and 65535')
+  }
+
+  return port
 }
 
 function isNumberParam(value: unknown): value is number {
@@ -72,21 +90,25 @@ function assertAllowedQuery(sql: string, params?: Params): void {
   }
 }
 
-function assertAllowedExecute(sql: string, params?: Params): void {
+function assertAllowedExecute(sql: string, params?: Params, previousSql?: string | null): void {
   const normalised = normaliseSql(sql)
 
   if (!WRITE_SQL.has(normalised)) {
     throw new HookDeniedError('demoSqlAllowlist', 'Statement is not allowed by this demo')
   }
 
-  if (!isAllowedParams(normalised, params)) {
+  if (!isAllowedParams(normalised, params, previousSql)) {
     throw new HookDeniedError('demoSqlAllowlist', 'Statement parameters are not allowed by this demo')
   }
 }
 
-function isAllowedParams(sql: string, params?: Params): boolean {
+function isAllowedParams(sql: string, params?: Params, previousSql?: string | null): boolean {
   if (sql === normaliseSql(DELETE_ACTIVITY_SQL) || sql === normaliseSql(DELETE_PRODUCTS_SQL)) {
     return params === undefined
+  }
+
+  if (sql === normaliseSql(INSERT_CREATED_ACTIVITY_SQL)) {
+    return params === undefined && previousSql === normaliseSql(INSERT_PRODUCT_SQL)
   }
 
   if (!Array.isArray(params)) {
@@ -121,14 +143,24 @@ function isAllowedParams(sql: string, params?: Params): boolean {
     )
   }
 
-  if (sql === normaliseSql(INSERT_ACTIVITY_SQL)) {
+  if (sql === normaliseSql(INSERT_ALLOCATE_ACTIVITY_SQL)) {
     return (
-      params.length === 3 &&
-      isStringParam(params[0]) &&
-      (params[1] === 'allocated' || params[1] === 'received' || params[1] === 'created') &&
-      isIntegerParam(params[2]) &&
-      params[2] >= 0 &&
-      params[2] <= 100_000
+      params.length === 1 &&
+      isIntegerParam(params[0]) &&
+      params[0] > 0 &&
+      previousSql === normaliseSql(ALLOCATE_PRODUCT_SQL)
+    )
+  }
+
+  if (sql === normaliseSql(INSERT_RECEIVE_ACTIVITY_SQL)) {
+    return (
+      params.length === 2 &&
+      isIntegerParam(params[0]) &&
+      params[0] > 0 &&
+      params[0] <= 1_000 &&
+      isIntegerParam(params[1]) &&
+      params[1] > 0 &&
+      previousSql === normaliseSql(RECEIVE_PRODUCT_SQL)
     )
   }
 
@@ -140,14 +172,17 @@ function isAllowedParams(sql: string, params?: Params): boolean {
 }
 
 function createGuardedTransaction(tx: Transaction): Transaction {
+  let previousSql: string | null = null
   const guarded = {
     query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
       assertAllowedQuery(sql, params)
       return tx.query<T>(sql, params)
     },
-    execute(sql: string, params?: Params): Promise<ExecuteResult> {
-      assertAllowedExecute(sql, params)
-      return tx.execute(sql, params)
+    async execute(sql: string, params?: Params): Promise<ExecuteResult> {
+      assertAllowedExecute(sql, params, previousSql)
+      const result = await tx.execute(sql, params)
+      previousSql = normaliseSql(sql)
+      return result
     },
     executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
       for (const params of paramsBatch) {

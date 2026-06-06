@@ -23,6 +23,16 @@ export function CustomerTable({
       onSelectCustomer={onSelectCustomer}
     />
   ))
+  const body =
+    customers.length === 0 ? (
+      <tr>
+        <td colSpan={8}>
+          <EmptyLedger />
+        </td>
+      </tr>
+    ) : (
+      rows
+    )
 
   return (
     <div className="table-wrap">
@@ -39,7 +49,7 @@ export function CustomerTable({
             <th>Focus</th>
           </tr>
         </thead>
-        <tbody>{rows}</tbody>
+        <tbody>{body}</tbody>
       </table>
     </div>
   )
@@ -59,6 +69,7 @@ function CustomerRow({
   const handleSelectClick = useCallback(() => {
     onSelectCustomer(customer)
   }, [customer, onSelectCustomer])
+  const focusLabel = `Focus account for ${customer.name}`
 
   return (
     <tr className={selected ? 'selected' : undefined}>
@@ -82,6 +93,8 @@ function CustomerRow({
           type="button"
           disabled={disabled}
           onClick={handleSelectClick}
+          aria-label={focusLabel}
+          aria-pressed={selected}
           title="Focus account"
         >
           {selected ? <CheckCircle2 size={16} /> : <MousePointer2 size={16} />}

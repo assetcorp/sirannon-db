@@ -98,7 +98,7 @@ const grpcHost = process.env.GRPC_HOST ?? '127.0.0.1'
 const grpcPort = requirePort('GRPC_PORT')
 const endpoints = requireCsv('GRPC_ENDPOINTS')
 const etcdHosts = requireCsv('ETCD_ENDPOINTS')
-const token = process.env.SIRANNON_CLUSTER_TOKEN ?? 'sirannon-entitlements-local-token'
+const token = requireClusterToken()
 const seedSchema = process.env.SEED_SCHEMA === 'true'
 const httpEndpoints = { ...DEFAULT_HTTP_ENDPOINTS, [nodeId]: requireEnv('HTTP_PUBLIC_ENDPOINT') }
 const driver = betterSqlite3({ busyTimeout: 10_000 })
@@ -110,12 +110,12 @@ const tracker = new ChangeTracker({ replication: true })
 if (seedSchema) {
   await conn.exec(SCHEMA)
   await conn.exec(SEED_SQL)
-  await tracker.watch(conn, 'customers')
-  await tracker.watch(conn, 'entitlements')
-  await tracker.watch(conn, 'usage_events')
-  await tracker.watch(conn, 'billing_events')
-  await tracker.watch(conn, 'audit_log')
 }
+await tracker.watch(conn, 'customers')
+await tracker.watch(conn, 'entitlements')
+await tracker.watch(conn, 'usage_events')
+await tracker.watch(conn, 'billing_events')
+await tracker.watch(conn, 'audit_log')
 
 const sirannon = new Sirannon({ driver })
 const db = await sirannon.open(DATABASE_ID, dbPath)
@@ -343,6 +343,12 @@ function requireRole(): NodeRole {
   const value = requireEnv('INITIAL_ROLE')
   if (value === 'primary' || value === 'replica') return value
   throw new Error('INITIAL_ROLE must be primary or replica')
+}
+
+function requireClusterToken(): string {
+  const value = requireEnv('SIRANNON_CLUSTER_TOKEN')
+  console.log('Using SIRANNON_CLUSTER_TOKEN from the environment for cluster HTTP and WebSocket auth')
+  return value
 }
 
 function requireEnv(name: string): string {

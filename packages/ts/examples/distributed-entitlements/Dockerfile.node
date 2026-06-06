@@ -14,6 +14,13 @@ COPY . .
 
 RUN pnpm --filter @delali/sirannon-db build
 
+RUN groupadd --system appuser \
+  && useradd --system --gid appuser --home-dir /home/appuser --create-home appuser \
+  && mkdir -p /data /certs \
+  && chown -R appuser:appuser /home/appuser /data /certs /repo
+
+USER appuser
+
 WORKDIR /repo/packages/ts/examples/distributed-entitlements
 
 CMD ["pnpm", "run", "node"]

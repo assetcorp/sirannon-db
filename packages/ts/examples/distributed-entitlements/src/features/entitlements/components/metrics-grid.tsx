@@ -11,7 +11,7 @@ export function MetricsGrid({ stats }: { stats: ControlPlaneStats }) {
         label="Allocated Seats"
         value={formatCompactNumber(stats.totalSeats)}
       />
-      <MetricCard icon={<KeyRound size={18} />} label="Quota Remaining" value={formatCompactNumber(stats.totalQuota)} />
+      <MetricCard icon={<KeyRound size={18} />} label="Total Quota" value={formatCompactNumber(stats.totalQuota)} />
       <MetricCard
         icon={<ServerCrash size={18} />}
         label="Primary / Down"

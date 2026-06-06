@@ -1,6 +1,6 @@
 # Sirannon Fulfillment Operations Demo
 
-A fulfillment operations app that demonstrates Sirannon as a networked SQLite data layer with HTTP operations, WebSocket subscriptions, CDC updates, and transactions working together.
+This example demonstrates Sirannon as a networked SQLite data layer with HTTP operations, WebSocket subscriptions, CDC updates, and transactions.
 
 ## Run
 

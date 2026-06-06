@@ -152,5 +152,18 @@ describe('ChangeTracker', () => {
         globalWithBuffer.Buffer = originalBuffer
       }
     })
+
+    it('rejects malformed tagged BLOB hex values before decoding', () => {
+      expect(() => decodeTaggedValues({ payload: { __sirannon_blob: 'abc' } })).toThrow('Invalid CDC BLOB hex payload')
+      expect(() => decodeTaggedValues({ payload: { __sirannon_blob: 'zz' } })).toThrow('Invalid CDC BLOB hex payload')
+    })
+
+    it('decodes empty tagged BLOB values', () => {
+      const decoded = decodeTaggedValues({ payload: { __sirannon_blob: '' } }) as {
+        payload: Uint8Array
+      }
+
+      expect(decoded.payload).toHaveLength(0)
+    })
   })
 })

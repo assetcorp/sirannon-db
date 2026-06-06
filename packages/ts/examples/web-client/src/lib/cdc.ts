@@ -19,13 +19,21 @@ function toFiniteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isValidTimestamp(value: unknown): value is string {
+  return isNonEmptyString(value) && !Number.isNaN(Date.parse(value))
+}
+
 export function normaliseProduct(row: Record<string, unknown> | undefined): Product | null {
   const id = toSafeInteger(row?.id)
   const price = toFiniteNumber(row?.price)
   const stock = toSafeInteger(row?.stock)
   const name = row?.name
 
-  if (id === null || price === null || stock === null || typeof name !== 'string') {
+  if (id === null || id < 0 || price === null || price <= 0 || stock === null || stock < 0 || !isNonEmptyString(name)) {
     return null
   }
 
@@ -42,9 +50,11 @@ export function normaliseActivityRecord(row: Record<string, unknown> | undefined
   if (
     id === null ||
     quantity === null ||
-    typeof productName !== 'string' ||
+    id < 0 ||
+    quantity < 0 ||
+    !isNonEmptyString(productName) ||
     (action !== 'allocated' && action !== 'received' && action !== 'created') ||
-    typeof createdAt !== 'string'
+    !isValidTimestamp(createdAt)
   ) {
     return null
   }

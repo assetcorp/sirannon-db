@@ -237,7 +237,7 @@ button {
   box-shadow: var(--shadow);
 }
 
-.live-signal div {
+.live-signal output {
   display: grid;
   gap: 3px;
   min-width: 0;

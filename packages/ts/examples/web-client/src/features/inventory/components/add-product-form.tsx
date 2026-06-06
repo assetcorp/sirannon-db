@@ -33,10 +33,21 @@ export function AddProductForm({
       event.preventDefault()
 
       const name = form.name.trim()
-      const price = Number.parseFloat(form.price)
-      const stock = Number.parseInt(form.stock, 10)
+      const priceInput = form.price.trim()
+      const stockInput = form.stock.trim()
+      const price = Number(priceInput)
+      const stock = Number(stockInput)
 
-      if (!name || !Number.isFinite(price) || !Number.isSafeInteger(stock) || price <= 0 || stock < 0) {
+      if (
+        !name ||
+        priceInput.length === 0 ||
+        stockInput.length === 0 ||
+        !Number.isFinite(price) ||
+        !Number.isInteger(stock) ||
+        !Number.isSafeInteger(stock) ||
+        price <= 0 ||
+        stock < 0
+      ) {
         return
       }
 

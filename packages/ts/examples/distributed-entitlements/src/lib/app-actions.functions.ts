@@ -31,6 +31,7 @@ import {
   DELETE_CUSTOMERS_SQL,
   DELETE_ENTITLEMENTS_SQL,
   DELETE_USAGE_EVENTS_SQL,
+  FINALIZE_BILLING_EVENT_SQL,
   INSERT_AUDIT_SQL,
   INSERT_BILLING_AUDIT_SQL,
   INSERT_BILLING_EVENT_SQL,
@@ -220,14 +221,12 @@ async function recordUsageInternal(db: RemoteDatabase, data: RecordUsageInput) {
 }
 
 async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingEventInput): Promise<void> {
-  const processingId = randomUUID()
   const payload = JSON.stringify({
     plan: data.plan,
     seats: data.seats,
     apiQuota: data.apiQuota,
     supportTier: data.supportTier,
     active: data.active,
-    processingId,
   })
 
   await db.transaction([
@@ -237,7 +236,7 @@ async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingE
     },
     {
       sql: UPDATE_CUSTOMER_FROM_BILLING_SQL,
-      params: [data.plan, data.status, data.customerExternalId, data.version, data.providerEventId, payload],
+      params: [data.plan, data.status, data.customerExternalId, data.version, data.providerEventId],
     },
     {
       sql: UPDATE_ENTITLEMENT_FROM_BILLING_SQL,
@@ -250,8 +249,11 @@ async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingE
         data.customerExternalId,
         data.version,
         data.providerEventId,
-        payload,
       ],
+    },
+    {
+      sql: FINALIZE_BILLING_EVENT_SQL,
+      params: [data.providerEventId],
     },
     {
       sql: INSERT_BILLING_AUDIT_SQL,
@@ -260,6 +262,7 @@ async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingE
         'billing_event_applied',
         data.customerExternalId,
         `${data.eventType} updated ${data.customerName} to version ${data.version}`,
+        data.providerEventId,
       ],
     },
   ])

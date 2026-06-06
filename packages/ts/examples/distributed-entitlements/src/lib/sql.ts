@@ -88,7 +88,7 @@ export const INSERT_BILLING_EVENT_SQL = `
     payload,
     outcome
   )
-  VALUES (?, ?, ?, ?, ?, 'accepted')
+  VALUES (?, ?, ?, ?, ?, 'duplicate')
 `
 export const UPDATE_CUSTOMER_FROM_BILLING_SQL = `
   UPDATE customers
@@ -97,7 +97,7 @@ export const UPDATE_CUSTOMER_FROM_BILLING_SQL = `
     AND id IN (SELECT customer_id FROM entitlements WHERE version < ?)
     AND EXISTS (
       SELECT 1 FROM billing_events
-      WHERE provider_event_id = ? AND payload = ?
+      WHERE provider_event_id = ? AND outcome = 'duplicate'
     )
 `
 export const UPDATE_ENTITLEMENT_FROM_BILLING_SQL = `
@@ -112,12 +112,22 @@ export const UPDATE_ENTITLEMENT_FROM_BILLING_SQL = `
     AND version < ?
     AND EXISTS (
       SELECT 1 FROM billing_events
-      WHERE provider_event_id = ? AND payload = ?
+      WHERE provider_event_id = ? AND outcome = 'duplicate'
     )
+`
+export const FINALIZE_BILLING_EVENT_SQL = `
+  UPDATE billing_events
+  SET outcome = CASE WHEN changes() > 0 THEN 'accepted' ELSE 'stale' END
+  WHERE provider_event_id = ? AND outcome = 'duplicate'
 `
 export const INSERT_BILLING_AUDIT_SQL = `
   INSERT INTO audit_log (actor, action, target, detail)
-  SELECT ?, ?, ?, ? WHERE changes() > 0
+  SELECT ?, ?, ?, ?
+  WHERE changes() > 0
+    AND EXISTS (
+      SELECT 1 FROM billing_events
+      WHERE provider_event_id = ? AND outcome = 'accepted'
+    )
 `
 export const DELETE_BILLING_EVENTS_SQL = 'DELETE FROM billing_events'
 export const DELETE_USAGE_EVENTS_SQL = 'DELETE FROM usage_events'

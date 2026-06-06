@@ -6,7 +6,7 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Turn any SQLite database into a distributed, networked data layer with real-time subscriptions and multi-node replication. One library gives you connection pooling, change data capture, migrations, scheduled backups, distributed replication with conflict resolution, and a client SDK that talks over HTTP or WebSocket.
+Turn any SQLite database into a distributed data layer with real-time subscriptions, HTTP/WebSocket access, and primary-replica replication. Sirannon gives you connection pooling, change data capture, migrations, scheduled backups, coordinator-backed failover, repair-time conflict resolution, and a client SDK.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
@@ -440,7 +440,7 @@ httpClient.close()
 
 ## Distributed replication
 
-Sirannon can replicate a SQLite database across multiple nodes with automatic change propagation, conflict resolution, and new-node bootstrapping. The replication layer is transport-agnostic, topology-aware, and adds zero overhead when not enabled.
+Sirannon can replicate a SQLite database across multiple nodes with automatic change propagation, new-node bootstrapping, write concerns, coordinator-backed failover, and repair-time conflict resolution. The production path is primary-replica: one primary accepts writes, replicas serve reads and can forward writes, and coordinator mode manages authority when failover is enabled. When replication is not enabled, the replication engine does not run.
 
 ```ts
 import { ReplicationEngine } from '@delali/sirannon-db/replication'
@@ -498,9 +498,11 @@ When `initialSync` is `true` (the default), a new replica automatically pulls a 
 
 ### Conflict resolution
 
+Conflict resolution is not the normal high-availability path. Normal writes are serialised through one primary per replication group. Resolvers run during explicit repair or disaster recovery when two versions of the same row exist on different nodes.
+
 Three built-in strategies ship with the replication module:
 
-| Strategy | Class | Behavior |
+| Strategy | Class | Behaviour |
 | --- | --- | --- |
 | Last-Writer-Wins | `LWWResolver` | The change with the higher HLC timestamp wins. Ties break by node ID. |
 | Field-Level Merge | `FieldMergeResolver` | Merges at the column level using per-column HLC tracking. Two nodes editing different columns on the same row both succeed. |
@@ -508,9 +510,9 @@ Three built-in strategies ship with the replication module:
 
 Custom resolvers can be built by creating a class with a `resolve(ctx: ConflictContext): ConflictResolution` method.
 
-### Initial sync
+### First sync
 
-When a new node joins a running cluster, it needs the full dataset before it can process incremental changes. The initial sync protocol handles this automatically:
+When a new node joins a running cluster, it needs the full dataset before it can process incremental changes. The sync protocol handles this automatically:
 
 1. The joiner connects and sends a sync request to the source
 2. The source opens a consistent read-only snapshot and sends schema DDL (CREATE TABLE, CREATE INDEX)
@@ -543,7 +545,53 @@ await engine.execute(
 )
 ```
 
-Levels: `'local'` (default, returns after local write), `'majority'` (waits for >50% of peers), `'all'` (waits for every peer).
+Levels: `'local'` (default, returns after local write), `'majority'` (waits for the configured majority), `'all'` (waits for every required peer).
+
+In coordinator mode, `majority` is calculated from configured voting data-bearing nodes in the replication group, including the primary's local durable commit. It is not calculated from the peers currently connected to this process. A successful coordinator-mode `majority` write survives automatic primary failover when only the failed primary is lost and an eligible in-sync replica remains.
+
+### Replication FAQ
+
+#### Is this SQLite over a shared network file system?
+
+No. Each node owns its own SQLite database file. Sirannon moves change batches through its replication transport and exposes database operations through the server and client layers. It does not rely on many machines opening the same SQLite file over NFS or another shared network file system.
+
+#### What is replicated?
+
+Sirannon replicates checksummed batches of `ReplicationChange` records. Each change carries the table, operation, row ID, primary key, HLC timestamp, transaction ID, node ID, old data, new data, and optional DDL statement.
+
+#### Is the protocol row-based, statement-based, operation-log based, or CRDT-like?
+
+It is operation-log based at the Sirannon layer. Data changes carry row images and primary-key metadata. DDL changes carry a validated DDL statement. The current production write path is not CRDT-like; it prevents normal write conflicts with a single writable primary.
+
+#### What ordering model does it use?
+
+Each change carries a Hybrid Logical Clock timestamp. The HLC gives deterministic causal ordering across nodes without relying on perfectly synchronised wall clocks. Batches also carry a sequence range, checksum, and, in coordinator mode, `groupId` and `primaryTerm`.
+
+#### What happens under partitions?
+
+Static mode does not own failover. If the static primary is lost, writes stay unavailable until an operator or external system promotes another node and reroutes clients.
+
+Coordinator mode uses a cluster coordinator, primary terms, leases, in-sync sets, and fail-closed write behaviour. A primary may accept writes only while it can prove current authority. Replicas reject stale batches, stale sync messages, and stale forwarded writes. Only an in-sync replica can be promoted.
+
+#### What topology do I need for automatic write failover?
+
+Use at least three voting data-bearing Sirannon nodes in one replication group. One node has no failover. Two nodes can replicate, but one survivor cannot prove majority authority after the other node is lost.
+
+#### Does Sirannon support schema changes across replicas?
+
+Yes, with a safety allowlist. Replicated DDL supports `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. The receiver rejects multiple statements, `AS SELECT`, extension loading, `ATTACH`, dangerous file functions, and DDL outside the allowlist.
+
+#### How do foreign keys and unique constraints behave?
+
+SQLite enforces constraints on each node. The primary serialises normal writes, which prevents normal concurrent unique-key conflicts. First sync orders tables by foreign-key dependency, and controlled resync disables foreign keys only while wiping tables before reloading from the sync source. Repair-time divergent rows can still violate schema constraints, so the chosen resolver or operator action must produce valid data.
+
+#### Are reads consistent after writes?
+
+Read concern controls this. `local` reads the selected node's local state. `majority` reads data that has reached the replication group's majority commit point. `linearizable` reads from the current primary after it proves live authority for the current primary term. If the requested read concern cannot be satisfied, the read fails rather than returning a weaker result.
+
+#### Is this local-first or multi-writer today?
+
+The current production path is primary-replica. Local-first and offline reconciliation are part of the longer-term direction, but the current conflict resolvers are repair tools, not a general multi-writer CRDT layer.
 
 ### Transport options
 
@@ -588,7 +636,7 @@ The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'prima
 | Error | Code | When |
 | --- | --- | --- |
 | `ReplicationError` | `REPLICATION_ERROR` | Base class for replication failures |
-| `SyncError` | `SYNC_ERROR` | Initial sync failures (node not ready, timeout, integrity mismatch) |
+| `SyncError` | `SYNC_ERROR` | First sync failures (node not ready, timeout, integrity mismatch) |
 | `ConflictError` | `CONFLICT_ERROR` | Unresolvable write conflict |
 | `TransportError` | `TRANSPORT_ERROR` | Inter-node communication failure |
 | `BatchValidationError` | `BATCH_VALIDATION_ERROR` | Checksum mismatch, clock drift, or oversized batch |
@@ -601,7 +649,7 @@ Sirannon-db gives you secure primitives, but the network server is intentionally
 
 ### Built-in protections
 
-- **Parameterized values** - Query and execute calls pass parameters through the driver layer. Keep user input in `params`; never concatenate user input into SQL strings.
+- **Parameterised values** - Query and execute calls pass parameters through the driver layer. Keep user input in `params`; never concatenate user input into SQL strings.
 - **Identifier validation** - CDC table and column names are validated against a strict allowlist regex (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) and escaped with double quotes.
 - **Path traversal prevention** - Migration and backup paths reject null bytes, `..` segments, and control characters before filesystem access.
 - **Request size limits** - HTTP bodies and WebSocket payloads are capped at 1 MB to reduce memory-exhaustion risk.

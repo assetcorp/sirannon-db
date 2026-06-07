@@ -477,6 +477,10 @@ class TopologyAwareTransport implements Transport {
 
   private readTransport: Transport | null = null
   private writeTransport: Transport | null = null
+  private subscriptionTransport: Transport | null = null
+  private readTransportRequest: Promise<Transport> | null = null
+  private writeTransportRequest: Promise<Transport> | null = null
+  private subscriptionTransportRequest: Promise<Transport> | null = null
   private currentReadUrl = ''
   private currentWriteUrl = ''
 
@@ -548,13 +552,26 @@ class TopologyAwareTransport implements Transport {
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
   ): Promise<RemoteSubscription> {
-    const transport = await this.getReadTransport(this.client._getReadConcern())
-    return transport.subscribe(table, filter, callback)
+    const transport = await this.getSubscriptionTransport(this.client._getReadConcern())
+    try {
+      return await transport.subscribe(table, filter, callback)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.closeSubscriptionTransport()
+        const refreshed = await this.getSubscriptionTransport(this.client._getReadConcern())
+        return refreshed.subscribe(table, filter, callback)
+      }
+      throw err
+    }
   }
 
   close(): void {
     this.closed = true
     const sameTransport = this.readTransport !== null && this.readTransport === this.writeTransport
+    const subscriptionIsRead = this.subscriptionTransport !== null && this.subscriptionTransport === this.readTransport
+    const subscriptionIsWrite =
+      this.subscriptionTransport !== null && this.subscriptionTransport === this.writeTransport
     if (this.readTransport) {
       this.readTransport.close()
       this.readTransport = null
@@ -563,22 +580,43 @@ class TopologyAwareTransport implements Transport {
       this.writeTransport.close()
     }
     this.writeTransport = null
+    if (this.subscriptionTransport && !subscriptionIsRead && !subscriptionIsWrite) {
+      this.subscriptionTransport.close()
+    }
+    this.subscriptionTransport = null
   }
 
   private async getReadTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
-    if (this.closed) {
-      const { RemoteError } = await import('./types.js')
-      throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+    this.assertOpen()
+
+    while (this.readTransportRequest) {
+      await this.readTransportRequest.catch(() => undefined)
+      this.assertOpen()
     }
 
+    const request = this.resolveReadTransport(readConcern)
+    this.readTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.readTransportRequest === request) {
+        this.readTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveReadTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
     const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
+    this.assertOpen()
+
     if (this.readTransport && this.currentReadUrl === endpoint) {
       return this.readTransport
     }
 
+    const nextTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
     const oldTransport = this.readTransport
+    this.readTransport = nextTransport
     this.currentReadUrl = endpoint
-    this.readTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
 
     if (oldTransport) {
       oldTransport.close()
@@ -588,22 +626,97 @@ class TopologyAwareTransport implements Transport {
   }
 
   private async getWriteTransport(): Promise<Transport> {
-    if (this.closed) {
-      throw new Error('Transport is closed')
+    this.assertOpen()
+
+    while (this.writeTransportRequest) {
+      await this.writeTransportRequest.catch(() => undefined)
+      this.assertOpen()
     }
 
+    const request = this.resolveWriteTransport()
+    this.writeTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.writeTransportRequest === request) {
+        this.writeTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveWriteTransport(): Promise<Transport> {
     const endpoint = await this.client._getWriteEndpoint(this.databaseId)
+    this.assertOpen()
+
     if (this.writeTransport && this.currentWriteUrl === endpoint) {
       return this.writeTransport
     }
 
-    if (this.writeTransport) {
-      this.writeTransport.close()
+    const nextTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+    const oldTransport = this.writeTransport
+    this.writeTransport = nextTransport
+    this.currentWriteUrl = endpoint
+
+    if (oldTransport) {
+      oldTransport.close()
     }
 
-    this.currentWriteUrl = endpoint
-    this.writeTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
     return this.writeTransport
+  }
+
+  private async getSubscriptionTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
+    this.assertOpen()
+
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    while (this.subscriptionTransportRequest) {
+      await this.subscriptionTransportRequest.catch(() => undefined)
+      this.assertOpen()
+      if (this.subscriptionTransport) {
+        return this.subscriptionTransport
+      }
+    }
+
+    const request = this.resolveSubscriptionTransport(readConcern)
+    this.subscriptionTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.subscriptionTransportRequest === request) {
+        this.subscriptionTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveSubscriptionTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
+    this.assertOpen()
+
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    this.subscriptionTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+    return this.subscriptionTransport
+  }
+
+  private closeSubscriptionTransport(): void {
+    if (this.subscriptionTransport) {
+      this.subscriptionTransport.close()
+      this.subscriptionTransport = null
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+    }
   }
 }
 

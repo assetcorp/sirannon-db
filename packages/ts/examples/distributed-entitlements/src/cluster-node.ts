@@ -9,11 +9,15 @@ const DATABASE_ID = 'entitlements'
 const CLUSTER_ID = 'sirannon-entitlements-control-plane'
 const GROUP_ID = 'entitlements'
 const NODE_IDS = ['node-a', 'node-b', 'node-c'] as const
+const DEFAULT_SESSION_TTL_MS = 10_000
+const DEFAULT_CONTROLLER_LEASE_TTL_MS = 5_000
+const DEFAULT_CONTROLLER_TICK_MS = 1_000
 const DEFAULT_HTTP_ENDPOINTS: Record<string, string> = {
   'node-a': 'http://127.0.0.1:7301/db/entitlements',
   'node-b': 'http://127.0.0.1:7302/db/entitlements',
   'node-c': 'http://127.0.0.1:7303/db/entitlements',
 }
+const REPLICATED_TABLES = ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log'] as const
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS customers (
@@ -110,12 +114,10 @@ const tracker = new ChangeTracker({ replication: true })
 if (seedSchema) {
   await conn.exec(SCHEMA)
   await conn.exec(SEED_SQL)
+  for (const table of REPLICATED_TABLES) {
+    await tracker.watch(conn, table)
+  }
 }
-await tracker.watch(conn, 'customers')
-await tracker.watch(conn, 'entitlements')
-await tracker.watch(conn, 'usage_events')
-await tracker.watch(conn, 'billing_events')
-await tracker.watch(conn, 'audit_log')
 
 const sirannon = new Sirannon({ driver })
 const db = await sirannon.open(DATABASE_ID, dbPath)
@@ -163,11 +165,11 @@ const engine = new ReplicationEngine(db, conn, {
     endpoint: httpEndpoints[nodeId],
     coordinator,
     votingDataBearingNodeIds: seedSchema ? [...NODE_IDS] : undefined,
-    sessionTtlMs: numberEnv('SESSION_TTL_MS', 1_500),
+    sessionTtlMs: numberEnv('SESSION_TTL_MS', DEFAULT_SESSION_TTL_MS),
     controller: {
       enabled: true,
-      leaseTtlMs: numberEnv('CONTROLLER_LEASE_TTL_MS', 1_000),
-      tickIntervalMs: numberEnv('CONTROLLER_TICK_MS', 250),
+      leaseTtlMs: numberEnv('CONTROLLER_LEASE_TTL_MS', DEFAULT_CONTROLLER_LEASE_TTL_MS),
+      tickIntervalMs: numberEnv('CONTROLLER_TICK_MS', DEFAULT_CONTROLLER_TICK_MS),
     },
     compatibility: {
       packageVersion: '0.1.4',

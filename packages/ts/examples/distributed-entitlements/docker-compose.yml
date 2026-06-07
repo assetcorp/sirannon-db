@@ -3,7 +3,7 @@ services:
     build:
       context: ../../../..
       dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
-    command: pnpm run certs
+    command: ["node", "--import", "tsx", "src/scripts/generate-certs.ts"]
     environment:
       CERT_DIR: /certs
     volumes:
@@ -44,7 +44,7 @@ services:
     build:
       context: ../../../..
       dockerfile: packages/ts/examples/distributed-entitlements/Dockerfile.node
-    command: pnpm run proxy:setup
+    command: ["node", "--import", "tsx", "src/scripts/setup-proxies.ts"]
     depends_on:
       etcd:
         condition: service_healthy
@@ -80,6 +80,17 @@ services:
       TLS_KEY: /certs/node-a-key.pem
     ports:
       - "127.0.0.1:7301:7301"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:7301/health/ready').then(response => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
     volumes:
       - sirannon-entitlements-certs:/certs:ro
       - sirannon-entitlements-node-a:/data
@@ -91,6 +102,8 @@ services:
     depends_on:
       certs:
         condition: service_completed_successfully
+      node-a:
+        condition: service_healthy
       proxy-setup:
         condition: service_completed_successfully
     environment:
@@ -122,6 +135,8 @@ services:
     depends_on:
       certs:
         condition: service_completed_successfully
+      node-a:
+        condition: service_healthy
       proxy-setup:
         condition: service_completed_successfully
     environment:

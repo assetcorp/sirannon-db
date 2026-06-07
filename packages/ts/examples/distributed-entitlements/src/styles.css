@@ -678,6 +678,28 @@ select:focus {
   color: var(--muted);
 }
 
+.not-found {
+  display: grid;
+  width: min(520px, calc(100vw - 32px));
+  min-height: 100vh;
+  place-content: center;
+  gap: 8px;
+  margin: 0 auto;
+  color: var(--text);
+}
+
+.not-found h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.6rem;
+  line-height: 1.15;
+}
+
+.not-found p {
+  margin: 0;
+  color: var(--muted);
+}
+
 @media (max-width: 1180px) {
   .command-grid,
   .observability-grid {

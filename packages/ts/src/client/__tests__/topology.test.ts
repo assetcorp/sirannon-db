@@ -1,12 +1,13 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import { SirannonClient, type TopologyAwareClientOptions } from '../client.js'
+import type { Transport } from '../types.js'
 
 const driver = betterSqlite3()
 
@@ -14,6 +15,38 @@ let tempDir: string
 let sirannon: Sirannon
 let server: SirannonServer
 let baseUrl: string
+
+function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolveDeferred = () => {}
+  const promise = new Promise<void>(resolve => {
+    resolveDeferred = resolve
+  })
+  return { promise, resolve: resolveDeferred }
+}
+
+function createDelayedSubscriptionTransport(gate: Promise<void>, closedIndexes: number[], index: number): Transport {
+  let closed = false
+  return {
+    query: async () => ({ rows: [] }),
+    execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
+    transaction: async () => ({ results: [] }),
+    subscribe: async () => {
+      await gate
+      if (closed) {
+        throw new Error(`transport ${index} closed during subscription`)
+      }
+      return { unsubscribe: () => {} }
+    },
+    close: () => {
+      closed = true
+      closedIndexes.push(index)
+    },
+  }
+}
 
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-topo-'))
@@ -279,6 +312,54 @@ describe('TopologyAwareClientOptions', () => {
     const db1 = client.database('testdb')
     const db2 = client.database('testdb')
     expect(db1).toBe(db2)
+    client.close()
+  })
+
+  it('keeps coordinator subscriptions on one stable read transport', async () => {
+    const client = new SirannonClient({
+      endpoints: [baseUrl],
+      discovery: 'coordinator',
+      readPreference: 'replica',
+      transport: 'websocket',
+    })
+    const gate = deferred()
+    const closedIndexes: number[] = []
+    const endpoints = [
+      'http://127.0.0.1:7101',
+      'http://127.0.0.1:7102',
+      'http://127.0.0.1:7103',
+      'http://127.0.0.1:7104',
+      'http://127.0.0.1:7105',
+    ]
+
+    const getReadEndpoint = vi.spyOn(client, '_getReadEndpoint').mockImplementation(async () => {
+      return endpoints.shift() ?? baseUrl
+    })
+    const createTransport = vi.spyOn(client, '_createTransportForEndpoint').mockImplementation(() => {
+      const index = createTransport.mock.calls.length
+      return createDelayedSubscriptionTransport(gate.promise, closedIndexes, index)
+    })
+
+    const db = client.database('testdb')
+    const subscriptions = Promise.all([
+      db.on('customers').subscribe(() => {}),
+      db.on('entitlements').subscribe(() => {}),
+      db.on('usage_events').subscribe(() => {}),
+      db.on('billing_events').subscribe(() => {}),
+      db.on('audit_log').subscribe(() => {}),
+    ])
+
+    await wait(0)
+    gate.resolve()
+    const handles = await subscriptions
+
+    expect(getReadEndpoint).toHaveBeenCalledTimes(1)
+    expect(createTransport).toHaveBeenCalledTimes(1)
+    expect(closedIndexes).toEqual([])
+
+    for (const handle of handles) {
+      handle.unsubscribe()
+    }
     client.close()
   })
 })

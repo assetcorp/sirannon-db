@@ -6,6 +6,7 @@ import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toWebSocke
 const endpoints = clusterEndpointsFromEnv(import.meta.env.VITE_SIRANNON_CLUSTER_ENDPOINTS)
 const token = import.meta.env.VITE_SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
 const authProtocol = toWebSocketAuthProtocol(token)
+const authHeaders = { Authorization: `Bearer ${token}` }
 
 const wsClient = new SirannonClient({
   endpoints,
@@ -13,6 +14,7 @@ const wsClient = new SirannonClient({
   transport: 'websocket',
   readPreference: 'replica',
   readConcern: 'majority',
+  headers: authHeaders,
   webSocketProtocols: [authProtocol],
 })
 

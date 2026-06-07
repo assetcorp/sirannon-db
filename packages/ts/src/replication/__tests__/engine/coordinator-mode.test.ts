@@ -203,6 +203,87 @@ describe('ReplicationEngine coordinator mode', () => {
     await engine.stop()
   })
 
+  it('admits a slower voter when its ACK reaches the current durability point', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_A, endpoint: 'https://node-a.example.com' },
+      primaryTerm: 3n,
+      inSyncNodeIds: [NODE_A, NODE_B],
+      durabilityPointSeq: 5n,
+    })
+
+    const engine = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('primary'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await engine.start()
+    engine.peerTracker.addPeer(NODE_C)
+
+    harness.transport.triggerAckReceived(
+      {
+        batchId: 'late-node-c',
+        ackedSeq: 5n,
+        nodeId: NODE_C,
+        groupId: 'orders',
+        primaryTerm: 3n,
+      },
+      NODE_C,
+    )
+
+    const state = await waitForInSyncNodes(coordinator, [NODE_A, NODE_B, NODE_C])
+    expect(state.durabilityPointSeq).toBe(5n)
+
+    await engine.stop()
+  })
+
+  it('admits a voter from durable ACK progress when the peer reconnects', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_A, endpoint: 'https://node-a.example.com' },
+      primaryTerm: 3n,
+      inSyncNodeIds: [NODE_A, NODE_B],
+      durabilityPointSeq: 5n,
+    })
+
+    const engine = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('primary'),
+      transport: harness.transport,
+      initialSync: false,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await engine.start()
+    await engine.log.setLastAppliedSeq(NODE_C, 5n)
+
+    harness.transport.addPeer(NODE_C)
+
+    const state = await waitForInSyncNodes(coordinator, [NODE_A, NODE_B, NODE_C])
+    expect(state.durabilityPointSeq).toBe(5n)
+
+    await engine.stop()
+  })
+
   it('rejects current-primary writes when local compatibility metadata is incompatible', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
     const coordinator = new InMemoryClusterCoordinator()
@@ -345,6 +426,55 @@ describe('ReplicationEngine coordinator mode', () => {
     expect(returningPrimary.status().syncState?.phase).toBe('syncing')
 
     await returningPrimary.stop()
+  })
+
+  it('starts rejoin sync when a coordinator update points pending repair at a connected primary', async () => {
+    const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    const tracker = new ChangeTracker({ replication: true })
+    await tracker.watch(conn, 'items')
+    const coordinator = new InMemoryClusterCoordinator()
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_B, endpoint: 'https://node-b.example.com' },
+      primaryTerm: 2n,
+      inSyncNodeIds: [NODE_B],
+      repairingNodeIds: [NODE_A],
+    })
+
+    const repairingReplica = new ReplicationEngine(db, conn, {
+      nodeId: NODE_A,
+      topology: new PrimaryReplicaTopology('replica'),
+      transport: harness.transport,
+      changeTracker: tracker,
+      coordinator: {
+        clusterId: 'cluster-a',
+        groupId: 'orders',
+        coordinator,
+        controller: false,
+      },
+    })
+    await repairingReplica.start()
+
+    expect(repairingReplica.status().syncState?.phase).toBe('pending')
+    harness.transport.addPeer(NODE_C, 'replica')
+    expect(harness.transport.sentSyncRequests).toHaveLength(0)
+
+    await coordinator.setReplicationGroupState({
+      clusterId: 'cluster-a',
+      groupId: 'orders',
+      votingDataBearingNodeIds: [NODE_A, NODE_B, NODE_C],
+      currentPrimary: { nodeId: NODE_C, endpoint: 'https://node-c.example.com' },
+      primaryTerm: 3n,
+      inSyncNodeIds: [NODE_C],
+      repairingNodeIds: [NODE_A, NODE_B],
+    })
+
+    await waitForSyncRequest(harness.transport, NODE_C)
+    expect(repairingReplica.status().syncState?.phase).toBe('syncing')
+
+    await repairingReplica.stop()
   })
 
   it('does not mark a deadline-ready coordinator replica in sync without durability proof', async () => {
@@ -507,6 +637,32 @@ async function waitForCurrentPrimary(coordinator: InMemoryClusterCoordinator, no
     await new Promise(resolve => setTimeout(resolve, 5))
   }
   throw new Error(`Timed out waiting for primary '${nodeId}'`)
+}
+
+async function waitForInSyncNodes(coordinator: InMemoryClusterCoordinator, nodeIds: string[], timeoutMs: number = 250) {
+  const startedAt = Date.now()
+  let latest = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = await coordinator.getReplicationGroupState('cluster-a', 'orders')
+    const state = latest
+    if (state && nodeIds.every(nodeId => state.inSyncNodeIds.includes(nodeId))) {
+      return state
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error(`Timed out waiting for in-sync nodes '${nodeIds.join(', ')}'`)
+}
+
+async function waitForSyncRequest(transport: EngineTestHarness['transport'], peerId: string, timeoutMs: number = 250) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const request = transport.sentSyncRequests.find(entry => entry.peerId === peerId)
+    if (request) {
+      return request
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error(`Timed out waiting for sync request to '${peerId}'`)
 }
 
 async function recordAppliedSeq(conn: SQLiteConnection, sourceNodeId: string, seq: bigint) {

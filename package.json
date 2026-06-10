@@ -2,7 +2,7 @@
   "name": "sirannon-db",
   "version": "0.1.0",
   "private": true,
-  "description": "Monorepo for sirannon-db, a TypeScript library that turns SQLite into a networked data layer with real-time subscriptions.",
+  "description": "Monorepo for sirannon-db, a library that turns SQLite into a networked data layer with real-time subscriptions.",
   "author": "Delali (https://sondelali.com)",
   "license": "Apache-2.0",
   "homepage": "https://github.com/assetcorp/sirannon-db",

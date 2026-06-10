@@ -1,7 +1,10 @@
-import { CheckCircle2, CircleDashed, MousePointer2 } from 'lucide-react'
+import { CheckCircle2, CircleDashed } from 'lucide-react'
 import { useCallback } from 'react'
 import type { CustomerEntitlement } from '../../../lib/schemas'
-import { formatCompactNumber, formatDateTime } from '../entitlements-utils'
+import { cn } from '../../../lib/ui'
+import { formatCompactNumber } from '../entitlements-utils'
+import { Badge } from './ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 
 export function CustomerTable({
   customers,
@@ -15,7 +18,7 @@ export function CustomerTable({
   onSelectCustomer: (customer: CustomerEntitlement) => void
 }) {
   const rows = customers.map(customer => (
-    <CustomerRow
+    <CustomerListItem
       key={customer.id}
       customer={customer}
       selected={selectedCustomer?.id === customer.id}
@@ -23,39 +26,22 @@ export function CustomerTable({
       onSelectCustomer={onSelectCustomer}
     />
   ))
-  const body =
-    customers.length === 0 ? (
-      <tr>
-        <td colSpan={8}>
-          <EmptyLedger />
-        </td>
-      </tr>
-    ) : (
-      rows
-    )
+  const body = customers.length === 0 ? <EmptyLedger /> : rows
 
   return (
-    <div className="table-wrap">
-      <table className="ledger-table">
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th>Plan</th>
-            <th>Seats</th>
-            <th>Quota</th>
-            <th>Support</th>
-            <th>Version</th>
-            <th>Updated</th>
-            <th>Focus</th>
-          </tr>
-        </thead>
-        <tbody>{body}</tbody>
-      </table>
-    </div>
+    <Card className="customer-panel">
+      <CardHeader>
+        <div>
+          <CardTitle>Accounts</CardTitle>
+          <CardDescription>{customers.length} entitlement records</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="customer-list">{body}</CardContent>
+    </Card>
   )
 }
 
-function CustomerRow({
+function CustomerListItem({
   customer,
   selected,
   disabled,
@@ -69,38 +55,25 @@ function CustomerRow({
   const handleSelectClick = useCallback(() => {
     onSelectCustomer(customer)
   }, [customer, onSelectCustomer])
-  const focusLabel = `Focus account for ${customer.name}`
 
   return (
-    <tr className={selected ? 'selected' : undefined}>
-      <td>
-        <div className="customer-cell">
-          <strong>{customer.name}</strong>
-          <span>{customer.external_id}</span>
-        </div>
-      </td>
-      <td>
-        <span className={`plan-chip ${customer.plan}`}>{customer.plan}</span>
-      </td>
-      <td>{customer.seats}</td>
-      <td>{formatCompactNumber(customer.api_quota)}</td>
-      <td>{customer.support_tier}</td>
-      <td>{customer.version}</td>
-      <td>{formatDateTime(customer.updated_at)}</td>
-      <td>
-        <button
-          className="row-icon-button"
-          type="button"
-          disabled={disabled}
-          onClick={handleSelectClick}
-          aria-label={focusLabel}
-          aria-pressed={selected}
-          title="Focus account"
-        >
-          {selected ? <CheckCircle2 size={16} /> : <MousePointer2 size={16} />}
-        </button>
-      </td>
-    </tr>
+    <button
+      className={cn('customer-row', selected && 'selected')}
+      type="button"
+      disabled={disabled}
+      onClick={handleSelectClick}
+      aria-pressed={selected}
+    >
+      <span className="customer-main">
+        <strong>{customer.name}</strong>
+        <span>{customer.external_id}</span>
+      </span>
+      <span className="customer-meta">
+        <Badge variant={planVariant(customer.plan)}>{customer.plan}</Badge>
+        <span>{formatCompactNumber(customer.api_quota)} quota</span>
+      </span>
+      {selected ? <CheckCircle2 className="customer-selected" size={16} /> : null}
+    </button>
   )
 }
 
@@ -111,4 +84,14 @@ export function EmptyLedger() {
       <span>No entitlement records are available.</span>
     </div>
   )
+}
+
+function planVariant(plan: CustomerEntitlement['plan']): 'default' | 'secondary' | 'success' {
+  if (plan === 'enterprise' || plan === 'scale') {
+    return 'default'
+  }
+  if (plan === 'growth') {
+    return 'success'
+  }
+  return 'secondary'
 }

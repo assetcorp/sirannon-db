@@ -1,9 +1,13 @@
-import { FlameKindling, Link2Off, Plus, Repeat2, Send, Wrench } from 'lucide-react'
+import { ArrowUpRight, Gauge, Link2Off, Plus, ReceiptText, Repeat2, Send, Wrench } from 'lucide-react'
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from 'react'
 import type { CreateCustomerInput, CustomerEntitlement, Plan, SupportTier } from '../../../lib/schemas'
-import { createIdempotencyKey, nextBillingVersion } from '../entitlements-utils'
+import { createIdempotencyKey, formatCompactNumber, nextBillingVersion } from '../entitlements-utils'
 import type { BillingDraft, UsageDraft } from '../types'
-import { PanelHeader } from './panel-header'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+
+type OperationsMode = 'operate' | 'incident'
 
 export function OperationsPanel({
   selectedCustomer,
@@ -24,23 +28,271 @@ export function OperationsPanel({
   onIsolatePrimary: () => Promise<void>
   onHealCluster: () => Promise<void>
 }) {
-  return (
-    <aside className="ops-panel command-panel">
-      <PanelHeader icon={<FlameKindling size={18} />} title="Operator Console" />
-      <CreateCustomerForm disabled={pendingAction !== null} onSubmit={onCreateCustomer} />
-      <UsageForm
+  const [mode, setMode] = useState<OperationsMode>('operate')
+  const disabled = pendingAction !== null || selectedCustomer === null
+
+  const handleOperateClick = useCallback(() => {
+    setMode('operate')
+  }, [])
+
+  const handleIncidentClick = useCallback(() => {
+    setMode('incident')
+  }, [])
+
+  const handleConsumeClick = useCallback(() => {
+    if (!selectedCustomer) {
+      return
+    }
+    void onRecordUsage({
+      units: 500,
+      source: 'api_gateway',
+      idempotencyKey: createIdempotencyKey('usage', selectedCustomer.id),
+    })
+  }, [onRecordUsage, selectedCustomer])
+
+  const handleReplayClick = useCallback(() => {
+    void onReplayDuplicateUsage()
+  }, [onReplayDuplicateUsage])
+
+  const handleUpgradeClick = useCallback(() => {
+    if (!selectedCustomer) {
+      return
+    }
+    const nextPlan = nextUpgradePlan(selectedCustomer.plan)
+    void onApplyBilling({
+      providerEventId: `evt_upgrade_${Date.now().toString(36)}`,
+      eventType: 'subscription.updated',
+      plan: nextPlan,
+      status: 'active',
+      seats: selectedCustomer.seats + 12,
+      apiQuota: selectedCustomer.api_quota + quotaStepForPlan(nextPlan),
+      supportTier: supportForPlan(nextPlan),
+      active: true,
+      version: nextBillingVersion(selectedCustomer),
+    })
+  }, [onApplyBilling, selectedCustomer])
+
+  const handleStaleBillingClick = useCallback(() => {
+    if (!selectedCustomer) {
+      return
+    }
+    void onApplyBilling({
+      providerEventId: `evt_stale_${Date.now().toString(36)}`,
+      eventType: 'subscription.updated',
+      plan: selectedCustomer.plan,
+      status: selectedCustomer.status,
+      seats: selectedCustomer.seats,
+      apiQuota: selectedCustomer.api_quota,
+      supportTier: selectedCustomer.support_tier,
+      active: selectedCustomer.active === 1,
+      version: Math.max(1, selectedCustomer.version - 1),
+    })
+  }, [onApplyBilling, selectedCustomer])
+
+  const handleIsolateClick = useCallback(() => {
+    void onIsolatePrimary()
+  }, [onIsolatePrimary])
+
+  const handleHealClick = useCallback(() => {
+    void onHealCluster()
+  }, [onHealCluster])
+
+  const content =
+    mode === 'operate' ? (
+      <OperationCommands
+        disabled={disabled}
         selectedCustomer={selectedCustomer}
-        disabled={pendingAction !== null}
-        onSubmit={onRecordUsage}
-        onReplayDuplicateUsage={onReplayDuplicateUsage}
+        onConsume={handleConsumeClick}
+        onReplay={handleReplayClick}
+        onUpgrade={handleUpgradeClick}
+        onStaleBilling={handleStaleBillingClick}
       />
-      <BillingForm selectedCustomer={selectedCustomer} disabled={pendingAction !== null} onSubmit={onApplyBilling} />
-      <FaultControls
+    ) : (
+      <IncidentCommands disabled={pendingAction !== null} onIsolate={handleIsolateClick} onHeal={handleHealClick} />
+    )
+
+  return (
+    <aside className="command-rail">
+      <Card>
+        <CardHeader className="command-header">
+          <div>
+            <CardTitle>Command Center</CardTitle>
+            <CardDescription>
+              {selectedCustomer ? selectedCustomer.name : 'Select an account to run entitlement operations'}
+            </CardDescription>
+          </div>
+          {pendingAction ? <Badge variant="warning">{pendingAction}</Badge> : <Badge variant="secondary">ready</Badge>}
+        </CardHeader>
+        <CardContent>
+          <div className="segmented-control" role="tablist" aria-label="Command mode">
+            <button
+              className={mode === 'operate' ? 'segment active' : 'segment'}
+              type="button"
+              onClick={handleOperateClick}
+              aria-selected={mode === 'operate'}
+              role="tab"
+            >
+              Operations
+            </button>
+            <button
+              className={mode === 'incident' ? 'segment active' : 'segment'}
+              type="button"
+              onClick={handleIncidentClick}
+              aria-selected={mode === 'incident'}
+              role="tab"
+            >
+              Incident
+            </button>
+          </div>
+          {content}
+        </CardContent>
+      </Card>
+      <AdvancedControls
         disabled={pendingAction !== null}
-        onIsolatePrimary={onIsolatePrimary}
-        onHealCluster={onHealCluster}
+        selectedCustomer={selectedCustomer}
+        onCreateCustomer={onCreateCustomer}
+        onApplyBilling={onApplyBilling}
       />
     </aside>
+  )
+}
+
+function OperationCommands({
+  disabled,
+  selectedCustomer,
+  onConsume,
+  onReplay,
+  onUpgrade,
+  onStaleBilling,
+}: {
+  disabled: boolean
+  selectedCustomer: CustomerEntitlement | null
+  onConsume: () => void
+  onReplay: () => void
+  onUpgrade: () => void
+  onStaleBilling: () => void
+}) {
+  const quotaLabel = selectedCustomer ? formatCompactNumber(selectedCustomer.api_quota) : 'none'
+
+  return (
+    <div className="command-stack">
+      <CommandButton
+        icon={<Gauge size={16} />}
+        title="Consume 500 API units"
+        detail={`Current quota ${quotaLabel}`}
+        disabled={disabled}
+        onClick={onConsume}
+      />
+      <CommandButton
+        icon={<Repeat2 size={16} />}
+        title="Replay same usage event"
+        detail="Same idempotency key, one quota change"
+        disabled={disabled}
+        onClick={onReplay}
+      />
+      <CommandButton
+        icon={<ArrowUpRight size={16} />}
+        title="Upgrade entitlement"
+        detail="New billing version, seats and quota increase"
+        disabled={disabled}
+        onClick={onUpgrade}
+      />
+      <CommandButton
+        icon={<ReceiptText size={16} />}
+        title="Send stale billing event"
+        detail="Older version should be recorded as stale"
+        disabled={disabled}
+        onClick={onStaleBilling}
+      />
+    </div>
+  )
+}
+
+function IncidentCommands({
+  disabled,
+  onIsolate,
+  onHeal,
+}: {
+  disabled: boolean
+  onIsolate: () => void
+  onHeal: () => void
+}) {
+  return (
+    <div className="command-stack">
+      <CommandButton
+        icon={<Link2Off size={16} />}
+        title="Partition current primary"
+        detail="Disable its coordinator proxy"
+        disabled={disabled}
+        dangerous
+        onClick={onIsolate}
+      />
+      <CommandButton
+        icon={<Wrench size={16} />}
+        title="Heal cluster links"
+        detail="Restore coordinator and replication proxies"
+        disabled={disabled}
+        onClick={onHeal}
+      />
+    </div>
+  )
+}
+
+function CommandButton({
+  icon,
+  title,
+  detail,
+  disabled,
+  dangerous = false,
+  onClick,
+}: {
+  icon: React.ReactNode
+  title: string
+  detail: string
+  disabled: boolean
+  dangerous?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      className={dangerous ? 'command-button dangerous' : 'command-button'}
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="command-icon">{icon}</span>
+      <span className="command-copy">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </span>
+    </button>
+  )
+}
+
+function AdvancedControls({
+  disabled,
+  selectedCustomer,
+  onCreateCustomer,
+  onApplyBilling,
+}: {
+  disabled: boolean
+  selectedCustomer: CustomerEntitlement | null
+  onCreateCustomer: (input: CreateCustomerInput) => Promise<boolean>
+  onApplyBilling: (draft: BillingDraft) => Promise<boolean>
+}) {
+  return (
+    <Card className="advanced-card">
+      <details>
+        <summary>
+          <span>Advanced inputs</span>
+          <Badge variant="outline">manual</Badge>
+        </summary>
+        <div className="advanced-grid">
+          <CreateCustomerForm disabled={disabled} onSubmit={onCreateCustomer} />
+          <BillingForm selectedCustomer={selectedCustomer} disabled={disabled} onSubmit={onApplyBilling} />
+        </div>
+      </details>
+    </Card>
   )
 }
 
@@ -130,90 +382,10 @@ function CreateCustomerForm({
           </select>
         </label>
       </div>
-      <button className="primary-button" type="submit" disabled={disabled}>
+      <Button type="submit" disabled={disabled} size="sm">
         <Plus size={15} />
         Create
-      </button>
-    </form>
-  )
-}
-
-function UsageForm({
-  selectedCustomer,
-  disabled,
-  onSubmit,
-  onReplayDuplicateUsage,
-}: {
-  selectedCustomer: CustomerEntitlement | null
-  disabled: boolean
-  onSubmit: (draft: UsageDraft) => Promise<boolean>
-  onReplayDuplicateUsage: () => Promise<boolean>
-}) {
-  const [units, setUnits] = useState(500)
-  const [idempotencyKey, setIdempotencyKey] = useState('usage-pulse')
-
-  useEffect(() => {
-    if (selectedCustomer) {
-      setIdempotencyKey(createIdempotencyKey('usage', selectedCustomer.id))
-    }
-  }, [selectedCustomer])
-
-  const handleUnitsChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    setUnits(Number(event.currentTarget.value))
-  }, [])
-
-  const handleIdempotencyKeyChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    setIdempotencyKey(event.currentTarget.value)
-  }, [])
-
-  const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      const recorded = await onSubmit({
-        units,
-        source: 'api_gateway',
-        idempotencyKey,
-      })
-      if (recorded && selectedCustomer) {
-        setIdempotencyKey(createIdempotencyKey('usage', selectedCustomer.id))
-      }
-    },
-    [idempotencyKey, onSubmit, selectedCustomer, units],
-  )
-
-  const handleReplayClick = useCallback(() => {
-    void onReplayDuplicateUsage()
-  }, [onReplayDuplicateUsage])
-
-  return (
-    <form className="operator-form" onSubmit={handleSubmit}>
-      <h3>Usage ingestion</h3>
-      <div className="selected-target">{selectedCustomer ? selectedCustomer.name : 'No account selected'}</div>
-      <div className="form-grid">
-        <label>
-          Units
-          <input type="number" min={1} max={100000} value={units} disabled={disabled} onChange={handleUnitsChange} />
-        </label>
-        <label>
-          Idempotency key
-          <input type="text" value={idempotencyKey} disabled={disabled} onChange={handleIdempotencyKeyChange} />
-        </label>
-      </div>
-      <div className="button-row">
-        <button className="primary-button" type="submit" disabled={disabled || !selectedCustomer}>
-          <Send size={15} />
-          Record
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={disabled || !selectedCustomer}
-          onClick={handleReplayClick}
-        >
-          <Repeat2 size={15} />
-          Replay duplicate
-        </button>
-      </div>
+      </Button>
     </form>
   )
 }
@@ -304,7 +476,7 @@ function BillingForm({
 
   return (
     <form className="operator-form" onSubmit={handleSubmit}>
-      <h3>Billing webhook</h3>
+      <h3>Manual billing event</h3>
       <div className="form-grid two">
         <label>
           Event
@@ -371,44 +543,43 @@ function BillingForm({
           Active entitlements
         </label>
       </div>
-      <button className="primary-button" type="submit" disabled={disabled || !selectedCustomer}>
+      <Button type="submit" disabled={disabled || !selectedCustomer} size="sm">
         <Send size={15} />
-        Apply event
-      </button>
+        Apply
+      </Button>
     </form>
   )
 }
 
-function FaultControls({
-  disabled,
-  onIsolatePrimary,
-  onHealCluster,
-}: {
-  disabled: boolean
-  onIsolatePrimary: () => Promise<void>
-  onHealCluster: () => Promise<void>
-}) {
-  const handleIsolateClick = useCallback(() => {
-    void onIsolatePrimary()
-  }, [onIsolatePrimary])
+function nextUpgradePlan(plan: Plan): Plan {
+  if (plan === 'free') {
+    return 'growth'
+  }
+  if (plan === 'growth') {
+    return 'scale'
+  }
+  return 'enterprise'
+}
 
-  const handleHealClick = useCallback(() => {
-    void onHealCluster()
-  }, [onHealCluster])
+function supportForPlan(plan: Plan): SupportTier {
+  if (plan === 'enterprise') {
+    return 'named'
+  }
+  if (plan === 'scale') {
+    return 'priority'
+  }
+  if (plan === 'growth') {
+    return 'standard'
+  }
+  return 'community'
+}
 
-  return (
-    <div className="operator-form fault-controls">
-      <h3>Failure controls</h3>
-      <div className="button-row">
-        <button className="danger-button" type="button" disabled={disabled} onClick={handleIsolateClick}>
-          <Link2Off size={15} />
-          Isolate primary
-        </button>
-        <button className="secondary-button" type="button" disabled={disabled} onClick={handleHealClick}>
-          <Wrench size={15} />
-          Heal links
-        </button>
-      </div>
-    </div>
-  )
+function quotaStepForPlan(plan: Plan): number {
+  if (plan === 'enterprise') {
+    return 250000
+  }
+  if (plan === 'scale') {
+    return 100000
+  }
+  return 25000
 }

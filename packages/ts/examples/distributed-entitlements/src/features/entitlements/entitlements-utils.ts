@@ -55,7 +55,7 @@ export function formatDateTime(value: string): string {
 }
 
 export function formatEventLabel(event: CDCEvent): string {
-  return `${event.table} ${event.type} at seq ${event.seq.toString()}`
+  return `${event.table.replace(/_/g, ' ')} ${event.type} synced`
 }
 
 export function selectedCustomerOrFirst(

@@ -1,19 +1,29 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import '../styles.css'
 
 export const Route = createRootRoute({
+  head: () => ({
+    meta: [
+      { charSet: 'utf-8' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      { title: 'Sirannon · Entitlement Control Plane' },
+    ],
+  }),
   component: RootLayout,
   notFoundComponent: NotFoundComponent,
 })
 
 function RootLayout() {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
         <HeadContent />
       </head>
       <body>
-        <Outlet />
+        <TooltipProvider>
+          <Outlet />
+        </TooltipProvider>
         <Scripts />
       </body>
     </html>
@@ -22,9 +32,9 @@ function RootLayout() {
 
 function NotFoundComponent() {
   return (
-    <main className="not-found">
-      <h1>Page not found</h1>
-      <p>The requested route is not available in this example.</p>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-2 px-6 text-center">
+      <h1 className="text-2xl font-semibold tracking-tight">Page not found</h1>
+      <p className="text-muted-foreground text-sm">The requested route is not available in this example.</p>
     </main>
   )
 }

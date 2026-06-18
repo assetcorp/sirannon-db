@@ -16,5 +16,6 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   grpc-tools: true
+  msw: false
   nx: true
   protobufjs: true

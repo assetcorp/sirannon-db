@@ -1,8 +1,11 @@
-import { Activity, CircleDashed, DatabaseZap, ReceiptText, ScrollText } from 'lucide-react'
+import { CircleDashed, DatabaseZap, type LucideIcon, ReceiptText, ScrollText } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 import type { AuditRecord, BillingEvent, CustomerEntitlement, UsageEvent } from '../../../lib/schemas'
 import { formatDateTime } from '../entitlements-utils'
-import { Badge } from './ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { type StatusTone, TONE_BADGE } from './status'
 
 interface TimelineItem {
   id: string
@@ -12,6 +15,19 @@ interface TimelineItem {
   meta: string
   outcome: 'accepted' | 'duplicate' | 'stale' | 'recorded'
   time: string
+}
+
+const KIND_ICON: Record<TimelineItem['kind'], LucideIcon> = {
+  usage: DatabaseZap,
+  billing: ReceiptText,
+  audit: ScrollText,
+}
+
+const OUTCOME_TONE: Record<TimelineItem['outcome'], StatusTone> = {
+  accepted: 'success',
+  recorded: 'success',
+  duplicate: 'neutral',
+  stale: 'warning',
 }
 
 export function ActivityTimeline({
@@ -27,44 +43,62 @@ export function ActivityTimeline({
 }) {
   const items = selectedCustomer ? timelineForCustomer(selectedCustomer, usage, billingEvents, auditLog) : []
   const rows = items.map(item => <TimelineRow key={item.id} item={item} />)
-  const content = rows.length > 0 ? rows : <EmptyTimeline />
 
   return (
-    <Card className="timeline-panel">
-      <CardHeader>
-        <div>
-          <CardTitle>Activity</CardTitle>
-          <CardDescription>{selectedCustomer ? selectedCustomer.name : 'No account selected'}</CardDescription>
-        </div>
-        <Badge variant="outline">{items.length} events</Badge>
+    <Card className="gap-0 overflow-hidden py-0">
+      <CardHeader className="border-border/70 border-b py-3.5">
+        <CardTitle>Activity</CardTitle>
+        <CardDescription>{selectedCustomer ? selectedCustomer.name : 'No account selected'}</CardDescription>
+        <CardAction>
+          <Badge variant="outline" className="font-mono text-xs tabular-nums">
+            {items.length} events
+          </Badge>
+        </CardAction>
       </CardHeader>
-      <CardContent className="timeline-list">{content}</CardContent>
+      <CardContent className="p-0">
+        <ScrollArea className="h-[360px]">
+          {rows.length > 0 ? (
+            <div role="log" aria-live="polite" aria-relevant="additions" className="flex flex-col px-4">
+              {rows}
+            </div>
+          ) : (
+            <EmptyTimeline />
+          )}
+        </ScrollArea>
+      </CardContent>
     </Card>
   )
 }
 
 function TimelineRow({ item }: { item: TimelineItem }) {
+  const Icon = KIND_ICON[item.kind]
   return (
-    <article className="timeline-row">
-      <span className="timeline-icon">{iconForKind(item.kind)}</span>
-      <div className="timeline-copy">
-        <div className="timeline-head">
-          <strong>{item.title}</strong>
-          <Badge variant={badgeForOutcome(item.outcome)}>{item.outcome}</Badge>
+    <article className="border-border/60 flex items-start gap-3 border-b py-3 last:border-b-0">
+      <span className="border-border/80 bg-muted/40 text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border">
+        <Icon className="size-3.5" aria-hidden="true" />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{item.title}</span>
+          <Badge variant="outline" className={cn('font-mono text-[10px]', TONE_BADGE[OUTCOME_TONE[item.outcome]])}>
+            {item.outcome}
+          </Badge>
         </div>
-        <p>{item.detail}</p>
-        <span>{item.meta}</span>
+        <p className="text-muted-foreground truncate font-mono text-xs">{item.detail}</p>
+        <span className="text-muted-foreground/80 text-xs">{item.meta}</span>
       </div>
-      <time>{formatDateTime(item.time)}</time>
+      <time dateTime={item.time} className="text-muted-foreground shrink-0 pt-0.5 font-mono text-[11px] tabular-nums">
+        {formatDateTime(item.time)}
+      </time>
     </article>
   )
 }
 
 function EmptyTimeline() {
   return (
-    <div className="empty-state timeline-empty">
-      <CircleDashed size={20} />
-      <span>No activity is available for this account.</span>
+    <div className="text-muted-foreground flex h-[360px] flex-col items-center justify-center gap-2 px-6 text-center">
+      <CircleDashed className="size-5" aria-hidden="true" />
+      <span className="text-sm">No activity is available for this account.</span>
     </div>
   )
 }
@@ -126,30 +160,4 @@ function compareTimelineItems(a: TimelineItem, b: TimelineItem): number {
     return -1
   }
   return rightTime - leftTime
-}
-
-function iconForKind(kind: TimelineItem['kind']) {
-  if (kind === 'usage') {
-    return <DatabaseZap size={16} />
-  }
-  if (kind === 'billing') {
-    return <ReceiptText size={16} />
-  }
-  if (kind === 'audit') {
-    return <ScrollText size={16} />
-  }
-  return <Activity size={16} />
-}
-
-function badgeForOutcome(outcome: TimelineItem['outcome']): 'success' | 'secondary' | 'warning' | 'destructive' {
-  if (outcome === 'accepted' || outcome === 'recorded') {
-    return 'success'
-  }
-  if (outcome === 'stale') {
-    return 'warning'
-  }
-  if (outcome === 'duplicate') {
-    return 'secondary'
-  }
-  return 'destructive'
 }

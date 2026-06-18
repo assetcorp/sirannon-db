@@ -13,7 +13,7 @@ export function EntitlementsDemo({ initialData }: { initialData: LoaderData }) {
   const controller = useEntitlementsController(initialData)
 
   return (
-    <main className="app-shell">
+    <div className="min-h-dvh">
       <AppHeader
         connectionState={controller.connectionState}
         refreshing={controller.refreshing}
@@ -23,38 +23,47 @@ export function EntitlementsDemo({ initialData }: { initialData: LoaderData }) {
         onReset={controller.handleResetClick}
       />
 
-      <MetricsGrid stats={controller.stats} />
-      <ClusterBoard nodes={controller.clusterNodes} />
-
-      {controller.error ? <ErrorBanner message={controller.error} onDismiss={controller.handleDismissError} /> : null}
-
-      <section className="workspace-grid">
-        <CustomerTable
-          customers={controller.customers}
-          selectedCustomer={controller.selectedCustomer}
-          pendingAction={controller.pendingAction}
-          onSelectCustomer={controller.handleSelectCustomer}
-        />
-        <div className="record-workspace">
-          <EntitlementDetail customer={controller.selectedCustomer} />
-          <ActivityTimeline
-            selectedCustomer={controller.selectedCustomer}
-            usage={controller.usage}
-            billingEvents={controller.billingEvents}
-            auditLog={controller.auditLog}
-          />
+      <main className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-5 lg:px-6">
+        <div className="animate-rise motion-reduce:animate-none">
+          <MetricsGrid stats={controller.stats} />
         </div>
-        <OperationsPanel
-          selectedCustomer={controller.selectedCustomer}
-          pendingAction={controller.pendingAction}
-          onCreateCustomer={controller.handleCreateCustomer}
-          onRecordUsage={controller.handleRecordUsage}
-          onReplayDuplicateUsage={controller.handleReplayDuplicateUsage}
-          onApplyBilling={controller.handleApplyBilling}
-          onIsolatePrimary={controller.handleIsolatePrimary}
-          onHealCluster={controller.handleHealCluster}
-        />
-      </section>
-    </main>
+        <div className="animate-rise motion-reduce:animate-none [animation-delay:60ms]">
+          <ClusterBoard nodes={controller.clusterNodes} />
+        </div>
+
+        {controller.error ? <ErrorBanner message={controller.error} onDismiss={controller.handleDismissError} /> : null}
+
+        <section
+          aria-label="Entitlement workspace"
+          className="animate-rise grid items-start gap-4 motion-reduce:animate-none [animation-delay:120ms] xl:grid-cols-[300px_minmax(0,1fr)_360px]"
+        >
+          <CustomerTable
+            customers={controller.customers}
+            selectedCustomer={controller.selectedCustomer}
+            pendingAction={controller.pendingAction}
+            onSelectCustomer={controller.handleSelectCustomer}
+          />
+          <div className="flex min-w-0 flex-col gap-4">
+            <EntitlementDetail customer={controller.selectedCustomer} />
+            <ActivityTimeline
+              selectedCustomer={controller.selectedCustomer}
+              usage={controller.usage}
+              billingEvents={controller.billingEvents}
+              auditLog={controller.auditLog}
+            />
+          </div>
+          <OperationsPanel
+            selectedCustomer={controller.selectedCustomer}
+            pendingAction={controller.pendingAction}
+            onCreateCustomer={controller.handleCreateCustomer}
+            onRecordUsage={controller.handleRecordUsage}
+            onReplayDuplicateUsage={controller.handleReplayDuplicateUsage}
+            onApplyBilling={controller.handleApplyBilling}
+            onIsolatePrimary={controller.handleIsolatePrimary}
+            onHealCluster={controller.handleHealCluster}
+          />
+        </section>
+      </main>
+    </div>
   )
 }

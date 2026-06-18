@@ -1,9 +1,10 @@
-import { Database, RadioTower, Server, Unplug, Waves } from 'lucide-react'
+import { ChevronRight, Database, type LucideIcon, Waves } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 import type { ClusterNode } from '../../../lib/schemas'
-import { cn } from '../../../lib/ui'
 import { clusterHealthLabel } from '../entitlements-utils'
-import { Badge } from './ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { StatusDot, type StatusTone, TONE_BADGE } from './status'
 
 const FALLBACK_NODES: ClusterNode[] = [
   {
@@ -38,65 +39,94 @@ const FALLBACK_NODES: ClusterNode[] = [
   },
 ]
 
+const HEALTH_TONE: Record<string, StatusTone> = {
+  healthy: 'success',
+  degraded: 'warning',
+  failing_over: 'warning',
+  repairing: 'warning',
+  syncing: 'warning',
+  unavailable: 'destructive',
+  offline: 'destructive',
+}
+
+const TRANSITIONAL_HEALTH = new Set(['failing_over', 'repairing', 'syncing'])
+
 export function ClusterBoard({ nodes }: { nodes: ClusterNode[] }) {
   const visibleNodes = nodes.length > 0 ? nodes : FALLBACK_NODES
   const primaryNode = visibleNodes.find(node => node.currentPrimary !== null)?.currentPrimary ?? 'unknown'
   const availableNodes = visibleNodes.filter(node => node.reachable && node.health !== 'unavailable').length
-  const cards = visibleNodes.map(node => <ClusterNodePill key={node.nodeId} node={node} primaryNode={primaryNode} />)
+  const quorumTone: StatusTone = availableNodes >= 2 ? 'success' : 'warning'
+  const tiles = visibleNodes.map(node => <NodeTile key={node.nodeId} node={node} primaryNode={primaryNode} />)
 
   return (
-    <Card className="cluster-panel">
+    <Card>
       <CardHeader>
-        <div>
-          <CardTitle>Cluster Path</CardTitle>
-          <CardDescription>client, authority, replicas, subscriber</CardDescription>
-        </div>
-        <Badge variant={availableNodes >= 2 ? 'success' : 'warning'}>{availableNodes}/3 online</Badge>
+        <CardTitle>Cluster topology</CardTitle>
+        <CardDescription>Write path, replication fan-out, and change capture</CardDescription>
+        <CardAction>
+          <Badge variant="outline" className={cn('font-mono text-xs tabular-nums', TONE_BADGE[quorumTone])}>
+            {availableNodes}/{visibleNodes.length} online
+          </Badge>
+        </CardAction>
       </CardHeader>
       <CardContent>
-        <div className="cluster-path">
-          <PathStage icon={<Database size={16} />} label="client" value="app server" />
-          <PathStage icon={<RadioTower size={16} />} label="primary" value={primaryNode} active />
-          <div className="node-strip">{cards}</div>
-          <PathStage icon={<Waves size={16} />} label="live" value="CDC stream" />
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
+          <PathStage icon={Database} label="Client" value="App server" />
+          <FlowArrow />
+          <div className="grid flex-1 gap-2 sm:grid-cols-3">{tiles}</div>
+          <FlowArrow />
+          <PathStage icon={Waves} label="Subscriber" value="CDC stream" />
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function PathStage({
-  icon,
-  label,
-  value,
-  active = false,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  active?: boolean
-}) {
+function PathStage({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return (
-    <div className={cn('path-stage', active && 'active')}>
-      <span>{icon}</span>
-      <div>
-        <strong>{value}</strong>
-        <em>{label}</em>
+    <div className="border-border/80 bg-background/40 flex items-center gap-2.5 rounded-lg border border-dashed px-3 py-2.5 lg:w-44">
+      <Icon className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate text-sm font-medium">{value}</span>
+        <span className="text-muted-foreground text-[10px] tracking-wider uppercase">{label}</span>
       </div>
     </div>
   )
 }
 
-function ClusterNodePill({ node, primaryNode }: { node: ClusterNode; primaryNode: string }) {
+function FlowArrow() {
+  return (
+    <ChevronRight className="text-muted-foreground/50 hidden size-4 shrink-0 self-center lg:block" aria-hidden="true" />
+  )
+}
+
+function NodeTile({ node, primaryNode }: { node: ClusterNode; primaryNode: string }) {
   const health = clusterHealthLabel(node)
+  const tone = HEALTH_TONE[health] ?? 'neutral'
   const isPrimary = primaryNode === node.nodeId
-  const icon = node.reachable ? <Server size={15} /> : <Unplug size={15} />
 
   return (
-    <div className={cn('node-pill', health, isPrimary && 'primary')}>
-      <span>{icon}</span>
-      <strong>{node.nodeId}</strong>
-      <em>{health}</em>
+    <div
+      className={cn(
+        'bg-background/40 rounded-lg border p-3 transition-colors',
+        tone === 'warning' && 'border-warning/40',
+        tone === 'destructive' && 'border-destructive/40 opacity-80',
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-sm font-medium">{node.nodeId}</span>
+        <Badge
+          variant="outline"
+          className={cn('font-mono text-[10px] uppercase', isPrimary ? TONE_BADGE.success : 'text-muted-foreground')}
+        >
+          {isPrimary ? 'primary' : 'replica'}
+        </Badge>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        <StatusDot tone={tone} pulse={TRANSITIONAL_HEALTH.has(health)} />
+        <span className="capitalize">{health.replace(/_/g, ' ')}</span>
+      </div>
+      <p className="text-muted-foreground mt-1 truncate font-mono text-[11px]">{node.endpoint}</p>
     </div>
   )
 }

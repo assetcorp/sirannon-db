@@ -8,27 +8,12 @@ import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
-  private initiationPromise: Promise<void> | null = null
 
   constructor(private readonly engine: ReplicationEngine) {}
 
   async initiateSync(): Promise<void> {
-    if (this.engine.syncState.phase !== 'pending') return
-    if (this.initiationPromise) return this.initiationPromise
-
-    const initiation = this.initiateSyncOnce()
-    this.initiationPromise = initiation
-    try {
-      await initiation
-    } finally {
-      if (this.initiationPromise === initiation) {
-        this.initiationPromise = null
-      }
-    }
-  }
-
-  private async initiateSyncOnce(): Promise<void> {
     const engine = this.engine
+    if (engine.syncState.phase !== 'pending') return
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
     }
@@ -60,16 +45,15 @@ export class SyncJoiner {
       return
     }
 
-    const savedState = await engine.log.getSyncState()
-    const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
-
-    const requestId = randomUUID()
     engine.syncState.phase = 'syncing'
     engine.syncState.sourcePeerId = sourcePeerId
     engine.syncState.startedAt = Date.now()
     engine.syncState.error = null
 
     try {
+      const savedState = await engine.log.getSyncState()
+      const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
+      const requestId = randomUUID()
       await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
       await engine.config.transport.requestSync(
         sourcePeerId,

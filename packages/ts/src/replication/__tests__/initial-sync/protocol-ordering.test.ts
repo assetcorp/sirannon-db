@@ -46,6 +46,47 @@ describe('initial sync protocol ordering', () => {
     expect(engine.syncState.sourcePeerId).toBe('node-a')
   })
 
+  it('retries source selection after the coordinator primary changes', async () => {
+    let currentPrimary = 'node-b'
+    const sentRequests: string[] = []
+    const engine = {
+      tracker: {},
+      nodeId: 'node-a',
+      isCoordinatorMode: () => true,
+      getCurrentPrimaryPeerId: () => (currentPrimary === 'node-c' ? currentPrimary : null),
+      config: {
+        transport: {
+          peers: () => new Map([['node-c', { role: 'replica' }]]),
+          requestSync: async (peerId: string) => {
+            sentRequests.push(peerId)
+          },
+        },
+      },
+      log: {
+        getSyncState: async () => ({ phase: 'pending', completedTables: [] }),
+        setSyncMeta: async () => undefined,
+      },
+      syncState: {
+        phase: 'pending',
+        sourcePeerId: null,
+        snapshotSeq: null,
+        completedTables: [],
+        totalTables: 0,
+        startedAt: null,
+        error: null,
+      },
+      decorateSyncRequest: <T>(request: T): T => request,
+    } as unknown as ReplicationEngine
+    const joiner = new SyncJoiner(engine)
+
+    await joiner.initiateSync()
+    currentPrimary = 'node-c'
+    await joiner.initiateSync()
+
+    expect(sentRequests).toEqual(['node-c'])
+    expect(engine.syncState.sourcePeerId).toBe('node-c')
+  })
+
   it('registers a batch ACK waiter before the batch can be acknowledged', async () => {
     const sentCompletes: SyncComplete[] = []
     const errors: ReplicationErrorEvent[] = []

@@ -15,4 +15,5 @@ export interface ActiveSyncSession {
 
 export interface SyncAckWaiter {
   resolve: (ack: SyncAck) => void
+  timer: ReturnType<typeof setTimeout>
 }

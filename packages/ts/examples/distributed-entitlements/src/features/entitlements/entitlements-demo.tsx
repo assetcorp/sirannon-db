@@ -18,6 +18,8 @@ export function EntitlementsDemo({ initialData }: { initialData: LoaderData }) {
         connectionState={controller.connectionState}
         refreshing={controller.refreshing}
         pendingAction={controller.pendingAction}
+        writeAvailable={controller.writeAvailability.available}
+        writeUnavailableReason={controller.writeAvailability.reason}
         lastEvent={controller.lastEvent}
         onRefresh={controller.handleRefreshClick}
         onReset={controller.handleResetClick}
@@ -55,6 +57,8 @@ export function EntitlementsDemo({ initialData }: { initialData: LoaderData }) {
           <OperationsPanel
             selectedCustomer={controller.selectedCustomer}
             pendingAction={controller.pendingAction}
+            writeAvailable={controller.writeAvailability.available}
+            writeUnavailableReason={controller.writeAvailability.reason}
             onCreateCustomer={controller.handleCreateCustomer}
             onRecordUsage={controller.handleRecordUsage}
             onReplayDuplicateUsage={controller.handleReplayDuplicateUsage}

@@ -2,6 +2,7 @@ import { ChevronRight, Database, type LucideIcon, Waves } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { getMajorityWriteAvailability } from '../../../lib/cluster-readiness'
 import type { ClusterNode } from '../../../lib/schemas'
 import { clusterHealthLabel } from '../entitlements-utils'
 import { StatusDot, type StatusTone, TONE_BADGE } from './status'
@@ -54,8 +55,8 @@ const TRANSITIONAL_HEALTH = new Set(['failing_over', 'repairing', 'syncing'])
 export function ClusterBoard({ nodes }: { nodes: ClusterNode[] }) {
   const visibleNodes = nodes.length > 0 ? nodes : FALLBACK_NODES
   const primaryNode = visibleNodes.find(node => node.currentPrimary !== null)?.currentPrimary ?? 'unknown'
-  const availableNodes = visibleNodes.filter(node => node.reachable && node.health !== 'unavailable').length
-  const quorumTone: StatusTone = availableNodes >= 2 ? 'success' : 'warning'
+  const writeAvailability = getMajorityWriteAvailability(visibleNodes)
+  const quorumTone: StatusTone = writeAvailability.available ? 'success' : 'warning'
   const tiles = visibleNodes.map(node => <NodeTile key={node.nodeId} node={node} primaryNode={primaryNode} />)
 
   return (
@@ -65,7 +66,9 @@ export function ClusterBoard({ nodes }: { nodes: ClusterNode[] }) {
         <CardDescription>Write path, replication fan-out, and change capture</CardDescription>
         <CardAction>
           <Badge variant="outline" className={cn('font-mono text-xs tabular-nums', TONE_BADGE[quorumTone])}>
-            {availableNodes}/{visibleNodes.length} online
+            {writeAvailability.available
+              ? 'majority ready'
+              : `${writeAvailability.healthyVoters}/${writeAvailability.requiredVoters} majority`}
           </Badge>
         </CardAction>
       </CardHeader>

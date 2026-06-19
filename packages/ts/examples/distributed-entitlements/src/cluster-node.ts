@@ -114,7 +114,22 @@ const tracker = new ChangeTracker({ replication: true })
 if (seedSchema) {
   await conn.exec(SCHEMA)
   await conn.exec(SEED_SQL)
-  for (const table of REPLICATED_TABLES) {
+}
+
+const replicatedTablePlaceholders = REPLICATED_TABLES.map(() => '?').join(', ')
+const existingReplicatedTableRows = (await (
+  await conn.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${replicatedTablePlaceholders})`)
+).all(...REPLICATED_TABLES)) as Array<{ name: unknown }>
+const existingReplicatedTables = new Set<string>()
+
+for (const row of existingReplicatedTableRows) {
+  if (typeof row.name === 'string') {
+    existingReplicatedTables.add(row.name)
+  }
+}
+
+for (const table of REPLICATED_TABLES) {
+  if (existingReplicatedTables.has(table)) {
     await tracker.watch(conn, table)
   }
 }

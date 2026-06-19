@@ -21,11 +21,40 @@ const wsClient = new SirannonClient({
 const wsDb = wsClient.database(DATABASE_ID)
 
 export async function subscribeControlPlane(callback: (event: CDCEvent) => void): Promise<RemoteSubscription[]> {
-  return Promise.all([
+  const results = await Promise.allSettled([
     wsDb.on('customers').subscribe(callback),
     wsDb.on('entitlements').subscribe(callback),
     wsDb.on('usage_events').subscribe(callback),
     wsDb.on('billing_events').subscribe(callback),
     wsDb.on('audit_log').subscribe(callback),
   ])
+
+  const subscriptions: RemoteSubscription[] = []
+  const errors: unknown[] = []
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      subscriptions.push(result.value)
+    } else {
+      errors.push(result.reason)
+    }
+  }
+
+  if (errors.length === 0) {
+    return subscriptions
+  }
+
+  for (const subscription of subscriptions) {
+    try {
+      subscription.unsubscribe()
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+
+  throw new AggregateError(errors, 'Failed to establish control-plane subscriptions')
 }

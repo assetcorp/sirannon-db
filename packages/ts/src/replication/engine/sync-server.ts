@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
-import type { SyncAck, SyncRequest, SyncTableManifest } from '../types.js'
+import type { SyncAck, SyncBatch, SyncRequest, SyncTableManifest } from '../types.js'
 import { IDENTIFIER_RE } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
@@ -175,6 +175,7 @@ export class SyncServer {
     const waiter = this.syncAckWaiters.get(key)
     if (waiter) {
       this.syncAckWaiters.delete(key)
+      clearTimeout(waiter.timer)
       waiter.resolve(ack)
     }
   }
@@ -188,6 +189,7 @@ export class SyncServer {
     for (const [key, waiter] of this.syncAckWaiters) {
       if (key.startsWith(`${requestId}:`)) {
         this.syncAckWaiters.delete(key)
+        clearTimeout(waiter.timer)
         waiter.resolve({
           requestId,
           joinerNodeId: session.joinerNodeId,
@@ -247,11 +249,36 @@ export class SyncServer {
       timer.unref?.()
       this.syncAckWaiters.set(key, {
         resolve: (ack: SyncAck) => {
-          clearTimeout(timer)
           resolve(ack)
         },
+        timer,
       })
     })
+  }
+
+  private async sendSyncBatchAndWaitForAck(peerId: string, batch: SyncBatch): Promise<SyncAck> {
+    const ackPromise = this.waitForSyncAck(batch.requestId, batch.table, batch.batchIndex)
+    try {
+      await this.engine.config.transport.sendSyncBatch(peerId, this.engine.decorateSyncBatch(batch))
+    } catch (err: unknown) {
+      const key = `${batch.requestId}:${batch.table}:${batch.batchIndex}`
+      const waiter = this.syncAckWaiters.get(key)
+      if (waiter) {
+        this.syncAckWaiters.delete(key)
+        clearTimeout(waiter.timer)
+        waiter.resolve({
+          requestId: batch.requestId,
+          joinerNodeId: peerId,
+          table: batch.table,
+          batchIndex: batch.batchIndex,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      await ackPromise
+      throw err
+    }
+    return ackPromise
   }
 
   private async serveSyncSession(session: ActiveSyncSession): Promise<void> {
@@ -259,20 +286,15 @@ export class SyncServer {
     const schemaDdl = await engine.log.dumpSchema(session.readConn)
     const schemaChecksum = createHash('sha256').update(canonicaliseForChecksum(schemaDdl)).digest('hex')
 
-    await engine.config.transport.sendSyncBatch(
-      session.joinerNodeId,
-      engine.decorateSyncBatch({
-        requestId: session.requestId,
-        table: '__schema__',
-        batchIndex: 0,
-        rows: [],
-        schema: schemaDdl,
-        checksum: schemaChecksum,
-        isLastBatchForTable: true,
-      }),
-    )
-
-    const schemaAck = await this.waitForSyncAck(session.requestId, '__schema__', 0)
+    const schemaAck = await this.sendSyncBatchAndWaitForAck(session.joinerNodeId, {
+      requestId: session.requestId,
+      table: '__schema__',
+      batchIndex: 0,
+      rows: [],
+      schema: schemaDdl,
+      checksum: schemaChecksum,
+      isLastBatchForTable: true,
+    })
     if (!schemaAck.success) {
       this.abortSyncSession(session.requestId)
       return
@@ -289,19 +311,14 @@ export class SyncServer {
       )) {
         if (session.aborted) return
 
-        await engine.config.transport.sendSyncBatch(
-          session.joinerNodeId,
-          engine.decorateSyncBatch({
-            requestId: session.requestId,
-            table,
-            batchIndex,
-            rows,
-            checksum,
-            isLastBatchForTable: isLast,
-          }),
-        )
-
-        const ack = await this.waitForSyncAck(session.requestId, table, batchIndex)
+        const ack = await this.sendSyncBatchAndWaitForAck(session.joinerNodeId, {
+          requestId: session.requestId,
+          table,
+          batchIndex,
+          rows,
+          checksum,
+          isLastBatchForTable: isLast,
+        })
         if (!ack.success) {
           this.abortSyncSession(session.requestId)
           return
@@ -311,19 +328,14 @@ export class SyncServer {
       }
 
       if (batchIndex === 0) {
-        await engine.config.transport.sendSyncBatch(
-          session.joinerNodeId,
-          engine.decorateSyncBatch({
-            requestId: session.requestId,
-            table,
-            batchIndex: 0,
-            rows: [],
-            checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
-            isLastBatchForTable: true,
-          }),
-        )
-
-        const emptyAck = await this.waitForSyncAck(session.requestId, table, 0)
+        const emptyAck = await this.sendSyncBatchAndWaitForAck(session.joinerNodeId, {
+          requestId: session.requestId,
+          table,
+          batchIndex: 0,
+          rows: [],
+          checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
+          isLastBatchForTable: true,
+        })
         if (!emptyAck.success) {
           this.abortSyncSession(session.requestId)
           return

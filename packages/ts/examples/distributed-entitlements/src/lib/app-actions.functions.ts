@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { RemoteDatabase } from '@delali/sirannon-db/client'
 import { SirannonClient } from '@delali/sirannon-db/client'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
+import { getMajorityWriteAvailability } from './cluster-readiness'
 import type {
   ApplyBillingEventInput,
   AuditRecord,
@@ -90,11 +91,16 @@ export const getControlPlaneSnapshot = createServerFn({
   return controlPlaneSnapshotSchema.parse({ customers, usage, billingEvents, auditLog, clusterNodes })
 })
 
+export const getClusterStatus = createServerFn({
+  method: 'GET',
+}).handler(fetchClusterNodes)
+
 export const createCustomer = createServerFn({
   method: 'POST',
 })
   .inputValidator(data => createCustomerInputSchema.parse(data))
   .handler(async ({ data }) => {
+    await assertMajorityWriteAvailable()
     const db = getServerHttpDb()
     const externalId = createExternalId(data.name)
     await db.transaction([
@@ -118,6 +124,7 @@ export const recordUsage = createServerFn({
 })
   .inputValidator(data => recordUsageInputSchema.parse(data))
   .handler(async ({ data }) => {
+    await assertMajorityWriteAvailable()
     const db = getServerHttpDb()
     await recordUsageInternal(db, data)
   })
@@ -127,6 +134,7 @@ export const applyBillingEvent = createServerFn({
 })
   .inputValidator(data => applyBillingEventInputSchema.parse(data))
   .handler(async ({ data }) => {
+    await assertMajorityWriteAvailable()
     const db = getServerHttpDb()
     await applyBillingEventInternal(db, data)
   })
@@ -136,6 +144,7 @@ export const replayDuplicateUsage = createServerFn({
 })
   .inputValidator(data => recordUsageInputSchema.parse(data))
   .handler(async ({ data }) => {
+    await assertMajorityWriteAvailable()
     const db = getServerHttpDb()
     const replay = {
       ...data,
@@ -149,6 +158,7 @@ export const replayDuplicateUsage = createServerFn({
 export const resetControlPlane = createServerFn({
   method: 'POST',
 }).handler(async () => {
+  await assertMajorityWriteAvailable()
   const db = getServerHttpDb()
   await db.transaction([
     { sql: DELETE_BILLING_EVENTS_SQL },
@@ -273,6 +283,13 @@ async function fetchClusterNodes(): Promise<ClusterNode[]> {
   const endpoints = clusterEndpointsFromEnv(process.env.SIRANNON_CLUSTER_ENDPOINTS)
   const results = await Promise.all(endpoints.map(endpoint => fetchClusterNode(endpoint, token)))
   return results.map(result => clusterNodeSchema.parse(result))
+}
+
+async function assertMajorityWriteAvailable(): Promise<void> {
+  const availability = getMajorityWriteAvailability(await fetchClusterNodes())
+  if (!availability.available) {
+    throw new Error(`Write blocked: ${availability.reason}`)
+  }
 }
 
 async function fetchClusterNode(endpoint: string, token: string): Promise<ClusterNode> {

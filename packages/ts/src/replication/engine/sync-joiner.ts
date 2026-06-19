@@ -8,10 +8,26 @@ import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
+  private initiationPromise: Promise<void> | null = null
 
   constructor(private readonly engine: ReplicationEngine) {}
 
   async initiateSync(): Promise<void> {
+    if (this.engine.syncState.phase !== 'pending') return
+    if (this.initiationPromise) return this.initiationPromise
+
+    const initiation = this.initiateSyncOnce()
+    this.initiationPromise = initiation
+    try {
+      await initiation
+    } finally {
+      if (this.initiationPromise === initiation) {
+        this.initiationPromise = null
+      }
+    }
+  }
+
+  private async initiateSyncOnce(): Promise<void> {
     const engine = this.engine
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
@@ -48,19 +64,42 @@ export class SyncJoiner {
     const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
 
     const requestId = randomUUID()
-    await engine.config.transport.requestSync(
-      sourcePeerId,
-      engine.decorateSyncRequest({
-        requestId,
-        joinerNodeId: engine.nodeId,
-        completedTables,
-      }),
-    )
-
     engine.syncState.phase = 'syncing'
     engine.syncState.sourcePeerId = sourcePeerId
     engine.syncState.startedAt = Date.now()
-    await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
+    engine.syncState.error = null
+
+    try {
+      await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
+      await engine.config.transport.requestSync(
+        sourcePeerId,
+        engine.decorateSyncRequest({
+          requestId,
+          joinerNodeId: engine.nodeId,
+          completedTables,
+        }),
+      )
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      if (engine.syncState.phase === 'syncing' && engine.syncState.sourcePeerId === sourcePeerId) {
+        engine.syncState.phase = 'pending'
+        engine.syncState.sourcePeerId = null
+        engine.syncState.startedAt = null
+        engine.syncState.error = wrappedErr.message
+        try {
+          await engine.log.setSyncMeta('pending')
+        } catch (rollbackErr: unknown) {
+          const wrappedRollbackErr = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr))
+          engine.emitError({
+            error: wrappedRollbackErr,
+            operation: 'sync-request-state-rollback',
+            peerId: sourcePeerId,
+            recoverable: false,
+          })
+        }
+      }
+      throw wrappedErr
+    }
   }
 
   async handleSyncBatchReceived(batch: SyncBatch, fromPeerId: string): Promise<void> {

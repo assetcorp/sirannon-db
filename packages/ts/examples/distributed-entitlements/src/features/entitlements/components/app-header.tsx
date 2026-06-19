@@ -22,6 +22,8 @@ export function AppHeader({
   connectionState,
   refreshing,
   pendingAction,
+  writeAvailable,
+  writeUnavailableReason,
   lastEvent,
   onRefresh,
   onReset,
@@ -29,6 +31,8 @@ export function AppHeader({
   connectionState: ConnectionState
   refreshing: boolean
   pendingAction: string | null
+  writeAvailable: boolean
+  writeUnavailableReason: string
   lastEvent: string
   onRefresh: () => void
   onReset: () => Promise<void>
@@ -93,14 +97,16 @@ export function AppHeader({
                   variant="outline"
                   size="icon"
                   type="button"
-                  disabled={pendingAction !== null}
+                  disabled={pendingAction !== null || !writeAvailable}
                   onClick={handleResetClick}
                   aria-label="Reset control plane"
                 >
                   <RotateCcw aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Reset and reseed the control plane</TooltipContent>
+              <TooltipContent>
+                {writeAvailable ? 'Reset and reseed the control plane' : writeUnavailableReason}
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>

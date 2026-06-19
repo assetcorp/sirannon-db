@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyBillingEvent,
   createCustomer,
+  getClusterStatus,
   getControlPlaneSnapshot,
   healClusterLinks,
   isolateCurrentPrimary,
@@ -11,6 +12,7 @@ import {
   resetControlPlane,
 } from '../../lib/app-actions.functions'
 import type { CDCEvent } from '../../lib/cdc'
+import { getMajorityWriteAvailability } from '../../lib/cluster-readiness'
 import { subscribeControlPlane } from '../../lib/direct-client'
 import type {
   ApplyBillingEventInput,
@@ -29,6 +31,7 @@ import {
 import type { BillingDraft, ConnectionState, ControllerState, LoaderData, UsageDraft } from './types'
 
 const LIVE_REFRESH_DELAY_MS = 160
+const CLUSTER_READINESS_REFRESH_MS = 1_000
 
 export function useEntitlementsController(initialData: LoaderData) {
   const [state, setState] = useState<ControllerState>({
@@ -61,6 +64,9 @@ export function useEntitlementsController(initialData: LoaderData) {
     () => selectedCustomerOrFirst(state.customers, selectedCustomerId),
     [selectedCustomerId, state.customers],
   )
+  const writeAvailability = useMemo(() => getMajorityWriteAvailability(state.clusterNodes), [state.clusterNodes])
+  const writeAvailable = writeAvailability.available
+  const writeUnavailableReason = writeAvailability.reason
 
   const replaceSnapshot = useCallback((nextSnapshot: ControlPlaneSnapshot) => {
     setState({
@@ -76,6 +82,11 @@ export function useEntitlementsController(initialData: LoaderData) {
     const nextSnapshot = await getControlPlaneSnapshot()
     replaceSnapshot(nextSnapshot)
   }, [replaceSnapshot])
+
+  const refreshClusterStatus = useCallback(async () => {
+    const clusterNodes = await getClusterStatus()
+    setState(current => ({ ...current, clusterNodes }))
+  }, [])
 
   const queueLiveRefresh = useCallback(() => {
     if (refreshTimerRef.current !== null) {
@@ -150,6 +161,32 @@ export function useEntitlementsController(initialData: LoaderData) {
     }
   }, [])
 
+  useEffect(() => {
+    if (writeAvailable) return
+
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const scheduleRefresh = () => {
+      timer = setTimeout(() => {
+        refreshClusterStatus()
+          .catch(() => undefined)
+          .finally(() => {
+            if (!disposed) {
+              scheduleRefresh()
+            }
+          })
+      }, CLUSTER_READINESS_REFRESH_MS)
+    }
+
+    scheduleRefresh()
+    return () => {
+      disposed = true
+      if (timer !== null) {
+        clearTimeout(timer)
+      }
+    }
+  }, [refreshClusterStatus, writeAvailable])
+
   const runMutation = useCallback(
     async (label: string, mutation: () => Promise<void>): Promise<boolean> => {
       setPendingAction(label)
@@ -168,6 +205,17 @@ export function useEntitlementsController(initialData: LoaderData) {
     [refreshSnapshot],
   )
 
+  const runWriteMutation = useCallback(
+    async (label: string, mutation: () => Promise<void>): Promise<boolean> => {
+      if (!writeAvailable) {
+        setError(`Write blocked: ${writeUnavailableReason}`)
+        return false
+      }
+      return runMutation(label, mutation)
+    },
+    [runMutation, writeAvailable, writeUnavailableReason],
+  )
+
   const handleRefreshClick = useCallback(() => {
     setRefreshing(true)
     refreshSnapshot()
@@ -183,16 +231,16 @@ export function useEntitlementsController(initialData: LoaderData) {
   }, [refreshSnapshot])
 
   const handleResetClick = useCallback(async () => {
-    await runMutation('Resetting control plane', resetControlPlane)
-  }, [runMutation])
+    await runWriteMutation('Resetting control plane', resetControlPlane)
+  }, [runWriteMutation])
 
   const handleCreateCustomer = useCallback(
     async (input: CreateCustomerInput): Promise<boolean> => {
-      return runMutation(`Creating ${input.name}`, async () => {
+      return runWriteMutation(`Creating ${input.name}`, async () => {
         await createCustomer({ data: input })
       })
     },
-    [runMutation],
+    [runWriteMutation],
   )
 
   const handleSelectCustomer = useCallback((customer: CustomerEntitlement) => {
@@ -214,11 +262,11 @@ export function useEntitlementsController(initialData: LoaderData) {
         idempotencyKey: draft.idempotencyKey,
       }
 
-      return runMutation(`Recording ${draft.units} units`, async () => {
+      return runWriteMutation(`Recording ${draft.units} units`, async () => {
         await recordUsage({ data: input })
       })
     },
-    [runMutation, selectedCustomer],
+    [runWriteMutation, selectedCustomer],
   )
 
   const handleReplayDuplicateUsage = useCallback(async (): Promise<boolean> => {
@@ -235,10 +283,10 @@ export function useEntitlementsController(initialData: LoaderData) {
       idempotencyKey: createIdempotencyKey('usage-replay', selectedCustomer.id),
     }
 
-    return runMutation('Replaying duplicate usage', async () => {
+    return runWriteMutation('Replaying duplicate usage', async () => {
       await replayDuplicateUsage({ data: input })
     })
-  }, [runMutation, selectedCustomer])
+  }, [runWriteMutation, selectedCustomer])
 
   const handleApplyBilling = useCallback(
     async (draft: BillingDraft): Promise<boolean> => {
@@ -253,11 +301,11 @@ export function useEntitlementsController(initialData: LoaderData) {
         customerName: selectedCustomer.name,
       }
 
-      return runMutation(`Applying ${draft.eventType}`, async () => {
+      return runWriteMutation(`Applying ${draft.eventType}`, async () => {
         await applyBillingEvent({ data: input })
       })
     },
-    [runMutation, selectedCustomer],
+    [runWriteMutation, selectedCustomer],
   )
 
   const handleIsolatePrimary = useCallback(async () => {
@@ -281,6 +329,7 @@ export function useEntitlementsController(initialData: LoaderData) {
     refreshing,
     lastEvent,
     error,
+    writeAvailability,
     handleRefreshClick,
     handleResetClick,
     handleCreateCustomer,

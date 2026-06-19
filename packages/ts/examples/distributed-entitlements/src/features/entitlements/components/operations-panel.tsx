@@ -9,9 +9,20 @@ import {
   ReceiptText,
   Repeat2,
   Send,
+  TriangleAlert,
   Wrench,
 } from 'lucide-react'
-import { type ChangeEvent, type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from 'react'
+import {
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -50,6 +61,8 @@ function renderOption(value: string) {
 export function OperationsPanel({
   selectedCustomer,
   pendingAction,
+  writeAvailable,
+  writeUnavailableReason,
   onCreateCustomer,
   onRecordUsage,
   onReplayDuplicateUsage,
@@ -59,6 +72,8 @@ export function OperationsPanel({
 }: {
   selectedCustomer: CustomerEntitlement | null
   pendingAction: string | null
+  writeAvailable: boolean
+  writeUnavailableReason: string
   onCreateCustomer: (input: CreateCustomerInput) => Promise<boolean>
   onRecordUsage: (draft: UsageDraft) => Promise<boolean>
   onReplayDuplicateUsage: () => Promise<boolean>
@@ -67,34 +82,46 @@ export function OperationsPanel({
   onHealCluster: () => Promise<void>
 }) {
   const [mode, setMode] = useState<OperationsMode>('operate')
-  const disabled = pendingAction !== null || selectedCustomer === null
+  const usageAttemptKeysRef = useRef(new Map<number, string>())
+  const billingAttemptIdsRef = useRef(new Map<string, string>())
+  const disabled = pendingAction !== null || selectedCustomer === null || !writeAvailable
 
   const handleModeChange = useCallback((value: string) => {
     setMode(value as OperationsMode)
   }, [])
 
-  const handleConsumeClick = useCallback(() => {
+  const handleConsumeClick = useCallback(async () => {
     if (!selectedCustomer) {
       return
     }
-    void onRecordUsage({
+    const existingKey = usageAttemptKeysRef.current.get(selectedCustomer.id)
+    const idempotencyKey = existingKey ?? createIdempotencyKey('usage', selectedCustomer.id)
+    usageAttemptKeysRef.current.set(selectedCustomer.id, idempotencyKey)
+    const completed = await onRecordUsage({
       units: 500,
       source: 'api_gateway',
-      idempotencyKey: createIdempotencyKey('usage', selectedCustomer.id),
+      idempotencyKey,
     })
+    if (completed) {
+      usageAttemptKeysRef.current.delete(selectedCustomer.id)
+    }
   }, [onRecordUsage, selectedCustomer])
 
   const handleReplayClick = useCallback(() => {
     void onReplayDuplicateUsage()
   }, [onReplayDuplicateUsage])
 
-  const handleUpgradeClick = useCallback(() => {
+  const handleUpgradeClick = useCallback(async () => {
     if (!selectedCustomer) {
       return
     }
+    const attemptKey = `upgrade:${selectedCustomer.id}`
+    const existingEventId = billingAttemptIdsRef.current.get(attemptKey)
+    const providerEventId = existingEventId ?? `evt_upgrade_${selectedCustomer.id}_${Date.now().toString(36)}`
+    billingAttemptIdsRef.current.set(attemptKey, providerEventId)
     const nextPlan = nextUpgradePlan(selectedCustomer.plan)
-    void onApplyBilling({
-      providerEventId: `evt_upgrade_${Date.now().toString(36)}`,
+    const completed = await onApplyBilling({
+      providerEventId,
       eventType: 'subscription.updated',
       plan: nextPlan,
       status: 'active',
@@ -104,14 +131,21 @@ export function OperationsPanel({
       active: true,
       version: nextBillingVersion(selectedCustomer),
     })
+    if (completed) {
+      billingAttemptIdsRef.current.delete(attemptKey)
+    }
   }, [onApplyBilling, selectedCustomer])
 
-  const handleStaleBillingClick = useCallback(() => {
+  const handleStaleBillingClick = useCallback(async () => {
     if (!selectedCustomer) {
       return
     }
-    void onApplyBilling({
-      providerEventId: `evt_stale_${Date.now().toString(36)}`,
+    const attemptKey = `stale:${selectedCustomer.id}`
+    const existingEventId = billingAttemptIdsRef.current.get(attemptKey)
+    const providerEventId = existingEventId ?? `evt_stale_${selectedCustomer.id}_${Date.now().toString(36)}`
+    billingAttemptIdsRef.current.set(attemptKey, providerEventId)
+    const completed = await onApplyBilling({
+      providerEventId,
       eventType: 'subscription.updated',
       plan: selectedCustomer.plan,
       status: selectedCustomer.status,
@@ -121,6 +155,9 @@ export function OperationsPanel({
       active: selectedCustomer.active === 1,
       version: Math.max(1, selectedCustomer.version - 1),
     })
+    if (completed) {
+      billingAttemptIdsRef.current.delete(attemptKey)
+    }
   }, [onApplyBilling, selectedCustomer])
 
   const handleIsolateClick = useCallback(() => {
@@ -147,14 +184,25 @@ export function OperationsPanel({
                 <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 <span className="truncate">{pendingAction}</span>
               </Badge>
-            ) : (
+            ) : writeAvailable ? (
               <Badge variant="outline" className="text-muted-foreground font-mono text-[10px] uppercase">
                 ready
+              </Badge>
+            ) : (
+              <Badge variant="outline" className={cn('font-mono text-[10px] uppercase', TONE_BADGE.warning)}>
+                blocked
               </Badge>
             )}
           </CardAction>
         </CardHeader>
         <CardContent>
+          {!writeAvailable ? (
+            <Alert className="border-warning/40 bg-warning/5 mb-3">
+              <TriangleAlert aria-hidden="true" />
+              <AlertTitle>Writes unavailable</AlertTitle>
+              <AlertDescription className="text-xs">{writeUnavailableReason}</AlertDescription>
+            </Alert>
+          ) : null}
           <Tabs value={mode} onValueChange={handleModeChange}>
             <TabsList className="w-full">
               <TabsTrigger value="operate">Operations</TabsTrigger>
@@ -211,7 +259,7 @@ export function OperationsPanel({
         </CardContent>
       </Card>
       <AdvancedControls
-        disabled={pendingAction !== null}
+        disabled={pendingAction !== null || !writeAvailable}
         selectedCustomer={selectedCustomer}
         onCreateCustomer={onCreateCustomer}
         onApplyBilling={onApplyBilling}

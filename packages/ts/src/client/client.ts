@@ -28,6 +28,24 @@ interface ClusterRoutingState {
 
 const CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS = 2_000
 
+function clusterRoutingFingerprint(state: ClusterRoutingState): string {
+  const readEndpoints = state.readEndpoints
+    .map(endpoint => ({
+      url: endpoint.url,
+      readConcerns: [...endpoint.readConcerns].sort(),
+    }))
+    .sort((left, right) => left.url.localeCompare(right.url))
+  return JSON.stringify({
+    currentPrimary: state.currentPrimary,
+    primaryTerm: state.primaryTerm,
+    readEndpoints,
+  })
+}
+
+function clusterRoutingChanged(previous: ClusterRoutingState | undefined, next: ClusterRoutingState): boolean {
+  return previous === undefined || clusterRoutingFingerprint(previous) !== clusterRoutingFingerprint(next)
+}
+
 function isTopologyConfig(urlOrOpts: string | TopologyAwareClientOptions): urlOrOpts is TopologyAwareClientOptions {
   if (typeof urlOrOpts !== 'object') {
     return false
@@ -165,6 +183,7 @@ export class SirannonClient {
   private readonly wsBaseUrl: string
   private readonly transport: 'websocket' | 'http'
   private readonly headers: Record<string, string> | undefined
+  private readonly webSocketProtocols: string | string[] | undefined
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
   private readonly databases = new Map<string, RemoteDatabase>()
@@ -178,6 +197,7 @@ export class SirannonClient {
   private readonly readConcern: ReadConcernLevel | undefined
   private readonly starterEndpoints: string[]
   private readonly clusterRouting = new Map<string, ClusterRoutingState>()
+  private readonly topologyTransports = new Map<string, TopologyAwareTransport>()
   private latencies: EndpointLatency[] = []
   private latencyMeasuredAt = 0
   private latencyMeasuring: Promise<void> | null = null
@@ -201,6 +221,7 @@ export class SirannonClient {
       this.wsBaseUrl = toWsUrl(this.baseUrl)
       this.transport = topoOpts.transport ?? 'websocket'
       this.headers = topoOpts.headers
+      this.webSocketProtocols = topoOpts.webSocketProtocols
       this.autoReconnect = topoOpts.autoReconnect ?? true
       this.reconnectInterval = topoOpts.reconnectInterval ?? 1000
     } else {
@@ -216,6 +237,7 @@ export class SirannonClient {
       this.wsBaseUrl = toWsUrl(this.baseUrl)
       this.transport = options?.transport ?? 'websocket'
       this.headers = options?.headers
+      this.webSocketProtocols = options?.webSocketProtocols
       this.autoReconnect = options?.autoReconnect ?? true
       this.reconnectInterval = options?.reconnectInterval ?? 1000
     }
@@ -253,7 +275,9 @@ export class SirannonClient {
       return this.createTransportForUrl(this.baseUrl, this.wsBaseUrl, databaseId)
     }
 
-    return new TopologyAwareTransport(databaseId, this)
+    const transport = new TopologyAwareTransport(databaseId, this)
+    this.topologyTransports.set(databaseId, transport)
+    return transport
   }
 
   private createTransportForUrl(baseUrl: string, wsBaseUrl: string, databaseId: string): Transport {
@@ -266,6 +290,7 @@ export class SirannonClient {
     return new WebSocketTransport(`${wsBaseUrl}/db/${encodedId}`, {
       autoReconnect: this.autoReconnect,
       reconnectInterval: this.reconnectInterval,
+      protocols: this.webSocketProtocols,
     })
   }
 
@@ -416,6 +441,7 @@ export class SirannonClient {
       const timeout = setTimeout(() => controller.abort(), CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS)
       const unrefable = timeout as unknown as { unref?: () => void }
       unrefable.unref?.()
+      let next: ClusterRoutingState | null = null
       try {
         const response = await fetch(`${base}/db/${encodedId}/cluster`, {
           headers: this.headers,
@@ -425,8 +451,7 @@ export class SirannonClient {
           continue
         }
         const data = (await response.json()) as ClusterStatusResponse
-        this.clusterRouting.set(databaseId, parseClusterRouting(data, databaseId))
-        return
+        next = parseClusterRouting(data, databaseId)
       } catch (err) {
         if (err instanceof RemoteError && err.code === 'INVALID_RESPONSE') {
           throw err
@@ -434,6 +459,24 @@ export class SirannonClient {
       } finally {
         clearTimeout(timeout)
       }
+      if (!next) {
+        continue
+      }
+      const previous = this.clusterRouting.get(databaseId)
+      this.clusterRouting.set(databaseId, next)
+      if (clusterRoutingChanged(previous, next)) {
+        try {
+          await this.notifyClusterRoutingChanged(databaseId)
+        } catch (err) {
+          if (previous) {
+            this.clusterRouting.set(databaseId, previous)
+          } else {
+            this.clusterRouting.delete(databaseId)
+          }
+          throw err
+        }
+      }
+      return
     }
     throw new RemoteError('ROUTING_ERROR', `Could not discover cluster routing for database '${databaseId}'`)
   }
@@ -460,11 +503,32 @@ export class SirannonClient {
     if (this.baseUrl) candidates.add(this.baseUrl)
     return [...candidates]
   }
+
+  _unregisterTopologyTransport(databaseId: string, transport: TopologyAwareTransport): void {
+    if (this.topologyTransports.get(databaseId) === transport) {
+      this.topologyTransports.delete(databaseId)
+    }
+  }
+
+  private async notifyClusterRoutingChanged(databaseId: string): Promise<void> {
+    const transport = this.topologyTransports.get(databaseId)
+    if (!transport) return
+    await transport._handleClusterRoutingChanged()
+  }
 }
 
 import type { ChangeEvent, Params } from '../core/types.js'
 import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../server/protocol.js'
 import type { RemoteSubscription } from './types.js'
+
+interface TrackedRemoteSubscription {
+  id: number
+  table: string
+  filter: Record<string, unknown> | undefined
+  callback: (event: ChangeEvent) => void
+  remote: RemoteSubscription | null
+  active: boolean
+}
 
 class TopologyAwareTransport implements Transport {
   private readonly databaseId: string
@@ -473,8 +537,16 @@ class TopologyAwareTransport implements Transport {
 
   private readTransport: Transport | null = null
   private writeTransport: Transport | null = null
+  private subscriptionTransport: Transport | null = null
+  private readTransportRequest: Promise<Transport> | null = null
+  private writeTransportRequest: Promise<Transport> | null = null
+  private subscriptionTransportRequest: Promise<Transport> | null = null
+  private subscriptionOperation: Promise<void> = Promise.resolve()
+  private activeSubscriptions = new Map<number, TrackedRemoteSubscription>()
+  private nextSubscriptionId = 0
   private currentReadUrl = ''
   private currentWriteUrl = ''
+  private currentSubscriptionUrl = ''
 
   constructor(databaseId: string, client: SirannonClient) {
     this.databaseId = databaseId
@@ -544,13 +616,41 @@ class TopologyAwareTransport implements Transport {
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
   ): Promise<RemoteSubscription> {
-    const transport = await this.getReadTransport(this.client._getReadConcern())
-    return transport.subscribe(table, filter, callback)
+    try {
+      return await this.subscribeOnCurrentEndpoint(table, filter, callback)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        const hadActiveSubscriptions = this.activeSubscriptions.size > 0
+        if (!hadActiveSubscriptions) {
+          this.closeSubscriptionTransport()
+        }
+        await this.client._refreshClusterRouting(this.databaseId)
+        if (!hadActiveSubscriptions) {
+          this.closeSubscriptionTransport()
+        }
+        return this.subscribeOnCurrentEndpoint(table, filter, callback)
+      }
+      throw err
+    }
+  }
+
+  async _handleClusterRoutingChanged(): Promise<void> {
+    if (!this.client._usesCoordinatorDiscovery()) return
+    if (this.activeSubscriptions.size === 0) return
+    await this.withSubscriptionOperation(() => this.migrateSubscriptionsToCurrentEndpoint())
   }
 
   close(): void {
     this.closed = true
     const sameTransport = this.readTransport !== null && this.readTransport === this.writeTransport
+    const subscriptionIsRead = this.subscriptionTransport !== null && this.subscriptionTransport === this.readTransport
+    const subscriptionIsWrite =
+      this.subscriptionTransport !== null && this.subscriptionTransport === this.writeTransport
+    for (const subscription of this.activeSubscriptions.values()) {
+      subscription.active = false
+      subscription.remote = null
+    }
+    this.activeSubscriptions.clear()
     if (this.readTransport) {
       this.readTransport.close()
       this.readTransport = null
@@ -559,22 +659,132 @@ class TopologyAwareTransport implements Transport {
       this.writeTransport.close()
     }
     this.writeTransport = null
+    if (this.subscriptionTransport && !subscriptionIsRead && !subscriptionIsWrite) {
+      this.subscriptionTransport.close()
+    }
+    this.subscriptionTransport = null
+    this.currentSubscriptionUrl = ''
+    this.client._unregisterTopologyTransport(this.databaseId, this)
+  }
+
+  private async subscribeOnCurrentEndpoint(
+    table: string,
+    filter: Record<string, unknown> | undefined,
+    callback: (event: ChangeEvent) => void,
+  ): Promise<RemoteSubscription> {
+    return this.withSubscriptionOperation(async () => {
+      const transport = await this.getSubscriptionTransport(this.client._getReadConcern())
+      const remote = await transport.subscribe(table, filter, callback)
+      const subscription: TrackedRemoteSubscription = {
+        id: ++this.nextSubscriptionId,
+        table,
+        filter,
+        callback,
+        remote,
+        active: true,
+      }
+      this.activeSubscriptions.set(subscription.id, subscription)
+      return this.createSubscriptionHandle(subscription)
+    })
+  }
+
+  private createSubscriptionHandle(subscription: TrackedRemoteSubscription): RemoteSubscription {
+    return {
+      unsubscribe: () => {
+        if (!subscription.active) return
+        subscription.active = false
+        this.activeSubscriptions.delete(subscription.id)
+        const remote = subscription.remote
+        subscription.remote = null
+        remote?.unsubscribe()
+      },
+    }
+  }
+
+  private async migrateSubscriptionsToCurrentEndpoint(): Promise<void> {
+    this.assertOpen()
+    const subscriptions = [...this.activeSubscriptions.values()].filter(subscription => subscription.active)
+    if (subscriptions.length === 0) return
+
+    const readConcern = this.client._getReadConcern()
+    const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
+    this.assertOpen()
+    if (this.subscriptionTransport && this.currentSubscriptionUrl === endpoint) {
+      return
+    }
+
+    const nextTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+    const nextSubscriptions = new Map<number, RemoteSubscription>()
+    try {
+      for (const subscription of subscriptions) {
+        if (!subscription.active) continue
+        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback)
+        if (!subscription.active) {
+          remote.unsubscribe()
+          continue
+        }
+        nextSubscriptions.set(subscription.id, remote)
+      }
+    } catch (err) {
+      for (const remote of nextSubscriptions.values()) {
+        remote.unsubscribe()
+      }
+      nextTransport.close()
+      throw toSubscriptionRoutingError(err, this.databaseId)
+    }
+
+    const oldTransport = this.subscriptionTransport
+    this.subscriptionTransport = nextTransport
+    this.currentSubscriptionUrl = endpoint
+
+    for (const subscription of subscriptions) {
+      const nextRemote = nextSubscriptions.get(subscription.id)
+      if (!nextRemote) continue
+      const previousRemote = subscription.remote
+      if (!subscription.active) {
+        nextRemote.unsubscribe()
+        continue
+      }
+      subscription.remote = nextRemote
+      previousRemote?.unsubscribe()
+    }
+
+    if (oldTransport) {
+      oldTransport.close()
+    }
   }
 
   private async getReadTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
-    if (this.closed) {
-      const { RemoteError } = await import('./types.js')
-      throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+    this.assertOpen()
+
+    while (this.readTransportRequest) {
+      await this.readTransportRequest.catch(() => undefined)
+      this.assertOpen()
     }
 
+    const request = this.resolveReadTransport(readConcern)
+    this.readTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.readTransportRequest === request) {
+        this.readTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveReadTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
     const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
+    this.assertOpen()
+
     if (this.readTransport && this.currentReadUrl === endpoint) {
       return this.readTransport
     }
 
+    const nextTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
     const oldTransport = this.readTransport
+    this.readTransport = nextTransport
     this.currentReadUrl = endpoint
-    this.readTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
 
     if (oldTransport) {
       oldTransport.close()
@@ -584,23 +794,122 @@ class TopologyAwareTransport implements Transport {
   }
 
   private async getWriteTransport(): Promise<Transport> {
-    if (this.closed) {
-      throw new Error('Transport is closed')
+    this.assertOpen()
+
+    while (this.writeTransportRequest) {
+      await this.writeTransportRequest.catch(() => undefined)
+      this.assertOpen()
     }
 
+    const request = this.resolveWriteTransport()
+    this.writeTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.writeTransportRequest === request) {
+        this.writeTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveWriteTransport(): Promise<Transport> {
     const endpoint = await this.client._getWriteEndpoint(this.databaseId)
+    this.assertOpen()
+
     if (this.writeTransport && this.currentWriteUrl === endpoint) {
       return this.writeTransport
     }
 
-    if (this.writeTransport) {
-      this.writeTransport.close()
+    const nextTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+    const oldTransport = this.writeTransport
+    this.writeTransport = nextTransport
+    this.currentWriteUrl = endpoint
+
+    if (oldTransport) {
+      oldTransport.close()
     }
 
-    this.currentWriteUrl = endpoint
-    this.writeTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
     return this.writeTransport
   }
+
+  private async getSubscriptionTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
+    this.assertOpen()
+
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    while (this.subscriptionTransportRequest) {
+      await this.subscriptionTransportRequest.catch(() => undefined)
+      this.assertOpen()
+      if (this.subscriptionTransport) {
+        return this.subscriptionTransport
+      }
+    }
+
+    const request = this.resolveSubscriptionTransport(readConcern)
+    this.subscriptionTransportRequest = request
+    try {
+      return await request
+    } finally {
+      if (this.subscriptionTransportRequest === request) {
+        this.subscriptionTransportRequest = null
+      }
+    }
+  }
+
+  private async resolveSubscriptionTransport(readConcern?: ReadConcernLevel): Promise<Transport> {
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    const endpoint = await this.client._getReadEndpoint(this.databaseId, readConcern)
+    this.assertOpen()
+
+    if (this.subscriptionTransport) {
+      return this.subscriptionTransport
+    }
+
+    this.subscriptionTransport = this.client._createTransportForEndpoint(endpoint, this.databaseId)
+    this.currentSubscriptionUrl = endpoint
+    return this.subscriptionTransport
+  }
+
+  private closeSubscriptionTransport(): void {
+    if (this.subscriptionTransport) {
+      this.subscriptionTransport.close()
+      this.subscriptionTransport = null
+    }
+    this.currentSubscriptionUrl = ''
+  }
+
+  private async withSubscriptionOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.subscriptionOperation
+    let release = () => {}
+    this.subscriptionOperation = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await previous.catch(() => undefined)
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+    }
+  }
+}
+
+function toSubscriptionRoutingError(err: unknown, databaseId: string): RemoteError {
+  const detail = err instanceof Error ? err.message : String(err)
+  return new RemoteError(
+    'ROUTING_ERROR',
+    `Could not re-establish active subscriptions on refreshed routing for database '${databaseId}': ${detail}`,
+  )
 }
 
 function shouldRefreshRouting(err: unknown): boolean {

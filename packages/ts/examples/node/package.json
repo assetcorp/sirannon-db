@@ -1,0 +1,25 @@
+{
+  "name": "@delali/sirannon-example-node",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "start:better-sqlite3": "tsx src/main.ts --driver=better-sqlite3",
+    "start:node-native": "node --experimental-sqlite --import tsx src/main.ts --driver=node",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@delali/sirannon-db": "workspace:*",
+    "better-sqlite3": "12.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "25.5.0",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -270,9 +270,10 @@ export class WSHandler {
     }
 
     const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
+    let ctx: CDCContext | null = null
 
     try {
-      const ctx = await this.ensureCDC(state.databaseId, state.database)
+      ctx = await this.ensureCDC(state.databaseId, state.database)
       await ctx.tracker.watch(ctx.cdcConn, msg.table)
 
       const sub = ctx.manager.subscribe(msg.table, filter, (event: ChangeEvent) => {
@@ -282,6 +283,9 @@ export class WSHandler {
       state.subscriptions.set(id, sub)
       this.send(conn, { type: 'subscribed', id })
     } catch (err) {
+      if (ctx?.manager.size === 0) {
+        this.maybeCleanupCDC(state.databaseId)
+      }
       this.sendSirannonError(conn, id, err)
     }
   }
@@ -327,6 +331,12 @@ export class WSHandler {
 
     const tracker = new ChangeTracker()
     const manager = new SubscriptionManager()
+    try {
+      await tracker.advanceToLatest(cdcConn)
+    } catch (err) {
+      await cdcConn.close().catch(() => {})
+      throw err
+    }
 
     let polling = false
     let consecutiveErrors = 0

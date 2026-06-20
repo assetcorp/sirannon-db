@@ -1,4 +1,4 @@
-import { Database } from '@delali/sirannon-db'
+import { Database, type Subscription } from '@delali/sirannon-db'
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 
 const output = document.getElementById('output') as HTMLDivElement
@@ -12,6 +12,8 @@ const btnClear = document.getElementById('btn-clear') as HTMLButtonElement
 
 let db: Database | null = null
 let insertCounter = 0
+const cdcExpectedEvents = 3
+const cdcTimeoutMs = 3_000
 
 function log(message: string) {
   output.textContent += `${message}\n`
@@ -28,6 +30,29 @@ function enableButtons(enabled: boolean) {
   btnQuery.disabled = !enabled
   btnTransaction.disabled = !enabled
   btnCdc.disabled = !enabled
+}
+
+function waitForCdcEvents(getEventCount: () => number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const startedAt = performance.now()
+
+    const check = () => {
+      const eventCount = getEventCount()
+      if (eventCount >= cdcExpectedEvents) {
+        resolve()
+        return
+      }
+
+      if (performance.now() - startedAt >= cdcTimeoutMs) {
+        reject(new Error(`Timed out waiting for ${cdcExpectedEvents} CDC events; received ${eventCount}`))
+        return
+      }
+
+      globalThis.setTimeout(check, 50)
+    }
+
+    check()
+  })
 }
 
 btnClear.addEventListener('click', () => {
@@ -159,32 +184,33 @@ btnTransaction.addEventListener('click', async () => {
 
 btnCdc.addEventListener('click', async () => {
   if (!db) return
-  btnCdc.disabled = true
+  enableButtons(false)
+  let subscription: Subscription | null = null
 
   try {
     log('\nSetting up CDC watch on "notes" table...')
     await db.watch('notes')
 
     let eventCount = 0
-    const subscription = db.on('notes').subscribe(event => {
+    subscription = db.on('notes').subscribe(event => {
       eventCount++
       const row = event.row as Record<string, unknown>
       log(`  [CDC] ${event.type}: id=${row.id}, title=${row.title}`)
     })
 
-    log('Inserting 3 rows to trigger CDC events...')
-    for (let i = 1; i <= 3; i++) {
+    log(`Inserting ${cdcExpectedEvents} rows to trigger CDC events...`)
+    for (let i = 1; i <= cdcExpectedEvents; i++) {
       await db.execute('INSERT INTO notes (title, body) VALUES (?, ?)', [`CDC Test ${i}`, `Triggering event ${i}`])
     }
 
-    await new Promise(resolve => globalThis.setTimeout(resolve, 200))
+    await waitForCdcEvents(() => eventCount)
 
-    subscription.unsubscribe()
     log(`CDC watch complete. Received ${eventCount} event(s).`)
   } catch (err) {
     log(`CDC error: ${err}`)
   } finally {
-    btnCdc.disabled = false
+    subscription?.unsubscribe()
+    enableButtons(true)
   }
 })
 

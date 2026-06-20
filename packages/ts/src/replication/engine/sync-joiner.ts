@@ -13,6 +13,7 @@ export class SyncJoiner {
 
   async initiateSync(): Promise<void> {
     const engine = this.engine
+    if (engine.syncState.phase !== 'pending') return
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
     }
@@ -44,23 +45,45 @@ export class SyncJoiner {
       return
     }
 
-    const savedState = await engine.log.getSyncState()
-    const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
-
-    const requestId = randomUUID()
-    await engine.config.transport.requestSync(
-      sourcePeerId,
-      engine.decorateSyncRequest({
-        requestId,
-        joinerNodeId: engine.nodeId,
-        completedTables,
-      }),
-    )
-
     engine.syncState.phase = 'syncing'
     engine.syncState.sourcePeerId = sourcePeerId
     engine.syncState.startedAt = Date.now()
-    await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
+    engine.syncState.error = null
+
+    try {
+      const savedState = await engine.log.getSyncState()
+      const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
+      const requestId = randomUUID()
+      await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
+      await engine.config.transport.requestSync(
+        sourcePeerId,
+        engine.decorateSyncRequest({
+          requestId,
+          joinerNodeId: engine.nodeId,
+          completedTables,
+        }),
+      )
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      if (engine.syncState.phase === 'syncing' && engine.syncState.sourcePeerId === sourcePeerId) {
+        engine.syncState.phase = 'pending'
+        engine.syncState.sourcePeerId = null
+        engine.syncState.startedAt = null
+        engine.syncState.error = wrappedErr.message
+        try {
+          await engine.log.setSyncMeta('pending')
+        } catch (rollbackErr: unknown) {
+          const wrappedRollbackErr = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr))
+          engine.emitError({
+            error: wrappedRollbackErr,
+            operation: 'sync-request-state-rollback',
+            peerId: sourcePeerId,
+            recoverable: false,
+          })
+        }
+      }
+      throw wrappedErr
+    }
   }
 
   async handleSyncBatchReceived(batch: SyncBatch, fromPeerId: string): Promise<void> {

@@ -273,6 +273,8 @@ export interface ClientOptions {
   transport?: 'websocket' | 'http'
   /** Custom headers for HTTP requests. */
   headers?: Record<string, string>
+  /** WebSocket subprotocols sent during the browser-compatible handshake. */
+  webSocketProtocols?: string | string[]
   /** Reconnect on WebSocket disconnect. Default: true. */
   autoReconnect?: boolean
   /** Reconnect interval in ms. Default: 1000. */

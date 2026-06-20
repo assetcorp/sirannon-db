@@ -2,6 +2,16 @@ import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { ReplicationEngine } from './engine.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
+function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
+  engine.log
+    .setLastAppliedSeq(nodeId, ackedSeq)
+    .then(() => engine.handleCoordinatorAckProgress(nodeId, ackedSeq))
+    .catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: nodeId, recoverable: true })
+    })
+}
+
 export function wireTransportHandlers(engine: ReplicationEngine): void {
   engine.config.transport.onBatchReceived(async (batch, fromPeerId) => {
     if (!engine.running) return
@@ -92,20 +102,14 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         return
       }
       engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
-      engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: ack.nodeId, recoverable: true })
-      })
+      persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       return
     }
     engine
       .assertInboundCoordinatorMessage(ack, fromPeerId, 'ack')
       .then(() => {
         engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
-        engine.log.setLastAppliedSeq(ack.nodeId, ack.ackedSeq).catch((err: unknown) => {
-          const wrappedErr = err instanceof Error ? err : new Error(String(err))
-          engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: ack.nodeId, recoverable: true })
-        })
+        persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       })
       .catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
@@ -136,10 +140,18 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onPeerConnected(peer => {
     engine.peerTracker.addPeer(peer.id)
-    engine.log.setLastAppliedSeq(peer.id, 0n).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'peer-state-initialise', peerId: peer.id, recoverable: true })
-    })
+    engine.log
+      .getPeerAckedSeq(peer.id)
+      .then(async ackedSeq => {
+        if (!engine.running) return
+        engine.peerTracker.onAckReceived(peer.id, ackedSeq)
+        await engine.log.setLastAppliedSeq(peer.id, ackedSeq)
+        await engine.handleCoordinatorAckProgress(peer.id, ackedSeq)
+      })
+      .catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        engine.emitError({ error: wrappedErr, operation: 'peer-state-initialise', peerId: peer.id, recoverable: true })
+      })
     if (engine.syncState.phase === 'pending') {
       engine.syncJoiner.initiateSync().catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))

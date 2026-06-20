@@ -6,22 +6,22 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Turn any SQLite database into a distributed data layer with real-time subscriptions, HTTP/WebSocket access, and primary-replica replication. Sirannon gives you connection pooling, change data capture, migrations, scheduled backups, coordinator-backed failover, repair-time conflict resolution, and a client SDK.
+Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
 ## Install
 
 ```bash
-pnpm add @delali/sirannon-db
+pnpm add -E @delali/sirannon-db
 ```
 
 Then install the SQLite driver for your platform:
 
 ```bash
-pnpm add better-sqlite3    # Node.js
-pnpm add wa-sqlite          # Browser (IndexedDB persistence)
-pnpm add expo-sqlite        # React Native (Expo)
+pnpm add -E better-sqlite3    # Node.js
+pnpm add -E wa-sqlite          # Browser (IndexedDB persistence)
+pnpm add -E expo-sqlite        # React Native (Expo)
 # Node 22+ built-in sqlite and Bun need no extra package
 ```
 
@@ -30,7 +30,7 @@ pnpm add expo-sqlite        # React Native (Expo)
 ### Node.js
 
 ```bash
-pnpm add @delali/sirannon-db better-sqlite3
+pnpm add -E @delali/sirannon-db better-sqlite3
 ```
 
 ```ts
@@ -58,7 +58,7 @@ const driver = nodeSqlite()
 ### Browser
 
 ```bash
-pnpm add @delali/sirannon-db wa-sqlite
+pnpm add -E @delali/sirannon-db wa-sqlite
 ```
 
 The browser driver persists data to IndexedDB through a WebAssembly SQLite build. Use `Database.create` directly since `Sirannon` registries are designed for server-side use.
@@ -82,7 +82,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 ### React Native (Expo)
 
 ```bash
-pnpm add @delali/sirannon-db expo-sqlite
+pnpm add -E @delali/sirannon-db expo-sqlite
 ```
 
 ```ts
@@ -128,11 +128,11 @@ Sirannon-db separates the database engine from the library. You pick the driver 
 
 | Driver | Import | Runtime | Install |
 | --- | --- | --- | --- |
-| better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add better-sqlite3` |
+| better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add -E better-sqlite3` |
 | Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (use `--experimental-sqlite` flag) |
-| wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser | `pnpm add wa-sqlite` |
+| wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser | `pnpm add -E wa-sqlite` |
 | Bun | `@delali/sirannon-db/driver/bun` | Bun | None (uses `bun:sqlite`) |
-| Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add expo-sqlite` |
+| Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add -E expo-sqlite` |
 
 ```ts
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
@@ -440,13 +440,24 @@ httpClient.close()
 
 ## Distributed replication
 
-Sirannon can replicate a SQLite database across multiple nodes with automatic change propagation, new-node bootstrapping, write concerns, coordinator-backed failover, and repair-time conflict resolution. The production path is primary-replica: one primary accepts writes, replicas serve reads and can forward writes, and coordinator mode manages authority when failover is enabled. When replication is not enabled, the replication engine does not run.
+Sirannon can replicate a SQLite database across multiple nodes with change propagation, new-node bootstrapping, write concerns, and coordinator-backed failover. The production path is primary-replica: one primary accepts writes, replicas serve reads and can forward writes, and coordinator mode manages authority when failover is enabled. When replication is not enabled, the replication engine does not run.
 
 ```ts
 import { ReplicationEngine } from '@delali/sirannon-db/replication'
 import { InMemoryTransport, MemoryBus } from '@delali/sirannon-db/transport/memory'
 import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
 ```
+
+### Client and replication transports
+
+Sirannon has two transport interfaces with different responsibilities:
+
+| Traffic | Interface | Built-in network transport |
+| --- | --- | --- |
+| Application queries, writes, and CDC subscriptions | Client `Transport` | HTTP or WebSocket |
+| Change batches, acknowledgements, write forwarding, and first sync between Sirannon nodes | `ReplicationTransport` | gRPC |
+
+`WebSocketTransport` conforms to the client `Transport` interface. It connects an application to the Sirannon server and does not conform to `ReplicationTransport`. Use `GrpcReplicationTransport` for production node-to-node replication, or `InMemoryTransport` for tests and single-process scenarios.
 
 ### Primary-replica setup
 
@@ -496,19 +507,65 @@ await replicaEngine.start()
 
 When `initialSync` is `true` (the default), a new replica automatically pulls a full snapshot from the primary before accepting reads. The replica blocks reads and writes until the sync completes and incremental catch-up reaches the configured lag threshold.
 
+### Coordinator-backed failover
+
+Coordinator mode stores primary authority, node sessions, replication-group state, and the in-sync set in a `ClusterCoordinator`. The TypeScript package includes an etcd adapter:
+
+```ts
+import { readFileSync } from 'node:fs'
+import { createEtcdCoordinator } from '@delali/sirannon-db/replication/coordinator/etcd'
+
+const coordinator = createEtcdCoordinator({
+  hosts: ['https://etcd-1.internal:2379', 'https://etcd-2.internal:2379'],
+  keyPrefix: '/sirannon/orders',
+  credentials: {
+    rootCertificate: readFileSync('./certs/etcd-ca.crt'),
+    privateKey: readFileSync('./certs/orders-node.key'),
+    certChain: readFileSync('./certs/orders-node.crt'),
+  },
+})
+
+const engine = new ReplicationEngine(db, writerConn, {
+  nodeId: 'orders-node-a',
+  topology: new PrimaryReplicaTopology('primary'),
+  transport,
+  transportConfig: {
+    endpoints: ['orders-node-b.internal:4200', 'orders-node-c.internal:4200'],
+    protocolVersion: '1',
+  },
+  changeTracker: tracker,
+  snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
+  writeForwarding: true,
+  coordinator: {
+    clusterId: 'commerce-production',
+    groupId: 'orders',
+    endpoint: 'https://orders-node-a.internal/db/orders',
+    coordinator,
+    votingDataBearingNodeIds: ['orders-node-a', 'orders-node-b', 'orders-node-c'],
+    controller: true,
+  },
+})
+```
+
+Every coordinator-mode node needs a stable, persisted `nodeId`. `votingDataBearingNodeIds` creates the replication group when it does not exist; later nodes read the registered group from etcd. Production coordinator access requires HTTPS plus an authenticated identity. The in-memory coordinator and `allowInsecure: true` are for tests and local development.
+
+Automatic write failover needs at least three voting data-bearing nodes. With fewer than three voters, the controller cannot prove majority authority after losing a node and keeps writes unavailable.
+
 ### Conflict resolution
 
-Conflict resolution is not the normal high-availability path. Normal writes are serialised through one primary per replication group. Resolvers run during explicit repair or disaster recovery when two versions of the same row exist on different nodes.
+Normal writes are serialised through one primary per replication group. When a receiver applies a batch and finds the target row already present, it passes the local and incoming versions to the configured resolver. This is part of normal batch application, not a separate repair command.
 
 Three built-in strategies ship with the replication module:
 
 | Strategy | Class | Behaviour |
 | --- | --- | --- |
-| Last-Writer-Wins | `LWWResolver` | The change with the higher HLC timestamp wins. Ties break by node ID. |
-| Field-Level Merge | `FieldMergeResolver` | Merges at the column level using per-column HLC tracking. Two nodes editing different columns on the same row both succeed. |
-| Primary Wins | `PrimaryWinsResolver` | The primary's version always wins. Useful for reference data that replicas should never override. |
+| Last-Writer-Wins | `LWWResolver` | Selects the change with the higher HLC timestamp. Ties break by node ID. |
+| Field-Level Merge | `FieldMergeResolver` | Merges non-overlapping columns and uses per-column HLC metadata for overlapping columns. Falls back to whole-row LWW when column metadata is unavailable. |
+| Primary Wins | `PrimaryWinsResolver` | Selects the version authored by a configured primary node ID. Falls back to LWW when neither version came from that node. |
 
 Custom resolvers can be built by creating a class with a `resolve(ctx: ConflictContext): ConflictResolution` method.
+
+Coordinator mode quarantines a returning former primary when it contains local-only writes. It does not merge that history into the current primary or expose a force-promotion or high-level repair API. An operator must rebuild, restore, or otherwise remediate the faulted node before rejoining it.
 
 ### First sync
 
@@ -545,7 +602,7 @@ await engine.execute(
 )
 ```
 
-Levels: `'local'` (default, returns after local write), `'majority'` (waits for the configured majority), `'all'` (waits for every required peer).
+In static mode, omitting `writeConcern` returns after the local commit. In coordinator mode, omitting it selects `'majority'`. You can request `'local'`, `'majority'`, or `'all'` explicitly. A coordinator-mode `'local'` write is not protected against loss during automatic failover.
 
 In coordinator mode, `majority` is calculated from configured voting data-bearing nodes in the replication group, including the primary's local durable commit. It is not calculated from the peers currently connected to this process. A successful coordinator-mode `majority` write survives automatic primary failover when only the failed primary is lost and an eligible in-sync replica remains.
 
@@ -583,7 +640,7 @@ Yes, with a safety allowlist. Replicated DDL supports `CREATE TABLE`, `ALTER TAB
 
 #### How do foreign keys and unique constraints behave?
 
-SQLite enforces constraints on each node. The primary serialises normal writes, which prevents normal concurrent unique-key conflicts. First sync orders tables by foreign-key dependency, and controlled resync disables foreign keys only while wiping tables before reloading from the sync source. Repair-time divergent rows can still violate schema constraints, so the chosen resolver or operator action must produce valid data.
+SQLite enforces constraints on each node. The primary serialises normal writes, which prevents normal concurrent unique-key conflicts. First sync orders tables by foreign-key dependency, and controlled resync disables foreign keys only while wiping tables before reloading from the sync source. Incoming replicated data still has to satisfy the receiving database's constraints.
 
 #### Are reads consistent after writes?
 
@@ -591,7 +648,7 @@ Read concern controls this. `local` reads the selected node's local state. `majo
 
 #### Is this local-first or multi-writer today?
 
-The current production path is primary-replica. Local-first and offline reconciliation are part of the longer-term direction, but the current conflict resolvers are repair tools, not a general multi-writer CRDT layer.
+The current production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row; they do not provide local-first reconciliation or a multi-writer CRDT layer.
 
 ### Transport options
 
@@ -601,16 +658,27 @@ The current production path is primary-replica. Local-first and offline reconcil
 | In-Memory | `@delali/sirannon-db/transport/memory` | Testing and single-process multi-node scenarios. Messages delivered via microtask scheduling. |
 | Custom | Build your own | Any transport that satisfies the `ReplicationTransport` interface (Redis, NATS, MQTT, TCP, etc). |
 
-The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'primary'` when configuring the primary node. Only two roles exist: `'primary'` and `'replica'`.
+`ReplicationEngine.start()` derives `TransportConfig.localRole` from `topology.role`. In coordinator mode, it also supplies the current `groupId`, `primaryTerm`, and protocol version to the transport. Set these fields yourself only when you connect a `ReplicationTransport` without `ReplicationEngine`.
+
+`TransportConfig` accepts these fields:
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `endpoints` | `string[]` | Peer addresses used to establish replication connections |
+| `localRole` | `'primary' \| 'replica'` | Local topology role; `ReplicationEngine` supplies this value |
+| `groupId` | `string` | Replication group carried in coordinator-mode handshakes; the engine supplies it from coordinator configuration |
+| `primaryTerm` | `bigint` | Current fencing term; the engine supplies it from coordinator state |
+| `protocolVersion` | `string` | Replication protocol version advertised to peers |
+| `metadata` | `Record<string, unknown>` | Optional custom transport metadata |
 
 ### Replication configuration reference
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `nodeId` | `string` | auto-generated | Unique identifier for this node |
+| `nodeId` | `string` | auto-generated in static mode | Unique node identifier. Coordinator mode requires a stable, persisted value. |
 | `topology` | `Topology` | required | `PrimaryReplicaTopology` |
 | `transport` | `ReplicationTransport` | required | Transport for inter-node communication |
-| `transportConfig` | `TransportConfig` | `{}` | Endpoints and metadata for the transport |
+| `transportConfig` | `TransportConfig` | `{}` | Peer endpoints and transport metadata. The engine supplies role and coordinator fencing fields when it starts. |
 | `writeForwarding` | `boolean` | `false` | Forward writes from replicas to the primary |
 | `defaultConflictResolver` | `ConflictResolver` | `LWWResolver` | Default conflict resolution strategy |
 | `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
@@ -618,6 +686,7 @@ The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'prima
 | `batchIntervalMs` | `number` | `100` | Sender loop interval in ms |
 | `maxClockDriftMs` | `number` | `60000` | Maximum tolerated HLC drift before rejecting a batch |
 | `maxPendingBatches` | `number` | `10` | In-flight batches per peer before backpressure |
+| `maxBatchChanges` | `number` | `1000` | Maximum accepted changes in one inbound batch |
 | `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |
 | `initialSync` | `boolean` | `true` | Pull a full snapshot when joining a cluster |
 | `syncBatchSize` | `number` | `10000` | Rows per sync batch during initial sync |
@@ -630,6 +699,24 @@ The `TransportConfig.localRole` field defaults to `'replica'`. Set it to `'prima
 | `snapshotConnectionFactory` | `() => Promise<SQLiteConnection>` | - | Factory for read-only connections used during sync serving |
 | `changeTracker` | `ChangeTracker` | - | CDC trigger manager, required for initial sync |
 | `flowControl` | `{ maxLagSeconds?, onLagExceeded? }` | - | Replication lag monitoring callbacks |
+| `onBeforeForwardedQuery` | `(sql, params?) => void` | - | Validation or authorisation hook called before the primary executes each forwarded statement |
+| `coordinator` | `CoordinatorModeConfig` | - | Enables coordinator-backed authority and failover |
+| `snapshotThreshold` | `number` | - | Reserved configuration field; the current engine does not read it |
+
+### Coordinator configuration reference
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `clusterId` | `string` | required | Coordinator namespace for the Sirannon cluster |
+| `groupId` | `string` | required | Replication group containing copies of one database |
+| `endpoint` | `string` | - | Application endpoint advertised for client discovery |
+| `votingDataBearingNodeIds` | `string[]` | - | Voter set used to create an unregistered group and calculate coordinator write concerns |
+| `coordinator` | `ClusterCoordinator` | required | Coordinator adapter, such as the etcd adapter |
+| `sessionTtlMs` | `number` | `10000` | Node-session lease lifetime |
+| `controller` | `boolean \| CoordinatorControllerConfig` | enabled | Enables the controller loop or configures its lease holder, TTL, and tick interval |
+| `compatibility` | `CoordinatorCompatibilityMetadata` | - | Package, specification, and protocol versions used for promotion compatibility checks |
+
+`CoordinatorControllerConfig` accepts `enabled`, `holderId`, `leaseTtlMs`, and `tickIntervalMs`. The lease TTL defaults to 10,000 ms, and the controller tick interval defaults to 1,000 ms.
 
 ### Replication errors
 
@@ -851,13 +938,14 @@ try {
 
 ## Examples
 
-Self-contained example projects live in [`examples/`](examples/) and cover the current runnable Node.js, browser, and client-server paths:
+Self-contained example projects live in [`examples/`](examples/) and cover the current Node.js, browser, client-server, and distributed paths:
 
 | Example | Runtime | Driver | What it demonstrates |
 | --- | --- | --- | --- |
 | [`node`](examples/node/) | Node.js >= 22 | better-sqlite3 or built-in `node:sqlite` | All core features: schema, migrations, CRUD, transactions, CDC, connection pools, metrics, multi-tenant, hooks, backup, shutdown |
 | [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser (Vite) | wa-sqlite + IndexedDB | CRUD, transactions, CDC subscriptions in the browser |
 | [`web-client`](examples/web-client/) | Browser + Node.js | better-sqlite3 (server) | Client SDK connecting to a Sirannon server over HTTP and WebSocket |
+| [`distributed-entitlements`](examples/distributed-entitlements/) | Node.js + browser | better-sqlite3 | Three-node coordinator-backed replication over gRPC with etcd authority, local mTLS certificates, and Toxiproxy failure controls |
 
 ### Running the examples
 
@@ -885,6 +973,10 @@ pnpm run dev
 
 # Client-server (starts both Sirannon server and Vite client)
 cd packages/ts/examples/web-client
+pnpm run dev
+
+# Distributed entitlements (starts the Docker cluster and dashboard)
+cd packages/ts/examples/distributed-entitlements
 pnpm run dev
 ```
 

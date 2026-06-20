@@ -16,23 +16,23 @@ Sirannon is organised into six layers. Each layer depends only on
 the layers below it.
 
 ```text
-┌───────────────────���──────────────────────┐
-│   Application Layer (Client / Server)    │
-├──────────────────────────────────────────┤
-│   Replication & Transport Layer          │
-│   (Engine, HLC, Topology, Failover)      │
-├──────────────────────────────────────────┤
-│   Database Orchestration Layer           │
-│   (Registry, Database, Hooks, Metrics)   │
-├──────────────────────────────────────────┤
-│   Connection & Execution Layer           │
-│   (Pool, Query Executor, CDC, Backup)    │
-├──────────────────────────────────────────┤
-│   Driver Abstraction Layer               │
-│   (SQLiteDriver, Connection, Statement)  │
-├──────────────────────────────────────────┤
-│   SQLite Engine (pluggable)              │
-└──────────────────────────────────────────┘
++-----------------------------------------+
+| Application layer (client and server)   |
++-----------------------------------------+
+| Replication and transport layer         |
+| Engine, HLC, topology, and failover     |
++-----------------------------------------+
+| Database orchestration layer            |
+| Registry, database, hooks, and metrics  |
++-----------------------------------------+
+| Connection and execution layer          |
+| Pool, query executor, CDC, and backup   |
++-----------------------------------------+
+| Driver abstraction layer                |
+| SQLiteDriver, connection, and statement |
++-----------------------------------------+
+| Pluggable SQLite engine                 |
++-----------------------------------------+
 ```
 
 **Driver Abstraction Layer.** Pluggable interface that wraps any
@@ -47,18 +47,19 @@ tracks changes via trigger-based CDC, and creates backups.
 multiple named databases with lifecycle hooks, metrics collection,
 idle eviction, and auto-open resolution.
 
-**Replication & Transport Layer.** Distributes changes across nodes
+**Replication and transport layer.** Distributes changes across nodes
 using Hybrid Logical Clocks for causal ordering. Uses a
 primary-replica topology where a single primary per replication
 group accepts writes and replicates to read replicas. In
 coordinator mode, Sirannon owns automatic primary failover through
 coordinator-backed leases, primary terms, in-sync replica tracking,
-and fail-closed promotion rules. Conflict resolvers are reserved
-for explicit repair and disaster recovery.
+and fail-closed promotion rules. The production network transport
+for node-to-node replication is gRPC.
 
-**Application Layer.** An HTTP + WebSocket server exposes databases
+**Application layer.** An HTTP + WebSocket server exposes databases
 over the network. A client SDK provides a remote database proxy
-with subscriptions and topology-aware read routing.
+with subscriptions and topology-aware read routing. These HTTP and
+WebSocket client transports do not carry node-to-node replication.
 
 ---
 
@@ -126,7 +127,7 @@ implementations use their language's native type system.
 | **CDC** | Change Data Capture; trigger-based mechanism that records row-level changes |
 | **Change event** | A record of a single row mutation (insert, update, or delete) |
 | **Cluster coordinator** | A linearizable metadata service used to store Sirannon cluster authority, leases, and watches |
-| **Conflict resolver** | A function that determines the outcome when two nodes write to the same row |
+| **Conflict resolver** | A function that selects or merges local and incoming row versions when batch application finds the target row already present |
 | **Controller** | A Sirannon process role that owns failover decisions while it holds the coordinator controller lease |
 | **Driver** | A pluggable adapter that wraps a specific SQLite engine |
 | **HLC** | Hybrid Logical Clock; a timestamp combining wall-clock time with a logical counter for causal ordering |
@@ -140,6 +141,7 @@ implementations use their language's native type system.
 | **Replication group** | The Sirannon nodes that hold copies of the same database and share one primary authority |
 | **Subscription** | A callback registered to receive CDC events for a specific table |
 | **Topology** | The replication pattern that determines which nodes can write and how changes flow |
-| **Transport** | The network layer that carries replication messages between nodes |
+| **Client transport** | HTTP or WebSocket communication between an application client and a Sirannon server |
+| **Replication transport** | The channel that carries replication messages between Sirannon nodes; the normative network protocol is gRPC |
 | **Write concern** | A durability guarantee specifying how many nodes must acknowledge a write |
 | **Write forwarding** | A mechanism where replicas forward write operations to the primary for execution |

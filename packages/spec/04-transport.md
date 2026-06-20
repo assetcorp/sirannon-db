@@ -1,4 +1,4 @@
-# Sirannon Transport Specification
+# Sirannon replication transport specification
 
 This document defines the transport layer that carries replication
 messages between nodes. It covers the transport interface, message
@@ -7,9 +7,14 @@ implementations must support the transport interface. The gRPC wire
 protocol is the normative network format for cross-implementation
 interoperability.
 
+This document covers node-to-node replication transport. The HTTP
+and WebSocket transports in the client SDK connect applications to
+a Sirannon server and conform to the separate client `Transport`
+interface. WebSocket is not a `ReplicationTransport`.
+
 ---
 
-## Transport Interface
+## Replication transport interface
 
 The transport interface abstracts the network layer for
 replication. Implementations may provide multiple transports (in-
@@ -59,9 +64,16 @@ TransportConfig {
   localRole?:  'primary' | 'replica'
   groupId?:    string
   primaryTerm?: bigint
+  protocolVersion?: string
   metadata?:   Map<string, any>
 }
 ```
+
+`ReplicationEngine` supplies `localRole` from the configured
+topology. In coordinator mode, it also supplies `groupId`,
+`primaryTerm`, and `protocolVersion` when it connects the
+transport. A caller only sets those fields directly when using a
+replication transport without the engine.
 
 ### NodeInfo
 
@@ -467,3 +479,4 @@ Its behaviour is implementation-defined.
 | `reconnectMultiplier` | 2 (recommended) | Exponential backoff multiplier |
 | `groupId` | none | Replication group identifier for coordinator mode |
 | `primaryTerm` | none | Current primary term for coordinator mode |
+| `protocolVersion` | none | Replication protocol version advertised during peer handshake |

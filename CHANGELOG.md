@@ -1,3 +1,66 @@
+## 0.1.5 (2026-06-20)
+
+### 🚀 Features
+
+- implement coordinator-backed automatic failover and enhance replication specifications ([3c24e28](https://github.com/assetcorp/sirannon-db/commit/3c24e28))
+- **docs:** update README and TypeScript documentation to reflect new features in distributed replication, including conflict resolution, coordinator-backed failover, and enhanced security measures ([e5f523c](https://github.com/assetcorp/sirannon-db/commit/e5f523c))
+- **spec:** introduce specifications for Sirannon's driver, core, replication, transport, server, client, and error handling modules ([69bef40](https://github.com/assetcorp/sirannon-db/commit/69bef40))
+- **tests:** add end-to-end chaos replication tests with mTLS and improve node storage handling ([63e1b9e](https://github.com/assetcorp/sirannon-db/commit/63e1b9e))
+- **ts:** add pool size sweep benchmark and improve existing benchmarks ([8ba32b1](https://github.com/assetcorp/sirannon-db/commit/8ba32b1))
+- **ts:** improve benchmarks documentation with new chart types and reference results; remove outdated CSV files ([5f016a0](https://github.com/assetcorp/sirannon-db/commit/5f016a0))
+- **ts:** propagate read and write concerns through query hooks ([3c0176b](https://github.com/assetcorp/sirannon-db/commit/3c0176b))
+- **ts:** extend change tracker for replication workloads ([04960f4](https://github.com/assetcorp/sirannon-db/commit/04960f4))
+- **ts:** add replication engine with Raft, log, and conflict resolution ([80efba5](https://github.com/assetcorp/sirannon-db/commit/80efba5))
+- **ts:** add memory and websocket replication transports ([dd19768](https://github.com/assetcorp/sirannon-db/commit/dd19768))
+- **ts:** add topology-aware Sirannon client ([2856a01](https://github.com/assetcorp/sirannon-db/commit/2856a01))
+- **ts:** expose replication status on readiness endpoint ([38fded6](https://github.com/assetcorp/sirannon-db/commit/38fded6))
+- **ts:** implement forward authorization in replication engine and enhance WebSocket transport with authentication ([9984661](https://github.com/assetcorp/sirannon-db/commit/9984661))
+- **ts:** add recordColumnVersions method to track column changes in replication log ([c73d50a](https://github.com/assetcorp/sirannon-db/commit/c73d50a))
+- **ts:** improve replication and transport layers with new features and error handling improvements ([dad6693](https://github.com/assetcorp/sirannon-db/commit/dad6693))
+- **ts:** add safety checks for SQL statements in ReplicationEngine and enhance DDL validation in log module ([3a66bfa](https://github.com/assetcorp/sirannon-db/commit/3a66bfa))
+- **ts:** implement convergence and fault policy mechanisms in simulated transport layer ([58f56c2](https://github.com/assetcorp/sirannon-db/commit/58f56c2))
+- **ts:** enhance replication engine with acknowledgment timeout and in-flight batch tracking ([465a44e](https://github.com/assetcorp/sirannon-db/commit/465a44e))
+- **ts:** implement initial sync functionality in ReplicationEngine with enhanced sync state management and error handling ([e45265e](https://github.com/assetcorp/sirannon-db/commit/e45265e))
+- **ts:** enhance replication and transport layers with improved error handling, transport configuration, and type safety ([1585b5c](https://github.com/assetcorp/sirannon-db/commit/1585b5c))
+- **ts:** improve ChangeTracker and ReplicationEngine ([7c82874](https://github.com/assetcorp/sirannon-db/commit/7c82874))
+- **ts:** use gRPC transport  in place of websockets ([701fbf4](https://github.com/assetcorp/sirannon-db/commit/701fbf4))
+- **ts:** add TLS identity validation and peer resolution in gRPC transport ([a17a1fa](https://github.com/assetcorp/sirannon-db/commit/a17a1fa))
+- **ts:** enhance ChangeTracker and ReplicationEngine with DDL handling and trigger management ([2ab0236](https://github.com/assetcorp/sirannon-db/commit/2ab0236))
+- **ts:** add soak testing configuration and related tests ([1ea4240](https://github.com/assetcorp/sirannon-db/commit/1ea4240))
+- **ts:** add etcd3 coordinator support and enhance replication client with read concern handling ([965270c](https://github.com/assetcorp/sirannon-db/commit/965270c))
+- **ts:** enhance replication coordinator with compatibility checks and automatic failover requirements ([6c42888](https://github.com/assetcorp/sirannon-db/commit/6c42888))
+- **ts:** add failover testing framework and configurations for enhanced replication resilience ([a96cd27](https://github.com/assetcorp/sirannon-db/commit/a96cd27))
+- **ts:** enhance failover node process with durability point checks and admission logic for in-sync set ([fa00e93](https://github.com/assetcorp/sirannon-db/commit/fa00e93))
+- **ts:** implement execution target resolution for server and enhance HTTP/WS handlers for query execution ([eb62ce9](https://github.com/assetcorp/sirannon-db/commit/eb62ce9))
+- **ts:** add advanceToLatest method to ChangeTracker and update WSHandler to utilize it for improved change tracking ([3d874d5](https://github.com/assetcorp/sirannon-db/commit/3d874d5))
+- **ts:** enhance activity and product management with normalization functions and improved event handling ([e96d314](https://github.com/assetcorp/sirannon-db/commit/e96d314))
+- **ts:** update web-client example with new fulfillment operations, improved server setup, and enhanced package dependencies ([f7a858a](https://github.com/assetcorp/sirannon-db/commit/f7a858a))
+- **ts:** enhance security model in web-client example with WebSocket authentication and protocol validation ([9d7cfdd](https://github.com/assetcorp/sirannon-db/commit/9d7cfdd))
+- **ts:** implement CDC event handling improvements and enhance BLOB decoding in change tracker ([7622f04](https://github.com/assetcorp/sirannon-db/commit/7622f04))
+- **ts:** add distributed entitlements example with Docker setup, gRPC replication, and enhanced UI components ([0af9981](https://github.com/assetcorp/sirannon-db/commit/0af9981))
+- **ts:** implement cluster routing fingerprinting and subscription migration for topology-aware transport ([843a606](https://github.com/assetcorp/sirannon-db/commit/843a606))
+- **ts:** enhance distributed entitlements UI with new components and improved styling ([327cd38](https://github.com/assetcorp/sirannon-db/commit/327cd38))
+- **ts:** improve ui ([fa8660b](https://github.com/assetcorp/sirannon-db/commit/fa8660b))
+- **ts:** implement majority write availability checks and enhance UI components for distributed entitlements ([7229cc8](https://github.com/assetcorp/sirannon-db/commit/7229cc8))
+
+### 🩹 Fixes
+
+- address all codrabbit reported issues ([960e7f5](https://github.com/assetcorp/sirannon-db/commit/960e7f5))
+- **ts:** update bulk-insert benchmark to cap at 10K rows and improve documentation on performance metrics ([d33d5a9](https://github.com/assetcorp/sirannon-db/commit/d33d5a9))
+- **ts:** address security and reliability issues ([6a25549](https://github.com/assetcorp/sirannon-db/commit/6a25549))
+- **ts:** include options parameter in query method for improved database querying ([22328f8](https://github.com/assetcorp/sirannon-db/commit/22328f8))
+- **ts:** update lastSentSeq handling in ReplicationEngine to ensure accurate batch processing ([e30e808](https://github.com/assetcorp/sirannon-db/commit/e30e808))
+- **ts:** update connected peer check to use isConnected property for accurate transport status ([e07029f](https://github.com/assetcorp/sirannon-db/commit/e07029f))
+- **ts:** address issues with old raft replication ([1edf150](https://github.com/assetcorp/sirannon-db/commit/1edf150))
+- **ts:** address all security and reliability issues reported by coderabbitai ([99e131f](https://github.com/assetcorp/sirannon-db/commit/99e131f))
+- **ts:** address issues ([74a8350](https://github.com/assetcorp/sirannon-db/commit/74a8350))
+- **ts:** update SQL logic for duplicate outcomes ([b94522b](https://github.com/assetcorp/sirannon-db/commit/b94522b))
+- **ts:** address selection retry after coordinator primary change ([bb6ba6d](https://github.com/assetcorp/sirannon-db/commit/bb6ba6d))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.4 (2026-03-20)
 
 ### 🚀 Features

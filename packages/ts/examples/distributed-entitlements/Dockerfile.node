@@ -1,0 +1,29 @@
+FROM node:22-trixie-slim
+
+WORKDIR /repo
+
+RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml nx.json tsconfig.json .npmrc ./
+COPY packages/ts/package.json packages/ts/package.json
+COPY packages/ts/examples/distributed-entitlements/package.json packages/ts/examples/distributed-entitlements/package.json
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/ts/tsconfig.json packages/ts/tsup.config.ts packages/ts/
+COPY packages/ts/src packages/ts/src
+COPY packages/ts/examples/distributed-entitlements/tsconfig.json packages/ts/examples/distributed-entitlements/vite.config.ts packages/ts/examples/distributed-entitlements/
+COPY packages/ts/examples/distributed-entitlements/src packages/ts/examples/distributed-entitlements/src
+
+RUN pnpm --filter @delali/sirannon-db build
+
+RUN groupadd --system appuser \
+  && useradd --system --gid appuser --home-dir /home/appuser --create-home appuser \
+  && mkdir -p /data /certs \
+  && chown -R appuser:appuser /home/appuser /data /certs /repo
+
+USER appuser
+
+WORKDIR /repo/packages/ts/examples/distributed-entitlements
+
+CMD ["node", "--import", "tsx", "src/cluster-node.ts"]

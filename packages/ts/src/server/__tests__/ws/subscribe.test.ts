@@ -98,6 +98,40 @@ describe('WSHandler', () => {
       await handler.close()
     })
 
+    it('does not replay changes that happened before a WebSocket subscription starts', async () => {
+      const handler = createWSHandler(sirannon)
+      const db = await sirannon.open('mydb', join(tempDir, 'live-only.db'))
+      await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
+      await db.watch('users')
+      await db.execute("INSERT INTO users (name) VALUES ('Historical')")
+
+      const conn = createMockConnection()
+      await handler.handleOpen(conn, 'mydb')
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'sub-1',
+          type: 'subscribe',
+          table: 'users',
+        }),
+      )
+
+      await flushAsync(hasMessageCount(conn, 1))
+      await new Promise(resolve => setTimeout(resolve, 150))
+
+      const preLiveChanges = parseMessages(conn).filter(m => m.type === 'change')
+      expect(preLiveChanges).toHaveLength(0)
+
+      await db.execute("INSERT INTO users (name) VALUES ('Live')")
+      await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
+
+      const changeMessages = parseMessages(conn).filter(m => m.type === 'change')
+      expect(changeMessages).toHaveLength(1)
+      const event = changeMessages[0].event as Record<string, unknown>
+      expect((event.row as Record<string, unknown>).name).toBe('Live')
+      await handler.close()
+    })
+
     it('receives filtered change events', async () => {
       const handler = createWSHandler(sirannon)
       const db = await sirannon.open('mydb', join(tempDir, 'filter.db'))

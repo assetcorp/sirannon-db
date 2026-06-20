@@ -43,6 +43,7 @@ export class WebSocketTransport implements Transport {
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
   private readonly requestTimeout: number
+  private readonly protocols: string | string[] | undefined
 
   private pendingRequests = new Map<string, PendingRequest>()
   private activeSubscriptions = new Map<string, ActiveSubscription>()
@@ -57,12 +58,14 @@ export class WebSocketTransport implements Transport {
       autoReconnect?: boolean
       reconnectInterval?: number
       requestTimeout?: number
+      protocols?: string | string[]
     },
   ) {
     this.url = url
     this.autoReconnect = options?.autoReconnect ?? true
     this.reconnectInterval = options?.reconnectInterval ?? 1000
     this.requestTimeout = options?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT
+    this.protocols = options?.protocols
   }
 
   async query(sql: string, params?: Params): Promise<QueryResponse> {
@@ -159,7 +162,7 @@ export class WebSocketTransport implements Transport {
   private connect(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false
-      const ws = new WebSocket(this.url)
+      const ws = this.protocols === undefined ? new WebSocket(this.url) : new WebSocket(this.url, this.protocols)
 
       const onOpen = () => {
         settled = true

@@ -2,7 +2,7 @@
   "name": "sirannon-db",
   "version": "0.1.0",
   "private": true,
-  "description": "Monorepo for sirannon-db, a TypeScript library that turns SQLite into a networked data layer with real-time subscriptions.",
+  "description": "Monorepo for sirannon-db, a library that turns SQLite into a networked data layer with real-time subscriptions.",
   "author": "Delali (https://sondelali.com)",
   "license": "Apache-2.0",
   "homepage": "https://github.com/assetcorp/sirannon-db",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/assetcorp/sirannon-db/issues"
   },
-  "packageManager": "pnpm@10.30.3+sha512.c961d1e0a2d8e354ecaa5166b822516668b7f44cb5bd95122d590dd81922f606f5473b6d23ec4a5be05e7fcd18e8488d47d978bbe981872f1145d06e9a740017",
+  "packageManager": "pnpm@11.8.0+sha512.c1f5e7c4cb241c8f174b743851d82f42b802324afc8b0f116b96adb15aa06664948dde36960a3ba1079ba5b4b29dd0140135b94b5b5f5263592249d68e555f26",
   "scripts": {
     "build": "nx run-many -t build",
     "test": "nx run-many -t test",

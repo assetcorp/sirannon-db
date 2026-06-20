@@ -4,18 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "server": "tsx src/server.ts",
-    "dev": "vite",
-    "start": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm dev\""
+    "server": "tsx src/data-server.ts",
+    "app:dev": "vite dev",
+    "dev": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm run app:dev\"",
+    "build": "vite build",
+    "serve": "node .output/server/index.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",
+    "@tanstack/react-router": "1.170.10",
+    "@tanstack/react-start": "1.168.18",
     "better-sqlite3": "12.6.2",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0"
+    "lucide-react": "1.17.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.5.0",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
     "concurrently": "9.2.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",

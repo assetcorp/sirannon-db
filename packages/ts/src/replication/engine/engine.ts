@@ -107,6 +107,7 @@ export class ReplicationEngine extends EventEmitter {
   private coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   private coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
   private controllerTimer: ReturnType<typeof setInterval> | null = null
+  private coordinatorRejoinSyncStarting = false
   lastSentSeq = 0n
   lastLocalSeq = 0n
   highestSourceSeqSeen = 0n
@@ -482,6 +483,29 @@ export class ReplicationEngine extends EventEmitter {
     })
     this.coordinatorState = admitted ?? state
     this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(this.coordinatorState)
+  }
+
+  async handleCoordinatorAckProgress(nodeId: string, ackedSeq: bigint): Promise<void> {
+    const config = this.config.coordinator
+    const state = this.coordinatorState
+    if (!config || !state) return
+    if (nodeId === this.nodeId) return
+    if (!this.hasCurrentPrimaryAuthorityFor(state)) return
+    if (state.inSyncNodeIds.includes(nodeId)) return
+    if (!state.votingDataBearingNodeIds.includes(nodeId)) return
+    if (ackedSeq < state.durabilityPointSeq) return
+
+    const admitted = await config.coordinator.admitNodeToInSyncSet({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId,
+      sourceNodeId: this.nodeId,
+      appliedSeq: ackedSeq,
+    })
+    if (!admitted) return
+
+    this.coordinatorState = admitted
+    this.coordinatorAuthority = this.hasCurrentPrimaryAuthorityFor(admitted)
   }
 
   private async removeLocalNodeFromCoordinatorInSyncSet(state: ReplicationGroupState): Promise<void> {
@@ -875,7 +899,30 @@ export class ReplicationEngine extends EventEmitter {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         this.emitError({ error: wrappedErr, operation: 'coordinator-former-primary-demotion', recoverable: false })
       })
+      return
     }
+
+    this.startCoordinatorRejoinSyncIfReady(next)
+  }
+
+  private startCoordinatorRejoinSyncIfReady(state: ReplicationGroupState): void {
+    if (!this.running) return
+    if (this.coordinatorRejoinSyncStarting) return
+    if (!this.requiresCoordinatorRejoinSync(state)) return
+    if (this.syncState.phase !== 'pending') return
+    const sourceNodeId = state.currentPrimary?.nodeId
+    if (!sourceNodeId || !this.config.transport.peers().has(sourceNodeId)) return
+
+    this.coordinatorRejoinSyncStarting = true
+    this.syncJoiner
+      .initiateSync()
+      .catch((err: unknown) => {
+        const wrappedErr = err instanceof Error ? err : new Error(String(err))
+        this.emitError({ error: wrappedErr, operation: 'coordinator-rejoin-sync', recoverable: true })
+      })
+      .finally(() => {
+        this.coordinatorRejoinSyncStarting = false
+      })
   }
 
   private async handleFormerPrimaryDemotion(state: ReplicationGroupState): Promise<void> {

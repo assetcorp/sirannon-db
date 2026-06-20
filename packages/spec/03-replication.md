@@ -25,9 +25,10 @@ Sirannon supports two authority modes:
   to own primary authority, node liveness, safe promotion, client
   routing metadata, and fail-closed write behaviour.
 
-Conflict resolvers are not the normal high-availability path.
-They are used during explicit repair and disaster recovery when
-divergent writes must be reconciled.
+Conflict resolvers are batch-application primitives. A receiver
+uses one when an incoming data change targets a row that already
+exists locally. They do not provide multi-writer authority or make
+automatic failover safe.
 
 ---
 
@@ -362,7 +363,8 @@ Nodes must apply these fencing rules:
 - Replicas must reject batches, sync messages, and forwarded
   writes from stale terms or non-current primaries.
 - A former primary that observes a newer term must demote and
-  rejoin through sync or repair.
+  compare its history before rejoining. A safe node rejoins through
+  sync; a node with local-only writes remains faulted.
 
 ### In-Sync Set
 
@@ -401,14 +403,19 @@ cannot prove majority authority after the other node is lost.
 
 ### Returning Former Primary
 
-A returning former primary must not silently merge local-only
-divergent writes into the current primary. It must demote, compare
-history, quarantine or report divergent local-only writes when
-present, and rejoin through sync or repair from the current
-primary.
+A returning former primary must not merge local-only divergent
+writes into the current primary. It must demote and compare its
+local history with the current primary's acknowledged history. If
+the former primary contains local-only writes, the coordinator must
+remove it from the in-sync set, mark it faulted, and keep it out of
+majority-read, write, and promotion paths. An explicit local read
+may inspect quarantined data for operator recovery.
 
-Conflict resolvers may be used during the explicit repair step.
-They are not a substitute for term fencing or safe promotion.
+The current contract does not define an automatic divergent-history
+merge or a high-level repair command. An operator must rebuild,
+restore, or otherwise remediate a faulted node before it can rejoin.
+Conflict resolvers used during batch application are not a
+substitute for term fencing or safe promotion.
 
 ### Maintenance Mode
 
@@ -427,13 +434,13 @@ Sirannon detects node registration through the coordinator,
 assigns replication work, validates catch-up, and marks nodes safe
 only after they are current.
 
-### Unsafe Recovery
+### Recovery when no safe primary exists
 
-When Sirannon cannot prove a safe primary, automatic recovery must
-fail closed. Unsafe recovery requires explicit operator intent
-through an auditable command or API, such as restoring a backup,
-rejoining persisted data, resyncing a replica, or force-promoting
-a named node with a data-loss acknowledgement.
+When Sirannon cannot prove a safe primary, it must fail closed. This
+specification does not define a force-promotion or unsafe-recovery
+API. Operators can restore a backup, rebuild a node, or repair the
+deployment outside Sirannon, then rejoin a node through the normal
+sync path. Sirannon must not weaken promotion rules automatically.
 
 ### Rolling Upgrade Compatibility
 
@@ -462,7 +469,8 @@ real multi-node Sirannon groups:
 - only in-sync replicas are promoted;
 - clients reroute writes to the new primary or receive a clear
   error;
-- returning former primaries rejoin through sync or repair;
+- returning former primaries rejoin through sync when their history
+  is safe, while nodes with local-only writes remain quarantined;
 - health state reports write availability, read availability,
   coordinator status, current primary, primary term, and repair
   state accurately.
@@ -471,15 +479,16 @@ real multi-node Sirannon groups:
 
 ## Conflict Resolution
 
-Conflict resolvers determine the outcome when two versions of the
-same row exist on different nodes. This can occur during explicit
-repair or disaster recovery after a former primary returns with
-local-only writes.
+Conflict resolvers determine the outcome when an incoming data
+change targets a row that already exists on the receiving node.
+The batch applier invokes the resolver for this case during normal
+replication and first-sync catch-up.
 
 Conflict resolvers must not be used to make normal automatic
 failover safe. Coordinator-mode failover prevents two writable
 primaries through leases, primary terms, in-sync sets, and
-fail-closed promotion.
+fail-closed promotion. The replication module does not expose a
+high-level workflow for merging divergent former-primary history.
 
 All three built-in resolvers are **normative**. Every
 implementation must ship them, and they must produce identical
@@ -650,12 +659,14 @@ ReplicationChange {
 
 ### Checksum
 
-The checksum is computed as the SHA-256 hex digest of the
-deterministic protobuf encoding of the changes list. Deterministic
-encoding means fields are serialised in field-number order and map
-entries are sorted by key. Both the sender and receiver must
-compute and compare this checksum. A mismatch must result in error
-code `BATCH_VALIDATION_ERROR`.
+The checksum is the SHA-256 hex digest of the canonical changes
+list. Canonicalisation sorts object keys, preserves array order,
+encodes integers as decimal strings tagged with `__sint`, encodes
+byte arrays as base64 strings tagged with `__blob`, and omits
+undefined object fields. The checksum is independent of protobuf
+wire encoding. Both sender and receiver must calculate and compare
+it. A mismatch must result in error code
+`BATCH_VALIDATION_ERROR`.
 
 ### Maximum Batch Size
 
@@ -692,12 +703,8 @@ and application.
 
 ```text
 ReplicationConfig {
-  nodeId?:                  string     (auto-generated if omitted)
-  stableNodeId?:            string
-  replicationGroupId?:      string
+  nodeId?:                  string
   topology:                 Topology
-  coordinator?:             CoordinatorConfig
-  controller?:              ControllerConfig
   transport:                ReplicationTransport
   transportConfig?:         TransportConfig
   writeForwarding?:         boolean
@@ -706,45 +713,62 @@ ReplicationConfig {
   batchSize?:               number
   batchIntervalMs?:         number
   maxPendingBatches?:       number
+  snapshotThreshold?:       number
   maxClockDriftMs?:         number
   maxBatchChanges?:         number
   ackTimeoutMs?:            number
+  onBeforeForwardedQuery?:  function(sql, params)
+  flowControl?:             FlowControlConfig
   initialSync?:             boolean
   syncBatchSize?:           number
   maxConcurrentSyncs?:      number
   maxSyncDurationMs?:       number
+  maxSyncLagBeforeReady?:   number
+  syncAckTimeoutMs?:        number
+  catchUpDeadlineMs?:       number
+  resumeFromSeq?:           bigint
+  snapshotConnectionFactory?: async -> SQLiteConnection
+  changeTracker?:           ChangeTracker
+  coordinator?:             CoordinatorModeConfig
 }
 
-CoordinatorConfig {
-  mode:             'etcd' | 'memory'
-  endpoints:        List<string>
-  keyPrefix:        string
-  tls?:             CoordinatorTlsConfig
-  auth?:            CoordinatorAuthConfig
-  leaseTtlMs?:      number
-  electionTimeoutMs?: number
+FlowControlConfig {
+  maxLagSeconds?: number
+  onLagExceeded?: function(peerId, lagMs)
 }
 
-ControllerConfig {
-  candidate?: boolean     (default: true)
+CoordinatorModeConfig {
+  clusterId:                   string
+  groupId:                     string
+  endpoint?:                   string
+  votingDataBearingNodeIds?:   List<string>
+  coordinator:                 ClusterCoordinator
+  sessionTtlMs?:               number
+  controller?:                 boolean or CoordinatorControllerConfig
+  compatibility?:              CoordinatorCompatibilityMetadata
 }
 
-CoordinatorTlsConfig {
-  caCertPath?:     string
-  certPath?:       string
-  keyPath?:        string
-  insecure?:       boolean     (development and test only)
-}
-
-CoordinatorAuthConfig {
-  username?:       string
-  password?:       string
-  clientIdentity?: string
+CoordinatorControllerConfig {
+  enabled?:       boolean
+  holderId?:      string
+  leaseTtlMs?:    number
+  tickIntervalMs?: number
 }
 ```
 
-`coordinator.mode = 'memory'` is not a production coordinator. It
-is allowed only for tests and local development.
+Static mode generates `nodeId` when it is omitted. Coordinator mode
+requires a stable, persisted `nodeId` and rejects configuration that
+does not provide one.
+
+`ClusterCoordinator` is supplied as an object rather than selected
+by a mode string. The TypeScript package provides an etcd adapter
+for production and an in-memory adapter for tests. Production etcd
+connections require HTTPS and an authenticated identity. Insecure
+coordinator access requires explicit opt-in and is limited to tests
+and local development.
+
+`snapshotThreshold` is reserved in the current TypeScript API and
+has no runtime effect.
 
 ### Default Values
 
@@ -760,6 +784,13 @@ is allowed only for tests and local development.
 | `syncBatchSize` | 10,000 (recommended) | No |
 | `maxConcurrentSyncs` | 2 (recommended) | No |
 | `maxSyncDurationMs` | 1,800,000 ms (recommended) | No |
+| `maxSyncLagBeforeReady` | 100 sequences | No |
+| `syncAckTimeoutMs` | 30,000 ms | No |
+| `catchUpDeadlineMs` | 600,000 ms | No |
+| `coordinator.sessionTtlMs` | 10,000 ms | Yes |
+| `coordinator.controller` | enabled | Yes |
+| `coordinator.controller.leaseTtlMs` | 10,000 ms | Yes |
+| `coordinator.controller.tickIntervalMs` | 1,000 ms | No |
 
 ### Sender Loop
 
@@ -797,6 +828,9 @@ acknowledgements:
 - `all`: Wait for all connected peers to acknowledge. Reject with
   `WRITE_CONCERN_ERROR` on timeout or if any peer disconnects.
 
+When a write does not specify a concern, static mode returns after
+the local commit and coordinator mode uses `majority`.
+
 In coordinator mode, `majority` is calculated from configured
 voting data-bearing nodes in the replication group, including the
 primary's local durable commit. It is not calculated from currently
@@ -817,7 +851,7 @@ Read concern controls which durability point a read may observe.
 
 - `local`: Read the selected node's local state. In coordinator
   mode, this mode can observe data that may later be quarantined
-  during repair and must be selected explicitly.
+  after failover and must be selected explicitly.
 - `majority`: Read data that has reached the replication group's
   majority commit point.
 - `linearizable`: Read from the current primary after it proves

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "distributed-entitlements",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "packages/ts/examples/distributed-entitlements", "run", "app:dev"],
+      "port": 3001
+    }
+  ]
+}

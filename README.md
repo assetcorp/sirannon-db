@@ -6,20 +6,20 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Turn any SQLite database into a distributed data layer with real-time subscriptions, HTTP/WebSocket access, and primary-replica replication. Sirannon gives you connection pooling, change data capture, migrations, scheduled backups, coordinator-backed failover, repair-time conflict resolution, and a client SDK.
+Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
 ## Install
 
 ```bash
-pnpm add @delali/sirannon-db
+pnpm add -E @delali/sirannon-db
 ```
 
 Then add the [driver](#pluggable-drivers) for your runtime. For example, Node.js users will typically add `better-sqlite3`:
 
 ```bash
-pnpm add better-sqlite3
+pnpm add -E better-sqlite3
 ```
 
 ## Quick start (Node.js)
@@ -74,13 +74,13 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
 - **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Includes health endpoints, CORS configuration, and an `onRequest` hook for authentication.
 - **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
-- **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas over pluggable transports.
+- **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas. The production network transport is gRPC with TLS support.
 - **Coordinator-backed failover** - Use etcd-backed authority, primary terms, in-sync sets, and write concerns. Minority partitions fail closed for writes.
-- **Repair-time conflict resolution** - Resolve divergent rows during explicit repair with LWW, PrimaryWins, or FieldMerge resolvers.
+- **Deterministic batch application** - Choose LWW, PrimaryWins, FieldMerge, or a custom resolver when an incoming replicated change targets an existing row.
 
 ## Examples
 
-Self-contained example projects in [`packages/ts/examples/`](packages/ts/examples/) cover the current runnable Node.js, browser, and client-server paths:
+Self-contained example projects in [`packages/ts/examples/`](packages/ts/examples/) cover the current Node.js, browser, client-server, and distributed paths:
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
@@ -95,19 +95,22 @@ pnpm install && pnpm --filter @delali/sirannon-db build
 # then pick one:
 cd packages/ts/examples/node && pnpm start
 cd packages/ts/examples/node && pnpm run start:node-native
-cd packages/ts/examples/web-wa-sqlite && pnpm dev
-cd packages/ts/examples/web-client && pnpm start
+cd packages/ts/examples/web-wa-sqlite && pnpm run dev
+cd packages/ts/examples/web-client && pnpm run dev
+cd packages/ts/examples/distributed-entitlements && pnpm run dev
 ```
 
 ## Distributed replication FAQ
 
 ### Is Sirannon SQLite over a shared network file system?
 
-No. Each node owns a local SQLite database file. Sirannon moves changes through its replication transport and exposes database operations through the HTTP/WebSocket server and client SDK. It does not ask many machines to open and write to the same SQLite file over NFS or another shared network file system.
+No. Each node owns a local SQLite database file. Sirannon moves changes between nodes through a replication transport and exposes database operations to applications through the HTTP/WebSocket server and client SDK. Each process opens its own file instead of sharing one SQLite file over NFS or another network file system.
 
 ### What kind of replication does Sirannon use?
 
 Sirannon uses change-log replication. Local writes are captured, stamped with a Hybrid Logical Clock (HLC), grouped into checksummed `ReplicationBatch` messages, and applied on replicas by primary key. The transport can be in-memory for tests or gRPC with TLS for Node.js clusters.
+
+WebSocket has a separate job. It is a client transport for application queries, writes, and CDC subscriptions. It does not carry `ReplicationBatch` messages between Sirannon nodes. Production node-to-node replication uses `GrpcReplicationTransport`.
 
 ### Is it row-based, statement-based, operation-log based, or CRDT-like?
 
@@ -115,7 +118,9 @@ It is operation-log based at the Sirannon layer. A replicated change carries the
 
 ### What conflict model does it use?
 
-Normal writes use a single primary per replication group, so writes are serialised before replication. Conflict resolvers run when divergent row versions must be repaired, usually after disaster recovery or a returning former primary. The built-in resolvers are Last-Writer-Wins by HLC, PrimaryWins, and FieldMerge with per-column HLCs.
+Normal writes use a single primary per replication group, so writes are serialised before replication. During batch application, the receiver invokes a conflict resolver whenever the target row already exists. The built-in choices are Last-Writer-Wins by HLC, PrimaryWins, and FieldMerge with per-column HLCs.
+
+The package does not expose a high-level command that merges a divergent former primary back into the group. Coordinator mode quarantines a former primary with local-only writes and removes it from safe service. Recovery then requires an operator to rebuild, restore, or otherwise remediate that node before it can rejoin.
 
 ### What happens under network partitions?
 
@@ -125,17 +130,19 @@ Static primary-replica mode has no Sirannon-owned failover; writes stay unavaila
 
 In coordinator mode, `majority` is calculated from configured voting data-bearing nodes in the replication group, including the primary's local durable commit. A successful `majority` write survives automatic primary failover when only the failed primary is lost and an eligible in-sync replica remains.
 
+Coordinator mode uses `majority` when a write does not specify a concern. Static mode returns after the local commit unless the write requests a stronger concern.
+
 ### Does Sirannon replicate schema changes?
 
 Yes, within a safety allowlist. Replicated DDL supports `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. DDL with multiple statements, `AS SELECT`, `ATTACH`, extension loading, and other dangerous patterns is rejected.
 
 ### What happens with foreign keys and unique constraints?
 
-SQLite enforces constraints on each node. The single-primary write path prevents normal concurrent unique-key conflicts. First sync orders tables by foreign-key dependency, and resync handles table wiping with foreign keys disabled only for the controlled wipe phase. Divergent repair data can still violate application schema constraints; the resolver or operator must choose a valid result.
+SQLite enforces constraints on each node. The single-primary write path prevents normal concurrent unique-key conflicts. First sync orders tables by foreign-key dependency, and resync disables foreign keys only during the controlled table-wipe phase. Incoming replicated data still has to satisfy the receiving database's constraints.
 
 ### Is Sirannon local-first or multi-writer today?
 
-The current production path is primary-replica. The roadmap includes local-first and offline reconciliation, but the current conflict resolvers are repair tools, not a general multi-writer CRDT layer.
+The current production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row; they do not turn the replication engine into a multi-writer or CRDT system.
 
 ## Security
 

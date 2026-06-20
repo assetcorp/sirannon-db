@@ -1,10 +1,15 @@
-# Sirannon Client Specification
+# Sirannon client specification
 
 This document defines the client SDK that provides a remote
 database proxy over HTTP and WebSocket transports. It covers the
 client API, remote database operations, subscriptions, and
 topology-aware read routing. All Sirannon implementations that
 ship a client module must follow these contracts.
+
+The transports in this document connect applications to a
+Sirannon server. They are separate from `ReplicationTransport`,
+which carries change batches between Sirannon nodes over the
+normative gRPC replication protocol.
 
 ---
 
@@ -29,10 +34,16 @@ SirannonClient {
 ClientOptions {
   transport?:         'websocket' | 'http'   (default: 'websocket')
   headers?:           Map<string, string>
+  webSocketProtocols?: string or List<string>
   autoReconnect?:     boolean                (default: true)
   reconnectInterval?: number                 (default: 1000, milliseconds)
 }
 ```
+
+`headers` applies to HTTP requests. Browser WebSocket handshakes
+cannot attach an arbitrary `Authorization` header; browser clients
+can send a short-lived credential through `webSocketProtocols`
+when the server validates the selected subprotocol.
 
 ### TopologyAwareClientOptions
 
@@ -151,7 +162,7 @@ is removed and not retried.
 
 ---
 
-## Transport Layer
+## Client transport layer
 
 The client supports two transport implementations. Both conform to
 the same internal transport interface.

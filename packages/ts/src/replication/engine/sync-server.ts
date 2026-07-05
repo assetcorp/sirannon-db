@@ -155,6 +155,7 @@ export class SyncServer {
       readConn,
       snapshotSeq,
       tables,
+      totalTables: allTables.length,
       completedTables: new Set(request.completedTables),
       startedAt: Date.now(),
       timeoutTimer,
@@ -294,6 +295,7 @@ export class SyncServer {
       schema: schemaDdl,
       checksum: schemaChecksum,
       isLastBatchForTable: true,
+      totalTables: session.totalTables,
     })
     if (!schemaAck.success) {
       this.abortSyncSession(session.requestId)

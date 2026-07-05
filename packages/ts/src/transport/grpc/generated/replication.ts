@@ -111,6 +111,7 @@ export interface SyncBatchPayload {
   isLastBatchForTable: boolean;
   groupId: string;
   primaryTerm: bigint;
+  totalTables: number;
 }
 
 export interface SyncCompletePayload {
@@ -1615,6 +1616,7 @@ function createBaseSyncBatchPayload(): SyncBatchPayload {
     isLastBatchForTable: false,
     groupId: "",
     primaryTerm: 0n,
+    totalTables: 0,
   };
 }
 
@@ -1649,6 +1651,9 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(72).int64(message.primaryTerm);
+    }
+    if (message.totalTables !== 0) {
+      writer.uint32(80).int32(message.totalTables);
     }
     return writer;
   },
@@ -1732,6 +1737,14 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.totalTables = reader.int32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1772,6 +1785,11 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      totalTables: isSet(object.totalTables)
+        ? globalThis.Number(object.totalTables)
+        : isSet(object.total_tables)
+        ? globalThis.Number(object.total_tables)
+        : 0,
     };
   },
 
@@ -1804,6 +1822,9 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.totalTables !== 0) {
+      obj.totalTables = Math.round(message.totalTables);
+    }
     return obj;
   },
 
@@ -1821,6 +1842,7 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
     message.isLastBatchForTable = object.isLastBatchForTable ?? false;
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.totalTables = object.totalTables ?? 0;
     return message;
   },
 };

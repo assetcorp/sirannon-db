@@ -580,6 +580,8 @@ When a new node joins a running cluster, it needs the full dataset before it can
 
 The state machine is: `pending` -> `syncing` -> `catching-up` -> `ready`. You can monitor it via `engine.status().syncState`.
 
+During `syncing`, `syncState.completedTables` lists the tables the joiner has finished and `syncState.totalTables` holds how many it will receive in all, so `completedTables.length / totalTables` gives you first-sync progress. A source that predates this field leaves `totalTables` at 0 until the sync finishes.
+
 For large databases where a network transfer is impractical, the out-of-band path lets you copy the SQLite file directly and start from a known sequence:
 
 ```ts

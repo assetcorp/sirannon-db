@@ -70,6 +70,7 @@ export function isValidSyncBatch(batch: unknown): batch is SyncBatch {
     Array.isArray(b.rows) &&
     typeof b.checksum === 'string' &&
     typeof b.isLastBatchForTable === 'boolean' &&
+    optionalNonNegativeInteger(b.totalTables) &&
     optionalString(b.groupId) &&
     optionalBigint(b.primaryTerm)
   )
@@ -107,4 +108,8 @@ function optionalString(value: unknown): boolean {
 
 function optionalBigint(value: unknown): boolean {
   return value === undefined || typeof value === 'bigint'
+}
+
+function optionalNonNegativeInteger(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isInteger(value) && value >= 0)
 }

@@ -30,6 +30,7 @@ describe('GrpcReplicationTransport', () => {
           schema: ['id', 'name'],
           checksum: 'sync-check-1',
           isLastBatchForTable: true,
+          totalTables: 3,
         })
 
         await primary.sendSyncComplete('replica-node', {
@@ -63,6 +64,7 @@ describe('GrpcReplicationTransport', () => {
       expect(receivedSyncRequests[0]?.req.requestId).toBe('sync-1')
       expect(receivedSyncBatches[0]?.batch.table).toBe('users')
       expect(receivedSyncBatches[0]?.batch.rows[0]).toEqual({ id: 1n, name: 'Alice' })
+      expect(receivedSyncBatches[0]?.batch.totalTables).toBe(3)
       expect(receivedSyncCompletes[0]?.complete.snapshotSeq).toBe(100n)
 
       await replica.sendSyncAck('primary-node', {

@@ -260,6 +260,7 @@ export interface SyncBatch {
   schema?: string[]
   checksum: string
   isLastBatchForTable: boolean
+  totalTables?: number
   groupId?: string
   primaryTerm?: bigint
 }

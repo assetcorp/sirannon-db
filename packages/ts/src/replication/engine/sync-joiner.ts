@@ -111,6 +111,9 @@ export class SyncJoiner {
 
     try {
       if (batch.table === '__schema__') {
+        if (typeof batch.totalTables === 'number' && Number.isInteger(batch.totalTables) && batch.totalTables >= 0) {
+          engine.syncState.totalTables = batch.totalTables
+        }
         if (batch.schema) {
           for (const ddl of batch.schema) {
             if (!isSyncSafeDdl(ddl)) {

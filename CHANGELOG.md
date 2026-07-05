@@ -1,3 +1,13 @@
+## 0.1.6 (2026-07-05)
+
+### 🚀 Features
+
+- **ts:** add totalTables field to SyncBatch and related structures for improved sync progress tracking ([4be33e4](https://github.com/assetcorp/sirannon-db/commit/4be33e4))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.5 (2026-06-20)
 
 ### 🚀 Features

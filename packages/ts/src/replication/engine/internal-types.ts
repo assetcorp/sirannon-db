@@ -7,6 +7,7 @@ export interface ActiveSyncSession {
   readConn: SQLiteConnection
   snapshotSeq: bigint
   tables: string[]
+  totalTables: number
   completedTables: Set<string>
   startedAt: number
   timeoutTimer: ReturnType<typeof setTimeout>

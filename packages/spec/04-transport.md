@@ -272,6 +272,7 @@ message SyncBatchPayload {
   bool is_last_batch_for_table = 7;
   string group_id = 8;
   int64 primary_term = 9;
+  int32 total_tables = 10;
 }
 
 message SyncTableManifest {

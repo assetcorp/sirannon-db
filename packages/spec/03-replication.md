@@ -985,6 +985,7 @@ SyncBatch {
   schema?:            List<string>
   checksum:           string
   isLastBatchForTable: boolean
+  totalTables?:       number
 }
 
 SyncComplete {
@@ -1016,6 +1017,15 @@ SyncAck {
 `groupId` and `primaryTerm` are required for sync messages in
 coordinator mode. A replica must restart sync when the primary
 term changes before the sync completes.
+
+The primary sets `totalTables` on the schema batch to the full
+number of tables the joiner will receive once the sync completes,
+counting tables the joiner already finished in a resumed sync.
+The joiner uses this value as the denominator for sync progress
+against `completedTables`. The field is advisory: a primary that
+predates it omits it, and the joiner then reports a total of zero
+until the sync finishes. A joiner must reject a `totalTables`
+that is not a non-negative integer and fall back to zero.
 
 ### Sync Flow
 

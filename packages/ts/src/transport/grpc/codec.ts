@@ -191,6 +191,7 @@ export function toSyncBatchPayload(batch: SyncBatch): SyncBatchPayload {
     isLastBatchForTable: batch.isLastBatchForTable,
     groupId: batch.groupId ?? '',
     primaryTerm: batch.primaryTerm ?? 0n,
+    totalTables: batch.totalTables ?? 0,
   }
 }
 
@@ -205,6 +206,7 @@ export function fromSyncBatchPayload(p: SyncBatchPayload): SyncBatch {
     isLastBatchForTable: p.isLastBatchForTable,
     groupId: p.groupId || undefined,
     primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
+    totalTables: p.totalTables === 0 ? undefined : p.totalTables,
   }
 }
 

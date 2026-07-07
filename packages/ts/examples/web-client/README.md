@@ -27,7 +27,7 @@ The demo has two UI modes:
 - **Application API**: the browser calls server-side domain actions. Those actions validate inputs and call the Sirannon HTTP API from the server.
 - **Direct Data API**: the browser calls the Sirannon HTTP API directly. The data server limits this mode with loopback binding, restricted CORS, bearer auth for HTTP, and a demo SQL allowlist.
 
-Both modes keep WebSocket subscriptions in the browser for live CDC events. The UI loads one initial snapshot, then applies product and activity changes from the stream instead of refetching after every mutation. WebSocket upgrades are limited to configured browser origins and must include the configured demo auth subprotocol.
+Both modes keep WebSocket subscriptions in the browser for live CDC events. The UI loads one first snapshot, then applies product and activity changes from the stream instead of refetching after every mutation. WebSocket upgrades are limited to configured browser origins and must include the configured demo auth subprotocol.
 
 ## Environment
 
@@ -89,7 +89,7 @@ What this example does:
 
 What this example does not do:
 
-- It does not implement real user login, sessions, JWTs, roles, tenant checks, or permission checks.
+- It has no real user login, sessions, JWTs, roles, tenant checks, or permission checks.
 - It does not include rate limiting, abuse protection, audit logging, or WAF rules.
 - It does not terminate TLS itself. Local development uses `http://` and `ws://`.
 - The demo token is visible to browser code in Direct Data API mode. Treat that mode as a local demonstration of the client SDK, not as a production browser security boundary.

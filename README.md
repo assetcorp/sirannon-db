@@ -8,7 +8,25 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
+In matched-durability benchmarks against Postgres 17, Sirannon leads across single-client workloads because the database runs in your process with no network hop, and the margin narrows under concurrency where Postgres parallelises across its connection pool. Every published figure is generated from a recorded run on a disclosed machine, and the same benchmarks show where Postgres wins. See the full [methodology and results](packages/ts/benchmarks/BENCHMARKS.md).
+
+See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](packages/ts/examples/distributed-entitlements/), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
+
 > *sirannon* means 'gate-stream' in Sindarin.
+
+## Project status
+
+Sirannon has two levels of maturity. The core data layer, the server, the client, and primary-replica replication are stable. Coordinator-backed automatic failover is the newest part and needs more production use before it is stable.
+
+| Part | Status | Details |
+| --- | --- | --- |
+| Core engine (`@delali/sirannon-db`) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
+| Server and client (`@delali/sirannon-db/server`, `@delali/sirannon-db/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server runs client SQL by design, so read the [security section](packages/ts/README.md#security) before you expose it. |
+| Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
+| Coordinator-backed automatic failover (`@delali/sirannon-db/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
+| Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers run today but have no TypeScript declarations yet. |
+
+Durability follows SQLite's WAL mode with `synchronous=NORMAL` by default, and you can raise it. The [roadmap](ROADMAP.md) sets out what is next, including a second-language implementation and scaling beyond a single node's disk.
 
 ## Install
 
@@ -57,10 +75,13 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters |
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
+| `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation, also re-exported from the core entry |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
 | `@delali/sirannon-db/replication` | Replication engine, primary-replica topology, HLC, write concerns, and conflict resolvers |
+| `@delali/sirannon-db/replication/coordinator/etcd` | etcd-backed cluster coordinator for primary authority and automatic failover |
 | `@delali/sirannon-db/transport/grpc` | gRPC replication transport with TLS support |
+| `@delali/sirannon-db/transport/memory` | In-memory replication transport for tests and single-process clusters |
 
 ## Features
 
@@ -100,21 +121,29 @@ cd packages/ts/examples/web-client && pnpm run dev
 cd packages/ts/examples/distributed-entitlements && pnpm run dev
 ```
 
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
+</p>
+
+Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
+
 ## Distributed replication FAQ
 
 ### Is Sirannon SQLite over a shared network file system?
 
-No. Each node owns a local SQLite database file. Sirannon moves changes between nodes through a replication transport and exposes database operations to applications through the HTTP/WebSocket server and client SDK. Each process opens its own file instead of sharing one SQLite file over NFS or another network file system.
+No. Each node has its own local SQLite database file. Sirannon moves changes between nodes through a replication transport and exposes database operations to applications through the HTTP/WebSocket server and client SDK. Each process opens its own file instead of sharing one SQLite file over NFS or another network file system.
 
 ### What kind of replication does Sirannon use?
 
 Sirannon uses change-log replication. Local writes are captured, stamped with a Hybrid Logical Clock (HLC), grouped into checksummed `ReplicationBatch` messages, and applied on replicas by primary key. The transport can be in-memory for tests or gRPC with TLS for Node.js clusters.
 
-WebSocket has a separate job. It is a client transport for application queries, writes, and CDC subscriptions. It does not carry `ReplicationBatch` messages between Sirannon nodes. Production node-to-node replication uses `GrpcReplicationTransport`.
+WebSocket serves a different purpose. It is a client transport for application queries, writes, and CDC subscriptions. It does not move `ReplicationBatch` messages between Sirannon nodes. Production node-to-node replication uses `GrpcReplicationTransport`.
 
 ### Is it row-based, statement-based, operation-log based, or CRDT-like?
 
-It is operation-log based at the Sirannon layer. A replicated change carries the table, operation, primary key, old data, new data, transaction ID, node ID, and HLC. It is not raw SQL statement replay, and the current production write path is not a CRDT protocol.
+It is operation-log based at the Sirannon layer. A replicated change includes the table, operation, primary key, old data, new data, transaction ID, node ID, and HLC. It is not raw SQL statement replay, and the current production write path is not a CRDT protocol.
 
 ### What conflict model does it use?
 
@@ -142,7 +171,7 @@ SQLite enforces constraints on each node. The single-primary write path prevents
 
 ### Is Sirannon local-first or multi-writer today?
 
-The current production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row; they do not turn the replication engine into a multi-writer or CRDT system.
+The current production path is primary-replica. Conflict resolvers determine how a receiving node applies a change to an existing row; they do not turn the replication engine into a multi-writer or CRDT system.
 
 ## Security
 
@@ -155,7 +184,7 @@ Sirannon-db is designed to be secure by default in its core operations:
 
 > **Warning:** The server accepts arbitrary SQL from clients. When you expose it beyond localhost, always use the `onRequest` hook to authenticate and authorise requests. See the [TypeScript package docs](packages/ts/README.md#security) for examples.
 >
-> The built-in server binds plain HTTP and WebSocket without TLS. When you serve traffic outside a trusted network, terminate TLS upstream with a reverse proxy (nginx, Caddy, a cloud load balancer) or your clients' bearer tokens and query payloads will travel in cleartext.
+> The built-in server binds plain HTTP and WebSocket without TLS. When you serve traffic outside a trusted network, terminate TLS upstream with a reverse proxy (nginx, Caddy, a cloud load balancer) or your clients' bearer tokens and query payloads will be sent in cleartext.
 
 ## Documentation
 

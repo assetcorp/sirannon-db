@@ -1,6 +1,6 @@
 # Sirannon DB - Browser + wa-sqlite Example
 
-Browser-based example running Sirannon DB with wa-sqlite and IndexedDB persistence via Vite.
+This browser-based example runs Sirannon DB with wa-sqlite and IndexedDB persistence via Vite.
 
 ## Prerequisites
 

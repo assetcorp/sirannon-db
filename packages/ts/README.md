@@ -8,7 +8,25 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
+In matched-durability benchmarks against Postgres 17, Sirannon leads across single-client workloads because the database runs in your process with no network hop, and the margin narrows under concurrency where Postgres parallelises across its connection pool. Every published figure is generated from a recorded run on a disclosed machine, and the same benchmarks show where Postgres wins. See the full [methodology and results](benchmarks/BENCHMARKS.md).
+
+See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
+
 > *sirannon* means 'gate-stream' in Sindarin.
+
+## Project status
+
+Sirannon has two levels of maturity. The core data layer, the server, the client, and primary-replica replication are stable. Coordinator-backed automatic failover is the newest part and needs more production use before it is stable.
+
+| Part | Status | Details |
+| --- | --- | --- |
+| Core engine (`@delali/sirannon-db`) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
+| Server and client (`@delali/sirannon-db/server`, `@delali/sirannon-db/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server runs client SQL by design, so read the [security section](#security) before you expose it. |
+| Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
+| Coordinator-backed automatic failover (`@delali/sirannon-db/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
+| Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers run today but have no TypeScript declarations yet. |
+
+Durability follows SQLite's WAL mode with `synchronous=NORMAL` by default, and you can raise it. The [roadmap](https://github.com/assetcorp/sirannon-db/blob/main/ROADMAP.md) sets out what is next, including a second-language implementation and scaling beyond a single node's disk.
 
 ## Install
 
@@ -103,7 +121,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 ### Bun
 
-No extra dependency needed since Bun ships `bun:sqlite` built in.
+You need no extra dependency, because Bun includes `bun:sqlite`.
 
 ```ts
 import { Sirannon } from '@delali/sirannon-db'
@@ -149,16 +167,18 @@ const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
 
 ## Package exports
 
-The package ships independent exports so you only bundle what you need:
+The package provides independent exports so you only bundle what you need:
 
 | Import | What you get |
 | --- | --- |
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters (see table above) |
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
+| `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation, also re-exported from the core entry |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
 | `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, HLC |
+| `@delali/sirannon-db/replication/coordinator/etcd` | etcd-backed cluster coordinator for primary authority and automatic failover |
 | `@delali/sirannon-db/transport/grpc` | gRPC replication transport with TLS support |
 | `@delali/sirannon-db/transport/memory` | In-memory transport for testing |
 
@@ -440,6 +460,10 @@ httpClient.close()
 
 ## Distributed replication
 
+<p align="center">
+  <img src="../../docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
+</p>
+
 Sirannon can replicate a SQLite database across multiple nodes with change propagation, new-node bootstrapping, write concerns, and coordinator-backed failover. The production path is primary-replica: one primary accepts writes, replicas serve reads and can forward writes, and coordinator mode manages authority when failover is enabled. When replication is not enabled, the replication engine does not run.
 
 ```ts
@@ -555,7 +579,7 @@ Automatic write failover needs at least three voting data-bearing nodes. With fe
 
 Normal writes are serialised through one primary per replication group. When a receiver applies a batch and finds the target row already present, it passes the local and incoming versions to the configured resolver. This is part of normal batch application, not a separate repair command.
 
-Three built-in strategies ship with the replication module:
+The replication module includes three built-in strategies:
 
 | Strategy | Class | Behaviour |
 | --- | --- | --- |
@@ -580,7 +604,7 @@ When a new node joins a running cluster, it needs the full dataset before it can
 
 The state machine is: `pending` -> `syncing` -> `catching-up` -> `ready`. You can monitor it via `engine.status().syncState`.
 
-During `syncing`, `syncState.completedTables` lists the tables the joiner has finished and `syncState.totalTables` holds how many it will receive in all, so `completedTables.length / totalTables` gives you first-sync progress. A source that predates this field leaves `totalTables` at 0 until the sync finishes.
+During `syncing`, `syncState.completedTables` lists the tables the joiner has finished and `syncState.totalTables` records how many it will receive in all, so `completedTables.length / totalTables` gives you first-sync progress. A source that predates this field leaves `totalTables` at 0 until the sync finishes.
 
 For large databases where a network transfer is impractical, the out-of-band path lets you copy the SQLite file directly and start from a known sequence:
 
@@ -612,23 +636,23 @@ In coordinator mode, `majority` is calculated from configured voting data-bearin
 
 #### Is this SQLite over a shared network file system?
 
-No. Each node owns its own SQLite database file. Sirannon moves change batches through its replication transport and exposes database operations through the server and client layers. It does not rely on many machines opening the same SQLite file over NFS or another shared network file system.
+No. Each node has its own SQLite database file. Sirannon moves change batches through its replication transport and exposes database operations through the server and client layers. It does not rely on many machines opening the same SQLite file over NFS or another shared network file system.
 
 #### What is replicated?
 
-Sirannon replicates checksummed batches of `ReplicationChange` records. Each change carries the table, operation, row ID, primary key, HLC timestamp, transaction ID, node ID, old data, new data, and optional DDL statement.
+Sirannon replicates checksummed batches of `ReplicationChange` records. Each change includes the table, operation, row ID, primary key, HLC timestamp, transaction ID, node ID, old data, new data, and an optional DDL statement.
 
 #### Is the protocol row-based, statement-based, operation-log based, or CRDT-like?
 
-It is operation-log based at the Sirannon layer. Data changes carry row images and primary-key metadata. DDL changes carry a validated DDL statement. The current production write path is not CRDT-like; it prevents normal write conflicts with a single writable primary.
+It is operation-log based at the Sirannon layer. Data changes include row images and primary-key metadata. DDL changes include a validated DDL statement. The current production write path is not CRDT-like; it prevents normal write conflicts with a single writable primary.
 
 #### What ordering model does it use?
 
-Each change carries a Hybrid Logical Clock timestamp. The HLC gives deterministic causal ordering across nodes without relying on perfectly synchronised wall clocks. Batches also carry a sequence range, checksum, and, in coordinator mode, `groupId` and `primaryTerm`.
+Each change includes a Hybrid Logical Clock timestamp. The HLC gives deterministic causal ordering across nodes without relying on perfectly synchronised wall clocks. Batches also include a sequence range, checksum, and, in coordinator mode, `groupId` and `primaryTerm`.
 
 #### What happens under partitions?
 
-Static mode does not own failover. If the static primary is lost, writes stay unavailable until an operator or external system promotes another node and reroutes clients.
+Static mode has no automatic failover. If the static primary is lost, writes stay unavailable until an operator or external system promotes another node and reroutes clients.
 
 Coordinator mode uses a cluster coordinator, primary terms, leases, in-sync sets, and fail-closed write behaviour. A primary may accept writes only while it can prove current authority. Replicas reject stale batches, stale sync messages, and stale forwarded writes. Only an in-sync replica can be promoted.
 
@@ -650,7 +674,7 @@ Read concern controls this. `local` reads the selected node's local state. `majo
 
 #### Is this local-first or multi-writer today?
 
-The current production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row; they do not provide local-first reconciliation or a multi-writer CRDT layer.
+The current production path is primary-replica. Conflict resolvers determine how a receiving node applies a change to an existing row; they do not provide local-first reconciliation or a multi-writer CRDT layer.
 
 ### Transport options
 
@@ -691,7 +715,7 @@ The current production path is primary-replica. Conflict resolvers decide how a 
 | `maxBatchChanges` | `number` | `1000` | Maximum accepted changes in one inbound batch |
 | `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |
 | `initialSync` | `boolean` | `true` | Pull a full snapshot when joining a cluster |
-| `syncBatchSize` | `number` | `10000` | Rows per sync batch during initial sync |
+| `syncBatchSize` | `number` | `10000` | Rows per sync batch during first sync |
 | `maxConcurrentSyncs` | `number` | `2` | Maximum simultaneous sync sessions on the source |
 | `maxSyncDurationMs` | `number` | `1800000` | Source aborts sync after this duration (30 min) |
 | `maxSyncLagBeforeReady` | `number` | `100` | Catch-up lag threshold (in sequences) to transition to ready |
@@ -699,7 +723,7 @@ The current production path is primary-replica. Conflict resolvers decide how a 
 | `catchUpDeadlineMs` | `number` | `600000` | Max time in catch-up phase before transitioning to ready (10 min) |
 | `resumeFromSeq` | `bigint` | - | Start replication from a specific sequence (out-of-band sync) |
 | `snapshotConnectionFactory` | `() => Promise<SQLiteConnection>` | - | Factory for read-only connections used during sync serving |
-| `changeTracker` | `ChangeTracker` | - | CDC trigger manager, required for initial sync |
+| `changeTracker` | `ChangeTracker` | - | CDC trigger manager, required for first sync |
 | `flowControl` | `{ maxLagSeconds?, onLagExceeded? }` | - | Replication lag monitoring callbacks |
 | `onBeforeForwardedQuery` | `(sql, params?) => void` | - | Validation or authorisation hook called before the primary executes each forwarded statement |
 | `coordinator` | `CoordinatorModeConfig` | - | Enables coordinator-backed authority and failover |
@@ -820,7 +844,7 @@ Protocol values must be valid `Sec-WebSocket-Protocol` tokens. If you derive the
 
 ### TLS and transport security
 
-The built-in server binds plain HTTP and WebSocket. For any traffic outside a trusted local network, terminate TLS upstream with a reverse proxy, load balancer, or platform edge and use `https://` and `wss://` client URLs. Without TLS, credentials, SQL text, parameters, and CDC payloads travel in cleartext.
+The built-in server binds plain HTTP and WebSocket. For any traffic outside a trusted local network, terminate TLS upstream with a reverse proxy, load balancer, or platform edge and use `https://` and `wss://` client URLs. Without TLS, credentials, SQL text, parameters, and CDC payloads are sent in cleartext.
 
 ### CORS and browser access
 

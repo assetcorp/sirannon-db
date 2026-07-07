@@ -1,16 +1,16 @@
 # Run a three-node Sirannon entitlement cluster
 
-This example runs Sirannon as a three-node, coordinator-backed entitlement control plane. Each node owns a durable SQLite database. Sirannon replicates changes between those databases and uses etcd to manage primary authority and automatic failover.
+This example runs Sirannon as a three-node, coordinator-backed entitlement control plane. Each node has its own durable SQLite database. Sirannon replicates changes between those databases and uses etcd to manage primary authority and automatic failover.
 
 The application models a SaaS entitlement service. Billing events update customer plans, usage events decrement quota through idempotent transactions, and the dashboard shows cluster state and replicated data as they change.
 
 ## What runs
 
-- Three Sirannon data nodes: `node-a`, `node-b`, and `node-c`
-- One etcd service for authority, leases, primary terms, and the in-sync set
-- gRPC replication between Sirannon nodes, protected by locally generated mTLS certificates
-- Toxiproxy links for coordinator and replication failure controls
-- A TanStack Start dashboard at `http://127.0.0.1:3001`
+- Three Sirannon data nodes run as `node-a`, `node-b`, and `node-c`.
+- One etcd service handles authority, leases, primary terms, and the in-sync set.
+- gRPC replication connects the Sirannon nodes and is protected by locally generated mTLS certificates.
+- Toxiproxy links provide coordinator and replication failure controls.
+- A TanStack Start dashboard runs at `http://127.0.0.1:3001`.
 
 ## How traffic moves
 
@@ -23,7 +23,7 @@ The example uses three separate network paths:
 | Sirannon node to Sirannon node | gRPC with mTLS | Replication batches, acknowledgements, write forwarding, and first sync |
 | Sirannon nodes to etcd | etcd gRPC through Toxiproxy | Primary authority, leases, node sessions, and replication-group metadata |
 
-WebSocket is an application client transport in this example. It does not carry node-to-node replication. `cluster-node.ts` creates a `GrpcReplicationTransport` for replication, while `direct-client.ts` creates a WebSocket client for browser subscriptions.
+WebSocket is an application client transport in this example. It is not used for node-to-node replication. `cluster-node.ts` creates a `GrpcReplicationTransport` for replication, while `direct-client.ts` creates a WebSocket client for browser subscriptions.
 
 Application traffic uses these localhost endpoints:
 
@@ -70,7 +70,7 @@ pnpm run build
 - Isolate the current primary from etcd through Toxiproxy and observe failover.
 - Restore the coordinator and replication links and watch eligible nodes converge.
 
-The mutation path checks majority write availability before sending a transaction. The coordinator still decides whether the current primary has authority, and the replication engine uses majority write concern by default in coordinator mode.
+The mutation path checks majority write availability before sending a transaction. The coordinator still determines whether the current primary has authority, and the replication engine uses majority write concern by default in coordinator mode.
 
 ## Security boundary
 

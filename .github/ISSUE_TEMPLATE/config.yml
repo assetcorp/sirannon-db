@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the documentation
+    url: https://github.com/assetcorp/sirannon-db#readme
+    about: The README and the package documentation cover most questions about usage and configuration.
+  - name: Read the roadmap
+    url: https://github.com/assetcorp/sirannon-db/blob/main/ROADMAP.md
+    about: Check the roadmap before you request a feature, in case the work is already planned.
+  - name: Report a security issue
+    url: https://github.com/assetcorp/sirannon-db/security/advisories/new
+    about: Please report vulnerabilities privately through the advisory form, not as a public issue.

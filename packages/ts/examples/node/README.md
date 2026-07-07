@@ -1,6 +1,6 @@
 # Sirannon DB - Node.js Example
 
-Self-contained Node.js example demonstrating Sirannon DB core features with either the `better-sqlite3` driver or Node's built-in `node:sqlite` driver.
+This self-contained Node.js example demonstrates Sirannon DB core features with either the `better-sqlite3` driver or Node's built-in `node:sqlite` driver.
 
 ## Prerequisites
 

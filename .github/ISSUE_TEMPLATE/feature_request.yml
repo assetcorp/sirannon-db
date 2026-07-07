@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a capability or an improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting an improvement. Please describe the problem before the solution, so the discussion stays open to alternatives.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does Sirannon get in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Sirannon to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part
+      options:
+        - Core engine
+        - Server
+        - Client
+        - Replication
+        - Coordinator or failover
+        - Drivers
+        - The specification
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and the roadmap and did not find a duplicate.
+          required: true

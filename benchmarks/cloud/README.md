@@ -45,8 +45,8 @@ That creates the VM, pushes your current working tree including uncommitted chan
 Docker, git, and Python 3, runs the full `cloud` preset (10,000,000 rows across both durability
 levels), and copies each run directory into `benchmarks/server/results/runs/`. For a smaller run,
 override individual `BENCH_` variables (for example `BENCH_DATA_SIZE`) as shown below. It leaves the VM running so you can inspect it, and prints the
-command to delete it. Add `--teardown` to delete on success and `--yes` to skip the billing
-confirmation:
+command to delete it. Add `--teardown` to delete the VM when the run exits, even if a step fails,
+and `--yes` to skip the billing confirmation:
 
 ```bash
 PROVIDER=hetzner ./run-cloud.sh all --yes --teardown

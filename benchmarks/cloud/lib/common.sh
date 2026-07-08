@@ -8,7 +8,7 @@
 # run, result fetching, dry-run, and teardown.
 
 CLOUD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_ROOT="$(cd "$CLOUD_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$CLOUD_DIR/../.." && pwd)"
 
 PROVIDER="${PROVIDER:-gcp}"
 VM_NAME="${VM_NAME:-sirannon-bench}"
@@ -194,19 +194,40 @@ cmd_status() {
   prov_status
 }
 
+# Runs on the way out of cmd_all whether every step passed, a step failed under
+# set -e, or the shell is exiting for any other reason, so a VM that cmd_up
+# created is never silently left billing after an early error. With --teardown it
+# deletes on every exit; without it, it names the VM still running so the cost is
+# visible even on failure.
+_all_exit() {
+  local code=$?
+  trap - EXIT
+  if [ "$DRY_RUN" = "1" ]; then
+    if [ "${TEARDOWN:-0}" = "1" ]; then
+      log "(dry-run) would delete $VM_NAME on exit"
+    else
+      log "(dry-run) nothing was created; a real run leaves the VM up until you run 'down'"
+    fi
+    exit "$code"
+  fi
+  if [ "${TEARDOWN:-0}" = "1" ]; then
+    [ "$code" -eq 0 ] || log "a step failed (status $code); tearing down $VM_NAME because --teardown was set"
+    if prov_exists 2>/dev/null; then
+      cmd_down || log "automatic teardown failed; delete it manually with: PROVIDER=${PROVIDER} ./run-cloud.sh down"
+    fi
+  elif prov_exists 2>/dev/null; then
+    log "VM $VM_NAME is running and billing. Delete it with: PROVIDER=${PROVIDER} ./run-cloud.sh down"
+  fi
+  exit "$code"
+}
+
 cmd_all() {
+  trap _all_exit EXIT
   cmd_up
   cmd_sync
   cmd_setup
   cmd_run
   cmd_fetch
-  if [ "${TEARDOWN:-0}" = "1" ]; then
-    cmd_down
-  elif [ "$DRY_RUN" = "1" ]; then
-    log "(dry-run) nothing was created; a real run would leave the VM up until you run 'down'"
-  else
-    log "VM left running and billing. Delete it with: PROVIDER=${PROVIDER} run-cloud.sh down"
-  fi
 }
 
 usage() {
@@ -225,7 +246,7 @@ Commands:
   status   show the VM state
   down     delete the VM
 
-Flags: --yes (skip billing prompt), --teardown (delete on success),
+Flags: --yes (skip billing prompt), --teardown (delete on exit, even if a step fails),
        --dry-run (print the commands instead of running them).
 
 Common env:

@@ -28,6 +28,20 @@ describe('BackupScheduler', () => {
     await conn.close()
   })
 
+  it('throws BackupError for an unknown timezone', async () => {
+    const conn = await createTestDb(temp.path)
+    const scheduler = new BackupScheduler()
+
+    expect(() =>
+      scheduler.schedule(conn, {
+        cron: '0 0 * * *',
+        destDir: join(temp.path, 'bad-tz'),
+        timezone: 'Not/AZone',
+      }),
+    ).toThrow(/Invalid timezone 'Not\/AZone'/)
+    await conn.close()
+  })
+
   it('creates destination directory if it does not exist', async () => {
     const conn = await createTestDb(temp.path)
     const backupDir = join(temp.path, 'new', 'nested', 'dir')

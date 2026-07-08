@@ -176,6 +176,11 @@ export interface BackupScheduleOptions {
   destDir: string
   /** Maximum number of backup files to keep. Default: 5. */
   maxFiles?: number
+  /**
+   * Sirannon evaluates the cron expression in this IANA time zone (e.g. 'America/New_York').
+   * When omitted, it uses the host's local time zone, which also sets the daylight saving rules that apply.
+   */
+  timezone?: string
   /** Called when a scheduled backup fails. Without this, errors are silently discarded. */
   onError?: (error: Error) => void
 }

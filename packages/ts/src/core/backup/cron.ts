@@ -1,6 +1,16 @@
+export interface CronParts {
+  readonly year: number
+  readonly month: number
+  readonly dayOfMonth: number
+  readonly hour: number
+  readonly minute: number
+  readonly second: number
+  readonly dayOfWeek: number
+}
+
 export interface CronExpression {
   readonly hasSeconds: boolean
-  matches(date: Date): boolean
+  matches(parts: CronParts): boolean
 }
 
 interface FieldSpec {
@@ -53,6 +63,70 @@ const NICKNAMES: Readonly<Record<string, string>> = {
 }
 
 const UNSUPPORTED_SYNTAX = /[LW#?]/i
+
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = zoneFormatters.get(timeZone)
+  if (cached) {
+    return cached
+  }
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  })
+  zoneFormatters.set(timeZone, formatter)
+  return formatter
+}
+
+export function assertValidTimeZone(timeZone: string): void {
+  try {
+    zoneFormatter(timeZone)
+  } catch {
+    throw new Error(`unknown timezone '${timeZone}'`)
+  }
+}
+
+export function wallClockParts(date: Date, timeZone?: string): CronParts {
+  if (timeZone === undefined) {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      dayOfMonth: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      second: date.getSeconds(),
+      dayOfWeek: date.getDay(),
+    }
+  }
+
+  const fields: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {}
+  for (const part of zoneFormatter(timeZone).formatToParts(date)) {
+    if (part.type !== 'literal') {
+      fields[part.type] = Number(part.value)
+    }
+  }
+
+  const year = fields.year ?? 0
+  const month = fields.month ?? 1
+  const dayOfMonth = fields.day ?? 1
+  const hour = fields.hour === 24 ? 0 : (fields.hour ?? 0)
+  return {
+    year,
+    month,
+    dayOfMonth,
+    hour,
+    minute: fields.minute ?? 0,
+    second: fields.second ?? 0,
+    dayOfWeek: new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCDay(),
+  }
+}
 
 function resolveValue(token: string, spec: FieldSpec): number {
   let value: number
@@ -159,22 +233,22 @@ class ParsedCron implements CronExpression {
     private readonly dowRestricted: boolean,
   ) {}
 
-  matches(date: Date): boolean {
-    if (this.hasSeconds && !this.seconds.has(date.getSeconds())) {
+  matches(parts: CronParts): boolean {
+    if (this.hasSeconds && !this.seconds.has(parts.second)) {
       return false
     }
-    if (!this.minutes.has(date.getMinutes())) {
+    if (!this.minutes.has(parts.minute)) {
       return false
     }
-    if (!this.hours.has(date.getHours())) {
+    if (!this.hours.has(parts.hour)) {
       return false
     }
-    if (!this.months.has(date.getMonth() + 1)) {
+    if (!this.months.has(parts.month)) {
       return false
     }
 
-    const domMatch = this.daysOfMonth.has(date.getDate())
-    const dowMatch = this.daysOfWeek.has(date.getDay())
+    const domMatch = this.daysOfMonth.has(parts.dayOfMonth)
+    const dowMatch = this.daysOfWeek.has(parts.dayOfWeek)
     if (this.domRestricted && this.dowRestricted) {
       return domMatch || dowMatch
     }

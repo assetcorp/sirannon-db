@@ -37,7 +37,11 @@ def ops(value: object) -> str:
 
 
 def ms(value: object) -> str:
-    return f"{value:.3f}" if is_number(value) else "n/a"
+    if not is_number(value):
+        return "n/a"
+    if abs(value) >= 100:
+        return f"{round(value):,}"
+    return f"{value:.3f}"
 
 
 def percent(fraction: object, places: int = 1) -> str:

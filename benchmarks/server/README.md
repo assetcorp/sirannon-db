@@ -56,12 +56,25 @@ The full run drives both engines at both durability levels in Docker:
 ./run-all.sh
 ```
 
-A quick smoke overrides the workload set and the windows:
+Two presets cover the common cases. The `cloud` preset is the real thing: 10,000,000 rows across
+both durability levels, and it regenerates the page from the fresh numbers.
 
 ```sh
-BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 BENCH_RUNS=2 \
-  BENCH_WARMUP_SECONDS=1 BENCH_MEASURE_SECONDS=2 ./run-all.sh
+./run-all.sh cloud
 ```
+
+The `smoke` preset checks that the harness works end to end without spending the time a real run
+needs: 10,000 rows at one durability level with short windows. It never touches the published
+page, and it keeps its output under `results/.smoke/` (git-ignored) so you can read the numbers
+and confirm they look sane. Remove that directory yourself once you're satisfied:
+`rm -rf results/.smoke`.
+
+```sh
+./run-all.sh smoke
+```
+
+A preset only fills in defaults. Any `BENCH_` variable you export still overrides it, so
+`BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
 
 To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud`,
 not on a laptop, because laptop clocks throttle under sustained load. On macOS a plain fsync does

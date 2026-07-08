@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { collectSystemInfo } from './config'
 import { escapeCsvField, formatLatency } from './reporter'
 import { buildManifest, createRunDirectory, runIdFromIso, writeRunArtifact } from './run-manifest'
+import { medianOf, summarizeMetric } from './stats'
 
 const COMPOSE_FILE = join(import.meta.dirname, 'docker', 'docker-compose.yml')
 const RESULTS_DIR = join(import.meta.dirname, 'results')
@@ -18,6 +19,17 @@ const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 10000)
 const WORKLOADS = (
   process.env.BENCH_WORKLOADS ?? 'point-select,bulk-insert,batch-update,ycsb-a,ycsb-b,ycsb-c,ycsb-f,tpc-c-derived'
 ).split(',')
+
+/**
+ * The per-workload comparison reports the median of several independent runs rather than a single
+ * warmup+measure, so one noisy run cannot set the headline number. Each run is a fresh
+ * warmup+measure driven by the engine control server; the driver interleaves the two engines per
+ * run to keep any slow drift over the suite from favouring whichever side ran first. The bootstrap
+ * confidence interval reuses BENCH_SEED so a run reproduces byte-for-byte.
+ */
+const ENGINE_RUNS = Math.max(1, Math.trunc(Number(process.env.BENCH_ENGINE_RUNS ?? 5)))
+const CI_CONFIDENCE = 0.95
+const CI_SEED = BigInt(process.env.BENCH_SEED ?? '42')
 
 /**
  * The published engine track is a co-located server-vs-server comparison: the load driver
@@ -144,21 +156,115 @@ function estimateBenchmarkTimeoutMs(
   return Math.max(estimated * 2, 120_000)
 }
 
-interface EngineResult {
-  engine: string
+interface RawResultEntry {
+  name: string
+  opsPerSec: number
+  meanNs: number
+  p50Ns: number
+  p75Ns: number
+  p99Ns: number
+  p999Ns: number
+  samples: number
+  cv: number
+}
+
+interface RawWorkloadResult {
   workload: string
   dataSize: number
-  results: Array<{
-    name: string
-    opsPerSec: number
-    meanNs: number
-    p50Ns: number
-    p75Ns: number
-    p99Ns: number
-    p999Ns: number
-    samples: number
-    cv: number
-  }>
+  results: RawResultEntry[]
+}
+
+interface AllRunResponse {
+  engine: string
+  results: RawWorkloadResult[]
+}
+
+/**
+ * A per-workload result aggregated across the independent runs. The latency and within-run CV
+ * fields carry the median across runs so the columns still read as a central tendency, while the
+ * ops-per-second distribution keeps its own median, run-to-run spread, and confidence interval.
+ */
+interface AggregatedResultEntry extends RawResultEntry {
+  runs: number
+  opsPerSecSamples: number[]
+  medianOpsPerSec: number
+  meanOpsPerSec: number
+  stdDevOpsPerSec: number
+  cvOpsPerSec: number
+  ciLowerOpsPerSec: number
+  ciUpperOpsPerSec: number
+  ciConfidence: number
+}
+
+interface AggregatedWorkloadResult {
+  workload: string
+  dataSize: number
+  results: AggregatedResultEntry[]
+}
+
+interface EngineResult {
+  engine: string
+  results: AggregatedWorkloadResult[]
+}
+
+function aggregateRuns(engine: string, runs: AllRunResponse[], confidence: number, seed: bigint): EngineResult {
+  const template = runs[0]
+  if (!template) {
+    return { engine, results: [] }
+  }
+
+  const results: AggregatedWorkloadResult[] = template.results.map((group, groupIndex) => {
+    const entries: AggregatedResultEntry[] = group.results.map((entry, entryIndex) => {
+      const opsSamples: number[] = []
+      const meanNsSamples: number[] = []
+      const p50Samples: number[] = []
+      const p75Samples: number[] = []
+      const p99Samples: number[] = []
+      const p999Samples: number[] = []
+      const cvSamples: number[] = []
+      let totalSamples = 0
+
+      for (const run of runs) {
+        const runEntry = run.results[groupIndex]?.results[entryIndex]
+        if (!runEntry) continue
+        opsSamples.push(runEntry.opsPerSec)
+        meanNsSamples.push(runEntry.meanNs)
+        p50Samples.push(runEntry.p50Ns)
+        p75Samples.push(runEntry.p75Ns)
+        p99Samples.push(runEntry.p99Ns)
+        p999Samples.push(runEntry.p999Ns)
+        cvSamples.push(runEntry.cv)
+        totalSamples += runEntry.samples
+      }
+
+      const summary = summarizeMetric(opsSamples, confidence, seed)
+
+      return {
+        name: entry.name,
+        opsPerSec: summary.median,
+        meanNs: medianOf(meanNsSamples),
+        p50Ns: medianOf(p50Samples),
+        p75Ns: medianOf(p75Samples),
+        p99Ns: medianOf(p99Samples),
+        p999Ns: medianOf(p999Samples),
+        samples: totalSamples,
+        cv: medianOf(cvSamples),
+        runs: summary.runs,
+        opsPerSecSamples: opsSamples,
+        medianOpsPerSec: summary.median,
+        meanOpsPerSec: summary.mean,
+        stdDevOpsPerSec: summary.stdDev,
+        cvOpsPerSec: summary.cv,
+        ciLowerOpsPerSec: summary.lowerBound,
+        ciUpperOpsPerSec: summary.upperBound,
+        ciConfidence: summary.confidence,
+      }
+    })
+
+    return { workload: group.workload, dataSize: group.dataSize, results: entries }
+  })
+
+  return { engine, results }
 }
 
 function pad(str: string, width: number, align: 'left' | 'right' = 'right'): string {
@@ -244,12 +350,17 @@ function printScalingTable(
   console.log('-'.repeat(header.length))
 }
 
-function printComparisonTable(sirannonResults: EngineResult[], postgresResults: EngineResult[]) {
+function printComparisonTable(
+  sirannonResults: AggregatedWorkloadResult[],
+  postgresResults: AggregatedWorkloadResult[],
+) {
   const header = [
     pad('Workload', 25, 'left'),
     pad('N Rows', 8),
-    pad('Sirannon ops/s', 16),
-    pad('Postgres ops/s', 16),
+    pad('Runs', 5),
+    pad('Sirannon median', 16),
+    pad('Sirannon 95% CI', 22),
+    pad('Postgres median', 16),
     pad('Speedup', 10),
     pad('S P50', 12),
     pad('S P99', 12),
@@ -270,16 +381,19 @@ function printComparisonTable(sirannonResults: EngineResult[], postgresResults: 
       const pr = pResult.results[i]
       if (!pr) continue
 
-      const speedup = pr.opsPerSec > 0 ? sr.opsPerSec / pr.opsPerSec : Infinity
-      const cvPct = sr.cv * 100
+      const speedup = pr.medianOpsPerSec > 0 ? sr.medianOpsPerSec / pr.medianOpsPerSec : Infinity
+      const cvPct = sr.cvOpsPerSec * 100
       const cvStr = `${cvPct.toFixed(1)}%${cvPct > 15 ? ' [!]' : ''}`
+      const ciStr = `[${fmtOps(sr.ciLowerOpsPerSec)}, ${fmtOps(sr.ciUpperOpsPerSec)}]`
 
       console.log(
         [
           pad(sr.name, 25, 'left'),
           pad(sResult.dataSize.toLocaleString(), 8),
-          pad(fmtOps(sr.opsPerSec), 16),
-          pad(fmtOps(pr.opsPerSec), 16),
+          pad(String(sr.runs), 5),
+          pad(fmtOps(sr.medianOpsPerSec), 16),
+          pad(ciStr, 22),
+          pad(fmtOps(pr.medianOpsPerSec), 16),
           pad(`${speedup.toFixed(2)}x`, 10),
           pad(formatLatency(sr.p50Ns), 12),
           pad(formatLatency(sr.p99Ns), 12),
@@ -305,33 +419,36 @@ async function main() {
     await waitForHealth(POSTGRES_ENGINE_URL, 'Postgres engine')
 
     const benchTimeout = estimateBenchmarkTimeoutMs(WORKLOADS, DATA_SIZES, WARMUP_MS, MEASURE_MS)
-    console.log(`\nBenchmark timeout: ${Math.round(benchTimeout / 1000)}s per engine`)
+    console.log(`\nBenchmark timeout: ${Math.round(benchTimeout / 1000)}s per engine run`)
+    console.log(`Reporting the median of ${ENGINE_RUNS} independent run(s) per workload with a 95% CI.`)
 
-    console.log('\nRunning Sirannon engine benchmarks...')
-    const sirannonResult = (await postJson(
-      `${SIRANNON_ENGINE_URL}/benchmark/all`,
-      {
-        dataSizes: DATA_SIZES,
-        warmupMs: WARMUP_MS,
-        measureMs: MEASURE_MS,
-        workloads: WORKLOADS,
-      },
-      benchTimeout,
-    )) as { engine: string; results: EngineResult[] }
+    const allBody = {
+      dataSizes: DATA_SIZES,
+      warmupMs: WARMUP_MS,
+      measureMs: MEASURE_MS,
+      workloads: WORKLOADS,
+    }
 
-    console.log('\nRunning Postgres engine benchmarks...')
-    const postgresResult = (await postJson(
-      `${POSTGRES_ENGINE_URL}/benchmark/all`,
-      {
-        dataSizes: DATA_SIZES,
-        warmupMs: WARMUP_MS,
-        measureMs: MEASURE_MS,
-        workloads: WORKLOADS,
-      },
-      benchTimeout,
-    )) as { engine: string; results: EngineResult[] }
+    const sirannonRuns: AllRunResponse[] = []
+    const postgresRuns: AllRunResponse[] = []
 
-    printComparisonTable(sirannonResult.results as EngineResult[], postgresResult.results as EngineResult[])
+    for (let runIndex = 0; runIndex < ENGINE_RUNS; runIndex++) {
+      console.log(`\n--- Engine run ${runIndex + 1}/${ENGINE_RUNS} ---`)
+      console.log('Running Sirannon engine benchmarks...')
+      sirannonRuns.push(
+        (await postJson(`${SIRANNON_ENGINE_URL}/benchmark/all`, allBody, benchTimeout)) as AllRunResponse,
+      )
+
+      console.log('Running Postgres engine benchmarks...')
+      postgresRuns.push(
+        (await postJson(`${POSTGRES_ENGINE_URL}/benchmark/all`, allBody, benchTimeout)) as AllRunResponse,
+      )
+    }
+
+    const sirannonResult = aggregateRuns('sirannon', sirannonRuns, CI_CONFIDENCE, CI_SEED)
+    const postgresResult = aggregateRuns('postgres', postgresRuns, CI_CONFIDENCE, CI_SEED)
+
+    printComparisonTable(sirannonResult.results, postgresResult.results)
 
     const sirannonInfo = (await getJson(`${SIRANNON_ENGINE_URL}/info`).catch(() => ({}))) as Record<string, string>
     const postgresInfo = (await getJson(`${POSTGRES_ENGINE_URL}/info`).catch(() => ({}))) as Record<string, string>
@@ -355,6 +472,8 @@ async function main() {
         warmupMs: WARMUP_MS,
         measureMs: MEASURE_MS,
         workloads: WORKLOADS,
+        runs: ENGINE_RUNS,
+        confidence: CI_CONFIDENCE,
         delivery: DELIVERY_DISCLOSURE,
       },
       sirannon: sirannonResult,
@@ -372,20 +491,24 @@ async function main() {
       'workload',
       'dataSize',
       'operation',
-      'sirannonOpsPerSec',
-      'postgresOpsPerSec',
+      'runs',
+      'sirannonMedianOpsPerSec',
+      'sirannonCiLowOpsPerSec',
+      'sirannonCiHighOpsPerSec',
+      'sirannonCvOpsPerSec',
+      'postgresMedianOpsPerSec',
+      'postgresCiLowOpsPerSec',
+      'postgresCiHighOpsPerSec',
       'speedup',
       'sirannonP50Ns',
       'sirannonP99Ns',
       'postgresP50Ns',
       'postgresP99Ns',
-      'sirannonCV',
-      'postgresCV',
     ].join(',')
     const engineCsvRows: string[] = []
 
-    for (const sResult of sirannonResult.results as EngineResult[]) {
-      const pResult = (postgresResult.results as EngineResult[]).find(
+    for (const sResult of sirannonResult.results) {
+      const pResult = postgresResult.results.find(
         r => r.workload === sResult.workload && r.dataSize === sResult.dataSize,
       )
       if (!pResult) continue
@@ -394,21 +517,25 @@ async function main() {
         const sr = sResult.results[i]
         const pr = pResult.results[i]
         if (!pr) continue
-        const speedup = pr.opsPerSec > 0 ? sr.opsPerSec / pr.opsPerSec : Infinity
+        const speedup = pr.medianOpsPerSec > 0 ? sr.medianOpsPerSec / pr.medianOpsPerSec : Infinity
         engineCsvRows.push(
           [
             escapeCsvField(sResult.workload),
             sResult.dataSize,
             escapeCsvField(sr.name),
-            sr.opsPerSec.toFixed(2),
-            pr.opsPerSec.toFixed(2),
+            sr.runs,
+            sr.medianOpsPerSec.toFixed(2),
+            sr.ciLowerOpsPerSec.toFixed(2),
+            sr.ciUpperOpsPerSec.toFixed(2),
+            sr.cvOpsPerSec.toFixed(4),
+            pr.medianOpsPerSec.toFixed(2),
+            pr.ciLowerOpsPerSec.toFixed(2),
+            pr.ciUpperOpsPerSec.toFixed(2),
             speedup.toFixed(4),
             sr.p50Ns.toFixed(0),
             sr.p99Ns.toFixed(0),
             pr.p50Ns.toFixed(0),
             pr.p99Ns.toFixed(0),
-            sr.cv.toFixed(4),
-            pr.cv.toFixed(4),
           ].join(','),
         )
       }

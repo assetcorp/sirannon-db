@@ -208,6 +208,7 @@ pnpm bench:docker
 | `BENCH_DATA_SIZES`         | `1000,10000`                   | Comma-separated row counts                        |
 | `BENCH_WARMUP_MS`          | `5000`                         | Warmup duration per task                          |
 | `BENCH_MEASURE_MS`         | `10000`                        | Measurement duration per task                     |
+| `BENCH_ENGINE_RUNS`        | `5`                            | Independent runs per workload (median + 95% CI)   |
 | `BENCH_WORKLOADS`          | `point-select,bulk-insert,...` | Comma-separated workload names                    |
 | `BENCH_DURABILITY`         | `matched`                      | Durability mode for both engines                  |
 | `BENCH_CPUS`               | `2`                            | Total CPU budget per side                         |

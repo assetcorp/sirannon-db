@@ -32,6 +32,11 @@ from .core.workloads import build_workloads
 from .features import measure_cdc_latency
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "")
+    return int(raw) if raw.strip() else default
+
+
 async def _run(engine: str, durability: str, config: Config, want_features: bool) -> dict:
     driver = build_driver(engine, config, durability)
     await driver.connect()
@@ -44,8 +49,8 @@ async def _run(engine: str, durability: str, config: Config, want_features: bool
                 await measure_cdc_latency(
                     base_url=config.sirannon.base_url,
                     database_id=config.sirannon.database_id,
-                    samples=int(os.environ.get("BENCH_CDC_SAMPLES", "200")),
-                    warmup_samples=int(os.environ.get("BENCH_CDC_WARMUP", "20")),
+                    samples=_env_int("BENCH_CDC_SAMPLES", 200),
+                    warmup_samples=_env_int("BENCH_CDC_WARMUP", 20),
                 )
             )
         environment = capture_environment()

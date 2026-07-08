@@ -21,42 +21,6 @@ equivalent for: change-feed latency over Sirannon's built-in WebSocket feed, col
 the connection-scaling curve. Each is framed as a property of Sirannon, never as a win over
 PostgreSQL, because the two systems do not do the same work there.
 
-## Why the comparison is fair
-
-**One generator, one client per engine.** A single Node load generator holds the open-loop
-scheduler, the coordinated-omission correction, and the statistics, so that instrument behaves
-identically for both systems; only a thin per-database adapter differs. Each engine is reached
-through the client it actually ships: Sirannon over its SDK's default WebSocket transport, which
-multiplexes every concurrent request over one persistent socket the way an application talks to
-it, and PostgreSQL over node-postgres on its binary socket protocol. Driving each system through
-its own shipping client, and disclosing the difference, is what respected efforts do: ClickBench
-measures the full client path, YCSB drives every database through its own native binding, and
-SurrealDB's own comparison runs each engine on its native protocol and tells readers not to
-compare across the transport gap. Sirannon pays JSON framing on every request, which is heavier
-than PostgreSQL's binary protocol. Charging Sirannon that cost is the point, because it's
-Sirannon's real client path. Wrapping PostgreSQL in a foreign HTTP proxy to equalize transport
-would measure the proxy, not the database, so the harness never does that.
-
-**Durability is matched, at two levels.** The run reports a full-durability row and a
-matched-relaxed row. Full durability sets PostgreSQL `synchronous_commit=on` against SQLite
-`synchronous=FULL`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off`
-against `synchronous=NORMAL` in WAL mode, so both defer the fsync and both can lose only the most
-recent commits on power loss without corrupting. Running one engine durable and the other relaxed
-would measure fsync against no-fsync, so the harness matches at each level.
-
-**The load is open-loop and corrected for coordinated omission.** A closed-loop generator stops
-sending when the server stalls, so the slow requests never get measured and the tail looks far
-better than it is. This harness fires requests at a fixed rate and charges each request's latency
-from the time it was meant to be sent, which is the wrk2 correction. It reports p50, p95, p99, and
-p99.9, never an average. Before each sweep it measures each client's own throughput ceiling
-against the live engine and discloses it, so a rate that falls short is charged to the database,
-and a client that ran out of room is flagged instead of being read as a slow server.
-
-**The setup is disclosed and capped.** Both engines run in resource-capped containers on one host
-with no network between the load driver and the server. The load driver runs on its own pinned
-cores so it never competes with the engine under test. Every figure in the report names the
-machine, the commit, the durability settings, the workloads, and the seed.
-
 ## Running it
 
 The full run drives both engines at both durability levels in Docker:

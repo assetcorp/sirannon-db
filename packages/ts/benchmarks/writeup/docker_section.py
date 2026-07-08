@@ -8,7 +8,7 @@ honest placeholder that the drift check tolerates.
 
 from __future__ import annotations
 
-from render import decimal, integer, is_number, latency_ms, ops, percent, speedup, table
+from render import decimal, humanized_list, integer, is_number, latency_ms, ops, percent, speedup, table
 from sources import Source
 
 _WORKLOAD_LABELS = {
@@ -92,7 +92,7 @@ def _setup_block(source: Source) -> str:
     )
     machine = f"The run executed on {label}, which reports {host}." if label else f"The run host reports {host}."
 
-    sizes = ", ".join(integer(size) for size in (engine_config.get("dataSizes") or []))
+    sizes = humanized_list([integer(size) for size in (engine_config.get("dataSizes") or [])])
     postgres_version = engines.get("postgresVersion") or "n/a"
     sqlite_version = engines.get("sqliteVersion") or "n/a"
 
@@ -109,15 +109,17 @@ def _setup_block(source: Source) -> str:
         f"- **Run.** These figures come from run `{source.run_id}`, recorded on {_date(source)} from commit "
         f"`{commit}`{dirty}. The raw per-workload results are in [the run report]({source.report_link}).",
         f"- **Machine.** {machine}",
-        f"- **Engines.** Sirannon on SQLite {sqlite_version} against {postgres_version}, each in a "
-        f"resource-capped Docker container under the {config.get('durability') or 'matched'} durability mode.",
+        f"- **Engines.** Sirannon runs on SQLite {sqlite_version}; Postgres is {postgres_version}. Each engine "
+        f"runs in a resource-capped Docker container under the {config.get('durability') or 'matched'} durability "
+        "mode.",
         "- **Delivery.** The load driver reached Sirannon through the SirannonClient SDK over HTTP into the "
         "real server front-end, and reached Postgres through the native pg driver, both over loopback on one "
         f"host. {cpu_line}",
-        f"- **Workloads.** Measured at {sizes or 'n/a'} rows with a {integer(engine_config.get('warmupMs'))} ms "
-        f"warmup and {integer(engine_config.get('measureMs'))} ms measurement window, seed "
-        f"`{config.get('seed') or 'n/a'}`. Each workload runs across {integer(engine_config.get('runs'))} "
-        "independent runs, and the comparison reports the median with a 95% confidence interval.",
+        f"- **Workloads.** Every workload ran at {sizes or 'n/a'} rows with a "
+        f"{integer(engine_config.get('warmupMs'))} ms warmup and a {integer(engine_config.get('measureMs'))} ms "
+        f"measurement window, under seed `{config.get('seed') or 'n/a'}`. Every workload ran "
+        f"{integer(engine_config.get('runs'))} independent times, and the comparison reports the median with a "
+        "95% confidence interval.",
     ])
 
 
@@ -125,11 +127,12 @@ _METHODOLOGY = (
     "Both databases do the same client-server job on the same host. The load driver reaches Sirannon "
     "through its real client SDK over HTTP into the real server front-end, and reaches Postgres through "
     "the native pg driver, both over loopback with no network between them to bias the result. This is "
-    "the comparison that counts, because it measures the two engines doing the same work rather than one "
-    "engine skipping a network hop the other pays.\n\n"
+    "the comparison that counts, because it measures the two engines doing the same work. An "
+    "embedded-versus-networked setup would let one engine skip a network hop that the other pays, and that "
+    "gap would swamp the real difference between the engines.\n\n"
     "Sirannon's HTTP request path carries JSON framing on every call, which is heavier than Postgres's "
-    "binary wire protocol. The numbers err in that direction on purpose: charging Sirannon its real client "
-    "cost keeps the comparison honest rather than flattering.\n\n"
+    "binary wire protocol. The numbers err in that direction on purpose. Charging Sirannon its real client "
+    "cost keeps the comparison honest; hiding that cost would flatter Sirannon.\n\n"
     "The embedded figures reported separately below are a different claim. They measure Sirannon called "
     "in-process with no network hop at all, which is how an application that embeds the engine reaches it. "
     "That is a property of the embedded deployment mode, so it is never presented as Sirannon beating a "
@@ -270,12 +273,44 @@ def _embedded_block(source: Source) -> str:
     if not isinstance(scaling, dict):
         return "No embedded-deployment results were recorded."
     return "\n\n".join([
-        "Separate claim about the embedded deployment mode, not a head-to-head against a server database. "
-        "Here Sirannon is called in-process across worker threads with no network hop, which is how an "
-        "application that embeds the engine reaches it. Postgres is still reached over its client-server "
-        "path, so this table describes Sirannon's embedded mode rather than declaring a winner.",
+        "These figures make a separate claim about the embedded deployment mode. Here an application calls "
+        "Sirannon in-process across worker threads with no network hop, which is how embedding the engine "
+        "works. Postgres is still reached over its client-server path, so this table describes Sirannon's "
+        "embedded mode; it does not declare a winner over a server database.",
         _scaling_model_table(scaling, "worker-threads"),
     ])
+
+
+def comparison_document(source: Source) -> str:
+    """Assemble the self-contained per-run report committed as ``comparison.md`` beside the run's
+    result JSON. It reuses the same block builders as the published page, so a reader who opens one
+    run directory sees the machine, the methodology, and every table without leaving the folder."""
+    date = _date(source) or "an unrecorded date"
+    intro = (
+        f"This report captures one recorded run of the Docker engine benchmark, run `{source.run_id}` "
+        f"from {date}. Both databases answer the same workloads over their own client-server path on the "
+        "same host, so the figures measure the two engines doing identical work over the loopback interface."
+    )
+    single_client_intro = (
+        "This table reports throughput and latency per workload at each measured row count. A speedup "
+        "above one means Sirannon ran faster than Postgres for that workload."
+    )
+    sections = [
+        "# Docker engine benchmark: Sirannon and Postgres on one host",
+        intro,
+        "## Why this comparison is fair",
+        _methodology_block(source),
+        "## Run and machine",
+        _setup_block(source),
+        "## Single-client comparison",
+        single_client_intro,
+        _comparison_block(source),
+        "## Concurrency scaling (server versus server)",
+        _scaling_block(source),
+        "## Embedded deployment (separate claim)",
+        _embedded_block(source),
+    ]
+    return "\n\n".join(sections) + "\n"
 
 
 def docker_blocks(source: Source | None) -> dict[str, str]:

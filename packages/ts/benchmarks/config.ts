@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { cpus, release, totalmem, type } from 'node:os'
 import type { SQLiteDriver } from '../src/core/driver/types'
 
@@ -37,6 +38,14 @@ export interface SystemInfo {
   durability: string
   seed: string
   driverName: string
+  /**
+   * Human-readable description of the machine the run executed on, for example the
+   * cloud instance type and region. Sourced from BENCH_MACHINE_LABEL so published
+   * numbers name the exact disclosed host rather than an anonymous CPU string.
+   */
+  machineLabel: string
+  gitCommit: string
+  gitDirty: boolean
 }
 
 let cachedDriver: SQLiteDriver | null = null
@@ -119,9 +128,32 @@ function validateConfig(config: BenchConfig): void {
   }
 }
 
+function gitOutput(args: string[]): string | null {
+  try {
+    return execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch {
+    return null
+  }
+}
+
+interface GitProvenance {
+  commit: string
+  dirty: boolean
+}
+
+export function collectGitProvenance(): GitProvenance {
+  const commit = gitOutput(['rev-parse', 'HEAD'])
+  if (commit === null) {
+    return { commit: 'unknown', dirty: false }
+  }
+  const status = gitOutput(['status', '--porcelain'])
+  return { commit, dirty: status !== null && status.length > 0 }
+}
+
 export function collectSystemInfo(): SystemInfo {
   const config = loadConfig()
   const cpuInfo = cpus()
+  const git = collectGitProvenance()
   return {
     os: `${type()} ${release()}`,
     cpu: cpuInfo[0]?.model ?? 'unknown',
@@ -134,5 +166,8 @@ export function collectSystemInfo(): SystemInfo {
     sqliteVersion: '',
     postgresVersion: '',
     driverName: getBenchDriverName(),
+    machineLabel: process.env.BENCH_MACHINE_LABEL ?? '',
+    gitCommit: git.commit,
+    gitDirty: git.dirty,
   }
 }

@@ -75,7 +75,10 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
         return
       }
 
-      chunks.push(Buffer.from(chunk))
+      const bytes = new Uint8Array(chunk)
+      const copy = Buffer.allocUnsafe(bytes.byteLength)
+      copy.set(bytes)
+      chunks.push(copy)
 
       if (isLast) {
         done = true

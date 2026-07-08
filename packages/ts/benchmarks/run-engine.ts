@@ -4,6 +4,7 @@ import http from 'node:http'
 import { join } from 'node:path'
 import { collectSystemInfo } from './config'
 import { escapeCsvField, formatLatency } from './reporter'
+import { buildManifest, createRunDirectory, runIdFromIso, writeRunArtifact } from './run-manifest'
 
 const COMPOSE_FILE = join(import.meta.dirname, 'docker', 'docker-compose.yml')
 const RESULTS_DIR = join(import.meta.dirname, 'results')
@@ -14,7 +15,27 @@ const POSTGRES_ENGINE_URL = process.env.POSTGRES_ENGINE_URL ?? 'http://localhost
 const DATA_SIZES = (process.env.BENCH_DATA_SIZES ?? '1000,10000').split(',').map(Number)
 const WARMUP_MS = Number(process.env.BENCH_WARMUP_MS ?? 5000)
 const MEASURE_MS = Number(process.env.BENCH_MEASURE_MS ?? 10000)
-const WORKLOADS = (process.env.BENCH_WORKLOADS ?? 'point-select,bulk-insert,batch-update,ycsb-a,tpc-c-lite').split(',')
+const WORKLOADS = (
+  process.env.BENCH_WORKLOADS ?? 'point-select,bulk-insert,batch-update,ycsb-a,ycsb-b,ycsb-c,ycsb-f,tpc-c-derived'
+).split(',')
+
+/**
+ * The published engine track is a co-located server-vs-server comparison: the load driver
+ * reaches Sirannon through the SirannonClient SDK over HTTP into the real server front-end,
+ * and Postgres through the native pg driver, both over loopback on one host. Each side runs
+ * on the same total CPU budget split between its load driver and its database server. These
+ * values name what the recorded run measured so the generated page can disclose it; they are
+ * read from the same environment the Docker compose file sets, so the disclosure never drifts
+ * from the containers that produced the numbers.
+ */
+const DELIVERY_DISCLOSURE = {
+  sirannon: 'client-server-http',
+  postgres: 'client-server',
+  transport: 'loopback',
+  cpusPerSide: Number(process.env.BENCH_CPUS ?? 2),
+  sirannonSplit: process.env.BENCH_SIRANNON_SPLIT ?? 'driver and server share the container CPU budget',
+  postgresSplit: process.env.BENCH_POSTGRES_SPLIT ?? 'driver container plus database container share the CPU budget',
+} as const
 
 function run(cmd: string, opts?: { ignoreError?: boolean }) {
   console.log(`> ${cmd}`)
@@ -83,6 +104,34 @@ async function postJson(url: string, body: unknown, timeoutMs = 30_000): Promise
   })
 }
 
+async function getJson(url: string, timeoutMs = 15_000): Promise<unknown> {
+  const parsed = new URL(url)
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname, method: 'GET' },
+      res => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf-8')
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(JSON.parse(text))
+          } else {
+            reject(new Error(`GET ${url} failed: ${res.statusCode} ${text}`))
+          }
+        })
+      },
+    )
+    const timer = setTimeout(() => req.destroy(new Error(`GET ${url} timed out after ${timeoutMs}ms`)), timeoutMs)
+    req.on('error', err => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    req.on('close', () => clearTimeout(timer))
+    req.end()
+  })
+}
+
 function estimateBenchmarkTimeoutMs(
   workloads: string[],
   dataSizes: number[],
@@ -122,10 +171,13 @@ function fmtOps(ops: number): string {
   return ops.toFixed(2)
 }
 
+type DeliveryMode = 'client-server-http' | 'client-server' | 'embedded'
+
 interface ConcurrentDataPoint {
   concurrency: number
   readRatio: number
   model: string
+  delivery: DeliveryMode
   totalOps: number
   opsPerSec: number
   p50Ns: number
@@ -281,25 +333,40 @@ async function main() {
 
     printComparisonTable(sirannonResult.results as EngineResult[], postgresResult.results as EngineResult[])
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const resultsPath = join(RESULTS_DIR, `engine-${timestamp}.json`)
-    writeFileSync(
-      resultsPath,
-      `${JSON.stringify(
-        {
-          category: 'engine',
-          timestamp: new Date().toISOString(),
-          system: systemInfo,
-          config: { dataSizes: DATA_SIZES, warmupMs: WARMUP_MS, measureMs: MEASURE_MS, workloads: WORKLOADS },
-          sirannon: sirannonResult,
-          postgres: postgresResult,
-        },
-        null,
-        2,
-      )}\n`,
+    const sirannonInfo = (await getJson(`${SIRANNON_ENGINE_URL}/info`).catch(() => ({}))) as Record<string, string>
+    const postgresInfo = (await getJson(`${POSTGRES_ENGINE_URL}/info`).catch(() => ({}))) as Record<string, string>
+    systemInfo.sqliteVersion = sirannonInfo.version ?? ''
+    systemInfo.postgresVersion = postgresInfo.version ?? ''
+
+    const createdAtIso = new Date().toISOString()
+    const timestamp = createdAtIso.replace(/[:.]/g, '-')
+    const runId = runIdFromIso(createdAtIso)
+    const runDir = createRunDirectory(
+      RESULTS_DIR,
+      buildManifest({ runId, createdAt: createdAtIso, category: 'engine', system: systemInfo }),
     )
 
+    const enginePayload = {
+      category: 'engine' as const,
+      timestamp: createdAtIso,
+      system: systemInfo,
+      config: {
+        dataSizes: DATA_SIZES,
+        warmupMs: WARMUP_MS,
+        measureMs: MEASURE_MS,
+        workloads: WORKLOADS,
+        delivery: DELIVERY_DISCLOSURE,
+      },
+      sirannon: sirannonResult,
+      postgres: postgresResult,
+    }
+
+    const resultsPath = join(RESULTS_DIR, `engine-${timestamp}.json`)
+    writeFileSync(resultsPath, `${JSON.stringify(enginePayload, null, 2)}\n`)
+    writeRunArtifact(runDir, 'engine.json', enginePayload)
+
     console.log(`\nEngine benchmark results written to ${resultsPath}`)
+    console.log(`Self-describing run recorded under ${join(runDir)}`)
 
     const engineCsvHeader = [
       'workload',
@@ -382,22 +449,24 @@ async function main() {
       postgresConcResult.results,
     )
 
+    const scalingPayload = {
+      category: 'engine-scaling' as const,
+      timestamp: createdAtIso,
+      system: systemInfo,
+      config: {
+        concurrencyLevels,
+        durationMs: scalingDurationMs,
+        dataSize: 10_000,
+        readRatios: [1.0, 0.5],
+        delivery: DELIVERY_DISCLOSURE,
+      },
+      sirannon: sirannonConcResult,
+      postgres: postgresConcResult,
+    }
+
     const scalingResultsPath = join(RESULTS_DIR, `engine-scaling-${timestamp}.json`)
-    writeFileSync(
-      scalingResultsPath,
-      `${JSON.stringify(
-        {
-          category: 'engine-scaling',
-          timestamp: new Date().toISOString(),
-          system: systemInfo,
-          config: { concurrencyLevels, durationMs: scalingDurationMs, dataSize: 10_000, readRatios: [1.0, 0.5] },
-          sirannon: sirannonConcResult,
-          postgres: postgresConcResult,
-        },
-        null,
-        2,
-      )}\n`,
-    )
+    writeFileSync(scalingResultsPath, `${JSON.stringify(scalingPayload, null, 2)}\n`)
+    writeRunArtifact(runDir, 'engine-scaling.json', scalingPayload)
     console.log(`\nScaling benchmark results written to ${scalingResultsPath}`)
 
     const scalingCsvHeader = [

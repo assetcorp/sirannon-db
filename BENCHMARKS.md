@@ -1,17 +1,16 @@
 # Sirannon benchmarks
 
-Sirannon is a Postgres alternative built on SQLite, so the benchmark that matters is a fair,
-head-to-head comparison against PostgreSQL on the same OLTP workloads. This page reports that
-comparison. Both engines run on one host in resource-capped containers, each driven through the
-client it actually ships, at matched durability, under an open-loop load generator that reports
-the tail latency honestly.
+Sirannon is a Postgres alternative built on SQLite, so this page reports a head-to-head comparison
+against PostgreSQL on the same OLTP workloads. Both engines run on one host in resource-capped
+containers, each driven through the client it ships, at matched durability, under an open-loop load
+generator that records the full tail latency.
 
-The numbers on this page are generated from the latest committed run under
+The numbers on this page come from the latest committed run under
 `benchmarks/server/results/runs/`. The prose is written by hand; every table and the machine
-description come from the recorded run, so the two never disagree. When no run is committed, the
-tables say so rather than show invented numbers.
+description come from that run, so the words and the numbers match. When no run is committed, the
+page shows a placeholder instead of numbers.
 
-## How to read these numbers
+## Methodology
 
 <!-- BENCH:methodology START -->
 _No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit its run directory under `benchmarks/server/results/runs/` to publish numbers here._
@@ -36,9 +35,9 @@ _No benchmark run is committed yet. Run the suite on the disclosed cloud machine
 
 ## Throughput versus offered load
 
-Peak throughput on its own hides where an engine's tail latency breaks down. The curve below
+Peak throughput alone does not show where an engine's tail latency breaks down. The curve below
 shows achieved throughput and p99 latency as the offered rate climbs, so you can see the knee for
-each engine rather than a single peak number.
+each engine.
 
 <!-- BENCH:scaling START -->
 _No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit its run directory under `benchmarks/server/results/runs/` to publish numbers here._
@@ -46,9 +45,8 @@ _No benchmark run is committed yet. Run the suite on the disclosed cloud machine
 
 ## Sirannon-only characterizations
 
-These describe Sirannon on its own terms, because PostgreSQL either has no built-in equivalent or
-reaches the same goal through a different mechanism. Read them as properties of Sirannon, not as a
-win over PostgreSQL.
+These measure Sirannon on its own terms, because PostgreSQL either has no built-in equivalent or
+reaches the same goal a different way.
 
 <!-- BENCH:features START -->
 _No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit its run directory under `benchmarks/server/results/runs/` to publish numbers here._
@@ -56,8 +54,7 @@ _No benchmark run is committed yet. Run the suite on the disclosed cloud machine
 
 ## Reproducing this
 
-The harness is a Python project under `benchmarks/server/`. Its README explains the fair-comparison
-method, the durability matching, the coordinated-omission correction, and how to run the suite,
-both in Docker and against a hand-started server. To publish credible numbers, run it on the
-disclosed cloud machine through `benchmarks/cloud/`, not on a laptop, because laptop clocks
-throttle under sustained load.
+The harness is in `benchmarks/server/`, and its README explains the method, the durability
+matching, the coordinated-omission correction, and how to run the suite in Docker or against a
+hand-started server. To publish credible numbers, run it on the disclosed cloud machine through
+`benchmarks/cloud/`; a laptop throttles under sustained load, so its numbers aren't trustworthy.

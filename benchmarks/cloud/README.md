@@ -9,13 +9,13 @@ hardware and anyone can repeat it.
 
 One shared core drives every provider. Each provider is a small driver under `providers/` that
 supplies create, ssh, scp, and delete. Everything else, the git packaging, the detached run,
-result fetching, dry-run, and teardown, lives in `lib/common.sh` and is identical everywhere.
+result fetching, dry-run, and teardown, is in `lib/common.sh` and identical everywhere.
 
 ## Pick a provider
 
 Select the cloud with the `PROVIDER` variable (default `gcp`). Every provider defaults to a
-dedicated-vCPU machine with about 8 vCPU and 32 GB, because shared tiers wander under load and
-ruin reproducible timing.
+dedicated-vCPU machine with about 8 vCPU and 32 GB, because shared tiers change speed under load
+and make timing impossible to reproduce.
 
 | `PROVIDER` | CLI | Machine (dedicated, ~8 vCPU / 32 GB) | Login | ~$/hr |
 | --- | --- | --- | --- | --- |
@@ -44,18 +44,18 @@ PROVIDER=hetzner ./run-cloud.sh all
 That creates the VM, pushes your current working tree including uncommitted changes, installs
 Docker, git, and Python 3, runs the full `cloud` preset (10,000,000 rows across both durability
 levels), and copies each run directory into `benchmarks/server/results/runs/`. For a smaller run,
-override individual `BENCH_` variables (for example `BENCH_DATA_SIZE`) as shown below. It leaves the VM running so you can inspect it, and prints the
-command to delete it. Add `--teardown` to delete the VM when the run exits, even if a step fails,
-and `--yes` to skip the billing confirmation:
+override individual `BENCH_` variables such as `BENCH_DATA_SIZE`. It leaves the VM running so you
+can inspect it, and prints the command to delete it. Add `--teardown` to delete the VM when the
+run exits, even if a step fails, and `--yes` to skip the billing confirmation:
 
 ```bash
 PROVIDER=hetzner ./run-cloud.sh all --yes --teardown
 ```
 
 The suite runs Sirannon and PostgreSQL 17 in resource-capped Docker containers, each driven
-through its own shipping client, so the comparison is fair on both sides. The Sirannon image
-builds from `node:24-trixie-slim` as defined in `../server/`, so Sirannon runs on Node 24
-regardless of the host, and the harness itself runs in a Python container.
+through its own shipping client. The Sirannon image builds from `node:24-trixie-slim` as defined
+in `../server/`, so Sirannon runs on Node 24 regardless of the host, and the harness itself runs
+in a Python container.
 
 ## Test it before you trust it
 
@@ -139,7 +139,7 @@ public IP.
 
 ## Publishing a run
 
-Each fetched run is a self-describing directory under `results/runs/<run id>/` that carries the
+Each fetched run is a self-describing directory under `results/runs/<run id>/` that records the
 machine, the commit, the durability settings, and the versions of both engines. The toolkit
 copies runs back but never commits them; commit the run directory you want to publish, then run
 `python3 benchmarks/writeup/generate.py` to regenerate the page from it.

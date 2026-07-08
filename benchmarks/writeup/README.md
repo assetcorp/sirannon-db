@@ -12,8 +12,7 @@ The page is hand-written prose with generated regions marked by `<!-- BENCH:<id>
 `<!-- BENCH:<id> END -->` comments. The generator only replaces the text inside those regions, so
 the narrative stays human while the tables and the machine description come from the recorded run.
 It reads the newest run under `benchmarks/server/results/runs/`, which is the lexicographic
-maximum of the run ids. When no run is committed it writes an honest placeholder instead of
-inventing numbers.
+maximum of the run ids. When no run is committed it writes a placeholder instead of numbers.
 
 The `--check` mode is the continuous-integration gate: it fails if the committed page or the
 per-run `comparison.md` differs from a fresh generation, so a stale page cannot merge.

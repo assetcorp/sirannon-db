@@ -1,16 +1,16 @@
 # Sirannon vs PostgreSQL benchmark harness
 
 This harness compares Sirannon against PostgreSQL on the same OLTP workloads, on one host, with
-matched durability and a load generator that reports the tail latency honestly. One Node load
-generator drives both engines through the client each actually ships: Sirannon over its SDK's
-WebSocket transport, and PostgreSQL over its binary socket protocol through node-postgres. The
-generator writes one result file per engine; a small Python step joins those files into the
-cross-engine comparison and the writeup renders the page.
+matched durability and a load generator that records the full tail latency. One Node load
+generator drives both engines through the client each ships: Sirannon over its SDK's WebSocket
+transport, and PostgreSQL over its binary socket protocol through node-postgres. The generator
+writes one result file per engine; a small Python step joins those files into the cross-engine
+comparison, and the writeup renders the page.
 
 ## What it measures
 
-The core is a fair, server-versus-server comparison on the standard OLTP workloads both engines
-run identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped
+The core is a server-versus-server comparison on the standard OLTP workloads both engines run
+identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped
 transaction mix. For each workload the harness sweeps a set of target request rates and reports
 the operating point, the highest offered rate the engine sustained while holding p99 latency
 under the disclosed service-level target. The full sweep is kept as the throughput-versus-load
@@ -18,13 +18,13 @@ curve.
 
 Alongside the head-to-head, the harness records characterizations that PostgreSQL has no direct
 equivalent for: change-feed latency over Sirannon's built-in WebSocket feed, cold-start time, and
-the connection-scaling curve. Each is framed as a property of Sirannon, never as a win over
-PostgreSQL, because the two systems do not do the same work there.
+the connection-scaling curve. Each measures a property of Sirannon, because PostgreSQL either has
+no equivalent or does the same work a different way.
 
 ## Running it
 
-Two profiles cover the common cases. The `cloud` profile is the real thing, and it is what a bare
-`./run-all.sh` runs by default: 10,000,000 rows across both durability levels in Docker, and it
+Two profiles cover the common cases. The `cloud` profile is the full run, and a bare
+`./run-all.sh` uses it by default: 10,000,000 rows across both durability levels in Docker, and it
 regenerates the page from the fresh numbers.
 
 ```sh
@@ -41,12 +41,12 @@ and confirm they look sane. Remove that directory yourself once you're satisfied
 ./run-all.sh smoke
 ```
 
-A preset only fills in defaults. Any `BENCH_` variable you export still overrides it, so
+A profile only fills in defaults. Any `BENCH_` variable you export still overrides it, so
 `BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
 
-To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud`,
-not on a laptop, because laptop clocks throttle under sustained load. On macOS a plain fsync does
-not flush the drive cache, so trust the full-durability numbers only from the Linux cloud run.
+To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud`; a
+laptop's clock throttles under sustained load. On macOS a plain fsync does not flush the drive
+cache, so trust the full-durability numbers only from the Linux cloud run.
 
 You can also drive a hand-started server and a local PostgreSQL without Docker. Build the SDK the
 generator imports, install the generator's own dependencies, then point it at the two engines

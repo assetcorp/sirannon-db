@@ -2,8 +2,8 @@
 
 Every number in the setup line, the per-workload comparison, the scaling curve, and the
 Sirannon-only characterizations reads straight from the recorded run, so the surrounding prose in
-BENCHMARKS.md stays qualitative and never disagrees with the data. When no run is committed the
-blocks render an honest placeholder that the drift check tolerates.
+BENCHMARKS.md stays qualitative and the numbers come only from that run. When no run is committed
+the blocks render a placeholder that the drift check tolerates.
 """
 
 from __future__ import annotations
@@ -105,11 +105,11 @@ def _setup_block(source: Source) -> str:
     ]
     if sirannon_ceiling or postgres_ceiling:
         bullets.append(
-            "- **Load-client headroom.** Driven flat-out in isolation against the live engines, the Sirannon SDK "
+            "- **Load-client headroom.** Run on its own against the live engines, the Sirannon SDK "
             f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
             f"{ops(postgres_ceiling.get('ceiling_ops'))}, {speedup(sirannon_ceiling.get('headroom_factor'))} and "
-            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator keeps "
-            "this headroom over both engines, so every reported number reflects the database, not the client."
+            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator stays "
+            "well above both engines, so every reported number reflects the database's speed."
         )
     bullets.append(
         f"- **Workloads.** Every workload ran at {integer(config.get('data_size'))} rows, sweeping target rates of "
@@ -123,25 +123,21 @@ def _setup_block(source: Source) -> str:
 
 
 _METHODOLOGY = (
-    "Both databases answer the same workloads on the same host, driven by one Node load generator so the "
-    "coordinated-omission instrument behaves identically for each. Only a thin per-database adapter differs, and "
-    "each engine is reached through the client it actually ships: Sirannon over its SDK's default WebSocket "
-    "transport, which multiplexes every concurrent request over one persistent socket, and PostgreSQL over "
-    "node-postgres on its binary socket protocol. Both run over loopback with no network between them to bias the "
-    "result. Sirannon's WebSocket path carries JSON framing on every call, which is heavier than PostgreSQL's "
-    "binary protocol, and the numbers carry that cost on purpose, because it's Sirannon's real client path. "
-    "Before each sweep the generator measures each client's own throughput ceiling against the live engine and "
-    "discloses it, so a rate that falls short is charged to the database, not to a client that ran out of room. "
-    "Wrapping PostgreSQL in a foreign HTTP proxy to equalize transport would measure the proxy, not the "
-    "database, so this suite never does that.\n\n"
-    "Durability is matched at two levels. Full durability sets PostgreSQL `synchronous_commit=on` against "
-    "SQLite `synchronous=FULL`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off` "
+    "One Node load generator drives both databases, with a thin per-database adapter for each. Sirannon runs "
+    "over its SDK's default WebSocket transport, which multiplexes every concurrent request over one persistent "
+    "socket; PostgreSQL runs over node-postgres on its binary socket protocol. Both engines answer on the same "
+    "host over loopback. Sirannon's WebSocket path carries JSON framing on every call, heavier than PostgreSQL's "
+    "binary protocol, and the numbers include that cost because it is Sirannon's client path. Before each sweep "
+    "the generator measures each client's own throughput ceiling against the live engine and records it with the "
+    "results, so a rate that falls short reflects the database's limit.\n\n"
+    "The harness matches durability at two levels. Full durability sets PostgreSQL `synchronous_commit=on` "
+    "against SQLite `synchronous=FULL`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off` "
     "against `synchronous=NORMAL` in WAL mode, so both defer the fsync and both can lose only the most recent "
     "commits on power loss without corrupting.\n\n"
-    "Load is generated open-loop. Requests arrive at a fixed target rate whether or not earlier requests have "
-    "returned, and each request's latency is charged from the time it was meant to be sent, which corrects for "
-    "coordinated omission. The report leads with the tail percentiles, never an average, and the operating "
-    "point is the highest offered rate the engine sustained while holding p99 under the disclosed target."
+    "The load is open-loop. Requests arrive at a fixed target rate whether or not earlier requests have "
+    "returned, and each request's latency counts from the time it was meant to be sent, which corrects for "
+    "coordinated omission. The report uses tail-latency percentiles, and the operating point is the highest "
+    "offered rate the engine sustained while holding p99 under the recorded target."
 )
 
 
@@ -190,7 +186,7 @@ def _durability_table(node: dict) -> str:
     aligns = ["left", "right", "right", "right", "right", "right", "right", "right"]
     rendered = table(headers, aligns, body)
     if has_below_slo:
-        rendered += "\n\n_A † marks a workload where an engine could not hold p99 under the target at any offered rate, so its operating point is the best sustained rate instead._"
+        rendered += "\n\n_A † marks a workload where an engine could not hold p99 under the target at any offered rate; its operating point is then the best rate it sustained._"
     return rendered
 
 
@@ -200,14 +196,14 @@ def _comparison_block(source: Source) -> str:
         return "No engine results were recorded."
     parts: list[str] = []
     for name, node in durabilities:
-        parts.append(f"**{_DURABILITY_LABELS.get(name, name)}**")
+        parts.append(f"### {_DURABILITY_LABELS.get(name, name)}")
         parts.append(_durability_table(node))
     note = (
         "_Each throughput figure is the median of several independent runs at the operating point, the highest "
         "offered rate the engine sustained under the p99 target, shown with a 95% bootstrap confidence interval "
         "and the run-to-run coefficient of variation. A speedup above one means Sirannon sustained more "
         "throughput than PostgreSQL. TPC-C-derived is a TPC-C-shaped mix of new-order and payment, not an "
-        "audited TPC-C result. The YCSB subset is A, B, C, and F; D and E are left out._"
+        "audited TPC-C result. The YCSB subset is A, B, C, and F, and leaves out D and E._"
     )
     return "\n\n".join([*parts, note])
 
@@ -221,12 +217,12 @@ def _scaling_block(source: Source) -> str:
     if not scaling:
         return "No scaling results were recorded."
     parts: list[str] = [
-        "As the offered request rate climbs, this is where PostgreSQL's row-level locking overtakes "
-        f"SQLite's single-writer model, or the reverse, depending on the workload. The curve below is at "
-        f"{_DURABILITY_LABELS.get(name, name).lower()}."
+        "The curves below show achieved throughput and p99 latency as the offered rate climbs, at "
+        f"{_DURABILITY_LABELS.get(name, name).lower()}. PostgreSQL relies on row-level locking and Sirannon on a "
+        "single writer, so which one holds throughput as the rate rises depends on the workload."
     ]
     for entry in scaling:
-        parts.append(f"**{_label(entry.get('workload', 'n/a'))}**")
+        parts.append(f"### {_label(entry.get('workload', 'n/a'))}")
         body = [
             [
                 integer(point.get("target_rate")),
@@ -253,9 +249,10 @@ def _features_block(source: Source) -> str:
             node = cold_start.get(key)
             value = node.get("cold_start_ms") if isinstance(node, dict) else None
             body.append([engine, ms(value)])
+        parts.append("### Cold start")
         parts.append(
-            "**Cold start.** Time from the container start command to the first successful health probe, "
-            "measured the same way for both engines."
+            "This is the time from the container start command to the first successful health probe, measured "
+            "the same way for both engines."
         )
         parts.append(table(["Engine", "Cold start ms"], ["left", "right"], body))
 
@@ -263,11 +260,12 @@ def _features_block(source: Source) -> str:
         if feature.get("feature") != "cdc-latency":
             continue
         latency = feature.get("latency_ms", {})
+        parts.append("### Change-feed latency (Sirannon only)")
         parts.append(
-            "**Change-feed latency (Sirannon only).** Lag from a committed write to the change arriving at a "
-            "subscriber over Sirannon's built-in WebSocket feed. The server polls the change log every "
+            "This measures the lag from a committed write to the change reaching a subscriber over Sirannon's "
+            "built-in WebSocket feed. The server polls the change log every "
             f"{integer(feature.get('server_poll_interval_ms'))} ms, so that interval is the floor. PostgreSQL "
-            "has no built-in change feed, so this is a characterization of Sirannon, not a head-to-head."
+            "has no built-in change feed, so these numbers describe Sirannon on its own."
         )
         parts.append(
             table(
@@ -294,14 +292,14 @@ def comparison_document(source: Source) -> str:
     run directory sees the machine, the methodology, and every table without leaving the folder."""
     date = _date(source.comparison) or "an unrecorded date"
     intro = (
-        f"This report captures one recorded run of the Sirannon-versus-PostgreSQL benchmark, run "
-        f"`{source.run_id}` from {date}. Both databases answer the same workloads over their own shipping "
-        "client on the same host, so the figures measure the two engines doing the same work."
+        f"This report records one run of the Sirannon-versus-PostgreSQL benchmark, `{source.run_id}` from "
+        f"{date}. Both databases answer the same workloads over their own shipping client on the same host, so "
+        "the figures measure the two engines doing the same work."
     )
     sections = [
         "# Sirannon and PostgreSQL on one host",
         intro,
-        "## Why this comparison is fair",
+        "## Methodology",
         _methodology_block(source),
         "## Run and machine",
         _setup_block(source),

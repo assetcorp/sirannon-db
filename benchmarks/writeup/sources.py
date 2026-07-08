@@ -4,7 +4,7 @@ Run directories are named with a compact UTC timestamp, so the newest run is the
 maximum, the same ordering the harness writes them in. The writeup always reads the latest
 committed run, so publishing a page means running the suite and committing its run directory
 alongside the regenerated page. When no run is committed yet, the loader returns ``None`` so the
-generator can emit an honest placeholder rather than fabricate numbers.
+generator can emit a placeholder instead of numbers.
 """
 
 from __future__ import annotations

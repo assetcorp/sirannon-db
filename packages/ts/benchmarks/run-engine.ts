@@ -1,9 +1,9 @@
 import { execSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import http from 'node:http'
 import { join } from 'node:path'
 import { collectSystemInfo } from './config'
-import { escapeCsvField, formatLatency } from './reporter'
+import { formatLatency } from './reporter'
 import { buildManifest, createRunDirectory, runIdFromIso, writeRunArtifact } from './run-manifest'
 import { medianOf, summarizeMetric } from './stats'
 
@@ -456,7 +456,6 @@ async function main() {
     systemInfo.postgresVersion = postgresInfo.version ?? ''
 
     const createdAtIso = new Date().toISOString()
-    const timestamp = createdAtIso.replace(/[:.]/g, '-')
     const runId = runIdFromIso(createdAtIso)
     const runDir = createRunDirectory(
       RESULTS_DIR,
@@ -480,70 +479,8 @@ async function main() {
       postgres: postgresResult,
     }
 
-    const resultsPath = join(RESULTS_DIR, `engine-${timestamp}.json`)
-    writeFileSync(resultsPath, `${JSON.stringify(enginePayload, null, 2)}\n`)
     writeRunArtifact(runDir, 'engine.json', enginePayload)
-
-    console.log(`\nEngine benchmark results written to ${resultsPath}`)
-    console.log(`Self-describing run recorded under ${join(runDir)}`)
-
-    const engineCsvHeader = [
-      'workload',
-      'dataSize',
-      'operation',
-      'runs',
-      'sirannonMedianOpsPerSec',
-      'sirannonCiLowOpsPerSec',
-      'sirannonCiHighOpsPerSec',
-      'sirannonCvOpsPerSec',
-      'postgresMedianOpsPerSec',
-      'postgresCiLowOpsPerSec',
-      'postgresCiHighOpsPerSec',
-      'speedup',
-      'sirannonP50Ns',
-      'sirannonP99Ns',
-      'postgresP50Ns',
-      'postgresP99Ns',
-    ].join(',')
-    const engineCsvRows: string[] = []
-
-    for (const sResult of sirannonResult.results) {
-      const pResult = postgresResult.results.find(
-        r => r.workload === sResult.workload && r.dataSize === sResult.dataSize,
-      )
-      if (!pResult) continue
-
-      for (let i = 0; i < sResult.results.length; i++) {
-        const sr = sResult.results[i]
-        const pr = pResult.results[i]
-        if (!pr) continue
-        const speedup = pr.medianOpsPerSec > 0 ? sr.medianOpsPerSec / pr.medianOpsPerSec : Infinity
-        engineCsvRows.push(
-          [
-            escapeCsvField(sResult.workload),
-            sResult.dataSize,
-            escapeCsvField(sr.name),
-            sr.runs,
-            sr.medianOpsPerSec.toFixed(2),
-            sr.ciLowerOpsPerSec.toFixed(2),
-            sr.ciUpperOpsPerSec.toFixed(2),
-            sr.cvOpsPerSec.toFixed(4),
-            pr.medianOpsPerSec.toFixed(2),
-            pr.ciLowerOpsPerSec.toFixed(2),
-            pr.ciUpperOpsPerSec.toFixed(2),
-            speedup.toFixed(4),
-            sr.p50Ns.toFixed(0),
-            sr.p99Ns.toFixed(0),
-            pr.p50Ns.toFixed(0),
-            pr.p99Ns.toFixed(0),
-          ].join(','),
-        )
-      }
-    }
-
-    const engineCsvPath = join(RESULTS_DIR, `engine-${timestamp}.csv`)
-    writeFileSync(engineCsvPath, `${[engineCsvHeader, ...engineCsvRows].join('\n')}\n`)
-    console.log(`Engine CSV written to ${engineCsvPath}`)
+    console.log(`\nSelf-describing run recorded under ${runDir}`)
 
     const concurrencyLevels = (process.env.BENCH_CONCURRENCY_LEVELS ?? '1,2,4,8,16,32,64').split(',').map(Number)
     const scalingDurationMs = Number(process.env.BENCH_SCALING_DURATION_MS ?? 10_000)
@@ -591,53 +528,8 @@ async function main() {
       postgres: postgresConcResult,
     }
 
-    const scalingResultsPath = join(RESULTS_DIR, `engine-scaling-${timestamp}.json`)
-    writeFileSync(scalingResultsPath, `${JSON.stringify(scalingPayload, null, 2)}\n`)
     writeRunArtifact(runDir, 'engine-scaling.json', scalingPayload)
-    console.log(`\nScaling benchmark results written to ${scalingResultsPath}`)
-
-    const scalingCsvHeader = [
-      'model',
-      'workload',
-      'concurrency',
-      'sirannonOpsPerSec',
-      'postgresOpsPerSec',
-      'speedup',
-      'sirannonP50Ns',
-      'sirannonP99Ns',
-      'postgresP50Ns',
-      'postgresP99Ns',
-    ].join(',')
-    const scalingCsvRows: string[] = []
-
-    const sirannonConcPoints = sirannonConcResult.results
-    const postgresConcPoints = postgresConcResult.results
-
-    for (const sp of sirannonConcPoints) {
-      const pp = postgresConcPoints.find(
-        p => p.model === sp.model && p.concurrency === sp.concurrency && p.readRatio === sp.readRatio,
-      )
-      if (!pp) continue
-      const speedup = pp.opsPerSec > 0 ? sp.opsPerSec / pp.opsPerSec : Infinity
-      scalingCsvRows.push(
-        [
-          escapeCsvField(sp.model),
-          escapeCsvField(workloadLabel(sp.readRatio)),
-          sp.concurrency,
-          sp.opsPerSec.toFixed(2),
-          pp.opsPerSec.toFixed(2),
-          speedup.toFixed(4),
-          sp.p50Ns.toFixed(0),
-          sp.p99Ns.toFixed(0),
-          pp.p50Ns.toFixed(0),
-          pp.p99Ns.toFixed(0),
-        ].join(','),
-      )
-    }
-
-    const scalingCsvPath = join(RESULTS_DIR, `engine-scaling-${timestamp}.csv`)
-    writeFileSync(scalingCsvPath, `${[scalingCsvHeader, ...scalingCsvRows].join('\n')}\n`)
-    console.log(`Scaling CSV written to ${scalingCsvPath}`)
+    console.log(`Scaling results recorded under ${runDir}`)
 
     await postJson(`${SIRANNON_ENGINE_URL}/cleanup`, {})
     await postJson(`${POSTGRES_ENGINE_URL}/cleanup`, {})

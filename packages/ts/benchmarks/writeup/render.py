@@ -48,6 +48,17 @@ def percent(fraction: object, places: int = 1) -> str:
     return f"{fraction * 100:.{places}f}%"
 
 
+def humanized_list(parts: Sequence[str]) -> str:
+    items = [part for part in parts if part]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
 def table(headers: Sequence[str], aligns: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     divider = ["---:" if align == "right" else "---" for align in aligns]
 

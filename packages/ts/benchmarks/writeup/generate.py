@@ -13,9 +13,10 @@ exits non-zero on any drift, which is what continuous integration runs.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from docker_section import docker_blocks
-from sources import benchmarks_dir, load_engine_source
+from docker_section import comparison_document, docker_blocks
+from sources import Source, benchmarks_dir, load_engine_source
 
 
 def _inject(text: str, blocks: dict[str, str]) -> str:
@@ -32,27 +33,51 @@ def _inject(text: str, blocks: dict[str, str]) -> str:
     return text
 
 
+def _comparison_path(source: Source) -> Path:
+    return benchmarks_dir() / "results" / "runs" / source.run_id / "comparison.md"
+
+
 def main(argv: list[str]) -> int:
     check = "--check" in argv
     path = benchmarks_dir() / "BENCHMARKS.md"
     current = path.read_text(encoding="utf-8")
-    updated = _inject(current, docker_blocks(load_engine_source()))
+    source = load_engine_source()
+    updated = _inject(current, docker_blocks(source))
+
+    fresh_comparison = comparison_document(source) if source is not None else None
+    comparison_path = _comparison_path(source) if source is not None else None
 
     if check:
+        stale: list[str] = []
         if updated != current:
+            stale.append("BENCHMARKS.md")
+        if fresh_comparison is not None and comparison_path is not None:
+            existing = comparison_path.read_text(encoding="utf-8") if comparison_path.is_file() else None
+            if existing != fresh_comparison:
+                stale.append(f"results/runs/{source.run_id}/comparison.md")
+        if stale:
             sys.stderr.write(
-                "BENCHMARKS.md is out of date with the latest benchmark run. "
+                f"Benchmark writeup is out of date with the latest run: {', '.join(stale)}. "
                 "Run `python3 benchmarks/writeup/generate.py` and commit the result.\n"
             )
             return 1
-        sys.stdout.write("BENCHMARKS.md is up to date with the latest run.\n")
+        sys.stdout.write("Benchmark writeup is up to date with the latest run.\n")
         return 0
 
-    if updated == current:
-        sys.stdout.write("BENCHMARKS.md is already up to date.\n")
-        return 0
-    path.write_text(updated, encoding="utf-8")
-    sys.stdout.write("BENCHMARKS.md regenerated from the latest run.\n")
+    wrote: list[str] = []
+    if updated != current:
+        path.write_text(updated, encoding="utf-8")
+        wrote.append("BENCHMARKS.md")
+    if fresh_comparison is not None and comparison_path is not None:
+        existing = comparison_path.read_text(encoding="utf-8") if comparison_path.is_file() else None
+        if existing != fresh_comparison:
+            comparison_path.write_text(fresh_comparison, encoding="utf-8")
+            wrote.append(f"results/runs/{source.run_id}/comparison.md")
+
+    if wrote:
+        sys.stdout.write(f"Regenerated from the latest run: {', '.join(wrote)}.\n")
+    else:
+        sys.stdout.write("Benchmark writeup is already up to date.\n")
     return 0
 
 

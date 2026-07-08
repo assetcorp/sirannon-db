@@ -92,15 +92,23 @@ export class SirannonDriver extends Driver {
 
   async seed(tables: SeedTable[]): Promise<void> {
     for (const table of tables) {
-      if (table.rows.length === 0) {
-        continue
-      }
       const insert = this.insertSql(table)
-      for (let offset = 0; offset < table.rows.length; offset += SEED_CHUNK) {
-        const chunk = table.rows.slice(offset, offset + SEED_CHUNK)
+      let chunk: unknown[][] = []
+      const flush = async (): Promise<void> => {
+        if (chunk.length === 0) {
+          return
+        }
         const statements = chunk.map(row => ({ sql: insert, params: row }))
+        chunk = []
         await this.post('/transaction', { statements })
       }
+      for (const row of table.rows) {
+        chunk.push(row)
+        if (chunk.length >= SEED_CHUNK) {
+          await flush()
+        }
+      }
+      await flush()
     }
   }
 

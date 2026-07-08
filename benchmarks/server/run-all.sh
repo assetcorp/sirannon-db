@@ -145,7 +145,7 @@ for durability in $DURABILITIES; do
 done
 
 echo "================ aggregate ================"
-compose run --rm --entrypoint python bench -m sirannon_bench.aggregate || status=1
+compose run --rm aggregate || status=1
 
 if [ -n "${SMOKE}" ]; then
   echo "================ writeup (skipped for smoke) ================"

@@ -146,6 +146,10 @@ def build_comparison(run_dir: Path, manifest: dict) -> dict:
             "scaling": _scaling_rows(sirannon, postgres, config.get("scaling_workloads", [])),
             "sirannon_engine": sirannon.get("engine", {}),
             "postgres_engine": postgres.get("engine", {}),
+            "client_saturation": {
+                "sirannon": sirannon.get("client_saturation"),
+                "postgres": postgres.get("client_saturation"),
+            },
         }
 
     return {

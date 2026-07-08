@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseCron } from '../../backup/cron.js'
+import { assertValidTimeZone, type CronParts, parseCron, wallClockParts } from '../../backup/cron.js'
 
-function at(year: number, monthIndex: number, day: number, hours = 0, minutes = 0, seconds = 0): Date {
-  return new Date(year, monthIndex, day, hours, minutes, seconds)
+function at(year: number, monthIndex: number, day: number, hours = 0, minutes = 0, seconds = 0): CronParts {
+  return wallClockParts(new Date(year, monthIndex, day, hours, minutes, seconds))
 }
 
 describe('parseCron', () => {
@@ -129,6 +129,34 @@ describe('parseCron', () => {
       expect(() => parseCron('0 0 * * 5#2')).toThrow(/unsupported syntax/)
       expect(() => parseCron('0 0 15W * *')).toThrow(/unsupported syntax/)
       expect(() => parseCron('0 0 ? * *')).toThrow(/unsupported syntax/)
+    })
+  })
+
+  describe('timezone-aware parts', () => {
+    it('reads the wall-clock time in a named timezone', () => {
+      const summer = wallClockParts(new Date('2023-07-01T16:30:00Z'), 'America/New_York')
+      expect(summer.hour).toBe(12)
+      expect(summer.minute).toBe(30)
+      expect(summer.dayOfMonth).toBe(1)
+      expect(summer.dayOfWeek).toBe(6)
+    })
+
+    it('reflects the standard-time offset outside daylight saving', () => {
+      const winter = wallClockParts(new Date('2023-01-01T16:30:00Z'), 'America/New_York')
+      expect(winter.hour).toBe(11)
+      expect(winter.minute).toBe(30)
+    })
+
+    it('matches a cron expression against a timezone-adjusted instant', () => {
+      const cron = parseCron('0 9 * * *')
+      const nineLocal = wallClockParts(new Date('2023-07-03T13:00:00Z'), 'America/New_York')
+      const eightLocal = wallClockParts(new Date('2023-07-03T12:00:00Z'), 'America/New_York')
+      expect(cron.matches(nineLocal)).toBe(true)
+      expect(cron.matches(eightLocal)).toBe(false)
+    })
+
+    it('rejects an unknown timezone', () => {
+      expect(() => assertValidTimeZone('Not/AZone')).toThrow(/unknown timezone/)
     })
   })
 })

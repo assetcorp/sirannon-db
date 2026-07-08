@@ -316,9 +316,12 @@ db.scheduleBackup({
   cron: '0 */6 * * *',      // every 6 hours
   destDir: './backups',
   maxFiles: 10,              // keep the 10 most recent
+  timezone: 'America/New_York', // optional; defaults to the host timezone
   onError: err => console.error('Backup failed:', err),
 })
 ```
+
+The cron expression supports five or six fields (an optional leading seconds field), ranges, steps, lists, month and weekday names, and `@daily`-style nicknames. It runs in `timezone` when you set one, and in the host's local timezone otherwise. When the clocks go forward for daylight saving time, the scheduler skips the missing hour; when they go back, it runs a backup timed for the repeated hour once.
 
 ### Hooks
 

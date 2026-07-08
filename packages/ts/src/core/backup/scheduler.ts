@@ -4,11 +4,12 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError } from '../errors.js'
 import type { BackupScheduleOptions } from '../types.js'
 import { BackupManager } from './backup.js'
-import { type CronExpression, parseCron } from './cron.js'
+import { assertValidTimeZone, type CronExpression, type CronParts, parseCron, wallClockParts } from './cron.js'
 
 const DEFAULT_MAX_FILES = 5
 const MINUTE_RESOLUTION_MS = 60_000
 const SECOND_RESOLUTION_MS = 1_000
+const ONE_HOUR_MS = 3_600_000
 
 function toError(value: unknown): Error {
   if (value instanceof Error) {
@@ -17,9 +18,9 @@ function toError(value: unknown): Error {
   return new BackupError(typeof value === 'string' ? value : 'Scheduled backup failed')
 }
 
-function slotKey(date: Date, hasSeconds: boolean): string {
-  const base = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}-${date.getMinutes()}`
-  return hasSeconds ? `${base}-${date.getSeconds()}` : base
+function slotKey(parts: CronParts, hasSeconds: boolean): string {
+  const base = `${parts.year}-${parts.month}-${parts.dayOfMonth}-${parts.hour}-${parts.minute}`
+  return hasSeconds ? `${base}-${parts.second}` : base
 }
 
 export class BackupScheduler {
@@ -30,7 +31,7 @@ export class BackupScheduler {
   }
 
   schedule(conn: SQLiteConnection, options: BackupScheduleOptions): () => void {
-    const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, onError } = options
+    const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, onError, timezone } = options
 
     let cron: CronExpression
     try {
@@ -39,6 +40,14 @@ export class BackupScheduler {
       throw new BackupError(
         `Invalid cron expression '${cronExpr}': ${err instanceof Error ? err.message : String(err)}`,
       )
+    }
+
+    if (timezone !== undefined) {
+      try {
+        assertValidTimeZone(timezone)
+      } catch (err) {
+        throw new BackupError(`Invalid timezone '${timezone}': ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
 
     const resolvedDir = resolve(destDir)
@@ -52,7 +61,7 @@ export class BackupScheduler {
       }
     }
 
-    return this.run(conn, cron, resolvedDir, maxFiles, onError)
+    return this.run(conn, cron, resolvedDir, maxFiles, timezone, onError)
   }
 
   private run(
@@ -60,6 +69,7 @@ export class BackupScheduler {
     cron: CronExpression,
     resolvedDir: string,
     maxFiles: number,
+    timezone: string | undefined,
     onError?: (error: Error) => void,
   ): () => void {
     const tickMs = cron.hasSeconds ? SECOND_RESOLUTION_MS : MINUTE_RESOLUTION_MS
@@ -86,6 +96,11 @@ export class BackupScheduler {
       }
     }
 
+    const isRepeatedWallClock = (now: Date, parts: CronParts): boolean => {
+      const previous = wallClockParts(new Date(now.getTime() - ONE_HOUR_MS), timezone)
+      return slotKey(previous, cron.hasSeconds) === slotKey(parts, cron.hasSeconds)
+    }
+
     const scheduleNext = (): void => {
       if (stopped) {
         return
@@ -100,9 +115,10 @@ export class BackupScheduler {
         return
       }
       const now = new Date()
-      if (!running && cron.matches(now)) {
-        const slot = slotKey(now, cron.hasSeconds)
-        if (slot !== lastFiredSlot) {
+      const parts = wallClockParts(now, timezone)
+      if (!running && cron.matches(parts)) {
+        const slot = slotKey(parts, cron.hasSeconds)
+        if (slot !== lastFiredSlot && !isRepeatedWallClock(now, parts)) {
           lastFiredSlot = slot
           running = true
           void runBackup()

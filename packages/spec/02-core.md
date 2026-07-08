@@ -619,12 +619,20 @@ BackupScheduleOptions {
   cron:      string       (cron expression)
   destDir:   string
   maxFiles?: number       (default: 5, recommended)
+  timezone?: string       (IANA name; default: host time zone)
   onError?:  (error: Error) -> void
 }
 ```
 
 Scheduled backups execute on the cron schedule, create a backup
 in `destDir`, and rotate old files.
+
+Sirannon evaluates the cron expression in `timezone` when you
+supply one, and in the host's local time zone otherwise. When
+the clocks go forward for daylight saving time, the scheduler
+skips the missing hour, so a backup timed for that hour does not
+run that day. When the clocks go back, it runs a backup timed
+for the repeated hour once, at its first occurrence.
 
 ---
 

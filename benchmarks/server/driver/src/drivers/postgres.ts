@@ -102,32 +102,48 @@ export class PostgresDriver extends Driver {
     const client = await pool.connect()
     try {
       for (const table of tables) {
-        if (table.rows.length === 0) {
-          continue
-        }
         const columnCount = table.columns.length
         const rowsPerBatch = Math.max(1, Math.floor(MAX_BIND_PARAMS / columnCount))
         const columns = table.columns.join(', ')
-        await client.query('BEGIN')
-        try {
-          for (let offset = 0; offset < table.rows.length; offset += rowsPerBatch) {
-            const batch = table.rows.slice(offset, offset + rowsPerBatch)
-            const values: unknown[] = []
-            const tuples: string[] = []
-            let bind = 0
-            for (const row of batch) {
-              const marks: string[] = []
-              for (const value of row) {
-                values.push(value)
-                marks.push(`$${++bind}`)
-              }
-              tuples.push(`(${marks.join(', ')})`)
-            }
-            await client.query(`INSERT INTO ${table.table} (${columns}) VALUES ${tuples.join(', ')}`, values)
+        let batch: unknown[][] = []
+        let began = false
+        const flush = async (): Promise<void> => {
+          if (batch.length === 0) {
+            return
           }
-          await client.query('COMMIT')
+          if (!began) {
+            await client.query('BEGIN')
+            began = true
+          }
+          const values: unknown[] = []
+          const tuples: string[] = []
+          let bind = 0
+          for (const row of batch) {
+            const marks: string[] = []
+            for (const value of row) {
+              values.push(value)
+              marks.push(`$${++bind}`)
+            }
+            tuples.push(`(${marks.join(', ')})`)
+          }
+          batch = []
+          await client.query(`INSERT INTO ${table.table} (${columns}) VALUES ${tuples.join(', ')}`, values)
+        }
+        try {
+          for (const row of table.rows) {
+            batch.push(row)
+            if (batch.length >= rowsPerBatch) {
+              await flush()
+            }
+          }
+          await flush()
+          if (began) {
+            await client.query('COMMIT')
+          }
         } catch (err) {
-          await client.query('ROLLBACK')
+          if (began) {
+            await client.query('ROLLBACK')
+          }
           throw err
         }
       }

@@ -34,7 +34,7 @@ export interface Operation {
 export interface SeedTable {
   table: string
   columns: string[]
-  rows: unknown[][]
+  rows: Iterable<unknown[]>
 }
 
 export interface Workload {
@@ -104,16 +104,24 @@ function productRow(rng: SeededRng, rowId: number): unknown[] {
   return [rowId, `Product ${rowId}`, price, 1000]
 }
 
-function userSeed(rng: SeededRng, dataSize: number): SeedTable[] {
-  const rows: unknown[][] = []
+function* userRows(rng: SeededRng, dataSize: number): Generator<unknown[]> {
   for (let i = 0; i < dataSize; i++) {
-    rows.push(userRow(rng, i + 1))
+    yield userRow(rng, i + 1)
   }
-  return [{ table: 'users', columns: ['id', 'name', 'email', 'age', 'bio'], rows }]
+}
+
+function userSeed(rng: SeededRng, dataSize: number): SeedTable[] {
+  return [{ table: 'users', columns: ['id', 'name', 'email', 'age', 'bio'], rows: userRows(rng, dataSize) }]
 }
 
 function emptySeed(): SeedTable[] {
   return []
+}
+
+function* ycsbRows(rng: SeededRng, dataSize: number): Generator<unknown[]> {
+  for (let i = 0; i < dataSize; i++) {
+    yield ycsbRow(rng, `user${i}`)
+  }
 }
 
 function ycsbSeed(rng: SeededRng, dataSize: number): SeedTable[] {
@@ -121,26 +129,26 @@ function ycsbSeed(rng: SeededRng, dataSize: number): SeedTable[] {
   for (let i = 0; i < 10; i++) {
     columns.push(`field${i}`)
   }
-  const rows: unknown[][] = []
+  return [{ table: 'usertable', columns, rows: ycsbRows(rng, dataSize) }]
+}
+
+function* customerRows(dataSize: number): Generator<unknown[]> {
   for (let i = 0; i < dataSize; i++) {
-    rows.push(ycsbRow(rng, `user${i}`))
+    yield customerRow(i + 1)
   }
-  return [{ table: 'usertable', columns, rows }]
+}
+
+function* productRows(rng: SeededRng, count: number): Generator<unknown[]> {
+  for (let i = 0; i < count; i++) {
+    yield productRow(rng, i + 1)
+  }
 }
 
 function tpccSeed(rng: SeededRng, dataSize: number): SeedTable[] {
-  const customers: unknown[][] = []
-  for (let i = 0; i < dataSize; i++) {
-    customers.push(customerRow(i + 1))
-  }
   const productCount = Math.min(dataSize, 1000)
-  const products: unknown[][] = []
-  for (let i = 0; i < productCount; i++) {
-    products.push(productRow(rng, i + 1))
-  }
   return [
-    { table: 'customers', columns: ['id', 'name', 'email', 'balance'], rows: customers },
-    { table: 'products', columns: ['id', 'name', 'price', 'stock'], rows: products },
+    { table: 'customers', columns: ['id', 'name', 'email', 'balance'], rows: customerRows(dataSize) },
+    { table: 'products', columns: ['id', 'name', 'price', 'stock'], rows: productRows(rng, productCount) },
   ]
 }
 

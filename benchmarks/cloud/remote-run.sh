@@ -29,7 +29,7 @@ if ! docker ps >/dev/null 2>&1; then
 fi
 
 stamp "Sirannon vs PostgreSQL suite (capped Docker containers)"
-( cd benchmarks/server && ./run-all.sh ) || status=1
+( cd benchmarks/server && ./run-all.sh "${BENCH_PROFILE:-cloud}" ) || status=1
 
 stamp "finished with status $status"
 echo "$status" > "$HOME/bench.status"

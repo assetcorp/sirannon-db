@@ -7,7 +7,7 @@
 # successful in-container health probe. Everything lands under results/runs/<run id>/.
 #
 # Usage:
-#   ./run-all.sh                 # both durabilities at the config's data size
+#   ./run-all.sh                 # same as cloud
 #   ./run-all.sh cloud           # full-scale run: 10,000,000 rows, both durabilities, regenerates the page
 #   ./run-all.sh smoke           # fast throwaway check: 10,000 rows, one durability, no page, self-cleaning
 #
@@ -17,10 +17,9 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-PROFILE="${1:-${BENCH_PROFILE:-full}}"
+PROFILE="${1:-${BENCH_PROFILE:-cloud}}"
 SMOKE=""
 case "${PROFILE}" in
-  full) ;;
   cloud)
     : "${BENCH_DATA_SIZE:=10000000}"
     : "${BENCH_DURABILITIES:=full matched}"
@@ -39,13 +38,11 @@ case "${PROFILE}" in
     : "${BENCH_TARGET_RATES:=1000,4000}"
     ;;
   *)
-    echo "unknown profile '${PROFILE}' (expected: full, cloud, or smoke)" >&2
+    echo "unknown profile '${PROFILE}' (expected: cloud or smoke)" >&2
     exit 2
     ;;
 esac
-if [ "${PROFILE}" != "full" ]; then
-  export BENCH_DATA_SIZE BENCH_DURABILITIES BENCH_RUNS BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_TARGET_RATES
-fi
+export BENCH_DATA_SIZE BENCH_DURABILITIES BENCH_RUNS BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_TARGET_RATES
 
 BENCH_RUN_ID="${BENCH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 export BENCH_RUN_ID

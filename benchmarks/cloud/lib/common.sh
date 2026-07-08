@@ -115,7 +115,7 @@ cmd_run() {
   local forward
   forward="$(printf '%q ' "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
   local v
-  for v in BENCH_DURABILITIES BENCH_DATA_SIZE BENCH_WORKLOADS \
+  for v in BENCH_PROFILE BENCH_DURABILITIES BENCH_DATA_SIZE BENCH_WORKLOADS \
     BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_RUNS BENCH_SEED \
     BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_SLO_P99_MS BENCH_MAX_IN_FLIGHT \
     BENCH_ENGINE_CPUS BENCH_DRIVER_CPUS BENCH_ENGINE_CPUSET BENCH_DRIVER_CPUSET \
@@ -231,11 +231,12 @@ Flags: --yes (skip billing prompt), --teardown (delete on success),
 Common env:
   VM_NAME, MACHINE_TYPE, DISK_SIZE (GB),
   SSH_KEY (private key for hetzner/digitalocean/aws; the public key is <key>.pub),
+  BENCH_PROFILE (cloud by default: 10,000,000 rows; smoke for a quick check),
   BENCH_MACHINE_LABEL, BENCH_DURABILITIES, BENCH_WORKLOADS, BENCH_TARGET_RATES,
   BENCH_DATA_SIZE, BENCH_RUNS, BENCH_WARMUP_SECONDS, BENCH_MEASURE_SECONDS.
 
-A cheap end-to-end smoke on any provider, then clean up:
-  PROVIDER=hetzner BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 \
+A cheap end-to-end check on any provider, then clean up:
+  PROVIDER=hetzner BENCH_DATA_SIZE=10000 BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 \
     BENCH_RUNS=2 BENCH_WARMUP_SECONDS=1 BENCH_MEASURE_SECONDS=2 \
     ./run-cloud.sh all --yes --teardown
 EOF

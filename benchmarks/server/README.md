@@ -23,20 +23,15 @@ PostgreSQL, because the two systems do not do the same work there.
 
 ## Running it
 
-The full run drives both engines at both durability levels in Docker:
-
-```sh
-./run-all.sh
-```
-
-Two presets cover the common cases. The `cloud` preset is the real thing: 10,000,000 rows across
-both durability levels, and it regenerates the page from the fresh numbers.
+Two profiles cover the common cases. The `cloud` profile is the real thing, and it is what a bare
+`./run-all.sh` runs by default: 10,000,000 rows across both durability levels in Docker, and it
+regenerates the page from the fresh numbers.
 
 ```sh
 ./run-all.sh cloud
 ```
 
-The `smoke` preset checks that the harness works end to end without spending the time a real run
+The `smoke` profile checks that the harness works end to end without spending the time a real run
 needs: 10,000 rows at one durability level with short windows. It never touches the published
 page, and it keeps its output under `results/.smoke/` (git-ignored) so you can read the numbers
 and confirm they look sane. Remove that directory yourself once you're satisfied:

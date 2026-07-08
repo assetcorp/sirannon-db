@@ -13,14 +13,13 @@ REPO_ROOT="$(cd "$CLOUD_DIR/.." && pwd)"
 PROVIDER="${PROVIDER:-gcp}"
 VM_NAME="${VM_NAME:-sirannon-bench}"
 DISK_SIZE="${DISK_SIZE:-60}"
-SUITES="${SUITES:-both}"
 DRY_RUN="${DRY_RUN:-0}"
 MACHINE_LABEL="${BENCH_MACHINE_LABEL:-}"
 MACHINE_TYPE="${MACHINE_TYPE:-}"
 
-# The Docker benchmark run output lands here as flat, timestamped files (git
-# ignores the JSON, tracks the CSV), so the whole directory is the fetch target.
-RESULTS_REL="packages/ts/benchmarks/results"
+# Each committed run is a self-describing directory under results/runs/<id>, so
+# that tree is the fetch target.
+RESULTS_REL="benchmarks/server/results"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -107,19 +106,20 @@ cmd_sync() {
 }
 
 cmd_setup() {
-  log "install Docker, Node, pnpm, and k6 on the VM"
+  log "install Docker, git, and Python 3 on the VM"
   prov_ssh "bash sirannon/benchmarks/cloud/remote-bootstrap.sh"
 }
 
 cmd_run() {
   log "launch the benchmark run (detached; survives an SSH drop)"
   local forward
-  forward="$(printf '%q ' "SUITES=$SUITES" "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
+  forward="$(printf '%q ' "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
   local v
-  for v in BENCH_DURABILITY BENCH_DATA_SIZES BENCH_WORKLOADS \
-    BENCH_WARMUP_MS BENCH_MEASURE_MS BENCH_CONCURRENCY_LEVELS \
-    BENCH_DATA_SIZE BENCH_RPS_LEVELS BENCH_DURATION \
-    BENCH_CPUS BENCH_MEMORY; do
+  for v in BENCH_DURABILITIES BENCH_DATA_SIZE BENCH_WORKLOADS \
+    BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_RUNS BENCH_SEED \
+    BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_SLO_P99_MS BENCH_MAX_IN_FLIGHT \
+    BENCH_ENGINE_CPUS BENCH_DRIVER_CPUS BENCH_ENGINE_CPUSET BENCH_DRIVER_CPUSET \
+    BENCH_ENGINE_MEMORY BENCH_DRIVER_MEMORY BENCH_PG_POOL_SIZE BENCH_CDC_SAMPLES; do
     if [ -n "${!v:-}" ]; then
       forward+="$(printf '%q ' "$v=${!v}")"
     fi
@@ -150,27 +150,8 @@ cmd_logs() {
 cmd_fetch() {
   local remote="$RESULTS_REL" dest="$REPO_ROOT/$RESULTS_REL"
   if [ "$DRY_RUN" = "1" ]; then
-    log "(dry-run) would fetch new result files and run directories from $remote"
+    log "(dry-run) would fetch new run directories from $remote/runs"
     return 0
-  fi
-  local files
-  # -maxdepth 1 keeps generated chart SVGs (under results/charts) and the
-  # per-run directories (under results/runs) out of this pass; only the
-  # top-level timestamped JSON and CSV files are copied here.
-  files="$(prov_ssh "find sirannon/$remote -maxdepth 1 -type f \( -name '*.json' -o -name '*.csv' \) -printf '%f\n' 2>/dev/null || true" | tr -d '\r')"
-  if [ -n "$files" ]; then
-    mkdir -p "$dest"
-    local name
-    for name in $files; do
-      if [ -e "$dest/$name" ]; then
-        log "have $name already, skipping"
-        continue
-      fi
-      log "fetch $name"
-      prov_scp_down "sirannon/$remote/$name" "$dest/"
-    done
-  else
-    log "no top-level result files under $remote yet"
   fi
 
   # Each self-describing run is a directory keyed by a compact UTC run id, holding
@@ -236,10 +217,10 @@ Commands:
   all      up -> sync -> setup -> run -> fetch (add --teardown to delete after)
   up       create the VM
   sync     push the local working tree
-  setup    install Docker, Node, pnpm, and k6 on the VM
-  run      build and run the Docker benchmark track (detached, streamed back)
+  setup    install Docker, git, and Python 3 on the VM
+  run      build and run the benchmark suite (detached, streamed back)
   logs     re-attach to a run in progress
-  fetch    copy result files back into the repo
+  fetch    copy run directories back into the repo
   ssh      open an interactive shell on the VM
   status   show the VM state
   down     delete the VM
@@ -248,13 +229,14 @@ Flags: --yes (skip billing prompt), --teardown (delete on success),
        --dry-run (print the commands instead of running them).
 
 Common env:
-  VM_NAME, MACHINE_TYPE, DISK_SIZE (GB), SUITES (both|engine|e2e),
+  VM_NAME, MACHINE_TYPE, DISK_SIZE (GB),
   SSH_KEY (private key for hetzner/digitalocean/aws; the public key is <key>.pub),
-  BENCH_MACHINE_LABEL, BENCH_DURABILITY, BENCH_DATA_SIZES, BENCH_WORKLOADS,
-  BENCH_DATA_SIZE, BENCH_RPS_LEVELS, BENCH_DURATION, BENCH_CPUS, BENCH_MEMORY.
+  BENCH_MACHINE_LABEL, BENCH_DURABILITIES, BENCH_WORKLOADS, BENCH_TARGET_RATES,
+  BENCH_DATA_SIZE, BENCH_RUNS, BENCH_WARMUP_SECONDS, BENCH_MEASURE_SECONDS.
 
 A cheap end-to-end smoke on any provider, then clean up:
-  PROVIDER=hetzner SUITES=engine BENCH_DATA_SIZES=1000 BENCH_WORKLOADS=point-select \
+  PROVIDER=hetzner BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 \
+    BENCH_RUNS=2 BENCH_WARMUP_SECONDS=1 BENCH_MEASURE_SECONDS=2 \
     ./run-cloud.sh all --yes --teardown
 EOF
 }

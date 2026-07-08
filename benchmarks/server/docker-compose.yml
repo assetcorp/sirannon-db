@@ -1,0 +1,97 @@
+name: sirannon-bench
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+      POSTGRES_DB: benchmark
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - random_page_cost=1.1
+    cpuset: ${BENCH_ENGINE_CPUSET:-2,3}
+    cpus: "${BENCH_ENGINE_CPUS:-2}"
+    mem_limit: ${BENCH_ENGINE_MEMORY:-2g}
+    memswap_limit: ${BENCH_ENGINE_MEMORY:-2g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchmark"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  sirannon:
+    build:
+      context: ../..
+      dockerfile: benchmarks/server/sirannon-server.Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9876
+      BENCH_SIRANNON_DB: bench
+      BENCH_DURABILITY: ${BENCH_DURABILITY:-matched}
+    cpuset: ${BENCH_ENGINE_CPUSET:-2,3}
+    cpus: "${BENCH_ENGINE_CPUS:-2}"
+    mem_limit: ${BENCH_ENGINE_MEMORY:-2g}
+    memswap_limit: ${BENCH_ENGINE_MEMORY:-2g}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9876/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BENCH_SIRANNON_URL: http://sirannon:9876
+      BENCH_SIRANNON_DB: bench
+      BENCH_PG_HOST: postgres
+      BENCH_PG_PORT: "5432"
+      BENCH_PG_USER: benchmark
+      BENCH_PG_PASSWORD: benchmark
+      BENCH_PG_DATABASE: benchmark
+      BENCH_PG_POOL_SIZE: ${BENCH_PG_POOL_SIZE:-16}
+      BENCH_RUN_ID: ${BENCH_RUN_ID:-}
+      BENCH_MACHINE_LABEL: ${BENCH_MACHINE_LABEL:-}
+      BENCH_DATA_SIZE: ${BENCH_DATA_SIZE:-}
+      BENCH_WARMUP_SECONDS: ${BENCH_WARMUP_SECONDS:-}
+      BENCH_MEASURE_SECONDS: ${BENCH_MEASURE_SECONDS:-}
+      BENCH_RUNS: ${BENCH_RUNS:-}
+      BENCH_SEED: ${BENCH_SEED:-}
+      BENCH_WORKLOADS: ${BENCH_WORKLOADS:-}
+      BENCH_TARGET_RATES: ${BENCH_TARGET_RATES:-}
+      BENCH_SCALING_WORKLOADS: ${BENCH_SCALING_WORKLOADS:-}
+      BENCH_SLO_P99_MS: ${BENCH_SLO_P99_MS:-}
+      BENCH_MAX_IN_FLIGHT: ${BENCH_MAX_IN_FLIGHT:-}
+      BENCH_DRIVER_CPUS: ${BENCH_DRIVER_CPUS:-2}
+      BENCH_ENGINE_CPUS: ${BENCH_ENGINE_CPUS:-2}
+      BENCH_CDC_SAMPLES: ${BENCH_CDC_SAMPLES:-}
+      BENCH_CDC_WARMUP: ${BENCH_CDC_WARMUP:-}
+    volumes:
+      - ./results:/app/results
+    cpuset: ${BENCH_DRIVER_CPUSET:-0,1}
+    cpus: "${BENCH_DRIVER_CPUS:-2}"
+    mem_limit: ${BENCH_DRIVER_MEMORY:-2g}
+    memswap_limit: ${BENCH_DRIVER_MEMORY:-2g}

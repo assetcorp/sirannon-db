@@ -18,7 +18,7 @@ This roadmap sets out where the project is heading. It covers direction and inte
 ## Planned
 
 - **A second-language implementation.** The specification names TypeScript, Go, Rust, and Python as targets, and a second implementation is the headline item, because it proves the specification is portable across languages. The choice of which language to build first is open, and the decision will weigh runtime footprint, the concurrency model, and the ecosystem each language reaches.
-- **Scaling beyond a single node's disk.** Each Sirannon node uses one SQLite file on one machine, so a dataset larger than local storage is where Postgres wins today, as the [benchmarks](packages/ts/benchmarks/BENCHMARKS.md) set out plainly. How Sirannon handles data beyond a single machine, whether through sharding, tiered storage, or another route, is an open question. We have not settled on a design.
+- **Scaling beyond a single node's disk.** Each Sirannon node uses one SQLite file on one machine, so a dataset larger than local storage is where Postgres wins today, as the [benchmarks](BENCHMARKS.md) set out plainly. How Sirannon handles data beyond a single machine, whether through sharding, tiered storage, or another route, is an open question. We have not settled on a design.
 
 ## How to get involved
 

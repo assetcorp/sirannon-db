@@ -36,14 +36,14 @@ pnpm test:failover   # Docker-based failover conformance
 pnpm test:soak       # long-running soak run
 ```
 
-The benchmark suites also run from `packages/ts`. See [`packages/ts/benchmarks/BENCHMARKS.md`](packages/ts/benchmarks/BENCHMARKS.md) for how to run them against Postgres.
+The benchmark suite runs from `benchmarks/server`. See [`BENCHMARKS.md`](BENCHMARKS.md) for the methodology and [`benchmarks/server/README.md`](benchmarks/server/README.md) for how to run it against Postgres.
 
 ## Repository layout
 
 - `packages/ts` contains the TypeScript library: the core engine, the server and client subpaths, replication, the transports, and the SQLite drivers.
 - `packages/spec` contains the language-agnostic specification that every implementation follows, along with its test vectors.
 - `packages/ts/examples` contains runnable example projects for Node.js, the browser, the client-server path, and a distributed cluster.
-- `packages/ts/benchmarks` contains the benchmark suites and their Docker setup.
+- `benchmarks` contains the benchmark suite: the Python harness under `benchmarks/server`, the report generator under `benchmarks/writeup`, and the cloud provisioning under `benchmarks/cloud`.
 
 ## Conventions
 

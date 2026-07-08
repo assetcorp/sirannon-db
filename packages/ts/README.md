@@ -8,7 +8,7 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
-In matched-durability benchmarks against Postgres 17, Sirannon leads across single-client workloads because the database runs in your process with no network hop, and the margin narrows under concurrency where Postgres parallelises across its connection pool. Every published figure is generated from a recorded run on a disclosed machine, and the same benchmarks show where Postgres wins. See the full [methodology and results](benchmarks/BENCHMARKS.md).
+The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it ships and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](../../BENCHMARKS.md).
 
 See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
 
@@ -1008,7 +1008,7 @@ pnpm run dev
 
 ## Benchmarks
 
-The benchmark suite compares Sirannon's embedded SQLite performance against Postgres 17 across micro-operations, YCSB, TPC-C, and concurrency scaling. All benchmarks support driver switching via the `BENCH_DRIVER` environment variable (`better-sqlite3` or `node`). See [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md) for setup instructions, configuration, Docker-based fair comparisons, and statistical analysis methodology.
+The benchmark suite compares Sirannon against Postgres 17 on the same OLTP workloads, driving Sirannon over HTTP into its real server and Postgres over its socket, both in resource-capped containers at matched durability, under an open-loop load generator that corrects for coordinated omission. The harness is a Python project at the repository root under `benchmarks/server`. See [`BENCHMARKS.md`](../../BENCHMARKS.md) for the methodology and the latest results.
 
 ## Development
 

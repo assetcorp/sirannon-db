@@ -102,6 +102,12 @@ services:
   # Category 2: Engine-Level Benchmarks
   # ──────────────────────────────────────────
 
+  # The fair engine track co-locates each database with its load driver on one host over
+  # loopback and gives both sides the same total CPU budget (BENCH_CPUS, default 2). Sirannon
+  # runs its SDK load driver and its real server front-end in one container that holds the whole
+  # budget. Postgres splits the identical budget across its load-driver container and its
+  # database container (BENCH_ENGINE_DRIVER_CPUS + BENCH_ENGINE_DB_CPUS default to 1 + 1). Neither
+  # side gets a network-geography advantage, and neither side gets more CPU than the other.
   sirannon-engine:
     build:
       context: ../../../..
@@ -114,6 +120,9 @@ services:
       - HOST=0.0.0.0
       - PORT=9878
       - BENCH_DURABILITY=${BENCH_DURABILITY:-matched}
+      - BENCH_CPUS=${BENCH_CPUS:-2}
+      - BENCH_SIRANNON_SPLIT=SDK load driver and Sirannon server co-located in one container sharing the ${BENCH_CPUS:-2} CPU budget
+      - BENCH_POSTGRES_SPLIT=pg load-driver container (${BENCH_ENGINE_DRIVER_CPUS:-1} CPU) plus Postgres database container (${BENCH_ENGINE_DB_CPUS:-1} CPU)
     deploy:
       resources:
         limits:
@@ -145,14 +154,17 @@ services:
       - PG_POOL_SIZE=10
       - NODE_OPTIONS=--max-old-space-size=1536
       - BENCH_DURABILITY=${BENCH_DURABILITY:-matched}
+      - BENCH_CPUS=${BENCH_CPUS:-2}
+      - BENCH_SIRANNON_SPLIT=SDK load driver and Sirannon server co-located in one container sharing the ${BENCH_CPUS:-2} CPU budget
+      - BENCH_POSTGRES_SPLIT=pg load-driver container (${BENCH_ENGINE_DRIVER_CPUS:-1} CPU) plus Postgres database container (${BENCH_ENGINE_DB_CPUS:-1} CPU)
     depends_on:
       postgres-eng:
         condition: service_healthy
     deploy:
       resources:
         limits:
-          cpus: '${BENCH_CPUS:-2}'
-          memory: ${BENCH_PG_CLIENT_MEMORY:-2g}
+          cpus: '${BENCH_ENGINE_DRIVER_CPUS:-1}'
+          memory: ${BENCH_PG_CLIENT_MEMORY:-1g}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9879/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 2s
@@ -192,8 +204,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${BENCH_CPUS:-2}'
-          memory: ${BENCH_MEMORY:-2g}
+          cpus: '${BENCH_ENGINE_DB_CPUS:-1}'
+          memory: ${BENCH_PG_MEMORY:-1g}
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U benchmark']
       interval: 2s

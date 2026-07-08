@@ -7,7 +7,8 @@ import { Bench } from 'tinybench'
 import { loadBenchDriver } from '../config'
 import { SeededRng } from '../rng'
 import { generateUserRow, microSchemaPostgres, microSchemaSqlite, ZipfianGenerator } from '../schemas'
-import { getWorkload, type WorkloadConfig, workloads } from './workloads'
+import { createFairSirannonHarness, type FairSirannonHarness } from './fair-harness'
+import { getWorkload, pickOperation, type WorkloadConfig, workloads } from './workloads'
 
 const ENGINE = process.env.ENGINE ?? 'sirannon'
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -24,57 +25,39 @@ interface EngineBackend {
 }
 
 async function createSirannonBackend(): Promise<EngineBackend> {
-  const { Database } = await import('../../src/core/database')
-  const driver = await loadBenchDriver()
-  let db: InstanceType<typeof Database> | null = null
-  let tempDir = ''
+  let harness: FairSirannonHarness | null = null
 
   return {
     async setup(schemaSql: string) {
-      tempDir = mkdtempSync(join(tmpdir(), 'sirannon-engine-'))
-      const dbPath = join(tempDir, 'bench.db')
-      db = await Database.create('bench', dbPath, driver, { readPoolSize: 4, walMode: true })
-      await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
-
-      for (const stmt of schemaSql
-        .split(';')
-        .map(s => s.trim())
-        .filter(Boolean)) {
-        await db.execute(stmt)
-      }
+      if (harness) await harness.cleanup()
+      harness = await createFairSirannonHarness(schemaSql, DURABILITY)
     },
 
     async seed(insertSql: string, rows: unknown[][]) {
-      if (!db) throw new Error('Database not initialized')
-      await db.executeBatch(insertSql, rows)
+      if (!harness) throw new Error('Database not initialized')
+      await harness.seed(insertSql, rows)
     },
 
     async query(sql: string, params: unknown[]) {
-      if (!db) throw new Error('Database not initialized')
-      return db.query(sql, params)
+      if (!harness) throw new Error('Database not initialized')
+      return harness.db.query(sql, params)
     },
 
     async execute(sql: string, params: unknown[]) {
-      if (!db) throw new Error('Database not initialized')
-      return db.execute(sql, params)
+      if (!harness) throw new Error('Database not initialized')
+      return harness.db.execute(sql, params)
     },
 
     async cleanup() {
-      if (db && !db.closed) await db.close()
-      if (tempDir) rmSync(tempDir, { recursive: true, force: true })
-      db = null
-      tempDir = ''
+      if (harness) {
+        await harness.cleanup()
+        harness = null
+      }
     },
 
     async info() {
-      if (!db) return { engine: 'sirannon', status: 'not initialized' }
-      const pragmas = ['journal_mode', 'synchronous', 'cache_size', 'page_size']
-      const result: Record<string, string> = { engine: 'sirannon' }
-      for (const p of pragmas) {
-        const rows = await db.query<Record<string, unknown>>(`PRAGMA ${p}`)
-        result[p] = String(rows[0] ? Object.values(rows[0])[0] : 'unknown')
-      }
-      return result
+      if (!harness) return { engine: 'sirannon', delivery: 'client-server-http', status: 'not initialized' }
+      return harness.info()
     },
   }
 }
@@ -206,20 +189,24 @@ async function runWorkloadBenchmark(backend: EngineBackend, config: WorkloadConf
   })
 
   if (ENGINE === 'sirannon') {
-    for (const op of workload.operations) {
-      bench.add(
-        `${config.name}/${op.name}`,
-        async () => {
-          const params = op.paramsFn(config.dataSize)
-          if (op.sqliteSql.trimStart().toUpperCase().startsWith('SELECT')) {
-            await backend.query(op.sqliteSql, params)
-          } else {
-            await backend.execute(op.sqliteSql, params)
-          }
-        },
-        { async: true },
-      )
-    }
+    bench.add(
+      config.name,
+      async () => {
+        const op = pickOperation(workload.operations)
+        const params = op.paramsFn(config.dataSize)
+        if (op.kind === 'rmw') {
+          const [key, newValue] = params
+          await backend.query(op.sqliteSql, [key])
+          if (!op.writeSqliteSql) throw new Error(`rmw operation ${op.name} is missing writeSqliteSql`)
+          await backend.execute(op.writeSqliteSql, [newValue, key])
+        } else if (op.kind === 'read') {
+          await backend.query(op.sqliteSql, params)
+        } else {
+          await backend.execute(op.sqliteSql, params)
+        }
+      },
+      { async: true },
+    )
   } else {
     const pg = await import('pg')
     const pool = new pg.default.Pool({
@@ -231,16 +218,22 @@ async function runWorkloadBenchmark(backend: EngineBackend, config: WorkloadConf
       max: Number(process.env.PG_POOL_SIZE ?? 10),
     })
 
-    for (const op of workload.operations) {
-      bench.add(
-        `${config.name}/${op.name}`,
-        async () => {
-          const params = op.paramsFn(config.dataSize)
+    bench.add(
+      config.name,
+      async () => {
+        const op = pickOperation(workload.operations)
+        const params = op.paramsFn(config.dataSize)
+        if (op.kind === 'rmw') {
+          const [key, newValue] = params
+          await pool.query({ text: op.postgresSql, values: [key] })
+          if (!op.writePostgresSql) throw new Error(`rmw operation ${op.name} is missing writePostgresSql`)
+          await pool.query({ text: op.writePostgresSql, values: [newValue, key] })
+        } else {
           await pool.query({ text: op.postgresSql, values: params })
-        },
-        { async: true },
-      )
-    }
+        }
+      },
+      { async: true },
+    )
 
     const originalRun = bench.run
     bench.run = async () => {
@@ -287,10 +280,13 @@ interface WorkerResult {
   latencySamplesNs: number[]
 }
 
+type DeliveryMode = 'client-server-http' | 'client-server' | 'embedded'
+
 interface ConcurrentDataPoint {
   concurrency: number
   readRatio: number
   model: string
+  delivery: DeliveryMode
   totalOps: number
   opsPerSec: number
   p50Ns: number
@@ -322,6 +318,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
 
   const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-conc-'))
   let sirannonDbPath = ''
+  let fairHarness: FairSirannonHarness | null = null
   const pgConfig =
     ENGINE === 'postgres'
       ? {
@@ -353,6 +350,10 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
       } finally {
         await db.close()
       }
+
+      fairHarness = await createFairSirannonHarness(microSchemaSqlite, DURABILITY)
+      const seedRows = Array.from({ length: config.dataSize }, (_, i) => generateUserRow(i + 1))
+      await fairHarness.seed('INSERT INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)', seedRows)
     } else {
       const pg = await import('pg')
       const pool = new pg.default.Pool({ ...pgConfig, max: 2 })
@@ -398,51 +399,56 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
         console.log(`[${ENGINE}] Event loop: readRatio=${readRatio}, N=${N}`)
 
         if (ENGINE === 'sirannon') {
-          const { Database } = await import('../../src/core/database')
-          const driver = await loadBenchDriver()
-          const db = await Database.create('conc-el', sirannonDbPath, driver, { readPoolSize: 1, walMode: true })
-          await db.execute('PRAGMA busy_timeout = 5000')
-          await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+          if (!fairHarness) throw new Error('Fair Sirannon harness not initialized')
+          const db = fairHarness.db
+          const rng = new SeededRng(BigInt(BASE_SEED))
+          const zipf = new ZipfianGenerator(config.dataSize, 0.99, rng)
 
-          try {
-            const rng = new SeededRng(BigInt(BASE_SEED))
-            const zipf = new ZipfianGenerator(config.dataSize, 0.99, rng)
+          let ops = 0
+          const samples: number[] = []
+          const deadline = Date.now() + config.durationMs
 
-            let ops = 0
-            const samples: number[] = []
-            const deadline = Date.now() + config.durationMs
+          while (Date.now() < deadline) {
+            const batch: Promise<void>[] = []
+            for (let i = 0; i < N; i++) {
+              const isRead = rng.next() < readRatio
+              const id = zipf.next() + 1
+              const start = process.hrtime.bigint()
 
-            while (Date.now() < deadline) {
-              for (let i = 0; i < N; i++) {
-                const isRead = rng.next() < readRatio
-                const id = zipf.next() + 1
-                const start = process.hrtime.bigint()
-                if (isRead) {
-                  await db.query('SELECT * FROM users WHERE id = ?', [id])
-                } else {
-                  const age = Math.floor(rng.next() * 80) + 18
-                  await db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id])
-                }
-                const elapsed = Number(process.hrtime.bigint() - start)
-                ops++
-                if (samples.length < 10_000) samples.push(elapsed)
+              if (isRead) {
+                batch.push(
+                  db.query('SELECT * FROM users WHERE id = ?', [id]).then(() => {
+                    const elapsed = Number(process.hrtime.bigint() - start)
+                    ops++
+                    if (samples.length < 10_000) samples.push(elapsed)
+                  }),
+                )
+              } else {
+                const age = Math.floor(rng.next() * 80) + 18
+                batch.push(
+                  db.execute('UPDATE users SET age = ? WHERE id = ?', [age, id]).then(() => {
+                    const elapsed = Number(process.hrtime.bigint() - start)
+                    ops++
+                    if (samples.length < 10_000) samples.push(elapsed)
+                  }),
+                )
               }
             }
-
-            samples.sort((a, b) => a - b)
-            const opsPerSec = ops / (config.durationMs / 1_000)
-            results.push({
-              concurrency: N,
-              readRatio,
-              model: 'event-loop',
-              totalOps: ops,
-              opsPerSec,
-              p50Ns: percentile(samples, 0.5),
-              p99Ns: percentile(samples, 0.99),
-            })
-          } finally {
-            await db.close()
+            await Promise.all(batch)
           }
+
+          samples.sort((a, b) => a - b)
+          const opsPerSec = ops / (config.durationMs / 1_000)
+          results.push({
+            concurrency: N,
+            readRatio,
+            model: 'event-loop',
+            delivery: 'client-server-http',
+            totalOps: ops,
+            opsPerSec,
+            p50Ns: percentile(samples, 0.5),
+            p99Ns: percentile(samples, 0.99),
+          })
         } else {
           const pg = await import('pg')
           const pool = new pg.default.Pool({ ...pgConfig, max: N })
@@ -494,6 +500,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
               concurrency: N,
               readRatio,
               model: 'event-loop',
+              delivery: 'client-server',
               totalOps: ops,
               opsPerSec,
               p50Ns: percentile(samples, 0.5),
@@ -533,6 +540,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
           concurrency: N,
           readRatio,
           model: 'worker-threads',
+          delivery: ENGINE === 'sirannon' ? 'embedded' : 'client-server',
           totalOps,
           opsPerSec,
           p50Ns: percentile(mergedSamples, 0.5),
@@ -541,6 +549,7 @@ async function runConcurrentBenchmark(config: ConcurrentConfig): Promise<Concurr
       }
     }
   } finally {
+    if (fairHarness) await fairHarness.cleanup()
     rmSync(tempDir, { recursive: true, force: true })
   }
 

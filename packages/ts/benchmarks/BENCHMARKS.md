@@ -1,6 +1,6 @@
 # Benchmarks
 
-Sirannon benchmarks compare embedded SQLite performance against Postgres 17 across micro-operations, industry-standard workloads (YCSB, TPC-C), concurrency scaling, and Sirannon-specific features like CDC and connection pooling.
+Sirannon benchmarks compare it against Postgres 17 across micro-operations, industry-standard workloads (YCSB, TPC-C), concurrency scaling, and Sirannon-specific features like CDC and connection pooling. The published head-to-head reaches each database over its own client-server path on one host, so the comparison measures the engines rather than a network hop; Sirannon's embedded, in-process numbers are reported as a separate deployment-mode claim.
 
 Two benchmark categories exist: **local benchmarks** for quick development feedback, and **Docker-based benchmarks** for fair, reproducible comparisons.
 
@@ -169,15 +169,17 @@ pnpm bench:docker:e2e
 | `BENCH_RPS_LEVELS`    | `1000,5000,10000` | Comma-separated target req/s         |
 | `BENCH_DURATION`      | `60s`             | Duration per rate level              |
 
-### Category 2: Engine-Level Benchmarks
+### Category 2: Engine-Level Benchmarks (fair server vs server)
 
-Measures raw query execution performance under identical constraints. No network latency in the measurement; each container runs tinybench internally.
+Measures each database doing the same client-server job on one host. A networked load driver reaches Sirannon through the SirannonClient SDK over HTTP into the real server front-end, and reaches Postgres through the native pg driver, both over loopback. Neither side skips a network hop the other pays, which is the fairness rule a client-server comparison has to meet.
 
 **Resource allocation:**
 
-- **Sirannon engine**: Sirannon + tinybench in a single container (2 CPU, 2 GB)
-- **Postgres engine**: pg.Pool + tinybench in a client container (2 CPU, 2 GB) connected to a Postgres DB container (2 CPU, 2 GB)
-- Sirannon uses 2 CPUs total. Postgres uses 4 CPUs total (2 client + 2 database). Sirannon runs as a single process with the database embedded in the application, so it needs one container. Postgres separates the database server from the client, requiring a container for each. This resource split reflects the architectural difference between embedded and client-server databases.
+- **Sirannon engine**: SDK load driver and Sirannon server co-located in one container that holds the whole CPU budget (`BENCH_CPUS`, default 2 CPU, 2 GB).
+- **Postgres engine**: pg load-driver container (`BENCH_ENGINE_DRIVER_CPUS`, default 1 CPU) plus Postgres DB container (`BENCH_ENGINE_DB_CPUS`, default 1 CPU).
+- Both sides run on the same total CPU budget. Sirannon co-locates its driver and server in one container; Postgres splits the identical budget across its driver and database containers. The totals match, so neither side is given more compute than the other.
+
+Sirannon's HTTP request path carries JSON framing on every call, which is heavier than Postgres's binary wire protocol. That is Sirannon's real client cost, disclosed rather than hidden, so the comparison errs toward charging Sirannon more rather than flattering it.
 
 Both engines receive `BENCH_DURABILITY` via environment variable, so the `matched` vs `full` durability mode applies in Docker the same way it does locally.
 
@@ -201,13 +203,16 @@ pnpm bench:docker
 
 **Configuration:**
 
-| Variable           | Default                          | Description                          |
-|--------------------|----------------------------------|--------------------------------------|
-| `BENCH_DATA_SIZES` | `1000,10000`                     | Comma-separated row counts           |
-| `BENCH_WARMUP_MS`  | `5000`                           | Warmup duration per task             |
-| `BENCH_MEASURE_MS` | `10000`                          | Measurement duration per task        |
-| `BENCH_WORKLOADS`  | `point-select,bulk-insert,...`   | Comma-separated workload names       |
-| `BENCH_DURABILITY` | `matched`                        | Durability mode for both engines     |
+| Variable                   | Default                        | Description                                       |
+|----------------------------|--------------------------------|---------------------------------------------------|
+| `BENCH_DATA_SIZES`         | `1000,10000`                   | Comma-separated row counts                        |
+| `BENCH_WARMUP_MS`          | `5000`                         | Warmup duration per task                          |
+| `BENCH_MEASURE_MS`         | `10000`                        | Measurement duration per task                     |
+| `BENCH_WORKLOADS`          | `point-select,bulk-insert,...` | Comma-separated workload names                    |
+| `BENCH_DURABILITY`         | `matched`                      | Durability mode for both engines                  |
+| `BENCH_CPUS`               | `2`                            | Total CPU budget per side                         |
+| `BENCH_ENGINE_DRIVER_CPUS` | `1`                            | CPU for the Postgres load-driver container        |
+| `BENCH_ENGINE_DB_CPUS`     | `1`                            | CPU for the Postgres database container           |
 
 ## Statistical Analysis
 
@@ -275,77 +280,43 @@ Requires Python 3 with matplotlib and pandas (`pip install matplotlib pandas`).
 
 ### Reference Results
 
-Results from a clean end-to-end run on Apple M3 Pro (11 cores, 18 GB RAM), Postgres 17.9 in Docker, matched durability mode. Statistical charts use 10 independent runs.
+The numbers below are generated from the latest committed Docker engine run and describe the exact machine that ran it. The Docker engine track is the fair, reproducible comparison: a networked client reaches each database through the database's own server over loopback, both co-located in resource-capped containers on one host, so the figures measure the engines doing the same job rather than one system's missing network hop. Regenerate this section with `pnpm bench:writeup` after committing a run directory under `results/runs/`.
 
-#### Speedup by Workload (10 runs, with 95% CI error bars)
+#### Why this comparison is fair
 
-**Point-Select** (primary key lookup, 1K and 10K rows):
+<!-- BENCH:engine-methodology START -->
+_No benchmark run is committed yet. Run the Docker engine suite on the disclosed cloud machine and commit its run directory under `results/runs/` to publish numbers here._
+<!-- BENCH:engine-methodology END -->
 
-![Point-Select Speedup](results/charts/point-select-speedup.svg)
+#### Run and machine
 
-**Batch-Update** (multi-row UPDATE in a transaction):
+<!-- BENCH:engine-setup START -->
+_No benchmark run is committed yet. Run the Docker engine suite on the disclosed cloud machine and commit its run directory under `results/runs/` to publish numbers here._
+<!-- BENCH:engine-setup END -->
 
-![Batch-Update Speedup](results/charts/batch-update-speedup.svg)
+#### Single-client comparison
 
-**YCSB Workload-A** (50/50 read/update, Zipfian distribution):
+Throughput and latency per workload at each measured row count, each database reached over its own client-server path on the same host. A speedup above one means Sirannon was faster than Postgres for that workload.
 
-![YCSB-A Speedup](results/charts/ycsb-a-speedup.svg)
+<!-- BENCH:engine-comparison START -->
+_No benchmark run is committed yet. Run the Docker engine suite on the disclosed cloud machine and commit its run directory under `results/runs/` to publish numbers here._
+<!-- BENCH:engine-comparison END -->
 
-**TPC-C Lite** (mixed OLTP, 100K customers):
+#### Concurrency scaling (server vs server)
 
-![TPC-C Speedup](results/charts/tpc-c-lite-speedup.svg)
+Throughput as concurrent clients increase, with both databases reached over their own client-server path. This is the head-to-head result and includes the region where Postgres pulls ahead.
 
-#### Speedup at Scale (1K to 1M rows)
+<!-- BENCH:engine-scaling START -->
+_No benchmark run is committed yet. Run the Docker engine suite on the disclosed cloud machine and commit its run directory under `results/runs/` to publish numbers here._
+<!-- BENCH:engine-scaling END -->
 
-**Point-Select across data sizes:**
+#### Embedded deployment mode (separate claim)
 
-![Point-Select Scale](results/charts/point-select-scale-speedup.svg)
+Sirannon's in-process, no-network-hop numbers. This is a property of the embedded deployment, not a head-to-head win over a server database.
 
-**YCSB-A across data sizes:**
-
-![YCSB-A Scale](results/charts/ycsb-a-scale-speedup.svg)
-
-**Batch-Update across data sizes:**
-
-![Batch-Update Scale](results/charts/batch-update-scale-speedup.svg)
-
-#### Per-Run Distribution (10 runs)
-
-Box plots showing the spread of ops/sec across independent runs. Tight boxes indicate stable measurements.
-
-**Point-Select:**
-
-![Point-Select Box Plot](results/charts/point-select-boxplot.svg)
-
-**TPC-C Lite:**
-
-![TPC-C Box Plot](results/charts/tpc-c-lite-boxplot.svg)
-
-#### Latency Comparison
-
-**Point-Select P50/P99:**
-
-![Point-Select Latency](results/charts/point-select-latency.svg)
-
-#### Pool Size Sweep
-
-**Postgres pool size (5, 10, 20) vs Sirannon:**
-
-![Pool Sweep](results/charts/pool-sweep-speedup.svg)
-
-#### Sirannon Feature Benchmarks
-
-**CDC Throughput** (sustained write rate with real-time event delivery):
-
-![CDC Throughput](results/charts/cdc-throughput.svg)
-
-**Cold Start** (database open + first query):
-
-![Cold Start](results/charts/cold-start.svg)
-
-**Connection Pool** (internal pool throughput):
-
-![Connection Pool](results/charts/connection-pool.svg)
+<!-- BENCH:engine-embedded START -->
+_No benchmark run is committed yet. Run the Docker engine suite on the disclosed cloud machine and commit its run directory under `results/runs/` to publish numbers here._
+<!-- BENCH:engine-embedded END -->
 
 ### Interpreting results
 
@@ -356,83 +327,42 @@ Box plots showing the spread of ops/sec across independent runs. Tight boxes ind
 
 ## Concurrency and Scaling Trade-offs
 
-The single-client benchmarks show Sirannon outperforming Postgres by 22x to 244x depending on the workload. These numbers are accurate, but they tell only half the story. The concurrency scaling benchmark (`pnpm bench:scaling`) reveals how these advantages shift as concurrent clients increase.
+The single-client comparison above reaches each database over its own client-server path on the same host, so it measures the engines, not a network hop. This section explains the architecture behind the results and how the picture shifts as concurrent clients increase.
 
-### Why single-client performance is so high
+### Why single-client performance is high
 
-Sirannon runs SQLite in-process. A query travels from your application code into SQLite's B-tree engine and back without leaving the process boundary. Postgres receives the same query over a TCP socket, parses it, plans it, executes it, serializes the result, and sends it back over the network. For a trivial point-select that takes microseconds to execute, the network round-trip dominates Postgres's total response time. Sirannon skips that round-trip entirely.
+Both databases answer the query over loopback on the same host, so neither is paying for a network between machines. Behind Sirannon's server, SQLite executes the query in the server process against its B-tree engine and returns; behind Postgres's server, the query is parsed, planned, executed, and serialised across Postgres's connection model. For a trivial point-select that finishes in microseconds, SQLite's shorter execution path inside the server shows up as a throughput lead, and Sirannon's own HTTP and JSON framing is charged against that lead rather than hidden.
 
-This explains the speedup hierarchy across workloads:
-
-| Workload | Speedup | Why |
-| --- | --- | --- |
-| batch-update (1K) | 244x | Multi-statement transactions multiply the network cost per transaction |
-| point-select (1K) | 91x | Trivial query where network overhead is nearly all of Postgres's latency |
-| tpc-c-lite (1K) | 44x | Multi-step transactions, but heavier per-step computation |
-| ycsb-a (1K) | 23x | Mixed read/update with Zipfian distribution adds real computation |
-
-The pattern is clear: the less work each query does, the more network overhead dominates, and the larger Sirannon's advantage.
+The speedup hierarchy in the comparison table follows from this: the less compute each query does, the more the per-request overhead each server carries dominates, and the larger the gap. Batch and multi-statement transactions amplify the difference; mixed read-update workloads with real per-query computation narrow it.
 
 ### What happens under concurrency
 
-SQLite uses a single-writer model. WAL mode allows any number of concurrent readers, but only one connection can write at a time. All other writers queue behind it. This is a fundamental architectural choice, not a bug or limitation to work around.
+SQLite uses a single-writer model. WAL mode allows any number of concurrent readers, but only one connection writes at a time, and other writers queue behind it. This is a fundamental architectural choice, not a bug to work around.
 
-The scaling benchmark tests concurrency from 1 to 64 clients and reveals the consequences:
+The scaling table tests concurrency from 1 to 64 clients over the client-server path both sides share. Sirannon's server overlaps concurrent reads through its read pool while its single-writer lock serialises writes; Postgres overlaps both reads and writes across its connection pool. As the client count climbs, Postgres's row-level locking lets write-heavy mixed workloads pull ahead of SQLite's single writer, and the scaling table records that crossover rather than hiding it. Read-heavy workloads keep Sirannon ahead further up the range because WAL readers do not contend.
 
-**Event-loop model (single Node.js thread, async Postgres pool):**
+### Where Postgres pulls ahead
 
-| Concurrency | Sirannon ops/s | Postgres ops/s | Speedup | Workload |
-| --- | --- | --- | --- | --- |
-| 1 | 422,067 | 6,413 | 65.8x | read-only |
-| 16 | 411,990 | 25,083 | 16.4x | read-only |
-| 64 | 411,674 | 30,694 | 13.4x | read-only |
-| 1 | 138,375 | 6,281 | 22.0x | mixed 50/50 |
-| 16 | 138,029 | 25,008 | 5.5x | mixed 50/50 |
-| 64 | 144,627 | 28,858 | 5.0x | mixed 50/50 |
-
-Sirannon's throughput stays flat regardless of how many concurrent clients are running. It can't go faster because the single event loop serializes all operations anyway, and SQLite's single-writer lock prevents write parallelism. Postgres, on the other hand, scales from 6,400 to 30,700 ops/sec on reads as its connection pool overlaps queries across the async event loop. Each additional Postgres connection does real parallel work on the server side.
-
-The speedup ratio compresses from 66x down to 13x for reads, and from 22x down to 5x for mixed workloads. Sirannon still wins at every concurrency level tested, but the margin narrows as Postgres gains ground.
-
-**Worker-thread model (N threads, each with its own connection):**
-
-| Concurrency | Sirannon ops/s | Postgres ops/s | Speedup | Workload |
-| --- | --- | --- | --- | --- |
-| 1 | 382,617 | 6,313 | 60.6x | read-only |
-| 4 | 926,611 | 17,234 | 53.8x | read-only |
-| 8 | 927,309 | 22,104 | 42.0x | read-only |
-| 1 | 111,677 | 6,187 | 18.1x | mixed 50/50 |
-| 4 | 123,366 | 16,828 | 7.3x | mixed 50/50 |
-| 16 | 118,935 | 24,606 | 4.8x | mixed 50/50 |
-
-Worker threads unlock SQLite's read parallelism. WAL mode allows multiple threads to read simultaneously, and Sirannon's throughput jumps from 383K to 927K ops/sec at 4 threads for read-only workloads. Beyond 4 threads, the gains plateau because the hardware's memory bandwidth and cache contention become the bottleneck rather than SQLite's locking.
-
-Mixed workloads tell a different story. Even with worker threads, write throughput stays flat at around 112-123K ops/sec because SQLite's write lock serializes all mutations regardless of how many threads are waiting. The extra threads don't help with writes; they only add contention overhead.
-
-### The crossover point
-
-Postgres never catches Sirannon within the concurrency range tested (1 to 64 clients). At 64 concurrent mixed-workload clients, Sirannon still delivers 5x the throughput.
-
-Postgres throughput grows linearly with concurrency while Sirannon's stays constant. Extrapolating the mixed-workload curve, Postgres would need roughly 300-400 concurrent database connections doing real parallel work to match Sirannon's throughput. In practice, production Postgres deployments rarely exceed 20-100 direct connections. Postgres documentation recommends keeping `max_connections` low, and tools like PgBouncer exist specifically to multiplex thousands of application requests through a small pool of database connections. The crossover point falls well outside normal production configurations.
+On write-heavy mixed workloads at higher client counts, Postgres overtakes Sirannon: every mutation Sirannon runs waits on the single-writer lock, so added clients only lengthen the write queue, while Postgres parallelises writes across connections through row-level locking. The scaling table shows the concurrency level where this crossover occurs for the recorded run. Read-only workloads do not cross over within the tested range because WAL mode serves concurrent readers without contention.
 
 ### Practical guidance
 
-Sirannon outperforms Postgres across every workload and concurrency level tested, from 244x on batch updates down to 5x at 64 concurrent mixed clients. The concurrency range tested (1 to 64 clients) covers and exceeds what most production database connection pools use.
+Read the scaling table for the crossover point on your workload mix: Sirannon leads on read-heavy and light mixed workloads across the tested range, and Postgres leads on write-heavy mixed workloads once the client count passes the recorded crossover.
 
-**Web applications at standard scale** see large, consistent gains. A backend handling hundreds or thousands of requests per day, with a connection pool of 10-50 concurrent database queries, falls squarely within the range where Sirannon leads by 5-22x on mixed workloads and 13-66x on reads. Sirannon also eliminates the operational overhead of running a separate database server. Connection pooling and configuration happen in-process rather than requiring external infrastructure to manage.
+**Web applications at standard scale** with a connection pool of 10-50 concurrent database queries usually fall on the read-heavy and light-mixed side where Sirannon leads. Sirannon also removes the operational overhead of running a separate database server when deployed embedded, because connection pooling and configuration happen in-process rather than through external infrastructure.
 
-**Multi-tenant architectures** are a natural fit. Each tenant gets its own SQLite database, so write serialization applies per tenant rather than across the whole system. A tenant with 10 concurrent users gets the full single-client performance profile, and tenants don't contend with each other.
+**Multi-tenant architectures** are a natural fit. Each tenant gets its own SQLite database, so write serialisation applies per tenant rather than across the whole system. A tenant with 10 concurrent users gets the full single-client performance profile, and tenants do not contend with each other.
 
-**Read-heavy workloads at scale** benefit from SQLite's WAL mode, which allows concurrent readers. The worker-thread benchmarks show Sirannon scaling from 383K to 927K read ops/sec at 4 threads. For horizontal read scaling beyond a single machine, WAL replication tools like Litestream can stream changes to read replicas via S3 for durability, or through faster transports like Redis Streams for sub-second replication lag.
+**Read-heavy workloads at scale** benefit from SQLite's WAL mode, which allows concurrent readers, so read throughput scales until hardware bandwidth limits it. For horizontal read scaling beyond a single machine, WAL replication tools like Litestream can stream changes to read replicas via S3 for durability, or through faster transports like Redis Streams for sub-second replication lag.
 
 **Where Postgres is the better fit:**
 
-- **Extremely write-heavy workloads with high concurrent writer counts on shared rows.** SQLite serializes writes through a single-writer lock. The scaling benchmarks show Sirannon's write throughput stays flat as concurrency increases, while Postgres scales linearly with its row-level locking. For applications where hundreds of clients mutate the same tables simultaneously (high-frequency trading systems, real-time bidding platforms, shared counters with hundreds of concurrent writers), Postgres's ability to parallelize writes across connections is a genuine advantage. For most applications, SQLite's single writer processes mutations fast enough that the queue never becomes a bottleneck.
+- **Extremely write-heavy workloads with high concurrent writer counts on shared rows.** SQLite serialises writes through a single-writer lock, so Sirannon's write throughput stays flat as concurrency increases while Postgres scales with its row-level locking. For applications where hundreds of clients mutate the same tables simultaneously (high-frequency trading systems, real-time bidding platforms, shared counters with hundreds of concurrent writers), Postgres's ability to parallelise writes across connections is a genuine advantage. For most applications, SQLite's single writer processes mutations fast enough that the queue never becomes a bottleneck.
 - **Data exceeding a single machine's disk.** SQLite operates on a single file on a single machine. If your dataset outgrows local storage, Postgres handles that natively with partitioning, tablespaces, and distributed extensions.
 
 ### What these benchmarks do and don't measure
 
-These benchmarks measure raw database throughput at concurrency levels that match real production deployments (1 to 64 concurrent clients). Sirannon is faster than Postgres across every tested scenario, with the advantage ranging from 5x under heavy concurrency to 244x for batch operations.
+These benchmarks measure client-server throughput at concurrency levels that match real production deployments (1 to 64 concurrent clients), with both databases reached over their own server on the same host. Sirannon leads on light and read-heavy workloads with the margin widest on batch operations; Postgres pulls ahead on write-heavy mixed workloads once the client count passes the crossover the scaling table records.
 
 The benchmarks do not measure replication, failover, or distributed transactions. SQLite replication is available through external tools (Litestream for WAL streaming, cr-sqlite for CRDT-based multi-writer), while Postgres includes these capabilities as built-in features. The trade-off is between Sirannon's deployment simplicity and Postgres's integrated feature set; both approaches achieve the same end result through different means.
 

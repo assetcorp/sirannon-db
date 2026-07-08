@@ -50,6 +50,8 @@
     "bench:docker:engine": "node --expose-gc --import tsx benchmarks/run-engine.ts",
     "bench:statistical": "node --expose-gc --import tsx benchmarks/run-statistical.ts",
     "bench:charts": "python3 benchmarks/scripts/generate-charts.py benchmarks/results/",
+    "bench:writeup": "python3 benchmarks/writeup/generate.py",
+    "bench:writeup:check": "python3 benchmarks/writeup/generate.py --check",
     "proto:gen": "grpc_tools_node_protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/transport/grpc/generated --ts_proto_opt=forceLong=bigint --ts_proto_opt=esModuleInterop=true --ts_proto_opt=outputServices=grpc-js --ts_proto_opt=env=node -I src/transport/grpc/proto src/transport/grpc/proto/replication.proto"
   },
   "exports": {

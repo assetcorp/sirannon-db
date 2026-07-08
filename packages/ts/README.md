@@ -321,7 +321,7 @@ db.scheduleBackup({
 })
 ```
 
-The cron expression supports five or six fields (an optional leading seconds field), ranges, steps, lists, month and weekday names, and `@daily`-style nicknames. It runs in `timezone` when you set one, and in the host's local timezone otherwise. When the clocks go forward for daylight saving time, the scheduler skips the missing hour; when they go back, it runs a backup timed for the repeated hour once.
+The cron expression supports five or six fields (an optional leading seconds field), ranges, steps, lists, month and weekday names, and `@daily`-style nicknames. It runs in `timezone` when you set one, and in the host's local timezone otherwise. When the clocks go forward for daylight saving time, the scheduler skips the missing hour; when they go back, it runs a backup timed for the repeated hour once. The scheduler does not backfill: if the host sleeps or the clock jumps forward past a scheduled time, that run is skipped rather than run late, and a backward clock step repeats nothing.
 
 ### Hooks
 

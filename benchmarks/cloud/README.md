@@ -42,8 +42,9 @@ PROVIDER=hetzner ./run-cloud.sh all
 ```
 
 That creates the VM, pushes your current working tree including uncommitted changes, installs
-Docker, git, and Python 3, runs the suite, and copies each run directory into
-`benchmarks/server/results/runs/`. It leaves the VM running so you can inspect it, and prints the
+Docker, git, and Python 3, runs the full `cloud` preset (10,000,000 rows across both durability
+levels), and copies each run directory into `benchmarks/server/results/runs/`. For a smaller run,
+override individual `BENCH_` variables (for example `BENCH_DATA_SIZE`) as shown below. It leaves the VM running so you can inspect it, and prints the
 command to delete it. Add `--teardown` to delete on success and `--yes` to skip the billing
 confirmation:
 
@@ -65,11 +66,12 @@ spending nothing:
 PROVIDER=aws ./run-cloud.sh all --dry-run
 ```
 
-For an end-to-end check against a real VM for pennies, restrict the work to one small workload
-and short windows, then tear down afterwards:
+For an end-to-end check against a real VM for pennies, override the data size down so you skip the
+ten-million-row seed, restrict the work to one small workload and short windows, then tear down
+afterwards:
 
 ```bash
-PROVIDER=hetzner BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 \
+PROVIDER=hetzner BENCH_DATA_SIZE=10000 BENCH_WORKLOADS=point-select BENCH_TARGET_RATES=1000 \
   BENCH_RUNS=2 BENCH_WARMUP_SECONDS=1 BENCH_MEASURE_SECONDS=2 \
   ./run-cloud.sh all --yes --teardown
 ```
@@ -102,6 +104,7 @@ Every default is an environment variable:
 | `MACHINE_TYPE` | per provider | Instance size |
 | `DISK_SIZE` | `60` | Boot disk size in GB (ignored by Hetzner, which bundles storage) |
 | `SSH_KEY` | `~/.ssh/id_ed25519` | Private key for the raw-SSH providers |
+| `BENCH_PROFILE` | `cloud` | Run profile on the VM: `cloud` (10,000,000 rows) or `smoke` (quick check) |
 | `BENCH_MACHINE_LABEL` | derived | Host label recorded in results |
 | `BENCH_DURABILITIES` | `full matched` | Durability levels to run, space separated |
 | `BENCH_WORKLOADS` | per config | Workloads to run (comma separated) |

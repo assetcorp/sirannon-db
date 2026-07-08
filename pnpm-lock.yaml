@@ -47,9 +47,6 @@ importers:
       better-sqlite3:
         specifier: 12.6.2
         version: 12.6.2
-      croner:
-        specifier: 10.0.1
-        version: 10.0.1
       etcd3:
         specifier: 1.1.2
         version: 1.1.2
@@ -4086,10 +4083,6 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
-
-  croner@10.0.1:
-    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
-    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -11405,8 +11398,6 @@ snapshots:
       parse-json: 5.2.0
     optionalDependencies:
       typescript: 5.9.3
-
-  croner@10.0.1: {}
 
   cross-spawn@7.0.6:
     dependencies:

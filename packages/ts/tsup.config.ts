@@ -7,7 +7,6 @@ const peerDeps = [
   'uWebSockets.js',
   'wa-sqlite',
   'expo-sqlite',
-  'croner',
   'etcd3',
   '@grpc/grpc-js',
   'grpc-health-check',

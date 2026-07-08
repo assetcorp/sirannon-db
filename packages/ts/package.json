@@ -108,7 +108,6 @@
     "@bufbuild/protobuf": ">=2.0.0",
     "@grpc/grpc-js": ">=1.10.0",
     "better-sqlite3": ">=12.0.0",
-    "croner": ">=10.0.0",
     "expo-sqlite": ">=14.0.0",
     "etcd3": ">=1.1.2",
     "grpc-health-check": ">=2.0.0",
@@ -123,9 +122,6 @@
       "optional": true
     },
     "better-sqlite3": {
-      "optional": true
-    },
-    "croner": {
       "optional": true
     },
     "expo-sqlite": {
@@ -151,7 +147,6 @@
     "@types/node": "25.3.3",
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "12.6.2",
-    "croner": "10.0.1",
     "etcd3": "1.1.2",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",

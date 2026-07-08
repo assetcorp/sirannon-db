@@ -23,6 +23,7 @@ describe('BackupScheduler', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(BackupError)
       expect((err as BackupError).code).toBe('BACKUP_ERROR')
+      expect((err as BackupError).message).toContain("Invalid cron expression 'not a cron'")
     }
     await conn.close()
   })
@@ -110,23 +111,15 @@ describe('BackupScheduler', () => {
     }
   })
 
-  it('wraps string cron callback failures into BackupError for onError', async () => {
-    vi.resetModules()
-
+  it('wraps a string thrown by a scheduled backup into a BackupError for onError', async () => {
+    vi.useFakeTimers()
     try {
-      vi.doMock('croner', () => ({
-        Cron: class {
-          constructor(_expr: string, options: { catch?: (err: unknown) => void }) {
-            options.catch?.('string cron failure')
-          }
-          stop() {}
-        },
-      }))
-
-      const { BackupError: MockedBackupError } = await import('../../errors.js')
-      const { BackupScheduler: MockedBackupScheduler } = await import('../../backup/scheduler.js')
-      const scheduler = new MockedBackupScheduler()
       const conn = await createTestDb(temp.path)
+      const manager = new BackupManager()
+      manager.backup = async () => {
+        throw 'string backup failure'
+      }
+      const scheduler = new BackupScheduler(manager)
       const errors: Error[] = []
 
       const cancel = scheduler.schedule(conn, {
@@ -134,35 +127,28 @@ describe('BackupScheduler', () => {
         destDir: join(temp.path, 'cron-string'),
         onError: err => errors.push(err),
       })
+
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
-      expect(errors).toHaveLength(1)
-      expect(errors[0]).toBeInstanceOf(MockedBackupError)
-      expect(errors[0].message).toContain('string cron failure')
+      expect(errors.length).toBeGreaterThanOrEqual(1)
+      expect(errors[0]).toBeInstanceOf(BackupError)
+      expect(errors[0].message).toContain('string backup failure')
       await conn.close()
     } finally {
-      vi.doUnmock('croner')
-      vi.resetModules()
+      vi.useRealTimers()
     }
   })
 
-  it('wraps non-string cron callback failures into a generic BackupError', async () => {
-    vi.resetModules()
-
+  it('wraps a non-string thrown by a scheduled backup into a generic BackupError', async () => {
+    vi.useFakeTimers()
     try {
-      vi.doMock('croner', () => ({
-        Cron: class {
-          constructor(_expr: string, options: { catch?: (err: unknown) => void }) {
-            options.catch?.(12345)
-          }
-          stop() {}
-        },
-      }))
-
-      const { BackupError: MockedBackupError } = await import('../../errors.js')
-      const { BackupScheduler: MockedBackupScheduler } = await import('../../backup/scheduler.js')
-      const scheduler = new MockedBackupScheduler()
       const conn = await createTestDb(temp.path)
+      const manager = new BackupManager()
+      manager.backup = async () => {
+        throw 12345
+      }
+      const scheduler = new BackupScheduler(manager)
       const errors: Error[] = []
 
       const cancel = scheduler.schedule(conn, {
@@ -170,45 +156,46 @@ describe('BackupScheduler', () => {
         destDir: join(temp.path, 'cron-number'),
         onError: err => errors.push(err),
       })
+
+      await vi.advanceTimersByTimeAsync(1500)
       cancel()
 
-      expect(errors).toHaveLength(1)
-      expect(errors[0]).toBeInstanceOf(MockedBackupError)
+      expect(errors.length).toBeGreaterThanOrEqual(1)
+      expect(errors[0]).toBeInstanceOf(BackupError)
       expect(errors[0].message).toContain('Scheduled backup failed')
       await conn.close()
     } finally {
-      vi.doUnmock('croner')
-      vi.resetModules()
+      vi.useRealTimers()
     }
   })
 
-  it('formats non-Error cron constructor failures', async () => {
-    vi.resetModules()
-
+  it('contains a throwing onError handler without crashing the scheduler', async () => {
+    vi.useFakeTimers()
     try {
-      vi.doMock('croner', () => ({
-        Cron: class {
-          constructor() {
-            throw 'invalid cron syntax'
-          }
-          stop() {}
-        },
-      }))
-
-      const { BackupScheduler: MockedBackupScheduler } = await import('../../backup/scheduler.js')
-      const scheduler = new MockedBackupScheduler()
       const conn = await createTestDb(temp.path)
+      const manager = new BackupManager()
+      manager.backup = async () => {
+        throw new BackupError('backup failed')
+      }
+      const scheduler = new BackupScheduler(manager)
+      let handlerCalls = 0
 
-      expect(() =>
-        scheduler.schedule(conn, {
-          cron: 'bad cron',
-          destDir: join(temp.path, 'invalid-cron'),
-        }),
-      ).toThrow("Invalid cron expression 'bad cron': invalid cron syntax")
+      const cancel = scheduler.schedule(conn, {
+        cron: '* * * * * *',
+        destDir: join(temp.path, 'throwing-handler'),
+        onError: () => {
+          handlerCalls += 1
+          throw new Error('handler exploded')
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      cancel()
+
+      expect(handlerCalls).toBeGreaterThanOrEqual(1)
       await conn.close()
     } finally {
-      vi.doUnmock('croner')
-      vi.resetModules()
+      vi.useRealTimers()
     }
   })
 })

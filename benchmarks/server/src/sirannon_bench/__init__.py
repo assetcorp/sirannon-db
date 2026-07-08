@@ -1,9 +1,10 @@
-"""Server-versus-server benchmark harness for Sirannon and PostgreSQL.
+"""Aggregation for the Sirannon-versus-PostgreSQL benchmark.
 
-The harness drives each database through its own shipping client: Sirannon over HTTP into
-its real server front-end, and PostgreSQL over its binary socket protocol through psycopg.
-Both run co-located in resource-capped containers on one host, so the numbers measure the two
-engines doing the same work rather than one skipping a network hop the other pays.
+A Node load generator drives each database through its own shipping client: Sirannon over its
+SDK's WebSocket transport, and PostgreSQL over its binary socket protocol through node-postgres.
+The generator writes one result file per engine and durability level. This package joins those
+files into the cross-engine comparison the writeup renders, so aggregation stays in Python while
+the measured load path runs in the language of the client under test.
 """
 
 from __future__ import annotations

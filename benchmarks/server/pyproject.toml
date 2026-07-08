@@ -1,22 +1,16 @@
 [project]
 name = "sirannon-bench"
-description = "Server-versus-server benchmark harness comparing Sirannon over HTTP against PostgreSQL over its socket, with matched durability and an open-loop, coordinated-omission-corrected load generator."
+description = "Aggregation and comparison for the Sirannon-versus-PostgreSQL benchmark. A Node load generator drives both engines through their native clients and writes per-engine result JSON; this package joins those files into the cross-engine comparison the writeup renders."
 readme = "README.md"
 dynamic = ["version"]
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-dependencies = [
-    "httpx",
-    "psycopg[binary]",
-    "psycopg-pool",
-    "websockets",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest"]
 
 [project.scripts]
-sirannon-bench = "sirannon_bench.cli:main"
 sirannon-bench-aggregate = "sirannon_bench.aggregate:main"
 
 [build-system]

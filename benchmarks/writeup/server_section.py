@@ -58,6 +58,16 @@ def _engine_versions(comparison: dict) -> tuple[str, str]:
     return "n/a", "n/a"
 
 
+def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
+    for _, node in _durabilities(comparison):
+        saturation = node.get("client_saturation") or {}
+        sirannon = saturation.get("sirannon") or {}
+        postgres = saturation.get("postgres") or {}
+        if sirannon or postgres:
+            return sirannon, postgres
+    return {}, {}
+
+
 def _setup_block(source: Source) -> str:
     comparison = source.comparison
     environment = comparison.get("environment", {})
@@ -80,31 +90,48 @@ def _setup_block(source: Source) -> str:
     rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])])
     engine_cpus = delivery.get("engine_cpus")
     driver_cpus = delivery.get("driver_cpus")
+    sirannon_ceiling, postgres_ceiling = _client_ceilings(comparison)
 
-    return "\n".join([
+    bullets = [
         f"- **Run.** These figures come from run `{source.run_id}`, recorded on {_date(comparison)} from commit "
         f"`{commit}`{dirty}. The full per-run report is in [the run report]({source.report_link}).",
         f"- **Machine.** {machine}",
         f"- **Engines.** Sirannon runs on SQLite {sqlite_version}; PostgreSQL is {postgres_version}. Both run in "
         f"resource-capped containers at {durability_names or 'the recorded durability levels'}.",
-        "- **Delivery.** The load driver reached Sirannon over HTTP into its real server front-end and reached "
-        f"PostgreSQL over its binary socket protocol, both on one host over loopback. Each engine ran on "
-        f"{integer(engine_cpus)} pinned cores and the load driver on {integer(driver_cpus)} of its own.",
+        "- **Delivery.** One Node load generator drove both engines through the client each ships: Sirannon over "
+        "its SDK's WebSocket transport, which multiplexes every request over one persistent socket, and PostgreSQL "
+        f"over node-postgres on its binary socket protocol, both on one host over loopback. Each engine ran on "
+        f"{integer(engine_cpus)} pinned cores and the load generator on {integer(driver_cpus)} of its own.",
+    ]
+    if sirannon_ceiling or postgres_ceiling:
+        bullets.append(
+            "- **Load-client headroom.** Driven flat-out in isolation against the live engines, the Sirannon SDK "
+            f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
+            f"{ops(postgres_ceiling.get('ceiling_ops'))}, {speedup(sirannon_ceiling.get('headroom_factor'))} and "
+            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator keeps "
+            "this headroom over both engines, so every reported number reflects the database, not the client."
+        )
+    bullets.append(
         f"- **Workloads.** Every workload ran at {integer(config.get('data_size'))} rows, sweeping target rates of "
         f"{rates or 'n/a'} requests per second, with a {decimal(config.get('warmup_seconds'), 0)} s warmup and a "
         f"{decimal(config.get('measure_seconds'), 0)} s measurement window under seed `{config.get('seed', 'n/a')}`. "
         f"Every rate ran {integer(config.get('runs'))} independent times, and each figure is the median with a "
         f"95% confidence interval. The service-level target for the operating point is a p99 under "
-        f"{decimal(config.get('slo_p99_ms'), 0)} ms.",
-    ])
+        f"{decimal(config.get('slo_p99_ms'), 0)} ms."
+    )
+    return "\n".join(bullets)
 
 
 _METHODOLOGY = (
-    "Both databases answer the same workloads on the same host, and each is driven through the client it "
-    "actually ships. The load driver reaches Sirannon over HTTP into its real server front-end and reaches "
-    "PostgreSQL over its binary socket protocol, both over loopback with no network between them to bias the "
-    "result. Sirannon's HTTP path carries JSON framing on every call, which is heavier than PostgreSQL's "
+    "Both databases answer the same workloads on the same host, driven by one Node load generator so the "
+    "coordinated-omission instrument behaves identically for each. Only a thin per-database adapter differs, and "
+    "each engine is reached through the client it actually ships: Sirannon over its SDK's default WebSocket "
+    "transport, which multiplexes every concurrent request over one persistent socket, and PostgreSQL over "
+    "node-postgres on its binary socket protocol. Both run over loopback with no network between them to bias the "
+    "result. Sirannon's WebSocket path carries JSON framing on every call, which is heavier than PostgreSQL's "
     "binary protocol, and the numbers carry that cost on purpose, because it's Sirannon's real client path. "
+    "Before each sweep the generator measures each client's own throughput ceiling against the live engine and "
+    "discloses it, so a rate that falls short is charged to the database, not to a client that ran out of room. "
     "Wrapping PostgreSQL in a foreign HTTP proxy to equalize transport would measure the proxy, not the "
     "database, so this suite never does that.\n\n"
     "Durability is matched at two levels. Full durability sets PostgreSQL `synchronous_commit=on` against "

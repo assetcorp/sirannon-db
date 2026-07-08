@@ -59,8 +59,8 @@ services:
 
   bench:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: benchmarks/server/driver.Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +74,7 @@ services:
       BENCH_PG_DATABASE: benchmark
       BENCH_PG_POOL_SIZE: ${BENCH_PG_POOL_SIZE:-16}
       BENCH_RUN_ID: ${BENCH_RUN_ID:-}
-      BENCH_RESULTS_DIR: ${BENCH_RESULTS_DIR:-}
+      BENCH_RESULTS_DIR: ${BENCH_RESULTS_DIR:-/app/results}
       BENCH_MACHINE_LABEL: ${BENCH_MACHINE_LABEL:-}
       BENCH_DATA_SIZE: ${BENCH_DATA_SIZE:-}
       BENCH_WARMUP_SECONDS: ${BENCH_WARMUP_SECONDS:-}
@@ -96,3 +96,13 @@ services:
     cpus: "${BENCH_DRIVER_CPUS:-2}"
     mem_limit: ${BENCH_DRIVER_MEMORY:-2g}
     memswap_limit: ${BENCH_DRIVER_MEMORY:-2g}
+
+  aggregate:
+    build:
+      context: .
+      dockerfile: aggregate.Dockerfile
+    environment:
+      BENCH_RUN_ID: ${BENCH_RUN_ID:-}
+      BENCH_RESULTS_DIR: ${BENCH_RESULTS_DIR:-/app/results}
+    volumes:
+      - ./results:/app/results

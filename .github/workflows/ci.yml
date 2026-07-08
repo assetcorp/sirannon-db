@@ -59,8 +59,23 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Check BENCHMARKS.md matches the latest recorded run
-        working-directory: packages/ts
         run: python3 benchmarks/writeup/generate.py --check
+
+  benchmarks-harness:
+    name: Benchmarks harness tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the harness
+        working-directory: benchmarks/server
+        run: python3 -m pip install -e '.[dev]'
+
+      - name: Run harness tests
+        working-directory: benchmarks/server
+        run: python3 -m pytest -q
 
   e2e:
     name: Replication E2E (Node ${{ matrix.node-version }})

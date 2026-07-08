@@ -1,0 +1,44 @@
+# Every value here is disclosed in the generated report. Any field can be overridden for a
+# one-off run with the matching BENCH_ environment variable (for example BENCH_RUNS,
+# BENCH_TARGET_RATES, BENCH_WORKLOADS) without editing this file.
+
+[run]
+data_size = 10000
+warmup_seconds = 3.0
+measure_seconds = 10.0
+runs = 5
+seed = 42
+workloads = [
+  "point-select",
+  "bulk-insert",
+  "batch-update",
+  "ycsb-a",
+  "ycsb-b",
+  "ycsb-c",
+  "ycsb-f",
+  "tpc-c-derived",
+]
+
+[load]
+target_rates = [1000, 4000, 16000]
+slo_p99_ms = 25.0
+max_in_flight = 256
+
+[scaling]
+workloads = ["ycsb-c", "ycsb-a"]
+
+[resources]
+driver_cpus = 2.0
+engine_cpus = 2.0
+
+[sirannon]
+base_url = "http://127.0.0.1:9876"
+database_id = "bench"
+
+[postgres]
+host = "127.0.0.1"
+port = 5432
+user = "benchmark"
+password = "benchmark"
+database = "benchmark"
+pool_size = 16

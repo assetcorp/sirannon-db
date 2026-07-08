@@ -2,7 +2,7 @@ declare module 'simple-statistics' {
   export function gammaln(x: number): number
 }
 
-import { errorFunction, gammaln, mean, quantile, sampleStandardDeviation } from 'simple-statistics'
+import { errorFunction, gammaln, mean, median, quantile, sampleStandardDeviation } from 'simple-statistics'
 import { SeededRng } from './rng'
 
 export interface WelchResult {
@@ -148,6 +148,73 @@ export function detectOutliers(samples: number[]): OutlierResult {
     percentage: (count / samples.length) * 100,
     lowerFence,
     upperFence,
+  }
+}
+
+export interface MetricSummary {
+  median: number
+  mean: number
+  stdDev: number
+  cv: number
+  lowerBound: number
+  upperBound: number
+  confidence: number
+  runs: number
+}
+
+export function medianOf(values: number[]): number {
+  return values.length > 0 ? median(values) : 0
+}
+
+/**
+ * Summarise one throughput metric collected across several independent runs: the median as the
+ * headline, the run-to-run standard deviation and coefficient of variation, and a percentile
+ * bootstrap confidence interval for the median. The bootstrap reuses the same seeded resampling
+ * as {@link speedupConfidenceInterval} so a given run reproduces byte-for-byte. With a single run
+ * the interval collapses to the point value and the spread is zero, which is honest for N=1.
+ */
+export function summarizeMetric(samples: number[], confidence = 0.95, seed?: bigint): MetricSummary {
+  const n = samples.length
+  if (n === 0) {
+    return { median: 0, mean: 0, stdDev: 0, cv: 0, lowerBound: 0, upperBound: 0, confidence, runs: 0 }
+  }
+
+  const med = median(samples)
+  const avg = mean(samples)
+
+  if (n === 1) {
+    return { median: med, mean: avg, stdDev: 0, cv: 0, lowerBound: med, upperBound: med, confidence, runs: 1 }
+  }
+
+  const stdDev = sampleStandardDeviation(samples)
+  const cv = avg > 0 ? stdDev / avg : 0
+
+  const iterations = 10_000
+  const rng = new SeededRng(seed ?? 42n)
+  const bootstrapMedians: number[] = new Array(iterations)
+  const resample: number[] = new Array(n)
+
+  for (let i = 0; i < iterations; i++) {
+    for (let j = 0; j < n; j++) {
+      resample[j] = samples[rng.nextInt(n)]
+    }
+    bootstrapMedians[i] = median(resample)
+  }
+
+  bootstrapMedians.sort((a, b) => a - b)
+  const alpha = 1 - confidence
+  const lowerIdx = Math.floor(bootstrapMedians.length * (alpha / 2))
+  const upperIdx = Math.min(bootstrapMedians.length - 1, Math.floor(bootstrapMedians.length * (1 - alpha / 2)))
+
+  return {
+    median: med,
+    mean: avg,
+    stdDev,
+    cv,
+    lowerBound: bootstrapMedians[lowerIdx],
+    upperBound: bootstrapMedians[upperIdx],
+    confidence,
+    runs: n,
   }
 }
 

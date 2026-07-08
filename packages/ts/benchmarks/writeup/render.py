@@ -42,6 +42,12 @@ def latency_ms(nanoseconds: object) -> str:
     return f"{nanoseconds / 1_000_000:.3f}"
 
 
+def percent(fraction: object, places: int = 1) -> str:
+    if not is_number(fraction):
+        return "n/a"
+    return f"{fraction * 100:.{places}f}%"
+
+
 def table(headers: Sequence[str], aligns: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     divider = ["---:" if align == "right" else "---" for align in aligns]
 

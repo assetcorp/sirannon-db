@@ -8,7 +8,7 @@ honest placeholder that the drift check tolerates.
 
 from __future__ import annotations
 
-from render import decimal, integer, is_number, latency_ms, ops, speedup, table
+from render import decimal, integer, is_number, latency_ms, ops, percent, speedup, table
 from sources import Source
 
 _WORKLOAD_LABELS = {
@@ -43,13 +43,20 @@ def _engine_rows(payload: dict, side: str) -> list[dict]:
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
-def _first_metric(row: dict, key: str) -> float | None:
+def _first_metric(row: dict, key: str, fallback: str | None = None) -> float | None:
     results = row.get("results")
     if not isinstance(results, list) or not results:
         return None
     first = results[0]
-    value = first.get(key) if isinstance(first, dict) else None
-    return float(value) if is_number(value) else None
+    if not isinstance(first, dict):
+        return None
+    value = first.get(key)
+    if is_number(value):
+        return float(value)
+    if fallback is not None:
+        alt = first.get(fallback)
+        return float(alt) if is_number(alt) else None
+    return None
 
 
 def _match(rows: list[dict], workload: str, data_size: object) -> dict | None:
@@ -109,7 +116,8 @@ def _setup_block(source: Source) -> str:
         f"host. {cpu_line}",
         f"- **Workloads.** Measured at {sizes or 'n/a'} rows with a {integer(engine_config.get('warmupMs'))} ms "
         f"warmup and {integer(engine_config.get('measureMs'))} ms measurement window, seed "
-        f"`{config.get('seed') or 'n/a'}`.",
+        f"`{config.get('seed') or 'n/a'}`. Each workload runs across {integer(engine_config.get('runs'))} "
+        "independent runs, and the comparison reports the median with a 95% confidence interval.",
     ])
 
 
@@ -151,26 +159,49 @@ def _comparison_block(source: Source) -> str:
     body: list[list[str]] = []
     for srow in sirannon_rows:
         prow = _match(postgres_rows, srow.get("workload") or "", srow.get("dataSize"))
-        sops = _first_metric(srow, "opsPerSec")
-        pops = _first_metric(prow, "opsPerSec") if prow else None
+        sops = _first_metric(srow, "medianOpsPerSec", "opsPerSec")
+        pops = _first_metric(prow, "medianOpsPerSec", "opsPerSec") if prow else None
         ratio = sops / pops if is_number(sops) and is_number(pops) and pops > 0 else None
+        ci_low = _first_metric(srow, "ciLowerOpsPerSec")
+        ci_high = _first_metric(srow, "ciUpperOpsPerSec")
+        ci_cell = f"[{ops(ci_low)}, {ops(ci_high)}]" if is_number(ci_low) and is_number(ci_high) else "n/a"
         body.append([
             _label(srow.get("workload") or "n/a"),
             integer(srow.get("dataSize")),
             ops(sops),
+            ci_cell,
+            percent(_first_metric(srow, "cvOpsPerSec")),
             ops(pops),
             speedup(ratio, 1),
             latency_ms(_first_metric(srow, "p50Ns")),
             latency_ms(_first_metric(srow, "p99Ns")),
         ])
 
-    headers = ["Workload", "Rows", "Sirannon ops/s", "Postgres ops/s", "Speedup", "Sirannon p50 ms", "Sirannon p99 ms"]
-    aligns = ["left", "right", "right", "right", "right", "right", "right"]
+    headers = [
+        "Workload",
+        "Rows",
+        "Sirannon median ops/s",
+        "Sirannon 95% CI",
+        "Sirannon CV",
+        "Postgres median ops/s",
+        "Speedup",
+        "Sirannon p50 ms",
+        "Sirannon p99 ms",
+    ]
+    aligns = ["left", "right", "right", "right", "right", "right", "right", "right", "right"]
+    runs = _engine_config(source).get("runs")
+    runs_phrase = (
+        f"the median of {integer(runs)} independent runs"
+        if is_number(runs)
+        else "the median of several independent runs"
+    )
     note = (
-        "\n\n_Each YCSB workload runs its full weighted operation mix as a single measurement. "
-        "TPC-C-derived is a TPC-C-shaped transaction mix (new-order plus payment), not an audited "
-        "TPC-C result. The YCSB subset run is A, B, C, and F; D (read-latest) and E (short-range-scan) "
-        "are omitted._"
+        f"\n\n_Each throughput figure is {runs_phrase}, each a fresh warmup and measurement, shown with "
+        "a 95% bootstrap confidence interval and the run-to-run coefficient of variation so a single noisy "
+        "run cannot set the headline. Each YCSB workload runs its full weighted operation mix as a single "
+        "measurement. TPC-C-derived is a TPC-C-shaped transaction mix (new-order plus payment), not an "
+        "audited TPC-C result. The YCSB subset run is A, B, C, and F; D (read-latest) and E "
+        "(short-range-scan) are omitted._"
     )
     return table(headers, aligns, body) + note
 

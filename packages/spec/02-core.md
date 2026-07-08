@@ -634,6 +634,13 @@ skips the missing hour, so a backup timed for that hour does not
 run that day. When the clocks go back, it runs a backup timed
 for the repeated hour once, at its first occurrence.
 
+The scheduler checks the time on a recurring tick and does not
+backfill. When the host sleeps or the clock jumps forward past a
+scheduled time, that occurrence is skipped rather than run late.
+When the clock steps backward, the scheduler waits until real
+time passes the last completed backup, so a rewind repeats
+nothing.
+
 ---
 
 ## Metrics

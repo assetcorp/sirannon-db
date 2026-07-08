@@ -9,7 +9,7 @@ import { assertValidTimeZone, type CronExpression, type CronParts, parseCron, wa
 const DEFAULT_MAX_FILES = 5
 const MINUTE_RESOLUTION_MS = 60_000
 const SECOND_RESOLUTION_MS = 1_000
-const ONE_HOUR_MS = 3_600_000
+const DST_LOOKBACK_MS = 3 * 60 * 60 * 1000
 
 function toError(value: unknown): Error {
   if (value instanceof Error) {
@@ -21,6 +21,72 @@ function toError(value: unknown): Error {
 function slotKey(parts: CronParts, hasSeconds: boolean): string {
   const base = `${parts.year}-${parts.month}-${parts.dayOfMonth}-${parts.hour}-${parts.minute}`
   return hasSeconds ? `${base}-${parts.second}` : base
+}
+
+function zoneOffsetMs(date: Date, timeZone: string | undefined): number {
+  const parts = wallClockParts(date, timeZone)
+  const wallAsUtc = Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth, parts.hour, parts.minute, parts.second)
+  return wallAsUtc - Math.floor(date.getTime() / 1000) * 1000
+}
+
+function isRepeatedWallClock(
+  now: Date,
+  nowParts: CronParts,
+  timeZone: string | undefined,
+  hasSeconds: boolean,
+): boolean {
+  const offsetNow = zoneOffsetMs(now, timeZone)
+  const offsetBefore = zoneOffsetMs(new Date(now.getTime() - DST_LOOKBACK_MS), timeZone)
+  if (offsetNow >= offsetBefore) {
+    return false
+  }
+  const shift = offsetBefore - offsetNow
+  const firstOccurrence = wallClockParts(new Date(now.getTime() - shift), timeZone)
+  return slotKey(firstOccurrence, hasSeconds) === slotKey(nowParts, hasSeconds)
+}
+
+export interface TickState {
+  readonly lastFiredSlot: string
+  readonly lastFiredEpoch: number
+}
+
+export const INITIAL_TICK_STATE: TickState = {
+  lastFiredSlot: '',
+  lastFiredEpoch: Number.NEGATIVE_INFINITY,
+}
+
+/**
+ * Decides whether a backup should fire at `now`, given what fired before.
+ * A fire is suppressed when the clock has not advanced past the previous fire
+ * (guarding a backward clock step), when the same slot already fired (guarding
+ * timer jitter), or when the wall-clock time repeats during a daylight-saving
+ * fall-back (so the repeated hour runs once, at its first occurrence).
+ */
+export function evaluateTick(
+  now: Date,
+  cron: CronExpression,
+  timeZone: string | undefined,
+  state: TickState,
+): { shouldFire: boolean; nextState: TickState } {
+  const nowEpoch = now.getTime()
+  if (nowEpoch <= state.lastFiredEpoch) {
+    return { shouldFire: false, nextState: state }
+  }
+
+  const parts = wallClockParts(now, timeZone)
+  if (!cron.matches(parts)) {
+    return { shouldFire: false, nextState: state }
+  }
+
+  const slot = slotKey(parts, cron.hasSeconds)
+  if (slot === state.lastFiredSlot) {
+    return { shouldFire: false, nextState: state }
+  }
+  if (isRepeatedWallClock(now, parts, timeZone, cron.hasSeconds)) {
+    return { shouldFire: false, nextState: state }
+  }
+
+  return { shouldFire: true, nextState: { lastFiredSlot: slot, lastFiredEpoch: nowEpoch } }
 }
 
 export class BackupScheduler {
@@ -76,7 +142,7 @@ export class BackupScheduler {
     let timer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
     let running = false
-    let lastFiredSlot = ''
+    let tickState = INITIAL_TICK_STATE
 
     const runBackup = async (): Promise<void> => {
       try {
@@ -96,11 +162,6 @@ export class BackupScheduler {
       }
     }
 
-    const isRepeatedWallClock = (now: Date, parts: CronParts): boolean => {
-      const previous = wallClockParts(new Date(now.getTime() - ONE_HOUR_MS), timezone)
-      return slotKey(previous, cron.hasSeconds) === slotKey(parts, cron.hasSeconds)
-    }
-
     const scheduleNext = (): void => {
       if (stopped) {
         return
@@ -114,12 +175,10 @@ export class BackupScheduler {
       if (stopped) {
         return
       }
-      const now = new Date()
-      const parts = wallClockParts(now, timezone)
-      if (!running && cron.matches(parts)) {
-        const slot = slotKey(parts, cron.hasSeconds)
-        if (slot !== lastFiredSlot && !isRepeatedWallClock(now, parts)) {
-          lastFiredSlot = slot
+      if (!running) {
+        const { shouldFire, nextState } = evaluateTick(new Date(), cron, timezone, tickState)
+        if (shouldFire) {
+          tickState = nextState
           running = true
           void runBackup()
         }

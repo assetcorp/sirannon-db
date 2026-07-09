@@ -39,6 +39,17 @@ describe('WriterLock', () => {
     expect(order).toEqual(['failing', 'following'])
   })
 
+  it('runs a re-entrant call inline instead of deadlocking', async () => {
+    const lock = new WriterLock()
+
+    const result = await lock.run(async () => {
+      const inner = await lock.run(async () => 'inner')
+      return `outer:${inner}`
+    })
+
+    expect(result).toBe('outer:inner')
+  })
+
   it('does not start the next operation until the current one settles', async () => {
     const lock = new WriterLock()
     let firstRunning = false

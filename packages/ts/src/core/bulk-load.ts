@@ -4,7 +4,8 @@ import { SirannonError } from './errors.js'
 import type { BulkLoadDurability, BulkLoadResult } from './types.js'
 
 const DEFAULT_LOAD_DURABILITY: BulkLoadDurability = 'off'
-const CHECKPOINT_ATTEMPTS = 2
+const CHECKPOINT_ATTEMPTS = 3
+const CHECKPOINT_RETRY_DELAY_MS = 50
 
 export function isBulkLoadDurability(value: unknown): value is BulkLoadDurability {
   return value === 'off' || value === 'normal'
@@ -45,11 +46,14 @@ export interface BulkLoadRun {
  * operator the load committed and must not be re-run; on a failed load the
  * original load error stays dominant.
  *
- * On success the WAL is checkpointed after the restore, so the loaded rows are
- * fsync'd into the main database file at the restored level before this
- * resolves. The checkpoint runs synchronously in the engine and blocks the
- * event loop for the duration of the WAL flush, which grows with the size of
- * the load.
+ * On success, and only when the load changed rows, the WAL is checkpointed
+ * after the restore so the loaded pages are written into the main database
+ * file and fsync'd at the restored synchronous level. A reader holding the WAL
+ * can defer that transfer: the checkpoint retries a few times and then leaves
+ * the remaining pages for a later checkpoint rather than failing a load that
+ * has already committed, so those pages stay in the WAL until then. The
+ * checkpoint runs synchronously in the engine and blocks the event loop for
+ * the flush, which grows with the size of the load.
  */
 export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
   const durability = run.durability ?? DEFAULT_LOAD_DURABILITY
@@ -78,11 +82,14 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
     )
   }
 
-  if (loadError !== undefined || result === undefined) {
+  if (loadError !== undefined) {
     throw loadError
   }
+  if (result === undefined) {
+    throw new SirannonError('Bulk load completed without a result', 'INTERNAL_ERROR')
+  }
 
-  if (run.walMode) {
+  if (run.walMode && result.changes > 0) {
     await checkpoint(run.writer)
   }
   return result
@@ -92,14 +99,21 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
  * Flush the WAL into the main database file and fsync it at the restored
  * durability. `wal_checkpoint(TRUNCATE)` reports `busy` rather than throwing
  * when a reader holds the WAL; the load has already committed, so a busy
- * result is not fatal. A single retry clears a transient reader, and a
- * persistent reader defers the final flush to the next checkpoint rather than
- * failing a committed load.
+ * result is not fatal. Each retry waits a short, growing delay to give a
+ * transient reader time to release the WAL; a persistent reader defers the
+ * final flush to a later checkpoint rather than failing a committed load.
  */
 async function checkpoint(writer: SQLiteConnection): Promise<void> {
   for (let attempt = 0; attempt < CHECKPOINT_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await delay(attempt * CHECKPOINT_RETRY_DELAY_MS)
+    }
     const stmt = await writer.prepare('PRAGMA wal_checkpoint(TRUNCATE)')
     const row = await stmt.get<WalCheckpointRow>()
     if (!row || row.busy === 0) return
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

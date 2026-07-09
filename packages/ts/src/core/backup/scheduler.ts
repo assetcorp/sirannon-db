@@ -89,6 +89,13 @@ export function evaluateTick(
   return { shouldFire: true, nextState: { lastFiredSlot: slot, lastFiredEpoch: nowEpoch } }
 }
 
+/** Runs a backup while the caller's writer lock is held, so it never shares the writer connection with another write. */
+export type RunExclusive = (op: () => Promise<void>) => Promise<void>
+
+function runDirect(op: () => Promise<void>): Promise<void> {
+  return op()
+}
+
 export class BackupScheduler {
   private readonly manager: BackupManager
 
@@ -96,7 +103,7 @@ export class BackupScheduler {
     this.manager = manager ?? new BackupManager()
   }
 
-  schedule(conn: SQLiteConnection, options: BackupScheduleOptions): () => void {
+  schedule(conn: SQLiteConnection, options: BackupScheduleOptions, runExclusive: RunExclusive = runDirect): () => void {
     const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, onError, timezone } = options
 
     let cron: CronExpression
@@ -127,7 +134,7 @@ export class BackupScheduler {
       }
     }
 
-    return this.run(conn, cron, resolvedDir, maxFiles, timezone, onError)
+    return this.run(conn, cron, resolvedDir, maxFiles, timezone, runExclusive, onError)
   }
 
   private run(
@@ -136,6 +143,7 @@ export class BackupScheduler {
     resolvedDir: string,
     maxFiles: number,
     timezone: string | undefined,
+    runExclusive: RunExclusive,
     onError?: (error: Error) => void,
   ): () => void {
     const tickMs = cron.hasSeconds ? SECOND_RESOLUTION_MS : MINUTE_RESOLUTION_MS
@@ -147,7 +155,7 @@ export class BackupScheduler {
     const runBackup = async (): Promise<void> => {
       try {
         const destPath = join(resolvedDir, this.manager.generateFilename())
-        await this.manager.backup(conn, destPath)
+        await runExclusive(() => this.manager.backup(conn, destPath))
         this.manager.rotate(resolvedDir, maxFiles)
       } catch (err) {
         if (onError) {

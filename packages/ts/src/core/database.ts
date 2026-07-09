@@ -1,11 +1,10 @@
-import { BackupManager } from './backup/backup.js'
-import { BackupScheduler } from './backup/scheduler.js'
 import { runBulkLoad } from './bulk-load.js'
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
-import { applyDdlSideEffects, isCdcRelevantDdl } from './cdc/ddl-handler.js'
+import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import { ConnectionPool } from './connection-pool.js'
+import { DatabaseBackupController } from './database-backup.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
@@ -58,9 +57,10 @@ export class Database {
   private readonly parentHooks: HookRegistry | null
   private readonly metricsCollector: MetricsCollector | null
 
-  private readonly backupManager = new BackupManager()
-  private readonly backupScheduler = new BackupScheduler(this.backupManager)
-  private readonly scheduledBackupCancellers: (() => void)[] = []
+  private readonly backups = new DatabaseBackupController(
+    op => this.writerLock.run(op),
+    () => this.pool.acquireWriter(),
+  )
 
   private constructor(
     id: string,
@@ -108,8 +108,7 @@ export class Database {
 
     const start = performance.now()
     try {
-      const reader = this.pool.acquireReader()
-      return await this.track(sql, () => query<T>(reader, sql, params))
+      return await this.runRead(sql, conn => query<T>(conn, sql, params))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -125,11 +124,21 @@ export class Database {
 
     const start = performance.now()
     try {
-      const reader = this.pool.acquireReader()
-      return await this.track(sql, () => queryOne<T>(reader, sql, params))
+      return await this.runRead(sql, conn => queryOne<T>(conn, sql, params))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
+  }
+
+  /**
+   * On a single-connection driver the reader is the writer, so serialise the
+   * read through the writer lock to avoid a bulk load's uncommitted rows.
+   */
+  private runRead<T>(sql: string, op: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
+    if (this.pool.readerCount === 0) {
+      return this.writerLock.run(() => this.track(sql, () => op(this.pool.acquireWriter())))
+    }
+    return this.track(sql, () => op(this.pool.acquireReader()))
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
@@ -142,7 +151,7 @@ export class Database {
       return await this.writerLock.run(async () => {
         const writer = this.pool.acquireWriter()
         const result = await this.track(sql, () => execute(writer, sql, params))
-        await this.maybeApplyDdlSideEffects(writer, sql)
+        await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
         return result
       })
     } finally {
@@ -176,7 +185,7 @@ export class Database {
     run: (txConn: SQLiteConnection) => Promise<T>,
   ): Promise<T> {
     const result = await this.track(sql, () => writer.transaction(run))
-    await this.maybeApplyDdlSideEffects(writer, sql)
+    await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
     return result
   }
 
@@ -187,7 +196,9 @@ export class Database {
    * level is restored before this resolves, whether the load succeeds or
    * fails. The load runs in one transaction, so one commit and one durability
    * barrier cover the whole batch. Rows are summed rather than returned
-   * per-row to bound memory on large loads.
+   * per-row to bound memory on large loads. Like `execute` and `transaction`,
+   * this writes only to the local database; under replication the server routes
+   * loads through the engine, not through this method.
    */
   async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     this.ensureOpen()
@@ -237,13 +248,6 @@ export class Database {
     })
   }
 
-  private async maybeApplyDdlSideEffects(writer: SQLiteConnection, sql: string): Promise<void> {
-    const tracker = this.changeTracker
-    if (!tracker) return
-    if (!isCdcRelevantDdl(sql)) return
-    await applyDdlSideEffects(tracker, writer, sql)
-  }
-
   async watch(table: string): Promise<void> {
     this.ensureOpen()
     if (this.readOnly) {
@@ -288,14 +292,12 @@ export class Database {
 
   async backup(destPath: string): Promise<void> {
     this.ensureOpen()
-    await this.writerLock.run(() => this.backupManager.backup(this.pool.acquireWriter(), destPath))
+    await this.backups.backup(destPath)
   }
 
   scheduleBackup(options: BackupScheduleOptions): void {
     this.ensureOpen()
-    const writer = this.pool.acquireWriter()
-    const cancel = this.backupScheduler.schedule(writer, options)
-    this.scheduledBackupCancellers.push(cancel)
+    this.backups.schedule(options)
   }
 
   async loadExtension(extensionPath: string): Promise<void> {
@@ -321,15 +323,7 @@ export class Database {
     this._closed = true
 
     this.stopCdcPollingLoop()
-
-    for (const cancel of this.scheduledBackupCancellers) {
-      try {
-        cancel()
-      } catch {
-        /* best-effort */
-      }
-    }
-    this.scheduledBackupCancellers.length = 0
+    this.backups.cancelAll()
 
     let poolError: unknown
     try {

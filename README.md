@@ -20,7 +20,7 @@ Sirannon has two levels of maturity. The core data layer, the server, the client
 
 | Part | Status | Details |
 | --- | --- | --- |
-| Core engine (`@delali/sirannon-db`) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
+| Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `@delali/sirannon-db/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server runs client SQL by design, so read the [security section](packages/ts/README.md#security) before you expose it. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
 | Coordinator-backed automatic failover (`@delali/sirannon-db/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
@@ -123,11 +123,11 @@ cd packages/ts/examples/distributed-entitlements && pnpm run dev
 
 ## Architecture
 
+Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
+
 <p align="center">
   <img src="docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
 </p>
-
-Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
 
 ## Distributed replication FAQ
 

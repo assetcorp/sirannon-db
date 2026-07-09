@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
 export interface NodeSqliteOptions {
@@ -12,7 +13,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false })
       if (options?.walMode !== false) db.exec('PRAGMA journal_mode = WAL')
-      db.exec('PRAGMA synchronous = NORMAL')
+      db.exec(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.exec('PRAGMA foreign_keys = ON')
       db.exec(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
 

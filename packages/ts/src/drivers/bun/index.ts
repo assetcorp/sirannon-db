@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
 export interface BunSqliteOptions {
@@ -12,7 +13,7 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
       const { Database } = await import('bun:sqlite')
       const db = new Database(path, { readonly: options?.readonly ?? false })
       if (options?.walMode !== false) db.run('PRAGMA journal_mode = WAL')
-      db.run('PRAGMA synchronous = NORMAL')
+      db.run(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.run('PRAGMA foreign_keys = ON')
       db.run(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
 

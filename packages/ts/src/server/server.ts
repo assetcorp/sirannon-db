@@ -3,7 +3,6 @@ import uWS from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   ClusterStatusInfo,
-  CorsOptions,
   OnRequestHook,
   ReplicationStatusInfo,
   RequestContext,
@@ -11,11 +10,15 @@ import type {
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
+import type { ResolvedCors } from './cors.js'
+import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
 import type { DbRouteHandler } from './http-handler.js'
 import {
+  handleBatch,
   handleClusterStatus,
   handleExecute,
+  handleLoad,
   handleQuery,
   handleTransaction,
   initAbortHandler,
@@ -25,42 +28,14 @@ import {
 import type { WSConnection } from './ws-handler.js'
 import { WSHandler } from './ws-handler.js'
 
-interface ResolvedCors {
-  origin: string | string[]
-  methods: string
-  headers: string
-}
+const DEFAULT_MAX_BODY_BYTES = 1_048_576
 
-function resolveCors(cors: boolean | CorsOptions | undefined): ResolvedCors | null {
-  if (!cors) return null
-  if (cors === true) {
-    return {
-      origin: '*',
-      methods: 'GET, POST, OPTIONS',
-      headers: 'Content-Type, Authorization',
-    }
+function resolveMaxBodyBytes(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_BODY_BYTES
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error('ServerOptions.maxBodyBytes must be a positive integer number of bytes')
   }
-  return {
-    origin: cors.origin ?? '*',
-    methods: cors.methods?.join(', ') ?? 'GET, POST, OPTIONS',
-    headers: cors.headers?.join(', ') ?? 'Content-Type, Authorization',
-  }
-}
-
-function matchOrigin(cors: ResolvedCors, requestOrigin: string): string | null {
-  if (cors.origin === '*') return '*'
-  if (typeof cors.origin === 'string') return cors.origin
-  if (cors.origin.includes(requestOrigin)) return requestOrigin
-  return null
-}
-
-function writeCorsOrigin(res: uWS.HttpResponse, cors: ResolvedCors, requestOrigin: string): void {
-  const allowed = matchOrigin(cors, requestOrigin)
-  if (!allowed) return
-  res.writeHeader('Access-Control-Allow-Origin', allowed)
-  if (allowed !== '*') {
-    res.writeHeader('Vary', 'Origin')
-  }
+  return value
 }
 
 function selectWebSocketProtocol(header: string): string {
@@ -107,6 +82,7 @@ export class SirannonServer {
   private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
+  private readonly maxBodyBytes: number
 
   constructor(sirannon: Sirannon, options?: ServerOptions) {
     this.sirannon = sirannon
@@ -117,7 +93,11 @@ export class SirannonServer {
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
-    this.wsHandler = new WSHandler(sirannon, { resolveExecutionTarget: this.resolveExecutionTarget })
+    this.maxBodyBytes = resolveMaxBodyBytes(options?.maxBodyBytes)
+    this.wsHandler = new WSHandler(sirannon, {
+      resolveExecutionTarget: this.resolveExecutionTarget,
+      maxPayloadLength: this.maxBodyBytes,
+    })
     this.app = uWS.App()
     this.registerRoutes()
   }
@@ -178,6 +158,8 @@ export class SirannonServer {
       '/db/:id/transaction',
       this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
     )
+    this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
 
     this.registerWebSocketRoute()
 
@@ -191,7 +173,7 @@ export class SirannonServer {
     const onRequestHook = this.onRequestHook
 
     this.app.ws<WSUserData>('/db/:id', {
-      maxPayloadLength: 1_048_576,
+      maxPayloadLength: this.maxBodyBytes,
       idleTimeout: 120,
       sendPingsAutomatically: true,
 
@@ -303,7 +285,7 @@ export class SirannonServer {
   private wrapDbRoute(handler: DbRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
     const onRequestHook = this.onRequestHook
     const corsHeaders = this.cors
-    const MAX_BODY = 1_048_576
+    const maxBody = this.maxBodyBytes
 
     return (res, req) => {
       const dbId = req.getParameter(0) ?? ''
@@ -315,7 +297,7 @@ export class SirannonServer {
       }
 
       const abort = initAbortHandler(res)
-      const bodyPromise = readBody(res, MAX_BODY, abort)
+      const bodyPromise = readBody(res, maxBody, abort)
 
       if (!onRequestHook) {
         bodyPromise

@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
 export interface BetterSqlite3Options {
@@ -61,7 +62,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       const Database = (await import('better-sqlite3')).default
       const db = new Database(path, { readonly: options?.readonly ?? false })
       if (options?.walMode !== false) db.pragma('journal_mode = WAL')
-      db.pragma('synchronous = NORMAL')
+      db.pragma(`synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.pragma('foreign_keys = ON')
       db.pragma(`busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
       return createConnection(db)

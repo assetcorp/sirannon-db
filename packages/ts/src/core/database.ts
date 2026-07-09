@@ -1,13 +1,16 @@
 import { BackupManager } from './backup/backup.js'
 import { BackupScheduler } from './backup/scheduler.js'
+import { runBulkLoad } from './bulk-load.js'
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
 import { applyDdlSideEffects, isCdcRelevantDdl } from './cdc/ddl-handler.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import { ConnectionPool } from './connection-pool.js'
-import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
+import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
+import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
+import { fireAfterQueryHooks, fireBeforeQueryHooks } from './hooks/query-hooks.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
@@ -18,10 +21,10 @@ import type {
   AfterQueryHook,
   BackupScheduleOptions,
   BeforeQueryHook,
+  BulkLoadOptions,
   DatabaseOptions,
   ExecuteResult,
   Params,
-  QueryHookContext,
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
@@ -37,6 +40,8 @@ export class Database {
   readonly readOnly: boolean
   private readonly pool: ConnectionPool
   private readonly driver: SQLiteDriver
+  private readonly synchronous: SynchronousLevel
+  private readonly walMode: boolean
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
@@ -67,6 +72,8 @@ export class Database {
     this.pool = pool
     this.driver = driver
     this.readOnly = options?.readOnly ?? false
+    this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
+    this.walMode = options?.walMode ?? true
     this.cdcPollInterval = options?.cdcPollInterval ?? 50
     this.cdcRetention = options?.cdcRetention ?? 3_600_000
     this.parentHooks = internals?.parentHooks ?? null
@@ -86,6 +93,7 @@ export class Database {
       readOnly: options?.readOnly,
       readPoolSize: options?.readPoolSize ?? 4,
       walMode: options?.walMode ?? true,
+      synchronous: options?.synchronous,
     })
 
     return new Database(id, path, pool, driver, options, internals)
@@ -174,6 +182,25 @@ export class Database {
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
     }
+  }
+
+  /**
+   * Load rows with relaxed writer durability: the whole batch runs in one
+   * transaction (one commit, one durability barrier for the load) and the
+   * configured `synchronous` level is restored before this resolves, whether
+   * the load succeeds or fails.
+   */
+  async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<ExecuteResult[]> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    const writer = this.pool.acquireWriter()
+    return runBulkLoad({
+      writer,
+      configuredSynchronous: this.synchronous,
+      walMode: this.walMode,
+      durability: options?.durability,
+      execute: () => this.executeBatch(sql, paramsBatch),
+    })
   }
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
@@ -356,36 +383,10 @@ export class Database {
   }
 
   private fireBeforeQueryHooks(sql: string, params?: Params, options?: QueryOptions): void {
-    const hasParent = this.parentHooks?.has('beforeQuery')
-    const hasLocal = this.hookRegistry.has('beforeQuery')
-    if (!hasParent && !hasLocal) return
-
-    const ctx: QueryHookContext = {
-      databaseId: this.id,
-      sql,
-      params,
-      writeConcern: options?.writeConcern,
-      readConcern: options?.readConcern,
-    }
-    this.parentHooks?.invokeSync('beforeQuery', ctx)
-    this.hookRegistry.invokeSync('beforeQuery', ctx)
+    fireBeforeQueryHooks(this.parentHooks, this.hookRegistry, this.id, sql, params, options)
   }
 
   private fireAfterQueryHooks(sql: string, params: Params | undefined, durationMs: number): void {
-    const hasParent = this.parentHooks?.has('afterQuery')
-    const hasLocal = this.hookRegistry.has('afterQuery')
-    if (!hasParent && !hasLocal) return
-
-    const ctx = { databaseId: this.id, sql, params, durationMs }
-    try {
-      this.parentHooks?.invokeSync('afterQuery', ctx)
-    } catch {
-      /* non-fatal */
-    }
-    try {
-      this.hookRegistry.invokeSync('afterQuery', ctx)
-    } catch {
-      /* non-fatal */
-    }
+    fireAfterQueryHooks(this.parentHooks, this.hookRegistry, this.id, sql, params, durationMs)
   }
 }

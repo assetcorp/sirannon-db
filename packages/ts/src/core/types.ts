@@ -323,4 +323,11 @@ export interface ClientOptions {
   autoReconnect?: boolean
   /** Reconnect interval in ms. Default: 1000. */
   reconnectInterval?: number
+  /**
+   * Per-request timeout in milliseconds for the WebSocket transport. A bulk
+   * load or batch of tens of millions of rows can legitimately run longer than
+   * the default, so raise this for large writes. Set to 0 to wait indefinitely.
+   * Default: 30000.
+   */
+  requestTimeout?: number
 }

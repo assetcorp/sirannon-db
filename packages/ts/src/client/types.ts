@@ -1,5 +1,11 @@
-import type { ChangeEvent, Params, ReadConcern } from '../core/types.js'
-import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../server/protocol.js'
+import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../core/types.js'
+import type {
+  BatchResponse,
+  ExecuteResponse,
+  LoadResponse,
+  QueryResponse,
+  TransactionResponse,
+} from '../server/protocol.js'
 
 /**
  * Transport layer for communicating with a sirannon-db server.
@@ -9,6 +15,8 @@ export interface Transport {
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
+  batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
+  load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse>
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,

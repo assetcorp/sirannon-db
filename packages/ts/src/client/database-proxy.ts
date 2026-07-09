@@ -1,4 +1,4 @@
-import type { Params, QueryOptions } from '../core/types.js'
+import type { BulkLoadDurability, BulkLoadResult, Params, QueryOptions, WriteConcern } from '../core/types.js'
 import type { ExecuteResponse } from '../server/protocol.js'
 import { RemoteSubscriptionBuilderImpl } from './subscription.js'
 import type { RemoteSubscriptionBuilder, Transport } from './types.js'
@@ -48,6 +48,28 @@ export class RemoteDatabase {
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
     const response = await this.transport.transaction(statements)
     return response.results
+  }
+
+  /**
+   * Run the same statement once per parameter set as a single atomic
+   * transaction that commits with one fsync. Returns one result per
+   * parameter set, in order. Use this for a burst of same-shape writes
+   * (an import, a bulk insert) that must all commit or all roll back.
+   */
+  async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<ExecuteResponse[]> {
+    const response = await this.transport.batch(sql, paramsBatch, writeConcern)
+    return response.results
+  }
+
+  /**
+   * Load many rows through the same statement with writer durability
+   * relaxed for the duration, then restored before this resolves. Built
+   * for seeding and large imports where the load itself need not be
+   * crash-durable but every write after it must run at the configured
+   * durability. Returns the total rows loaded and changes applied.
+   */
+  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<BulkLoadResult> {
+    return this.transport.load(sql, paramsBatch, durability)
   }
 
   /**

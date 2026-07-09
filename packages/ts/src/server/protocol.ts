@@ -1,68 +1,63 @@
 import { isBulkLoadDurability } from '../core/bulk-load.js'
-import type { BulkLoadDurability, ClusterStatusInfo, ExecuteResult, ReadConcern, WriteConcern } from '../core/types.js'
+import type {
+  BulkLoadDurability,
+  BulkLoadResult,
+  ClusterStatusInfo,
+  ExecuteResult,
+  ReadConcern,
+  WriteConcern,
+} from '../core/types.js'
 
-/** Body for POST /db/:id/query */
 export interface QueryRequest {
   sql: string
   params?: Record<string, unknown> | unknown[]
   readConcern?: ReadConcern
 }
 
-/** Body for POST /db/:id/execute */
 export interface ExecuteRequest {
   sql: string
   params?: Record<string, unknown> | unknown[]
   writeConcern?: WriteConcern
 }
 
-/** A single statement within a transaction batch. */
 export interface TransactionStatement {
   sql: string
   params?: Record<string, unknown> | unknown[]
 }
 
-/** Body for POST /db/:id/transaction */
 export interface TransactionRequest {
   statements: TransactionStatement[]
   writeConcern?: WriteConcern
 }
 
-/**
- * Body for POST /db/:id/batch. Runs one SQL statement over many parameter
- * sets inside a single server-side transaction, so the whole batch commits
- * atomically with one fsync.
- */
+/** The whole batch commits atomically in one server-side transaction with one fsync. */
 export interface BatchRequest {
   sql: string
   paramsBatch: (Record<string, unknown> | unknown[])[]
   writeConcern?: WriteConcern
 }
 
-/** Response for a successful query. */
 export interface QueryResponse {
   rows: Record<string, unknown>[]
 }
 
-/** Response for a successful execute. */
 export interface ExecuteResponse {
   changes: number
   lastInsertRowId: number | string
 }
 
-/** Response for a successful transaction. */
 export interface TransactionResponse {
   results: ExecuteResponse[]
 }
 
-/** Response for a successful batch. */
 export interface BatchResponse {
   results: ExecuteResponse[]
 }
 
 /**
- * Body for POST /db/:id/load. Loads rows with relaxed writer durability;
- * the database's configured durability is restored before the response is
- * sent. A load interrupted by a crash is recovered by re-running it.
+ * Loads rows with relaxed writer durability; the configured durability is
+ * restored before the response is sent, and a load interrupted by a crash is
+ * recovered by re-running it.
  */
 export interface LoadRequest {
   sql: string
@@ -70,16 +65,8 @@ export interface LoadRequest {
   durability?: BulkLoadDurability
 }
 
-/**
- * Response for a successful load. Aggregated rather than per-row so a
- * million-row load never echoes a million result objects back.
- */
-export interface LoadResponse {
-  rowsLoaded: number
-  changes: number
-}
+export type LoadResponse = BulkLoadResult
 
-/** Standard error response envelope. */
 export interface ErrorResponse {
   error: {
     code: string
@@ -92,7 +79,6 @@ export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
   primaryTerm?: string
 }
 
-/** Inbound WS message types. */
 export type WSClientMessage =
   | WSSubscribeMessage
   | WSUnsubscribeMessage
@@ -140,7 +126,6 @@ export interface WSTransactionMessage {
   writeConcern?: WriteConcern
 }
 
-/** One SQL statement applied over many parameter sets in one transaction. */
 export interface WSBatchMessage {
   type: 'batch'
   id: string
@@ -149,7 +134,6 @@ export interface WSBatchMessage {
   writeConcern?: WriteConcern
 }
 
-/** Bulk load over the socket, mirroring POST /db/:id/load. */
 export interface WSLoadMessage {
   type: 'load'
   id: string
@@ -158,7 +142,6 @@ export interface WSLoadMessage {
   durability?: BulkLoadDurability
 }
 
-/** Outbound WS message types. */
 export type WSServerMessage =
   | WSSubscribedMessage
   | WSUnsubscribedMessage
@@ -204,7 +187,6 @@ export interface WSErrorMessage {
   }
 }
 
-/** Convert an ExecuteResult (with possible bigint) to a JSON-safe response. */
 export function toExecuteResponse(result: ExecuteResult): ExecuteResponse {
   return {
     changes: result.changes,
@@ -213,10 +195,7 @@ export function toExecuteResponse(result: ExecuteResult): ExecuteResponse {
   }
 }
 
-/**
- * Validate the optional load durability field shared by both transports.
- * Returns an error message for the client, or null when valid.
- */
+/** Validates the optional load durability field identically for both transports. */
 export function loadDurabilityValidationError(value: unknown): string | null {
   if (value === undefined) return null
   if (!isBulkLoadDurability(value)) {
@@ -225,7 +204,6 @@ export function loadDurabilityValidationError(value: unknown): string | null {
   return null
 }
 
-/** Outcome of validating an optional request field shared by both transports. */
 export type FieldValidation<T> = { ok: true; value: T | undefined } | { ok: false; message: string }
 
 export function validateReadConcern(value: unknown): FieldValidation<ReadConcern> {
@@ -281,10 +259,8 @@ function isWriteConcernLevel(value: unknown): value is WriteConcern['level'] {
 }
 
 /**
- * Validate a transaction's statement list identically for both transports, so
- * an input one transport accepts the other cannot silently reject. Returns an
- * error message for the client, or null when every entry carries a string sql
- * and, if present, an object or array params.
+ * Validates a transaction's statement list identically for both transports, so
+ * an input one transport accepts the other cannot silently reject.
  */
 export function transactionStatementsValidationError(value: unknown): string | null {
   if (!Array.isArray(value)) {
@@ -295,7 +271,11 @@ export function transactionStatementsValidationError(value: unknown): string | n
   }
   for (let i = 0; i < value.length; i++) {
     const stmt = value[i]
-    if (typeof stmt !== 'object' || stmt === null || typeof (stmt as { sql?: unknown }).sql !== 'string') {
+    if (typeof stmt !== 'object' || stmt === null) {
+      return `Statement at index ${i} is missing a valid "sql" field`
+    }
+    const sql = (stmt as { sql?: unknown }).sql
+    if (typeof sql !== 'string' || sql.length === 0) {
       return `Statement at index ${i} is missing a valid "sql" field`
     }
     const params = (stmt as { params?: unknown }).params
@@ -306,11 +286,7 @@ export function transactionStatementsValidationError(value: unknown): string | n
   return null
 }
 
-/**
- * Validate a batch parameter list shared by the HTTP and WebSocket
- * transports. Returns a human-readable error message for the client, or null
- * when the value is a non-empty array whose entries are all objects or arrays.
- */
+/** Validates a batch parameter list identically for both transports. */
 export function paramsBatchValidationError(value: unknown): string | null {
   if (!Array.isArray(value)) {
     return 'Field "paramsBatch" is required and must be an array'

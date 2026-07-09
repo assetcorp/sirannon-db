@@ -75,3 +75,14 @@ export async function applyDdlSideEffects(
     await tracker.pruneDroppedTables(writerConn, [dropped])
   }
 }
+
+export function applyDdlSideEffectsIfRelevant(
+  tracker: ChangeTracker | null,
+  writerConn: SQLiteConnection,
+  sql: string,
+): Promise<void> {
+  if (!tracker || !isCdcRelevantDdl(sql)) {
+    return Promise.resolve()
+  }
+  return applyDdlSideEffects(tracker, writerConn, sql)
+}

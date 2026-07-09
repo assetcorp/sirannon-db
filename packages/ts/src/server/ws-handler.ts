@@ -88,7 +88,7 @@ export class WSHandler {
     const state = this.connections.get(conn)
     if (!state) return
 
-    if (data.length > this.maxPayloadLength) {
+    if (Buffer.byteLength(data) > this.maxPayloadLength) {
       this.sendError(conn, '', 'PAYLOAD_TOO_LARGE', 'Message exceeds maximum payload length')
       return
     }
@@ -112,7 +112,8 @@ export class WSHandler {
     }
 
     if (typeof msg.id !== 'string') {
-      this.sendError(conn, '', 'INVALID_MESSAGE', 'Message must have a string "id" field')
+      const echoId = typeof msg.id === 'number' || typeof msg.id === 'bigint' ? String(msg.id) : ''
+      this.sendError(conn, echoId, 'INVALID_MESSAGE', 'Message must have a string "id" field')
       return
     }
 

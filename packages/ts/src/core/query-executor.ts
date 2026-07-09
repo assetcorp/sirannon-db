@@ -82,46 +82,47 @@ export async function execute(conn: SQLiteConnection, sql: string, params?: Para
   }
 }
 
-export async function executeBatch(
+async function forEachBatchRow(
   conn: SQLiteConnection,
   sql: string,
   paramsBatch: Params[],
-): Promise<ExecuteResult[]> {
+  sink: (changes: number, lastInsertRowId: number | bigint) => void,
+): Promise<void> {
   try {
     const stmt = await getStatement(conn, sql)
-    const results: ExecuteResult[] = []
     for (const params of paramsBatch) {
       const result = await stmt.run(...bindParams(params))
-      results.push({
-        changes: result.changes,
-        lastInsertRowId: result.lastInsertRowId,
-      })
+      sink(result.changes, result.lastInsertRowId)
     }
-    return results
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }
 }
 
+export async function executeBatch(
+  conn: SQLiteConnection,
+  sql: string,
+  paramsBatch: Params[],
+): Promise<ExecuteResult[]> {
+  const results: ExecuteResult[] = []
+  await forEachBatchRow(conn, sql, paramsBatch, (changes, lastInsertRowId) => {
+    results.push({ changes, lastInsertRowId })
+  })
+  return results
+}
+
 /**
- * Apply one statement over many parameter sets, accumulating a count and a
- * running sum of changes instead of one result object per row. The load path
- * uses this so a million-row load never materialises a million-element array.
+ * Sums changes instead of returning one result per row, so a million-row load
+ * never materialises a million-element array.
  */
 export async function executeBatchSummary(
   conn: SQLiteConnection,
   sql: string,
   paramsBatch: Params[],
 ): Promise<BulkLoadResult> {
-  try {
-    const stmt = await getStatement(conn, sql)
-    let changes = 0
-    for (const params of paramsBatch) {
-      const result = await stmt.run(...bindParams(params))
-      changes += result.changes
-    }
-    return { rowsLoaded: paramsBatch.length, changes }
-  } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
-  }
+  let changes = 0
+  await forEachBatchRow(conn, sql, paramsBatch, rowChanges => {
+    changes += rowChanges
+  })
+  return { rowsLoaded: paramsBatch.length, changes }
 }

@@ -102,7 +102,7 @@ describe('runBulkLoad pragma sequencing', () => {
       loadRows: async () => oneRow,
     })
     expect(summary).toEqual(oneRow)
-    expect(log.filter(sql => sql === 'PRAGMA wal_checkpoint(TRUNCATE)')).toHaveLength(2)
+    expect(log.filter(sql => sql === 'PRAGMA wal_checkpoint(TRUNCATE)')).toHaveLength(3)
   })
 
   it('restores the configured level when the load fails, without a checkpoint', async () => {

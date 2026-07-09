@@ -1,14 +1,18 @@
-import { ChangeTracker } from '../core/cdc/change-tracker.js'
-import { SubscriptionManager } from '../core/cdc/subscription.js'
 import type { Database } from '../core/database.js'
-import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
-import { toExecuteResponse } from './protocol.js'
+import { CdcContextRegistry } from './ws-cdc.js'
+import type { WSOperationContext } from './ws-operations.js'
+import {
+  handleBatchMessage,
+  handleExecuteMessage,
+  handleLoadMessage,
+  handleQueryMessage,
+  handleTransactionMessage,
+} from './ws-operations.js'
 
-const DEFAULT_POLL_INTERVAL_MS = 50
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
 export interface WSConnection {
@@ -23,26 +27,19 @@ interface ConnectionState {
   subscriptions: Map<string, Subscription>
 }
 
-interface CDCContext {
-  cdcConn: SQLiteConnection
-  tracker: ChangeTracker
-  manager: SubscriptionManager
-  stopPolling: () => void
-}
-
 export class WSHandler {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
   private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
-  private readonly cdcContexts = new Map<string, CDCContext>()
-  private readonly cdcPending = new Map<string, Promise<CDCContext>>()
+  private readonly cdc: CdcContextRegistry
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.resolveExecutionTarget = options?.resolveExecutionTarget
+    this.cdc = new CdcContextRegistry(sirannon)
   }
 
   async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
@@ -123,10 +120,19 @@ export class WSHandler {
 
     switch (msg.type) {
       case 'query':
-        this.handleQuery(conn, state, msg, id)
+        handleQueryMessage(this.operationContext(conn, state), msg, id)
         break
       case 'execute':
-        this.handleExecute(conn, state, msg, id)
+        handleExecuteMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'transaction':
+        handleTransactionMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'batch':
+        handleBatchMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'load':
+        handleLoadMessage(this.operationContext(conn, state), msg, id)
         break
       case 'subscribe':
         this.handleSubscribe(conn, state, msg, id)
@@ -148,7 +154,7 @@ export class WSHandler {
     }
     state.subscriptions.clear()
 
-    this.maybeCleanupCDC(state.databaseId)
+    this.cdc.maybeCleanup(state.databaseId)
     this.connections.delete(conn)
   }
 
@@ -169,68 +175,15 @@ export class WSHandler {
     }
     this.connections.clear()
 
-    for (const ctx of this.cdcContexts.values()) {
-      ctx.stopPolling()
-      try {
-        await ctx.cdcConn.close()
-      } catch {
-        /* best effort */
-      }
-    }
-    this.cdcContexts.clear()
+    await this.cdc.closeAll()
   }
 
-  private async handleQuery(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.sql !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Query message requires a "sql" string field')
-      return
-    }
-
-    if (!this.isValidParams(msg.params)) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"params" must be an object or array')
-      return
-    }
-
-    try {
-      const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const rows = await state.executionTarget.query(msg.sql, params)
-      this.send(conn, { type: 'result', id, data: { rows } })
-    } catch (err) {
-      this.sendSirannonError(conn, id, err)
-    }
-  }
-
-  private async handleExecute(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.sql !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Execute message requires a "sql" string field')
-      return
-    }
-
-    if (!this.isValidParams(msg.params)) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"params" must be an object or array')
-      return
-    }
-
-    try {
-      const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const result = await state.executionTarget.execute(msg.sql, params)
-      this.send(conn, {
-        type: 'result',
-        id,
-        data: toExecuteResponse(result),
-      })
-    } catch (err) {
-      this.sendSirannonError(conn, id, err)
+  private operationContext(conn: WSConnection, state: ConnectionState): WSOperationContext {
+    return {
+      target: state.executionTarget,
+      sendResult: (id, data) => this.send(conn, { type: 'result', id, data }),
+      sendError: (id, code, message) => this.sendError(conn, id, code, message),
+      sendCaughtError: (id, err) => this.sendSirannonError(conn, id, err),
     }
   }
 
@@ -270,10 +223,9 @@ export class WSHandler {
     }
 
     const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
-    let ctx: CDCContext | null = null
 
     try {
-      ctx = await this.ensureCDC(state.databaseId, state.database)
+      const ctx = await this.cdc.ensure(state.databaseId, state.database)
       await ctx.tracker.watch(ctx.cdcConn, msg.table)
 
       const sub = ctx.manager.subscribe(msg.table, filter, (event: ChangeEvent) => {
@@ -283,9 +235,7 @@ export class WSHandler {
       state.subscriptions.set(id, sub)
       this.send(conn, { type: 'subscribed', id })
     } catch (err) {
-      if (ctx?.manager.size === 0) {
-        this.maybeCleanupCDC(state.databaseId)
-      }
+      this.cdc.maybeCleanup(state.databaseId)
       this.sendSirannonError(conn, id, err)
     }
   }
@@ -300,93 +250,7 @@ export class WSHandler {
     sub.unsubscribe()
     state.subscriptions.delete(id)
     this.send(conn, { type: 'unsubscribed', id })
-    this.maybeCleanupCDC(state.databaseId)
-  }
-
-  private async ensureCDC(databaseId: string, database: Database): Promise<CDCContext> {
-    const existing = this.cdcContexts.get(databaseId)
-    if (existing) return existing
-
-    const pending = this.cdcPending.get(databaseId)
-    if (pending) return pending
-
-    const promise = this.createCDCContext(database)
-    this.cdcPending.set(databaseId, promise)
-    try {
-      const ctx = await promise
-      if (this.closed) {
-        ctx.stopPolling()
-        await ctx.cdcConn.close().catch(() => {})
-        throw new SirannonError('WebSocket handler is shut down', 'HANDLER_CLOSED')
-      }
-      this.cdcContexts.set(databaseId, ctx)
-      return ctx
-    } finally {
-      this.cdcPending.delete(databaseId)
-    }
-  }
-
-  private async createCDCContext(database: Database): Promise<CDCContext> {
-    const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
-
-    const tracker = new ChangeTracker()
-    const manager = new SubscriptionManager()
-    try {
-      await tracker.advanceToLatest(cdcConn)
-    } catch (err) {
-      await cdcConn.close().catch(() => {})
-      throw err
-    }
-
-    let polling = false
-    let consecutiveErrors = 0
-    const MAX_CONSECUTIVE_ERRORS = 10
-
-    const stopPolling = () => {
-      clearInterval(interval)
-    }
-
-    const tick = async () => {
-      if (manager.size === 0) return
-      if (polling) return
-      polling = true
-      try {
-        const events = await tracker.poll(cdcConn)
-        if (events.length > 0) {
-          manager.dispatch(events)
-        }
-        consecutiveErrors = 0
-      } catch {
-        consecutiveErrors++
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          stopPolling()
-        }
-      } finally {
-        polling = false
-      }
-    }
-    const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
-      unref?: () => void
-    }
-    interval.unref?.()
-
-    return { cdcConn, tracker, manager, stopPolling }
-  }
-
-  private maybeCleanupCDC(databaseId: string): void {
-    const ctx = this.cdcContexts.get(databaseId)
-    if (!ctx || ctx.manager.size > 0) return
-
-    ctx.stopPolling()
-    ctx.cdcConn.close().catch(() => {
-      /* best effort */
-    })
-    this.cdcContexts.delete(databaseId)
-  }
-
-  private isValidParams(params: unknown): boolean {
-    if (params === undefined || params === null) return true
-    return typeof params === 'object'
+    this.cdc.maybeCleanup(state.databaseId)
   }
 
   private async resolveTarget(databaseId: string): Promise<ServerExecutionTarget | null> {

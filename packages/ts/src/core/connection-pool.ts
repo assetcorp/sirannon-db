@@ -1,4 +1,4 @@
-import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
+import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ConnectionPoolError } from './errors.js'
 
 export interface ConnectionPoolOptions {
@@ -7,6 +7,7 @@ export interface ConnectionPoolOptions {
   readOnly?: boolean
   readPoolSize?: number
   walMode?: boolean
+  synchronous?: SynchronousLevel
 }
 
 async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promise<void> {
@@ -32,14 +33,14 @@ export class ConnectionPool {
   }
 
   static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
-    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true } = options
+    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true, synchronous } = options
 
     let writer: SQLiteConnection | null = null
     const readers: SQLiteConnection[] = []
 
     try {
       if (!readOnly) {
-        writer = await driver.open(path, { walMode })
+        writer = await driver.open(path, { walMode, synchronous })
       }
 
       const poolSize = driver.capabilities.multipleConnections ? Math.max(readPoolSize, 1) : 0

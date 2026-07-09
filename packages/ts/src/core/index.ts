@@ -1,11 +1,13 @@
 export { BackupManager } from './backup/backup.js'
 export { BackupScheduler } from './backup/scheduler.js'
+export { isBulkLoadDurability, runBulkLoad } from './bulk-load.js'
 export { ChangeTracker } from './cdc/change-tracker.js'
 export type { ChangeTrackerOptions } from './cdc/types.js'
 export type { ConnectionPoolOptions } from './connection-pool.js'
 export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'
 export { defineDriver } from './driver/define.js'
+export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'
 export type {
   DriverCapabilities,
   OpenOptions,
@@ -13,6 +15,7 @@ export type {
   SQLiteConnection,
   SQLiteDriver,
   SQLiteStatement,
+  SynchronousLevel,
 } from './driver/types.js'
 export * from './errors.js'
 export { HookRegistry } from './hooks/registry.js'

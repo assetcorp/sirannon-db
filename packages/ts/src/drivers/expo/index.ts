@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
 export function expoSqlite(): SQLiteDriver {
@@ -12,7 +13,7 @@ export function expoSqlite(): SQLiteDriver {
       type SQLiteHandle = Awaited<ReturnType<typeof SQLite.openDatabaseAsync>>
 
       if (options?.walMode !== false) await db.execAsync('PRAGMA journal_mode = WAL')
-      await db.execAsync('PRAGMA synchronous = NORMAL')
+      await db.execAsync(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       await db.execAsync('PRAGMA foreign_keys = ON')
 
       const buildConnectionFromHandle = (dbHandle: SQLiteHandle): SQLiteConnection => ({

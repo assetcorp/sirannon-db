@@ -1,4 +1,4 @@
-import type { SQLiteDriver } from './driver/types.js'
+import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import type { Transaction } from './transaction.js'
 
 /** Query parameter types: named (object) or positional (array). */
@@ -154,6 +154,11 @@ export interface DatabaseOptions {
   readPoolSize?: number
   /** Enable WAL mode. Default: true. */
   walMode?: boolean
+  /**
+   * Writer durability (`PRAGMA synchronous`). Default: 'normal'. This is the
+   * level restored after every bulk load, whatever the load relaxed it to.
+   */
+  synchronous?: SynchronousLevel
   /** CDC polling interval in milliseconds. Default: 50. */
   cdcPollInterval?: number
   /** CDC retention period in milliseconds. Default: 3_600_000 (1 hour). */
@@ -215,10 +220,28 @@ export interface RequestDenial {
 /** Middleware hook for auth, rate limiting, and request validation. */
 export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
+/**
+ * Durability level in force while a bulk load runs. SQLite sanctions 'off'
+ * for a from-scratch load that can simply be re-run after a power loss;
+ * 'normal' keeps corruption safety in WAL mode for loads into existing data.
+ */
+export type BulkLoadDurability = 'off' | 'normal'
+
+export interface BulkLoadOptions {
+  /** Durability during the load. Default: 'off'. */
+  durability?: BulkLoadDurability
+}
+
 export interface ServerExecutionTarget {
   query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
+  /**
+   * Optional bulk-load entry point. Targets that proxy to a remote primary
+   * may omit it; the server rejects load requests for such targets instead
+   * of silently degrading to per-statement writes.
+   */
+  bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<ExecuteResult[]>
 }
 
 export type ServerExecutionTargetResolver = (
@@ -230,6 +253,13 @@ export interface ServerOptions {
   host?: string
   port?: number
   cors?: boolean | CorsOptions
+  /**
+   * Maximum HTTP request body and WebSocket message size in bytes. Applied
+   * identically to both transports. Must be a positive, finite integer.
+   * Default: 1_048_576 (1 MB), matching the general web default and acting as
+   * a denial-of-service guard on a memory-limited server.
+   */
+  maxBodyBytes?: number
   onRequest?: OnRequestHook
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null

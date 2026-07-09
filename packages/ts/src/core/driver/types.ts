@@ -16,9 +16,20 @@ export interface SQLiteConnection {
   close(): Promise<void>
 }
 
+/**
+ * SQLite `PRAGMA synchronous` level applied to a connection. `normal` is safe
+ * from corruption in WAL mode but can lose the most recent commits on power
+ * loss; `full` fsyncs every commit; `extra` adds a directory sync after the
+ * rollback journal is unlinked in DELETE journal mode and equals `full` in
+ * WAL mode; `off` hands writes to the OS without syncing and is sanctioned
+ * only for re-runnable bulk loads.
+ */
+export type SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
+
 export interface OpenOptions {
   readonly?: boolean
   walMode?: boolean
+  synchronous?: SynchronousLevel
 }
 
 export interface DriverCapabilities {

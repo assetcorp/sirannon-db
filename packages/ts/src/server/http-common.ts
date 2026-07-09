@@ -152,6 +152,16 @@ export function errorDetails(err: SirannonError): Record<string, unknown> | unde
   return details && Object.keys(details).length > 0 ? details : undefined
 }
 
+/** Map a thrown value to the response, unless the socket already aborted. */
+export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: unknown): void {
+  if (abort.aborted) return
+  if (err instanceof SirannonError) {
+    sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
+  } else {
+    sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+  }
+}
+
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
 
 export async function resolveExecutionTarget(

@@ -1,15 +1,13 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
 import {
-  errorDetails,
-  httpStatusForError,
   parseBody,
   parseReadConcern,
   parseWriteConcern,
   resolveExecutionTarget,
+  sendCaughtError,
   sendError,
   sendJson,
 } from './http-common.js'
@@ -25,7 +23,7 @@ import {
   loadDurabilityValidationError,
   paramsBatchValidationError,
   toExecuteResponse,
-  toLoadResponse,
+  transactionStatementsValidationError,
 } from './protocol.js'
 
 export type { ResponseAbort } from './http-common.js'
@@ -58,12 +56,7 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
       if (abort.aborted) return
       sendJson(res, { rows })
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -93,12 +86,7 @@ export function handleExecute(sirannon: Sirannon, resolveTarget?: ServerExecutio
       if (abort.aborted) return
       sendJson(res, toExecuteResponse(result))
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -108,26 +96,14 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
     const body = parseBody<TransactionRequest>(res, rawBody)
     if (!body) return
 
-    if (!Array.isArray(body.statements)) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Field "statements" is required and must be an array')
-      return
-    }
-
-    if (body.statements.length === 0) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Transaction requires at least one statement')
+    const statementsError = transactionStatementsValidationError(body.statements)
+    if (statementsError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', statementsError)
       return
     }
 
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
-
-    for (let i = 0; i < body.statements.length; i++) {
-      const stmt = body.statements[i]
-      if (!stmt.sql || typeof stmt.sql !== 'string') {
-        sendError(res, 400, 'INVALID_REQUEST', `Statement at index ${i} is missing a valid "sql" field`)
-        return
-      }
-    }
 
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
@@ -149,12 +125,7 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
         results: results.map(toExecuteResponse),
       })
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -191,12 +162,7 @@ export function handleBatch(sirannon: Sirannon, resolveTarget?: ServerExecutionT
         results: results.map(toExecuteResponse),
       })
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -233,21 +199,16 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
     }
 
     try {
-      const results = await bulkLoad.call(
+      const summary = await bulkLoad.call(
         target,
         body.sql,
         body.paramsBatch,
         body.durability ? { durability: body.durability } : undefined,
       )
       if (abort.aborted) return
-      sendJson(res, toLoadResponse(results))
+      sendJson(res, summary)
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }

@@ -7,18 +7,34 @@ import { runBulkLoad } from '../bulk-load.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { Sirannon } from '../sirannon.js'
-import type { BulkLoadDurability, ChangeEvent, ExecuteResult } from '../types.js'
+import type { BulkLoadDurability, BulkLoadResult, ChangeEvent } from '../types.js'
 
-function createStubWriter(executedSql: string[], failOn?: string): SQLiteConnection {
+interface StubOptions {
+  failExecOn?: string
+  checkpointBusy?: boolean
+}
+
+function createStubWriter(log: string[], options?: StubOptions): SQLiteConnection {
   return {
     async exec(sql: string): Promise<void> {
-      if (failOn !== undefined && sql.includes(failOn)) {
-        throw new Error(`stub failure on ${failOn}`)
+      if (options?.failExecOn !== undefined && sql.includes(options.failExecOn)) {
+        throw new Error(`stub failure on ${options.failExecOn}`)
       }
-      executedSql.push(sql)
+      log.push(sql)
     },
-    async prepare(): Promise<never> {
-      throw new Error('not used by runBulkLoad')
+    async prepare(sql: string) {
+      log.push(sql)
+      return {
+        async all<T = unknown>(): Promise<T[]> {
+          return []
+        },
+        async get<T = unknown>(): Promise<T | undefined> {
+          return { busy: options?.checkpointBusy ? 1 : 0 } as T
+        },
+        async run() {
+          return { changes: 0, lastInsertRowId: 0 }
+        },
+      }
     },
     async transaction<T>(): Promise<T> {
       throw new Error('not used by runBulkLoad')
@@ -27,25 +43,24 @@ function createStubWriter(executedSql: string[], failOn?: string): SQLiteConnect
   }
 }
 
+const oneRow: BulkLoadResult = { rowsLoaded: 1, changes: 1 }
+
 describe('runBulkLoad pragma sequencing', () => {
   it('relaxes durability, loads, restores, then checkpoints', async () => {
-    const executedSql: string[] = []
-    const writer = createStubWriter(executedSql)
-    const loadResults: ExecuteResult[] = [{ changes: 1, lastInsertRowId: 1 }]
-
-    const results = await runBulkLoad({
-      writer,
+    const log: string[] = []
+    const summary = await runBulkLoad({
+      writer: createStubWriter(log),
       configuredSynchronous: 'full',
       walMode: true,
       durability: undefined,
-      execute: async () => {
-        executedSql.push('<load>')
-        return loadResults
+      loadRows: async () => {
+        log.push('<load>')
+        return oneRow
       },
     })
 
-    expect(results).toBe(loadResults)
-    expect(executedSql).toEqual([
+    expect(summary).toEqual(oneRow)
+    expect(log).toEqual([
       'PRAGMA synchronous = OFF',
       '<load>',
       'PRAGMA synchronous = FULL',
@@ -54,59 +69,79 @@ describe('runBulkLoad pragma sequencing', () => {
   })
 
   it('uses the requested load durability', async () => {
-    const executedSql: string[] = []
+    const log: string[] = []
     await runBulkLoad({
-      writer: createStubWriter(executedSql),
+      writer: createStubWriter(log),
       configuredSynchronous: 'normal',
       walMode: true,
       durability: 'normal',
-      execute: async () => [],
+      loadRows: async () => oneRow,
     })
-    expect(executedSql[0]).toBe('PRAGMA synchronous = NORMAL')
+    expect(log[0]).toBe('PRAGMA synchronous = NORMAL')
   })
 
   it('skips the checkpoint when WAL mode is off', async () => {
-    const executedSql: string[] = []
+    const log: string[] = []
     await runBulkLoad({
-      writer: createStubWriter(executedSql),
+      writer: createStubWriter(log),
       configuredSynchronous: 'normal',
       walMode: false,
       durability: undefined,
-      execute: async () => [],
+      loadRows: async () => oneRow,
     })
-    expect(executedSql).not.toContain('PRAGMA wal_checkpoint(TRUNCATE)')
+    expect(log).not.toContain('PRAGMA wal_checkpoint(TRUNCATE)')
+  })
+
+  it('retries a busy checkpoint before giving up on a committed load', async () => {
+    const log: string[] = []
+    const summary = await runBulkLoad({
+      writer: createStubWriter(log, { checkpointBusy: true }),
+      configuredSynchronous: 'full',
+      walMode: true,
+      durability: undefined,
+      loadRows: async () => oneRow,
+    })
+    expect(summary).toEqual(oneRow)
+    expect(log.filter(sql => sql === 'PRAGMA wal_checkpoint(TRUNCATE)')).toHaveLength(2)
   })
 
   it('restores the configured level when the load fails, without a checkpoint', async () => {
-    const executedSql: string[] = []
-    const writer = createStubWriter(executedSql)
-
+    const log: string[] = []
     await expect(
       runBulkLoad({
-        writer,
+        writer: createStubWriter(log),
         configuredSynchronous: 'full',
         walMode: true,
         durability: undefined,
-        execute: async () => {
+        loadRows: async () => {
           throw new Error('load exploded')
         },
       }),
     ).rejects.toThrow('load exploded')
 
-    expect(executedSql).toEqual(['PRAGMA synchronous = OFF', 'PRAGMA synchronous = FULL'])
+    expect(log).toEqual(['PRAGMA synchronous = OFF', 'PRAGMA synchronous = FULL'])
   })
 
-  it('propagates the load error even when the restore also fails', async () => {
-    const executedSql: string[] = []
-    const writer = createStubWriter(executedSql, 'synchronous = FULL')
-
+  it('reports a committed load whose restore fails as DURABILITY_RESTORE_FAILED', async () => {
     await expect(
       runBulkLoad({
-        writer,
+        writer: createStubWriter([], { failExecOn: 'synchronous = FULL' }),
         configuredSynchronous: 'full',
         walMode: true,
         durability: undefined,
-        execute: async () => {
+        loadRows: async () => oneRow,
+      }),
+    ).rejects.toMatchObject({ code: 'DURABILITY_RESTORE_FAILED' })
+  })
+
+  it('keeps the load error dominant when both the load and the restore fail', async () => {
+    await expect(
+      runBulkLoad({
+        writer: createStubWriter([], { failExecOn: 'synchronous = FULL' }),
+        configuredSynchronous: 'full',
+        walMode: true,
+        durability: undefined,
+        loadRows: async () => {
           throw new Error('load exploded')
         },
       }),
@@ -114,17 +149,17 @@ describe('runBulkLoad pragma sequencing', () => {
   })
 
   it('rejects an invalid durability level before touching the writer', async () => {
-    const executedSql: string[] = []
+    const log: string[] = []
     await expect(
       runBulkLoad({
-        writer: createStubWriter(executedSql),
+        writer: createStubWriter(log),
         configuredSynchronous: 'normal',
         walMode: true,
         durability: 'everything' as BulkLoadDurability,
-        execute: async () => [],
+        loadRows: async () => oneRow,
       }),
     ).rejects.toMatchObject({ code: 'INVALID_DURABILITY' })
-    expect(executedSql).toEqual([])
+    expect(log).toEqual([])
   })
 })
 
@@ -151,19 +186,21 @@ describe('Database.bulkLoad', () => {
     })
   }
 
+  const FULL = 2
+  const NORMAL = 1
+
   it('loads rows atomically and restores the configured durability', async () => {
     const db = await sirannon.open('load', join(tempDir, 'load.db'), { synchronous: 'full' })
     await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
 
     const paramsBatch = Array.from({ length: 500 }, (_, i) => [i + 1, i * 0.5])
-    const results = await db.bulkLoad('INSERT INTO readings (id, value) VALUES (?, ?)', paramsBatch)
+    const summary = await db.bulkLoad('INSERT INTO readings (id, value) VALUES (?, ?)', paramsBatch)
 
-    expect(results).toHaveLength(500)
+    expect(summary.rowsLoaded).toBe(500)
+    expect(summary.changes).toBe(500)
     const rows = await db.query<{ count: number }>('SELECT COUNT(*) AS count FROM readings')
     expect(rows[0].count).toBe(500)
-
-    const fullLevel = 2
-    expect(await writerSynchronousLevel(db)).toBe(fullLevel)
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
   })
 
   it('truncates the WAL after a successful load', async () => {
@@ -197,16 +234,52 @@ describe('Database.bulkLoad', () => {
 
     const afterFailure = await db.query<{ count: number }>('SELECT COUNT(*) AS count FROM readings')
     expect(afterFailure[0].count).toBe(0)
-    const fullLevel = 2
-    expect(await writerSynchronousLevel(db)).toBe(fullLevel)
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
 
     const corrected = [
       [1, 1.0],
       [2, 2.0],
       [3, 3.0],
     ]
-    const results = await db.bulkLoad('INSERT INTO readings (id, value) VALUES (?, ?)', corrected)
-    expect(results).toHaveLength(3)
+    const summary = await db.bulkLoad('INSERT INTO readings (id, value) VALUES (?, ?)', corrected)
+    expect(summary.rowsLoaded).toBe(3)
+  })
+
+  it('holds durability at the configured level for a concurrent write during a load', async () => {
+    const db = await sirannon.open('concurrent', join(tempDir, 'concurrent.db'), { synchronous: 'full' })
+    await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
+
+    const load = db.bulkLoad(
+      'INSERT INTO readings (id, value) VALUES (?, ?)',
+      Array.from({ length: 2000 }, (_, i) => [i + 1, i]),
+      { durability: 'off' },
+    )
+    const concurrentWrite = db.execute('INSERT INTO readings (id, value) VALUES (100001, 9.9)')
+
+    await Promise.all([load, concurrentWrite])
+
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
+    const rows = await db.query<{ count: number }>('SELECT COUNT(*) AS count FROM readings')
+    expect(rows[0].count).toBe(2001)
+  })
+
+  it('serialises two overlapping loads without a nested-transaction error', async () => {
+    const db = await sirannon.open('overlap', join(tempDir, 'overlap.db'), { synchronous: 'full' })
+    await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
+
+    const first = db.bulkLoad(
+      'INSERT INTO readings (id, value) VALUES (?, ?)',
+      Array.from({ length: 500 }, (_, i) => [i + 1, i]),
+    )
+    const second = db.bulkLoad(
+      'INSERT INTO readings (id, value) VALUES (?, ?)',
+      Array.from({ length: 500 }, (_, i) => [i + 501, i]),
+    )
+
+    const [firstSummary, secondSummary] = await Promise.all([first, second])
+    expect(firstSummary.rowsLoaded).toBe(500)
+    expect(secondSummary.rowsLoaded).toBe(500)
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
   })
 
   it('is visible to CDC subscribers', async () => {
@@ -242,11 +315,9 @@ describe('Database.bulkLoad', () => {
 
   it('applies the configured synchronous level when opening', async () => {
     const db = await sirannon.open('sync-full', join(tempDir, 'sync-full.db'), { synchronous: 'full' })
-    const fullLevel = 2
-    expect(await writerSynchronousLevel(db)).toBe(fullLevel)
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
 
     const defaultDb = await sirannon.open('sync-default', join(tempDir, 'sync-default.db'))
-    const normalLevel = 1
-    expect(await writerSynchronousLevel(defaultDb)).toBe(normalLevel)
+    expect(await writerSynchronousLevel(defaultDb)).toBe(NORMAL)
   })
 })

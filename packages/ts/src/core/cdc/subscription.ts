@@ -96,6 +96,7 @@ export function startPolling(
   manager: SubscriptionManager,
   intervalMs: number,
   onError?: (err: Error) => void,
+  runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>,
 ): () => void {
   let consecutiveErrors = 0
   let tickCount = 0
@@ -103,13 +104,18 @@ export function startPolling(
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
+  // Poll and cleanup read and write the shared writer connection, so they run
+  // under the same serialisation as ordinary writes; otherwise a tick reads
+  // rows a still-open transaction has not committed.
+  const exclusive = runExclusive ?? (<T>(operation: () => Promise<T>) => operation())
+
   const tick = async () => {
     if (manager.size === 0) return
     if (polling) return
     polling = true
 
     try {
-      const events = await tracker.poll(conn)
+      const events = await exclusive(() => tracker.poll(conn))
       if (events.length > 0) {
         manager.dispatch(events)
       }
@@ -118,7 +124,7 @@ export function startPolling(
       tickCount++
       if (tickCount >= CLEANUP_INTERVAL_TICKS) {
         tickCount = 0
-        await tracker.cleanup(conn)
+        await exclusive(() => tracker.cleanup(conn))
       }
     } catch (err) {
       consecutiveErrors++

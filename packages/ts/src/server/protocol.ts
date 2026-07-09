@@ -213,15 +213,6 @@ export function toExecuteResponse(result: ExecuteResult): ExecuteResponse {
   }
 }
 
-/** Aggregate per-row load results into the load response summary. */
-export function toLoadResponse(results: ExecuteResult[]): LoadResponse {
-  let changes = 0
-  for (const result of results) {
-    changes += result.changes
-  }
-  return { rowsLoaded: results.length, changes }
-}
-
 /**
  * Validate the optional load durability field shared by both transports.
  * Returns an error message for the client, or null when valid.
@@ -287,6 +278,32 @@ function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
 
 function isWriteConcernLevel(value: unknown): value is WriteConcern['level'] {
   return value === 'local' || value === 'majority' || value === 'all'
+}
+
+/**
+ * Validate a transaction's statement list identically for both transports, so
+ * an input one transport accepts the other cannot silently reject. Returns an
+ * error message for the client, or null when every entry carries a string sql
+ * and, if present, an object or array params.
+ */
+export function transactionStatementsValidationError(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return 'Field "statements" is required and must be an array'
+  }
+  if (value.length === 0) {
+    return 'Transaction requires at least one statement'
+  }
+  for (let i = 0; i < value.length; i++) {
+    const stmt = value[i]
+    if (typeof stmt !== 'object' || stmt === null || typeof (stmt as { sql?: unknown }).sql !== 'string') {
+      return `Statement at index ${i} is missing a valid "sql" field`
+    }
+    const params = (stmt as { params?: unknown }).params
+    if (params !== undefined && params !== null && typeof params !== 'object') {
+      return `Statement at index ${i} has invalid "params"`
+    }
+  }
+  return null
 }
 
 /**

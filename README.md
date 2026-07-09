@@ -86,6 +86,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 ## Features
 
 - **Queries and transactions** - Execute reads, writes, and batch operations. Transactions provide full ACID guarantees.
+- **Bulk load** - Load a large dataset in one transaction under relaxed durability, then restore the configured level, so a big import pays one durability barrier instead of one per row.
 - **Connection pooling** - 1 dedicated write connection + N read connections (default 4). WAL mode enabled by default for concurrent reads during writes.
 - **Change data capture (CDC)** - Watch tables for INSERT, UPDATE, and DELETE events in real time through SQLite triggers and configurable polling.
 - **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations, tracked in a `_sirannon_migrations` table. Supports rollback to any version.
@@ -93,7 +94,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Hooks** - Before/after hooks for queries, connections, and subscriptions. Throwing from a before-hook denies the operation.
 - **Metrics** - Plug in callbacks to collect query timing, connection events, and CDC activity.
 - **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
-- **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Includes health endpoints, CORS configuration, and an `onRequest` hook for authentication.
+- **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Query, execute, transaction, batch, and bulk-load routes on both transports, plus health endpoints, CORS configuration, a configurable body-size cap, and an `onRequest` hook for authentication.
 - **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
 - **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas. The production network transport is gRPC with TLS support.
 - **Coordinator-backed failover** - Use etcd-backed authority, primary terms, in-sync sets, and write concerns. Minority partitions fail closed for writes.

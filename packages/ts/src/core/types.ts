@@ -221,15 +221,24 @@ export interface RequestDenial {
 export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
 /**
- * Durability level in force while a bulk load runs. SQLite sanctions 'off'
- * for a from-scratch load that can simply be re-run after a power loss;
- * 'normal' keeps corruption safety in WAL mode for loads into existing data.
+ * Durability level in force while a bulk load runs. SQLite sanctions 'off' for
+ * a from-scratch load that the operator can re-run after a power loss; 'off'
+ * gives up corruption safety, so it fits only a load that starts from nothing.
+ * 'normal' keeps WAL-mode corruption safety and suits loads into a database
+ * that already holds data the operator cannot afford to lose.
  */
 export type BulkLoadDurability = 'off' | 'normal'
 
 export interface BulkLoadOptions {
   /** Durability during the load. Default: 'off'. */
   durability?: BulkLoadDurability
+}
+
+/** Aggregate outcome of a bulk load. Summed rather than per-row so a
+ * million-row load never holds a million result objects in memory. */
+export interface BulkLoadResult {
+  rowsLoaded: number
+  changes: number
 }
 
 export interface ServerExecutionTarget {
@@ -241,7 +250,7 @@ export interface ServerExecutionTarget {
    * may omit it; the server rejects load requests for such targets instead
    * of silently degrading to per-statement writes.
    */
-  bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<ExecuteResult[]>
+  bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>
 }
 
 export type ServerExecutionTargetResolver = (

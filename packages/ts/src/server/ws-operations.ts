@@ -4,7 +4,7 @@ import {
   loadDurabilityValidationError,
   paramsBatchValidationError,
   toExecuteResponse,
-  toLoadResponse,
+  transactionStatementsValidationError,
   validateWriteConcern,
 } from './protocol.js'
 
@@ -77,22 +77,10 @@ export async function handleTransactionMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  const statements = msg.statements
-  if (!Array.isArray(statements) || statements.length === 0) {
-    ctx.sendError(id, 'INVALID_MESSAGE', 'Transaction message requires a non-empty "statements" array')
+  const statementsError = transactionStatementsValidationError(msg.statements)
+  if (statementsError !== null) {
+    ctx.sendError(id, 'INVALID_MESSAGE', statementsError)
     return
-  }
-
-  for (let i = 0; i < statements.length; i++) {
-    const stmt: unknown = statements[i]
-    if (typeof stmt !== 'object' || stmt === null || typeof (stmt as { sql?: unknown }).sql !== 'string') {
-      ctx.sendError(id, 'INVALID_MESSAGE', `Statement at index ${i} is missing a valid "sql" field`)
-      return
-    }
-    if (!isValidParams((stmt as { params?: unknown }).params)) {
-      ctx.sendError(id, 'INVALID_MESSAGE', `Statement at index ${i} has invalid "params"`)
-      return
-    }
   }
 
   const writeConcern = validateWriteConcern(msg.writeConcern)
@@ -101,7 +89,7 @@ export async function handleTransactionMessage(
     return
   }
 
-  const validStatements = statements as { sql: string; params?: Record<string, unknown> | unknown[] }[]
+  const validStatements = msg.statements as { sql: string; params?: Record<string, unknown> | unknown[] }[]
 
   try {
     const results = await ctx.target.transaction(
@@ -189,8 +177,8 @@ export async function handleLoadMessage(
   const durability = msg.durability as 'off' | 'normal' | undefined
 
   try {
-    const results = await bulkLoad.call(ctx.target, sql, paramsBatch, durability ? { durability } : undefined)
-    ctx.sendResult(id, toLoadResponse(results))
+    const summary = await bulkLoad.call(ctx.target, sql, paramsBatch, durability ? { durability } : undefined)
+    ctx.sendResult(id, summary)
   } catch (err) {
     ctx.sendCaughtError(id, err)
   }

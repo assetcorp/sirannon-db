@@ -209,6 +209,25 @@ const total = await db.transaction(async tx => {
 })
 ```
 
+### Bulk load
+
+Loading a large dataset through many small committed transactions is slow and can stall the whole server. At `synchronous = full`, every commit calls `fsync`, and because the engine is synchronous, each `fsync` blocks the event loop until the disk confirms; tens of thousands of blocking `fsync` calls back to back stop the server from answering anything. `db.bulkLoad` runs the whole batch in one transaction under a relaxed durability level, then restores the configured level before it resolves.
+
+```ts
+const summary = await db.bulkLoad(
+  'INSERT INTO events (id, payload) VALUES (?, ?)',
+  rows, // an array of parameter arrays, one per row
+  { durability: 'off' },
+)
+// summary.rowsLoaded, summary.changes
+```
+
+The load holds the single writer for its whole duration, so no other write commits under the relaxed level and no two loads race on the durability setting. On success the WAL is checkpointed at the restored level, so the loaded rows are written into the main database file before the call resolves. That checkpoint runs synchronously and blocks the event loop for the length of the WAL flush, which grows with the size of the load.
+
+`durability` defaults to `'off'`. SQLite sanctions `'off'` for a load that starts from an empty database and that the operator can re-run after a power loss; a crash during an `'off'` load can corrupt the file, so recovery means re-running the load from scratch. Use `'normal'` for a load into a database that already holds data you cannot afford to lose, because it keeps WAL corruption safety while it still drops the per-commit `fsync`. Either way the configured `synchronous` level is restored when the load finishes, and a crash mid-load leaves the configured level in force on the next open, because `PRAGMA synchronous` is connection state that SQLite never stores in the database file.
+
+The result sums the row count and the changes rather than returning one object per row, so a load of millions of rows never holds millions of result objects in memory. Over the server, one load must fit under `maxBodyBytes`; send a larger dataset as several sequential loads, each of which restores durability on its own.
+
 ### Connection pooling
 
 Every database opens with 1 dedicated write connection and N read connections (default 4). WAL mode is enabled by default, allowing concurrent reads during writes.
@@ -402,19 +421,39 @@ await server.listen()
 
 See the [Security](#security) section for authentication, TLS, and CORS configuration.
 
+The server offers three write shapes, on both transports. Reach for each one when:
+
+- **transaction** runs several *different* statements that must all succeed or all fail together, such as a debit on one row and a credit on another.
+- **batch** runs *one* statement many times with different values, such as inserting a thousand rows into the same table. It costs less than a transaction of a thousand near-identical statements, and it stays all-or-nothing.
+- **load** runs a batch for a large, from-scratch import. It relaxes durability while the rows go in and restores it afterward, so it trades power-loss safety during the load for speed; if the process dies mid-load, you re-run it.
+
 ### HTTP routes
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/db/:id/query` | Execute a SELECT, returns `{ rows }` |
 | `POST` | `/db/:id/execute` | Execute a mutation, returns `{ changes, lastInsertRowId }` |
-| `POST` | `/db/:id/transaction` | Execute a batch of statements atomically, returns `{ results }` |
+| `POST` | `/db/:id/transaction` | Execute many statements atomically in one transaction, returns `{ results }` |
+| `POST` | `/db/:id/batch` | Apply one statement over many parameter sets in one transaction, returns `{ results }` |
+| `POST` | `/db/:id/load` | Bulk-load rows with relaxed durability, returns `{ rowsLoaded, changes }` |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/health/ready` | Readiness check with per-database status |
 
 ### WebSocket protocol
 
-Connect to `ws://host:port/db/:id` and send JSON messages for queries, executions, and CDC subscriptions. The server dispatches change events to subscribers in real time.
+Connect to `ws://host:port/db/:id` and send JSON messages. Every message carries a `type` and a client-chosen `id`, and every reply echoes that `id`. The server dispatches CDC change events to subscribers in real time.
+
+| Inbound `type` | Fields | Reply |
+| --- | --- | --- |
+| `query` | `sql`, `params?` | `{ type: 'result', data: { rows } }` |
+| `execute` | `sql`, `params?` | `{ type: 'result', data: { changes, lastInsertRowId } }` |
+| `transaction` | `statements`, `writeConcern?` | `{ type: 'result', data: { results } }` |
+| `batch` | `sql`, `paramsBatch`, `writeConcern?` | `{ type: 'result', data: { results } }` |
+| `load` | `sql`, `paramsBatch`, `durability?` | `{ type: 'result', data: { rowsLoaded, changes } }` |
+| `subscribe` | `table`, `filter?` | `{ type: 'subscribed' }` then `change` events |
+| `unsubscribe` | - | `{ type: 'unsubscribed' }` |
+
+The `transaction`, `batch`, and `load` messages run every statement server-side in one transaction and reply once. The server never holds the write lock across a network round-trip, so it does not accept an interactive transaction where the client sends `BEGIN`, then more statements, then `COMMIT` over separate messages; a single slow or dead client would otherwise freeze every write to the database.
 
 ## Client SDK
 
@@ -912,6 +951,8 @@ All errors extend `SirannonError` with a machine-readable `code` property:
 | `MaxDatabasesError` | `MAX_DATABASES` | Capacity limit reached |
 | `ExtensionError` | `EXTENSION_ERROR` | SQLite extension load failure |
 
+The server and the bulk-load path add a few more codes. `createServer` throws `SirannonError` with `INVALID_MAX_BODY_BYTES` when `maxBodyBytes` is not a positive integer. A bulk load throws `INVALID_DURABILITY` when `durability` is neither `'off'` nor `'normal'`, and `DURABILITY_RESTORE_FAILED` when the load committed but the writer connection failed before its durability could be restored; treat that last code as 'the load succeeded, do not re-run it'. Over the wire the server also returns `PAYLOAD_TOO_LARGE` when a request or message exceeds `maxBodyBytes`, and `BULK_LOAD_UNSUPPORTED` when the resolved execution target for a database does not implement bulk load.
+
 ```ts
 import { QueryError } from '@delali/sirannon-db'
 
@@ -943,6 +984,7 @@ try {
 | `readOnly` | `boolean` | `false` | Open in read-only mode |
 | `readPoolSize` | `number` | `4` | Number of read connections |
 | `walMode` | `boolean` | `true` | Enable WAL mode |
+| `synchronous` | `'off' \| 'normal' \| 'full' \| 'extra'` | `'normal'` | Writer durability (`PRAGMA synchronous`); this is the level a bulk load restores when it finishes |
 | `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms (1 hour) |
 
@@ -953,6 +995,7 @@ try {
 | `host` | `string` | `'127.0.0.1'` | Bind address |
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
+| `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP request body and WebSocket message size in bytes; one value governs both transports, and it must be a positive integer |
 | `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
 
 ### `ClientOptions`

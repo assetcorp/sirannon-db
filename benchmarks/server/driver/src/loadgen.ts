@@ -13,7 +13,7 @@
 // Distinguishing a slow server from a slow client is done against a measured client ceiling, not
 // inferred from the cap alone, because a slow client fills the cap exactly as a slow server does.
 
-import { mean, percentile } from './stats.ts'
+import { maxOf, mean, percentile } from './stats.ts'
 
 export type RunOp = () => Promise<boolean>
 
@@ -172,7 +172,7 @@ export async function runOpenLoop(
     p95Ms: percentile(latenciesMs, 0.95),
     p99Ms: percentile(latenciesMs, 0.99),
     p999Ms: percentile(latenciesMs, 0.999),
-    maxMs: latenciesMs.length > 0 ? Math.max(...latenciesMs) : 0.0,
+    maxMs: maxOf(latenciesMs),
     meanMs: mean(latenciesMs),
     maxInFlightObserved,
     dispatchedInWindow,

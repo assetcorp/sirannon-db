@@ -14,6 +14,18 @@ export function mean(samples: number[]): number {
   return samples.length > 0 ? samples.reduce((a, b) => a + b, 0) / samples.length : 0.0
 }
 
+// A fold, not Math.max(...samples): spreading a large sample array as call arguments overflows the
+// stack, and a measurement window holds hundreds of thousands of latencies.
+export function maxOf(samples: number[]): number {
+  let max = Number.NEGATIVE_INFINITY
+  for (const value of samples) {
+    if (value > max) {
+      max = value
+    }
+  }
+  return max === Number.NEGATIVE_INFINITY ? 0.0 : max
+}
+
 export function median(samples: number[]): number {
   if (samples.length === 0) {
     return 0.0

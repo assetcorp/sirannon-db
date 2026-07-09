@@ -22,6 +22,8 @@ describe('RemoteSubscriptionBuilder', () => {
       query: vi.fn(),
       execute: vi.fn(),
       transaction: vi.fn(),
+      batch: vi.fn(),
+      load: vi.fn(),
       subscribe: subscribeFn,
       close: vi.fn(),
     }
@@ -39,6 +41,8 @@ describe('RemoteSubscriptionBuilder', () => {
       query: vi.fn(),
       execute: vi.fn(),
       transaction: vi.fn(),
+      batch: vi.fn(),
+      load: vi.fn(),
       subscribe: subscribeFn,
       close: vi.fn(),
     }
@@ -58,6 +62,8 @@ describe('RemoteSubscriptionBuilder', () => {
       query: vi.fn(),
       execute: vi.fn(),
       transaction: vi.fn(),
+      batch: vi.fn(),
+      load: vi.fn(),
       subscribe: subscribeFn,
       close: vi.fn(),
     }

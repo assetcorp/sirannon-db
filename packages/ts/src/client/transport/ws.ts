@@ -1,6 +1,8 @@
-import type { ChangeEvent, Params } from '../../core/types.js'
+import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
 import type {
+  BatchResponse,
   ExecuteResponse,
+  LoadResponse,
   QueryResponse,
   TransactionResponse,
   WSClientMessage,
@@ -14,7 +16,7 @@ const DEFAULT_REQUEST_TIMEOUT = 30_000
 interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | undefined
 }
 
 interface ActiveSubscription {
@@ -85,6 +87,30 @@ export class WebSocketTransport implements Transport {
       'TRANSPORT_ERROR',
       'Transactions are not supported over WebSocket. Use HTTP transport for batch transactions.',
     )
+  }
+
+  async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<BatchResponse>({
+      type: 'batch',
+      id,
+      sql,
+      paramsBatch,
+      ...(writeConcern ? { writeConcern } : {}),
+    })
+  }
+
+  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<LoadResponse>({
+      type: 'load',
+      id,
+      sql,
+      paramsBatch,
+      ...(durability ? { durability } : {}),
+    })
   }
 
   async subscribe(
@@ -331,10 +357,13 @@ export class WebSocketTransport implements Transport {
         return
       }
 
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(id)
-        reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
-      }, this.requestTimeout)
+      const timer =
+        this.requestTimeout > 0
+          ? setTimeout(() => {
+              this.pendingRequests.delete(id)
+              reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
+            }, this.requestTimeout)
+          : undefined
 
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,

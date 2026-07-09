@@ -1,5 +1,12 @@
-import type { ChangeEvent, Params, ReadConcern } from '../../core/types.js'
-import type { ErrorResponse, ExecuteResponse, QueryResponse, TransactionResponse } from '../../server/protocol.js'
+import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
+import type {
+  BatchResponse,
+  ErrorResponse,
+  ExecuteResponse,
+  LoadResponse,
+  QueryResponse,
+  TransactionResponse,
+} from '../../server/protocol.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 
@@ -32,6 +39,14 @@ export class HttpTransport implements Transport {
 
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     return this.post<TransactionResponse>('/transaction', { statements })
+  }
+
+  async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
+    return this.post<BatchResponse>('/batch', { sql, paramsBatch, writeConcern })
+  }
+
+  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
+    return this.post<LoadResponse>('/load', { sql, paramsBatch, durability })
   }
 
   async subscribe(

@@ -24,7 +24,6 @@ export function resolveCors(cors: boolean | CorsOptions | undefined): ResolvedCo
 }
 
 function matchOrigin(cors: ResolvedCors, requestOrigin: string): string | null {
-  if (cors.origin === '*') return '*'
   if (typeof cors.origin === 'string') return cors.origin
   if (cors.origin.includes(requestOrigin)) return requestOrigin
   return null

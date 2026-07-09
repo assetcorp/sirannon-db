@@ -1,6 +1,6 @@
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError } from './errors.js'
-import type { ExecuteResult, Params } from './types.js'
+import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
@@ -98,6 +98,29 @@ export async function executeBatch(
       })
     }
     return results
+  } catch (err) {
+    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+  }
+}
+
+/**
+ * Apply one statement over many parameter sets, accumulating a count and a
+ * running sum of changes instead of one result object per row. The load path
+ * uses this so a million-row load never materialises a million-element array.
+ */
+export async function executeBatchSummary(
+  conn: SQLiteConnection,
+  sql: string,
+  paramsBatch: Params[],
+): Promise<BulkLoadResult> {
+  try {
+    const stmt = await getStatement(conn, sql)
+    let changes = 0
+    for (const params of paramsBatch) {
+      const result = await stmt.run(...bindParams(params))
+      changes += result.changes
+    }
+    return { rowsLoaded: paramsBatch.length, changes }
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }

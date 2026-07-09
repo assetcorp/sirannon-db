@@ -1,5 +1,6 @@
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
+import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   ClusterStatusInfo,
@@ -33,7 +34,10 @@ const DEFAULT_MAX_BODY_BYTES = 1_048_576
 function resolveMaxBodyBytes(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_BODY_BYTES
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
-    throw new Error('ServerOptions.maxBodyBytes must be a positive integer number of bytes')
+    throw new SirannonError(
+      'ServerOptions.maxBodyBytes must be a positive integer number of bytes',
+      'INVALID_MAX_BODY_BYTES',
+    )
   }
   return value
 }

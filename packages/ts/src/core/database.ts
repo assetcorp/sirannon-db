@@ -15,19 +15,21 @@ import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { execute, executeBatch, query, queryOne } from './query-executor.js'
+import { execute, executeBatch, executeBatchSummary, query, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
   BackupScheduleOptions,
   BeforeQueryHook,
   BulkLoadOptions,
+  BulkLoadResult,
   DatabaseOptions,
   ExecuteResult,
   Params,
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
+import { WriterLock } from './writer-lock.js'
 
 export interface DatabaseInternals {
   parentHooks?: HookRegistry
@@ -42,6 +44,7 @@ export class Database {
   private readonly driver: SQLiteDriver
   private readonly synchronous: SynchronousLevel
   private readonly walMode: boolean
+  private readonly writerLock = new WriterLock()
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
@@ -106,13 +109,7 @@ export class Database {
     const start = performance.now()
     try {
       const reader = this.pool.acquireReader()
-      if (this.metricsCollector) {
-        return await this.metricsCollector.trackQuery(() => query<T>(reader, sql, params), {
-          databaseId: this.id,
-          sql,
-        })
-      }
-      return await query<T>(reader, sql, params)
+      return await this.track(sql, () => query<T>(reader, sql, params))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -129,13 +126,7 @@ export class Database {
     const start = performance.now()
     try {
       const reader = this.pool.acquireReader()
-      if (this.metricsCollector) {
-        return await this.metricsCollector.trackQuery(() => queryOne<T>(reader, sql, params), {
-          databaseId: this.id,
-          sql,
-        })
-      }
-      return await queryOne<T>(reader, sql, params)
+      return await this.track(sql, () => queryOne<T>(reader, sql, params))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -148,15 +139,12 @@ export class Database {
 
     const start = performance.now()
     try {
-      const writer = this.pool.acquireWriter()
-      const result = this.metricsCollector
-        ? await this.metricsCollector.trackQuery(() => execute(writer, sql, params), {
-            databaseId: this.id,
-            sql,
-          })
-        : await execute(writer, sql, params)
-      await this.maybeApplyDdlSideEffects(writer, sql)
-      return result
+      return await this.writerLock.run(async () => {
+        const writer = this.pool.acquireWriter()
+        const result = await this.track(sql, () => execute(writer, sql, params))
+        await this.maybeApplyDdlSideEffects(writer, sql)
+        return result
+      })
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -169,61 +157,84 @@ export class Database {
 
     const start = performance.now()
     try {
-      const writer = this.pool.acquireWriter()
-      const batchFn = () => writer.transaction(async txConn => executeBatch(txConn, sql, paramsBatch))
-      const results = this.metricsCollector
-        ? await this.metricsCollector.trackQuery(batchFn, {
-            databaseId: this.id,
-            sql,
-          })
-        : await batchFn()
-      await this.maybeApplyDdlSideEffects(writer, sql)
-      return results
+      return await this.writerLock.run(() =>
+        this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
+      )
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
     }
   }
 
+  private track<T>(sql: string, operation: () => Promise<T>): Promise<T> {
+    if (!this.metricsCollector) return operation()
+    return this.metricsCollector.trackQuery(operation, { databaseId: this.id, sql })
+  }
+
+  private async runInTransaction<T>(
+    writer: SQLiteConnection,
+    sql: string,
+    run: (txConn: SQLiteConnection) => Promise<T>,
+  ): Promise<T> {
+    const result = await this.track(sql, () => writer.transaction(run))
+    await this.maybeApplyDdlSideEffects(writer, sql)
+    return result
+  }
+
   /**
-   * Load rows with relaxed writer durability: the whole batch runs in one
-   * transaction (one commit, one durability barrier for the load) and the
-   * configured `synchronous` level is restored before this resolves, whether
-   * the load succeeds or fails.
+   * Load rows with relaxed writer durability. The load holds the writer lock
+   * for its whole duration, so no other write commits under the relaxed level
+   * and no two loads race on the shared `synchronous` setting; the configured
+   * level is restored before this resolves, whether the load succeeds or
+   * fails. The load runs in one transaction, so one commit and one durability
+   * barrier cover the whole batch. Rows are summed rather than returned
+   * per-row to bound memory on large loads.
    */
-  async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<ExecuteResult[]> {
+  async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    const writer = this.pool.acquireWriter()
-    return runBulkLoad({
-      writer,
-      configuredSynchronous: this.synchronous,
-      walMode: this.walMode,
-      durability: options?.durability,
-      execute: () => this.executeBatch(sql, paramsBatch),
-    })
+    this.fireBeforeQueryHooks(sql, undefined, undefined)
+
+    const start = performance.now()
+    try {
+      return await this.writerLock.run(() => {
+        const writer = this.pool.acquireWriter()
+        return runBulkLoad({
+          writer,
+          configuredSynchronous: this.synchronous,
+          walMode: this.walMode,
+          durability: options?.durability,
+          loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
+        })
+      })
+    } finally {
+      this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
+    }
   }
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    const writer = this.pool.acquireWriter()
-    const tracker = this.changeTracker
 
-    if (!tracker) {
-      return Transaction.run(writer, fn)
-    }
+    return this.writerLock.run(async () => {
+      const writer = this.pool.acquireWriter()
+      const tracker = this.changeTracker
 
-    const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-    const result = await writer.transaction(async txConn => {
-      const tx = new CdcAwareTransaction(txConn, tracker, state)
-      return fn(tx)
+      if (!tracker) {
+        return Transaction.run(writer, fn)
+      }
+
+      const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
+      const result = await writer.transaction(async txConn => {
+        const tx = new CdcAwareTransaction(txConn, tracker, state)
+        return fn(tx)
+      })
+
+      if (state.sawDdl && state.droppedTables.length > 0) {
+        await tracker.pruneDroppedTables(writer, state.droppedTables)
+      }
+
+      return result
     })
-
-    if (state.sawDdl && state.droppedTables.length > 0) {
-      await tracker.pruneDroppedTables(writer, state.droppedTables)
-    }
-
-    return result
   }
 
   private async maybeApplyDdlSideEffects(writer: SQLiteConnection, sql: string): Promise<void> {
@@ -240,19 +251,19 @@ export class Database {
     }
 
     this.ensureCdc()
-    const writer = this.pool.acquireWriter()
-    await this.changeTracker?.watch(writer, table)
+    const tracker = this.changeTracker
+    await this.writerLock.run(() => tracker?.watch(this.pool.acquireWriter(), table) ?? Promise.resolve())
     this.ensureCdcPolling()
   }
 
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
-    if (!this.changeTracker) return
+    const tracker = this.changeTracker
+    if (!tracker) return
 
-    const writer = this.pool.acquireWriter()
-    await this.changeTracker.unwatch(writer, table)
+    await this.writerLock.run(() => tracker.unwatch(this.pool.acquireWriter(), table))
 
-    if (this.changeTracker.watchedTables.size === 0) {
+    if (tracker.watchedTables.size === 0) {
       this.stopCdcPollingLoop()
     }
   }
@@ -267,20 +278,17 @@ export class Database {
 
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
-    const writer = this.pool.acquireWriter()
-    return MigrationRunner.run(writer, migrations)
+    return this.writerLock.run(() => MigrationRunner.run(this.pool.acquireWriter(), migrations))
   }
 
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
-    const writer = this.pool.acquireWriter()
-    return MigrationRunner.rollback(writer, migrations, version)
+    return this.writerLock.run(() => MigrationRunner.rollback(this.pool.acquireWriter(), migrations, version))
   }
 
   async backup(destPath: string): Promise<void> {
     this.ensureOpen()
-    const writer = this.pool.acquireWriter()
-    await this.backupManager.backup(writer, destPath)
+    await this.writerLock.run(() => this.backupManager.backup(this.pool.acquireWriter(), destPath))
   }
 
   scheduleBackup(options: BackupScheduleOptions): void {
@@ -292,8 +300,7 @@ export class Database {
 
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
-    const writer = this.pool.acquireWriter()
-    await loadExtensionImpl(this.driver, writer, extensionPath)
+    await this.writerLock.run(() => loadExtensionImpl(this.driver, this.pool.acquireWriter(), extensionPath))
   }
 
   onBeforeQuery(hook: BeforeQueryHook): void {
@@ -372,7 +379,14 @@ export class Database {
     if (!this.changeTracker || !this.subscriptionManager) return
 
     const writer = this.pool.acquireWriter()
-    this.stopCdcPolling = startPolling(writer, this.changeTracker, this.subscriptionManager, this.cdcPollInterval)
+    this.stopCdcPolling = startPolling(
+      writer,
+      this.changeTracker,
+      this.subscriptionManager,
+      this.cdcPollInterval,
+      undefined,
+      operation => this.writerLock.run(operation),
+    )
   }
 
   private stopCdcPollingLoop(): void {

@@ -1,10 +1,15 @@
 // Boot the real Sirannon HTTP server for the benchmark. The harness drives this exactly as an
-// application would: JSON requests to /db/<id>/query, /execute, and /transaction over loopback.
-// The database starts empty; the harness applies each workload's schema and seed over the wire.
+// application would: JSON requests to /db/<id>/query, /execute, /transaction, and the bulk-load
+// endpoint over loopback. The database starts empty; the harness applies each workload's schema
+// and seed over the wire.
 //
-// Durability is applied to the writer connection from BENCH_DURABILITY: FULL fsyncs every commit
-// to match PostgreSQL synchronous_commit=on; NORMAL defers the fsync to match synchronous_commit
-// =off. Both run in WAL mode.
+// Writer durability comes from BENCH_DURABILITY through the open option: 'full' fsyncs every commit
+// to match PostgreSQL synchronous_commit=on; 'normal' defers the fsync to match synchronous_commit
+// =off. Both run in WAL mode. Seeding uses the bulk-load endpoint, which loads each batch with sync
+// relaxed and then restores this configured level, so measured writes always run at it.
+//
+// The request-body limit is raised well above the load batch size the driver sends, so a seed batch
+// is never rejected; the driver keeps each batch within memory on its own side.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,6 +22,8 @@ const HOST = process.env.HOST ?? '0.0.0.0'
 const PORT = Number(process.env.PORT ?? 9876)
 const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
+const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
+const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 5_368_709_120)
 
 const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-bench-'))
 const dbPath = join(tempDir, 'bench.db')
@@ -64,10 +71,9 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 
 try {
   sirannon = new Sirannon({ driver: betterSqlite3() })
-  const db = await sirannon.open(DATABASE_ID, dbPath, { readPoolSize: 4, walMode: true })
-  await db.execute(DURABILITY === 'full' ? 'PRAGMA synchronous = FULL' : 'PRAGMA synchronous = NORMAL')
+  await sirannon.open(DATABASE_ID, dbPath, { readPoolSize: 4, walMode: true, synchronous: WRITER_SYNCHRONOUS })
 
-  server = createServer(sirannon, { host: HOST, port: PORT })
+  server = createServer(sirannon, { host: HOST, port: PORT, maxBodyBytes: MAX_BODY_BYTES })
   await server.listen()
   console.log(`Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability)`)
 } catch (error) {

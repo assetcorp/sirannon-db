@@ -1,17 +1,14 @@
-// Drive Sirannon through the SDK an application actually ships with. Measured reads and writes go
-// over the SDK's default WebSocket transport, which multiplexes every concurrent request over one
-// persistent socket, the way a real application talks to Sirannon. Seeding and DDL go over the
-// HTTP `/transaction` and `/execute` endpoints, because the WebSocket transport does not carry
-// transactions; no measured operation is a transaction, so the measured path stays entirely on
-// the socket. Durability is applied to the server's writer connection at start-up, so the driver
-// only records which level was requested.
+// Drive Sirannon through the SDK an application ships with: seeding and measured operations both go
+// over the WebSocket transport, DDL over HTTP `/execute`. Seeding uses the bulk-load endpoint, which
+// relaxes writer durability per batch and restores the configured level, so measured writes still
+// run at the requested durability.
 
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
 import type { SeedTable } from '../workloads.ts'
 import { Driver } from './driver.ts'
 
-const SEED_CHUNK = 500
+const SEED_BATCH_ROWS = 25_000
 
 export class SirannonDriver extends Driver {
   readonly name = 'sirannon'
@@ -34,7 +31,8 @@ export class SirannonDriver extends Driver {
   }
 
   async connect(): Promise<void> {
-    this.client = new SirannonClient(this.baseUrl)
+    // A multi-million-row seed load runs longer than the SDK's default request timeout.
+    this.client = new SirannonClient(this.baseUrl, { requestTimeout: 0 })
     this.db = this.client.database(this.databaseId)
     await this.read('SELECT 1', [])
   }
@@ -93,18 +91,18 @@ export class SirannonDriver extends Driver {
   async seed(tables: SeedTable[]): Promise<void> {
     for (const table of tables) {
       const insert = this.insertSql(table)
-      let chunk: unknown[][] = []
+      let batch: unknown[][] = []
       const flush = async (): Promise<void> => {
-        if (chunk.length === 0) {
+        if (batch.length === 0) {
           return
         }
-        const statements = chunk.map(row => ({ sql: insert, params: row }))
-        chunk = []
-        await this.post('/transaction', { statements })
+        const paramsBatch = batch
+        batch = []
+        await this.database().load(insert, paramsBatch, 'off')
       }
       for (const row of table.rows) {
-        chunk.push(row)
-        if (chunk.length >= SEED_CHUNK) {
+        batch.push(row)
+        if (batch.length >= SEED_BATCH_ROWS) {
           await flush()
         }
       }

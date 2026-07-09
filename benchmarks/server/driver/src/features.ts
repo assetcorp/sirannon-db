@@ -8,7 +8,7 @@
 // stack comparison, not an engine one. The number here describes Sirannon's feed on its own terms.
 
 import { SirannonClient } from './sirannon-client.ts'
-import { mean, percentile } from './stats.ts'
+import { maxOf, mean, percentile } from './stats.ts'
 
 const PROBE_TABLE = 'cdc_probe'
 const SERVER_POLL_INTERVAL_MS = 50
@@ -78,7 +78,7 @@ export async function measureCdcLatency(
       p50: percentile(latenciesMs, 0.5),
       p95: percentile(latenciesMs, 0.95),
       p99: percentile(latenciesMs, 0.99),
-      max: latenciesMs.length > 0 ? Math.max(...latenciesMs) : 0.0,
+      max: maxOf(latenciesMs),
       mean: mean(latenciesMs),
     },
   }

@@ -111,7 +111,9 @@ describe('MigrationRunner', () => {
 
       expect(result.rolledBack).toHaveLength(1)
 
-      const tables = await db.query<{ name: string }>("SELECT name FROM pragma_table_list WHERE name = 'users'")
+      const tables = await db.query<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+      )
       expect(tables).toHaveLength(0)
 
       await db.close()

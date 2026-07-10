@@ -19,20 +19,23 @@ export class SirannonDriver extends Driver {
   private readonly databaseId: string
   private readonly endpoint: string
   private readonly durability: string
+  private readonly requestTimeoutMs: number
   private client: SirannonClient | null = null
   private db: RemoteDatabase | null = null
 
-  constructor(baseUrl: string, databaseId: string, durability: string) {
+  constructor(baseUrl: string, databaseId: string, durability: string, requestTimeoutMs: number) {
     super()
     this.baseUrl = baseUrl
     this.databaseId = databaseId
     this.endpoint = `${baseUrl.replace(/\/+$/, '')}/db/${encodeURIComponent(databaseId)}`
     this.durability = durability
+    this.requestTimeoutMs = requestTimeoutMs
   }
 
   async connect(): Promise<void> {
-    // A multi-million-row seed load runs longer than the SDK's default request timeout.
-    this.client = new SirannonClient(this.baseUrl, { requestTimeout: 0 })
+    // Every request, seed load and measured op alike, is bounded so a stalled request fails fast
+    // instead of hanging the run. Seed batches are small enough to finish well inside this window.
+    this.client = new SirannonClient(this.baseUrl, { requestTimeout: this.requestTimeoutMs })
     this.db = this.client.database(this.databaseId)
     await this.read('SELECT 1', [])
   }

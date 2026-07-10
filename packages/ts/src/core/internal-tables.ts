@@ -12,18 +12,29 @@ export const SYNC_STATE_TABLE = '_sirannon_sync_state'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
 
-const RESERVED_PREFIXES = ['_sirannon', 'sqlite_']
+const SIRANNON_PREFIX = '_sirannon'
+const SQLITE_PREFIX = 'sqlite_'
 
-const RESERVED_MESSAGE =
-  "Access to internal tables is not permitted: identifiers beginning with '_sirannon' or 'sqlite_' are reserved"
+const SIRANNON_MESSAGE =
+  "Access to internal tables is not permitted: identifiers beginning with '_sirannon' are reserved"
+const SQLITE_WRITE_MESSAGE =
+  "The SQLite schema catalogue is read-only: statements that modify a 'sqlite_' identifier are not permitted"
 const ATTACH_MESSAGE = 'ATTACH and DETACH statements are not permitted'
+const WRITABLE_SCHEMA_MESSAGE = 'PRAGMA writable_schema is not permitted'
+
+const WRITE_VERBS = new Set(['insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'vacuum', 'reindex'])
+
+type ReservedKind = 'sirannon' | 'sqlite' | null
+
+function reservedKind(name: string): ReservedKind {
+  const lower = name.toLowerCase()
+  if (lower.startsWith(SIRANNON_PREFIX)) return 'sirannon'
+  if (lower.startsWith(SQLITE_PREFIX)) return 'sqlite'
+  return null
+}
 
 export function isReservedIdentifier(name: string): boolean {
-  const lower = name.toLowerCase()
-  for (const prefix of RESERVED_PREFIXES) {
-    if (lower.startsWith(prefix)) return true
-  }
-  return false
+  return reservedKind(name) !== null
 }
 
 /**
@@ -31,6 +42,12 @@ export function isReservedIdentifier(name: string): boolean {
  * own bookkeeping runs on raw connections that never reach this check, so the
  * reserved namespace is closed to the query API without blocking the engine
  * from maintaining its own tables.
+ *
+ * The `_sirannon_` tables are Sirannon's private ledger (deleted rows, prior
+ * values, replication state), so any reference is refused. The `sqlite_`
+ * catalogue is readable, matching every SQL engine, but statements that would
+ * modify it are refused; SQLite already treats the catalogue as read-only
+ * unless `PRAGMA writable_schema` is set, which is refused here too.
  */
 export function reservedSqlError(sql: string): string | null {
   const lower = sql.toLowerCase()
@@ -38,7 +55,8 @@ export function reservedSqlError(sql: string): string | null {
     !lower.includes('_sirannon') &&
     !lower.includes('sqlite_') &&
     !lower.includes('attach') &&
-    !lower.includes('detach')
+    !lower.includes('detach') &&
+    !lower.includes('writable_schema')
   ) {
     return null
   }
@@ -60,10 +78,17 @@ function isWordPart(c: string): boolean {
   return isWordStart(c) || (c >= '0' && c <= '9') || c === '$'
 }
 
+function referenceError(kind: ReservedKind, verb: string): string | null {
+  if (kind === 'sirannon') return SIRANNON_MESSAGE
+  if (kind === 'sqlite' && WRITE_VERBS.has(verb)) return SQLITE_WRITE_MESSAGE
+  return null
+}
+
 function scan(sql: string): string | null {
   const n = sql.length
   let i = 0
   let statementStart = true
+  let verb = ''
 
   while (i < n) {
     const c = sql[i]
@@ -94,7 +119,8 @@ function scan(sql: string): string | null {
 
     if (c === '"' || c === '`') {
       const delimited = readDelimited(sql, i, c)
-      if (isReservedIdentifier(delimited.value)) return RESERVED_MESSAGE
+      const error = referenceError(reservedKind(delimited.value), verb)
+      if (error) return error
       i = delimited.next
       statementStart = false
       continue
@@ -103,7 +129,8 @@ function scan(sql: string): string | null {
     if (c === '[') {
       const end = sql.indexOf(']', i + 1)
       const stop = end === -1 ? n : end
-      if (isReservedIdentifier(sql.slice(i + 1, stop))) return RESERVED_MESSAGE
+      const error = referenceError(reservedKind(sql.slice(i + 1, stop)), verb)
+      if (error) return error
       i = stop + 1
       statementStart = false
       continue
@@ -112,6 +139,7 @@ function scan(sql: string): string | null {
     if (c === ';') {
       i++
       statementStart = true
+      verb = ''
       continue
     }
 
@@ -120,10 +148,14 @@ function scan(sql: string): string | null {
       while (j < n && isWordPart(sql[j])) j++
       const word = sql.slice(i, j)
       const lowerWord = word.toLowerCase()
-      if (statementStart && (lowerWord === 'attach' || lowerWord === 'detach')) {
-        return ATTACH_MESSAGE
+      if (statementStart) {
+        verb = lowerWord
+        if (lowerWord === 'attach' || lowerWord === 'detach') return ATTACH_MESSAGE
+      } else if (verb === 'pragma' && lowerWord === 'writable_schema') {
+        return WRITABLE_SCHEMA_MESSAGE
       }
-      if (isReservedIdentifier(word)) return RESERVED_MESSAGE
+      const error = referenceError(reservedKind(word), verb)
+      if (error) return error
       i = j
       statementStart = false
       continue

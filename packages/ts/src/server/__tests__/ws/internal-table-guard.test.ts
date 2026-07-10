@@ -97,4 +97,40 @@ describe('WSHandler internal-table guard', () => {
     expect((msg.data as Record<string, unknown>).rows).toEqual([{ id: 1, name: 'Alice' }])
     await handler.close()
   })
+
+  it('allows reading the sqlite_ catalogue', async () => {
+    const handler = createWSHandler(sirannon)
+    const db = await sirannon.open('mydb', join(tempDir, 'guard-catalog.db'))
+    await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY)')
+
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'mydb')
+    handler.handleMessage(
+      conn,
+      JSON.stringify({
+        id: 'r1',
+        type: 'query',
+        sql: "SELECT name FROM sqlite_master WHERE type='table' AND name='users'",
+      }),
+    )
+
+    await flushAsync(hasMessageCount(conn, 1))
+    const msg = lastMessage(conn)
+    expect(msg.type).toBe('result')
+    expect((msg.data as Record<string, unknown>).rows).toEqual([{ name: 'users' }])
+    await handler.close()
+  })
+
+  it('rejects PRAGMA writable_schema', async () => {
+    const handler = createWSHandler(sirannon)
+    await sirannon.open('mydb', join(tempDir, 'guard-writable.db'))
+
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'mydb')
+    handler.handleMessage(conn, JSON.stringify({ id: 'r1', type: 'execute', sql: 'PRAGMA writable_schema = ON' }))
+
+    await flushAsync(hasMessageCount(conn, 1))
+    expect((lastMessage(conn).error as Record<string, unknown>).code).toBe('FORBIDDEN_SQL')
+    await handler.close()
+  })
 })

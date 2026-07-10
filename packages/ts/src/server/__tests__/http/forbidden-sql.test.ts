@@ -76,4 +76,18 @@ describe('internal-table guard over HTTP', () => {
     expect(status).toBe(200)
     expect(body.rows).toEqual([])
   })
+
+  it('allows reading the sqlite_ catalogue', async () => {
+    const { status, body } = await post('/db/test/query', {
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+    })
+    expect(status).toBe(200)
+    expect(body.rows).toEqual([{ name: 'users' }])
+  })
+
+  it('rejects PRAGMA writable_schema', async () => {
+    const { status, body } = await post('/db/test/execute', { sql: 'PRAGMA writable_schema = ON' })
+    expect(status).toBe(403)
+    expect(body.error.code).toBe('FORBIDDEN_SQL')
+  })
 })

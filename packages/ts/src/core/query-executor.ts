@@ -1,5 +1,6 @@
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError } from './errors.js'
+import { assertSqlAllowed } from './internal-tables.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
@@ -48,6 +49,7 @@ export async function query<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T[]> {
+  assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     return await stmt.all<T>(...bindParams(params))
@@ -61,6 +63,7 @@ export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T | undefined> {
+  assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     return await stmt.get<T>(...bindParams(params))
@@ -70,6 +73,7 @@ export async function queryOne<T = Record<string, unknown>>(
 }
 
 export async function execute(conn: SQLiteConnection, sql: string, params?: Params): Promise<ExecuteResult> {
+  assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     const result = await stmt.run(...bindParams(params))
@@ -88,6 +92,7 @@ async function forEachBatchRow(
   paramsBatch: Params[],
   sink: (changes: number, lastInsertRowId: number | bigint) => void,
 ): Promise<void> {
+  assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     for (const params of paramsBatch) {

@@ -1,5 +1,6 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { APPLIED_CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../../core/internal-tables.js'
 import { extractDroppedTable } from '../engine/constants.js'
 import { BatchValidationError } from '../errors.js'
 import type { HLC } from '../hlc.js'
@@ -45,7 +46,7 @@ export class BatchApplier {
     if (needsPartialDedup) {
       appliedSeqSet = new Set<string>()
       const checkStmt = await this.conn.prepare(
-        'SELECT source_seq FROM _sirannon_applied_changes WHERE source_node_id = ? AND source_seq >= ? AND source_seq <= ?',
+        `SELECT source_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ? AND source_seq >= ? AND source_seq <= ?`,
       )
       const applied = (await checkStmt.all(
         batch.sourceNodeId,
@@ -163,7 +164,7 @@ export class BatchApplier {
     }
 
     const recordStmt = await this.conn.prepare(
-      'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
+      `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
     )
     const nowSec = Date.now() / 1000
     for (let seq = batch.fromSeq; seq <= batch.toSeq; seq += 1n) {
@@ -200,7 +201,7 @@ export class BatchApplier {
 
   private async getLocalHlcForRow(tx: SQLiteConnection, table: string, rowId: string): Promise<string | null> {
     const stmt = await tx.prepare(
-      'SELECT MAX(hlc) as max_hlc FROM _sirannon_column_versions WHERE table_name = ? AND row_id = ?',
+      `SELECT MAX(hlc) as max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`,
     )
     const row = (await stmt.get(table, rowId)) as { max_hlc: string | null } | undefined
     return row?.max_hlc ?? null
@@ -320,7 +321,7 @@ export class BatchApplier {
     data: Record<string, unknown> | null,
   ): Promise<void> {
     if (change.operation === 'delete') {
-      const delStmt = await tx.prepare('DELETE FROM _sirannon_column_versions WHERE table_name = ? AND row_id = ?')
+      const delStmt = await tx.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`)
       await delStmt.run(change.table, change.rowId)
       return
     }
@@ -328,7 +329,7 @@ export class BatchApplier {
     if (!data) return
 
     const upsertStmt = await tx.prepare(
-      `INSERT INTO _sirannon_column_versions (table_name, row_id, column_name, hlc, node_id)
+      `INSERT INTO ${COLUMN_VERSIONS_TABLE} (table_name, row_id, column_name, hlc, node_id)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(table_name, row_id, column_name)
        DO UPDATE SET hlc = excluded.hlc, node_id = excluded.node_id`,

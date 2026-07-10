@@ -100,6 +100,13 @@ export interface WSSubscribeMessage {
    * decimal string to preserve values beyond `Number.MAX_SAFE_INTEGER`.
    */
   sinceSeq?: string
+  /**
+   * The `epoch` the server reported when this cursor was issued. A `sinceSeq`
+   * only means something within the sequence space that produced it, so a
+   * mismatch tells the server the cursor came from another database and it must
+   * resync rather than replay foreign rows against it.
+   */
+  epoch?: string
 }
 
 export interface WSUnsubscribeMessage {
@@ -171,6 +178,12 @@ export interface WSSubscribedMessage {
    * client must treat its prior state as stale and re-read.
    */
   resync?: boolean
+  /**
+   * Identifies the sequence space this subscription streams from. The client
+   * stores it and echoes it when resuming, so a cursor carried to a different
+   * database forces a resync instead of a silent replay of unrelated rows.
+   */
+  epoch?: string
 }
 
 export interface WSUnsubscribedMessage {

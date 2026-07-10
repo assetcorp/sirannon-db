@@ -121,6 +121,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'DATABASE_NOT_FOUND':
       return 404
     case 'READ_ONLY':
+    case 'FORBIDDEN_SQL':
       return 403
     case 'QUERY_ERROR':
     case 'TRANSACTION_ERROR':

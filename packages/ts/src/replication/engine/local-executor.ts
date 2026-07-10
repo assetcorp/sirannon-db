@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { Params, QueryOptions } from '../../core/types.js'
 import { ReplicationError } from '../errors.js'
@@ -43,7 +44,7 @@ export class LocalExecutor {
 
       if (isDdl) {
         const ddlStmt = await tx.prepare(
-          `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
+          `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
            VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
         )
         const hlcVal = engine.hlc.now()
@@ -124,7 +125,7 @@ export class LocalExecutor {
             droppedTables.push(droppedTable)
           }
           const ddlStmt = await tx.prepare(
-            `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
+            `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
              VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
           )
           const hlcVal = engine.hlc.now()
@@ -184,7 +185,7 @@ export class LocalExecutor {
           hooks.droppedTables.push(droppedTable)
         }
         const ddlStmt = await tx.prepare(
-          `INSERT INTO "_sirannon_changes" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
+          `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
            VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
         )
         const hlcVal = engine.hlc.now()

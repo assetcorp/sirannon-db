@@ -8,7 +8,7 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
-The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it ships and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](../../BENCHMARKS.md).
+The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it provides and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](../../BENCHMARKS.md).
 
 See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
 

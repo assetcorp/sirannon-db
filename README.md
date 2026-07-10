@@ -10,7 +10,7 @@ Build a networked SQLite service with connection pooling, change data capture, m
 
 Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).
 
-The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it ships and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](BENCHMARKS.md).
+The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it provides and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](BENCHMARKS.md).
 
 See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](packages/ts/examples/distributed-entitlements/), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
 

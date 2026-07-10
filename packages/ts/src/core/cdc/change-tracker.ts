@@ -189,22 +189,78 @@ export class ChangeTracker {
       return []
     }
 
-    const events: ChangeEvent[] = []
-
-    for (const row of rows) {
-      events.push({
-        type: row.operation.toLowerCase() as 'insert' | 'update' | 'delete',
-        table: row.table_name,
-        row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
-        oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
-        seq: BigInt(row.seq),
-        timestamp: row.changed_at,
-      })
-    }
+    const events = rows.map(row => this.rowToEvent(row))
 
     this.lastSeq = BigInt(rows[rows.length - 1].seq)
 
     return events
+  }
+
+  /** The highest seq already polled; live subscribers receive events beyond it. */
+  get cursor(): bigint {
+    return this.lastSeq
+  }
+
+  /**
+   * Reads retained changes for one table with seq in `(afterSeq, upToSeq]`,
+   * ordered ascending and capped at `limit`. Used to replay history to a
+   * resuming subscriber without disturbing the shared poll cursor.
+   */
+  async readSince(
+    conn: SQLiteConnection,
+    table: string,
+    afterSeq: bigint,
+    upToSeq: bigint,
+    limit: number,
+  ): Promise<ChangeEvent[]> {
+    if (!this.changesTableReady) {
+      await this.detectChangesTable(conn)
+      if (!this.changesTableReady) {
+        return []
+      }
+    }
+
+    const stmt = await this.getStmt(
+      conn,
+      'read_since',
+      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
+			 FROM "${this.changesTable}"
+			 WHERE table_name = ? AND seq > ? AND seq <= ?
+			 ORDER BY seq ASC
+			 LIMIT ?`,
+    )
+
+    const rows = (await stmt.all(table, afterSeq.toString(), upToSeq.toString(), limit)) as ChangeRow[]
+    return rows.map(row => this.rowToEvent(row))
+  }
+
+  /** The lowest retained seq, or `null` when the change log is empty. */
+  async getMinSeq(conn: SQLiteConnection): Promise<bigint | null> {
+    if (!this.changesTableReady) {
+      await this.detectChangesTable(conn)
+      if (!this.changesTableReady) {
+        return null
+      }
+    }
+
+    const stmt = await this.getStmt(conn, 'min_seq', `SELECT MIN(seq) AS seq FROM "${this.changesTable}"`)
+    const row = (await stmt.get()) as { seq?: unknown } | undefined
+    const seq = row?.seq
+    if (seq === undefined || seq === null) {
+      return null
+    }
+    return typeof seq === 'bigint' ? seq : BigInt(String(seq))
+  }
+
+  private rowToEvent(row: ChangeRow): ChangeEvent {
+    return {
+      type: row.operation.toLowerCase() as 'insert' | 'update' | 'delete',
+      table: row.table_name,
+      row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
+      oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
+      seq: BigInt(row.seq),
+      timestamp: row.changed_at,
+    }
   }
 
   async advanceToLatest(conn: SQLiteConnection): Promise<void> {

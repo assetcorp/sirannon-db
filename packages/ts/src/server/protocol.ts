@@ -93,6 +93,13 @@ export interface WSSubscribeMessage {
   id: string
   table: string
   filter?: Record<string, unknown>
+  /**
+   * Highest `seq` the client has already processed. When present, the server
+   * replays every retained change with a greater seq before delivering live
+   * events, so a reconnecting subscriber does not miss changes. Sent as a
+   * decimal string to preserve values beyond `Number.MAX_SAFE_INTEGER`.
+   */
+  sinceSeq?: string
 }
 
 export interface WSUnsubscribeMessage {
@@ -152,6 +159,18 @@ export type WSServerMessage =
 export interface WSSubscribedMessage {
   type: 'subscribed'
   id: string
+  /**
+   * The seq the subscription is live from. A client that has not yet seen any
+   * change adopts this as its resume cursor, so a reconnect during an idle
+   * spell still replays what it missed instead of silently skipping it.
+   */
+  seq?: string
+  /**
+   * Set when a requested `sinceSeq` fell below the retained history, so the
+   * gap cannot be replayed. The subscription still starts live from now; the
+   * client must treat its prior state as stale and re-read.
+   */
+  resync?: boolean
 }
 
 export interface WSUnsubscribedMessage {

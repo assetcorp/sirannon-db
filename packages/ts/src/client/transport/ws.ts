@@ -8,7 +8,7 @@ import type {
   WSClientMessage,
   WSServerMessage,
 } from '../../server/protocol.js'
-import type { RemoteSubscription, Transport } from '../types.js'
+import type { RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
@@ -23,6 +23,8 @@ interface ActiveSubscription {
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onReset: (() => void) | undefined
+  lastSeq: bigint | undefined
 }
 
 /**
@@ -117,6 +119,7 @@ export class WebSocketTransport implements Transport {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -124,7 +127,7 @@ export class WebSocketTransport implements Transport {
     // Store the subscription before sending so the callback is
     // available if a change event arrives before the 'subscribed'
     // confirmation (unlikely but safe).
-    this.activeSubscriptions.set(id, { table, filter, callback })
+    this.activeSubscriptions.set(id, { table, filter, callback, onReset: options?.onReset, lastSeq: undefined })
 
     try {
       const msg: WSClientMessage = {
@@ -250,6 +253,27 @@ export class WebSocketTransport implements Transport {
       }
 
       case 'subscribed': {
+        const sub = this.activeSubscriptions.get(msg.id)
+        if (sub) {
+          let baseline: bigint | undefined
+          if (msg.seq !== undefined) {
+            try {
+              baseline = BigInt(msg.seq)
+            } catch {
+              baseline = undefined
+            }
+          }
+          if (msg.resync) {
+            sub.lastSeq = baseline
+            try {
+              sub.onReset?.()
+            } catch {
+              // A failing reset handler must not disrupt message processing.
+            }
+          } else if (sub.lastSeq === undefined && baseline !== undefined) {
+            sub.lastSeq = baseline
+          }
+        }
         const pending = this.pendingRequests.get(msg.id)
         if (pending) {
           clearTimeout(pending.timer)
@@ -280,6 +304,9 @@ export class WebSocketTransport implements Transport {
               oldRow: msg.event.oldRow,
               seq: BigInt(msg.event.seq),
               timestamp: msg.event.timestamp,
+            }
+            if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
+              sub.lastSeq = event.seq
             }
             sub.callback(event)
           } catch {
@@ -338,6 +365,7 @@ export class WebSocketTransport implements Transport {
           id,
           table: sub.table,
           ...(sub.filter ? { filter: sub.filter } : {}),
+          ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
         }
         await this.request<void>(msg)
       } catch {

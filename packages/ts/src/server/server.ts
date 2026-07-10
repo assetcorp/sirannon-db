@@ -26,10 +26,11 @@ import {
   readBody,
   sendError,
 } from './http-handler.js'
-import type { WSConnection } from './ws-handler.js'
+import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WSHandler } from './ws-handler.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
+const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
 
 function resolveMaxBodyBytes(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_BODY_BYTES
@@ -40,6 +41,29 @@ function resolveMaxBodyBytes(value: number | undefined): number {
     )
   }
   return value
+}
+
+function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number): number {
+  const resolved = value ?? Math.max(DEFAULT_WS_BACKPRESSURE_BYTES, maxBodyBytes)
+  if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved <= 0) {
+    throw new SirannonError(
+      'ServerOptions.maxWebSocketBackpressureBytes must be a positive integer number of bytes',
+      'INVALID_WS_BACKPRESSURE',
+    )
+  }
+  if (resolved < maxBodyBytes) {
+    throw new SirannonError(
+      'ServerOptions.maxWebSocketBackpressureBytes must be at least maxBodyBytes so a single frame fits',
+      'INVALID_WS_BACKPRESSURE',
+    )
+  }
+  return resolved
+}
+
+function toSendOutcome(result: number): WSSendOutcome {
+  if (result === 2) return 'dropped'
+  if (result === 0) return 'buffered'
+  return 'sent'
 }
 
 function selectWebSocketProtocol(header: string): string {
@@ -87,6 +111,7 @@ export class SirannonServer {
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
   private readonly maxBodyBytes: number
+  private readonly maxWsBackpressureBytes: number
 
   constructor(sirannon: Sirannon, options?: ServerOptions) {
     this.sirannon = sirannon
@@ -98,9 +123,11 @@ export class SirannonServer {
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
     this.maxBodyBytes = resolveMaxBodyBytes(options?.maxBodyBytes)
+    this.maxWsBackpressureBytes = resolveWsBackpressure(options?.maxWebSocketBackpressureBytes, this.maxBodyBytes)
     this.wsHandler = new WSHandler(sirannon, {
       resolveExecutionTarget: this.resolveExecutionTarget,
       maxPayloadLength: this.maxBodyBytes,
+      cdcRetentionMs: options?.cdcRetentionMs,
     })
     this.app = uWS.App()
     this.registerRoutes()
@@ -178,6 +205,7 @@ export class SirannonServer {
 
     this.app.ws<WSUserData>('/db/:id', {
       maxPayloadLength: this.maxBodyBytes,
+      maxBackpressure: this.maxWsBackpressureBytes,
       idleTimeout: 120,
       sendPingsAutomatically: true,
 
@@ -239,11 +267,11 @@ export class SirannonServer {
       open: ws => {
         const userData = ws.getUserData()
         const conn: WSConnection = {
-          send(data: string) {
+          send(data: string): WSSendOutcome {
             try {
-              ws.send(data, false)
+              return toSendOutcome(ws.send(data, false))
             } catch {
-              /* connection may already be closing */
+              return 'dropped'
             }
           },
           close(code?: number, reason?: string) {
@@ -263,6 +291,13 @@ export class SirannonServer {
         if (!userData.conn) return
         const text = Buffer.from(message).toString('utf-8')
         wsHandler.handleMessage(userData.conn, text)
+      },
+
+      dropped: ws => {
+        const userData = ws.getUserData()
+        if (userData.conn) {
+          wsHandler.handleOverload(userData.conn)
+        }
       },
 
       close: ws => {

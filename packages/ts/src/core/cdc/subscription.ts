@@ -51,7 +51,7 @@ export class SubscriptionManager {
       for (const id of ids) {
         const sub = this.subscriptions.get(id)
         if (!sub) continue
-        if (sub.filter && !matchesFilter(event, sub.filter)) {
+        if (sub.filter && !changeMatchesFilter(event, sub.filter)) {
           continue
         }
         try {
@@ -149,7 +149,7 @@ export function startPolling(
   return stop
 }
 
-function matchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
+export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
   const target = event.type === 'delete' ? (event.oldRow ?? {}) : event.row
   for (const [key, value] of Object.entries(filter)) {
     if ((target as Record<string, unknown>)[key] !== value) {

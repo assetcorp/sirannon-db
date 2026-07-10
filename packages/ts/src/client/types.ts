@@ -7,6 +7,16 @@ import type {
   TransactionResponse,
 } from '../server/protocol.js'
 
+/** Optional behaviours for a CDC subscription. */
+export interface SubscribeOptions {
+  /**
+   * Invoked when a reconnect cannot replay missed changes because they fell
+   * outside the server's retained history. The subscription continues live
+   * from the current moment; treat any prior state as stale and re-read.
+   */
+  onReset?: () => void
+}
+
 /**
  * Transport layer for communicating with a sirannon-db server.
  * Each transport instance is bound to a specific database.
@@ -21,6 +31,7 @@ export interface Transport {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription>
   close(): void
 }
@@ -33,7 +44,7 @@ export interface RemoteSubscription {
 /** Builder for creating remote CDC subscriptions with optional filters. */
 export interface RemoteSubscriptionBuilder {
   filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
-  subscribe(callback: (event: ChangeEvent) => void): Promise<RemoteSubscription>
+  subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>
 }
 
 /**

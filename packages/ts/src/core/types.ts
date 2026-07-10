@@ -269,6 +269,22 @@ export interface ServerOptions {
    * a denial-of-service guard on a memory-limited server.
    */
   maxBodyBytes?: number
+  /**
+   * Maximum bytes buffered per WebSocket connection before the server stops
+   * absorbing backpressure. A single frame can be as large as `maxBodyBytes`,
+   * so this must hold several of them; the resolved value is raised to at
+   * least `maxBodyBytes`. When the buffer is exceeded the server closes the
+   * connection so the client reconnects rather than losing a frame silently.
+   * Default: the larger of 16 MB and `maxBodyBytes`.
+   */
+  maxWebSocketBackpressureBytes?: number
+  /**
+   * How long, in milliseconds, change events are retained for WebSocket CDC
+   * subscriptions. Retention bounds both on-disk growth of the change log and
+   * how far back a reconnecting subscriber can resume. Default: 3_600_000
+   * (one hour).
+   */
+  cdcRetentionMs?: number
   onRequest?: OnRequestHook
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
@@ -308,6 +324,8 @@ export interface CorsOptions {
 export interface WSHandlerOptions {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
+  /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
+  cdcRetentionMs?: number
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 

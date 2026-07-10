@@ -27,6 +27,7 @@ case "${PROFILE}" in
     : "${BENCH_WARMUP_SECONDS:=3}"
     : "${BENCH_MEASURE_SECONDS:=10}"
     : "${BENCH_TARGET_RATES:=1000,4000,16000}"
+    : "${BENCH_PASS_TIMEOUT:=5400}"
     ;;
   smoke)
     SMOKE=1
@@ -36,6 +37,7 @@ case "${PROFILE}" in
     : "${BENCH_WARMUP_SECONDS:=1}"
     : "${BENCH_MEASURE_SECONDS:=3}"
     : "${BENCH_TARGET_RATES:=1000,4000}"
+    : "${BENCH_PASS_TIMEOUT:=1200}"
     ;;
   *)
     echo "unknown profile '${PROFILE}' (expected: cloud or smoke)" >&2
@@ -43,6 +45,7 @@ case "${PROFILE}" in
     ;;
 esac
 export BENCH_DATA_SIZE BENCH_DURABILITIES BENCH_RUNS BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_TARGET_RATES
+export BENCH_PASS_TIMEOUT
 
 BENCH_RUN_ID="${BENCH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 export BENCH_RUN_ID
@@ -67,6 +70,52 @@ echo "durabilities: ${DURABILITIES}"
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 
 compose() { docker compose "$@"; }
+
+DEADLINE_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  DEADLINE_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  DEADLINE_BIN="gtimeout"
+fi
+
+# Run a command under a wall-clock deadline so a stalled pass can never hang the run. Uses
+# coreutils timeout when present (the cloud image has it) and a portable background watcher
+# otherwise. On the deadline it kills the command, removes any leftover ephemeral bench
+# container, and returns 124 so the caller records the pass as a failure and moves on.
+run_with_deadline() {
+  local secs="$1"
+  shift
+  local rc=0
+  if [ -n "$DEADLINE_BIN" ]; then
+    "$DEADLINE_BIN" -k 30 "$secs" "$@"
+    rc=$?
+  else
+    "$@" &
+    local cmd_pid=$!
+    (
+      waited=0
+      while [ "$waited" -lt "$secs" ]; do
+        kill -0 "$cmd_pid" 2>/dev/null || exit 0
+        sleep 2
+        waited=$((waited + 2))
+      done
+      kill -TERM "$cmd_pid" 2>/dev/null
+      sleep 30
+      kill -KILL "$cmd_pid" 2>/dev/null
+    ) &
+    local watcher=$!
+    wait "$cmd_pid" 2>/dev/null
+    rc=$?
+    kill "$watcher" 2>/dev/null
+    wait "$watcher" 2>/dev/null
+  fi
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
+    echo "pass exceeded its ${secs}s deadline; killed it and cleaning up the container" >&2
+    docker rm -f $(docker ps -aq --filter "name=bench-run") >/dev/null 2>&1 || true
+    return 124
+  fi
+  return "$rc"
+}
 
 wait_probe() {
   # Poll an in-container probe command until it succeeds, then print the elapsed milliseconds
@@ -136,13 +185,13 @@ for durability in $DURABILITIES; do
   if [ "$first" = "1" ]; then
     sirannon_args+=(--features)
   fi
-  compose run --rm bench "${sirannon_args[@]}" || status=1
-  compose run --rm bench --engine postgres --durability "$durability" || status=1
+  run_with_deadline "$BENCH_PASS_TIMEOUT" docker compose run --rm bench "${sirannon_args[@]}" || status=1
+  run_with_deadline "$BENCH_PASS_TIMEOUT" docker compose run --rm bench --engine postgres --durability "$durability" || status=1
   first=0
 done
 
 echo "================ aggregate ================"
-compose run --rm aggregate || status=1
+run_with_deadline 600 docker compose run --rm aggregate || status=1
 
 if [ -n "${SMOKE}" ]; then
   echo "================ writeup (skipped for smoke) ================"

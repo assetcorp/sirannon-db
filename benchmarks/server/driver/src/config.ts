@@ -37,6 +37,8 @@ export interface Config {
   scalingWorkloads: string[]
   driverCpus: number
   engineCpus: number
+  requestTimeoutMs: number
+  workloadTimeoutMs: number
 }
 
 function present(name: string): string | undefined {
@@ -160,6 +162,8 @@ export function loadConfig(path: string): Config {
     scalingWorkloads: envStrList('BENCH_SCALING_WORKLOADS', asStringList(scaling.workloads)),
     driverCpus: envFloat('BENCH_DRIVER_CPUS', asNumber(resources.driver_cpus, 2.0)),
     engineCpus: envFloat('BENCH_ENGINE_CPUS', asNumber(resources.engine_cpus, 2.0)),
+    requestTimeoutMs: envInt('BENCH_REQUEST_TIMEOUT_MS', asNumber(run.request_timeout_ms, 60_000)),
+    workloadTimeoutMs: envInt('BENCH_WORKLOAD_TIMEOUT_MS', asNumber(run.workload_timeout_ms, 0)),
   }
   validate(config)
   return config
@@ -194,6 +198,12 @@ function validate(config: Config): void {
   }
   if (config.postgres.port < 1 || config.postgres.port > 65535) {
     throw new Error(`postgres port must be 1-65535, got ${config.postgres.port}`)
+  }
+  if (config.requestTimeoutMs <= 0) {
+    throw new Error(`request_timeout_ms must be > 0; the benchmark never issues an unbounded request, got ${config.requestTimeoutMs}`)
+  }
+  if (config.workloadTimeoutMs < 0) {
+    throw new Error(`workload_timeout_ms must be >= 0, where 0 derives the deadline from the workload size, got ${config.workloadTimeoutMs}`)
   }
 }
 

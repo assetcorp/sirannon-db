@@ -20,6 +20,34 @@ const CEILING_SAFETY = 0.9
 const CEILING_MIN_SECONDS = 2
 const CEILING_MAX_SECONDS = 4
 
+const MIN_SEED_ROWS_PER_SEC = 20_000
+const WORKLOAD_DEADLINE_SAFETY = 3
+const WORKLOAD_DEADLINE_FLOOR_MS = 120_000
+
+function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
+  if (config.workloadTimeoutMs > 0) {
+    return config.workloadTimeoutMs
+  }
+  const seedSeconds = config.dataSize / MIN_SEED_ROWS_PER_SEC
+  const sweepSeconds =
+    ceilingSeconds + config.targetRates.length * config.runs * (config.warmupSeconds + config.measureSeconds)
+  return Math.max(WORKLOAD_DEADLINE_FLOOR_MS, Math.ceil((seedSeconds + sweepSeconds) * WORKLOAD_DEADLINE_SAFETY) * 1000)
+}
+
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} exceeded its ${Math.round(ms / 1000)}s deadline and was aborted as a stall`))
+    }, ms)
+  })
+  return Promise.race([work, deadline]).finally(() => {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+    }
+  })
+}
+
 export interface EngineResult {
   workloads: WorkloadResult[]
   clientCeiling: ClientCeiling
@@ -189,7 +217,12 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
       return false
     }
   }
-  const clientCeiling = await measureClientCeiling(trivialOp, ceilingSeconds, config.maxInFlight)
+  const deadlineMs = workloadDeadlineMs(config, ceilingSeconds)
+  const clientCeiling = await withDeadline(
+    measureClientCeiling(trivialOp, ceilingSeconds, config.maxInFlight),
+    deadlineMs,
+    'client-ceiling measurement',
+  )
 
   const results: WorkloadResult[] = []
   let clientBoundAny = false
@@ -198,7 +231,11 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
     if (workload === undefined) {
       throw new Error(`unknown workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`)
     }
-    const result = await runWorkload(driver, workload, config, clientCeiling.ceilingOps)
+    const result = await withDeadline(
+      runWorkload(driver, workload, config, clientCeiling.ceilingOps),
+      deadlineMs,
+      `workload ${name} (${driver.name}, ${config.dataSize} rows)`,
+    )
     if (result.sweep.some(rate => rate.client_bound === true)) {
       clientBoundAny = true
     }

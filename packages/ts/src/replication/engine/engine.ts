@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from '../../core/internal-tables.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import { LWWResolver } from '../conflict/lww.js'
@@ -139,7 +140,7 @@ export class ReplicationEngine extends EventEmitter {
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
     this.tracker = config.changeTracker
-    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, '_sirannon_changes', this.tracker)
+    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, CHANGES_TABLE, this.tracker)
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
     this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
@@ -369,7 +370,7 @@ export class ReplicationEngine extends EventEmitter {
 
   async loadAppliedSeqs(): Promise<void> {
     const stmt = await this.writerConn.prepare(
-      'SELECT source_node_id, MAX(source_seq) AS max_seq FROM _sirannon_applied_changes GROUP BY source_node_id',
+      `SELECT source_node_id, MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} GROUP BY source_node_id`,
     )
     const rows = (await stmt.all()) as Array<{ source_node_id: string; max_seq: number | string | null }>
     for (const row of rows) {

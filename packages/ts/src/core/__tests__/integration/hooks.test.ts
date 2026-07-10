@@ -115,7 +115,7 @@ describe('Hooks integration', () => {
       await expect(db.query('SELECT * FROM users')).resolves.not.toThrow()
       await expect(db.execute('DROP TABLE users')).rejects.toThrow(HookDeniedError)
 
-      const rows = await db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+      const rows = await db.query("SELECT name FROM pragma_table_list WHERE name='users'")
       expect(rows).toHaveLength(1)
 
       await sir.shutdown()

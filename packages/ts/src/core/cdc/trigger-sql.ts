@@ -1,4 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import { CDC_TRIGGER_PREFIX } from '../internal-tables.js'
 import { SAFE_INT_BOUND_TEXT } from './encoding.js'
 
 /**
@@ -16,9 +17,9 @@ import { SAFE_INT_BOUND_TEXT } from './encoding.js'
  * can re-install triggers in place without nesting another transaction.
  */
 export async function dropCdcTriggers(conn: SQLiteConnection, table: string): Promise<void> {
-  await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_insert"`)
-  await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_update"`)
-  await conn.exec(`DROP TRIGGER IF EXISTS "_sirannon_trg_${table}_delete"`)
+  await conn.exec(`DROP TRIGGER IF EXISTS "${CDC_TRIGGER_PREFIX}${table}_insert"`)
+  await conn.exec(`DROP TRIGGER IF EXISTS "${CDC_TRIGGER_PREFIX}${table}_update"`)
+  await conn.exec(`DROP TRIGGER IF EXISTS "${CDC_TRIGGER_PREFIX}${table}_delete"`)
 }
 
 export async function installCdcTriggers(
@@ -38,7 +39,7 @@ export async function installCdcTriggers(
   const replVals = replication ? ", '', '', ''" : ''
 
   await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_insert"
+			CREATE TRIGGER IF NOT EXISTS "${CDC_TRIGGER_PREFIX}${table}_insert"
 			AFTER INSERT ON "${table}"
 			BEGIN
 				INSERT INTO "${changesTable}" (table_name, operation, row_id, new_data${replCols})
@@ -47,7 +48,7 @@ export async function installCdcTriggers(
 		`)
 
   await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_update"
+			CREATE TRIGGER IF NOT EXISTS "${CDC_TRIGGER_PREFIX}${table}_update"
 			AFTER UPDATE ON "${table}"
 			BEGIN
 				INSERT INTO "${changesTable}" (table_name, operation, row_id, old_data, new_data${replCols})
@@ -56,7 +57,7 @@ export async function installCdcTriggers(
 		`)
 
   await conn.exec(`
-			CREATE TRIGGER IF NOT EXISTS "_sirannon_trg_${table}_delete"
+			CREATE TRIGGER IF NOT EXISTS "${CDC_TRIGGER_PREFIX}${table}_delete"
 			AFTER DELETE ON "${table}"
 			BEGIN
 				INSERT INTO "${changesTable}" (table_name, operation, row_id, old_data${replCols})

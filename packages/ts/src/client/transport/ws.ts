@@ -25,6 +25,7 @@ interface ActiveSubscription {
   callback: (event: ChangeEvent) => void
   onReset: (() => void) | undefined
   lastSeq: bigint | undefined
+  epoch: string | undefined
 }
 
 /**
@@ -127,7 +128,14 @@ export class WebSocketTransport implements Transport {
     // Store the subscription before sending so the callback is
     // available if a change event arrives before the 'subscribed'
     // confirmation (unlikely but safe).
-    this.activeSubscriptions.set(id, { table, filter, callback, onReset: options?.onReset, lastSeq: undefined })
+    this.activeSubscriptions.set(id, {
+      table,
+      filter,
+      callback,
+      onReset: options?.onReset,
+      lastSeq: undefined,
+      epoch: undefined,
+    })
 
     try {
       const msg: WSClientMessage = {
@@ -255,6 +263,9 @@ export class WebSocketTransport implements Transport {
       case 'subscribed': {
         const sub = this.activeSubscriptions.get(msg.id)
         if (sub) {
+          if (msg.epoch !== undefined) {
+            sub.epoch = msg.epoch
+          }
           let baseline: bigint | undefined
           if (msg.seq !== undefined) {
             try {
@@ -366,6 +377,7 @@ export class WebSocketTransport implements Transport {
           table: sub.table,
           ...(sub.filter ? { filter: sub.filter } : {}),
           ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
+          ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
         }
         await this.request<void>(msg)
       } catch {

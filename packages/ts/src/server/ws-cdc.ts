@@ -1,4 +1,5 @@
 import { ChangeTracker } from '../core/cdc/change-tracker.js'
+import { ensureCdcEpoch } from '../core/cdc/epoch.js'
 import { SubscriptionManager } from '../core/cdc/subscription.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
@@ -13,6 +14,7 @@ export interface CDCContext {
   tracker: ChangeTracker
   manager: SubscriptionManager
   stopPolling: () => void
+  epoch: string
 }
 
 /**
@@ -91,11 +93,19 @@ export class CdcContextRegistry {
 
     const tracker = new ChangeTracker(this.retentionMs === undefined ? undefined : { retention: this.retentionMs })
     const manager = new SubscriptionManager()
+    let epoch = ''
     try {
       await tracker.advanceToLatest(cdcConn)
+      await database.runCdcMaintenance(async writer => {
+        epoch = await ensureCdcEpoch(writer)
+      })
     } catch (err) {
       await cdcConn.close().catch(() => {})
       throw err
+    }
+    if (epoch === '') {
+      await cdcConn.close().catch(() => {})
+      throw new SirannonError(`Database '${database.id}' is closed`, 'DATABASE_CLOSED')
     }
 
     let polling = false
@@ -137,6 +147,6 @@ export class CdcContextRegistry {
     }
     interval.unref?.()
 
-    return { cdcConn, tracker, manager, stopPolling }
+    return { cdcConn, tracker, manager, stopPolling, epoch }
   }
 }

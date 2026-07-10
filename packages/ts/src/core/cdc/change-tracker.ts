@@ -1,12 +1,12 @@
 import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
-import { CDCError } from '../errors.js'
+import { CDCError, ForbiddenSqlError } from '../errors.js'
+import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
 import type { ChangeEvent } from '../types.js'
 import { decodeTaggedValues } from './encoding.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeRow, ChangeTrackerOptions, ColumnInfo, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
-const DEFAULT_CHANGES_TABLE = '_sirannon_changes'
 const DEFAULT_POLL_BATCH_SIZE = 1000
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
@@ -24,7 +24,7 @@ export class ChangeTracker {
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
-    this.changesTable = options?.changesTable ?? DEFAULT_CHANGES_TABLE
+    this.changesTable = options?.changesTable ?? CHANGES_TABLE
     this.pollBatchSize = options?.pollBatchSize ?? DEFAULT_POLL_BATCH_SIZE
     this.replication = options?.replication ?? false
 
@@ -33,6 +33,9 @@ export class ChangeTracker {
 
   async watch(conn: SQLiteConnection, table: string): Promise<void> {
     this.assertIdentifier(table, 'table name')
+    if (isReservedIdentifier(table)) {
+      throw new ForbiddenSqlError(`Table '${table}' is reserved for Sirannon and cannot be watched`)
+    }
     await this.ensureChangesTable(conn)
 
     const columns = await this.getColumns(conn, table)

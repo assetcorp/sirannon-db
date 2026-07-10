@@ -29,9 +29,24 @@ function changeNames(conn: ReturnType<typeof createMockConnection>): string[] {
     .map(m => ((m.event as Record<string, unknown>).row as Record<string, string>).name)
 }
 
+async function withRawConn<T>(
+  db: Awaited<ReturnType<Sirannon['open']>>,
+  op: (conn: Awaited<ReturnType<typeof driver.open>>) => Promise<T>,
+): Promise<T> {
+  const conn = await driver.open(db.path, { walMode: true })
+  try {
+    return await op(conn)
+  } finally {
+    await conn.close()
+  }
+}
+
 async function maxSeq(db: Awaited<ReturnType<Sirannon['open']>>): Promise<string> {
-  const rows = await db.query('SELECT MAX(seq) AS s FROM _sirannon_changes')
-  return String((rows[0] as Record<string, unknown>).s)
+  return withRawConn(db, async conn => {
+    const stmt = await conn.prepare('SELECT MAX(seq) AS s FROM _sirannon_changes')
+    const rows = (await stmt.all()) as Record<string, unknown>[]
+    return String(rows[0].s)
+  })
 }
 
 beforeEach(() => {
@@ -95,7 +110,10 @@ describe('WSHandler resume-from-seq', () => {
     await db.execute("INSERT INTO users (name) VALUES ('Bob')")
     await db.execute("INSERT INTO users (name) VALUES ('Carol')")
     const tail = await maxSeq(db)
-    await db.execute('DELETE FROM _sirannon_changes WHERE seq < ?', [Number(tail)])
+    await withRawConn(db, async conn => {
+      const stmt = await conn.prepare('DELETE FROM _sirannon_changes WHERE seq < ?')
+      await stmt.run(Number(tail))
+    })
 
     const conn = createMockConnection()
     await handler.handleOpen(conn, 'mydb')
@@ -147,7 +165,12 @@ describe('WSHandler resume-from-seq', () => {
     await db.watch('users')
     await db.execute("INSERT INTO users (name) VALUES ('Alice')")
     await db.execute("INSERT INTO users (name) VALUES ('Bob')")
-    await db.execute("UPDATE _sirannon_changes SET new_data = '{' WHERE seq = (SELECT MIN(seq) FROM _sirannon_changes)")
+    await withRawConn(db, async conn => {
+      const stmt = await conn.prepare(
+        "UPDATE _sirannon_changes SET new_data = '{' WHERE seq = (SELECT MIN(seq) FROM _sirannon_changes)",
+      )
+      await stmt.run()
+    })
 
     const conn = createMockConnection()
     await handler.handleOpen(conn, 'mydb')

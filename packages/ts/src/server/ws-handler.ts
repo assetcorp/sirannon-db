@@ -248,12 +248,21 @@ export class WSHandler {
       sinceSeq = BigInt(msg.sinceSeq)
     }
 
+    let clientEpoch: string | undefined
+    if (msg.epoch !== undefined) {
+      if (typeof msg.epoch !== 'string') {
+        this.sendError(conn, id, 'INVALID_MESSAGE', '"epoch" must be a string')
+        return
+      }
+      clientEpoch = msg.epoch
+    }
+
     if (sinceSeq === undefined) {
       await this.subscribeLive(conn, state, id, msg.table, filter)
       return
     }
 
-    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq)
+    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq, clientEpoch)
   }
 
   private async subscribeLive(
@@ -273,7 +282,7 @@ export class WSHandler {
       })
 
       state.subscriptions.set(id, sub)
-      this.send(conn, { type: 'subscribed', id, seq: boundary.toString() })
+      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch })
     } catch (err) {
       this.cdc.maybeCleanup(state.databaseId)
       this.sendSirannonError(conn, id, err)
@@ -287,6 +296,7 @@ export class WSHandler {
     table: string,
     filter: Record<string, unknown> | undefined,
     sinceSeq: bigint,
+    clientEpoch: string | undefined,
   ): Promise<void> {
     let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
     let primed: PrimedSubscription
@@ -306,8 +316,15 @@ export class WSHandler {
       state.subscriptions.set(id, sub)
 
       const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
-      resync = needsResync(sinceSeq, minSeq, boundary)
-      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), ...(resync ? { resync: true } : {}) })
+      const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
+      resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
+      this.send(conn, {
+        type: 'subscribed',
+        id,
+        seq: boundary.toString(),
+        epoch: ctx.epoch,
+        ...(resync ? { resync: true } : {}),
+      })
     } catch (err) {
       this.cdc.maybeCleanup(state.databaseId)
       this.sendSirannonError(conn, id, err)
@@ -318,7 +335,7 @@ export class WSHandler {
       try {
         await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
       } catch {
-        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), resync: true })
+        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch, resync: true })
       }
     }
     primed.goLive()

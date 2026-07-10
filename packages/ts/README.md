@@ -65,7 +65,7 @@ await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@e
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-Node.js 22+ users can skip the extra dependency by using the built-in `node:sqlite` module (requires the `--experimental-sqlite` flag):
+Node.js 22+ users can skip the extra dependency by using the built-in `node:sqlite` module. Node enables it by default from 22.13.0 and 23.4.0 onward; earlier 22.x releases need the `--experimental-sqlite` flag. The module is still experimental.
 
 ```ts
 import { nodeSqlite } from '@delali/sirannon-db/driver/node'
@@ -147,7 +147,7 @@ Sirannon-db separates the database engine from the library. You pick the driver 
 | Driver | Import | Runtime | Install |
 | --- | --- | --- | --- |
 | better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add -E better-sqlite3` |
-| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (use `--experimental-sqlite` flag) |
+| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (built in; flag-free from Node 22.13.0 and 23.4.0) |
 | wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser | `pnpm add -E wa-sqlite` |
 | Bun | `@delali/sirannon-db/driver/bun` | Bun | None (uses `bun:sqlite`) |
 | Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add -E expo-sqlite` |

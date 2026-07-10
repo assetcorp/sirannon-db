@@ -6,6 +6,7 @@ import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 
 const DEFAULT_POLL_INTERVAL_MS = 50
+const CLEANUP_INTERVAL_TICKS = 100
 
 export interface CDCContext {
   cdcConn: SQLiteConnection
@@ -22,12 +23,14 @@ export interface CDCContext {
  */
 export class CdcContextRegistry {
   private readonly sirannon: Sirannon
+  private readonly retentionMs: number | undefined
   private readonly contexts = new Map<string, CDCContext>()
   private readonly pending = new Map<string, Promise<CDCContext>>()
   private closed = false
 
-  constructor(sirannon: Sirannon) {
+  constructor(sirannon: Sirannon, retentionMs?: number) {
     this.sirannon = sirannon
+    this.retentionMs = retentionMs
   }
 
   async ensure(databaseId: string, database: Database): Promise<CDCContext> {
@@ -86,7 +89,7 @@ export class CdcContextRegistry {
   private async createContext(database: Database): Promise<CDCContext> {
     const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
 
-    const tracker = new ChangeTracker()
+    const tracker = new ChangeTracker(this.retentionMs === undefined ? undefined : { retention: this.retentionMs })
     const manager = new SubscriptionManager()
     try {
       await tracker.advanceToLatest(cdcConn)
@@ -97,6 +100,7 @@ export class CdcContextRegistry {
 
     let polling = false
     let consecutiveErrors = 0
+    let tickCount = 0
     const MAX_CONSECUTIVE_ERRORS = 10
 
     const stopPolling = () => {
@@ -113,6 +117,12 @@ export class CdcContextRegistry {
           manager.dispatch(events)
         }
         consecutiveErrors = 0
+
+        tickCount++
+        if (tickCount >= CLEANUP_INTERVAL_TICKS) {
+          tickCount = 0
+          await database.runCdcMaintenance(writer => tracker.cleanup(writer)).catch(() => {})
+        }
       } catch {
         consecutiveErrors++
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {

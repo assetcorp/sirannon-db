@@ -1,12 +1,13 @@
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
-import type { WSConnection } from '../ws-handler.js'
+import type { WSConnection, WSSendOutcome } from '../ws-connection.js'
 
 export interface MockWSConnection extends WSConnection {
   messages: string[]
   closed: boolean
   closeCode?: number
   closeReason?: string
+  sendOutcome: WSSendOutcome
 }
 
 export function createMockConnection(): MockWSConnection {
@@ -15,8 +16,13 @@ export function createMockConnection(): MockWSConnection {
     closed: false,
     closeCode: undefined,
     closeReason: undefined,
-    send(data: string) {
+    sendOutcome: 'sent',
+    send(data: string): WSSendOutcome {
+      if (conn.sendOutcome === 'dropped') {
+        return 'dropped'
+      }
       conn.messages.push(data)
+      return conn.sendOutcome
     },
     close(code?: number, reason?: string) {
       conn.closed = true

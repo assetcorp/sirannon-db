@@ -4,6 +4,9 @@ import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
 import { CdcContextRegistry } from './ws-cdc.js'
+import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
+import type { WSConnection, WSSendOutcome } from './ws-connection.js'
+import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import type { WSOperationContext } from './ws-operations.js'
 import {
   handleBatchMessage,
@@ -13,18 +16,16 @@ import {
   handleTransactionMessage,
 } from './ws-operations.js'
 
-const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
+export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
-export interface WSConnection {
-  send(data: string): void
-  close(code?: number, reason?: string): void
-}
+const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
 interface ConnectionState {
   databaseId: string
   database: Database
   executionTarget: ServerExecutionTarget
   subscriptions: Map<string, Subscription>
+  overloaded: boolean
 }
 
 export class WSHandler {
@@ -39,7 +40,7 @@ export class WSHandler {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.resolveExecutionTarget = options?.resolveExecutionTarget
-    this.cdc = new CdcContextRegistry(sirannon)
+    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs)
   }
 
   async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
@@ -81,7 +82,20 @@ export class WSHandler {
       database,
       executionTarget,
       subscriptions: new Map(),
+      overloaded: false,
     })
+  }
+
+  /**
+   * Tears down a connection whose outbound buffer overflowed. Closing lets the
+   * client reject in-flight requests and reconnect; guarding on `overloaded`
+   * keeps a burst of dropped frames from repeatedly re-closing the socket.
+   */
+  handleOverload(conn: WSConnection): void {
+    const state = this.connections.get(conn)
+    if (!state || state.overloaded) return
+    state.overloaded = true
+    conn.close(WS_CLOSE_OVERLOADED, 'Connection overloaded: backpressure limit exceeded')
   }
 
   handleMessage(conn: WSConnection, data: string): void {
@@ -225,20 +239,89 @@ export class WSHandler {
 
     const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
 
+    let sinceSeq: bigint | undefined
+    if (msg.sinceSeq !== undefined) {
+      if (typeof msg.sinceSeq !== 'string' || !/^\d+$/.test(msg.sinceSeq)) {
+        this.sendError(conn, id, 'INVALID_MESSAGE', '"sinceSeq" must be a non-negative integer string')
+        return
+      }
+      sinceSeq = BigInt(msg.sinceSeq)
+    }
+
+    if (sinceSeq === undefined) {
+      await this.subscribeLive(conn, state, id, msg.table, filter)
+      return
+    }
+
+    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq)
+  }
+
+  private async subscribeLive(
+    conn: WSConnection,
+    state: ConnectionState,
+    id: string,
+    table: string,
+    filter: Record<string, unknown> | undefined,
+  ): Promise<void> {
     try {
       const ctx = await this.cdc.ensure(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, msg.table)
+      await ctx.tracker.watch(ctx.cdcConn, table)
 
-      const sub = ctx.manager.subscribe(msg.table, filter, (event: ChangeEvent) => {
+      const boundary = ctx.tracker.cursor
+      const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
         this.sendChange(conn, id, event)
       })
 
       state.subscriptions.set(id, sub)
-      this.send(conn, { type: 'subscribed', id })
+      this.send(conn, { type: 'subscribed', id, seq: boundary.toString() })
     } catch (err) {
       this.cdc.maybeCleanup(state.databaseId)
       this.sendSirannonError(conn, id, err)
     }
+  }
+
+  private async subscribeResuming(
+    conn: WSConnection,
+    state: ConnectionState,
+    id: string,
+    table: string,
+    filter: Record<string, unknown> | undefined,
+    sinceSeq: bigint,
+  ): Promise<void> {
+    let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
+    let primed: PrimedSubscription
+    let boundary: bigint
+    let resync: boolean
+    try {
+      ctx = await this.cdc.ensure(state.databaseId, state.database)
+      await ctx.tracker.watch(ctx.cdcConn, table)
+
+      boundary = ctx.tracker.cursor
+      primed = new PrimedSubscription(
+        sinceSeq,
+        event => this.sendChange(conn, id, event),
+        () => this.handleOverload(conn),
+      )
+      const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
+      state.subscriptions.set(id, sub)
+
+      const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
+      resync = needsResync(sinceSeq, minSeq, boundary)
+      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), ...(resync ? { resync: true } : {}) })
+    } catch (err) {
+      this.cdc.maybeCleanup(state.databaseId)
+      this.sendSirannonError(conn, id, err)
+      return
+    }
+
+    if (!resync) {
+      try {
+        await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
+      } catch {
+        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), resync: true })
+      }
+    }
+    primed.goLive()
   }
 
   private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
@@ -261,12 +344,18 @@ export class WSHandler {
     return (await this.resolveExecutionTarget(databaseId)) ?? null
   }
 
-  private send(conn: WSConnection, msg: WSServerMessage): void {
+  private send(conn: WSConnection, msg: WSServerMessage): WSSendOutcome {
+    let data: string
     try {
-      conn.send(JSON.stringify(msg))
+      data = JSON.stringify(msg)
     } catch {
-      // Connection might be closing; ignore send failures
+      return 'sent'
     }
+    const outcome = conn.send(data)
+    if (outcome === 'dropped') {
+      this.handleOverload(conn)
+    }
+    return outcome
   }
 
   private sendError(conn: WSConnection, id: string, code: string, message: string): void {
@@ -279,8 +368,8 @@ export class WSHandler {
     this.sendError(conn, id, code, message)
   }
 
-  private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): void {
-    this.send(conn, {
+  private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
+    return this.send(conn, {
       type: 'change',
       id: subscriptionId,
       event: {

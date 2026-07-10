@@ -260,6 +260,17 @@ export class Database {
     this.ensureCdcPolling()
   }
 
+  /**
+   * Runs a CDC maintenance write (change-log pruning) on the shared writer
+   * under the writer lock. Serialising it with application writes keeps it
+   * from becoming a second writer that contends for SQLite's single write
+   * lock and stalls the event loop on `busy_timeout`.
+   */
+  async runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void> {
+    if (this._closed) return
+    await this.writerLock.run(() => op(this.pool.acquireWriter()))
+  }
+
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
     const tracker = this.changeTracker

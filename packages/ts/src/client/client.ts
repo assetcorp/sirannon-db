@@ -529,13 +529,14 @@ import type {
   QueryResponse,
   TransactionResponse,
 } from '../server/protocol.js'
-import type { RemoteSubscription } from './types.js'
+import type { RemoteSubscription, SubscribeOptions } from './types.js'
 
 interface TrackedRemoteSubscription {
   id: number
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onReset: (() => void) | undefined
   remote: RemoteSubscription | null
   active: boolean
 }
@@ -653,9 +654,10 @@ class TopologyAwareTransport implements Transport {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     try {
-      return await this.subscribeOnCurrentEndpoint(table, filter, callback)
+      return await this.subscribeOnCurrentEndpoint(table, filter, callback, options)
     } catch (err) {
       if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
         const hadActiveSubscriptions = this.activeSubscriptions.size > 0
@@ -666,7 +668,7 @@ class TopologyAwareTransport implements Transport {
         if (!hadActiveSubscriptions) {
           this.closeSubscriptionTransport()
         }
-        return this.subscribeOnCurrentEndpoint(table, filter, callback)
+        return this.subscribeOnCurrentEndpoint(table, filter, callback, options)
       }
       throw err
     }
@@ -709,15 +711,17 @@ class TopologyAwareTransport implements Transport {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     return this.withSubscriptionOperation(async () => {
       const transport = await this.getSubscriptionTransport(this.client._getReadConcern())
-      const remote = await transport.subscribe(table, filter, callback)
+      const remote = await transport.subscribe(table, filter, callback, options)
       const subscription: TrackedRemoteSubscription = {
         id: ++this.nextSubscriptionId,
         table,
         filter,
         callback,
+        onReset: options?.onReset,
         remote,
         active: true,
       }
@@ -756,7 +760,9 @@ class TopologyAwareTransport implements Transport {
     try {
       for (const subscription of subscriptions) {
         if (!subscription.active) continue
-        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback)
+        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback, {
+          onReset: subscription.onReset,
+        })
         if (!subscription.active) {
           remote.unsubscribe()
           continue

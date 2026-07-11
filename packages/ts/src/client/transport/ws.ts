@@ -1,3 +1,4 @@
+import { decodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
 import type {
   BatchResponse,
@@ -311,8 +312,11 @@ export class WebSocketTransport implements Transport {
             const event: ChangeEvent = {
               type: msg.event.type,
               table: msg.event.table,
-              row: msg.event.row,
-              oldRow: msg.event.oldRow,
+              row: decodeTaggedValues(msg.event.row) as Record<string, unknown>,
+              oldRow:
+                msg.event.oldRow === undefined
+                  ? undefined
+                  : (decodeTaggedValues(msg.event.oldRow) as Record<string, unknown>),
               seq: BigInt(msg.event.seq),
               timestamp: msg.event.timestamp,
             }

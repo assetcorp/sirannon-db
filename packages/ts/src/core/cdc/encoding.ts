@@ -4,6 +4,31 @@ export const INT_TAG = '__sirannon_int'
 export const SAFE_INT_BOUND_TEXT = '9007199254740991'
 const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
 
+/**
+ * Re-tags native values a decoded change event carries (`BigInt`, binary) into
+ * the same JSON envelope the CDC trigger writes, so a change frame stays
+ * JSON-serialisable on the wire and the client decodes it back with
+ * {@link decodeTaggedValues}. The inverse of {@link decodeTaggedValues}.
+ */
+export function encodeTaggedValues(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    return { [INT_TAG]: value.toString() }
+  }
+  if (isBinaryValue(value)) {
+    return { [BLOB_TAG]: encodeHexBytes(value) }
+  }
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) {
+    return value.map(encodeTaggedValues)
+  }
+  const obj = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(obj)) {
+    out[k] = encodeTaggedValues(obj[k])
+  }
+  return out
+}
+
 export function decodeTaggedValues(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
   if (isBinaryValue(value)) return value
@@ -31,6 +56,17 @@ export function decodeTaggedValues(value: unknown): unknown {
 
 function isBinaryValue(value: unknown): value is Uint8Array | Buffer {
   return value instanceof Uint8Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer(value))
+}
+
+function encodeHexBytes(bytes: Uint8Array | Buffer): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('hex').toUpperCase()
+  }
+  let hex = ''
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, '0')
+  }
+  return hex.toUpperCase()
 }
 
 function decodeHexBytes(hex: string): Uint8Array | Buffer {

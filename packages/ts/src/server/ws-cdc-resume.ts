@@ -1,4 +1,5 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
+import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import { changeMatchesFilter } from '../core/cdc/subscription.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import type { ChangeEvent } from '../core/types.js'
@@ -10,8 +11,8 @@ const DEFAULT_PRIME_BUFFER_BYTES = 16 * 1_048_576
 
 function approxEventBytes(event: ChangeEvent): number {
   let bytes = 0
-  if (event.row) bytes += JSON.stringify(event.row).length
-  if (event.oldRow) bytes += JSON.stringify(event.oldRow).length
+  if (event.row) bytes += JSON.stringify(encodeTaggedValues(event.row)).length
+  if (event.oldRow) bytes += JSON.stringify(encodeTaggedValues(event.oldRow)).length
   return bytes
 }
 

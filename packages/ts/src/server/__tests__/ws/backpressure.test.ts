@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Sirannon } from '../../../core/sirannon.js'
+import type { ServerExecutionTarget } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { WS_CLOSE_OVERLOADED } from '../../ws-connection.js'
 import { createWSHandler } from '../../ws-handler.js'
@@ -72,6 +73,27 @@ describe('WSHandler backpressure', () => {
     expect(conn.closed).toBe(true)
     expect(conn.closeCode).toBe(WS_CLOSE_OVERLOADED)
     expect(parseMessages(conn).some(m => m.type === 'change')).toBe(false)
+    await handler.close()
+  })
+
+  it('closes the connection when a reply cannot be serialised rather than reporting it sent', async () => {
+    const unserialisableTarget: ServerExecutionTarget = {
+      query: async <T>() => [{ balance: 9007199254740993n }] as T[],
+      execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
+      transaction: async fn => fn({} as never),
+    }
+    const handler = createWSHandler(sirannon, { resolveExecutionTarget: () => unserialisableTarget })
+    await sirannon.open('mydb', join(tempDir, 'serialise.db'))
+
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'mydb')
+    handler.handleMessage(conn, JSON.stringify({ id: 'q-1', type: 'query', sql: 'SELECT balance FROM ledgers' }))
+
+    await flushAsync(() => conn.closed)
+
+    expect(conn.closed).toBe(true)
+    expect(conn.closeCode).toBe(WS_CLOSE_OVERLOADED)
+    expect(conn.messages).toHaveLength(0)
     await handler.close()
   })
 

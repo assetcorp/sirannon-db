@@ -1,3 +1,4 @@
+import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Database } from '../core/database.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
@@ -366,7 +367,8 @@ export class WSHandler {
     try {
       data = JSON.stringify(msg)
     } catch {
-      return 'sent'
+      this.handleOverload(conn)
+      return 'dropped'
     }
     const outcome = conn.send(data)
     if (outcome === 'dropped') {
@@ -392,8 +394,8 @@ export class WSHandler {
       event: {
         type: event.type,
         table: event.table,
-        row: event.row as Record<string, unknown>,
-        oldRow: event.oldRow as Record<string, unknown> | undefined,
+        row: encodeTaggedValues(event.row) as Record<string, unknown>,
+        oldRow: event.oldRow === undefined ? undefined : (encodeTaggedValues(event.oldRow) as Record<string, unknown>),
         seq: event.seq.toString(),
         timestamp: event.timestamp,
       },

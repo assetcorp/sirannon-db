@@ -1,8 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeTracker } from '../../cdc/change-tracker.js'
-import { decodeTaggedValues } from '../../cdc/encoding.js'
+import { decodeTaggedValues, encodeTaggedValues } from '../../cdc/encoding.js'
 import type { SQLiteConnection } from '../../driver/types.js'
 import { createTestDb, insertUser } from './_helpers.js'
+
+describe('encodeTaggedValues', () => {
+  it('re-tags a BigInt into the JSON envelope decodeTaggedValues restores', () => {
+    const big = 9223372036854775807n
+    const encoded = encodeTaggedValues({ balance: big })
+    expect(encoded).toEqual({ balance: { __sirannon_int: '9223372036854775807' } })
+    expect((decodeTaggedValues(encoded) as { balance: bigint }).balance).toBe(big)
+  })
+
+  it('re-tags binary values into an uppercase hex envelope that round-trips to bytes', () => {
+    const payload = Uint8Array.from([0x00, 0x01, 0xff, 0xab])
+    const encoded = encodeTaggedValues({ payload }) as { payload: { __sirannon_blob: string } }
+    expect(encoded.payload.__sirannon_blob).toBe('0001FFAB')
+    const decoded = decodeTaggedValues(encoded) as { payload: Uint8Array }
+    expect(Array.from(decoded.payload)).toEqual([0x00, 0x01, 0xff, 0xab])
+  })
+
+  it('leaves safe numbers, strings, booleans, and null untouched', () => {
+    const row = { id: 42, name: 'Alice', active: true, note: null }
+    expect(encodeTaggedValues(row)).toEqual(row)
+  })
+
+  it('produces JSON-serialisable output for rows carrying BigInt and binary columns', () => {
+    const encoded = encodeTaggedValues({ balance: 9007199254740993n, blob: Buffer.from([0x7f]) })
+    expect(() => JSON.stringify(encoded)).not.toThrow()
+  })
+})
 
 describe('ChangeTracker', () => {
   let conn: SQLiteConnection

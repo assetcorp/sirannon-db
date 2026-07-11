@@ -250,7 +250,7 @@ machine-readable routing context, such as `currentPrimary`,
 | Status | Error Codes |
 |--------|-------------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR` |
-| 403 | `READ_ONLY`, `HOOK_DENIED` |
+| 403 | `READ_ONLY`, `HOOK_DENIED`, `FORBIDDEN_SQL` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH` |
 | 404 | `DATABASE_NOT_FOUND` |
 | 413 | `PAYLOAD_TOO_LARGE` |

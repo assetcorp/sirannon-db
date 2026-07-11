@@ -60,6 +60,7 @@ query execution, and related subsystems.
 | `DATABASE_OPEN_FAILED` | SirannonError | Database could not be opened (pool creation failure). |
 | `READ_ONLY` | ReadOnlyError | Write operation attempted on a read-only database. |
 | `QUERY_ERROR` | QueryError | SQLite failed to prepare or execute a statement. |
+| `FORBIDDEN_SQL` | ForbiddenSqlError | Statement reaches a reserved internal table (`_sirannon_*`), modifies the `sqlite_*` catalogue, or uses `ATTACH`/`DETACH`. |
 | `TRANSACTION_ERROR` | TransactionError | Transaction could not be committed or was forcibly rolled back. |
 | `MIGRATION_ERROR` | MigrationError | A migration step failed during execution. |
 | `MIGRATION_VALIDATION_ERROR` | MigrationError | Migration definitions failed validation (bad version, duplicate, invalid name). |

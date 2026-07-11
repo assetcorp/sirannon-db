@@ -312,6 +312,18 @@ Before passing parameters to a prepared statement, normalise them:
   `[params]` for engines that expect positional binding of named
   parameter objects.
 
+### Reserved Identifiers
+
+The query API refuses any statement that reaches Sirannon's
+internal tables. Identifiers beginning with `_sirannon_` are
+private to the engine, so a read or a write against them fails
+with `FORBIDDEN_SQL`. You can still read the `sqlite_` catalogue,
+as you can in any SQL engine, but a statement that modifies it
+fails with the same code, and so do `PRAGMA writable_schema`,
+`ATTACH`, and `DETACH`. The engine maintains its own tables through
+internal connections that bypass this check, so change tracking,
+migrations, and replication keep working.
+
 ---
 
 ## Change Data Capture (CDC)

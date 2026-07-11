@@ -1,4 +1,5 @@
 import { HLC } from '../hlc.js'
+import { canonicaliseForChecksum } from '../log/canonicalise.js'
 import type { ConflictContext, ConflictResolution, ConflictResolver } from '../types.js'
 import { LWWResolver } from './lww.js'
 
@@ -39,13 +40,13 @@ export class FieldMergeResolver implements ConflictResolver {
     const remoteChanged = new Set<string>()
 
     for (const key of Object.keys(localData)) {
-      if (JSON.stringify(localData[key]) !== JSON.stringify(oldData[key])) {
+      if (canonicaliseForChecksum(localData[key]) !== canonicaliseForChecksum(oldData[key])) {
         localChanged.add(key)
       }
     }
 
     for (const key of Object.keys(remoteData)) {
-      if (JSON.stringify(remoteData[key]) !== JSON.stringify(oldData[key])) {
+      if (canonicaliseForChecksum(remoteData[key]) !== canonicaliseForChecksum(oldData[key])) {
         remoteChanged.add(key)
       }
     }

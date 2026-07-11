@@ -14,7 +14,7 @@ import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { execute, executeBatch, executeBatchSummary, query, queryOne } from './query-executor.js'
+import { execute, executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -109,6 +109,24 @@ export class Database {
     const start = performance.now()
     try {
       return await this.runRead(sql, conn => query<T>(conn, sql, params))
+    } finally {
+      this.fireAfterQueryHooks(sql, params, performance.now() - start)
+    }
+  }
+
+  /**
+   * Returns query rows already encoded for the wire (safe-range integers as
+   * plain numbers, larger integers and BLOBs as tagged envelopes) in a single
+   * pass. The server response path uses this so a read walks its values once
+   * rather than narrowing on the driver and re-scanning to tag.
+   */
+  async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
+    this.ensureOpen()
+    this.fireBeforeQueryHooks(sql, params, options)
+
+    const start = performance.now()
+    try {
+      return await this.runRead(sql, conn => queryForWire(conn, sql, params))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }

@@ -19,6 +19,9 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
         async all<T = unknown>(...params: unknown[]): Promise<T[]> {
           return narrowRowsIntegers(stmt.all(...params) as T[])
         },
+        async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
+          return stmt.all(...params) as T[]
+        },
         async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
           return narrowRowIntegers(stmt.get(...params) as T | undefined)
         },

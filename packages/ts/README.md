@@ -474,7 +474,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
 
-const sub = db.subscribe('users', event => {
+const sub = await db.on('users').subscribe(event => {
   console.log('User changed:', event)
 })
 

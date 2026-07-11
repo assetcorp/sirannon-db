@@ -2,6 +2,7 @@ export const BLOB_TAG = '__sirannon_blob'
 export const INT_TAG = '__sirannon_int'
 
 export const SAFE_INT_BOUND_TEXT = '9007199254740991'
+const SAFE_INT_BOUND = 9007199254740991n
 const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
 /**
  * SQLite integers span at most 19 decimal digits (int64). Rejecting longer
@@ -15,9 +16,17 @@ const INT_PAYLOAD_RE = /^-?\d{1,19}$/
  * the same JSON envelope the CDC trigger writes, so a change frame stays
  * JSON-serialisable on the wire and the client decodes it back with
  * {@link decodeTaggedValues}. The inverse of {@link decodeTaggedValues}.
+ *
+ * Also the single normalisation pass for server query rows: a `BigInt` inside
+ * the JS safe range narrows to a plain number, matching the spec that only
+ * integers beyond 2^53 - 1 cross the wire tagged, so raw driver rows can be
+ * encoded directly without a preceding narrowing walk.
  */
 export function encodeTaggedValues(value: unknown): unknown {
   if (typeof value === 'bigint') {
+    if (value >= -SAFE_INT_BOUND && value <= SAFE_INT_BOUND) {
+      return Number(value)
+    }
     return { [INT_TAG]: value.toString() }
   }
   if (isBinaryValue(value)) {

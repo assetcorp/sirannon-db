@@ -1,3 +1,4 @@
+import { encodeTaggedValues } from './cdc/encoding.js'
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
@@ -53,6 +54,24 @@ export async function query<T = Record<string, unknown>>(
   try {
     const stmt = await getStatement(conn, sql)
     return await stmt.all<T>(...bindParams(params))
+  } catch (err) {
+    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+  }
+}
+
+/**
+ * Reads rows already encoded for the wire in a single walk. Pulls raw BigInt
+ * rows from the driver ({@link SQLiteStatement.allRaw}) and lets
+ * {@link encodeTaggedValues} both narrow safe-range integers and tag the rest,
+ * so the server never narrows on the driver and then re-scans to tag.
+ */
+export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
+  assertSqlAllowed(sql)
+  try {
+    const stmt = await getStatement(conn, sql)
+    const bound = bindParams(params)
+    const rows = stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)
+    return encodeTaggedValues(rows) as unknown[]
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }

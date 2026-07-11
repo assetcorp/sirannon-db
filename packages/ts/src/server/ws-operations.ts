@@ -1,4 +1,3 @@
-import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { ServerExecutionTarget } from '../core/types.js'
 import type { WSResultMessage } from './protocol.js'
 import {
@@ -9,6 +8,7 @@ import {
   transactionStatementsValidationError,
   validateWriteConcern,
 } from './protocol.js'
+import { queryWireRows } from './wire-rows.js'
 
 /**
  * Reply surface handed to each data-operation message handler, so the
@@ -65,8 +65,8 @@ export async function handleQueryMessage(
   }
 
   try {
-    const rows = await ctx.target.query(msg.sql, params.value)
-    ctx.sendResult(id, { rows: encodeTaggedValues(rows) as Record<string, unknown>[] })
+    const rows = await queryWireRows(ctx.target, msg.sql, params.value)
+    ctx.sendResult(id, { rows: rows as Record<string, unknown>[] })
   } catch (err) {
     ctx.sendCaughtError(id, err)
   }

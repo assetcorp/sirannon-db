@@ -30,6 +30,9 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
               return narrowRowsIntegers(stmt.all(...(params as Parameters<typeof stmt.all>)) as T[])
             },
+            async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
+              return stmt.all(...(params as Parameters<typeof stmt.all>)) as T[]
+            },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
               return narrowRowIntegers(stmt.get(...(params as Parameters<typeof stmt.get>)) as T | undefined)
             },

@@ -1,5 +1,4 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
@@ -27,6 +26,7 @@ import {
   toExecuteResponse,
   transactionStatementsValidationError,
 } from './protocol.js'
+import { queryWireRows } from './wire-rows.js'
 
 function decodeBatchParams(
   res: HttpResponse,
@@ -72,13 +72,14 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
     if (!target) return
 
     try {
-      const rows = await target.query(
+      const rows = await queryWireRows(
+        target,
         body.sql,
         params.value,
         readConcern.value ? { readConcern: readConcern.value } : undefined,
       )
       if (abort.aborted) return
-      sendJson(res, { rows: encodeTaggedValues(rows) })
+      sendJson(res, { rows })
     } catch (err) {
       sendCaughtError(res, abort, err)
     }

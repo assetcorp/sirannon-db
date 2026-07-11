@@ -144,5 +144,85 @@ export function runConformanceTests(driverFactory: () => SQLiteDriver, label: st
       expect(typeof driver.capabilities.multipleConnections).toBe('boolean')
       expect(typeof driver.capabilities.extensions).toBe('boolean')
     })
+
+    it('reads integers beyond 2^53 - 1 back as exact BigInt values', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
+
+      const values = [9007199254740992n, 9007199254740993n, 9223372036854775807n, -9223372036854775808n]
+      const insertStmt = await conn.prepare('INSERT INTO ledgers (id, balance) VALUES (?, ?)')
+      for (let i = 0; i < values.length; i++) {
+        await insertStmt.run(i + 1, values[i])
+      }
+
+      const selectStmt = await conn.prepare('SELECT balance FROM ledgers ORDER BY id')
+      const rows = await selectStmt.all<{ balance: unknown }>()
+      expect(rows.map(r => r.balance)).toEqual(values)
+      for (const row of rows) {
+        expect(typeof row.balance).toBe('bigint')
+      }
+      await conn.close()
+    })
+
+    it('reads integers within the safe range back as plain numbers', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
+
+      const values = [0, 1, -1, 9007199254740991, -9007199254740991]
+      const insertStmt = await conn.prepare('INSERT INTO ledgers (id, balance) VALUES (?, ?)')
+      for (let i = 0; i < values.length; i++) {
+        await insertStmt.run(i + 1, values[i])
+      }
+
+      const selectStmt = await conn.prepare('SELECT balance FROM ledgers ORDER BY id')
+      const rows = await selectStmt.all<{ balance: unknown }>()
+      expect(rows.map(r => r.balance)).toEqual(values)
+      for (const row of rows) {
+        expect(typeof row.balance).toBe('number')
+      }
+      await conn.close()
+    })
+
+    it('round-trips BLOB values exactly', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE files (id INTEGER PRIMARY KEY, payload BLOB)')
+
+      const payload = Buffer.from([0x00, 0x01, 0x7f, 0x80, 0xff])
+      const insertStmt = await conn.prepare('INSERT INTO files (id, payload) VALUES (?, ?)')
+      await insertStmt.run(1, payload)
+
+      const selectStmt = await conn.prepare('SELECT payload FROM files WHERE id = 1')
+      const row = await selectStmt.get<{ payload: Uint8Array }>()
+      expect(row).toBeDefined()
+      expect(Buffer.compare(Buffer.from(row?.payload ?? []), payload)).toBe(0)
+      await conn.close()
+    })
+
+    it('reports lastInsertRowId beyond 2^53 - 1 as exact BigInt', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT)')
+
+      const bigRowId = 9223372036854775806n
+      const insertStmt = await conn.prepare('INSERT INTO events (id, note) VALUES (?, ?)')
+      const result = await insertStmt.run(bigRowId, 'boundary')
+      expect(result.lastInsertRowId).toBe(bigRowId)
+      await conn.close()
+    })
+
+    it('reports lastInsertRowId within the safe range as a plain number', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT)')
+
+      const insertStmt = await conn.prepare('INSERT INTO events (note) VALUES (?)')
+      const result = await insertStmt.run('first')
+      expect(result.lastInsertRowId).toBe(1)
+      expect(typeof result.lastInsertRowId).toBe('number')
+      await conn.close()
+    })
   })
 }

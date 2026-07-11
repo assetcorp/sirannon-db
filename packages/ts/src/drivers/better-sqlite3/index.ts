@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 
 export interface BetterSqlite3Options {
   busyTimeout?: number
@@ -16,16 +17,16 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
       const stmt = db.prepare(sql)
       return {
         async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-          return stmt.all(...params) as T[]
+          return narrowRowsIntegers(stmt.all(...params) as T[])
         },
         async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-          return stmt.get(...params) as T | undefined
+          return narrowRowIntegers(stmt.get(...params) as T | undefined)
         },
         async run(...params: unknown[]) {
           const result = stmt.run(...params)
           return {
-            changes: result.changes,
-            lastInsertRowId: result.lastInsertRowid,
+            changes: Number(result.changes),
+            lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
           }
         },
       }
@@ -61,6 +62,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
     async open(path, options) {
       const Database = (await import('better-sqlite3')).default
       const db = new Database(path, { readonly: options?.readonly ?? false })
+      db.defaultSafeIntegers(true)
       if (options?.walMode !== false) db.pragma('journal_mode = WAL')
       db.pragma(`synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.pragma('foreign_keys = ON')

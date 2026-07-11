@@ -1,6 +1,8 @@
+import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { ServerExecutionTarget } from '../core/types.js'
 import type { WSResultMessage } from './protocol.js'
 import {
+  decodeBoundParams,
   loadDurabilityValidationError,
   paramsBatchValidationError,
   toExecuteResponse,
@@ -24,6 +26,23 @@ export function isValidParams(params: unknown): boolean {
   return typeof params === 'object'
 }
 
+function decodeBatchParams(
+  ctx: WSOperationContext,
+  id: string,
+  raw: (Record<string, unknown> | unknown[])[],
+): (Record<string, unknown> | unknown[])[] | null {
+  const decoded: (Record<string, unknown> | unknown[])[] = []
+  for (const entry of raw) {
+    const result = decodeBoundParams(entry, 'paramsBatch')
+    if (!result.ok) {
+      ctx.sendError(id, 'INVALID_MESSAGE', result.message)
+      return null
+    }
+    decoded.push(result.value as Record<string, unknown> | unknown[])
+  }
+  return decoded
+}
+
 export async function handleQueryMessage(
   ctx: WSOperationContext,
   msg: Record<string, unknown>,
@@ -39,10 +58,15 @@ export async function handleQueryMessage(
     return
   }
 
+  const params = decodeBoundParams(msg.params, 'params')
+  if (!params.ok) {
+    ctx.sendError(id, 'INVALID_MESSAGE', params.message)
+    return
+  }
+
   try {
-    const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-    const rows = await ctx.target.query(msg.sql, params)
-    ctx.sendResult(id, { rows })
+    const rows = await ctx.target.query(msg.sql, params.value)
+    ctx.sendResult(id, { rows: encodeTaggedValues(rows) as Record<string, unknown>[] })
   } catch (err) {
     ctx.sendCaughtError(id, err)
   }
@@ -63,9 +87,14 @@ export async function handleExecuteMessage(
     return
   }
 
+  const params = decodeBoundParams(msg.params, 'params')
+  if (!params.ok) {
+    ctx.sendError(id, 'INVALID_MESSAGE', params.message)
+    return
+  }
+
   try {
-    const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-    const result = await ctx.target.execute(msg.sql, params)
+    const result = await ctx.target.execute(msg.sql, params.value)
     ctx.sendResult(id, toExecuteResponse(result))
   } catch (err) {
     ctx.sendCaughtError(id, err)
@@ -90,12 +119,21 @@ export async function handleTransactionMessage(
   }
 
   const validStatements = msg.statements as { sql: string; params?: Record<string, unknown> | unknown[] }[]
+  const statements: { sql: string; params?: Record<string, unknown> | unknown[] }[] = []
+  for (const stmt of validStatements) {
+    const params = decodeBoundParams(stmt.params, 'params')
+    if (!params.ok) {
+      ctx.sendError(id, 'INVALID_MESSAGE', params.message)
+      return
+    }
+    statements.push({ sql: stmt.sql, params: params.value })
+  }
 
   try {
     const results = await ctx.target.transaction(
       async tx => {
         const txResults = []
-        for (const stmt of validStatements) {
+        for (const stmt of statements) {
           txResults.push(await tx.execute(stmt.sql, stmt.params))
         }
         return txResults
@@ -131,7 +169,8 @@ export async function handleBatchMessage(
   }
 
   const sql = msg.sql
-  const paramsBatch = msg.paramsBatch as (Record<string, unknown> | unknown[])[]
+  const paramsBatch = decodeBatchParams(ctx, id, msg.paramsBatch as (Record<string, unknown> | unknown[])[])
+  if (paramsBatch === null) return
 
   try {
     const results = await ctx.target.transaction(
@@ -173,7 +212,8 @@ export async function handleLoadMessage(
   }
 
   const sql = msg.sql
-  const paramsBatch = msg.paramsBatch as (Record<string, unknown> | unknown[])[]
+  const paramsBatch = decodeBatchParams(ctx, id, msg.paramsBatch as (Record<string, unknown> | unknown[])[])
+  if (paramsBatch === null) return
   const durability = msg.durability as 'off' | 'normal' | undefined
 
   try {

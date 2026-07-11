@@ -1,4 +1,5 @@
 import { isBulkLoadDurability } from '../core/bulk-load.js'
+import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type {
   BulkLoadDurability,
   BulkLoadResult,
@@ -237,6 +238,20 @@ export function loadDurabilityValidationError(value: unknown): string | null {
 }
 
 export type FieldValidation<T> = { ok: true; value: T | undefined } | { ok: false; message: string }
+
+/**
+ * Restores tagged big-integer and BLOB envelopes in client-supplied bind
+ * parameters to native values, identically for both transports. Rejects
+ * malformed envelopes instead of letting them reach the SQL layer.
+ */
+export function decodeBoundParams(value: unknown, field: string): FieldValidation<Record<string, unknown> | unknown[]> {
+  if (value === undefined || value === null) return { ok: true, value: undefined }
+  try {
+    return { ok: true, value: decodeTaggedValues(value) as Record<string, unknown> | unknown[] }
+  } catch {
+    return { ok: false, message: `Field "${field}" contains an invalid tagged value` }
+  }
+}
 
 export function validateReadConcern(value: unknown): FieldValidation<ReadConcern> {
   if (value === undefined) return { ok: true, value: undefined }

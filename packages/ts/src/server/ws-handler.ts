@@ -4,6 +4,7 @@ import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
+import { decodeBoundParams } from './protocol.js'
 import { CdcContextRegistry } from './ws-cdc.js'
 import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
@@ -238,7 +239,12 @@ export class WSHandler {
       return
     }
 
-    const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
+    const decodedFilter = decodeBoundParams(msg.filter, 'filter')
+    if (!decodedFilter.ok) {
+      this.sendError(conn, id, 'INVALID_MESSAGE', decodedFilter.message)
+      return
+    }
+    const filter = decodedFilter.value as Record<string, unknown> | undefined
 
     let sinceSeq: bigint | undefined
     if (msg.sinceSeq !== undefined) {

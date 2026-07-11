@@ -1,4 +1,4 @@
-import { decodeTaggedValues } from '../../core/cdc/encoding.js'
+import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
 import type {
   BatchResponse,
@@ -77,13 +77,24 @@ export class WebSocketTransport implements Transport {
   async query(sql: string, params?: Params): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
-    return this.request<QueryResponse>({ type: 'query', id, sql, params })
+    const response = await this.request<QueryResponse>({
+      type: 'query',
+      id,
+      sql,
+      params: encodeTaggedValues(params) as Params | undefined,
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
     await this.ensureConnected()
     const id = this.nextId()
-    return this.request<ExecuteResponse>({ type: 'execute', id, sql, params })
+    return this.request<ExecuteResponse>({
+      type: 'execute',
+      id,
+      sql,
+      params: encodeTaggedValues(params) as Params | undefined,
+    })
   }
 
   async transaction(_statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
@@ -100,7 +111,7 @@ export class WebSocketTransport implements Transport {
       type: 'batch',
       id,
       sql,
-      paramsBatch,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry) as Params),
       ...(writeConcern ? { writeConcern } : {}),
     })
   }
@@ -112,7 +123,7 @@ export class WebSocketTransport implements Transport {
       type: 'load',
       id,
       sql,
-      paramsBatch,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry) as Params),
       ...(durability ? { durability } : {}),
     })
   }
@@ -143,7 +154,7 @@ export class WebSocketTransport implements Transport {
         type: 'subscribe',
         id,
         table,
-        ...(filter ? { filter } : {}),
+        ...(filter ? { filter: encodeTaggedValues(filter) as Record<string, unknown> } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {
@@ -379,7 +390,7 @@ export class WebSocketTransport implements Transport {
           type: 'subscribe',
           id,
           table: sub.table,
-          ...(sub.filter ? { filter: sub.filter } : {}),
+          ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
           ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
           ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
         }

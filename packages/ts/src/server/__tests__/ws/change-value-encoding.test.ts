@@ -59,6 +59,59 @@ describe('WSHandler change value encoding', () => {
     await handler.close()
   })
 
+  it('delivers only changes matching an envelope-encoded filter on a column beyond 2^53', async () => {
+    const handler = createWSHandler(sirannon)
+    const db = await sirannon.open('mydb', join(tempDir, 'bigfilter.db'))
+    await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
+
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'mydb')
+    handler.handleMessage(
+      conn,
+      JSON.stringify({
+        id: 'sub-1',
+        type: 'subscribe',
+        table: 'ledgers',
+        filter: { balance: { __sirannon_int: '9007199254740993' } },
+      }),
+    )
+    await flushAsync(() => parseMessages(conn).some(m => m.type === 'subscribed'))
+
+    await db.execute('INSERT INTO ledgers (id, balance) VALUES (1, 9007199254740995)')
+    await db.execute('INSERT INTO ledgers (id, balance) VALUES (2, 9007199254740993)')
+    await flushAsync(() => parseMessages(conn).some(m => m.type === 'change'))
+
+    const changes = parseMessages(conn).filter(m => m.type === 'change')
+    expect(changes).toHaveLength(1)
+    const row = (changes[0].event as Record<string, unknown>).row as Record<string, unknown>
+    expect(row.id).toBe(2)
+    expect(row.balance).toEqual({ __sirannon_int: '9007199254740993' })
+    await handler.close()
+  })
+
+  it('rejects a malformed envelope inside a subscription filter', async () => {
+    const handler = createWSHandler(sirannon)
+    const db = await sirannon.open('mydb', join(tempDir, 'badfilter.db'))
+    await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
+
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'mydb')
+    handler.handleMessage(
+      conn,
+      JSON.stringify({
+        id: 'sub-1',
+        type: 'subscribe',
+        table: 'ledgers',
+        filter: { balance: { __sirannon_int: '12abc' } },
+      }),
+    )
+    await flushAsync(() => parseMessages(conn).some(m => m.type === 'error'))
+
+    const error = parseMessages(conn).find(m => m.type === 'error') as Record<string, unknown>
+    expect((error.error as Record<string, unknown>).code).toBe('INVALID_MESSAGE')
+    await handler.close()
+  })
+
   it('encodes oldRow values on update changes the same way as row values', async () => {
     const handler = createWSHandler(sirannon)
     const db = await sirannon.open('mydb', join(tempDir, 'oldrow.db'))

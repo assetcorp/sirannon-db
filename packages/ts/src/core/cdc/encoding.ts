@@ -3,6 +3,12 @@ export const INT_TAG = '__sirannon_int'
 
 export const SAFE_INT_BOUND_TEXT = '9007199254740991'
 const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
+/**
+ * SQLite integers span at most 19 decimal digits (int64). Rejecting longer
+ * payloads before BigInt parses them keeps a hostile client from submitting
+ * megabyte-long digit strings that cost quadratic parse time.
+ */
+const INT_PAYLOAD_RE = /^-?\d{1,19}$/
 
 /**
  * Re-tags native values a decoded change event carries (`BigInt`, binary) into
@@ -20,6 +26,12 @@ export function encodeTaggedValues(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
   if (Array.isArray(value)) {
     return value.map(encodeTaggedValues)
+  }
+  // Objects with custom JSON behaviour (e.g. Date) keep it; walking them as
+  // plain records would erase the value JSON.stringify produces. Binary values
+  // are enveloped above, so Buffer's own toJSON never reaches this check.
+  if (typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+    return value
   }
   const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
@@ -44,6 +56,9 @@ export function decodeTaggedValues(value: unknown): unknown {
       return decodeHexBytes(tagValue)
     }
     if (tag === INT_TAG && typeof tagValue === 'string') {
+      if (!INT_PAYLOAD_RE.test(tagValue)) {
+        throw new Error('Invalid tagged integer payload')
+      }
       return BigInt(tagValue)
     }
   }

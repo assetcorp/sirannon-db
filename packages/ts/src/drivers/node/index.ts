@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 
 export interface NodeSqliteOptions {
   busyTimeout?: number
@@ -24,12 +25,13 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
 
         async prepare(sql: string): Promise<SQLiteStatement> {
           const stmt = db.prepare(sql)
+          stmt.setReadBigInts(true)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return stmt.all(...(params as Parameters<typeof stmt.all>)) as T[]
+              return narrowRowsIntegers(stmt.all(...(params as Parameters<typeof stmt.all>)) as T[])
             },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              return stmt.get(...(params as Parameters<typeof stmt.get>)) as T | undefined
+              return narrowRowIntegers(stmt.get(...(params as Parameters<typeof stmt.get>)) as T | undefined)
             },
             async run(...params: unknown[]) {
               const result = stmt.run(...(params as Parameters<typeof stmt.run>)) as {
@@ -38,7 +40,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
               }
               return {
                 changes: Number(result.changes),
-                lastInsertRowId: result.lastInsertRowid,
+                lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
               }
             },
           }

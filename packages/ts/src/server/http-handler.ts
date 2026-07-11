@@ -1,4 +1,5 @@
 import type { HttpResponse } from 'uWebSockets.js'
+import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
@@ -20,11 +21,28 @@ import type {
   TransactionRequest,
 } from './protocol.js'
 import {
+  decodeBoundParams,
   loadDurabilityValidationError,
   paramsBatchValidationError,
   toExecuteResponse,
   transactionStatementsValidationError,
 } from './protocol.js'
+
+function decodeBatchParams(
+  res: HttpResponse,
+  raw: (Record<string, unknown> | unknown[])[],
+): (Record<string, unknown> | unknown[])[] | null {
+  const decoded: (Record<string, unknown> | unknown[])[] = []
+  for (const entry of raw) {
+    const result = decodeBoundParams(entry, 'paramsBatch')
+    if (!result.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', result.message)
+      return null
+    }
+    decoded.push(result.value as Record<string, unknown> | unknown[])
+  }
+  return decoded
+}
 
 export type { ResponseAbort } from './http-common.js'
 export { initAbortHandler, readBody, sendError } from './http-common.js'
@@ -44,17 +62,23 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
     const readConcern = parseReadConcern(res, body.readConcern)
     if (!readConcern.ok) return
 
+    const params = decodeBoundParams(body.params, 'params')
+    if (!params.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', params.message)
+      return
+    }
+
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
       const rows = await target.query(
         body.sql,
-        body.params,
+        params.value,
         readConcern.value ? { readConcern: readConcern.value } : undefined,
       )
       if (abort.aborted) return
-      sendJson(res, { rows })
+      sendJson(res, { rows: encodeTaggedValues(rows) })
     } catch (err) {
       sendCaughtError(res, abort, err)
     }
@@ -74,13 +98,19 @@ export function handleExecute(sirannon: Sirannon, resolveTarget?: ServerExecutio
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
+    const params = decodeBoundParams(body.params, 'params')
+    if (!params.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', params.message)
+      return
+    }
+
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
       const result = await target.execute(
         body.sql,
-        body.params,
+        params.value,
         writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
       )
       if (abort.aborted) return
@@ -105,6 +135,16 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
+    const statements: { sql: string; params?: Record<string, unknown> | unknown[] }[] = []
+    for (const stmt of body.statements) {
+      const params = decodeBoundParams(stmt.params, 'params')
+      if (!params.ok) {
+        sendError(res, 400, 'INVALID_REQUEST', params.message)
+        return
+      }
+      statements.push({ sql: stmt.sql, params: params.value })
+    }
+
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
 
@@ -112,7 +152,7 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
       const results = await target.transaction(
         async tx => {
           const txResults = []
-          for (const stmt of body.statements) {
+          for (const stmt of statements) {
             if (abort.aborted) throw new Error('Request aborted')
             txResults.push(await tx.execute(stmt.sql, stmt.params))
           }
@@ -149,12 +189,15 @@ export function handleBatch(sirannon: Sirannon, resolveTarget?: ServerExecutionT
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
+    const paramsBatch = decodeBatchParams(res, body.paramsBatch)
+    if (paramsBatch === null) return
+
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
       const results = await target.transaction(
-        async tx => tx.executeBatch(body.sql, body.paramsBatch),
+        async tx => tx.executeBatch(body.sql, paramsBatch),
         writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
       )
       if (abort.aborted) return
@@ -189,6 +232,9 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
       return
     }
 
+    const paramsBatch = decodeBatchParams(res, body.paramsBatch)
+    if (paramsBatch === null) return
+
     const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
     if (!target) return
 
@@ -202,7 +248,7 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
       const summary = await bulkLoad.call(
         target,
         body.sql,
-        body.paramsBatch,
+        paramsBatch,
         body.durability ? { durability: body.durability } : undefined,
       )
       if (abort.aborted) return

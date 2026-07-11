@@ -163,6 +163,99 @@ describe('FieldMergeResolver', () => {
     const result = await resolver.resolve(ctx)
     expect(result.action).toBe('accept_remote')
   })
+
+  it('resolves an overlapping conflict on an integer column above 2^53 without throwing', async () => {
+    const ancestor = 9007199254740993n
+    const localBalance = 9007199254740995n
+    const remoteBalance = 9007199254740997n
+
+    const getColumnVersions = async () => new Map([['balance', { hlc: '0000000f4240-0000-nodeA', nodeId: 'nodeA' }]])
+    const resolver = new FieldMergeResolver(getColumnVersions)
+
+    const ctx: ConflictContext = {
+      table: 'accounts',
+      rowId: '1',
+      localChange: makeChange({
+        nodeId: 'nodeA',
+        newData: { id: 1, balance: localBalance },
+        oldData: { id: 1, balance: ancestor },
+      }),
+      remoteChange: makeChange({
+        nodeId: 'nodeB',
+        hlc: '0000000f4241-0000-nodeB',
+        newData: { id: 1, balance: remoteBalance },
+        oldData: { id: 1, balance: ancestor },
+      }),
+      localHlc: '0000000f4240-0000-nodeA',
+      remoteHlc: '0000000f4241-0000-nodeB',
+    }
+
+    const result = await resolver.resolve(ctx)
+    expect(result.action).toBe('merge')
+    expect(result.mergedData?.balance).toBe(remoteBalance)
+  })
+
+  it('resolves a conflict on a BLOB column without throwing', async () => {
+    const ancestorAvatar = Buffer.from([1, 2, 3])
+    const remoteAvatar = Buffer.from([4, 5, 6])
+    const localBalance = 9007199254740999n
+
+    const getColumnVersions = async () =>
+      new Map([
+        ['balance', { hlc: '0000000f4240-0000-nodeA', nodeId: 'nodeA' }],
+        ['avatar', { hlc: '0000000f4240-0000-nodeB', nodeId: 'nodeB' }],
+      ])
+    const resolver = new FieldMergeResolver(getColumnVersions)
+
+    const ctx: ConflictContext = {
+      table: 'accounts',
+      rowId: '1',
+      localChange: makeChange({
+        nodeId: 'nodeA',
+        newData: { id: 1, balance: localBalance, avatar: ancestorAvatar },
+        oldData: { id: 1, balance: 9007199254740993n, avatar: ancestorAvatar },
+      }),
+      remoteChange: makeChange({
+        nodeId: 'nodeB',
+        hlc: '0000000f4241-0000-nodeB',
+        newData: { id: 1, balance: 9007199254740993n, avatar: remoteAvatar },
+        oldData: { id: 1, balance: 9007199254740993n, avatar: ancestorAvatar },
+      }),
+      localHlc: '0000000f4240-0000-nodeA',
+      remoteHlc: '0000000f4241-0000-nodeB',
+    }
+
+    const result = await resolver.resolve(ctx)
+    expect(result.action).toBe('merge')
+    expect(result.mergedData?.balance).toBe(localBalance)
+    expect(result.mergedData?.avatar).toEqual(remoteAvatar)
+  })
+
+  it('does not treat a BigInt equal to a numerically equal number as a change', async () => {
+    const getColumnVersions = async () => new Map([['balance', { hlc: '0000000f4240-0000-nodeA', nodeId: 'nodeA' }]])
+    const resolver = new FieldMergeResolver(getColumnVersions)
+
+    const ctx: ConflictContext = {
+      table: 'accounts',
+      rowId: '1',
+      localChange: makeChange({
+        nodeId: 'nodeA',
+        newData: { id: 1, balance: 42n },
+        oldData: { id: 1, balance: 42 },
+      }),
+      remoteChange: makeChange({
+        nodeId: 'nodeB',
+        hlc: '0000000f4241-0000-nodeB',
+        newData: { id: 1, balance: 42 },
+        oldData: { id: 1, balance: 42 },
+      }),
+      localHlc: '0000000f4240-0000-nodeA',
+      remoteHlc: '0000000f4241-0000-nodeB',
+    }
+
+    const result = await resolver.resolve(ctx)
+    expect(result.action).toBe('keep_local')
+  })
 })
 
 describe('PrimaryWinsResolver', () => {

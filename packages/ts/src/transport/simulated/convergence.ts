@@ -1,4 +1,5 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { canonicaliseForChecksum } from '../../replication/log/canonicalise.js'
 
 export interface NodeSnapshot {
   nodeId: string
@@ -50,7 +51,7 @@ async function getPrimaryKeyColumns(conn: SQLiteConnection, table: string): Prom
 }
 
 function rowKey(row: Record<string, unknown>, pkColumns: string[]): string {
-  return pkColumns.map(col => JSON.stringify(row[col] ?? null)).join('|')
+  return pkColumns.map(col => canonicaliseForChecksum(row[col] ?? null)).join('|')
 }
 
 export class ConvergenceOracle {
@@ -148,7 +149,9 @@ export class ConvergenceOracle {
         } else if (!row.nodeBValue) {
           messages.push(`    key=${row.key}: missing on ${d.nodeB}`)
         } else {
-          messages.push(`    key=${row.key}: ${JSON.stringify(row.nodeAValue)} vs ${JSON.stringify(row.nodeBValue)}`)
+          messages.push(
+            `    key=${row.key}: ${canonicaliseForChecksum(row.nodeAValue)} vs ${canonicaliseForChecksum(row.nodeBValue)}`,
+          )
         }
       }
       if (d.rowDiffs.length > 5) {
@@ -185,7 +188,7 @@ export class ConvergenceOracle {
         continue
       }
 
-      if (JSON.stringify(valA) !== JSON.stringify(valB)) {
+      if (canonicaliseForChecksum(valA) !== canonicaliseForChecksum(valB)) {
         diffs.push({ key, nodeAValue: valA, nodeBValue: valB })
       }
     }

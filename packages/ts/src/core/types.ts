@@ -243,6 +243,14 @@ export interface BulkLoadResult {
 
 export interface ServerExecutionTarget {
   query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
+  /**
+   * Optional single-pass read that returns rows already encoded for the wire
+   * (safe-range integers as plain numbers, larger integers and BLOBs as tagged
+   * envelopes). When present the server uses it instead of {@link query}
+   * followed by a separate tag-encoding walk. A target that omits it stays
+   * correct: the server falls back to encoding {@link query} rows itself.
+   */
+  queryForWire?(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
   /**

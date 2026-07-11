@@ -7,6 +7,13 @@ export interface SQLiteStatement {
   all<T = unknown>(...params: unknown[]): Promise<T[]>
   get<T = unknown>(...params: unknown[]): Promise<T | undefined>
   run(...params: unknown[]): Promise<RunResult>
+  /**
+   * Like {@link all} but skips the safe-range BigInt narrowing, leaving every
+   * integer as a BigInt. The server wire path narrows and tags in one pass, so
+   * feeding it raw rows avoids a second walk. Optional: a driver that omits it
+   * falls back to {@link all}, still correct but with the extra narrowing walk.
+   */
+  allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>
 }
 
 export interface SQLiteConnection {

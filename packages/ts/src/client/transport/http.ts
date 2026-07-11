@@ -1,3 +1,4 @@
+import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
 import type {
   BatchResponse,
@@ -30,23 +31,38 @@ export class HttpTransport implements Transport {
   }
 
   async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
-    return this.post<QueryResponse>('/query', { sql, params, readConcern })
+    const response = await this.post<QueryResponse>('/query', {
+      sql,
+      params: encodeTaggedValues(params),
+      readConcern,
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
-    return this.post<ExecuteResponse>('/execute', { sql, params })
+    return this.post<ExecuteResponse>('/execute', { sql, params: encodeTaggedValues(params) })
   }
 
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
-    return this.post<TransactionResponse>('/transaction', { statements })
+    return this.post<TransactionResponse>('/transaction', {
+      statements: statements.map(stmt => ({ sql: stmt.sql, params: encodeTaggedValues(stmt.params) })),
+    })
   }
 
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
-    return this.post<BatchResponse>('/batch', { sql, paramsBatch, writeConcern })
+    return this.post<BatchResponse>('/batch', {
+      sql,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry)),
+      writeConcern,
+    })
   }
 
   async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
-    return this.post<LoadResponse>('/load', { sql, paramsBatch, durability })
+    return this.post<LoadResponse>('/load', {
+      sql,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry)),
+      durability,
+    })
   }
 
   async subscribe(

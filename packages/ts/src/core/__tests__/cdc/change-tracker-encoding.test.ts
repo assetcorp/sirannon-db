@@ -25,9 +25,59 @@ describe('encodeTaggedValues', () => {
     expect(encodeTaggedValues(row)).toEqual(row)
   })
 
+  it('preserves objects with custom JSON behaviour so stringify still applies it', () => {
+    const stamp = new Date('2026-07-11T00:00:00.000Z')
+    const encoded = encodeTaggedValues({ createdAt: stamp }) as { createdAt: unknown }
+    expect(encoded.createdAt).toBe(stamp)
+    expect(JSON.parse(JSON.stringify(encoded))).toEqual({ createdAt: '2026-07-11T00:00:00.000Z' })
+  })
+
+  it('envelopes Buffer values even though Buffer defines its own toJSON', () => {
+    const encoded = encodeTaggedValues({ payload: Buffer.from([0xab]) })
+    expect(encoded).toEqual({ payload: { __sirannon_blob: 'AB' } })
+  })
+
   it('produces JSON-serialisable output for rows carrying BigInt and binary columns', () => {
     const encoded = encodeTaggedValues({ balance: 9007199254740993n, blob: Buffer.from([0x7f]) })
     expect(() => JSON.stringify(encoded)).not.toThrow()
+  })
+})
+
+describe('decodeTaggedValues hostile input', () => {
+  it('rejects integer payloads with non-digit characters', () => {
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: '12abc' } })).toThrow('Invalid tagged integer payload')
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: '1e10' } })).toThrow('Invalid tagged integer payload')
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: ' 1' } })).toThrow('Invalid tagged integer payload')
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: '' } })).toThrow('Invalid tagged integer payload')
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: '+1' } })).toThrow('Invalid tagged integer payload')
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: '0x10' } })).toThrow('Invalid tagged integer payload')
+  })
+
+  it('rejects integer payloads longer than an int64 can hold', () => {
+    const oversized = '9'.repeat(20)
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: oversized } })).toThrow('Invalid tagged integer payload')
+    const megabyteOfDigits = '1'.repeat(1_000_000)
+    expect(() => decodeTaggedValues({ v: { __sirannon_int: megabyteOfDigits } })).toThrow(
+      'Invalid tagged integer payload',
+    )
+  })
+
+  it('accepts the full int64 range', () => {
+    expect(decodeTaggedValues({ v: { __sirannon_int: '9223372036854775807' } })).toEqual({
+      v: 9223372036854775807n,
+    })
+    expect(decodeTaggedValues({ v: { __sirannon_int: '-9223372036854775808' } })).toEqual({
+      v: -9223372036854775808n,
+    })
+  })
+
+  it('leaves a non-string envelope payload as an ordinary object', () => {
+    expect(decodeTaggedValues({ v: { __sirannon_int: 5 } })).toEqual({ v: { __sirannon_int: 5 } })
+  })
+
+  it('leaves a string that resembles an envelope untouched', () => {
+    const lookalike = '{"__sirannon_int":"5"}'
+    expect(decodeTaggedValues({ v: lookalike })).toEqual({ v: lookalike })
   })
 })
 

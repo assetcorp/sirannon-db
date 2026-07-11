@@ -152,9 +152,33 @@ export function startPolling(
 export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
   const target = event.type === 'delete' ? (event.oldRow ?? {}) : event.row
   for (const [key, value] of Object.entries(filter)) {
-    if ((target as Record<string, unknown>)[key] !== value) {
+    if (!filterValueMatches((target as Record<string, unknown>)[key], value)) {
       return false
     }
   }
   return true
+}
+
+/**
+ * Row values carry BigInt beyond the safe-integer range and Buffer for BLOB
+ * columns, while filters can hold either representation; comparing across the
+ * bigint/number boundary and by bytes keeps a filter matching the same column
+ * value regardless of which form each side arrived in.
+ */
+function filterValueMatches(rowValue: unknown, filterValue: unknown): boolean {
+  if (rowValue === filterValue) return true
+  if (typeof rowValue === 'bigint' && typeof filterValue === 'number') {
+    return Number.isInteger(filterValue) && BigInt(filterValue) === rowValue
+  }
+  if (typeof rowValue === 'number' && typeof filterValue === 'bigint') {
+    return Number.isInteger(rowValue) && BigInt(rowValue) === filterValue
+  }
+  if (rowValue instanceof Uint8Array && filterValue instanceof Uint8Array) {
+    if (rowValue.byteLength !== filterValue.byteLength) return false
+    for (let i = 0; i < rowValue.byteLength; i++) {
+      if (rowValue[i] !== filterValue[i]) return false
+    }
+    return true
+  }
+  return false
 }

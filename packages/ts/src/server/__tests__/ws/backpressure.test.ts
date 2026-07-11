@@ -77,8 +77,13 @@ describe('WSHandler backpressure', () => {
   })
 
   it('closes the connection when a reply cannot be serialised rather than reporting it sent', async () => {
+    const poisonRow = {
+      toJSON: () => {
+        throw new Error('unserialisable value')
+      },
+    }
     const unserialisableTarget: ServerExecutionTarget = {
-      query: async <T>() => [{ balance: 9007199254740993n }] as T[],
+      query: async <T>() => [poisonRow] as T[],
       execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
       transaction: async fn => fn({} as never),
     }

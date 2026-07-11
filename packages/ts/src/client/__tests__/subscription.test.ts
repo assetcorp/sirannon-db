@@ -415,6 +415,51 @@ describe('WebSocketTransport', () => {
     }
   })
 
+  it('decodes tagged big-integer and blob envelopes on change rows into native values', async () => {
+    const { sockets, restore } = installFakeWebSockets()
+    try {
+      const changes: ChangeEvent[] = []
+      const transport = new WebSocketTransport('ws://localhost:1234/db/test', {
+        autoReconnect: false,
+        requestTimeout: 1000,
+      })
+
+      const subscribed = transport.subscribe('ledgers', undefined, e => changes.push(e))
+      await until(() => firstSubscribeFrame(sockets[0]) !== undefined)
+      const subId = String(firstSubscribeFrame(sockets[0])?.id)
+      sockets[0].deliver({ type: 'subscribed', id: subId, seq: '1' })
+      await subscribed
+
+      sockets[0].deliver({
+        type: 'change',
+        id: subId,
+        event: {
+          type: 'update',
+          table: 'ledgers',
+          row: { id: 1, balance: { __sirannon_int: '9007199254740995' }, payload: { __sirannon_blob: '0001FFAB' } },
+          oldRow: { id: 1, balance: { __sirannon_int: '9007199254740993' }, payload: null },
+          seq: '2',
+          timestamp: 1,
+        },
+      })
+      await until(() => changes.length >= 1)
+
+      const row = changes[0].row as Record<string, unknown>
+      expect(row.balance).toBe(9007199254740995n)
+      const blob = row.payload
+      expect(Buffer.isBuffer(blob) || blob instanceof Uint8Array).toBe(true)
+      expect(Array.from(blob as Uint8Array)).toEqual([0x00, 0x01, 0xff, 0xab])
+
+      const oldRow = changes[0].oldRow as Record<string, unknown>
+      expect(oldRow.balance).toBe(9007199254740993n)
+      expect(oldRow.payload).toBeNull()
+
+      transport.close()
+    } finally {
+      restore()
+    }
+  })
+
   it('resumes from the subscribed baseline even when no change was received', async () => {
     const { sockets, restore } = installFakeWebSockets()
     try {

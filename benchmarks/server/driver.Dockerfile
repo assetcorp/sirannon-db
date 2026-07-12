@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Node load-generator image for the benchmark. One generator drives both engines through their
 # native clients: Sirannon over its SDK's WebSocket transport and PostgreSQL over node-postgres.
 #
@@ -11,10 +12,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 COPY . .
-RUN pnpm install --frozen-lockfile
+# Scope the install to the SDK package and disable pnpm's multi-day release-age gate; a full
+# workspace install pulls the example apps and stalls this benchmark image build on slow networks.
+RUN printf 'packages:\n  - packages/ts\nminimumReleaseAge: 0\nstrictDepBuilds: false\nverifyDepsBeforeRun: false\nfetchRetries: 5\nfetchTimeout: 600000\nfetchRetryMaxtimeout: 300000\nallowBuilds:\n  better-sqlite3: true\n  esbuild: true\n' > pnpm-workspace.yaml
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --no-frozen-lockfile --store-dir=/pnpm/store
 RUN pnpm --filter @delali/sirannon-db build
 WORKDIR /repo/benchmarks/server/driver
-RUN pnpm install --ignore-workspace --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --ignore-workspace --frozen-lockfile --store-dir=/pnpm/store
 
 FROM node:24-trixie-slim AS runtime
 WORKDIR /repo/benchmarks/server/driver

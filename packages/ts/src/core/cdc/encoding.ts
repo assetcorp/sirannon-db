@@ -23,14 +23,8 @@ const INT_PAYLOAD_RE = /^-?\d{1,19}$/
  * encoded directly without a preceding narrowing walk.
  */
 export function encodeTaggedValues(value: unknown): unknown {
-  if (typeof value === 'bigint') {
-    if (value >= -SAFE_INT_BOUND && value <= SAFE_INT_BOUND) {
-      return Number(value)
-    }
-    return { [INT_TAG]: value.toString() }
-  }
-  if (isBinaryValue(value)) {
-    return { [BLOB_TAG]: encodeHexBytes(value) }
+  if (typeof value === 'bigint' || isBinaryValue(value)) {
+    return encodeTaggedLeaf(value)
   }
   if (value === null || typeof value !== 'object') return value
   if (Array.isArray(value)) {
@@ -48,6 +42,50 @@ export function encodeTaggedValues(value: unknown): unknown {
     out[k] = encodeTaggedValues(obj[k])
   }
   return out
+}
+
+/**
+ * Encodes a single scalar into its wire form: safe-range `BigInt` narrows to a
+ * number, an out-of-range `BigInt` and any binary value take the tagged
+ * envelope, everything else passes through. The one place the envelope format
+ * lives, shared by {@link encodeTaggedValues} and {@link encodeWireRowsInPlace}.
+ */
+function encodeTaggedLeaf(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    if (value >= -SAFE_INT_BOUND && value <= SAFE_INT_BOUND) {
+      return Number(value)
+    }
+    return { [INT_TAG]: value.toString() }
+  }
+  if (isBinaryValue(value)) {
+    return { [BLOB_TAG]: encodeHexBytes(value) }
+  }
+  return value
+}
+
+/**
+ * Normalises freshly materialised query rows to their wire form in place,
+ * mutating each flat row's scalar cells instead of cloning a row object or
+ * building a new array.
+ *
+ * Safe only for rows read once for a single wire response. The CDC change path
+ * hands one `ChangeEvent` by reference to every subscriber and to in-process
+ * consumers, so it MUST keep the non-mutating {@link encodeTaggedValues};
+ * mutating a shared event corrupts it for the other consumers.
+ */
+export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row === null || typeof row !== 'object') continue
+    const obj = row as Record<string, unknown>
+    for (const k of Object.keys(obj)) {
+      const cell = obj[k]
+      if (typeof cell === 'bigint' || isBinaryValue(cell)) {
+        obj[k] = encodeTaggedLeaf(cell)
+      }
+    }
+  }
+  return rows
 }
 
 export function decodeTaggedValues(value: unknown): unknown {

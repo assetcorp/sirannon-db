@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeTracker } from '../../cdc/change-tracker.js'
-import { decodeTaggedValues, encodeTaggedValues } from '../../cdc/encoding.js'
+import { decodeTaggedValues, encodeTaggedValues, encodeWireRowsInPlace } from '../../cdc/encoding.js'
 import type { SQLiteConnection } from '../../driver/types.js'
 import { createTestDb, insertUser } from './_helpers.js'
 
@@ -40,6 +40,73 @@ describe('encodeTaggedValues', () => {
   it('produces JSON-serialisable output for rows carrying BigInt and binary columns', () => {
     const encoded = encodeTaggedValues({ balance: 9007199254740993n, blob: Buffer.from([0x7f]) })
     expect(() => JSON.stringify(encoded)).not.toThrow()
+  })
+})
+
+describe('encodeWireRowsInPlace', () => {
+  function freshWireRows(): Record<string, unknown>[] {
+    return [
+      {
+        safeInt: 42n,
+        bigInt: 9223372036854775807n,
+        negBigInt: -9223372036854775808n,
+        blobBuffer: Buffer.from([0x00, 0x01, 0xff, 0xab]),
+        blobBytes: Uint8Array.from([0xde, 0xad]),
+        emptyBlob: Buffer.alloc(0),
+        real: 3.5,
+        text: 'Alice',
+        nothing: null,
+      },
+    ]
+  }
+
+  it('produces byte-identical wire output to the shared encoder for every value type', () => {
+    const viaShared = encodeTaggedValues(freshWireRows())
+    const viaInPlace = encodeWireRowsInPlace(freshWireRows())
+    expect(viaInPlace).toEqual(viaShared)
+    expect(JSON.stringify(viaInPlace)).toBe(JSON.stringify(viaShared))
+  })
+
+  it('round-trips through the wire decoder back to native values', () => {
+    const encoded = encodeWireRowsInPlace(freshWireRows())
+    const decoded = decodeTaggedValues(JSON.parse(JSON.stringify(encoded))) as Record<string, unknown>[]
+    expect(decoded[0].bigInt).toBe(9223372036854775807n)
+    expect(decoded[0].negBigInt).toBe(-9223372036854775808n)
+    expect(decoded[0].safeInt).toBe(42)
+    expect(Array.from(decoded[0].blobBuffer as Uint8Array)).toEqual([0x00, 0x01, 0xff, 0xab])
+    expect(decoded[0].nothing).toBeNull()
+  })
+
+  it('mutates the same rows in place instead of allocating a new set', () => {
+    const rows = freshWireRows()
+    const firstRow = rows[0]
+    const result = encodeWireRowsInPlace(rows)
+    expect(result).toBe(rows)
+    expect(result[0]).toBe(firstRow)
+    expect(firstRow.bigInt).toEqual({ __sirannon_int: '9223372036854775807' })
+    expect(firstRow.blobBuffer).toEqual({ __sirannon_blob: '0001FFAB' })
+    expect(firstRow.safeInt).toBe(42)
+  })
+
+  it('leaves non-object entries untouched', () => {
+    expect(encodeWireRowsInPlace([null, 5, 'x'] as unknown[])).toEqual([null, 5, 'x'])
+  })
+})
+
+describe('CDC encoder never mutates a shared event', () => {
+  it('leaves the input intact so a shared ChangeEvent survives fan-out to every subscriber', () => {
+    const row = { balance: 9223372036854775807n, payload: Buffer.from([0xab]), name: 'Alice' }
+    const encoded = encodeTaggedValues(row)
+
+    expect(row.balance).toBe(9223372036854775807n)
+    expect(Buffer.isBuffer(row.payload)).toBe(true)
+    expect(row.name).toBe('Alice')
+    expect(encoded).not.toBe(row)
+    expect(encoded).toEqual({
+      balance: { __sirannon_int: '9223372036854775807' },
+      payload: { __sirannon_blob: 'AB' },
+      name: 'Alice',
+    })
   })
 })
 

@@ -1,4 +1,4 @@
-import { encodeTaggedValues } from './cdc/encoding.js'
+import { encodeWireRowsInPlace } from './cdc/encoding.js'
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
@@ -62,16 +62,18 @@ export async function query<T = Record<string, unknown>>(
 /**
  * Reads rows already encoded for the wire in a single walk. Pulls raw BigInt
  * rows from the driver ({@link SQLiteStatement.allRaw}) and lets
- * {@link encodeTaggedValues} both narrow safe-range integers and tag the rest,
- * so the server never narrows on the driver and then re-scans to tag.
+ * {@link encodeWireRowsInPlace} narrow safe-range integers and tag the rest
+ * without cloning a row, so the server never narrows on the driver and then
+ * re-scans to tag. The rows are freshly materialised for this response alone,
+ * so in-place mutation is safe here.
  */
 export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
   assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     const bound = bindParams(params)
-    const rows = stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)
-    return encodeTaggedValues(rows) as unknown[]
+    const rows = (stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)) as unknown[]
+    return encodeWireRowsInPlace(rows)
   } catch (err) {
     throw new QueryError(err instanceof Error ? err.message : String(err), sql)
   }

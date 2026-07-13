@@ -13,19 +13,12 @@ prov_init() {
   [ "$DRY_RUN" = "1" ] || hcloud context active >/dev/null 2>&1 || [ -n "${HCLOUD_TOKEN:-}" ] \
     || die "hcloud not configured; run 'hcloud context create' or export HCLOUD_TOKEN"
   MACHINE_TYPE="${MACHINE_TYPE:-ccx33}"
+  LOCAL_SSD_MODE="${LOCAL_SSD_MODE:-root}"
   IMAGE="${IMAGE:-ubuntu-24.04}"
   LOCATION="${HCLOUD_LOCATION:-fsn1}"
   SSH_USER="${SSH_USER:-root}"
   : "${MACHINE_LABEL:=Hetzner ${MACHINE_TYPE}, ${LOCATION}}"
   resolve_ssh_key
-}
-
-prov_hourly() {
-  case "$MACHINE_TYPE" in
-    ccx33) echo "~\$0.25" ;;
-    ccx43) echo "~\$0.51" ;;
-    *) echo "unknown" ;;
-  esac
 }
 
 prov_exists() {

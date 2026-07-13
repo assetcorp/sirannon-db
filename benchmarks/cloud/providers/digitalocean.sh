@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # DRY_RUN, VM_NAME, MACHINE_LABEL, CLOUD_DIR come from common.sh
 #
-# DigitalOcean driver. The general-purpose g-8vcpu-32gb droplet gives 8 dedicated
-# vCPU and 32 GB, matching the other providers. doctl addresses droplets by id,
-# so name is resolved to an id for ip, status, and delete.
+# DigitalOcean driver. The Premium gd-8vcpu-32gb droplet gives 8 vCPU, 32 GB, and
+# a guaranteed-NVMe local root; the Regular g- tier does not guarantee NVMe. doctl
+# addresses droplets by id, so name is resolved to an id for ip, status, and delete.
 
 # shellcheck source=lib/raw-ssh.sh
 . "$CLOUD_DIR/lib/raw-ssh.sh"
@@ -12,19 +12,15 @@ prov_init() {
   require_cmd doctl
   [ "$DRY_RUN" = "1" ] || doctl account get >/dev/null 2>&1 \
     || die "doctl not authenticated; run 'doctl auth init'"
-  MACHINE_TYPE="${MACHINE_TYPE:-g-8vcpu-32gb}"
+  MACHINE_TYPE="${MACHINE_TYPE:-gd-8vcpu-32gb}"
+  LOCAL_SSD_MODE="${LOCAL_SSD_MODE:-root}"
+  [ "$DRY_RUN" = "1" ] || doctl compute size list --format Slug --no-header 2>/dev/null | grep -qx "$MACHINE_TYPE" \
+    || die "DigitalOcean size '$MACHINE_TYPE' not found; run 'doctl compute size list' to pick a valid slug"
   IMAGE="${IMAGE:-ubuntu-24-04-x64}"
   REGION="${DO_REGION:-nyc3}"
   SSH_USER="${SSH_USER:-root}"
   : "${MACHINE_LABEL:=DigitalOcean ${MACHINE_TYPE}, ${REGION}}"
   resolve_ssh_key
-}
-
-prov_hourly() {
-  case "$MACHINE_TYPE" in
-    g-8vcpu-32gb) echo "~\$0.24" ;;
-    *) echo "unknown" ;;
-  esac
 }
 
 _do_id() {

@@ -2,8 +2,9 @@
 # shellcheck disable=SC2154  # DRY_RUN, VM_NAME, DISK_SIZE, MACHINE_LABEL come from common.sh
 #
 # Google Compute Engine driver. gcloud manages SSH keys and the connection, so
-# this driver does not use the raw-ssh transport. c3-standard-8 has a fixed CPU
-# platform, which is what a published, reproducible run needs.
+# this driver does not use the raw-ssh transport. c3-standard-8-lssd keeps a fixed
+# Sapphire Rapids CPU and bundles local NVMe SSDs, so database I/O avoids the
+# network-attached pd-balanced boot disk.
 
 prov_init() {
   require_cmd gcloud
@@ -11,24 +12,13 @@ prov_init() {
   [ -n "${PROJECT:-}" ] || [ "$DRY_RUN" = "1" ] || die "no GCP project; export GCP_PROJECT or run 'gcloud config set project'"
   PROJECT="${PROJECT:-DRY_RUN_PROJECT}"
   ZONE="${GCP_ZONE:-us-central1-a}"
-  MACHINE_TYPE="${MACHINE_TYPE:-c3-standard-8}"
+  MACHINE_TYPE="${MACHINE_TYPE:-c3-standard-8-lssd}"
+  LOCAL_SSD_MODE="${LOCAL_SSD_MODE:-required}"
   IMAGE_FAMILY="${IMAGE_FAMILY:-ubuntu-2404-lts-amd64}"
   IMAGE_PROJECT="${IMAGE_PROJECT:-ubuntu-os-cloud}"
   IAP_FLAG=""
   [ "${USE_IAP:-0}" = "1" ] && IAP_FLAG="--tunnel-through-iap"
   : "${MACHINE_LABEL:=GCP ${MACHINE_TYPE}, ${ZONE}}"
-}
-
-prov_hourly() {
-  case "$MACHINE_TYPE" in
-    c3-standard-8) echo "~\$0.40" ;;
-    c3-standard-4) echo "~\$0.20" ;;
-    n2-standard-8) echo "~\$0.39" ;;
-    e2-standard-2) echo "~\$0.07" ;;
-    e2-medium) echo "~\$0.03" ;;
-    e2-small) echo "~\$0.02" ;;
-    *) echo "unknown" ;;
-  esac
 }
 
 prov_exists() {

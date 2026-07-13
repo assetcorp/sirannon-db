@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # DRY_RUN, VM_NAME, DISK_SIZE, MACHINE_LABEL, CLOUD_DIR come from common.sh
 #
-# AWS EC2 driver. m7i.2xlarge is 8 vCPU / 32 GB on fixed Sapphire Rapids. This
-# driver imports the key pair, creates a security group that allows SSH only
-# from this machine's public IP, resolves the latest Ubuntu 24.04 AMI from
-# Canonical, and tags the instance by name so later commands find it. It assumes
-# a default VPC with a default subnet; set AWS_SUBNET to override.
+# AWS EC2 driver. m6id.2xlarge is 8 vCPU / 32 GB with a bundled NVMe instance
+# store for database I/O; it is Ice Lake because no x86 general-purpose instance
+# pairs Sapphire Rapids with an instance store. This driver imports the key pair,
+# creates a security group that allows SSH only from this machine's public IP,
+# resolves the latest Ubuntu 24.04 AMI from Canonical, and tags the instance by
+# name so later commands find it. It assumes a default VPC with a default subnet;
+# set AWS_SUBNET to override.
 
 # shellcheck source=lib/raw-ssh.sh
 . "$CLOUD_DIR/lib/raw-ssh.sh"
@@ -18,19 +20,12 @@ prov_init() {
   export AWS_DEFAULT_REGION="$AWS_REGION"
   [ "$DRY_RUN" = "1" ] || aws sts get-caller-identity >/dev/null 2>&1 \
     || die "aws not authenticated; run 'aws configure'"
-  MACHINE_TYPE="${MACHINE_TYPE:-m7i.2xlarge}"
+  MACHINE_TYPE="${MACHINE_TYPE:-m6id.2xlarge}"
+  LOCAL_SSD_MODE="${LOCAL_SSD_MODE:-required}"
   SSH_USER="${SSH_USER:-ubuntu}"
   SG_NAME="${AWS_SG_NAME:-sirannon-bench-sg}"
   : "${MACHINE_LABEL:=AWS ${MACHINE_TYPE}, ${AWS_REGION}}"
   resolve_ssh_key
-}
-
-prov_hourly() {
-  case "$MACHINE_TYPE" in
-    m7i.2xlarge) echo "~\$0.40" ;;
-    c7i.2xlarge) echo "~\$0.36" ;;
-    *) echo "unknown" ;;
-  esac
 }
 
 _aws_instance_id() {

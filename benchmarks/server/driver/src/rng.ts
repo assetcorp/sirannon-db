@@ -24,11 +24,11 @@ export class SeededRng {
   }
 
   text(length: number): string {
-    let out = ''
+    const chars = new Array<string>(length)
     for (let i = 0; i < length; i++) {
-      out += ALPHABET[Math.floor(this.fraction() * ALPHABET.length)]
+      chars[i] = ALPHABET.charAt(Math.floor(this.fraction() * ALPHABET.length))
     }
-    return out
+    return chars.join('')
   }
 }
 

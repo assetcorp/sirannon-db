@@ -2,7 +2,7 @@
 #
 # Shared orchestration for the cloud benchmark runners. A provider driver,
 # sourced after this file, supplies the provider-specific pieces: prov_init,
-# prov_exists, prov_create, prov_delete, prov_status, prov_hourly, and the
+# prov_exists, prov_create, prov_delete, prov_status, and the
 # transport prov_ssh, prov_ssh_interactive, prov_scp_up, and prov_scp_down.
 # Everything below is identical across providers: git packaging, the detached
 # run, result fetching, dry-run, and teardown.
@@ -59,7 +59,7 @@ cmd_up() {
     log "$VM_NAME already exists"
     return 0
   fi
-  log "create $VM_NAME ($MACHINE_TYPE, $(prov_hourly)/hr)"
+  log "create $VM_NAME ($MACHINE_TYPE)"
   if [ "$DRY_RUN" != "1" ] && [ "${ASSUME_YES:-0}" != "1" ]; then
     read -r -p "This starts billing until you run 'down'. Proceed? [y/N] " reply
     [ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted"
@@ -106,8 +106,8 @@ cmd_sync() {
 }
 
 cmd_setup() {
-  log "install Docker, git, and Python 3 on the VM"
-  prov_ssh "bash sirannon/benchmarks/cloud/remote-bootstrap.sh"
+  log "prepare local NVMe, install Docker, git, and Python 3 on the VM"
+  prov_ssh "BENCH_LOCAL_SSD_MODE='${LOCAL_SSD_MODE:-auto}' bash sirannon/benchmarks/cloud/remote-bootstrap.sh"
 }
 
 cmd_run() {

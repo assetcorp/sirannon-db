@@ -94,38 +94,10 @@ export class SirannonDriver extends Driver {
 
   async seed(tables: SeedTable[]): Promise<void> {
     for (const table of tables) {
-      await this.seedTable(table)
-    }
-  }
-
-  // A one-batch lookahead defers the checkpoint to the final batch of the table:
-  // every batch but the last loads with `checkpoint: false`, so the single
-  // fsyncing WAL checkpoint is paid once at the end rather than once per batch.
-  private async seedTable(table: SeedTable): Promise<void> {
-    const insert = this.insertSql(table)
-    const send = (rows: unknown[][], checkpoint: boolean): Promise<unknown> =>
-      this.database().load(insert, rows, 'off', checkpoint)
-
-    let batch: unknown[][] = []
-    let pending: unknown[][] | null = null
-    for (const row of table.rows) {
-      batch.push(row)
-      if (batch.length >= SEED_BATCH_ROWS) {
-        if (pending !== null) {
-          await send(pending, false)
-        }
-        pending = batch
-        batch = []
-      }
-    }
-
-    if (batch.length > 0) {
-      if (pending !== null) {
-        await send(pending, false)
-      }
-      await send(batch, true)
-    } else if (pending !== null) {
-      await send(pending, true)
+      await this.database().loadAll(this.insertSql(table), table.rows, {
+        batchSize: SEED_BATCH_ROWS,
+        durability: 'off',
+      })
     }
   }
 

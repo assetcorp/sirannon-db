@@ -26,7 +26,7 @@ export interface Transport {
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
   batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
-  load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse>
+  load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,

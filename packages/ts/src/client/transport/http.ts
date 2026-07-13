@@ -57,11 +57,17 @@ export class HttpTransport implements Transport {
     })
   }
 
-  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<LoadResponse> {
     return this.post<LoadResponse>('/load', {
       sql,
       paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry)),
       durability,
+      checkpoint,
     })
   }
 

@@ -68,6 +68,25 @@ describe('runBulkLoad pragma sequencing', () => {
     ])
   })
 
+  it('skips the checkpoint on a non-final load but still restores durability', async () => {
+    const log: string[] = []
+    const summary = await runBulkLoad({
+      writer: createStubWriter(log),
+      configuredSynchronous: 'full',
+      walMode: true,
+      durability: undefined,
+      checkpoint: false,
+      loadRows: async () => {
+        log.push('<load>')
+        return oneRow
+      },
+    })
+
+    expect(summary).toEqual(oneRow)
+    expect(log).toEqual(['PRAGMA synchronous = OFF', '<load>', 'PRAGMA synchronous = FULL'])
+    expect(log).not.toContain('PRAGMA wal_checkpoint(TRUNCATE)')
+  })
+
   it('uses the requested load durability', async () => {
     const log: string[] = []
     await runBulkLoad({
@@ -217,6 +236,34 @@ describe('Database.bulkLoad', () => {
     if (existsSync(walPath)) {
       expect(statSync(walPath).size).toBe(0)
     }
+  })
+
+  it('checkpoints once at the end of a multi-batch load and keeps measured writes at full durability', async () => {
+    const path = join(tempDir, 'multi-batch.db')
+    const db = await sirannon.open('multi-batch', path, { synchronous: 'full' })
+    await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
+
+    const walPath = `${path}-wal`
+    const insert = 'INSERT INTO readings (id, value) VALUES (?, ?)'
+    const batchFrom = (start: number): number[][] => Array.from({ length: 200 }, (_, i) => [start + i, i])
+
+    await db.bulkLoad(insert, batchFrom(1), { durability: 'off', checkpoint: false })
+    await db.bulkLoad(insert, batchFrom(201), { durability: 'off', checkpoint: false })
+
+    expect(existsSync(walPath)).toBe(true)
+    expect(statSync(walPath).size).toBeGreaterThan(0)
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
+
+    await db.bulkLoad(insert, batchFrom(401), { durability: 'off' })
+
+    if (existsSync(walPath)) {
+      expect(statSync(walPath).size).toBe(0)
+    }
+    const rows = await db.query<{ count: number }>('SELECT COUNT(*) AS count FROM readings')
+    expect(rows[0].count).toBe(600)
+
+    await db.execute('INSERT INTO readings (id, value) VALUES (99999, 1.5)')
+    expect(await writerSynchronousLevel(db)).toBe(FULL)
   })
 
   it('rolls back an interrupted load and stays recoverable by re-running it', async () => {

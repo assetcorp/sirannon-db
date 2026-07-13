@@ -636,10 +636,15 @@ class TopologyAwareTransport implements Transport {
     }
   }
 
-  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<LoadResponse> {
     const transport = await this.getWriteTransport()
     try {
-      return await transport.load(sql, paramsBatch, durability)
+      return await transport.load(sql, paramsBatch, durability, checkpoint)
     } catch (err) {
       if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
         await this.client._refreshClusterRouting(this.databaseId)

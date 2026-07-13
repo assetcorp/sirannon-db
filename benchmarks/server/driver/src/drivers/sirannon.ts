@@ -1,7 +1,8 @@
 // Drive Sirannon through the SDK an application ships with: seeding and measured operations both go
-// over the WebSocket transport, DDL over HTTP `/execute`. Seeding uses the bulk-load endpoint, which
-// relaxes writer durability per batch and restores the configured level, so measured writes still
-// run at the requested durability.
+// over the WebSocket transport, DDL over HTTP `/execute`. Seeding streams each table to the bulk-load
+// endpoint in batches at relaxed durability and pays the one fsyncing WAL checkpoint once, when the
+// table finishes, instead of once per batch; the configured durability is restored after every batch,
+// so measured writes still run at the requested durability.
 
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
@@ -93,23 +94,38 @@ export class SirannonDriver extends Driver {
 
   async seed(tables: SeedTable[]): Promise<void> {
     for (const table of tables) {
-      const insert = this.insertSql(table)
-      let batch: unknown[][] = []
-      const flush = async (): Promise<void> => {
-        if (batch.length === 0) {
-          return
+      await this.seedTable(table)
+    }
+  }
+
+  // A one-batch lookahead defers the checkpoint to the final batch of the table:
+  // every batch but the last loads with `checkpoint: false`, so the single
+  // fsyncing WAL checkpoint is paid once at the end rather than once per batch.
+  private async seedTable(table: SeedTable): Promise<void> {
+    const insert = this.insertSql(table)
+    const send = (rows: unknown[][], checkpoint: boolean): Promise<unknown> =>
+      this.database().load(insert, rows, 'off', checkpoint)
+
+    let batch: unknown[][] = []
+    let pending: unknown[][] | null = null
+    for (const row of table.rows) {
+      batch.push(row)
+      if (batch.length >= SEED_BATCH_ROWS) {
+        if (pending !== null) {
+          await send(pending, false)
         }
-        const paramsBatch = batch
+        pending = batch
         batch = []
-        await this.database().load(insert, paramsBatch, 'off')
       }
-      for (const row of table.rows) {
-        batch.push(row)
-        if (batch.length >= SEED_BATCH_ROWS) {
-          await flush()
-        }
+    }
+
+    if (batch.length > 0) {
+      if (pending !== null) {
+        await send(pending, false)
       }
-      await flush()
+      await send(batch, true)
+    } else if (pending !== null) {
+      await send(pending, true)
     }
   }
 

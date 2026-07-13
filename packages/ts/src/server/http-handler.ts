@@ -21,8 +21,10 @@ import type {
 } from './protocol.js'
 import {
   decodeBoundParams,
+  loadCheckpointValidationError,
   loadDurabilityValidationError,
   paramsBatchValidationError,
+  toBulkLoadOptions,
   toExecuteResponse,
   transactionStatementsValidationError,
 } from './protocol.js'
@@ -233,6 +235,12 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
       return
     }
 
+    const checkpointError = loadCheckpointValidationError(body.checkpoint)
+    if (checkpointError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', checkpointError)
+      return
+    }
+
     const paramsBatch = decodeBatchParams(res, body.paramsBatch)
     if (paramsBatch === null) return
 
@@ -246,12 +254,7 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
     }
 
     try {
-      const summary = await bulkLoad.call(
-        target,
-        body.sql,
-        paramsBatch,
-        body.durability ? { durability: body.durability } : undefined,
-      )
+      const summary = await bulkLoad.call(target, body.sql, paramsBatch, toBulkLoadOptions(body))
       if (abort.aborted) return
       sendJson(res, summary)
     } catch (err) {

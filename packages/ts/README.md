@@ -228,6 +228,8 @@ The load holds the single writer for its whole duration, so no other write commi
 
 The result sums the row count and the changes rather than returning one object per row, so a load of millions of rows never holds millions of result objects in memory. Over the server, one load must fit under `maxBodyBytes`; send a larger dataset as several sequential loads, each of which restores durability on its own.
 
+When you split a dataset into many batches, pass `{ checkpoint: false }` on every batch but the last so the one fsyncing WAL checkpoint is paid once at the end instead of once per batch. Each batch still restores the configured durability, so an import you abandon partway never leaves the writer at the relaxed level, and SQLite's automatic checkpoint keeps the WAL bounded during the import. On network-attached disks this turns a per-batch checkpoint storm into a single flush, which is what keeps a ten-million-row seed from stalling.
+
 ### Connection pooling
 
 Every database opens with 1 dedicated write connection and N read connections (default 4). WAL mode is enabled by default, allowing concurrent reads during writes.
@@ -449,7 +451,7 @@ Connect to `ws://host:port/db/:id` and send JSON messages. Every message carries
 | `execute` | `sql`, `params?` | `{ type: 'result', data: { changes, lastInsertRowId } }` |
 | `transaction` | `statements`, `writeConcern?` | `{ type: 'result', data: { results } }` |
 | `batch` | `sql`, `paramsBatch`, `writeConcern?` | `{ type: 'result', data: { results } }` |
-| `load` | `sql`, `paramsBatch`, `durability?` | `{ type: 'result', data: { rowsLoaded, changes } }` |
+| `load` | `sql`, `paramsBatch`, `durability?`, `checkpoint?` | `{ type: 'result', data: { rowsLoaded, changes } }` |
 | `subscribe` | `table`, `filter?` | `{ type: 'subscribed' }` then `change` events |
 | `unsubscribe` | - | `{ type: 'unsubscribed' }` |
 

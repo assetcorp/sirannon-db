@@ -2,6 +2,7 @@ import { isBulkLoadDurability } from '../core/bulk-load.js'
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type {
   BulkLoadDurability,
+  BulkLoadOptions,
   BulkLoadResult,
   ClusterStatusInfo,
   ExecuteResult,
@@ -64,6 +65,7 @@ export interface LoadRequest {
   sql: string
   paramsBatch: (Record<string, unknown> | unknown[])[]
   durability?: BulkLoadDurability
+  checkpoint?: boolean
 }
 
 export type LoadResponse = BulkLoadResult
@@ -155,6 +157,7 @@ export interface WSLoadMessage {
   sql: string
   paramsBatch: (Record<string, unknown> | unknown[])[]
   durability?: BulkLoadDurability
+  checkpoint?: boolean
 }
 
 export type WSServerMessage =
@@ -235,6 +238,31 @@ export function loadDurabilityValidationError(value: unknown): string | null {
     return "Field \"durability\" must be 'off' or 'normal' when provided"
   }
   return null
+}
+
+/** Validates the optional load checkpoint field identically for both transports. */
+export function loadCheckpointValidationError(value: unknown): string | null {
+  if (value === undefined) return null
+  if (typeof value !== 'boolean') {
+    return 'Field "checkpoint" must be a boolean when provided'
+  }
+  return null
+}
+
+/**
+ * Builds the bulk-load options both transports pass to the execution target,
+ * returning undefined when neither field is set so the target keeps its
+ * defaults.
+ */
+export function toBulkLoadOptions(source: {
+  durability?: BulkLoadDurability
+  checkpoint?: boolean
+}): BulkLoadOptions | undefined {
+  if (source.durability === undefined && source.checkpoint === undefined) return undefined
+  const options: BulkLoadOptions = {}
+  if (source.durability !== undefined) options.durability = source.durability
+  if (source.checkpoint !== undefined) options.checkpoint = source.checkpoint
+  return options
 }
 
 export type FieldValidation<T> = { ok: true; value: T | undefined } | { ok: false; message: string }

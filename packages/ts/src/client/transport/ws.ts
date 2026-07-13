@@ -116,7 +116,12 @@ export class WebSocketTransport implements Transport {
     })
   }
 
-  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<LoadResponse> {
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<LoadResponse> {
     await this.ensureConnected()
     const id = this.nextId()
     return this.request<LoadResponse>({
@@ -125,6 +130,7 @@ export class WebSocketTransport implements Transport {
       sql,
       paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry) as Params),
       ...(durability ? { durability } : {}),
+      ...(checkpoint !== undefined ? { checkpoint } : {}),
     })
   }
 

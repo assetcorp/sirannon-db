@@ -232,6 +232,14 @@ export type BulkLoadDurability = 'off' | 'normal'
 export interface BulkLoadOptions {
   /** Durability during the load. Default: 'off'. */
   durability?: BulkLoadDurability
+  /**
+   * Whether this load ends with a WAL checkpoint. Default: true. Set it false
+   * on every load but the last of a multi-batch import so the one fsyncing
+   * checkpoint is paid once at the end instead of once per batch; the
+   * configured durability is still restored after each batch regardless, so an
+   * abandoned import never leaves the writer at the relaxed level.
+   */
+  checkpoint?: boolean
 }
 
 /** Aggregate outcome of a bulk load. Summed rather than per-row so a

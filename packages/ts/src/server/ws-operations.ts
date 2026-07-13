@@ -2,8 +2,10 @@ import type { ServerExecutionTarget } from '../core/types.js'
 import type { WSResultMessage } from './protocol.js'
 import {
   decodeBoundParams,
+  loadCheckpointValidationError,
   loadDurabilityValidationError,
   paramsBatchValidationError,
+  toBulkLoadOptions,
   toExecuteResponse,
   transactionStatementsValidationError,
   validateWriteConcern,
@@ -205,6 +207,12 @@ export async function handleLoadMessage(
     return
   }
 
+  const checkpointError = loadCheckpointValidationError(msg.checkpoint)
+  if (checkpointError !== null) {
+    ctx.sendError(id, 'INVALID_MESSAGE', checkpointError)
+    return
+  }
+
   const bulkLoad = ctx.target.bulkLoad
   if (typeof bulkLoad !== 'function') {
     ctx.sendError(id, 'BULK_LOAD_UNSUPPORTED', 'The execution target for this database does not support bulk load')
@@ -214,10 +222,13 @@ export async function handleLoadMessage(
   const sql = msg.sql
   const paramsBatch = decodeBatchParams(ctx, id, msg.paramsBatch as (Record<string, unknown> | unknown[])[])
   if (paramsBatch === null) return
-  const durability = msg.durability as 'off' | 'normal' | undefined
+  const options = toBulkLoadOptions({
+    durability: msg.durability as 'off' | 'normal' | undefined,
+    checkpoint: msg.checkpoint as boolean | undefined,
+  })
 
   try {
-    const summary = await bulkLoad.call(ctx.target, sql, paramsBatch, durability ? { durability } : undefined)
+    const summary = await bulkLoad.call(ctx.target, sql, paramsBatch, options)
     ctx.sendResult(id, summary)
   } catch (err) {
     ctx.sendCaughtError(id, err)

@@ -67,9 +67,19 @@ export class RemoteDatabase {
    * for seeding and large imports where the load itself need not be
    * crash-durable but every write after it must run at the configured
    * durability. Returns the total rows loaded and changes applied.
+   *
+   * Pass `checkpoint: false` on every load but the last of a multi-batch
+   * import so the one fsyncing WAL checkpoint is paid once at the end rather
+   * than once per batch; the configured durability is still restored after
+   * each batch either way.
    */
-  async load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability): Promise<BulkLoadResult> {
-    return this.transport.load(sql, paramsBatch, durability)
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<BulkLoadResult> {
+    return this.transport.load(sql, paramsBatch, durability, checkpoint)
   }
 
   /**

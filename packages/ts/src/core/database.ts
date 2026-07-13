@@ -232,6 +232,7 @@ export class Database {
           configuredSynchronous: this.synchronous,
           walMode: this.walMode,
           durability: options?.durability,
+          checkpoint: options?.checkpoint ?? true,
           loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
         })
       })

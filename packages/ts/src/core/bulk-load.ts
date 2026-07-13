@@ -20,6 +20,7 @@ export interface BulkLoadRun {
   configuredSynchronous: SynchronousLevel
   walMode: boolean
   durability: BulkLoadDurability | undefined
+  checkpoint?: boolean
   loadRows: () => Promise<BulkLoadResult>
 }
 
@@ -54,6 +55,12 @@ export interface BulkLoadRun {
  * has already committed, so those pages stay in the WAL until then. The
  * checkpoint runs synchronously in the engine and blocks the event loop for
  * the flush, which grows with the size of the load.
+ *
+ * A multi-batch import passes `checkpoint: false` on every load but the last so
+ * the one fsyncing checkpoint is paid once at the end instead of once per
+ * batch; each intermediate load still restores the configured level, and
+ * SQLite's automatic checkpoint keeps the WAL bounded during the import at the
+ * relaxed level with no fsync of its own.
  */
 export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
   const durability = run.durability ?? DEFAULT_LOAD_DURABILITY
@@ -89,7 +96,7 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
     throw new SirannonError('Bulk load completed without a result', 'INTERNAL_ERROR')
   }
 
-  if (run.walMode && result.changes > 0) {
+  if ((run.checkpoint ?? true) && run.walMode && result.changes > 0) {
     await checkpoint(run.writer)
   }
   return result

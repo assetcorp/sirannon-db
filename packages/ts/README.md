@@ -228,7 +228,19 @@ The load holds the single writer for its whole duration, so no other write commi
 
 The result sums the row count and the changes rather than returning one object per row, so a load of millions of rows never holds millions of result objects in memory. Over the server, one load must fit under `maxBodyBytes`; send a larger dataset as several sequential loads, each of which restores durability on its own.
 
-When you split a dataset into many batches, pass `{ checkpoint: false }` on every batch but the last so the one fsyncing WAL checkpoint is paid once at the end instead of once per batch. Each batch still restores the configured durability, so an import you abandon partway never leaves the writer at the relaxed level, and SQLite's automatic checkpoint keeps the WAL bounded during the import. On network-attached disks this turns a per-batch checkpoint storm into a single flush, which is what keeps a ten-million-row seed from stalling.
+For a dataset that spans more than one request, the client's `db.loadAll` batches it for you. Hand it a synchronous or asynchronous iterable of parameter sets; it splits the rows into batches, runs the one fsyncing WAL checkpoint once after the final batch, and restores the configured durability after every batch:
+
+```ts
+const summary = await db.loadAll(
+  'INSERT INTO events (id, payload) VALUES (?, ?)',
+  rowStream, // an iterable or async iterable of parameter arrays
+  { batchSize: 5000, durability: 'off' },
+)
+```
+
+`batchSize` defaults to 1000, and each batch is one request, so size it to stay under the server's `maxBodyBytes`. `loadAll` runs the finalize itself and keeps the checkpoint flag out of your code. On network-attached disks, where each checkpoint fsync is slow, this collapses hundreds of per-batch flushes into one flush at the end.
+
+The low-level `db.load` exposes the same behaviour through a `checkpoint` flag for callers that batch by hand: pass `{ checkpoint: false }` on every load but the last, so the WAL checkpoint runs once, after the final load. Each load still restores the configured durability, so an import you abandon partway keeps the writer at the configured level, and SQLite's automatic checkpoint keeps the WAL bounded during the import. Prefer `loadAll` unless you need that control, because a forgotten final `checkpoint: true` leaves the last pages in the WAL until the next checkpoint.
 
 ### Connection pooling
 

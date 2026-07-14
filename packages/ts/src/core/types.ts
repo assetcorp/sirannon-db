@@ -280,7 +280,9 @@ export interface ServerOptions {
   cors?: boolean | CorsOptions
   /**
    * Maximum HTTP request body and WebSocket message size in bytes. Applied
-   * identically to both transports. Must be a positive, finite integer.
+   * identically to both transports. Must be a positive, finite integer no
+   * larger than 4_294_967_295 (the unsigned 32-bit ceiling uWebSockets.js can
+   * store; larger values would silently wrap modulo 2^32).
    * Default: 1_048_576 (1 MB), matching the general web default and acting as
    * a denial-of-service guard on a memory-limited server.
    */
@@ -289,7 +291,8 @@ export interface ServerOptions {
    * Maximum bytes buffered per WebSocket connection before the server stops
    * absorbing backpressure. A single frame can be as large as `maxBodyBytes`,
    * so this must hold several of them; the resolved value is raised to at
-   * least `maxBodyBytes`. When the buffer is exceeded the server closes the
+   * least `maxBodyBytes` and, like `maxBodyBytes`, must not exceed
+   * 4_294_967_295. When the buffer is exceeded the server closes the
    * connection so the client reconnects rather than losing a frame silently.
    * Default: the larger of 16 MB and `maxBodyBytes`.
    */

@@ -965,7 +965,7 @@ All errors extend `SirannonError` with a machine-readable `code` property:
 | `MaxDatabasesError` | `MAX_DATABASES` | Capacity limit reached |
 | `ExtensionError` | `EXTENSION_ERROR` | SQLite extension load failure |
 
-The server and the bulk-load path add a few more codes. `createServer` throws `SirannonError` with `INVALID_MAX_BODY_BYTES` when `maxBodyBytes` is not a positive integer. A bulk load throws `INVALID_DURABILITY` when `durability` is neither `'off'` nor `'normal'`, and `DURABILITY_RESTORE_FAILED` when the load committed but the writer connection failed before its durability could be restored; treat that last code as 'the load succeeded, do not re-run it'. Over the wire the server also returns `PAYLOAD_TOO_LARGE` when a request or message exceeds `maxBodyBytes`, and `BULK_LOAD_UNSUPPORTED` when the resolved execution target for a database does not implement bulk load.
+The server and the bulk-load path add a few more codes. `createServer` throws `SirannonError` with `INVALID_MAX_BODY_BYTES` when `maxBodyBytes` is not a positive integer or exceeds `4_294_967_295`, the largest value uWebSockets.js can store; a larger value would wrap modulo 2^32 and enforce a limit you never configured, so the server refuses to start instead. `INVALID_WS_BACKPRESSURE` guards `maxWebSocketBackpressureBytes` with the same bounds. A bulk load throws `INVALID_DURABILITY` when `durability` is neither `'off'` nor `'normal'`, and `DURABILITY_RESTORE_FAILED` when the load committed but the writer connection failed before its durability could be restored; treat that last code as 'the load succeeded, do not re-run it'. Over the wire the server also returns `PAYLOAD_TOO_LARGE` when a request or message exceeds `maxBodyBytes`, and `BULK_LOAD_UNSUPPORTED` when the resolved execution target for a database does not implement bulk load.
 
 ```ts
 import { QueryError } from '@delali/sirannon-db'
@@ -1009,7 +1009,7 @@ try {
 | `host` | `string` | `'127.0.0.1'` | Bind address |
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
-| `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP request body and WebSocket message size in bytes; one value governs both transports, and it must be a positive integer |
+| `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP request body and WebSocket message size in bytes; one value governs both transports, and it must be a positive integer no larger than `4_294_967_295` |
 | `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
 
 ### `ClientOptions`

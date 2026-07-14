@@ -1,6 +1,6 @@
 # Sirannon benchmarks
 
-Sirannon is a Postgres alternative built on SQLite, so this page reports a head-to-head comparison against PostgreSQL on the same OLTP workloads. Both engines run on one host in resource-capped containers, each driven through the client it ships, at matched durability, under an open-loop load generator that records the full tail latency.
+Sirannon is a Postgres alternative built on SQLite, so this page reports a head-to-head comparison against PostgreSQL on the same OLTP workloads. Both engines run on one host as native processes pinned to dedicated cores under a hard memory ceiling, each driven through the client it provides, at matched durability, under an open-loop load generator that records the full tail latency.
 
 The numbers on this page come from the latest committed run under `benchmarks/server/results/runs/`. The prose is written by hand; every table and the machine description come from that run, so the words and the numbers match. When no run is committed, the page shows a placeholder instead of numbers.
 
@@ -42,4 +42,4 @@ _No benchmark run is committed yet. Run the suite on the disclosed cloud machine
 
 ## Reproducing this
 
-The harness is in `benchmarks/server/`, and its README explains the method, the durability matching, the coordinated-omission correction, and how to run the suite in Docker or against a hand-started server. To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud/`.
+The harness is in `benchmarks/server/`, and its README explains the method, the durability matching, the coordinated-omission correction, and how to run the suite on the benchmark VM or against a hand-started server. To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud/`.

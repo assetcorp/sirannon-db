@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Provision a fixed, disclosed VM on the selected cloud, run the Sirannon Docker
-# benchmark track on it, copy the results back into this repository, and tear the
+# Provision a fixed, disclosed VM on the selected cloud, run the Sirannon
+# benchmark suite on it, copy the results back into this repository, and tear the
 # VM down. Absolute performance numbers only reproduce on one named machine, so
 # every provider defaults to a dedicated-vCPU instance whose CPU is fixed and
 # recorded with every result.

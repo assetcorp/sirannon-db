@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Run the Sirannon benchmark suite on the VM. The suite drives Sirannon and
-# PostgreSQL in resource-capped Docker containers, so a reachable Docker daemon
-# is required. The exit status is written to ~/bench.status with ~/bench.done as
-# the completion marker the orchestrator watches for.
+# Run the Sirannon benchmark suite on the VM. The suite starts Sirannon and
+# PostgreSQL as native processes in systemd units under cgroup caps, so the
+# pinned toolchain from remote-bootstrap.sh must be present. The exit status is
+# written to ~/bench.status with ~/bench.done as the completion marker the
+# orchestrator watches for.
 
 set -uo pipefail
 
@@ -16,19 +17,19 @@ export BENCH_MACHINE_LABEL="$LABEL"
 
 stamp() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
-# The suite drives resource-capped containers, so the Docker daemon must be
-# reachable in this session. usermod adds the login user to the docker group in
-# bootstrap, but the group only takes effect in a fresh login; the detached run
-# inherits the launching session, so fail fast with a clear message rather than
-# a confusing permission error deep in docker compose.
-if ! docker ps >/dev/null 2>&1; then
-  stamp "docker is not usable in this session; the benchmark suite needs it"
+fail_early() {
+  stamp "$1"
   echo 1 > "$HOME/bench.status"
   touch "$HOME/bench.done"
   exit 1
-fi
+}
 
-stamp "Sirannon vs PostgreSQL suite (capped Docker containers)"
+command -v systemd-run >/dev/null 2>&1 || fail_early "systemd-run is missing; the suite pins engines with systemd cgroups"
+[ -x /usr/lib/postgresql/17/bin/postgres ] || fail_early "PostgreSQL 17 is missing; run the setup step (remote-bootstrap.sh) first"
+command -v node >/dev/null 2>&1 || fail_early "Node is missing; run the setup step (remote-bootstrap.sh) first"
+command -v pnpm >/dev/null 2>&1 || fail_early "pnpm is missing; run the setup step (remote-bootstrap.sh) first"
+
+stamp "Sirannon vs PostgreSQL suite (native engines under cgroup caps)"
 ( cd benchmarks/server && ./run-all.sh "${BENCH_PROFILE:-cloud}" ) || status=1
 
 stamp "finished with status $status"

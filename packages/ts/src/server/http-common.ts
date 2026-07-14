@@ -1,5 +1,5 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import { SirannonError } from '../core/errors.js'
+import { SirannonError, WriteOverloadError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver, WriteConcern } from '../core/types.js'
 import type { ErrorResponse } from './protocol.js'
@@ -108,11 +108,16 @@ export function sendError(
   code: string,
   message: string,
   details?: Record<string, unknown>,
+  headers?: Record<string, string>,
 ): void {
   const body: ErrorResponse = { error: details ? { code, message, details } : { code, message } }
   const payload = JSON.stringify(body)
   res.cork(() => {
-    res.writeStatus(`${status}`).writeHeader('Content-Type', 'application/json').end(payload)
+    res.writeStatus(`${status}`)
+    if (headers) {
+      for (const [name, value] of Object.entries(headers)) res.writeHeader(name, value)
+    }
+    res.writeHeader('Content-Type', 'application/json').end(payload)
   })
 }
 
@@ -142,6 +147,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'NODE_NOT_IN_SYNC':
     case 'NODE_DRAINING':
     case 'UNSAFE_RECOVERY_REQUIRED':
+    case 'WRITE_OVERLOADED':
       return 503
     default:
       return 500
@@ -157,7 +163,9 @@ export function errorDetails(err: SirannonError): Record<string, unknown> | unde
 export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: unknown): void {
   if (abort.aborted) return
   if (err instanceof SirannonError) {
-    sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
+    const headers =
+      err instanceof WriteOverloadError ? { 'Retry-After': `${Math.ceil(err.retryAfterMs / 1000)}` } : undefined
+    sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err), headers)
   } else {
     sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
   }

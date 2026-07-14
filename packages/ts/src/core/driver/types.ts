@@ -3,6 +3,11 @@ export interface RunResult {
   lastInsertRowId: number | bigint
 }
 
+export interface BatchSummary {
+  rowsLoaded: number
+  changes: number
+}
+
 export interface SQLiteStatement {
   all<T = unknown>(...params: unknown[]): Promise<T[]>
   get<T = unknown>(...params: unknown[]): Promise<T | undefined>
@@ -21,6 +26,8 @@ export interface SQLiteConnection {
   prepare(sql: string): Promise<SQLiteStatement>
   transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T>
   close(): Promise<void>
+  runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
+  runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>
 }
 
 /**
@@ -44,7 +51,20 @@ export interface DriverCapabilities {
   extensions: boolean
 }
 
+/**
+ * Lets a worker thread rebuild the driver, since the driver's `open` function
+ * cannot cross the thread boundary. `specifier` must be importable from the
+ * worker and `config` must survive a structured clone; the worker imports the
+ * module and calls its `exportName` factory (default export otherwise) with it.
+ */
+export interface DriverWorkerEntry {
+  specifier: string
+  exportName?: string
+  config?: unknown
+}
+
 export interface SQLiteDriver {
   readonly capabilities: DriverCapabilities
   open(path: string, options?: OpenOptions): Promise<SQLiteConnection>
+  readonly worker?: DriverWorkerEntry
 }

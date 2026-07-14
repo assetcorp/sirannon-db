@@ -52,6 +52,7 @@ export default defineConfig([
     ...sharedOptions,
     entry: {
       'core/index': 'src/core/index.ts',
+      'core/writer-worker': 'src/core/worker/entry.ts',
       'server/index': 'src/server/index.ts',
       'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
       'driver/node': 'src/drivers/node/index.ts',

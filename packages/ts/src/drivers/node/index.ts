@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
@@ -10,6 +11,7 @@ export interface NodeSqliteOptions {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },
+    worker: { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions },
     async open(path, options) {
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false })
@@ -17,6 +19,8 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       db.exec(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.exec('PRAGMA foreign_keys = ON')
       db.exec(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
+
+      const batchStatementFor = createStatementCache(sql => db.prepare(sql))
 
       const conn: SQLiteConnection = {
         async exec(sql: string): Promise<void> {
@@ -47,6 +51,32 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
               }
             },
           }
+        },
+
+        async runBatch(sql: string, paramsBatch: readonly unknown[][]) {
+          const stmt = batchStatementFor(sql)
+          const results = new Array(paramsBatch.length)
+          for (let i = 0; i < paramsBatch.length; i++) {
+            const result = stmt.run(...(paramsBatch[i] as Parameters<typeof stmt.run>)) as {
+              changes: number | bigint
+              lastInsertRowid: number | bigint
+            }
+            results[i] = {
+              changes: Number(result.changes),
+              lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
+            }
+          }
+          return results
+        },
+
+        async runBatchSummary(sql: string, paramsBatch: readonly unknown[][]) {
+          const stmt = batchStatementFor(sql)
+          let changes = 0
+          for (let i = 0; i < paramsBatch.length; i++) {
+            const result = stmt.run(...(paramsBatch[i] as Parameters<typeof stmt.run>)) as { changes: number | bigint }
+            changes += Number(result.changes)
+          }
+          return { rowsLoaded: paramsBatch.length, changes }
         },
 
         async transaction<T>(fn: (c: SQLiteConnection) => Promise<T>): Promise<T> {

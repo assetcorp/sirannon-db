@@ -130,6 +130,14 @@ export async function executeBatch(
   sql: string,
   paramsBatch: Params[],
 ): Promise<ExecuteResult[]> {
+  if (conn.runBatch) {
+    assertSqlAllowed(sql)
+    try {
+      return await conn.runBatch(sql, paramsBatch.map(bindParams))
+    } catch (err) {
+      throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    }
+  }
   const results: ExecuteResult[] = []
   await forEachBatchRow(conn, sql, paramsBatch, (changes, lastInsertRowId) => {
     results.push({ changes, lastInsertRowId })
@@ -146,6 +154,14 @@ export async function executeBatchSummary(
   sql: string,
   paramsBatch: Params[],
 ): Promise<BulkLoadResult> {
+  if (conn.runBatchSummary) {
+    assertSqlAllowed(sql)
+    try {
+      return await conn.runBatchSummary(sql, paramsBatch.map(bindParams))
+    } catch (err) {
+      throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    }
+  }
   let changes = 0
   await forEachBatchRow(conn, sql, paramsBatch, rowChanges => {
     changes += rowChanges

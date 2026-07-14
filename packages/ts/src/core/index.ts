@@ -9,7 +9,9 @@ export { Database } from './database.js'
 export { defineDriver } from './driver/define.js'
 export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'
 export type {
+  BatchSummary,
   DriverCapabilities,
+  DriverWorkerEntry,
   OpenOptions,
   RunResult,
   SQLiteConnection,

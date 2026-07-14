@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import type { Database } from '../../database.js'
 import { defineDriver } from '../../driver/define.js'
@@ -132,6 +132,33 @@ describe('writer worker offload', () => {
     await expect(second).rejects.toMatchObject({ code: 'WRITE_OVERLOADED' })
     await expect(first).resolves.toMatchObject({ changes: 1 })
   })
+
+  it('rejects a stalled operation without killing the worker, then recovers', async () => {
+    await openOffloaded({ writerWorker: { writeTimeoutMs: 1_000 } })
+    await db.execute('CREATE TABLE sink (n INTEGER)')
+    await db.execute('CREATE TABLE recovered (n INTEGER)')
+
+    let stalledError: unknown
+    try {
+      await db.execute(
+        'INSERT INTO sink SELECT count(*) FROM (WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r WHERE x < 60000000) SELECT x FROM r)',
+      )
+    } catch (err) {
+      stalledError = err
+    }
+    expect((stalledError as Error | undefined)?.message).toMatch(/did not respond within/)
+
+    await vi.waitFor(
+      async () => {
+        const [{ c }] = await db.query<{ c: number }>('SELECT count(*) AS c FROM sink')
+        expect(c).toBe(1)
+      },
+      { timeout: 30_000, interval: 100 },
+    )
+
+    const after = await db.execute('INSERT INTO recovered (n) VALUES (?)', [1])
+    expect(after.changes).toBe(1)
+  }, 40_000)
 
   it('closes cleanly and can reopen', async () => {
     await openOffloaded()

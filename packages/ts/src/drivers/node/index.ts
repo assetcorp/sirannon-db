@@ -20,7 +20,11 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       db.exec('PRAGMA foreign_keys = ON')
       db.exec(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
 
-      const batchStatementFor = createStatementCache(sql => db.prepare(sql))
+      const batchStatementFor = createStatementCache(sql => {
+        const stmt = db.prepare(sql)
+        stmt.setReadBigInts(true)
+        return stmt
+      })
 
       const conn: SQLiteConnection = {
         async exec(sql: string): Promise<void> {

@@ -23,12 +23,13 @@ type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
 
 /**
  * Owns one writer worker thread and presents it as a {@link SQLiteConnection}.
- * A crash, exit, or timed-out operation rejects every in-flight request and
- * respawns, so a stalled disk flush never hangs a caller. A rejected in-flight
- * write has an indeterminate outcome: the commit may have reached disk just
- * after the fault, so a caller must reconcile state before retrying a
- * non-idempotent write. Only operations still queued behind the reopen never
- * reached the worker and are safe to retry unconditionally.
+ * A natural worker crash or non-zero exit rejects every in-flight request and
+ * respawns. A per-operation deadline instead rejects only the stalled caller
+ * and leaves the worker running, because a thread inside a synchronous native
+ * SQLite call cannot be interrupted: terminating it would leak the connection's
+ * file lock and can abort the whole process. A rejected write has an
+ * indeterminate outcome, since its commit may still reach disk, so a caller
+ * must reconcile state before retrying a non-idempotent write.
  */
 export class WriterWorker {
   private worker: Worker | null = null
@@ -101,6 +102,14 @@ export class WriterWorker {
     else entry.reject(deserializeError(res.error))
   }
 
+  private rejectPending(id: number, err: Error): void {
+    const entry = this.pending.get(id)
+    if (!entry) return
+    this.pending.delete(id)
+    if (entry.timer) clearTimeout(entry.timer)
+    entry.reject(err)
+  }
+
   private fault(errLike: unknown): void {
     if (this.closed || this.fatal) return
     const err = errLike instanceof Error ? errLike : new SirannonError(String(errLike), 'WRITER_WORKER_ERROR')
@@ -146,7 +155,8 @@ export class WriterWorker {
       let timer: NodeJS.Timeout | null = null
       if (this.timeoutMs > 0) {
         timer = setTimeout(() => {
-          this.fault(
+          this.rejectPending(
+            id,
             new SirannonError(
               `Writer worker did not respond within ${this.timeoutMs}ms; the operation's outcome is unknown`,
               'WRITER_WORKER_TIMEOUT',

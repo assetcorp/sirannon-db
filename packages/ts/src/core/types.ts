@@ -175,9 +175,9 @@ export interface DatabaseOptions {
 export interface WriterWorkerOptions {
   /** Writes allowed in flight before new writes are rejected with a busy signal. Default: 1024. */
   maxPendingWrites?: number
-  /** Per-operation deadline in ms; a slower operation restarts the worker and fails loudly. 0 disables it. Default: 30000. */
+  /** Per-operation deadline in ms; when an operation stalls past it, its caller is rejected loudly while the worker keeps running, so a stalled write's outcome is indeterminate. 0 disables it. Default: 30000. */
   writeTimeoutMs?: number
-  /** Restarts a crashed worker this many times before writes fail permanently. Default: 5. */
+  /** Restarts the worker this many times after it crashes on its own before writes fail permanently. Default: 5. */
   maxRestarts?: number
 }
 

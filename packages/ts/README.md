@@ -469,7 +469,7 @@ const db = await sirannon.open('app', './data/app.db', {
 })
 ```
 
-`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` restarts the worker when a single operation stalls past it, so a hung flush fails loudly instead of hanging a client; raise it only for unusually large single operations. `maxRestarts` caps consecutive restarts before writes fail permanently.
+`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` rejects the caller when a single operation stalls past it, so a hung flush fails loudly instead of hanging a client; the worker keeps running, since a thread inside a synchronous SQLite call cannot be interrupted safely, so a stalled write's outcome is indeterminate and a genuinely dead disk keeps rejecting writes until you restart the process. Raise it only for unusually large single operations. `maxRestarts` caps how many times the worker is respawned after it crashes on its own before writes fail permanently.
 
 ### HTTP routes
 

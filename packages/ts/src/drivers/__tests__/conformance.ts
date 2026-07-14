@@ -224,5 +224,23 @@ export function runConformanceTests(driverFactory: () => SQLiteDriver, label: st
       expect(typeof result.lastInsertRowId).toBe('number')
       await conn.close()
     })
+
+    it('runBatch reports lastInsertRowId beyond 2^53 - 1 as exact BigInt', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      await conn.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT)')
+      if (!conn.runBatch) {
+        await conn.close()
+        return
+      }
+
+      const bigRowId = 9223372036854775806n
+      const results = await conn.runBatch('INSERT INTO events (id, note) VALUES (?, ?)', [
+        [bigRowId, 'boundary'],
+        [1, 'safe'],
+      ])
+      expect(results.map(r => r.lastInsertRowId)).toEqual([bigRowId, 1])
+      await conn.close()
+    })
   })
 }

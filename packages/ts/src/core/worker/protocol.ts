@@ -1,4 +1,4 @@
-import type { BatchSummary, DriverWorkerEntry, OpenOptions, RunResult } from '../driver/types.js'
+import type { BatchSummary, DriverWorkerEntry, GroupRunOutcome, OpenOptions, RunResult } from '../driver/types.js'
 
 export type WorkerRequest =
   | { id: number; kind: 'open'; entry: DriverWorkerEntry; path: string; options: OpenOptions }
@@ -9,13 +9,14 @@ export type WorkerRequest =
   | { id: number; kind: 'allRaw'; sql: string; params: unknown[] }
   | { id: number; kind: 'runBatch'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
+  | { id: number; kind: 'runGroup'; batch: { sql: string; params: unknown[] }[] }
   | { id: number; kind: 'close' }
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 
 export type WorkerRequestBody = DistributiveOmit<WorkerRequest, 'id'>
 
-export type WorkerResult = undefined | RunResult | RunResult[] | BatchSummary | unknown[] | unknown
+export type WorkerResult = undefined | RunResult | RunResult[] | BatchSummary | GroupRunOutcome[] | unknown[] | unknown
 
 export interface SerializedError {
   message: string

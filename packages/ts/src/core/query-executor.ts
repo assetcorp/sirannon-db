@@ -107,6 +107,93 @@ export async function execute(conn: SQLiteConnection, sql: string, params?: Para
   }
 }
 
+export type GroupOutcome = { ok: true; value: ExecuteResult } | { ok: false; error: unknown }
+
+/**
+ * Runs independent writes in one transaction so a single commit fsync covers
+ * the whole group. On any statement error the group is retried with a savepoint
+ * per statement, so one failing write fails only itself. Settles after the
+ * commit, so an acknowledged write is as durable as a lone write.
+ */
+export async function executeGroup(
+  conn: SQLiteConnection,
+  batch: readonly { sql: string; params?: Params }[],
+): Promise<GroupOutcome[]> {
+  try {
+    await conn.exec('BEGIN')
+    const values: ExecuteResult[] = []
+    for (const job of batch) {
+      assertSqlAllowed(job.sql)
+      const stmt = await getStatement(conn, job.sql)
+      const result = await stmt.run(...bindParams(job.params))
+      values.push({ changes: result.changes, lastInsertRowId: result.lastInsertRowId })
+    }
+    await conn.exec('COMMIT')
+    return values.map(value => ({ ok: true, value }))
+  } catch {
+    try {
+      await conn.exec('ROLLBACK')
+    } catch {
+      /* nothing durable to preserve; the isolated retry re-runs the whole group */
+    }
+    return executeGroupIsolated(conn, batch)
+  }
+}
+
+async function executeGroupIsolated(
+  conn: SQLiteConnection,
+  batch: readonly { sql: string; params?: Params }[],
+): Promise<GroupOutcome[]> {
+  const outcomes: GroupOutcome[] = new Array(batch.length)
+  await conn.exec('BEGIN')
+  try {
+    for (let i = 0; i < batch.length; i++) {
+      outcomes[i] = await runIsolatedStatement(conn, batch[i], `sirannon_gc_${i}`)
+    }
+    await conn.exec('COMMIT')
+    return outcomes
+  } catch (commitErr) {
+    try {
+      await conn.exec('ROLLBACK')
+    } catch {
+      /* the commit already failed; nothing is durable */
+    }
+    const error = new QueryError(commitErr instanceof Error ? commitErr.message : String(commitErr), 'COMMIT')
+    return outcomes.map(outcome => (outcome?.ok ? { ok: false, error } : outcome))
+  }
+}
+
+async function runIsolatedStatement(
+  conn: SQLiteConnection,
+  job: { sql: string; params?: Params },
+  savepoint: string,
+): Promise<GroupOutcome> {
+  try {
+    assertSqlAllowed(job.sql)
+  } catch (err) {
+    return { ok: false, error: err }
+  }
+  let opened = false
+  try {
+    await conn.exec(`SAVEPOINT ${savepoint}`)
+    opened = true
+    const stmt = await getStatement(conn, job.sql)
+    const result = await stmt.run(...bindParams(job.params))
+    await conn.exec(`RELEASE ${savepoint}`)
+    return { ok: true, value: { changes: result.changes, lastInsertRowId: result.lastInsertRowId } }
+  } catch (err) {
+    if (opened) {
+      try {
+        await conn.exec(`ROLLBACK TO ${savepoint}`)
+        await conn.exec(`RELEASE ${savepoint}`)
+      } catch {
+        /* the enclosing transaction will roll back if this savepoint cannot be unwound */
+      }
+    }
+    return { ok: false, error: new QueryError(err instanceof Error ? err.message : String(err), job.sql) }
+  }
+}
+
 async function forEachBatchRow(
   conn: SQLiteConnection,
   sql: string,

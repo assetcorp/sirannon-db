@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Idempotent VM setup: Docker, git, Python 3, plus database data on local NVMe.
-# Both engines write into their container layer, so Docker's data-root moves to
-# the NVMe mount instead of bind-mounting each database. A provider whose root is
-# already local NVMe has no separate device; BENCH_LOCAL_SSD_MODE=required makes a
-# missing local disk a hard failure rather than a silent fall back to slow disk.
+# Idempotent VM setup for the native benchmark: PostgreSQL 17 from the PGDG apt
+# repository, Node 24 from NodeSource, pnpm through corepack, Python 3 (Ubuntu
+# 24.04 ships 3.12), and database data on local NVMe. A provider whose root disk
+# is already local NVMe has no separate device; BENCH_LOCAL_SSD_MODE=required
+# makes a missing local disk a hard failure rather than a silent fall back to
+# slow disk.
 
 set -euo pipefail
 
@@ -46,29 +47,62 @@ setup_local_nvme() {
     sudo mkfs.ext4 -F -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$dev"
     sudo mkdir -p "$NVME_MOUNT"
     sudo mount -o discard,defaults "$dev" "$NVME_MOUNT"
-    sudo mkdir -p "$NVME_MOUNT/docker" /etc/docker
-    printf '{\n  "data-root": "%s/docker"\n}\n' "$NVME_MOUNT" | sudo tee /etc/docker/daemon.json >/dev/null
-    log "Docker data-root set to $NVME_MOUNT/docker"
   elif [ "$SSD_MODE" = "required" ]; then
     log "no local NVMe device found, but this provider must supply one; refusing to run database I/O on a network disk"
     exit 1
   else
-    log "no separate NVMe device; the root disk is local NVMe, so Docker keeps its default data-root"
+    log "no separate NVMe device; the root disk is local NVMe, so database data stays on it"
   fi
 }
 
 log "apt packages"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+# build-essential backs node-gyp's fallback compile of better-sqlite3 when no prebuilt binary
+# matches the VM's Node.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  ca-certificates curl gnupg git python3
+  ca-certificates curl gnupg git python3 build-essential postgresql-common
 
 log "local NVMe (mode: $SSD_MODE)"
 setup_local_nvme
 
-if ! command -v docker >/dev/null 2>&1; then
-  log "install Docker"
-  curl -fsSL https://get.docker.com | sudo sh
+# The benchmark starts its own postgres on its own data directory and port; a
+# packaged default cluster would hold port 5432 and race every run.
+sudo mkdir -p /etc/postgresql-common/createcluster.d
+echo "create_main_cluster = false" | sudo tee /etc/postgresql-common/createcluster.d/no-main-cluster.conf >/dev/null
+
+if [ ! -x /usr/lib/postgresql/17/bin/postgres ]; then
+  log "install PostgreSQL 17 (PGDG apt repository)"
+  sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-17
+  sudo apt-mark hold postgresql-17 >/dev/null
 fi
-sudo usermod -aG docker "$USER"
+if pg_lsclusters 2>/dev/null | awk '{print $1, $2}' | grep -q '^17 main$'; then
+  log "drop the packaged default cluster"
+  sudo pg_dropcluster --stop 17 main
+fi
+
+# The apt repository is configured by hand instead of piping NodeSource's setup script into a
+# root shell; the signed repository is then the only thing trusted.
+if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v24" ]; then
+  log "install Node 24 (NodeSource apt repository)"
+  sudo install -d -m 755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
+fi
+
+log "enable pnpm (pinned by the repo's packageManager field)"
+if command -v corepack >/dev/null 2>&1; then
+  sudo corepack enable
+  if [ -f "$HOME/sirannon/package.json" ]; then
+    (cd "$HOME/sirannon" && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack install)
+  fi
+else
+  pnpm_version="$(python3 -c "import json; print(json.load(open('$HOME/sirannon/package.json'))['packageManager'].split('@')[1].split('+')[0])")"
+  sudo npm install -g "pnpm@${pnpm_version}"
+fi
 
 log "done"

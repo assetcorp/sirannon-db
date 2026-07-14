@@ -35,9 +35,8 @@ def mint_run_id() -> str:
 def default_results_dir() -> Path:
     """Resolve where runs are written and read.
 
-    The Docker image and the source checkout both run with a ``results`` directory beside the
-    working directory, so that is the default. ``BENCH_RESULTS_DIR`` overrides it for an ad-hoc
-    location.
+    The harness runs with a ``results`` directory beside the working directory, so that is the
+    default. ``BENCH_RESULTS_DIR`` overrides it for an ad-hoc location.
     """
     override = os.environ.get("BENCH_RESULTS_DIR")
     return Path(override) if override else Path.cwd() / "results"

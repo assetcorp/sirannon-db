@@ -20,12 +20,14 @@ export function deliveryDisclosure(config: Config): Record<string, unknown> {
     driver_cpus: config.driverCpus,
     engine_cpus: config.engineCpus,
     note:
-      'Each engine is driven through the client it actually ships. Sirannon runs over its SDK\'s ' +
+      'Each engine is driven through the client it provides. Sirannon runs over its SDK\'s ' +
       'default WebSocket transport, which multiplexes every concurrent request over one persistent ' +
       'socket, and PostgreSQL runs over node-postgres on its binary socket protocol. One Node load ' +
       'generator drives both, so the coordinated-omission instrument behaves identically for each. ' +
-      'Both run on one host with no network between the load driver and the server, and the load ' +
-      'driver runs on its own pinned cores so it never competes with the engine under test.',
+      'Both run as native processes on one host with no network between the load driver and the ' +
+      'server. The engine under test is pinned to its own CPU cores under a hard memory ceiling ' +
+      '(cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, so it ' +
+      'never competes with the engine under test.',
   }
 }
 

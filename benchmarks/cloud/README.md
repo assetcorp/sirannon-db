@@ -8,9 +8,9 @@ This runner provisions one fixed cloud machine, runs the Sirannon and PostgreSQL
 PROVIDER=gcp ./run-cloud.sh all --yes --teardown
 ```
 
-This creates the VM, pushes your working tree including uncommitted changes, installs Docker and puts its data on local NVMe, runs the `cloud` preset (10,000,000 rows across both durability levels), copies each run directory into `benchmarks/server/results/runs/`, and deletes the VM on exit. Drop `--teardown` to keep the VM for inspection, and drop `--yes` to confirm before billing starts.
+This creates the VM, pushes your working tree including uncommitted changes, installs the pinned toolchain (PostgreSQL 17 from the PGDG apt repository, Node 24 from NodeSource, pnpm, and Python 3), mounts the local NVMe for database data, runs the `cloud` preset (10,000,000 rows across both durability levels), copies each run directory into `benchmarks/server/results/runs/`, and deletes the VM on exit. Drop `--teardown` to keep the VM for inspection, and drop `--yes` to confirm before billing starts.
 
-The suite measures Sirannon and PostgreSQL 17 in resource-capped Docker containers, each through the client it ships with: Sirannon over its SDK, PostgreSQL over its socket. Sirannon runs on Node 24 (`node:24-trixie-slim`) regardless of the host, and the harness runs in a Python container.
+The suite measures Sirannon and PostgreSQL 17 as native processes in transient systemd units: the engine under test is pinned to its own CPU cores under a hard memory ceiling (cgroup v2), the Node load driver runs on disjoint cores, and each engine's data directory is proven at device level to be on the local NVMe before anything seeds. Each engine is driven through the client it provides: Sirannon over its SDK, PostgreSQL over its socket.
 
 ## Providers
 

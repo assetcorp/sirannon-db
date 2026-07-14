@@ -106,7 +106,7 @@ cmd_sync() {
 }
 
 cmd_setup() {
-  log "prepare local NVMe, install Docker, git, and Python 3 on the VM"
+  log "prepare local NVMe and install PostgreSQL 17, Node 24, pnpm, and Python 3 on the VM"
   prov_ssh "BENCH_LOCAL_SSD_MODE='${LOCAL_SSD_MODE:-auto}' bash sirannon/benchmarks/cloud/remote-bootstrap.sh"
 }
 
@@ -114,12 +114,15 @@ cmd_run() {
   log "launch the benchmark run (detached; survives an SSH drop)"
   local forward
   forward="$(printf '%q ' "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
+  forward+="$(printf '%q ' "BENCH_LOCAL_SSD_MODE=${LOCAL_SSD_MODE:-auto}")"
   local v
   for v in BENCH_PROFILE BENCH_DURABILITIES BENCH_DATA_SIZE BENCH_WORKLOADS \
     BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_RUNS BENCH_SEED \
     BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_SLO_P99_MS BENCH_MAX_IN_FLIGHT \
     BENCH_ENGINE_CPUS BENCH_DRIVER_CPUS BENCH_ENGINE_CPUSET BENCH_DRIVER_CPUSET \
-    BENCH_ENGINE_MEMORY BENCH_DRIVER_MEMORY BENCH_PG_POOL_SIZE BENCH_CDC_SAMPLES; do
+    BENCH_ENGINE_MEMORY BENCH_DRIVER_MEMORY BENCH_PG_POOL_SIZE BENCH_CDC_SAMPLES \
+    BENCH_CDC_WARMUP BENCH_DATA_ROOT BENCH_COOLDOWN_SECONDS BENCH_COOLDOWN_DIRTY_KB \
+    BENCH_COOLDOWN_TIMEOUT BENCH_COLD_START_TIMEOUT BENCH_PASS_TIMEOUT; do
     if [ -n "${!v:-}" ]; then
       forward+="$(printf '%q ' "$v=${!v}")"
     fi
@@ -238,7 +241,7 @@ Commands:
   all      up -> sync -> setup -> run -> fetch (add --teardown to delete after)
   up       create the VM
   sync     push the local working tree
-  setup    install Docker, git, and Python 3 on the VM
+  setup    install PostgreSQL 17, Node 24, pnpm, and Python 3 on the VM
   run      build and run the benchmark suite (detached, streamed back)
   logs     re-attach to a run in progress
   fetch    copy run directories back into the repo

@@ -11,9 +11,9 @@
 // The request-body limit is raised well above the load batch size the driver sends, so a seed batch
 // is never rejected; the driver keeps each batch within memory on its own side.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { Sirannon } from '../../packages/ts/dist/core/index.mjs'
 import { betterSqlite3 } from '../../packages/ts/dist/driver/better-sqlite3.mjs'
 import { createServer } from '../../packages/ts/dist/server/index.mjs'
@@ -23,10 +23,56 @@ const PORT = Number(process.env.PORT ?? 9876)
 const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
-const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 5_368_709_120)
+// uWebSockets.js stores its payload and backpressure limits in unsigned 32 bits, so anything
+// above that silently wraps; the limit is validated here so a configured value always takes
+// effect as written.
+const UWS_LIMIT_BYTES = 4_294_967_295
+const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 1_073_741_824)
+if (!Number.isInteger(MAX_BODY_BYTES) || MAX_BODY_BYTES <= 0 || MAX_BODY_BYTES > UWS_LIMIT_BYTES) {
+  console.error(`BENCH_MAX_BODY_BYTES must be a positive integer of at most ${UWS_LIMIT_BYTES} bytes.`)
+  process.exit(1)
+}
 
-const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-bench-'))
-const dbPath = join(tempDir, 'bench.db')
+// BENCH_DATA_DIR points the database at a chosen directory (the harness uses the local NVMe
+// mount); without it the server keeps its throwaway temp directory. Each start begins from an
+// empty directory. Only plain files named after the benchmark database are ever deleted, and a
+// configured directory itself is never removed, so a mispointed variable can never delete
+// unrelated files or a mount point.
+const isBenchDatabaseFile = entry => entry.isFile() && entry.name.startsWith('bench.db')
+
+const wipeBenchDatabase = dir => {
+  const entries = readdirSync(dir, { withFileTypes: true })
+  const foreign = entries.filter(entry => !isBenchDatabaseFile(entry))
+  if (foreign.length > 0) {
+    throw new Error(`BENCH_DATA_DIR ${dir} contains entries other than a previous benchmark database; refusing to wipe it`)
+  }
+  for (const entry of entries) {
+    rmSync(join(dir, entry.name), { force: true })
+  }
+}
+
+const prepareDataDir = () => {
+  const configured = process.env.BENCH_DATA_DIR
+  if (configured === undefined || configured.trim() === '') {
+    return { dir: mkdtempSync(join(tmpdir(), 'sirannon-bench-')), temporary: true }
+  }
+  const dir = resolve(configured)
+  mkdirSync(dir, { recursive: true })
+  wipeBenchDatabase(dir)
+  return { dir, temporary: false }
+}
+
+let dataDir
+let dataDirIsTemporary
+try {
+  const prepared = prepareDataDir()
+  dataDir = prepared.dir
+  dataDirIsTemporary = prepared.temporary
+} catch (error) {
+  console.error('Failed to prepare the benchmark data directory.', error)
+  process.exit(1)
+}
+const dbPath = join(dataDir, 'bench.db')
 
 let sirannon
 let server
@@ -53,10 +99,18 @@ const cleanup = async () => {
       }
     }
     try {
-      rmSync(tempDir, { recursive: true, force: true })
+      if (dataDirIsTemporary) {
+        rmSync(dataDir, { recursive: true, force: true })
+      } else {
+        for (const entry of readdirSync(dataDir, { withFileTypes: true })) {
+          if (isBenchDatabaseFile(entry)) {
+            rmSync(join(dataDir, entry.name), { force: true })
+          }
+        }
+      }
     } catch (error) {
       exitCode = 1
-      console.error('Failed to remove the benchmark temp directory.', error)
+      console.error('Failed to remove the benchmark database files.', error)
     }
     return exitCode
   })()

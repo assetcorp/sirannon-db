@@ -2,7 +2,7 @@
 // holds the stable choices that define the workload; every value is disclosed in the generated
 // report so a reader can reproduce the run. Environment variables prefixed BENCH_ override
 // individual fields for a one-off run without editing the file. Empty strings are treated as
-// unset, because docker-compose forwards absent variables as empty strings.
+// unset, because an orchestrator may forward absent variables as empty strings.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

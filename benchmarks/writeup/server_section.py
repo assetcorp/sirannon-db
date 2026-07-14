@@ -90,15 +90,19 @@ def _setup_block(source: Source) -> str:
     rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])])
     engine_cpus = delivery.get("engine_cpus")
     driver_cpus = delivery.get("driver_cpus")
+    resource_control = environment.get("resource_control") or {}
+    memory_cap = resource_control.get("engine_memory_max")
+    cap_text = f"a {memory_cap} memory ceiling" if memory_cap else "a hard memory ceiling"
     sirannon_ceiling, postgres_ceiling = _client_ceilings(comparison)
 
     bullets = [
         f"- **Run.** These figures come from run `{source.run_id}`, recorded on {_date(comparison)} from commit "
         f"`{commit}`{dirty}. The full per-run report is in [the run report]({source.report_link}).",
         f"- **Machine.** {machine}",
-        f"- **Engines.** Sirannon runs on SQLite {sqlite_version}; PostgreSQL is {postgres_version}. Both run in "
-        f"resource-capped containers at {durability_names or 'the recorded durability levels'}.",
-        "- **Delivery.** One Node load generator drove both engines through the client each ships: Sirannon over "
+        f"- **Engines.** Sirannon runs on SQLite {sqlite_version}; PostgreSQL is {postgres_version}. Both run as "
+        f"native processes on dedicated cores under {cap_text} (cgroup v2), at "
+        f"{durability_names or 'the recorded durability levels'}.",
+        "- **Delivery.** One Node load generator drove both engines through the client each provides: Sirannon over "
         "its SDK's WebSocket transport, which multiplexes every request over one persistent socket, and PostgreSQL "
         f"over node-postgres on its binary socket protocol, both on one host over loopback. Each engine ran on "
         f"{integer(engine_cpus)} pinned cores and the load generator on {integer(driver_cpus)} of its own.",
@@ -130,6 +134,15 @@ _METHODOLOGY = (
     "binary protocol, and the numbers include that cost because it is Sirannon's client path. Before each sweep "
     "the generator measures each client's own throughput ceiling against the live engine and records it with the "
     "results, so a rate that falls short reflects the database's limit.\n\n"
+    "Both engines run as native processes under Linux cgroup v2 control. The engine under test is pinned to its "
+    "own CPU cores with a hard memory ceiling, sized so the dataset cannot be served from RAM alone, and the "
+    "load generator runs on disjoint cores with no memory cap. Each engine writes to a data directory the "
+    "harness first proves, at device level, to be on the machine's local NVMe. The engines run one after the "
+    "other, each engine process starts fresh for its pass and is stopped after it, so neither engine carries a "
+    "warm buffer pool between passes, and Sirannon's data directory is removed after each of its passes. "
+    "Between passes the harness applies a disclosed cooldown: it syncs and waits for dirty pages to drain, "
+    "trims the data filesystem, and pauses for a fixed interval. The operating system page cache is dropped "
+    "before each measured series, so neither engine starts warm from the other's run.\n\n"
     "The harness matches durability at two levels. Full durability sets PostgreSQL `synchronous_commit=on` "
     "against SQLite `synchronous=FULL`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off` "
     "against `synchronous=NORMAL` in WAL mode, so both defer the fsync and both can lose only the most recent "
@@ -251,7 +264,7 @@ def _features_block(source: Source) -> str:
             body.append([engine, ms(value)])
         parts.append("### Cold start")
         parts.append(
-            "This is the time from the container start command to the first successful health probe, measured "
+            "This is the time from the process start command to the first successful health probe, measured "
             "the same way for both engines."
         )
         parts.append(table(["Engine", "Cold start ms"], ["left", "right"], body))
@@ -293,7 +306,7 @@ def comparison_document(source: Source) -> str:
     date = _date(source.comparison) or "an unrecorded date"
     intro = (
         f"This report records one run of the Sirannon-versus-PostgreSQL benchmark, `{source.run_id}` from "
-        f"{date}. Both databases answer the same workloads over their own shipping client on the same host, so "
+        f"{date}. Both databases answer the same workloads over the client each provides, on the same host, so "
         "the figures measure the two engines doing the same work."
     )
     sections = [

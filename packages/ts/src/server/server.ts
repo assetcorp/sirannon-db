@@ -31,12 +31,25 @@ import { WSHandler } from './ws-handler.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
+/**
+ * uWebSockets.js reads maxPayloadLength and maxBackpressure into unsigned
+ * 32-bit fields (ToInt32 in the addon, unsigned int in the C++ core), so any
+ * larger value is silently applied modulo 2^32. Reject those at construction
+ * instead of running with a limit the caller never configured.
+ */
+const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 
 function resolveMaxBodyBytes(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_BODY_BYTES
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
     throw new SirannonError(
       'ServerOptions.maxBodyBytes must be a positive integer number of bytes',
+      'INVALID_MAX_BODY_BYTES',
+    )
+  }
+  if (value > UWS_MAX_LIMIT_BYTES) {
+    throw new SirannonError(
+      `ServerOptions.maxBodyBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
       'INVALID_MAX_BODY_BYTES',
     )
   }
@@ -48,6 +61,12 @@ function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number):
   if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved <= 0) {
     throw new SirannonError(
       'ServerOptions.maxWebSocketBackpressureBytes must be a positive integer number of bytes',
+      'INVALID_WS_BACKPRESSURE',
+    )
+  }
+  if (resolved > UWS_MAX_LIMIT_BYTES) {
+    throw new SirannonError(
+      `ServerOptions.maxWebSocketBackpressureBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
       'INVALID_WS_BACKPRESSURE',
     )
   }

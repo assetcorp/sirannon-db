@@ -195,7 +195,7 @@ Full API reference, code examples, and configuration tables are in the [TypeScri
 
 ## Benchmarks
 
-The benchmark suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both in resource-capped containers at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records Sirannon-only characterizations: change-feed latency, cold start, and connection scaling. The harness is a Python project under [`benchmarks/server`](benchmarks/server); see [`BENCHMARKS.md`](BENCHMARKS.md) for the methodology and the latest results.
+The benchmark suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records Sirannon-only characterizations: change-feed latency, cold start, and connection scaling. The harness is a Python project under [`benchmarks/server`](benchmarks/server); see [`BENCHMARKS.md`](BENCHMARKS.md) for the methodology and the latest results.
 
 ## Development
 

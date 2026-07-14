@@ -36,6 +36,19 @@ function harnessVersion(): string {
   }
 }
 
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err)
+  }
+  const base = err.stack ?? err.message
+  const cause = (err as { cause?: unknown }).cause
+  if (cause === undefined) {
+    return base
+  }
+  const causeText = cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)
+  return `${base}\ncaused by: ${causeText}`
+}
+
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name]
   if (raw === undefined || raw.trim() === '') {
@@ -54,14 +67,20 @@ async function run(engine: string, durability: string, config: Config, wantFeatu
 
     const features: Record<string, unknown>[] = []
     if (wantFeatures && engine === 'sirannon') {
-      features.push(
-        await measureCdcLatency(
-          config.sirannon.baseUrl,
-          config.sirannon.databaseId,
-          envInt('BENCH_CDC_SAMPLES', 200),
-          envInt('BENCH_CDC_WARMUP', 20),
-        ),
-      )
+      try {
+        features.push(
+          await measureCdcLatency(
+            config.sirannon.baseUrl,
+            config.sirannon.databaseId,
+            envInt('BENCH_CDC_SAMPLES', 200),
+            envInt('BENCH_CDC_WARMUP', 20),
+          ),
+        )
+      } catch (err) {
+        process.stderr.write(
+          `change-feed characterisation failed; recording the run without it: ${describeError(err)}\n`,
+        )
+      }
     }
 
     const environment = captureEnvironment(harnessVersion())
@@ -122,6 +141,6 @@ main(process.argv.slice(2))
     process.exitCode = code
   })
   .catch((err: unknown) => {
-    process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
+    process.stderr.write(`${describeError(err)}\n`)
     process.exitCode = 1
   })

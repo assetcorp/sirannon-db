@@ -14,7 +14,8 @@ import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { execute, executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
+import { GroupCommitter } from './group-committer.js'
+import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
 import { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -47,6 +48,7 @@ export class Database {
   private readonly walMode: boolean
   private readonly writerLock = new WriterLock()
   private readonly writeGate: WriteGate
+  private readonly groupCommitter: GroupCommitter
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
@@ -86,6 +88,10 @@ export class Database {
     this.cdcRetention = options?.cdcRetention ?? 3_600_000
     this.parentHooks = internals?.parentHooks ?? null
     this.metricsCollector = internals?.metrics ?? null
+    this.groupCommitter = new GroupCommitter(this.writerLock, {
+      acquireWriter: () => this.pool.acquireWriter(),
+      afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql),
+    })
   }
 
   static async create(
@@ -183,14 +189,7 @@ export class Database {
 
     const start = performance.now()
     try {
-      return await this.writeGate.run(() =>
-        this.writerLock.run(async () => {
-          const writer = this.pool.acquireWriter()
-          const result = await this.track(sql, () => execute(writer, sql, params))
-          await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
-          return result
-        }),
-      )
+      return await this.writeGate.run(() => this.track(sql, () => this.groupCommitter.submit(sql, params)))
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -382,6 +381,7 @@ export class Database {
 
     let poolError: unknown
     try {
+      await this.groupCommitter.drain()
       await this.pool.close()
     } catch (err) {
       poolError = err

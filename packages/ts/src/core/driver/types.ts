@@ -21,6 +21,14 @@ export interface SQLiteStatement {
   allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>
 }
 
+export interface GroupRunError {
+  message: string
+  name?: string
+  code?: string
+}
+
+export type GroupRunOutcome = { ok: true; result: RunResult } | { ok: false; error: GroupRunError }
+
 export interface SQLiteConnection {
   exec(sql: string): Promise<void>
   prepare(sql: string): Promise<SQLiteStatement>
@@ -28,6 +36,7 @@ export interface SQLiteConnection {
   close(): Promise<void>
   runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
   runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>
+  runGroup?(batch: readonly { sql: string; params?: readonly unknown[] }[]): Promise<GroupRunOutcome[]>
 }
 
 /**

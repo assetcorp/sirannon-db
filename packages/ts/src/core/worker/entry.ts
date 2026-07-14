@@ -1,6 +1,7 @@
 import { parentPort } from 'node:worker_threads'
-import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../driver/types.js'
+import type { GroupRunOutcome, SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
+import { executeGroup } from '../query-executor.js'
 import { serializeError, type WorkerRequest, type WorkerResult } from './protocol.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
@@ -88,6 +89,12 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       let changes = 0
       for (const params of req.paramsBatch) changes += (await stmt.run(...params)).changes
       return { rowsLoaded: req.paramsBatch.length, changes }
+    }
+    case 'runGroup': {
+      const outcomes = await executeGroup(requireConnection(), req.batch)
+      return outcomes.map<GroupRunOutcome>(outcome =>
+        outcome.ok ? { ok: true, result: outcome.value } : { ok: false, error: serializeError(outcome.error) },
+      )
     }
     case 'close':
       if (connection) await connection.close()

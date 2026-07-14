@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads'
-import type { DriverWorkerEntry, OpenOptions, SQLiteConnection } from '../driver/types.js'
+import type { DriverWorkerEntry, GroupRunOutcome, OpenOptions, SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { deserializeError, type WorkerRequest, type WorkerRequestBody, type WorkerResponse } from './protocol.js'
 import { resolveWorkerScript } from './resolve-entry.js'
@@ -207,6 +207,11 @@ export class WriterWorker {
           rowsLoaded: number
           changes: number
         }>,
+      runGroup: batch =>
+        this.request({
+          kind: 'runGroup',
+          batch: batch.map(job => ({ sql: job.sql, params: job.params ? [...job.params] : [] })),
+        }) as Promise<GroupRunOutcome[]>,
       transaction: async fn => {
         await conn.exec('BEGIN')
         try {

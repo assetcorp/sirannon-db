@@ -23,6 +23,7 @@ const PORT = Number(process.env.PORT ?? 9876)
 const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
+const WRITER_WORKER = !['off', 'false', '0', 'no'].includes((process.env.BENCH_WRITER_WORKER ?? '').toLowerCase())
 // uWebSockets.js stores its payload and backpressure limits in unsigned 32 bits, so anything
 // above that silently wraps; the limit is validated here so a configured value always takes
 // effect as written.
@@ -124,12 +125,14 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 }
 
 try {
-  sirannon = new Sirannon({ driver: betterSqlite3() })
+  sirannon = new Sirannon({ driver: betterSqlite3(), writerWorker: WRITER_WORKER })
   await sirannon.open(DATABASE_ID, dbPath, { readPoolSize: 4, walMode: true, synchronous: WRITER_SYNCHRONOUS })
 
   server = createServer(sirannon, { host: HOST, port: PORT, maxBodyBytes: MAX_BODY_BYTES })
   await server.listen()
-  console.log(`Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability)`)
+  console.log(
+    `Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability, writer worker ${WRITER_WORKER ? 'on' : 'off'})`,
+  )
 } catch (error) {
   console.error('Failed to start the Sirannon benchmark server.', error)
   const code = await cleanup()

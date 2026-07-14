@@ -187,6 +187,7 @@ export interface SirannonOptions {
   hooks?: HookConfig
   metrics?: MetricsConfig
   lifecycle?: LifecycleConfig
+  writerWorker?: boolean | WriterWorkerOptions
 }
 
 /** Options for scheduled backups. */

@@ -112,6 +112,36 @@ describe('writer worker offload', () => {
     expect((event.row as { name: string }).name).toBe('live')
   })
 
+  it('offloads writes when the registry defaults the worker on', async () => {
+    const registry = new Sirannon({ driver: betterSqlite3(), writerWorker: true })
+    const offloaded = await registry.open('reg', join(dir, 'reg.db'), { synchronous: 'full' })
+    await offloaded.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
+    await offloaded.execute('INSERT INTO t (name) VALUES (?)', ['from-registry'])
+
+    const rows = await offloaded.query<{ name: string }>('SELECT name FROM t')
+    expect(rows).toEqual([{ name: 'from-registry' }])
+    await registry.shutdown().catch(() => {})
+  })
+
+  it('lets an open call opt out of the registry default', async () => {
+    const registry = new Sirannon({ driver: betterSqlite3(), writerWorker: true })
+    const plain = await registry.open('plain', join(dir, 'plain.db'), { writerWorker: false })
+    await plain.execute('CREATE TABLE t (n INTEGER)')
+    const result = await plain.execute('INSERT INTO t (n) VALUES (?)', [1])
+    expect(result.changes).toBe(1)
+    await registry.shutdown().catch(() => {})
+  })
+
+  it('propagates the registry default to the unsupported-driver check', async () => {
+    const base = betterSqlite3()
+    const noWorker = defineDriver({ capabilities: base.capabilities, open: base.open })
+    const registry = new Sirannon({ driver: noWorker, writerWorker: true })
+    await expect(registry.open('x', join(dir, 'x.db'))).rejects.toMatchObject({
+      code: 'WRITER_WORKER_UNSUPPORTED',
+    })
+    await registry.shutdown().catch(() => {})
+  })
+
   it('refuses to open when the driver has no worker entry', async () => {
     const base = betterSqlite3()
     const noWorker = defineDriver({ capabilities: base.capabilities, open: base.open })

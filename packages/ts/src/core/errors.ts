@@ -161,6 +161,20 @@ export class MaxDatabasesError extends SirannonError {
 }
 
 /**
+ * Thrown when more writes are pending than the writer-worker limit allows. It
+ * signals load shedding, so the server maps it to a 503 with a Retry-After hint.
+ */
+export class WriteOverloadError extends SirannonError {
+  constructor(
+    public readonly limit: number,
+    public readonly retryAfterMs: number,
+  ) {
+    super(`Write rejected: ${limit} writes already pending`, 'WRITE_OVERLOADED')
+    this.name = 'WriteOverloadError'
+  }
+}
+
+/**
  * Thrown when a native SQLite extension cannot be loaded. The `path` argument
  * is the filesystem path passed to `load_extension`, and the optional `cause`
  * string carries the error detail reported by SQLite.

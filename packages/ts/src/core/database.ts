@@ -28,6 +28,8 @@ import type {
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
+import { resolveWriterWorkerConfig } from './worker/config.js'
+import { WriteGate } from './worker/gate.js'
 import { WriterLock } from './writer-lock.js'
 
 export interface DatabaseInternals {
@@ -44,6 +46,7 @@ export class Database {
   private readonly synchronous: SynchronousLevel
   private readonly walMode: boolean
   private readonly writerLock = new WriterLock()
+  private readonly writeGate: WriteGate
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
@@ -67,6 +70,7 @@ export class Database {
     path: string,
     pool: ConnectionPool,
     driver: SQLiteDriver,
+    writeGate: WriteGate,
     options?: DatabaseOptions,
     internals?: DatabaseInternals,
   ) {
@@ -74,6 +78,7 @@ export class Database {
     this.path = path
     this.pool = pool
     this.driver = driver
+    this.writeGate = writeGate
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
@@ -90,6 +95,15 @@ export class Database {
     options?: DatabaseOptions,
     internals?: DatabaseInternals,
   ): Promise<Database> {
+    const writerWorker = resolveWriterWorkerConfig(options?.writerWorker)
+    const readOnly = options?.readOnly ?? false
+    if (writerWorker.enabled && !readOnly && !driver.worker) {
+      throw new SirannonError(
+        `writerWorker is enabled for database '${id}' but the driver does not carry a worker entry; use a driver that supports worker offload or disable writerWorker`,
+        'WRITER_WORKER_UNSUPPORTED',
+      )
+    }
+
     const pool = await ConnectionPool.create({
       driver,
       path,
@@ -97,9 +111,12 @@ export class Database {
       readPoolSize: options?.readPoolSize ?? 4,
       walMode: options?.walMode ?? true,
       synchronous: options?.synchronous,
+      useWriterWorker: writerWorker.enabled && !readOnly,
+      workerHostOptions: writerWorker.host,
     })
 
-    return new Database(id, path, pool, driver, options, internals)
+    const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
+    return new Database(id, path, pool, driver, writeGate, options, internals)
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
@@ -166,12 +183,14 @@ export class Database {
 
     const start = performance.now()
     try {
-      return await this.writerLock.run(async () => {
-        const writer = this.pool.acquireWriter()
-        const result = await this.track(sql, () => execute(writer, sql, params))
-        await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
-        return result
-      })
+      return await this.writeGate.run(() =>
+        this.writerLock.run(async () => {
+          const writer = this.pool.acquireWriter()
+          const result = await this.track(sql, () => execute(writer, sql, params))
+          await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
+          return result
+        }),
+      )
     } finally {
       this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
@@ -184,8 +203,10 @@ export class Database {
 
     const start = performance.now()
     try {
-      return await this.writerLock.run(() =>
-        this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
+      return await this.writeGate.run(() =>
+        this.writerLock.run(() =>
+          this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
+        ),
       )
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
@@ -225,17 +246,19 @@ export class Database {
 
     const start = performance.now()
     try {
-      return await this.writerLock.run(() => {
-        const writer = this.pool.acquireWriter()
-        return runBulkLoad({
-          writer,
-          configuredSynchronous: this.synchronous,
-          walMode: this.walMode,
-          durability: options?.durability,
-          checkpoint: options?.checkpoint ?? true,
-          loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
-        })
-      })
+      return await this.writeGate.run(() =>
+        this.writerLock.run(() => {
+          const writer = this.pool.acquireWriter()
+          return runBulkLoad({
+            writer,
+            configuredSynchronous: this.synchronous,
+            walMode: this.walMode,
+            durability: options?.durability,
+            checkpoint: options?.checkpoint ?? true,
+            loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
+          })
+        }),
+      )
     } finally {
       this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
     }
@@ -245,26 +268,28 @@ export class Database {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
 
-    return this.writerLock.run(async () => {
-      const writer = this.pool.acquireWriter()
-      const tracker = this.changeTracker
+    return this.writeGate.run(() =>
+      this.writerLock.run(async () => {
+        const writer = this.pool.acquireWriter()
+        const tracker = this.changeTracker
 
-      if (!tracker) {
-        return Transaction.run(writer, fn)
-      }
+        if (!tracker) {
+          return Transaction.run(writer, fn)
+        }
 
-      const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-      const result = await writer.transaction(async txConn => {
-        const tx = new CdcAwareTransaction(txConn, tracker, state)
-        return fn(tx)
-      })
+        const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
+        const result = await writer.transaction(async txConn => {
+          const tx = new CdcAwareTransaction(txConn, tracker, state)
+          return fn(tx)
+        })
 
-      if (state.sawDdl && state.droppedTables.length > 0) {
-        await tracker.pruneDroppedTables(writer, state.droppedTables)
-      }
+        if (state.sawDdl && state.droppedTables.length > 0) {
+          await tracker.pruneDroppedTables(writer, state.droppedTables)
+        }
 
-      return result
-    })
+        return result
+      }),
+    )
   }
 
   async watch(table: string): Promise<void> {

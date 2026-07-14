@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
@@ -8,6 +9,7 @@ export interface BetterSqlite3Options {
 }
 
 function createConnection(db: import('better-sqlite3').Database): SQLiteConnection {
+  const batchStatementFor = createStatementCache(sql => db.prepare(sql))
   const conn: SQLiteConnection = {
     async exec(sql: string): Promise<void> {
       db.exec(sql)
@@ -33,6 +35,28 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
           }
         },
       }
+    },
+
+    async runBatch(sql: string, paramsBatch: readonly unknown[][]) {
+      const stmt = batchStatementFor(sql)
+      const results = new Array(paramsBatch.length)
+      for (let i = 0; i < paramsBatch.length; i++) {
+        const result = stmt.run(...paramsBatch[i])
+        results[i] = {
+          changes: Number(result.changes),
+          lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
+        }
+      }
+      return results
+    },
+
+    async runBatchSummary(sql: string, paramsBatch: readonly unknown[][]) {
+      const stmt = batchStatementFor(sql)
+      let changes = 0
+      for (let i = 0; i < paramsBatch.length; i++) {
+        changes += Number(stmt.run(...paramsBatch[i]).changes)
+      }
+      return { rowsLoaded: paramsBatch.length, changes }
     },
 
     async transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
@@ -62,6 +86,7 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
 export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },
+    worker: { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions },
     async open(path, options) {
       const Database = (await import('better-sqlite3')).default
       const db = new Database(path, { readonly: options?.readonly ?? false })

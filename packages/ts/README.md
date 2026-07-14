@@ -165,6 +165,8 @@ import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
 ```
 
+You write a custom driver by passing `capabilities` and an `open` function to `defineDriver`. To let it run on a writer worker thread (see [Writer worker](#writer-worker-offload-disk-writes)), add a `worker` entry so the worker can rebuild it: a `specifier` the worker can import, the `exportName` of your factory, and a `config` value that survives a structured clone. The worker imports the module and calls the factory with the config, because the `open` function itself can't cross the thread boundary.
+
 ## Package exports
 
 The package provides independent exports so you only bundle what you need:
@@ -440,6 +442,34 @@ The server offers three write shapes, on both transports. Reach for each one whe
 - **transaction** runs several *different* statements that must all succeed or all fail together, such as a debit on one row and a credit on another.
 - **batch** runs *one* statement many times with different values, such as inserting a thousand rows into the same table. It costs less than a transaction of a thousand near-identical statements, and it stays all-or-nothing.
 - **load** runs a batch for a large, from-scratch import. It relaxes durability while the rows go in and restores it afterward, so it trades power-loss safety during the load for speed; if the process dies mid-load, you re-run it.
+
+### Writer worker (offload disk writes)
+
+Under full durability every commit flushes to disk, and a WAL checkpoint flushes too. While the serving thread runs one of those flushes it can't accept or answer connections, so a burst of writes can push the server into refusing fresh connections. Turn on `writerWorker` to run writes, WAL checkpoints, bulk loads, migrations, and backups on a dedicated worker thread. The serving thread hands the work across and stays free to accept and answer connections. Reads stay on the serving thread, since they're fast and served from the page cache.
+
+```ts
+const db = await sirannon.open('app', './data/app.db', {
+  synchronous: 'full',
+  writerWorker: true,
+})
+```
+
+Full durability holds. A write returns to the client only after its flush completes on the worker, exactly as it does without offload. The built-in `better-sqlite3` and `node` drivers support offload, and a custom driver opts in by declaring a worker entry (see [Pluggable drivers](#pluggable-drivers)). Enabling `writerWorker` on a driver that can't support it fails at open with a clear error rather than quietly keeping writes on the serving thread.
+
+Pass an object instead of `true` to tune backpressure and the worker's lifecycle:
+
+```ts
+const db = await sirannon.open('app', './data/app.db', {
+  synchronous: 'full',
+  writerWorker: {
+    maxPendingWrites: 1024,
+    writeTimeoutMs: 30000,
+    maxRestarts: 5,
+  },
+})
+```
+
+`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` restarts the worker when a single operation stalls past it, so a hung flush fails loudly instead of hanging a client; raise it only for unusually large single operations. `maxRestarts` caps consecutive restarts before writes fail permanently.
 
 ### HTTP routes
 
@@ -1001,6 +1031,7 @@ try {
 | `synchronous` | `'off' \| 'normal' \| 'full' \| 'extra'` | `'normal'` | Writer durability (`PRAGMA synchronous`); this is the level a bulk load restores when it finishes |
 | `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms (1 hour) |
+| `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so disk flushes never block the serving thread; see [Writer worker](#writer-worker-offload-disk-writes) |
 
 ### `ServerOptions`
 

@@ -163,6 +163,22 @@ export interface DatabaseOptions {
   cdcPollInterval?: number
   /** CDC retention period in milliseconds. Default: 3_600_000 (1 hour). */
   cdcRetention?: number
+  /**
+   * Run writes on a dedicated worker thread so disk flushes never block the
+   * thread serving connections; reads stay on the calling thread. Requires a
+   * driver with a worker entry (the `better-sqlite3` and `node` drivers have
+   * one), otherwise opening throws. Default: off.
+   */
+  writerWorker?: boolean | WriterWorkerOptions
+}
+
+export interface WriterWorkerOptions {
+  /** Writes allowed in flight before new writes are rejected with a busy signal. Default: 1024. */
+  maxPendingWrites?: number
+  /** Per-operation deadline in ms; a slower operation restarts the worker and fails loudly. 0 disables it. Default: 30000. */
+  writeTimeoutMs?: number
+  /** Restarts a crashed worker this many times before writes fail permanently. Default: 5. */
+  maxRestarts?: number
 }
 
 /** Top-level options for the Sirannon database registry. */

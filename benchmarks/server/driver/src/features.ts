@@ -12,6 +12,15 @@ import { maxOf, mean, percentile } from './stats.ts'
 
 const PROBE_TABLE = 'cdc_probe'
 const SERVER_POLL_INTERVAL_MS = 50
+const SETUP_ATTEMPTS = 5
+const SETUP_BACKOFF_MS = 250
+const SETUP_TIMEOUT_MS = 10_000
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms)
+  })
+}
 
 export async function measureCdcLatency(
   baseUrl: string,
@@ -20,15 +29,37 @@ export async function measureCdcLatency(
   warmupSamples: number,
 ): Promise<Record<string, unknown>> {
   const endpoint = `${baseUrl.replace(/\/+$/, '')}/db/${encodeURIComponent(databaseId)}`
+  // The change-feed setup runs after a long measured pass, when the single-threaded server can be
+  // briefly unresponsive and refuse or reset a fresh connection. A connection-level failure is
+  // retried with backoff; an HTTP error status means the server answered and the fault is logical,
+  // so it is surfaced at once without retrying.
   const post = async (path: string, body: unknown): Promise<void> => {
-    const response = await fetch(`${endpoint}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!response.ok) {
-      throw new Error(`POST ${path} returned ${response.status}: ${await response.text()}`)
+    const url = `${endpoint}${path}`
+    const payload = JSON.stringify(body)
+    let lastError: unknown
+    for (let attempt = 1; attempt <= SETUP_ATTEMPTS; attempt++) {
+      let response: Response
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: payload,
+          signal: AbortSignal.timeout(SETUP_TIMEOUT_MS),
+        })
+      } catch (err) {
+        lastError = err
+        if (attempt < SETUP_ATTEMPTS) {
+          await delay(SETUP_BACKOFF_MS * attempt)
+          continue
+        }
+        throw err
+      }
+      if (!response.ok) {
+        throw new Error(`POST ${path} returned ${response.status}: ${await response.text()}`)
+      }
+      return
     }
+    throw lastError
   }
 
   await post('/execute', { sql: `DROP TABLE IF EXISTS ${PROBE_TABLE}` })

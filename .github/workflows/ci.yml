@@ -45,7 +45,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Build
-        run: pnpm nx run sirannon-ts:build
+        run: pnpm build
 
       - name: Test
         run: pnpm nx run sirannon-ts:test

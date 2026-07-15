@@ -5,20 +5,27 @@
 // with a bootstrap confidence interval, so one noisy pass cannot set the headline. Latency is the
 // median of each pass's corrected percentiles. From the sweep it picks an operating point: the
 // highest offered rate the engine sustained while holding p99 under the disclosed service-level
-// target. Before the sweep it measures the load client's own throughput ceiling, so a rate that
-// falls short can be charged to the server or the client on evidence, never guessed.
+// target.
+//
+// Every rate also carries what the generator itself was doing while the number was taken: the rate
+// it actually offered against the rate it meant to, and how much of the window it spent pinned
+// against its own in-flight cap. A rate that fell short is read against those facts rather than
+// against an assumption, and where they settle nothing the rate says so.
 
+import { classifyPass, majorityVerdict } from './classify.ts'
 import type { Config } from './config.ts'
 import type { Driver } from './drivers/driver.ts'
 import { type ClientCeiling, type LoadResult, type RunOp, measureClientCeiling, runOpenLoop } from './loadgen.ts'
+import { makeRunOp, operationCost } from './operations.ts'
 import { SeededRng, ZipfianGenerator } from './rng.ts'
 import { median, summarizeMetric } from './stats.ts'
-import { type OperationContext, type Workload, buildWorkloads, pickOperation } from './workloads.ts'
+import { buildWorkloads } from './workloads/catalogue.ts'
+import type { Workload } from './workloads/workload.ts'
 
 const ERROR_RATE_CEILING = 0.01
-const CEILING_SAFETY = 0.9
 const CEILING_MIN_SECONDS = 2
 const CEILING_MAX_SECONDS = 4
+const CEILING_STATEMENT = 'SELECT 1'
 
 const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
@@ -52,42 +59,16 @@ export interface EngineResult {
   workloads: WorkloadResult[]
   clientCeiling: ClientCeiling
   clientBoundAny: boolean
+  indeterminateAny: boolean
 }
 
 export interface WorkloadResult {
   workload: string
   category: string
   runs: number
+  operation_cost: Record<string, unknown>
   operating_point: Record<string, unknown>
   sweep: Record<string, unknown>[]
-}
-
-function makeRunOp(driver: Driver, workload: Workload, rng: SeededRng, zipf: ZipfianGenerator, dataSize: number): RunOp {
-  const operations = workload.operations
-  const useSqlite = driver.dialect === 'sqlite'
-
-  return async (): Promise<boolean> => {
-    const operation = pickOperation(rng, operations)
-    const ctx: OperationContext = { rng, zipf, dataSize }
-    const params = operation.params(ctx)
-    try {
-      if (operation.kind === 'read') {
-        await driver.read(useSqlite ? operation.sqliteSql : operation.postgresSql, params)
-      } else if (operation.kind === 'write') {
-        await driver.write(useSqlite ? operation.sqliteSql : operation.postgresSql, params)
-      } else {
-        const readSql = useSqlite ? operation.sqliteSql : operation.postgresSql
-        const writeSql = useSqlite ? operation.writeSqliteSql : operation.writePostgresSql
-        const key = params[0]
-        const value = params[1]
-        await driver.read(readSql, [key])
-        await driver.write(writeSql ?? readSql, [value, key])
-      }
-      return true
-    } catch {
-      return false
-    }
-  }
 }
 
 async function prepare(driver: Driver, workload: Workload, config: Config): Promise<void> {
@@ -103,12 +84,28 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
   await driver.seed(seedTables)
 }
 
-function classifyPass(pass: LoadResult, ceilingOps: number): { serverSaturated: boolean; clientBound: boolean } {
-  if (pass.sustained) {
-    return { serverSaturated: false, clientBound: false }
+function generatorBlock(passes: LoadResult[], config: Config): Record<string, unknown> {
+  return {
+    max_in_flight: config.maxInFlight,
+    max_in_flight_observed: median(passes.map(pass => pass.maxInFlightObserved)),
+    reached_cap: passes.filter(pass => pass.reachedCap).length > passes.length / 2.0,
+    cap_occupancy: median(passes.map(pass => pass.capOccupancy)),
+    occupancy_samples: median(passes.map(pass => pass.occupancySamples)),
+    offered_rate: median(passes.map(pass => pass.offeredRate)),
+    offered_fraction: median(passes.map(pass => pass.offeredFraction)),
+    dispatched_in_window: median(passes.map(pass => pass.dispatchedInWindow)),
+    expected_in_window: median(passes.map(pass => pass.expectedInWindow)),
+    note:
+      'offered_fraction is the share of the target rate the generator actually offered, and it is ' +
+      'the field to read for whether the load was delivered. dispatched_in_window and ' +
+      'expected_in_window always agree and are not evidence of that: the generator walks every ' +
+      'scheduled request however late it is running, so the count comes out right even when the ' +
+      'schedule took several times its window to deliver. Only the elapsed time shows the shortfall, ' +
+      'which is what offered_rate measures. cap_occupancy is the fraction of the window, sampled off ' +
+      'the request path, that the generator spent with its in-flight cap full; near one means ' +
+      'requests were waiting on the server rather than on the generator, and occupancy_samples is ' +
+      'how many samples that fraction rests on.',
   }
-  const clientBound = pass.targetRate > ceilingOps * CEILING_SAFETY
-  return { serverSaturated: !clientBound, clientBound }
 }
 
 async function measureRate(
@@ -120,18 +117,13 @@ async function measureRate(
   const passes: LoadResult[] = []
   for (let run = 0; run < config.runs; run++) {
     const runOp = makeOp()
-    passes.push(
-      await runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight),
-    )
+    passes.push(await runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight))
   }
 
   const throughputSamples = passes.map(pass => pass.achievedRate)
   const summary = summarizeMetric(throughputSamples, 0.95, config.seed)
   const classifications = passes.map(pass => classifyPass(pass, ceilingOps))
-  const sustainedVotes = passes.filter(pass => pass.sustained).length
-  const saturatedVotes = classifications.filter(entry => entry.serverSaturated).length
-  const clientVotes = classifications.filter(entry => entry.clientBound).length
-  const majority = config.runs / 2.0
+  const verdict = majorityVerdict(classifications.map(entry => entry.verdict))
 
   return {
     target_rate: targetRate,
@@ -154,9 +146,12 @@ async function measureRate(
       max: median(passes.map(pass => pass.maxMs)),
       mean: median(passes.map(pass => pass.meanMs)),
     },
-    sustained: sustainedVotes > majority,
-    server_saturated: saturatedVotes > majority,
-    client_bound: clientVotes > majority,
+    generator: generatorBlock(passes, config),
+    sustained: verdict === 'sustained',
+    server_saturated: verdict === 'server_saturated' || verdict === 'both',
+    client_bound: verdict === 'client_bound' || verdict === 'both',
+    limit_verdict: verdict,
+    verdict_samples: classifications.map(entry => entry.verdict),
     error_rate: median(passes.map(pass => pass.errorRate)),
   }
 }
@@ -196,12 +191,12 @@ async function runWorkload(
   for (const rate of config.targetRates) {
     sweep.push(await measureRate(makeOp, rate, config, ceilingOps))
   }
-  const operatingPoint = selectOperatingPoint(sweep, config.sloP99Ms)
   return {
     workload: workload.name,
     category: workload.category,
     runs: config.runs,
-    operating_point: operatingPoint,
+    operation_cost: operationCost(driver, workload),
+    operating_point: selectOperatingPoint(sweep, config.sloP99Ms),
     sweep,
   }
 }
@@ -211,7 +206,7 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
   const ceilingSeconds = Math.min(Math.max(config.measureSeconds, CEILING_MIN_SECONDS), CEILING_MAX_SECONDS)
   const trivialOp: RunOp = async () => {
     try {
-      await driver.read('SELECT 1', [])
+      await driver.read(CEILING_STATEMENT, [])
       return true
     } catch {
       return false
@@ -219,17 +214,20 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
   }
   const deadlineMs = workloadDeadlineMs(config, ceilingSeconds)
   const clientCeiling = await withDeadline(
-    measureClientCeiling(trivialOp, ceilingSeconds, config.maxInFlight),
+    measureClientCeiling(trivialOp, ceilingSeconds, config.maxInFlight, CEILING_STATEMENT),
     deadlineMs,
     'client-ceiling measurement',
   )
 
   const results: WorkloadResult[] = []
   let clientBoundAny = false
+  let indeterminateAny = false
   for (const name of config.workloads) {
     const workload = catalogue.get(name)
     if (workload === undefined) {
-      throw new Error(`unknown workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`)
+      throw new Error(
+        `unknown workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`,
+      )
     }
     const result = await withDeadline(
       runWorkload(driver, workload, config, clientCeiling.ceilingOps),
@@ -239,7 +237,10 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
     if (result.sweep.some(rate => rate.client_bound === true)) {
       clientBoundAny = true
     }
+    if (result.sweep.some(rate => rate.limit_verdict === 'indeterminate')) {
+      indeterminateAny = true
+    }
     results.push(result)
   }
-  return { workloads: results, clientCeiling, clientBoundAny }
+  return { workloads: results, clientCeiling, clientBoundAny, indeterminateAny }
 }

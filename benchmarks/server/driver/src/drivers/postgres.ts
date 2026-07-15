@@ -1,6 +1,8 @@
 // Drive PostgreSQL through node-postgres, the client an application reaches it with: a pooled
-// binary-protocol connection over the socket, one statement per call in autocommit mode to match
-// Sirannon's per-statement commit. The pool size is disclosed, because the pool is where
+// binary-protocol connection over the socket. A single read or write runs one statement per call in
+// autocommit mode, matching Sirannon's per-statement commit; a transaction takes one session and
+// walks BEGIN, each statement, and COMMIT over it, because that is the only way node-postgres sends
+// a parameterised multi-statement transaction. The pool size is disclosed, because the pool is where
 // PostgreSQL's per-connection cost shows up as the client count climbs. Durability is set per
 // session: `synchronous_commit = on` for the full-durability pass and `off` for the
 // matched-relaxed pass, so the fsync behaviour matches Sirannon's `synchronous = FULL` and
@@ -8,8 +10,8 @@
 
 import { Pool } from 'pg'
 import type { PostgresConfig } from '../config.ts'
-import type { SeedTable } from '../workloads.ts'
-import { Driver } from './driver.ts'
+import type { SeedTable } from '../workloads/workload.ts'
+import { Driver, type TransactionStatement } from './driver.ts'
 
 const SYNCHRONOUS_COMMIT: Record<string, string> = { full: 'on', matched: 'off' }
 const MAX_BIND_PARAMS = 60_000
@@ -70,6 +72,10 @@ export class PostgresDriver extends Driver {
       durability_requested: this.durability,
       synchronous_commit: String(sync),
       version: String(version),
+      pool_size: this.config.poolSize,
+      // A transaction holds a session for its whole span, so this is the ceiling on concurrent
+      // transactions no matter how much load is offered. Beyond it, requests queue in the client.
+      max_concurrent_transactions: this.config.poolSize,
     }
   }
 
@@ -158,6 +164,41 @@ export class PostgresDriver extends Driver {
 
   async write(sql: string, params: unknown[]): Promise<void> {
     await this.poolOrThrow().query(this.render(sql), params)
+  }
+
+  // A transaction holds one pooled session for its whole span, because BEGIN, the statements, and
+  // COMMIT must reach the same backend. That also means the pool size, not the in-flight cap, is
+  // what limits concurrent transactions here; both are disclosed.
+  async transaction(statements: TransactionStatement[]): Promise<void> {
+    const client = await this.poolOrThrow().connect()
+    let open = false
+    let poisoned: Error | undefined
+    try {
+      await client.query('BEGIN')
+      open = true
+      for (const statement of statements) {
+        await client.query(this.render(statement.sql), statement.params)
+      }
+      await client.query('COMMIT')
+      open = false
+    } finally {
+      if (open) {
+        try {
+          await client.query('ROLLBACK')
+        } catch (err) {
+          // A session whose rollback failed cannot be trusted to be out of its transaction, so it
+          // is destroyed rather than handed to the next caller still holding one open.
+          poisoned = err instanceof Error ? err : new Error(String(err))
+        }
+      }
+      client.release(poisoned)
+    }
+  }
+
+  // node-postgres sends one statement per message on the extended protocol, so a transaction costs
+  // BEGIN, one round trip per statement, and COMMIT.
+  transactionRoundTrips(statementCount: number): number {
+    return statementCount + 2
   }
 
   async close(): Promise<void> {

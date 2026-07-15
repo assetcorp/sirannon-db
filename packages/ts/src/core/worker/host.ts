@@ -83,13 +83,11 @@ export class WriterWorker {
       if (this.worker === worker) this.fault(err)
     })
     worker.on('exit', code => {
-      if (this.worker === worker && !this.closed && code !== 0) {
+      if (this.worker === worker && !this.closed) {
         this.fault(new SirannonError(`Writer worker exited with code ${code}`, 'WRITER_WORKER_EXIT'))
       }
     })
-    this.ready = this.send(this.openRequest).then(() => {
-      this.restarts = 0
-    })
+    this.ready = this.send(this.openRequest).then(() => undefined)
     this.ready.catch(() => {})
   }
 
@@ -184,7 +182,12 @@ export class WriterWorker {
   private request(request: WorkerRequestBody): Promise<unknown> {
     if (this.fatal) return Promise.reject(this.fatal)
     if (this.closed) return Promise.reject(new SirannonError('Writer worker is closed', 'WRITER_WORKER_CLOSED'))
-    return this.ready.then(() => this.send(request))
+    return this.ready
+      .then(() => this.send(request))
+      .then(value => {
+        this.restarts = 0
+        return value
+      })
   }
 
   private makeConnection(): SQLiteConnection {

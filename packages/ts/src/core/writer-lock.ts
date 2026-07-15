@@ -21,6 +21,23 @@ export class WriterLock {
     this.tail = ticket.then(swallow, swallow)
     return ticket
   }
+
+  isHeld(): boolean {
+    return this.held.getStore() === true
+  }
+
+  async settle(): Promise<void> {
+    await this.run(() => Promise.resolve())
+  }
+
+  /**
+   * Work scheduled from inside a held operation inherits it, so shared
+   * machinery must detach or it runs every caller's work inside one caller's
+   * transaction.
+   */
+  detached<T>(operation: () => T): T {
+    return this.held.exit(operation)
+  }
 }
 
 function swallow(): void {}

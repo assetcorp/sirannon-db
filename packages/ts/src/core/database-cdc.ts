@@ -24,9 +24,8 @@ export class DatabaseCdcController {
   }
 
   async watch(table: string): Promise<void> {
-    this.ensure()
-    const tracker = this.tracker
-    await this.runExclusive(() => tracker?.watch(this.acquireWriter(), table) ?? Promise.resolve())
+    const { tracker } = this.ensure()
+    await this.runExclusive(() => tracker.watch(this.acquireWriter(), table))
     this.ensurePolling()
   }
 
@@ -42,10 +41,8 @@ export class DatabaseCdcController {
   }
 
   on(table: string): SubscriptionBuilder {
-    this.ensure()
-    const manager = this.subscriptions
-    if (!manager) throw new Error('subscriptionManager not initialized')
-    return new SubscriptionBuilderImpl(table, manager)
+    const { subscriptions } = this.ensure()
+    return new SubscriptionBuilderImpl(table, subscriptions)
   }
 
   async runTransaction<T>(writer: SQLiteConnection, fn: (tx: Transaction) => Promise<T>): Promise<T> {
@@ -71,13 +68,12 @@ export class DatabaseCdcController {
     }
   }
 
-  private ensure(): void {
-    if (!this.tracker) {
-      this.tracker = new ChangeTracker({ retention: this.retention })
-    }
-    if (!this.subscriptions) {
-      this.subscriptions = new SubscriptionManager()
-    }
+  private ensure(): { tracker: ChangeTracker; subscriptions: SubscriptionManager } {
+    const tracker = this.tracker ?? new ChangeTracker({ retention: this.retention })
+    const subscriptions = this.subscriptions ?? new SubscriptionManager()
+    this.tracker = tracker
+    this.subscriptions = subscriptions
+    return { tracker, subscriptions }
   }
 
   private ensurePolling(): void {

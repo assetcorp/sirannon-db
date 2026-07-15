@@ -1,6 +1,6 @@
 import { encodeWireRowsInPlace } from './cdc/encoding.js'
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
-import { QueryError } from './errors.js'
+import { QueryError, SirannonError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
 
@@ -45,6 +45,17 @@ export function bindParams(params?: Params): unknown[] {
   return [params]
 }
 
+/**
+ * A driver reports a failed statement as a plain Error, so only those become a
+ * QueryError. Anything this package already raised carries a code the server
+ * maps to a status, and rewrapping it would report a crashed writer or a
+ * rejected table as an ordinary SQL error.
+ */
+function asQueryError(err: unknown, sql: string): Error {
+  if (err instanceof SirannonError) return err
+  return new QueryError(err instanceof Error ? err.message : String(err), sql)
+}
+
 export async function query<T = Record<string, unknown>>(
   conn: SQLiteConnection,
   sql: string,
@@ -55,7 +66,7 @@ export async function query<T = Record<string, unknown>>(
     const stmt = await getStatement(conn, sql)
     return await stmt.all<T>(...bindParams(params))
   } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    throw asQueryError(err, sql)
   }
 }
 
@@ -75,7 +86,7 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
     const rows = (stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)) as unknown[]
     return encodeWireRowsInPlace(rows)
   } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    throw asQueryError(err, sql)
   }
 }
 
@@ -89,7 +100,7 @@ export async function queryOne<T = Record<string, unknown>>(
     const stmt = await getStatement(conn, sql)
     return await stmt.get<T>(...bindParams(params))
   } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    throw asQueryError(err, sql)
   }
 }
 
@@ -103,7 +114,7 @@ export async function execute(conn: SQLiteConnection, sql: string, params?: Para
       lastInsertRowId: result.lastInsertRowId,
     }
   } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    throw asQueryError(err, sql)
   }
 }
 
@@ -158,11 +169,11 @@ async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<Execute
   return values
 }
 
-function controlError(err: unknown, sql: string): QueryError {
-  return new QueryError(err instanceof Error ? err.message : String(err), sql)
+function controlError(err: unknown, sql: string): Error {
+  return asQueryError(err, sql)
 }
 
-async function execControl(conn: SQLiteConnection, sql: string): Promise<QueryError | null> {
+async function execControl(conn: SQLiteConnection, sql: string): Promise<Error | null> {
   try {
     await conn.exec(sql)
     return null
@@ -274,7 +285,7 @@ async function forEachBatchRow(
       sink(result.changes, result.lastInsertRowId)
     }
   } catch (err) {
-    throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+    throw asQueryError(err, sql)
   }
 }
 
@@ -288,7 +299,7 @@ export async function executeBatch(
     try {
       return await conn.runBatch(sql, paramsBatch.map(bindParams))
     } catch (err) {
-      throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+      throw asQueryError(err, sql)
     }
   }
   const results: ExecuteResult[] = []
@@ -312,7 +323,7 @@ export async function executeBatchSummary(
     try {
       return await conn.runBatchSummary(sql, paramsBatch.map(bindParams))
     } catch (err) {
-      throw new QueryError(err instanceof Error ? err.message : String(err), sql)
+      throw asQueryError(err, sql)
     }
   }
   let changes = 0

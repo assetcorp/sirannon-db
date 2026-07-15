@@ -35,7 +35,7 @@
     "test:failover": "vitest run --config vitest.failover.config.ts",
     "test:soak": "vitest run --config vitest.soak.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "proto:gen": "grpc_tools_node_protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/transport/grpc/generated --ts_proto_opt=forceLong=bigint --ts_proto_opt=esModuleInterop=true --ts_proto_opt=outputServices=grpc-js --ts_proto_opt=env=node -I src/transport/grpc/proto src/transport/grpc/proto/replication.proto"

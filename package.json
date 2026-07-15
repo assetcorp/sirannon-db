@@ -21,7 +21,7 @@
     "typecheck": "nx run-many -t typecheck",
     "lint": "nx run-many -t lint",
     "format": "biome check --write .",
-    "check": "biome check ."
+    "check": "biome check --error-on-warnings ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.4",

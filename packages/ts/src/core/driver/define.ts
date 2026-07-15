@@ -12,5 +12,6 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver {
     capabilities: Object.freeze({ ...config.capabilities }),
     open: config.open,
     ...(config.worker ? { worker: Object.freeze({ ...config.worker }) } : {}),
+    ...(config.startWriterHost ? { startWriterHost: config.startWriterHost } : {}),
   })
 }

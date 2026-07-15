@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "packages/ts/examples/distributed-entitlements", "run", "app:dev"],
       "port": 3001
+    },
+    {
+      "name": "web-wa-sqlite",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "packages/ts/examples/web-wa-sqlite", "run", "dev"],
+      "port": 5173
     }
   ]
 }

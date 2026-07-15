@@ -3,15 +3,21 @@ import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { WriterWorker } from '../../core/worker/host.js'
 
 export interface NodeSqliteOptions {
   busyTimeout?: number
 }
 
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
+  const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },
-    worker: { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions },
+    worker: workerEntry,
+    startWriterHost: async (path, options, hostOptions) => {
+      const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
+      return host.connection
+    },
     async open(path, options) {
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false })

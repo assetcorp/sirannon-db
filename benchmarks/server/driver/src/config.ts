@@ -1,9 +1,3 @@
-// Load the benchmark configuration from a TOML file, with environment overrides. The TOML file
-// holds the stable choices that define the workload; every value is disclosed in the generated
-// report so a reader can reproduce the run. Environment variables prefixed BENCH_ override
-// individual fields for a one-off run without editing the file. Empty strings are treated as
-// unset, because an orchestrator may forward absent variables as empty strings.
-
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'

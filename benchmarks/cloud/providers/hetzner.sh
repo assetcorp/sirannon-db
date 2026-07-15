@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # DRY_RUN, VM_NAME, MACHINE_LABEL, CLOUD_DIR come from common.sh
-#
-# Hetzner Cloud driver. The CCX line is dedicated AMD EPYC with no noisy
-# neighbour, the cheapest fixed-CPU option here. Storage is included with the
-# server type, so DISK_SIZE does not apply.
+# shellcheck disable=SC2154
 
 # shellcheck source=lib/raw-ssh.sh
 . "$CLOUD_DIR/lib/raw-ssh.sh"

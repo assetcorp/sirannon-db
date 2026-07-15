@@ -1,9 +1,3 @@
-// Assemble the per-engine result file and its disclosure block. One file records one engine at one
-// durability level: the machine, the engine version and durability settings in force, the full
-// configuration so a reader can reproduce the run, the per-workload numbers, and the load client's
-// own measured throughput ceiling. The aggregate step reads these files to build the cross-engine
-// comparison.
-
 import type { Config } from './config.ts'
 import type { ClientCeiling } from './loadgen.ts'
 

@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-#
-# Start remote-run.sh detached so the benchmark keeps running after the
-# controlling SSH session closes. Any KEY=VALUE arguments become environment
-# for the run. Records the pid so the orchestrator can follow the log.
 
 set -euo pipefail
 

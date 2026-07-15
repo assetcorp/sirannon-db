@@ -1,32 +1,7 @@
-// Open-loop load generation with coordinated-omission correction.
-//
-// A closed-loop generator sends the next request only after the previous one returns, so when the
-// server stalls the generator stops sending and the slow requests never get measured. This
-// generator instead fires requests at a fixed target rate whether or not earlier requests have
-// returned, and it records each request's latency from the time it was meant to be sent, not the
-// time a backlog let it start. A request delayed by a stall therefore carries the full delay,
-// which is the wrk2 correction for coordinated omission.
-//
-// Concurrency is bounded by a semaphore so a stalled server cannot spawn unbounded work. The result
-// records the raw facts a caller needs to classify the outcome: the achieved rate, the rate the
-// generator actually offered, and how much of the window it spent pinned against its own in-flight
-// cap. Those last two are what separate a slow server from a slow client, and both are reported
-// rather than collapsed into a verdict here.
-//
-// The offered rate is measured, not assumed. Counting dispatches alone cannot show a shortfall: the
-// loop walks every scheduled index whatever happens, so it always ends up having dispatched exactly
-// what the schedule called for, however far behind the clock it has fallen. The shortfall only
-// appears in how long that took, so the offered rate is the in-window dispatch count over the
-// wall-clock span from the window's scheduled start to the last dispatch. That needs one clock
-// reading per pass rather than one per request, so measuring it costs the request path nothing.
-//
-// In-flight occupancy is sampled off the request path by a timer, because it answers a question the
-// maximum cannot: a single spike touches the cap, but a server that has become the bottleneck holds
-// the generator against the cap for the whole window.
-
+import { type FailureCategory, FailureTally, OPERATION_REJECTED } from './failures.ts'
 import { maxOf, mean, percentile } from './stats.ts'
 
-export type RunOp = () => Promise<boolean>
+export type RunOp = () => Promise<FailureCategory | null>
 
 export interface LoadResult {
   targetRate: number
@@ -50,6 +25,7 @@ export interface LoadResult {
   expectedInWindow: number
   sustained: boolean
   reachedCap: boolean
+  failures: FailureTally
 }
 
 const SUSTAINED_FRACTION = 0.95
@@ -87,10 +63,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, ms))
 }
 
-// Drive runOp at targetRate requests per second. runOp performs one operation and resolves true
-// on success or false on an application error; it must not reject, so a single failed request
-// cannot tear down the run. Latencies from the warmup window are discarded; latencies from the
-// measurement window are corrected for coordinated omission and returned as percentiles.
 export async function runOpenLoop(
   runOp: RunOp,
   targetRate: number,
@@ -106,6 +78,7 @@ export async function runOpenLoop(
   const measureEnd = warmupEnd + measureSeconds * 1000
 
   const latenciesMs: number[] = []
+  const failures = new FailureTally()
   let served = 0
   let errors = 0
   let inFlight = 0
@@ -115,33 +88,30 @@ export async function runOpenLoop(
 
   const inMeasureWindow = (instant: number): boolean => instant >= warmupEnd && instant <= measureEnd
 
-  // Two accounting rules run here on purpose. Throughput counts responses that arrive within the
-  // measurement window, so a saturated server whose backlog drains after the window is not
-  // credited for work it did late. Latency is charged from the intended send time for every
-  // request meant to be sent in the window, so a stalled request carries its full delay.
   const fire = async (intendedTime: number, intendedInWindow: boolean): Promise<void> => {
     inFlight += 1
     if (inFlight > maxInFlightObserved) {
       maxInFlightObserved = inFlight
     }
-    let ok: boolean
+    let failure: FailureCategory | null
     try {
-      ok = await runOp()
+      failure = await runOp()
     } catch {
-      ok = false
+      failure = OPERATION_REJECTED
     } finally {
       inFlight -= 1
       semaphore.release()
     }
     const arrival = performance.now()
-    if (intendedInWindow && ok) {
+    if (intendedInWindow && failure === null) {
       latenciesMs.push(arrival - intendedTime)
     }
     if (inMeasureWindow(arrival)) {
-      if (ok) {
+      if (failure === null) {
         served += 1
       } else {
         errors += 1
+        failures.record(failure)
       }
     }
   }
@@ -184,12 +154,8 @@ export async function runOpenLoop(
       })
       index += 1
     }
-    // The loop breaks on the first index past the window and does no work in between, so this is
-    // when the last scheduled request left, whether that was on time or long after.
     dispatchEnd = performance.now()
 
-    // Let the backlog drain. Outstanding work is bounded by the in-flight cap, so once the generator
-    // stops offering, the queue clears without a pathological tail.
     await Promise.allSettled([...tasks])
   } finally {
     clearInterval(sampler)
@@ -225,6 +191,7 @@ export async function runOpenLoop(
     expectedInWindow,
     sustained,
     reachedCap,
+    failures,
   }
 }
 
@@ -236,15 +203,6 @@ export interface ClientCeiling {
   statement: string
 }
 
-// Measure how fast the load client can turn round trips over when it is never made to wait, driving
-// a trivial statement closed-loop at full concurrency.
-//
-// Read this for exactly what it is: an upper bound on the client's issue rate, measured on a
-// response of a few bytes. A workload whose rows are a kilobyte each costs the client more per
-// operation, so its true ceiling is lower than this one, by an amount this probe cannot see. That
-// asymmetry decides what the number may be used for. Achieving this rate proves the client is at
-// its limit. Falling short of it proves nothing on its own, because the workload's own lower
-// ceiling may be what was reached; whether the server is saturated is settled on other evidence.
 export async function measureClientCeiling(
   runOp: RunOp,
   seconds: number,
@@ -257,13 +215,13 @@ export async function measureClientCeiling(
 
   const worker = async (): Promise<void> => {
     while (performance.now() < deadline) {
-      let ok: boolean
+      let failure: FailureCategory | null
       try {
-        ok = await runOp()
+        failure = await runOp()
       } catch {
-        ok = false
+        failure = OPERATION_REJECTED
       }
-      if (ok) {
+      if (failure === null) {
         ops += 1
       } else {
         errors += 1

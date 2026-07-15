@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-# Run the Sirannon-versus-Postgres comparison end to end.
-#
-# Both engines run as native processes in transient systemd units under cgroup v2 control: the
-# engine under test is pinned to its own CPU cores with a hard memory ceiling, and the load driver
-# is pinned to disjoint cores with no memory cap. Engine data directories go under BENCH_DATA_ROOT,
-# and before anything seeds the script proves at device level that they resolve to the expected
-# disk. Cold start is timed for both engines as the interval from the process start command to the
-# first successful health probe. Each engine process starts fresh for each measured pass and is
-# stopped after it, a disclosed cooldown between passes lets the system recover, and the page
-# cache is dropped before each measured series so neither engine starts warm. Every artifact is
-# written under results/runs/<run id>/.
-#
-# Usage:
-#   ./run-all.sh                 # same as cloud
-#   ./run-all.sh cloud           # full-scale run: 10,000,000 rows, both durabilities, regenerates the page
-#   ./run-all.sh smoke           # fast throwaway check: 10,000 rows, one durability, no page, self-cleaning
-#
-# A preset only fills in defaults; any BENCH_ variable exported by hand still overrides it. A smoke
-# run keeps its output under results/.smoke (git-ignored) and leaves the published page untouched.
 
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
@@ -119,8 +100,6 @@ ENGINE_MEMORY="$(printf '%s' "${BENCH_ENGINE_MEMORY:-2G}" | tr '[:lower:]' '[:up
 if [ -n "${BENCH_DRIVER_MEMORY:-}" ]; then
   echo "note: the load driver runs without a memory cap; BENCH_DRIVER_MEMORY is ignored"
 fi
-# The core counts are disclosure values derived from the enforced cpusets, so the published
-# numbers can never disagree with the caps that were live.
 derived_driver_cpus="$(cpuset_count "$DRIVER_CPUSET")"
 derived_engine_cpus="$(cpuset_count "$ENGINE_CPUSET")"
 if [ -n "${BENCH_DRIVER_CPUS:-}" ] && [ "$BENCH_DRIVER_CPUS" != "$derived_driver_cpus" ]; then
@@ -138,9 +117,7 @@ BENCH_PG_PASSWORD="${BENCH_PG_PASSWORD:-$(od -An -N16 -tx1 /dev/urandom | tr -d 
 export BENCH_PG_PASSWORD
 
 SSD_MODE="${BENCH_LOCAL_SSD_MODE:-auto}"
-# PostgreSQL runs as its own system user and must traverse every path component to its data
-# directory and password file, so the fallback is a system path; a directory under a home such as
-# /root (mode 700 on providers that log in as root) blocks initdb with a permission error.
+# Must stay outside any home: the postgres user traverses every component, and mode 700 blocks it.
 if [ -z "${BENCH_DATA_ROOT:-}" ]; then
   if findmnt -no TARGET /mnt/nvme >/dev/null 2>&1; then
     BENCH_DATA_ROOT="/mnt/nvme/bench"
@@ -160,8 +137,6 @@ BENCH_RUN_ID="${BENCH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 export BENCH_RUN_ID
 DURABILITIES="${BENCH_DURABILITIES:-full matched}"
 
-# A smoke run is isolated under a git-ignored results tree so it is never committed or taken as
-# the latest run.
 if [ -n "${SMOKE}" ]; then
   HOST_RESULTS_DIR="results/.smoke"
 else
@@ -182,16 +157,12 @@ echo "durabilities: ${DURABILITIES}"
 echo "data root: ${BENCH_DATA_ROOT} (local SSD mode: ${SSD_MODE})"
 echo "driver cores: ${DRIVER_CPUSET}; engine cores: ${ENGINE_CPUSET}; engine memory ceiling: ${ENGINE_MEMORY}"
 
-# EPOCHREALTIME avoids forking an interpreter, so probe polling stays cheap and the cold-start
-# figure carries no process-spawn jitter. Stripping non-digits removes the locale's decimal
-# separator, leaving microseconds since the epoch.
 now_ms() {
   local us="${EPOCHREALTIME//[!0-9]/}"
   printf '%s\n' $(( us / 1000 ))
 }
 
-# Wait until the unit has fully deactivated, not merely left the active state; reusing the unit
-# name while the old instance is still deactivating fails with "unit already exists".
+# Reusing a unit name while the old one is still deactivating fails with "unit already exists".
 unit_stop() {
   local unit="$1" waited=0 state
   sudo systemctl stop "$unit" >/dev/null 2>&1 || true
@@ -214,24 +185,16 @@ unit_stop() {
   sudo systemctl reset-failed "$unit" >/dev/null 2>&1 || true
 }
 
-# shellcheck disable=SC2329 # invoked through the EXIT trap
+# shellcheck disable=SC2329
 cleanup_units() {
   unit_stop bench-driver.service
   unit_stop bench-sirannon.service
   unit_stop bench-postgres.service
 }
 trap cleanup_units EXIT
-# A hard-killed prior run never reached the EXIT trap, so its transient units can still hold the
-# ports and cores; clear them before the first start.
+# A hard-killed prior run never reached its EXIT trap, so its units may still hold ports and cores.
 cleanup_units
 
-# Run a command under a wall-clock deadline so a stalled pass can never hang the run. On the
-# deadline it kills the command, stops the driver unit the command may have left behind (the unit
-# is a child of systemd, not of this script), and returns 124 so the caller records the pass as a
-# failure and moves on. timeout returns 124 on a normal deadline kill and 137 when its follow-up
-# SIGKILL was needed, but the driver unit can also exit 137 on its own (an OOM kill, an operator
-# stop), so 137 only counts as a deadline hit when the wall clock agrees; everything else is
-# reported with its real exit code so a crash is never mislabelled as a timeout.
 run_with_deadline() {
   local secs="$1"
   shift
@@ -240,6 +203,7 @@ run_with_deadline() {
   timeout -k 30 "$secs" "$@"
   rc=$?
   elapsed=$(( ($(now_ms) - began) / 1000 ))
+  # 137 is timeout's SIGKILL or an OOM kill; only the elapsed check tells a crash from a deadline.
   if [ "$rc" -eq 124 ] || { [ "$rc" -eq 137 ] && [ "$elapsed" -ge "$secs" ]; }; then
     echo "pass exceeded its ${secs}s deadline; killed it and stopping the driver unit" >&2
     unit_stop bench-driver.service
@@ -251,14 +215,12 @@ run_with_deadline() {
   return "$rc"
 }
 
-# shellcheck disable=SC2329 # invoked through wait_probe "$@"
+# shellcheck disable=SC2329
 pg_probe() { "$PG_BINDIR/pg_isready" -q -h 127.0.0.1 -p 5432 -U benchmark; }
-# shellcheck disable=SC2329 # invoked through wait_probe "$@"
+# shellcheck disable=SC2329
 sirannon_probe() { "$NODE_BIN" -e "fetch('http://127.0.0.1:9876/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; }
 
 wait_probe() {
-  # Poll a health probe until it succeeds, then print the elapsed milliseconds from the supplied
-  # start time. Prints nothing and returns non-zero on timeout.
   local start_ms="$1" deadline
   shift
   deadline=$(( $(now_ms) + COLD_START_TIMEOUT * 1000 ))
@@ -281,10 +243,6 @@ backing_disk() {
   printf '%s\n' "$disk"
 }
 
-# The config saying where data should go is not proof of where it goes; a paid run once stalled
-# because a relocation setting was silently ignored and writes went to the network boot disk. This
-# resolves each data directory to its physical disk and refuses to run when the disk is not the
-# one the provider's local SSD mode promises.
 check_data_device() {
   local dir="$1" disk rootdisk
   disk="$(backing_disk "$dir")" || { echo "cannot resolve the device behind ${dir}" >&2; return 1; }
@@ -310,8 +268,7 @@ check_data_device() {
 verify_engine_cgroup() {
   local unit="$1" cg="/sys/fs/cgroup/system.slice/$1"
   local page expect_mem actual_mem actual_cpus
-  # The kernel rounds memory.max down to a page multiple, so the expectation is rounded the same
-  # way before the exact compare.
+  # The kernel rounds memory.max down to a page multiple, so the expectation is rounded to match.
   page="$(getconf PAGE_SIZE)"
   expect_mem="$(numfmt --from=iec "$ENGINE_MEMORY")"
   expect_mem=$(( expect_mem / page * page ))
@@ -329,9 +286,6 @@ drop_caches() {
   printf '3\n' | sudo tee /proc/sys/vm/drop_caches >/dev/null
 }
 
-# The disclosed recovery pause between engine passes: flush everything, wait for dirty pages to
-# settle so the next engine never pays for the previous engine's writeback, trim the data
-# filesystem so SSD garbage collection is in a comparable state, then pause a fixed interval.
 cooldown() {
   echo "cooldown: sync, settle dirty pages (<= ${COOLDOWN_DIRTY_KB} kB), trim, pause ${COOLDOWN_SECONDS}s"
   sync
@@ -350,9 +304,8 @@ cooldown() {
   sleep "$COOLDOWN_SECONDS"
 }
 
-# The postmaster is exempt from the OOM killer and every backend resets itself to a normal score
-# (the mechanism the PostgreSQL kernel-resources documentation prescribes), so memory pressure at
-# the cgroup ceiling can only kill a backend, which PostgreSQL recovers from, never the postmaster.
+# OOMScoreAdjust and the two PG_OOM_ADJUST variables are one mechanism: they exempt the postmaster
+# while each backend resets to a normal score, so memory pressure kills a recoverable backend.
 start_postgres() {
   sudo systemd-run --quiet --collect --unit=bench-postgres \
     -p AllowedCPUs="$ENGINE_CPUSET" -p MemoryMax="$ENGINE_MEMORY" -p MemorySwapMax=0 \
@@ -478,10 +431,6 @@ status=0
 read -r -a DURABILITY_LIST <<< "$DURABILITIES"
 total="${#DURABILITY_LIST[@]}"
 index=0
-# Each engine process starts fresh for its pass and is stopped after it: an engine that fails its
-# health probe or its cap verification is never measured, PostgreSQL's shared buffers cannot stay
-# warm across passes while Sirannon restarts cold, and an idle engine never shares the pinned
-# cores with the one under measurement.
 for durability in "${DURABILITY_LIST[@]}"; do
   echo "================ durability: ${durability} ================"
   sirannon_args=(--engine sirannon --durability "$durability")

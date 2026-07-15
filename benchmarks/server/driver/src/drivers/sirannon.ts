@@ -1,19 +1,48 @@
-// Drive Sirannon through the SDK an application ships with: seeding and measured operations both go
-// over the WebSocket transport, DDL over HTTP `/execute`. A transaction's whole statement list
-// travels in one request and the server commits it as a unit, so one transaction is one round trip
-// and the client is never in the loop between statements.
-//
-// Seeding streams each table to the bulk-load
-// endpoint in batches at relaxed durability and pays the one fsyncing WAL checkpoint once, when the
-// table finishes, instead of once per batch; the configured durability is restored after every batch,
-// so measured writes still run at the requested durability.
-
+import type { FailureClassifier, FailureKind } from '../failures.ts'
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
 import type { SeedTable } from '../workloads/workload.ts'
 import { Driver, type TransactionStatement } from './driver.ts'
 
 const SEED_BATCH_ROWS = 25_000
+
+const SIRANNON_SHED = new Set(['WRITE_OVERLOADED'])
+const SIRANNON_TIMEOUT = new Set(['TIMEOUT', 'WRITER_WORKER_TIMEOUT'])
+const SIRANNON_CONNECTION = new Set(['CONNECTION_ERROR', 'TRANSPORT_ERROR'])
+const SIRANNON_CLIENT = new Set(['INVALID_ARGUMENT', 'INVALID_RESPONSE', 'ROUTING_ERROR'])
+const SIRANNON_UNKNOWN = new Set(['UNKNOWN_ERROR'])
+
+function remoteCodeOf(err: unknown): string | undefined {
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' && code !== '' ? code : undefined
+}
+
+function sirannonKind(code: string, err: unknown): FailureKind {
+  // Re-reads err because sirannonCode substitutes err.name when the SDK reported no code at all.
+  if (remoteCodeOf(err) === undefined) {
+    return 'client_error'
+  }
+  if (SIRANNON_SHED.has(code)) {
+    return 'shed'
+  }
+  if (SIRANNON_TIMEOUT.has(code)) {
+    return 'timeout'
+  }
+  if (SIRANNON_CONNECTION.has(code)) {
+    return 'connection'
+  }
+  if (SIRANNON_CLIENT.has(code)) {
+    return 'client_error'
+  }
+  if (SIRANNON_UNKNOWN.has(code)) {
+    return 'unknown'
+  }
+  return 'server_error'
+}
+
+function sirannonCode(err: unknown): string {
+  return remoteCodeOf(err) ?? (err instanceof Error ? err.name : typeof err)
+}
 
 export class SirannonDriver extends Driver {
   readonly name = 'sirannon'
@@ -27,6 +56,7 @@ export class SirannonDriver extends Driver {
   private readonly requestTimeoutMs: number
   private client: SirannonClient | null = null
   private db: RemoteDatabase | null = null
+  readonly failureClassifier: FailureClassifier = { codeOf: sirannonCode, kindOf: sirannonKind }
 
   constructor(baseUrl: string, databaseId: string, durability: string, requestTimeoutMs: number) {
     super()
@@ -38,8 +68,6 @@ export class SirannonDriver extends Driver {
   }
 
   async connect(): Promise<void> {
-    // Every request, seed load and measured op alike, is bounded so a stalled request fails fast
-    // instead of hanging the run. Seed batches are small enough to finish well inside this window.
     this.client = new SirannonClient(this.baseUrl, { requestTimeout: this.requestTimeoutMs })
     this.db = this.client.database(this.databaseId)
     await this.read('SELECT 1', [])
@@ -65,10 +93,7 @@ export class SirannonDriver extends Driver {
   }
 
   async info(): Promise<Record<string, unknown>> {
-    // The read pool always opens at synchronous=NORMAL, so a PRAGMA read would misreport the
-    // writer's durability. The authoritative durability is the requested value, which the server
-    // applies to the writer connection; journal_mode is persistent per database, so it reads back
-    // accurately from any connection.
+    // A PRAGMA synchronous read would report the read pool's NORMAL, not the writer's durability.
     const settings: Record<string, unknown> = {
       engine: 'sirannon',
       delivery: this.delivery,

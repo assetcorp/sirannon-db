@@ -1,7 +1,3 @@
-// The single-statement micro workloads: one point read by primary key, one insert, one update.
-// Each operation is one statement and one round trip on both engines, so these are the baseline the
-// heavier workloads are read against.
-
 import type { SeededRng } from '../rng.ts'
 import type { SeedTable, Workload } from './workload.ts'
 

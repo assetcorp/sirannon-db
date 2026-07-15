@@ -1,11 +1,3 @@
-// Statistics for reporting throughput and latency credibly. The headline for each rate is the
-// median of several independent passes, carrying a percentile bootstrap 95% confidence interval
-// and the run-to-run coefficient of variation, so a reader can tell a real difference from noise.
-// Latency is summarised by percentiles, never a mean, because latency is right-skewed.
-//
-// The bootstrap reseeds from a fixed seed, so a given set of samples produces the same interval
-// every time and the continuous-integration drift check stays stable.
-
 import { SeededRng } from './rng.ts'
 
 const BOOTSTRAP_ITERATIONS = 10_000
@@ -14,8 +6,7 @@ export function mean(samples: number[]): number {
   return samples.length > 0 ? samples.reduce((a, b) => a + b, 0) / samples.length : 0.0
 }
 
-// A fold, not Math.max(...samples): spreading a large sample array as call arguments overflows the
-// stack, and a measurement window holds hundreds of thousands of latencies.
+// Not Math.max(...samples): a measurement window holds enough latencies to overflow the stack.
 export function maxOf(samples: number[]): number {
   let max = Number.NEGATIVE_INFINITY
   for (const value of samples) {
@@ -48,8 +39,6 @@ export function sampleStddev(samples: number[]): number {
   return Math.sqrt(variance)
 }
 
-// Linear-interpolation percentile (the method NumPy and R call type 7). fraction is in [0, 1];
-// 0.99 asks for the 99th percentile.
 export function percentile(samples: number[], fraction: number): number {
   if (samples.length === 0) {
     return 0.0
@@ -79,10 +68,6 @@ export interface MetricSummary {
   runs: number
 }
 
-// Summarise one throughput metric collected across independent passes. With a single pass the
-// interval collapses to the point value and the spread is zero, which is honest for n=1. With
-// more passes the confidence interval is a percentile bootstrap of the median resampled with
-// replacement.
 export function summarizeMetric(samples: number[], confidence = 0.95, seed = 42): MetricSummary {
   const n = samples.length
   if (n === 0) {

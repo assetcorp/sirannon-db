@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-#
-# Idempotent VM setup for the native benchmark: PostgreSQL 17 from the PGDG apt
-# repository, Node 24 from NodeSource, pnpm through corepack, Python 3 (Ubuntu
-# 24.04 ships 3.12), and database data on local NVMe. A provider whose root disk
-# is already local NVMe has no separate device; BENCH_LOCAL_SSD_MODE=required
-# makes a missing local disk a hard failure rather than a silent fall back to
-# slow disk.
 
 set -euo pipefail
 
@@ -57,16 +50,13 @@ setup_local_nvme() {
 
 log "apt packages"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-# build-essential backs node-gyp's fallback compile of better-sqlite3 when no prebuilt binary
-# matches the VM's Node.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   ca-certificates curl gnupg git python3 build-essential postgresql-common
 
 log "local NVMe (mode: $SSD_MODE)"
 setup_local_nvme
 
-# The benchmark starts its own postgres on its own data directory and port; a
-# packaged default cluster would hold port 5432 and race every run.
+# A packaged default cluster would hold port 5432 and race the benchmark's own postgres.
 sudo mkdir -p /etc/postgresql-common/createcluster.d
 echo "create_main_cluster = false" | sudo tee /etc/postgresql-common/createcluster.d/no-main-cluster.conf >/dev/null
 
@@ -81,8 +71,6 @@ if pg_lsclusters 2>/dev/null | awk '{print $1, $2}' | grep -q '^17 main$'; then
   sudo pg_dropcluster --stop 17 main
 fi
 
-# The apt repository is configured by hand instead of piping NodeSource's setup script into a
-# root shell; the signed repository is then the only thing trusted.
 if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v24" ]; then
   log "install Node 24 (NodeSource apt repository)"
   sudo install -d -m 755 /etc/apt/keyrings

@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # DRY_RUN, VM_NAME, DISK_SIZE, MACHINE_LABEL come from common.sh
-#
-# Google Compute Engine driver. gcloud manages SSH keys and the connection, so
-# this driver does not use the raw-ssh transport. c3-standard-8-lssd keeps a fixed
-# Sapphire Rapids CPU and bundles local NVMe SSDs, so database I/O avoids the
-# network-attached pd-balanced boot disk.
+# shellcheck disable=SC2154
 
 prov_init() {
   require_cmd gcloud
@@ -26,8 +21,7 @@ prov_exists() {
 }
 
 prov_create() {
-  # Keep the required flags in the array so it is never empty; expanding an empty
-  # array under 'set -u' aborts on the bash 3.2 that ships with macOS.
+  # Must never be empty: expanding an empty array under 'set -u' aborts on macOS's bash 3.2.
   local -a flags=(
     --project "$PROJECT" --zone "$ZONE"
     --machine-type "$MACHINE_TYPE"
@@ -48,8 +42,7 @@ prov_status() {
     || log "$VM_NAME not found"
 }
 
-# IAP_FLAG is left unquoted on purpose: it is either '--tunnel-through-iap' or
-# empty, and an empty value must expand to no argument rather than an empty one.
+# IAP_FLAG must stay unquoted: when empty it has to expand to no argument at all.
 # shellcheck disable=SC2086
 prov_ssh() {
   _run gcloud compute ssh "$VM_NAME" --project "$PROJECT" --zone "$ZONE" $IAP_FLAG --command "$1"

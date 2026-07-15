@@ -1,5 +1,3 @@
-// Map an engine name to its driver.
-
 import type { Config } from '../config.ts'
 import type { Driver } from './driver.ts'
 import { PostgresDriver } from './postgres.ts'

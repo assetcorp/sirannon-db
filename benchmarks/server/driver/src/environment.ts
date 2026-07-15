@@ -1,7 +1,3 @@
-// Capture the machine and build provenance recorded with every run. Published numbers name the
-// exact host they came from and the exact commit that produced them, so a reader can reproduce the
-// run and a stale page can be told apart from a fresh one.
-
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { arch, cpus, type as osType, release, totalmem } from 'node:os'
@@ -82,12 +78,7 @@ function cpusetSize(spec: string): number {
   return selected.size
 }
 
-// The driver's own caps are read back from the live cgroup files, so the record proves the pinning
-// was in force rather than merely configured; the engine caps come from the orchestrator's
-// environment because the engine runs in a separate unit the orchestrator verifies the same way.
-// Every cgroup-v2 host exposes readable files even for an unrestricted process, so the mechanism
-// only counts as enforced when the values show a real restriction: a cpuset smaller than the
-// machine or a finite memory ceiling.
+// cgroup-v2 exposes these files even for an unrestricted process, so only a real cap counts.
 function resourceControl(): Record<string, unknown> {
   const cgroupPath = ownCgroupPath()
   const driverCpus = cgroupPath === null ? null : cgroupValue(cgroupPath, 'cpuset.cpus.effective')

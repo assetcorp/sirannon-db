@@ -1,7 +1,3 @@
-// Seeded randomness so a run reproduces the same operation stream given the same seed. Both
-// engines are driven by this one generator, so the two sides answer an identical request stream.
-// mulberry32 is a small, fast, fully deterministic PRNG; an integer seed fixes the whole sequence.
-
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 export class SeededRng {
@@ -32,9 +28,7 @@ export class SeededRng {
   }
 }
 
-// YCSB-compatible Zipfian sampler (Gray et al., SIGMOD 1994). theta fixes the skew; the YCSB
-// default of 0.99 concentrates traffic on a few hot keys. The zeta constants are precomputed once
-// so each sample is O(1).
+// zeta, alpha, and eta follow the sampler in Gray et al., SIGMOD 1994, as YCSB uses it.
 export class ZipfianGenerator {
   private readonly items: number
   private readonly theta: number

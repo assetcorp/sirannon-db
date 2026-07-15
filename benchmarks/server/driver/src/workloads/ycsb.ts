@@ -1,9 +1,3 @@
-// The YCSB key-value mixes, drawn zipfian over the key space as the specification requires.
-//
-// A, B, C, and F are run. D (read-latest) needs insert-driven key growth during the run and E
-// (short-range-scan) needs ordered-key range scans on a separately loaded table; running a stated
-// subset is documented, accepted practice.
-
 import type { SeededRng } from '../rng.ts'
 import type { Operation, OperationContext, SeedTable, Workload } from './workload.ts'
 

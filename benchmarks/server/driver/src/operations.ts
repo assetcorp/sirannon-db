@@ -1,17 +1,5 @@
-// Turn a workload's operation mix into the single function the load generator calls, and describe
-// what one operation of that mix costs.
-//
-// Each operation is bound to its driver once, before any load is offered, so the dialect's SQL is
-// chosen and the statement list is shaped at setup rather than on every request. What remains on
-// the request path is drawing the parameters and making the call.
-//
-// The cost description exists because ops/sec is not self-explanatory. One operation of
-// `point-select` is one statement and one round trip; one operation of `tpc-c-new-order` is six
-// statements, which Sirannon's client sends in one round trip and node-postgres sends in eight.
-// Comparing those rates without the postage each pays is how a benchmark misleads by arithmetic, so
-// the postage is recorded next to the rate.
-
 import type { Driver, TransactionStatement } from './drivers/driver.ts'
+import { type FailureCategory, FailureInterner } from './failures.ts'
 import type { RunOp } from './loadgen.ts'
 import type { SeededRng, ZipfianGenerator } from './rng.ts'
 import type { Operation, OperationContext, Workload } from './workloads/workload.ts'
@@ -80,14 +68,15 @@ export function makeRunOp(
     run: bindOperation(driver, operation),
   }))
   const ctx: OperationContext = { rng, zipf, dataSize }
+  const failures = new FailureInterner(driver.failureClassifier)
 
-  return async (): Promise<boolean> => {
+  return async (): Promise<FailureCategory | null> => {
     const runner = pickWeighted(rng, runners)
     try {
       await runner.run(ctx)
-      return true
-    } catch {
-      return false
+      return null
+    } catch (err) {
+      return failures.categorize(err)
     }
   }
 }

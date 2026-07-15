@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # DRY_RUN, VM_NAME, MACHINE_LABEL, CLOUD_DIR come from common.sh
-#
-# DigitalOcean driver. The Premium gd-8vcpu-32gb droplet gives 8 vCPU, 32 GB, and
-# a guaranteed-NVMe local root; the Regular g- tier does not guarantee NVMe. doctl
-# addresses droplets by id, so name is resolved to an id for ip, status, and delete.
+# shellcheck disable=SC2154
 
 # shellcheck source=lib/raw-ssh.sh
 . "$CLOUD_DIR/lib/raw-ssh.sh"

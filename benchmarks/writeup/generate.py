@@ -1,15 +1,3 @@
-"""Generate the numbers in BENCHMARKS.md from the latest recorded benchmark run.
-
-The page is hand-written prose with generated regions marked by HTML comments. This tool replaces
-the text between each ``<!-- BENCH:<id> START -->`` and its matching END marker, so the narrative
-stays human while every table and the machine description come from the recorded run. With
-``--check`` it verifies the committed page matches a fresh generation and exits non-zero on any
-drift, which is what continuous integration runs.
-
-    python3 benchmarks/writeup/generate.py            # rewrite BENCHMARKS.md in place
-    python3 benchmarks/writeup/generate.py --check     # fail if the page is out of date
-"""
-
 from __future__ import annotations
 
 import sys

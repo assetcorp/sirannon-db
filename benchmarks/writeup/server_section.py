@@ -1,11 +1,3 @@
-"""Build the generated regions of BENCHMARKS.md from the latest recorded run.
-
-Every number in the setup line, the per-workload comparison, the scaling curve, and the
-Sirannon-only characterizations reads straight from the recorded run, so the surrounding prose in
-BENCHMARKS.md stays qualitative and the numbers come only from that run. When no run is committed
-the blocks render a placeholder that the drift check tolerates.
-"""
-
 from __future__ import annotations
 
 from render import decimal, gigabytes, humanized_list, integer, is_number, ms, ops, percent, speedup, table
@@ -300,9 +292,6 @@ def _features_block(source: Source) -> str:
 
 
 def comparison_document(source: Source) -> str:
-    """Assemble the self-contained per-run report committed as ``comparison.md`` beside the run's
-    result JSON. It reuses the same block builders as the published page, so a reader who opens one
-    run directory sees the machine, the methodology, and every table without leaving the folder."""
     date = _date(source.comparison) or "an unrecorded date"
     intro = (
         f"This report records one run of the Sirannon-versus-PostgreSQL benchmark, `{source.run_id}` from "

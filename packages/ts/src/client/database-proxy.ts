@@ -61,8 +61,8 @@ export class RemoteDatabase {
    * Execute multiple statements as a single atomic transaction.
    * Returns an array of results, one per statement.
    *
-   * Requires HTTP transport. WebSocket transport does not
-   * support server-side transactions.
+   * The whole list travels in one request and commits or rolls back as a
+   * unit, so the client is never in the loop between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
     const response = await this.transport.transaction(statements)

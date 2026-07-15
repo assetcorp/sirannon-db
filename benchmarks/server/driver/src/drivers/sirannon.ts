@@ -1,13 +1,17 @@
 // Drive Sirannon through the SDK an application ships with: seeding and measured operations both go
-// over the WebSocket transport, DDL over HTTP `/execute`. Seeding streams each table to the bulk-load
+// over the WebSocket transport, DDL over HTTP `/execute`. A transaction's whole statement list
+// travels in one request and the server commits it as a unit, so one transaction is one round trip
+// and the client is never in the loop between statements.
+//
+// Seeding streams each table to the bulk-load
 // endpoint in batches at relaxed durability and pays the one fsyncing WAL checkpoint once, when the
 // table finishes, instead of once per batch; the configured durability is restored after every batch,
 // so measured writes still run at the requested durability.
 
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
-import type { SeedTable } from '../workloads.ts'
-import { Driver } from './driver.ts'
+import type { SeedTable } from '../workloads/workload.ts'
+import { Driver, type TransactionStatement } from './driver.ts'
 
 const SEED_BATCH_ROWS = 25_000
 
@@ -107,6 +111,14 @@ export class SirannonDriver extends Driver {
 
   async write(sql: string, params: unknown[]): Promise<void> {
     await this.database().execute(sql, params)
+  }
+
+  async transaction(statements: TransactionStatement[]): Promise<void> {
+    await this.database().transaction(statements)
+  }
+
+  transactionRoundTrips(_statementCount: number): number {
+    return 1
   }
 
   async close(): Promise<void> {

@@ -84,7 +84,13 @@ async function run(engine: string, durability: string, config: Config, wantFeatu
     }
 
     const environment = captureEnvironment(harnessVersion())
-    const clientSaturation = clientSaturationBlock(engine, config, engineResult.clientCeiling, engineResult.clientBoundAny)
+    const clientSaturation = clientSaturationBlock(
+      engine,
+      config,
+      engineResult.clientCeiling,
+      engineResult.clientBoundAny,
+      engineResult.indeterminateAny,
+    )
     return buildEngineReport({
       environment,
       engine,

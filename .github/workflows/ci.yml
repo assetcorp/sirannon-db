@@ -39,10 +39,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm nx run sirannon-ts:lint
+        run: pnpm lint
 
       - name: Typecheck
-        run: pnpm nx run sirannon-ts:typecheck
+        run: pnpm typecheck
 
       - name: Build
         run: pnpm nx run sirannon-ts:build

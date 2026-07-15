@@ -26,10 +26,8 @@ const MAX_LINE_QUANTITY = 5
 // TPC-C clause 2.4.2.2 restock quantity.
 const STOCK_REPLENISH = 91
 
-const INSERT_ORDER =
-  'INSERT INTO orders (customer_id, total, status, created_at) VALUES (?, ?, ?, ?)'
-const TAKE_STOCK =
-  'UPDATE products SET stock = CASE WHEN stock >= ? THEN stock - ? ELSE stock - ? + ? END WHERE id = ?'
+const INSERT_ORDER = 'INSERT INTO orders (customer_id, total, status, created_at) VALUES (?, ?, ?, ?)'
+const TAKE_STOCK = 'UPDATE products SET stock = CASE WHEN stock >= ? THEN stock - ? ELSE stock - ? + ? END WHERE id = ?'
 const CHARGE_CUSTOMER = 'UPDATE customers SET balance = balance - ? WHERE id = ?'
 
 function bothDialects(sql: string): StatementTemplate {

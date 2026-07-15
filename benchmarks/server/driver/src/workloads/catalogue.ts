@@ -7,7 +7,11 @@ import { ycsbWorkloads } from './ycsb.ts'
 const VALIDATION_DATA_SIZE = 64
 
 function checkTransactionShapes(workload: Workload): void {
-  const ctx = { rng: new SeededRng(1), zipf: new ZipfianGenerator(VALIDATION_DATA_SIZE), dataSize: VALIDATION_DATA_SIZE }
+  const ctx = {
+    rng: new SeededRng(1),
+    zipf: new ZipfianGenerator(VALIDATION_DATA_SIZE),
+    dataSize: VALIDATION_DATA_SIZE,
+  }
   for (const operation of workload.operations) {
     if (operation.kind !== 'transaction') {
       continue

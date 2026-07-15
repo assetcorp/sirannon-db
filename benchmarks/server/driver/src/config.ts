@@ -194,10 +194,14 @@ function validate(config: Config): void {
     throw new Error(`postgres port must be 1-65535, got ${config.postgres.port}`)
   }
   if (config.requestTimeoutMs <= 0) {
-    throw new Error(`request_timeout_ms must be > 0; the benchmark never issues an unbounded request, got ${config.requestTimeoutMs}`)
+    throw new Error(
+      `request_timeout_ms must be > 0; the benchmark never issues an unbounded request, got ${config.requestTimeoutMs}`,
+    )
   }
   if (config.workloadTimeoutMs < 0) {
-    throw new Error(`workload_timeout_ms must be >= 0, where 0 derives the deadline from the workload size, got ${config.workloadTimeoutMs}`)
+    throw new Error(
+      `workload_timeout_ms must be >= 0, where 0 derives the deadline from the workload size, got ${config.workloadTimeoutMs}`,
+    )
   }
 }
 

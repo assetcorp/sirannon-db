@@ -1,0 +1,24 @@
+{
+  "name": "sirannon-benchmarks",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec biome check .",
+        "cwd": "benchmarks"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "pnpm install --ignore-workspace --frozen-lockfile",
+          "pnpm run typecheck"
+        ],
+        "cwd": "benchmarks/server/driver",
+        "parallel": false
+      }
+    }
+  }
+}

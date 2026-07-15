@@ -22,7 +22,7 @@ export function mintRunId(): string {
 
 export function defaultResultsDir(): string {
   const override = process.env.BENCH_RESULTS_DIR
-  return override && override.trim() ? override : join(process.cwd(), 'results')
+  return override?.trim() ? override : join(process.cwd(), 'results')
 }
 
 function validateSegment(value: string, kind: string): string {
@@ -47,7 +47,7 @@ export function runDirectory(resultsDir: string, runId: string): string {
   validateRunId(runId)
   const root = resolve(resultsDir, RUNS_DIRNAME)
   const candidate = resolve(root, runId)
-  if (candidate !== root && !candidate.startsWith(root + '/')) {
+  if (candidate !== root && !candidate.startsWith(`${root}/`)) {
     throw new Error(`run id ${JSON.stringify(runId)} resolves outside the results directory`)
   }
   return join(resultsDir, RUNS_DIRNAME, runId)

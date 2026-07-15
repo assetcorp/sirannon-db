@@ -354,12 +354,72 @@ describe('WebSocketTransport', () => {
     }
   })
 
-  it('rejects transactions', async () => {
-    const transport = new WebSocketTransport('ws://localhost:1234/db/test')
-    await expect(transport.transaction([{ sql: 'SELECT 1' }])).rejects.toThrow(
-      'Transactions are not supported over WebSocket',
-    )
-    transport.close()
+  it('sends a transaction frame carrying every statement and resolves with the results', async () => {
+    const { sockets, restore } = installFakeWebSockets()
+    try {
+      const transport = new WebSocketTransport('ws://localhost:1234/db/test', {
+        autoReconnect: false,
+        requestTimeout: 1000,
+      })
+
+      const pending = transport.transaction([
+        { sql: 'UPDATE accounts SET balance = balance - ? WHERE id = ?', params: [25, 1] },
+        { sql: 'INSERT INTO ledger (account_id, delta) VALUES (?, ?)', params: [1, -25] },
+      ])
+
+      await until(() => firstFrameOfType(sockets[0], 'transaction') !== undefined)
+      const frame = firstFrameOfType(sockets[0], 'transaction')
+      expect(frame?.statements).toEqual([
+        { sql: 'UPDATE accounts SET balance = balance - ? WHERE id = ?', params: [25, 1] },
+        { sql: 'INSERT INTO ledger (account_id, delta) VALUES (?, ?)', params: [1, -25] },
+      ])
+
+      sockets[0].deliver({
+        type: 'result',
+        id: String(frame?.id),
+        data: {
+          results: [
+            { changes: 1, lastInsertRowId: 0 },
+            { changes: 1, lastInsertRowId: 7 },
+          ],
+        },
+      })
+
+      await expect(pending).resolves.toEqual({
+        results: [
+          { changes: 1, lastInsertRowId: 0 },
+          { changes: 1, lastInsertRowId: 7 },
+        ],
+      })
+      transport.close()
+    } finally {
+      restore()
+    }
+  })
+
+  it('rejects a transaction with the server error when the statements do not commit', async () => {
+    const { sockets, restore } = installFakeWebSockets()
+    try {
+      const transport = new WebSocketTransport('ws://localhost:1234/db/test', {
+        autoReconnect: false,
+        requestTimeout: 1000,
+      })
+
+      const pending = transport.transaction([{ sql: 'INSERT INTO ledger (id) VALUES (?)', params: [1] }])
+      await until(() => firstFrameOfType(sockets[0], 'transaction') !== undefined)
+      const frame = firstFrameOfType(sockets[0], 'transaction')
+
+      sockets[0].deliver({
+        type: 'error',
+        id: String(frame?.id),
+        error: { code: 'QUERY_ERROR', message: 'UNIQUE constraint failed: ledger.id' },
+      })
+
+      await expect(pending).rejects.toThrow('UNIQUE constraint failed: ledger.id')
+      transport.close()
+    } finally {
+      restore()
+    }
   })
 
   it('rejects operations after close', async () => {
@@ -535,8 +595,12 @@ function installFakeWebSockets(): { sockets: FakeSocket[]; restore: () => void }
   return { sockets, restore: () => vi.stubGlobal('WebSocket', originalWebSocket) }
 }
 
+function firstFrameOfType(socket: FakeSocket, type: string): Record<string, unknown> | undefined {
+  return socket.sent.map(s => JSON.parse(s) as Record<string, unknown>).find(m => m.type === type)
+}
+
 function firstSubscribeFrame(socket: FakeSocket): Record<string, unknown> | undefined {
-  return socket.sent.map(s => JSON.parse(s) as Record<string, unknown>).find(m => m.type === 'subscribe')
+  return firstFrameOfType(socket, 'subscribe')
 }
 
 async function until(predicate: () => boolean, timeout = 2000): Promise<void> {

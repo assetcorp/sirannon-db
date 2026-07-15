@@ -13,9 +13,9 @@ import { RemoteError } from '../types.js'
 
 /**
  * HTTP transport for sirannon-db. Sends requests via `fetch` to the
- * server's REST endpoints. Supports query, execute, and transaction
- * operations. Real-time subscriptions are not available over HTTP;
- * use {@link WebSocketTransport} for CDC subscriptions.
+ * server's REST endpoints. Supports query, execute, transaction, batch,
+ * and load operations. Real-time subscriptions are not available over
+ * HTTP; use {@link WebSocketTransport} for CDC subscriptions.
  */
 export class HttpTransport implements Transport {
   private readonly baseUrl: string

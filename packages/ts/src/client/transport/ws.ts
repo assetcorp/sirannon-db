@@ -31,15 +31,13 @@ interface ActiveSubscription {
 
 /**
  * WebSocket transport for sirannon-db. Connects to
- * `ws(s)://host:port/db/{id}` and supports query, execute,
- * and real-time CDC subscriptions over a single persistent connection.
+ * `ws(s)://host:port/db/{id}` and supports query, execute, transaction,
+ * batch, load, and real-time CDC subscriptions over a single persistent
+ * connection.
  *
  * Connections are established lazily on first use and will
  * auto-reconnect (with subscription restoration) when
  * `autoReconnect` is enabled.
- *
- * Transactions are not supported over WebSocket; use
- * {@link HttpTransport} for batch transactions.
  */
 type ClientWebSocket = InstanceType<typeof WebSocket>
 
@@ -97,11 +95,17 @@ export class WebSocketTransport implements Transport {
     })
   }
 
-  async transaction(_statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
-    throw new RemoteError(
-      'TRANSPORT_ERROR',
-      'Transactions are not supported over WebSocket. Use HTTP transport for batch transactions.',
-    )
+  async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<TransactionResponse>({
+      type: 'transaction',
+      id,
+      statements: statements.map(stmt => ({
+        sql: stmt.sql,
+        params: encodeTaggedValues(stmt.params) as Params | undefined,
+      })),
+    })
   }
 
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {

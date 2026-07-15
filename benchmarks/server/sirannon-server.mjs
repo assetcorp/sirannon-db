@@ -25,7 +25,9 @@ const wipeBenchDatabase = dir => {
   const entries = readdirSync(dir, { withFileTypes: true })
   const foreign = entries.filter(entry => !isBenchDatabaseFile(entry))
   if (foreign.length > 0) {
-    throw new Error(`BENCH_DATA_DIR ${dir} contains entries other than a previous benchmark database; refusing to wipe it`)
+    throw new Error(
+      `BENCH_DATA_DIR ${dir} contains entries other than a previous benchmark database; refusing to wipe it`,
+    )
   }
   for (const entry of entries) {
     rmSync(join(dir, entry.name), { force: true })

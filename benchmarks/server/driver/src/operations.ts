@@ -109,8 +109,8 @@ export function operationCost(driver: Driver, workload: Workload): Record<string
     round_trips_per_operation: weightedBy(workload.operations, operation => roundTripsPerOperation(driver, operation)),
     note:
       'One operation is one unit of offered load and one unit of the reported rate. Statements and ' +
-      'round trips per operation are the weighted mean across this workload\'s operation mix. Round ' +
-      'trips are a property of each engine\'s client, so a rate on a workload costing several round ' +
+      "round trips per operation are the weighted mean across this workload's operation mix. Round " +
+      "trips are a property of each engine's client, so a rate on a workload costing several round " +
       'trips per operation is not comparable with a rate on a workload costing one.',
   }
 }

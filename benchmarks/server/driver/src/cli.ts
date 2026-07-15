@@ -49,7 +49,12 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 
-async function run(engine: string, durability: string, config: Config, wantFeatures: boolean): Promise<Record<string, unknown>> {
+async function run(
+  engine: string,
+  durability: string,
+  config: Config,
+  wantFeatures: boolean,
+): Promise<Record<string, unknown>> {
   const driver = buildDriver(engine, config, durability)
   await driver.connect()
   try {

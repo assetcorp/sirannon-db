@@ -87,7 +87,7 @@ export async function measureCdcLatency(
   return {
     feature: 'cdc-latency',
     description:
-      'Lag from a committed write to the change arriving at a subscriber over Sirannon\'s built-in ' +
+      "Lag from a committed write to the change arriving at a subscriber over Sirannon's built-in " +
       'WebSocket change feed. The server polls the change log on a fixed interval, so the floor is ' +
       'that interval.',
     samples: latenciesMs.length,

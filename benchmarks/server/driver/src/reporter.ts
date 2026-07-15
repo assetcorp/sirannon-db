@@ -14,7 +14,7 @@ export function deliveryDisclosure(config: Config): Record<string, unknown> {
     driver_cpus: config.driverCpus,
     engine_cpus: config.engineCpus,
     note:
-      'Each engine is driven through the client it provides. Sirannon runs over its SDK\'s ' +
+      "Each engine is driven through the client it provides. Sirannon runs over its SDK's " +
       'default WebSocket transport, which multiplexes every concurrent request over one persistent ' +
       'socket, and PostgreSQL runs over node-postgres on its binary socket protocol. One Node load ' +
       'generator drives both, so the coordinated-omission instrument behaves identically for each. ' +
@@ -69,9 +69,9 @@ export function clientSaturationBlock(
       'This ceiling is measured on the probe statement above, whose response is a few bytes. A ' +
       'workload returning real rows costs the client more per operation, so its true ceiling is ' +
       'lower than this figure by an amount the probe cannot measure. Read it as an upper bound on ' +
-      'the client only: a workload reaching this rate is at the client\'s limit, while a workload ' +
+      "the client only: a workload reaching this rate is at the client's limit, while a workload " +
       'falling below it proves nothing on its own. Whether the server saturated is decided per rate ' +
-      'from the generator\'s in-flight occupancy, not from this number, and headroom_factor is ' +
+      "from the generator's in-flight occupancy, not from this number, and headroom_factor is " +
       'therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the ' +
       'generator was waiting on replies rather than failing to send them; separating a server too ' +
       'busy to answer from a client too slow to read the answers needs the same offered load split ' +

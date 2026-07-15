@@ -1,7 +1,3 @@
-# Every value here is disclosed in the generated report. Any field can be overridden for a
-# one-off run with the matching BENCH_ environment variable (for example BENCH_RUNS,
-# BENCH_TARGET_RATES, BENCH_WORKLOADS) without editing this file.
-
 [run]
 data_size = 10000
 warmup_seconds = 3.0

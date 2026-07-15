@@ -1,20 +1,47 @@
-// Drive PostgreSQL through node-postgres, the client an application reaches it with: a pooled
-// binary-protocol connection over the socket. A single read or write runs one statement per call in
-// autocommit mode, matching Sirannon's per-statement commit; a transaction takes one session and
-// walks BEGIN, each statement, and COMMIT over it, because that is the only way node-postgres sends
-// a parameterised multi-statement transaction. The pool size is disclosed, because the pool is where
-// PostgreSQL's per-connection cost shows up as the client count climbs. Durability is set per
-// session: `synchronous_commit = on` for the full-durability pass and `off` for the
-// matched-relaxed pass, so the fsync behaviour matches Sirannon's `synchronous = FULL` and
-// `NORMAL` respectively.
-
 import { Pool } from 'pg'
 import type { PostgresConfig } from '../config.ts'
+import type { FailureClassifier, FailureKind } from '../failures.ts'
 import type { SeedTable } from '../workloads/workload.ts'
 import { Driver, type TransactionStatement } from './driver.ts'
 
 const SYNCHRONOUS_COMMIT: Record<string, string> = { full: 'on', matched: 'off' }
 const MAX_BIND_PARAMS = 60_000
+
+const SQLSTATE_CLASS_SHED = '53'
+const SQLSTATE_CLASS_CONNECTION = '08'
+const SQLSTATE_QUERY_CANCELED = '57014'
+const SYSCALL_TIMEOUT = new Set(['ETIMEDOUT', 'ESOCKETTIMEDOUT'])
+const SYSCALL_CONNECTION = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'])
+
+function postgresCodeOf(err: unknown): string {
+  const code = (err as { code?: unknown }).code
+  if (typeof code === 'string' && code !== '') {
+    return code
+  }
+  return err instanceof Error ? err.name : typeof err
+}
+
+function postgresKind(code: string, err: unknown): FailureKind {
+  if (SYSCALL_TIMEOUT.has(code)) {
+    return 'timeout'
+  }
+  if (SYSCALL_CONNECTION.has(code)) {
+    return 'connection'
+  }
+  if (code === SQLSTATE_QUERY_CANCELED) {
+    return 'timeout'
+  }
+  if (/^[0-9A-Z]{5}$/.test(code)) {
+    if (code.startsWith(SQLSTATE_CLASS_SHED)) {
+      return 'shed'
+    }
+    if (code.startsWith(SQLSTATE_CLASS_CONNECTION)) {
+      return 'connection'
+    }
+    return 'server_error'
+  }
+  return err instanceof Error ? 'client_error' : 'unknown'
+}
 
 export class PostgresDriver extends Driver {
   readonly name = 'postgres'
@@ -25,6 +52,7 @@ export class PostgresDriver extends Driver {
   private readonly durability: string
   private readonly synchronousCommit: string
   private pool: Pool | null = null
+  readonly failureClassifier: FailureClassifier = { codeOf: postgresCodeOf, kindOf: postgresKind }
 
   constructor(config: PostgresConfig, durability: string) {
     super()
@@ -34,10 +62,6 @@ export class PostgresDriver extends Driver {
   }
 
   async connect(): Promise<void> {
-    // The fsync behaviour is set at connection start through the libpq `options` startup
-    // parameter, so every pooled session carries it before it serves a request. Setting it on a
-    // per-query `connect` hook would race the pool handing the client to a caller, running two
-    // statements on one connection at once.
     this.pool = new Pool({
       host: this.config.host,
       port: this.config.port,
@@ -73,8 +97,6 @@ export class PostgresDriver extends Driver {
       synchronous_commit: String(sync),
       version: String(version),
       pool_size: this.config.poolSize,
-      // A transaction holds a session for its whole span, so this is the ceiling on concurrent
-      // transactions no matter how much load is offered. Beyond it, requests queue in the client.
       max_concurrent_transactions: this.config.poolSize,
     }
   }
@@ -166,9 +188,6 @@ export class PostgresDriver extends Driver {
     await this.poolOrThrow().query(this.render(sql), params)
   }
 
-  // A transaction holds one pooled session for its whole span, because BEGIN, the statements, and
-  // COMMIT must reach the same backend. That also means the pool size, not the in-flight cap, is
-  // what limits concurrent transactions here; both are disclosed.
   async transaction(statements: TransactionStatement[]): Promise<void> {
     const client = await this.poolOrThrow().connect()
     let open = false
@@ -186,17 +205,14 @@ export class PostgresDriver extends Driver {
         try {
           await client.query('ROLLBACK')
         } catch (err) {
-          // A session whose rollback failed cannot be trusted to be out of its transaction, so it
-          // is destroyed rather than handed to the next caller still holding one open.
           poisoned = err instanceof Error ? err : new Error(String(err))
         }
       }
+      // Passing an error to release() destroys the session instead of returning it to the pool.
       client.release(poisoned)
     }
   }
 
-  // node-postgres sends one statement per message on the extended protocol, so a transaction costs
-  // BEGIN, one round trip per statement, and COMMIT.
   transactionRoundTrips(statementCount: number): number {
     return statementCount + 2
   }

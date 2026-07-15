@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # DRY_RUN, VM_NAME, DISK_SIZE, MACHINE_LABEL, CLOUD_DIR come from common.sh
-#
-# AWS EC2 driver. m6id.2xlarge is 8 vCPU / 32 GB with a bundled NVMe instance
-# store for database I/O; it is Ice Lake because no x86 general-purpose instance
-# pairs Sapphire Rapids with an instance store. This driver imports the key pair,
-# creates a security group that allows SSH only from this machine's public IP,
-# resolves the latest Ubuntu 24.04 AMI from Canonical, and tags the instance by
-# name so later commands find it. It assumes a default VPC with a default subnet;
-# set AWS_SUBNET to override.
+# shellcheck disable=SC2154
 
 # shellcheck source=lib/raw-ssh.sh
 . "$CLOUD_DIR/lib/raw-ssh.sh"

@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-#
-# Run the Sirannon benchmark suite on the VM. The suite starts Sirannon and
-# PostgreSQL as native processes in systemd units under cgroup caps, so the
-# pinned toolchain from remote-bootstrap.sh must be present. The exit status is
-# written to ~/bench.status with ~/bench.done as the completion marker the
-# orchestrator watches for.
 
 set -uo pipefail
 

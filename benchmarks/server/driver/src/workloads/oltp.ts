@@ -1,19 +1,3 @@
-// The order-entry workloads over a customers/products/orders schema.
-//
-// `tpc-c-derived` offers an insert and an update as independent autocommit statements. Nothing
-// binds the two together, so it measures the cost of single writes under a mixed statement stream.
-//
-// `tpc-c-new-order` offers the checkout TPC-C models as its New-Order transaction: record the
-// order, take the stock for each line, and charge the customer, all committing or rolling back as
-// one unit. This is the workload that reaches the engine's transaction path, so it is the one that
-// shows what grouping concurrent commits is worth.
-//
-// Stock follows TPC-C's own replenishment rule (clause 2.4.2.2): a line that would take a product
-// below its remaining quantity restocks it by 91 instead of driving it negative. Without that rule
-// a long run leaves every product at an impossible negative quantity and the final database no
-// longer passes a correctness check, which is the first thing a reader of a benchmark should be
-// able to make.
-
 import type { SeededRng } from '../rng.ts'
 import type { SeedTable, StatementTemplate, Workload } from './workload.ts'
 
@@ -37,11 +21,9 @@ const ORDER_ENTRY_TABLES = ['orders', 'products', 'customers']
 const PRODUCT_COUNT_CAP = 1000
 const FIXED_TIMESTAMP = '2026-01-01T00:00:00.000Z'
 
-// TPC-C draws 5 to 15 lines per order. A fixed count is used instead so one operation always costs
-// the same statements, which keeps the reported ops/sec and its latency distribution a measurement
-// of the engine rather than of the draw. Four lines is within the range and is a plausible basket.
 const ORDER_LINES = 4
 const MAX_LINE_QUANTITY = 5
+// TPC-C clause 2.4.2.2 restock quantity.
 const STOCK_REPLENISH = 91
 
 const INSERT_ORDER =

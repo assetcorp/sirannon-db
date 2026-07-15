@@ -1,13 +1,3 @@
-// The shape every workload in the catalogue takes. A workload names its schema for each dialect, a
-// seed that fills the tables, and a weighted set of operations. Operations carry SQL for both
-// dialects written with `?` placeholders; each driver renders the placeholder in its own style.
-//
-// An operation is one unit of offered load and one entry in the reported ops/sec, so the kinds
-// deliberately differ in what they cost. A read or a write is one statement; a read-modify-write is
-// a read then a dependent write; a transaction is a statement list that commits or rolls back as a
-// unit. What each kind costs is disclosed per workload rather than left for a reader to assume,
-// because ops/sec means nothing without it.
-
 import type { SeededRng, ZipfianGenerator } from '../rng.ts'
 
 export interface OperationContext {
@@ -51,8 +41,6 @@ export interface ReadModifyWriteOperation extends OperationBase {
   params: (ctx: OperationContext) => { read: unknown[]; write: unknown[] }
 }
 
-// The statement list is fixed and the params for the whole list are drawn together, so values that
-// must agree across statements (an order total and the balance it charges) are drawn once.
 export interface TransactionOperation extends OperationBase {
   kind: 'transaction'
   statements: StatementTemplate[]

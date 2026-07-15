@@ -1,21 +1,8 @@
-// Run one engine through every workload and aggregate the numbers.
-//
-// For each workload the harness prepares a known table state, then sweeps a set of target request
-// rates. At each rate it runs several independent measured passes and takes the median throughput
-// with a bootstrap confidence interval, so one noisy pass cannot set the headline. Latency is the
-// median of each pass's corrected percentiles. From the sweep it picks an operating point: the
-// highest offered rate the engine sustained while holding p99 under the disclosed service-level
-// target.
-//
-// Every rate also carries what the generator itself was doing while the number was taken: the rate
-// it actually offered against the rate it meant to, and how much of the window it spent pinned
-// against its own in-flight cap. A rate that fell short is read against those facts rather than
-// against an assumption, and where they settle nothing the rate says so.
-
 import { classifyPass, majorityVerdict } from './classify.ts'
 import type { Config } from './config.ts'
 import type { Driver } from './drivers/driver.ts'
-import { type ClientCeiling, type LoadResult, type RunOp, measureClientCeiling, runOpenLoop } from './loadgen.ts'
+import { FailureInterner, summarizeFailures } from './failures.ts'
+import { type ClientCeiling, type LoadResult, measureClientCeiling, type RunOp, runOpenLoop } from './loadgen.ts'
 import { makeRunOp, operationCost } from './operations.ts'
 import { SeededRng, ZipfianGenerator } from './rng.ts'
 import { median, summarizeMetric } from './stats.ts'
@@ -153,6 +140,7 @@ async function measureRate(
     limit_verdict: verdict,
     verdict_samples: classifications.map(entry => entry.verdict),
     error_rate: median(passes.map(pass => pass.errorRate)),
+    failures: summarizeFailures(passes.map(pass => pass.failures)),
   }
 }
 
@@ -204,12 +192,13 @@ async function runWorkload(
 export async function runEngine(driver: Driver, config: Config): Promise<EngineResult> {
   const catalogue = buildWorkloads()
   const ceilingSeconds = Math.min(Math.max(config.measureSeconds, CEILING_MIN_SECONDS), CEILING_MAX_SECONDS)
+  const ceilingFailures = new FailureInterner(driver.failureClassifier)
   const trivialOp: RunOp = async () => {
     try {
       await driver.read(CEILING_STATEMENT, [])
-      return true
-    } catch {
-      return false
+      return null
+    } catch (err) {
+      return ceilingFailures.categorize(err)
     }
   }
   const deadlineMs = workloadDeadlineMs(config, ceilingSeconds)

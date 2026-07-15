@@ -1,12 +1,3 @@
-// Sirannon-only characterizations that PostgreSQL has no direct equivalent for.
-//
-// These are framed as characterizations, never as a win over PostgreSQL, because the two systems
-// do not do the same work here. The change-feed measurement reports the lag from a committed write
-// to that change arriving at a subscriber over Sirannon's built-in WebSocket feed, driven through
-// the same SDK an application uses. PostgreSQL has no built-in change feed, so the honest
-// comparison would be against PostgreSQL plus an external Debezium and Kafka pipeline, which is a
-// stack comparison, not an engine one. The number here describes Sirannon's feed on its own terms.
-
 import { SirannonClient } from './sirannon-client.ts'
 import { maxOf, mean, percentile } from './stats.ts'
 
@@ -29,10 +20,6 @@ export async function measureCdcLatency(
   warmupSamples: number,
 ): Promise<Record<string, unknown>> {
   const endpoint = `${baseUrl.replace(/\/+$/, '')}/db/${encodeURIComponent(databaseId)}`
-  // The change-feed setup runs after a long measured pass, when the single-threaded server can be
-  // briefly unresponsive and refuse or reset a fresh connection. A connection-level failure is
-  // retried with backoff; an HTTP error status means the server answered and the fault is logical,
-  // so it is surfaced at once without retrying.
   const post = async (path: string, body: unknown): Promise<void> => {
     const url = `${endpoint}${path}`
     const payload = JSON.stringify(body)

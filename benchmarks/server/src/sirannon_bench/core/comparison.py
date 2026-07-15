@@ -1,13 +1,3 @@
-"""Join the per-engine result files into one comparison the writeup can render.
-
-For each durability level the comparison pairs Sirannon against PostgreSQL on every workload at
-each engine's operating point, the highest offered rate it sustained under the service-level
-target. The speedup carries a bootstrap confidence interval on the throughput ratio, so the
-head-to-head claim comes with its own uncertainty rather than two error bars a reader has to
-compare by eye. The scaling section keeps the full throughput-versus-load curve for the chosen
-workloads, and the Sirannon-only features and the cold-start timing ride along unchanged.
-"""
-
 from __future__ import annotations
 
 import json

@@ -1,13 +1,3 @@
-"""Own the on-disk layout of a benchmark run.
-
-A published run is a self-contained directory keyed by a compact UTC run id, so the newest run
-is the lexicographic maximum, the same ordering the harness writes them in. The manifest carries
-the machine provenance; the sibling result files carry the numbers. The writeup generator reads
-the latest committed run directory, so publishing numbers means committing one of these
-directories alongside the regenerated page. All engines and durability passes of one run share a
-single run id threaded through the environment, so they land together.
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,11 +10,7 @@ RUN_ID_ENV = "BENCH_RUN_ID"
 RUNS_DIRNAME = "runs"
 MANIFEST_NAME = "run.json"
 
-# A run id and an artifact name both become one directory or file segment under the results
-# tree, so they must not start a hidden entry, climb out with a dot entry, carry a path
-# separator, or smuggle a null byte. The leading-alphanumeric rule rejects '.', '..', and
-# option-like leading dashes; the body allows only the characters a timestamp id and an artifact
-# name actually use.
+# The leading-alphanumeric class rejects '.' and '..'; widening it reopens path traversal.
 _SEGMENT = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")
 
 
@@ -33,11 +19,6 @@ def mint_run_id() -> str:
 
 
 def default_results_dir() -> Path:
-    """Resolve where runs are written and read.
-
-    The harness runs with a ``results`` directory beside the working directory, so that is the
-    default. ``BENCH_RESULTS_DIR`` overrides it for an ad-hoc location.
-    """
     override = os.environ.get("BENCH_RESULTS_DIR")
     return Path(override) if override else Path.cwd() / "results"
 
@@ -86,9 +67,6 @@ def resolve_run_id_for_write(explicit: str | None) -> str:
 
 
 def write_json(path: Path, payload: object) -> Path:
-    """Write pretty-printed JSON with a trailing newline through a temporary file, then rename it
-    into place, so a reader never sees a half-written file and a crash cannot leave a truncated
-    result behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")

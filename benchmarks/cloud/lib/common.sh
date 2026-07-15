@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-#
-# Shared orchestration for the cloud benchmark runners. A provider driver,
-# sourced after this file, supplies the provider-specific pieces: prov_init,
-# prov_exists, prov_create, prov_delete, prov_status, and the
-# transport prov_ssh, prov_ssh_interactive, prov_scp_up, and prov_scp_down.
-# Everything below is identical across providers: git packaging, the detached
-# run, result fetching, dry-run, and teardown.
 
 CLOUD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$CLOUD_DIR/../.." && pwd)"
@@ -17,15 +10,11 @@ DRY_RUN="${DRY_RUN:-0}"
 MACHINE_LABEL="${BENCH_MACHINE_LABEL:-}"
 MACHINE_TYPE="${MACHINE_TYPE:-}"
 
-# Each committed run is a self-describing directory under results/runs/<id>, so
-# that tree is the fetch target.
 RESULTS_REL="benchmarks/server/results"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-# Single choke point for every side-effecting external command, so --dry-run can
-# show the plan without touching the cloud.
 _run() {
   if [ "$DRY_RUN" = "1" ]; then
     printf 'DRY-RUN: %s\n' "$*"
@@ -68,14 +57,6 @@ cmd_up() {
   prov_wait_ssh
 }
 
-# Package exactly what git tracks or leaves untracked-but-not-ignored, plus the
-# .git directory so the run can stamp the build commit. Delegating the file set
-# to git keeps this identical on macOS and Linux and never drifts from
-# .gitignore, so node_modules, dist, and cached datasets are excluded because
-# git already ignores them. Committed result files still ship (they match HEAD,
-# so they stay clean), but untracked result files are skipped: they are
-# generated output, and shipping a stray local run would show up as a dirty
-# working tree on the VM and pollute the git status each run records.
 cmd_sync() {
   command -v git >/dev/null 2>&1 || die "git is required to package the working tree"
   log "package the working tree via git (honours .gitignore, keeps .git for the build stamp)"
@@ -93,10 +74,7 @@ cmd_sync() {
       -- . ":(exclude)${RESULTS_REL}"
     printf '.git\0'
   } >"$filelist"
-  # COPYFILE_DISABLE stops macOS tar from embedding AppleDouble '._*' sidecar
-  # files (they carry extended attributes like com.apple.provenance). On the
-  # Linux VM those extract as untracked junk and show up as a dirty working tree,
-  # polluting the git status each run records. The variable is a no-op on GNU tar.
+  # Without this, macOS tar embeds '._*' sidecars that dirty the working tree the run records.
   COPYFILE_DISABLE=1 tar czf "$tarball" -C "$REPO_ROOT" --null -T "$filelist"
   rm -f "$filelist"
   log "upload and unpack to ~/sirannon"
@@ -137,8 +115,7 @@ cmd_logs() {
     return 0
   fi
   log "stream ~/bench.log until the run finishes (Ctrl-C detaches, run keeps going)"
-  # The $(cat bench.pid) must expand on the VM, not here, so tail follows the
-  # remote run's pid; single quotes keep it unexpanded on the control host.
+  # Single-quoted so $(cat bench.pid) expands on the VM, not on the control host.
   # shellcheck disable=SC2016
   prov_ssh 'tail -n +1 --follow=name --pid=$(cat bench.pid 2>/dev/null || echo 1) bench.log' || true
   local st
@@ -157,9 +134,6 @@ cmd_fetch() {
     return 0
   fi
 
-  # Each self-describing run is a directory keyed by a compact UTC run id, holding
-  # run.json plus its result files. The writeup generator reads the latest committed
-  # run, so the whole run directory has to come back intact to publish numbers.
   local runs
   runs="$(prov_ssh "find sirannon/$remote/runs -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null || true" | tr -d '\r')"
   if [ -n "$runs" ]; then
@@ -197,11 +171,6 @@ cmd_status() {
   prov_status
 }
 
-# Runs on the way out of cmd_all whether every step passed, a step failed under
-# set -e, or the shell is exiting for any other reason, so a VM that cmd_up
-# created is never silently left billing after an early error. With --teardown it
-# deletes on every exit; without it, it names the VM still running so the cost is
-# visible even on failure.
 _all_exit() {
   local code=$?
   trap - EXIT

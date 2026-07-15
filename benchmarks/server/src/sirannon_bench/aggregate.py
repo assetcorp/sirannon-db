@@ -1,12 +1,3 @@
-"""Join the per-engine result files of one run into ``comparison.json``.
-
-    python -m sirannon_bench.aggregate
-
-The run id comes from ``--run-id``, then ``BENCH_RUN_ID``, then the latest run directory. The
-writeup generator reads the ``comparison.json`` this produces to render the page and the per-run
-report, so a run is published by aggregating it, regenerating the page, and committing both.
-"""
-
 from __future__ import annotations
 
 import argparse

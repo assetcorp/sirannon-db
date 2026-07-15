@@ -1,10 +1,3 @@
-"""Deterministic formatting for the generated benchmark writeup.
-
-Everything here is deterministic so the continuous-integration drift check stays stable: numbers
-render ``n/a`` when absent rather than raising, tables come out byte-identical for the same run,
-and no value depends on the wall clock or the host locale.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

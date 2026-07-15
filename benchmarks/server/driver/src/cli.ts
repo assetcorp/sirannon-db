@@ -1,12 +1,3 @@
-// Run one engine at one durability level and record the result.
-//
-//   node src/cli.ts --engine sirannon --durability full
-//   node src/cli.ts --engine postgres --durability matched
-//
-// All engines and durability passes of one run share a single run id, threaded through
-// BENCH_RUN_ID by the orchestrator, so their files land together under results/runs/<run id>/ for
-// the Python aggregate step to read.
-
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'

@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2154  # DRY_RUN, SSH_USER etc. come from common.sh and the driver
-#
-# Raw SSH transport shared by the IP-addressed providers (Hetzner, DigitalOcean,
-# AWS). Each of those drivers provides prov_ip; this file provides the transport
-# functions and resolves the local SSH key. GCP does not use this file because
-# gcloud manages its own SSH connection.
-#
-# Host-key checking is relaxed on purpose: benchmark VMs are throwaway and get a
-# fresh IP each time, so pinning host keys would only produce mismatch prompts.
+# shellcheck disable=SC2154
 
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10)
 

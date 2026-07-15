@@ -1,11 +1,3 @@
-// The catalogue both engines run identically: the standard OLTP core of point-select, bulk-insert
-// and batch-update as the single-statement operations, YCSB A/B/C/F as the key-value mix, an
-// autocommit order-entry write mix, and the TPC-C New-Order transaction.
-//
-// Every workload is checked as the catalogue is built, before any load is offered, so a transaction
-// whose params do not line up with its statements fails at startup rather than sending the wrong
-// values under measurement.
-
 import { SeededRng, ZipfianGenerator } from '../rng.ts'
 import { microWorkloads } from './micro.ts'
 import { oltpWorkloads } from './oltp.ts'

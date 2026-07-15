@@ -1,9 +1,3 @@
-// Own the on-disk layout of a benchmark run. A published run is a self-contained directory keyed
-// by a compact UTC run id, so the newest run is the lexicographic maximum. The manifest carries
-// the machine provenance; the sibling result files carry the numbers. All engines and durability
-// passes of one run share a single run id threaded through the environment, so they land together.
-// The Python aggregate step reads this same layout to build the cross-engine comparison.
-
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
@@ -11,10 +5,7 @@ const RUN_ID_ENV = 'BENCH_RUN_ID'
 const RUNS_DIRNAME = 'runs'
 export const MANIFEST_NAME = 'run.json'
 
-// A run id and an artifact name both become one directory or file segment under the results tree,
-// so they must not start a hidden entry, climb out with a dot entry, carry a path separator, or
-// smuggle a null byte. The leading-alphanumeric rule rejects '.', '..', and option-like leading
-// dashes; the body allows only the characters a timestamp id and an artifact name actually use.
+// The leading-alphanumeric class rejects '.' and '..'; widening it reopens path traversal.
 const SEGMENT = /^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/
 
 function pad(value: number, width: number): string {
@@ -67,8 +58,6 @@ export function resolveRunIdForWrite(explicit: string | null): string {
   return raw ? validateRunId(raw) : mintRunId()
 }
 
-// Write pretty-printed JSON with a trailing newline through a temporary file, then rename it into
-// place, so a reader never sees a half-written file and a crash cannot leave a truncated result.
 export function writeJson(path: string, payload: unknown): string {
   mkdirSync(dirname(path), { recursive: true })
   const temporary = join(dirname(path), `.${basename(path)}.tmp`)

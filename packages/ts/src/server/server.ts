@@ -7,7 +7,6 @@ import type {
   OnRequestHook,
   ReplicationStatusInfo,
   RequestContext,
-  RequestDenial,
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
@@ -26,8 +25,9 @@ import {
   readBody,
   sendError,
 } from './http-handler.js'
-import type { WSConnection, WSSendOutcome } from './ws-connection.js'
+import { decodeRemoteAddress, runOnRequest } from './request-hook.js'
 import { WSHandler } from './ws-handler.js'
+import { registerWebSocketRoute } from './ws-route.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
@@ -77,44 +77,6 @@ function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number):
     )
   }
   return resolved
-}
-
-function toSendOutcome(result: number): WSSendOutcome {
-  if (result === 2) return 'dropped'
-  if (result === 0) return 'buffered'
-  return 'sent'
-}
-
-function selectWebSocketProtocol(header: string): string {
-  const [firstProtocol] = header.split(',')
-  return firstProtocol?.trim() ?? ''
-}
-
-function decodeRemoteAddress(res: uWS.HttpResponse): string {
-  return Buffer.from(res.getRemoteAddressAsText()).toString()
-}
-
-function isRequestDenial(value: unknown): value is RequestDenial {
-  return typeof value === 'object' && value !== null && 'status' in value
-}
-
-async function runOnRequest(res: uWS.HttpResponse, ctx: RequestContext, hook: OnRequestHook): Promise<boolean> {
-  try {
-    const result = await hook(ctx)
-    if (isRequestDenial(result)) {
-      sendError(res, result.status, result.code, result.message)
-      return false
-    }
-    return true
-  } catch {
-    sendError(res, 500, 'HOOK_ERROR', 'onRequest hook threw an error')
-    return false
-  }
-}
-
-interface WSUserData {
-  databaseId: string
-  conn?: WSConnection
 }
 
 export class SirannonServer {
@@ -219,112 +181,12 @@ export class SirannonServer {
   }
 
   private registerWebSocketRoute(): void {
-    const wsHandler = this.wsHandler
-    const onRequestHook = this.onRequestHook
-
-    this.app.ws<WSUserData>('/db/:id', {
-      maxPayloadLength: this.maxBodyBytes,
-      maxBackpressure: this.maxWsBackpressureBytes,
-      idleTimeout: 120,
-      sendPingsAutomatically: true,
-
-      upgrade: (res, req, context) => {
-        const dbId = req.getParameter(0) ?? ''
-        const url = req.getUrl()
-        const method = req.getMethod()
-        const secWebSocketKey = req.getHeader('sec-websocket-key')
-        const secWebSocketProtocol = req.getHeader('sec-websocket-protocol')
-        const selectedWebSocketProtocol = selectWebSocketProtocol(secWebSocketProtocol)
-        const secWebSocketExtensions = req.getHeader('sec-websocket-extensions')
-
-        const headers: Record<string, string> = {}
-        req.forEach((key, value) => {
-          headers[key] = value
-        })
-
-        const remoteAddress = decodeRemoteAddress(res)
-        let aborted = false
-        res.onAborted(() => {
-          aborted = true
-        })
-
-        if (!onRequestHook) {
-          if (!aborted) {
-            res.upgrade<WSUserData>(
-              { databaseId: dbId },
-              secWebSocketKey,
-              selectedWebSocketProtocol,
-              secWebSocketExtensions,
-              context,
-            )
-          }
-          return
-        }
-
-        const ctx: RequestContext = {
-          headers,
-          method,
-          path: url,
-          databaseId: dbId,
-          remoteAddress,
-        }
-
-        runOnRequest(res, ctx, onRequestHook)
-          .then(allowed => {
-            if (aborted || !allowed) return
-            res.upgrade<WSUserData>(
-              { databaseId: dbId },
-              secWebSocketKey,
-              selectedWebSocketProtocol,
-              secWebSocketExtensions,
-              context,
-            )
-          })
-          .catch(() => {})
-      },
-
-      open: ws => {
-        const userData = ws.getUserData()
-        const conn: WSConnection = {
-          send(data: string): WSSendOutcome {
-            try {
-              return toSendOutcome(ws.send(data, false))
-            } catch {
-              return 'dropped'
-            }
-          },
-          close(code?: number, reason?: string) {
-            try {
-              ws.end(code, reason)
-            } catch {
-              /* already closed */
-            }
-          },
-        }
-        userData.conn = conn
-        wsHandler.handleOpen(conn, userData.databaseId).catch(() => {})
-      },
-
-      message: (ws, message) => {
-        const userData = ws.getUserData()
-        if (!userData.conn) return
-        const text = Buffer.from(message).toString('utf-8')
-        wsHandler.handleMessage(userData.conn, text)
-      },
-
-      dropped: ws => {
-        const userData = ws.getUserData()
-        if (userData.conn) {
-          wsHandler.handleOverload(userData.conn)
-        }
-      },
-
-      close: ws => {
-        const userData = ws.getUserData()
-        if (!userData.conn) return
-        wsHandler.handleClose(userData.conn)
-        userData.conn = undefined
-      },
+    registerWebSocketRoute({
+      app: this.app,
+      wsHandler: this.wsHandler,
+      onRequestHook: this.onRequestHook,
+      maxBodyBytes: this.maxBodyBytes,
+      maxBackpressureBytes: this.maxWsBackpressureBytes,
     })
   }
 
@@ -387,7 +249,7 @@ export class SirannonServer {
         remoteAddress,
       }
 
-      const hookPromise = runOnRequest(res, ctx, onRequestHook)
+      const hookPromise = runOnRequest(res, abort, ctx, onRequestHook)
 
       Promise.all([bodyPromise, hookPromise])
         .then(async ([rawBody, allowed]) => {
@@ -437,11 +299,11 @@ export class SirannonServer {
         remoteAddress: decodeRemoteAddress(res),
       }
 
-      runOnRequest(res, ctx, onRequestHook)
+      const abort = initAbortHandler(res)
+      runOnRequest(res, abort, ctx, onRequestHook)
         .then(allowed => {
-          if (allowed) {
-            handler(res, dbId)
-          }
+          if (abort.aborted || !allowed) return
+          handler(res, dbId)
         })
         .catch(() => {})
     }

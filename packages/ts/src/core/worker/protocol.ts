@@ -9,7 +9,7 @@ export type WorkerRequest =
   | { id: number; kind: 'allRaw'; sql: string; params: unknown[] }
   | { id: number; kind: 'runBatch'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
-  | { id: number; kind: 'runGroup'; batch: { sql: string; params: unknown[] }[] }
+  | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[] }[] }[] }
   | { id: number; kind: 'close' }
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never

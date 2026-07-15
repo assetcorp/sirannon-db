@@ -131,17 +131,17 @@ export async function handleTransactionMessage(
     statements.push({ sql: stmt.sql, params: params.value })
   }
 
+  const txOptions = writeConcern.value ? { writeConcern: writeConcern.value } : undefined
   try {
-    const results = await ctx.target.transaction(
-      async tx => {
-        const txResults = []
-        for (const stmt of statements) {
-          txResults.push(await tx.execute(stmt.sql, stmt.params))
-        }
-        return txResults
-      },
-      writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
-    )
+    const results = ctx.target.executeTransaction
+      ? await ctx.target.executeTransaction(statements, txOptions)
+      : await ctx.target.transaction(async tx => {
+          const txResults = []
+          for (const stmt of statements) {
+            txResults.push(await tx.execute(stmt.sql, stmt.params))
+          }
+          return txResults
+        }, txOptions)
     ctx.sendResult(id, { results: results.map(toExecuteResponse) })
   } catch (err) {
     ctx.sendCaughtError(id, err)

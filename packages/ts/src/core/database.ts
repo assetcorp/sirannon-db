@@ -1,22 +1,20 @@
 import { runBulkLoad } from './bulk-load.js'
-import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
-import { ChangeTracker } from './cdc/change-tracker.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
-import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import { ConnectionPool } from './connection-pool.js'
 import { DatabaseBackupController } from './database-backup.js'
+import { DatabaseCdcController } from './database-cdc.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
+import { canGroupTransaction, GroupCommitter } from './group-committer.js'
 import { fireAfterQueryHooks, fireBeforeQueryHooks } from './hooks/query-hooks.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { GroupCommitter } from './group-committer.js'
 import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
-import { Transaction } from './transaction.js'
+import type { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
   BackupScheduleOptions,
@@ -52,11 +50,7 @@ export class Database {
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
-  private changeTracker: ChangeTracker | null = null
-  private subscriptionManager: SubscriptionManager | null = null
-  private stopCdcPolling: (() => void) | null = null
-  private readonly cdcPollInterval: number
-  private readonly cdcRetention: number
+  private readonly cdc: DatabaseCdcController
 
   private readonly hookRegistry = new HookRegistry()
   private readonly parentHooks: HookRegistry | null
@@ -84,13 +78,17 @@ export class Database {
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
-    this.cdcPollInterval = options?.cdcPollInterval ?? 50
-    this.cdcRetention = options?.cdcRetention ?? 3_600_000
     this.parentHooks = internals?.parentHooks ?? null
     this.metricsCollector = internals?.metrics ?? null
+    this.cdc = new DatabaseCdcController(
+      op => this.writerLock.run(op),
+      () => this.pool.acquireWriter(),
+      options?.cdcPollInterval ?? 50,
+      options?.cdcRetention ?? 3_600_000,
+    )
     this.groupCommitter = new GroupCommitter(this.writerLock, {
       acquireWriter: () => this.pool.acquireWriter(),
-      afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql),
+      afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql),
     })
   }
 
@@ -127,14 +125,7 @@ export class Database {
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    this.fireBeforeQueryHooks(sql, params, options)
-
-    const start = performance.now()
-    try {
-      return await this.runRead(sql, conn => query<T>(conn, sql, params))
-    } finally {
-      this.fireAfterQueryHooks(sql, params, performance.now() - start)
-    }
+    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => query<T>(conn, sql, params)))
   }
 
   /**
@@ -145,14 +136,7 @@ export class Database {
    */
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
-    this.fireBeforeQueryHooks(sql, params, options)
-
-    const start = performance.now()
-    try {
-      return await this.runRead(sql, conn => queryForWire(conn, sql, params))
-    } finally {
-      this.fireAfterQueryHooks(sql, params, performance.now() - start)
-    }
+    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => queryForWire(conn, sql, params)))
   }
 
   async queryOne<T = Record<string, unknown>>(
@@ -161,14 +145,7 @@ export class Database {
     options?: QueryOptions,
   ): Promise<T | undefined> {
     this.ensureOpen()
-    this.fireBeforeQueryHooks(sql, params, options)
-
-    const start = performance.now()
-    try {
-      return await this.runRead(sql, conn => queryOne<T>(conn, sql, params))
-    } finally {
-      this.fireAfterQueryHooks(sql, params, performance.now() - start)
-    }
+    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => queryOne<T>(conn, sql, params)))
   }
 
   /**
@@ -185,30 +162,35 @@ export class Database {
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    this.fireBeforeQueryHooks(sql, params, options)
-
-    const start = performance.now()
-    try {
-      return await this.writeGate.run(() => this.track(sql, () => this.groupCommitter.submit(sql, params)))
-    } finally {
-      this.fireAfterQueryHooks(sql, params, performance.now() - start)
-    }
+    return this.withQueryHooks(sql, params, options, () =>
+      this.writeGate.run(() => this.track(sql, () => this.groupCommitter.submit(sql, params))),
+    )
   }
 
   async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    this.fireBeforeQueryHooks(sql, undefined, options)
-
-    const start = performance.now()
-    try {
-      return await this.writeGate.run(() =>
+    return this.withQueryHooks(sql, undefined, options, () =>
+      this.writeGate.run(() =>
         this.writerLock.run(() =>
           this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
         ),
-      )
+      ),
+    )
+  }
+
+  private async withQueryHooks<T>(
+    sql: string,
+    params: Params | undefined,
+    options: QueryOptions | undefined,
+    op: () => Promise<T>,
+  ): Promise<T> {
+    this.fireBeforeQueryHooks(sql, params, options)
+    const start = performance.now()
+    try {
+      return await op()
     } finally {
-      this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
+      this.fireAfterQueryHooks(sql, params, performance.now() - start)
     }
   }
 
@@ -223,7 +205,7 @@ export class Database {
     run: (txConn: SQLiteConnection) => Promise<T>,
   ): Promise<T> {
     const result = await this.track(sql, () => writer.transaction(run))
-    await applyDdlSideEffectsIfRelevant(this.changeTracker, writer, sql)
+    await applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql)
     return result
   }
 
@@ -241,11 +223,8 @@ export class Database {
   async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    this.fireBeforeQueryHooks(sql, undefined, undefined)
-
-    const start = performance.now()
-    try {
-      return await this.writeGate.run(() =>
+    return this.withQueryHooks(sql, undefined, undefined, () =>
+      this.writeGate.run(() =>
         this.writerLock.run(() => {
           const writer = this.pool.acquireWriter()
           return runBulkLoad({
@@ -257,38 +236,37 @@ export class Database {
             loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
           })
         }),
-      )
-    } finally {
-      this.fireAfterQueryHooks(sql, undefined, performance.now() - start)
+      ),
+    )
+  }
+
+  /**
+   * Takes the statements up front rather than a callback, since a group cannot wait on an
+   * arbitrary caller-supplied callback without delaying every transaction beside it.
+   */
+  async executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    if (statements.length === 0) return []
+
+    if (!canGroupTransaction(statements)) {
+      return this.transaction(async tx => {
+        const results: ExecuteResult[] = new Array(statements.length)
+        for (let i = 0; i < statements.length; i++) {
+          results[i] = await tx.execute(statements[i].sql, statements[i].params)
+        }
+        return results
+      })
     }
+
+    return this.writeGate.run(() => this.groupCommitter.submitTransaction(statements))
   }
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
 
-    return this.writeGate.run(() =>
-      this.writerLock.run(async () => {
-        const writer = this.pool.acquireWriter()
-        const tracker = this.changeTracker
-
-        if (!tracker) {
-          return Transaction.run(writer, fn)
-        }
-
-        const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-        const result = await writer.transaction(async txConn => {
-          const tx = new CdcAwareTransaction(txConn, tracker, state)
-          return fn(tx)
-        })
-
-        if (state.sawDdl && state.droppedTables.length > 0) {
-          await tracker.pruneDroppedTables(writer, state.droppedTables)
-        }
-
-        return result
-      }),
-    )
+    return this.writeGate.run(() => this.writerLock.run(() => this.cdc.runTransaction(this.pool.acquireWriter(), fn)))
   }
 
   async watch(table: string): Promise<void> {
@@ -296,11 +274,7 @@ export class Database {
     if (this.readOnly) {
       throw new ReadOnlyError(this.id)
     }
-
-    this.ensureCdc()
-    const tracker = this.changeTracker
-    await this.writerLock.run(() => tracker?.watch(this.pool.acquireWriter(), table) ?? Promise.resolve())
-    this.ensureCdcPolling()
+    await this.cdc.watch(table)
   }
 
   /**
@@ -316,22 +290,12 @@ export class Database {
 
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
-    const tracker = this.changeTracker
-    if (!tracker) return
-
-    await this.writerLock.run(() => tracker.unwatch(this.pool.acquireWriter(), table))
-
-    if (tracker.watchedTables.size === 0) {
-      this.stopCdcPollingLoop()
-    }
+    await this.cdc.unwatch(table)
   }
 
   on(table: string): SubscriptionBuilder {
     this.ensureOpen()
-    this.ensureCdc()
-    const manager = this.subscriptionManager
-    if (!manager) throw new Error('subscriptionManager not initialized')
-    return new SubscriptionBuilderImpl(table, manager)
+    return this.cdc.on(table)
   }
 
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
@@ -376,7 +340,7 @@ export class Database {
     if (this._closed) return
     this._closed = true
 
-    this.stopCdcPollingLoop()
+    this.cdc.stop()
     this.backups.cancelAll()
 
     let poolError: unknown
@@ -411,37 +375,6 @@ export class Database {
   private ensureOpen(): void {
     if (this._closed) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
-    }
-  }
-
-  private ensureCdc(): void {
-    if (!this.changeTracker) {
-      this.changeTracker = new ChangeTracker({ retention: this.cdcRetention })
-    }
-    if (!this.subscriptionManager) {
-      this.subscriptionManager = new SubscriptionManager()
-    }
-  }
-
-  private ensureCdcPolling(): void {
-    if (this.stopCdcPolling) return
-    if (!this.changeTracker || !this.subscriptionManager) return
-
-    const writer = this.pool.acquireWriter()
-    this.stopCdcPolling = startPolling(
-      writer,
-      this.changeTracker,
-      this.subscriptionManager,
-      this.cdcPollInterval,
-      undefined,
-      operation => this.writerLock.run(operation),
-    )
-  }
-
-  private stopCdcPollingLoop(): void {
-    if (this.stopCdcPolling) {
-      this.stopCdcPolling()
-      this.stopCdcPolling = null
     }
   }
 

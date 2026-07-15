@@ -279,6 +279,16 @@ export interface ServerExecutionTarget {
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
   /**
+   * Optional entry point for a transaction whose statements are all known
+   * before it starts, which lets concurrent transactions share one commit. A
+   * target that omits it stays correct: the server falls back to
+   * {@link transaction} and runs the statements one at a time.
+   */
+  executeTransaction?(
+    statements: readonly { sql: string; params?: Params }[],
+    options?: QueryOptions,
+  ): Promise<ExecuteResult[]>
+  /**
    * Optional bulk-load entry point. Targets that proxy to a remote primary
    * may omit it; the server rejects load requests for such targets instead
    * of silently degrading to per-statement writes.

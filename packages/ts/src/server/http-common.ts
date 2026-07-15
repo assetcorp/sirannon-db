@@ -11,9 +11,19 @@ export interface ResponseAbort {
   onAbort(fn: () => void): void
 }
 
-export function initAbortHandler(res: HttpResponse): ResponseAbort {
+/**
+ * uWS frees a response once it is ended and fires `onAborted` only for a client
+ * disconnect, never for our own reply, so concurrent writers cannot see that one
+ * of them has already answered. Only the caller that wins {@link claim} may write.
+ */
+export interface ResponseGuard extends ResponseAbort {
+  claim(): boolean
+}
+
+export function initAbortHandler(res: HttpResponse): ResponseGuard {
   const listeners: (() => void)[] = []
   let aborted = false
+  let claimed = false
 
   res.onAborted(() => {
     aborted = true
@@ -31,6 +41,11 @@ export function initAbortHandler(res: HttpResponse): ResponseAbort {
         listeners.push(fn)
       }
     },
+    claim() {
+      if (aborted || claimed) return false
+      claimed = true
+      return true
+    },
   }
 }
 
@@ -38,7 +53,7 @@ export function initAbortHandler(res: HttpResponse): ResponseAbort {
  * Read the request body as it streams in, enforcing `maxBytes` per chunk so
  * an oversized request is rejected with 413 before it is ever fully buffered.
  */
-export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbort): Promise<Buffer> {
+export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseGuard): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (abort.aborted) {
       reject(new Error('Request aborted'))
@@ -61,7 +76,7 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbo
       totalLength += chunk.byteLength
       if (totalLength > maxBytes) {
         done = true
-        if (!abort.aborted) {
+        if (abort.claim()) {
           sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'Request body exceeds size limit')
         }
         reject(new Error('Payload too large'))

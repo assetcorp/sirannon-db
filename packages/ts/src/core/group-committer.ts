@@ -1,4 +1,5 @@
 import type { GroupRunError, SQLiteConnection } from './driver/types.js'
+import { SirannonError } from './errors.js'
 import { bindParams, execute, executeGroup, type GroupOutcome, type GroupStatement } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
 import type { WriterLock } from './writer-lock.js'
@@ -166,9 +167,14 @@ export class GroupCommitter {
   }
 }
 
+/**
+ * Every error a group produces is raised by this package and carries a code the
+ * server maps to a status, so the code has to survive the worker's structured
+ * clone as a {@link SirannonError} rather than as a bare `Error` the server can
+ * only report as a 500.
+ */
 function toError(error: GroupRunError): Error {
-  const err = new Error(error.message)
+  const err = error.code ? new SirannonError(error.message, error.code) : new Error(error.message)
   if (error.name) err.name = error.name
-  if (error.code) (err as { code?: string }).code = error.code
   return err
 }

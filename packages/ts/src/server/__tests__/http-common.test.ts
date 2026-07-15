@@ -30,6 +30,7 @@ describe('readBody', () => {
     const abort = {
       aborted: true,
       onAbort: () => {},
+      claim: () => false,
     }
 
     await expect(readBody(mock.res, 1024, abort)).rejects.toThrow('Request aborted')
@@ -91,15 +92,12 @@ describe('readBody', () => {
     await expect(pending).resolves.toEqual(Buffer.from('done'))
   })
 
-  it('skips sending 413 when the request is already aborted during overflow', async () => {
+  it('skips sending 413 when the response is already spoken for', async () => {
     const mock = createMockResponse()
-    let checks = 0
     const abort = {
-      get aborted() {
-        checks++
-        return checks >= 3
-      },
+      aborted: false,
       onAbort: () => {},
+      claim: () => false,
     }
 
     const pending = readBody(mock.res, 3, abort)
@@ -107,5 +105,17 @@ describe('readBody', () => {
 
     await expect(pending).rejects.toThrow('Payload too large')
     expect(mock.state.status).toBeUndefined()
+  })
+
+  it('claims the response exactly once for the 413', async () => {
+    const mock = createMockResponse()
+    const abort = initAbortHandler(mock.res)
+    const pending = readBody(mock.res, 3, abort)
+
+    mock.data('abcd', true)
+
+    await expect(pending).rejects.toThrow('Payload too large')
+    expect(mock.state.status).toBe('413')
+    expect(abort.claim()).toBe(false)
   })
 })

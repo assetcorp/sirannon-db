@@ -37,6 +37,34 @@ describe('Metrics integration', () => {
     await sir.shutdown()
   })
 
+  it('records a metric for every statement of a grouped transaction', async () => {
+    const queryMetrics: { sql: string; durationMs: number; error?: boolean }[] = []
+
+    const sir = new Sirannon({
+      driver: testDriver,
+      metrics: {
+        onQueryComplete: m => queryMetrics.push({ sql: m.sql, durationMs: m.durationMs, error: m.error }),
+      },
+    })
+
+    const db = await sir.open('main', join(tempDir, 'tx-metrics.db'))
+    await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, ref TEXT)')
+    queryMetrics.length = 0
+
+    await db.executeTransaction([
+      { sql: 'INSERT INTO orders (ref) VALUES (?)', params: ['first'] },
+      { sql: 'UPDATE orders SET ref = ? WHERE ref = ?', params: ['second', 'first'] },
+    ])
+
+    expect(queryMetrics.map(m => m.sql)).toEqual([
+      'INSERT INTO orders (ref) VALUES (?)',
+      'UPDATE orders SET ref = ? WHERE ref = ?',
+    ])
+    expect(queryMetrics.every(m => m.durationMs >= 0 && !m.error)).toBe(true)
+
+    await sir.shutdown()
+  })
+
   it('tracks connection open and close metrics', async () => {
     const connectionEvents: { databaseId: string; event: 'open' | 'close' }[] = []
 

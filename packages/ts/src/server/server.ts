@@ -222,7 +222,7 @@ export class SirannonServer {
       if (!onRequestHook) {
         bodyPromise
           .then(async rawBody => {
-            if (abort.aborted) return
+            if (!abort.claim()) return
             try {
               await handler(res, dbId, rawBody, abort)
             } catch {
@@ -253,7 +253,7 @@ export class SirannonServer {
 
       Promise.all([bodyPromise, hookPromise])
         .then(async ([rawBody, allowed]) => {
-          if (abort.aborted || !allowed) return
+          if (!allowed || !abort.claim()) return
           try {
             await handler(res, dbId, rawBody, abort)
           } catch {
@@ -302,7 +302,7 @@ export class SirannonServer {
       const abort = initAbortHandler(res)
       runOnRequest(res, abort, ctx, onRequestHook)
         .then(allowed => {
-          if (abort.aborted || !allowed) return
+          if (!allowed || !abort.claim()) return
           handler(res, dbId)
         })
         .catch(() => {})

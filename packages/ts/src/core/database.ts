@@ -3,12 +3,12 @@ import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { ConnectionPool } from './connection-pool.js'
 import { DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
+import { DatabaseObserver } from './database-observability.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
 import { canGroupTransaction, GroupCommitter } from './group-committer.js'
-import { fireAfterQueryHooks, fireBeforeQueryHooks } from './hooks/query-hooks.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
@@ -53,8 +53,7 @@ export class Database {
   private readonly cdc: DatabaseCdcController
 
   private readonly hookRegistry = new HookRegistry()
-  private readonly parentHooks: HookRegistry | null
-  private readonly metricsCollector: MetricsCollector | null
+  private readonly observer: DatabaseObserver
 
   private readonly backups = new DatabaseBackupController(
     op => this.writerLock.run(op),
@@ -78,8 +77,12 @@ export class Database {
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
-    this.parentHooks = internals?.parentHooks ?? null
-    this.metricsCollector = internals?.metrics ?? null
+    this.observer = new DatabaseObserver(
+      id,
+      this.hookRegistry,
+      internals?.parentHooks ?? null,
+      internals?.metrics ?? null,
+    )
     this.cdc = new DatabaseCdcController(
       op => this.writerLock.run(op),
       () => this.pool.acquireWriter(),
@@ -125,7 +128,9 @@ export class Database {
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => query<T>(conn, sql, params)))
+    return this.observer.withQueryHooks(sql, params, options, () =>
+      this.runRead(sql, conn => query<T>(conn, sql, params)),
+    )
   }
 
   /**
@@ -136,7 +141,9 @@ export class Database {
    */
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
-    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => queryForWire(conn, sql, params)))
+    return this.observer.withQueryHooks(sql, params, options, () =>
+      this.runRead(sql, conn => queryForWire(conn, sql, params)),
+    )
   }
 
   async queryOne<T = Record<string, unknown>>(
@@ -145,7 +152,9 @@ export class Database {
     options?: QueryOptions,
   ): Promise<T | undefined> {
     this.ensureOpen()
-    return this.withQueryHooks(sql, params, options, () => this.runRead(sql, conn => queryOne<T>(conn, sql, params)))
+    return this.observer.withQueryHooks(sql, params, options, () =>
+      this.runRead(sql, conn => queryOne<T>(conn, sql, params)),
+    )
   }
 
   /**
@@ -154,23 +163,23 @@ export class Database {
    */
   private runRead<T>(sql: string, op: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
     if (this.pool.readerCount === 0) {
-      return this.writerLock.run(() => this.track(sql, () => op(this.pool.acquireWriter())))
+      return this.writerLock.run(() => this.observer.track(sql, () => op(this.pool.acquireWriter())))
     }
-    return this.track(sql, () => op(this.pool.acquireReader()))
+    return this.observer.track(sql, () => op(this.pool.acquireReader()))
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.withQueryHooks(sql, params, options, () =>
-      this.writeGate.run(() => this.track(sql, () => this.groupCommitter.submit(sql, params))),
+    return this.observer.withQueryHooks(sql, params, options, () =>
+      this.writeGate.run(() => this.observer.track(sql, () => this.groupCommitter.submit(sql, params))),
     )
   }
 
   async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.withQueryHooks(sql, undefined, options, () =>
+    return this.observer.withQueryHooks(sql, undefined, options, () =>
       this.writeGate.run(() =>
         this.writerLock.run(() =>
           this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
@@ -179,32 +188,12 @@ export class Database {
     )
   }
 
-  private async withQueryHooks<T>(
-    sql: string,
-    params: Params | undefined,
-    options: QueryOptions | undefined,
-    op: () => Promise<T>,
-  ): Promise<T> {
-    this.fireBeforeQueryHooks(sql, params, options)
-    const start = performance.now()
-    try {
-      return await op()
-    } finally {
-      this.fireAfterQueryHooks(sql, params, performance.now() - start)
-    }
-  }
-
-  private track<T>(sql: string, operation: () => Promise<T>): Promise<T> {
-    if (!this.metricsCollector) return operation()
-    return this.metricsCollector.trackQuery(operation, { databaseId: this.id, sql })
-  }
-
   private async runInTransaction<T>(
     writer: SQLiteConnection,
     sql: string,
     run: (txConn: SQLiteConnection) => Promise<T>,
   ): Promise<T> {
-    const result = await this.track(sql, () => writer.transaction(run))
+    const result = await this.observer.track(sql, () => writer.transaction(run))
     await applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql)
     return result
   }
@@ -223,7 +212,7 @@ export class Database {
   async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.withQueryHooks(sql, undefined, undefined, () =>
+    return this.observer.withQueryHooks(sql, undefined, undefined, () =>
       this.writeGate.run(() =>
         this.writerLock.run(() => {
           const writer = this.pool.acquireWriter()
@@ -249,17 +238,23 @@ export class Database {
     if (this.readOnly) throw new ReadOnlyError(this.id)
     if (statements.length === 0) return []
 
-    if (!canGroupTransaction(statements)) {
-      return this.transaction(async tx => {
-        const results: ExecuteResult[] = new Array(statements.length)
-        for (let i = 0; i < statements.length; i++) {
-          results[i] = await tx.execute(statements[i].sql, statements[i].params)
-        }
-        return results
-      })
-    }
+    const owned = statements.map(statement => ({ sql: statement.sql, params: statement.params }))
+    const run = canGroupTransaction(owned)
+      ? () => this.writeGate.run(() => this.groupCommitter.submitTransaction(owned))
+      : () => this.runStatementsAlone(owned)
 
-    return this.writeGate.run(() => this.groupCommitter.submitTransaction(statements))
+    if (!this.observer.observesQueries) return run()
+    return this.observer.withTransactionHooks(owned, run)
+  }
+
+  private runStatementsAlone(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
+    return this.transaction(async tx => {
+      const results: ExecuteResult[] = new Array(statements.length)
+      for (let i = 0; i < statements.length; i++) {
+        results[i] = await tx.execute(statements[i].sql, statements[i].params)
+      }
+      return results
+    })
   }
 
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
@@ -376,13 +371,5 @@ export class Database {
     if (this._closed) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }
-  }
-
-  private fireBeforeQueryHooks(sql: string, params?: Params, options?: QueryOptions): void {
-    fireBeforeQueryHooks(this.parentHooks, this.hookRegistry, this.id, sql, params, options)
-  }
-
-  private fireAfterQueryHooks(sql: string, params: Params | undefined, durationMs: number): void {
-    fireAfterQueryHooks(this.parentHooks, this.hookRegistry, this.id, sql, params, durationMs)
   }
 }

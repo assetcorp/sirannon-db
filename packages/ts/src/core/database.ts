@@ -172,7 +172,13 @@ export class Database {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
     return this.observer.withQueryHooks(sql, params, options, () =>
-      this.writeGate.run(() => this.observer.track(sql, () => this.groupCommitter.submit(sql, params))),
+      this.writeGate.run(() =>
+        this.observer.track(sql, () =>
+          this.writerLock.isHeld()
+            ? this.groupCommitter.runUngrouped(sql, params)
+            : this.groupCommitter.submit(sql, params),
+        ),
+      ),
     )
   }
 
@@ -341,6 +347,7 @@ export class Database {
     let poolError: unknown
     try {
       await this.groupCommitter.drain()
+      await this.writerLock.settle()
       await this.pool.close()
     } catch (err) {
       poolError = err

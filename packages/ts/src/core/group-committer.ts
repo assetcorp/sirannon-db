@@ -82,12 +82,16 @@ export class GroupCommitter {
     }
   }
 
+  runUngrouped(sql: string, params?: Params): Promise<ExecuteResult> {
+    return this.writerLock.run(() => this.runSingle({ sql, params }))
+  }
+
   private schedule(): void {
     if (this.running || this.scheduled) return
     this.scheduled = true
     queueMicrotask(() => {
       this.scheduled = false
-      this.runLoop()
+      this.writerLock.detached(() => this.runLoop())
     })
   }
 

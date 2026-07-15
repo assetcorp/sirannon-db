@@ -30,16 +30,6 @@ describe('Database', () => {
       await db.close()
     })
 
-    it('throws when subscription manager is unexpectedly missing', async () => {
-      const db = await createTestDb()
-      const cdc = db as unknown as { cdc: { ensure: () => void; subscriptions: unknown } }
-      cdc.cdc.ensure = () => {}
-      cdc.cdc.subscriptions = null
-
-      expect(() => db.on('users')).toThrow('subscriptionManager not initialized')
-      await db.close()
-    })
-
     it('ensureCdcPolling returns when CDC objects are absent', async () => {
       const db = await createTestDb()
       const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool

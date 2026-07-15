@@ -7,6 +7,7 @@ import type { Database } from '../../database.js'
 import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
+import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
 
 let dir: string
 let sirannon: Sirannon
@@ -189,6 +190,62 @@ describe('writer worker offload', () => {
     const after = await db.execute('INSERT INTO recovered (n) VALUES (?)', [1])
     expect(after.changes).toBe(1)
   }, 40_000)
+
+  it('rejects the in-flight write and respawns when the worker exits on its own', async () => {
+    const registry = new Sirannon({ driver: exitingDriver() })
+    try {
+      const crashed = await registry.open('crash', join(dir, 'crash.db'), {
+        writerWorker: { writeTimeoutMs: 2_000 },
+      })
+      await crashed.execute('CREATE TABLE survivors (n INTEGER)')
+
+      await expect(crashed.execute(`INSERT INTO ${EXIT_TABLE} (n) VALUES (1)`)).rejects.toThrow(/exited with code/)
+      await expect(crashed.execute('INSERT INTO survivors (n) VALUES (1)')).resolves.toMatchObject({ changes: 1 })
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 20_000)
+
+  it('keeps rejecting and recovering across repeated worker exits', async () => {
+    const registry = new Sirannon({ driver: exitingDriver() })
+    try {
+      const crashed = await registry.open('repeat', join(dir, 'repeat.db'), {
+        writerWorker: { writeTimeoutMs: 2_000 },
+      })
+      await crashed.execute('CREATE TABLE survivors (n INTEGER)')
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(crashed.execute(`INSERT INTO ${EXIT_TABLE} (n) VALUES (1)`)).rejects.toThrow(/exited with code/)
+        await expect(crashed.execute('INSERT INTO survivors (n) VALUES (?)', [attempt])).resolves.toMatchObject({
+          changes: 1,
+        })
+      }
+
+      expect(await crashed.query('SELECT count(*) AS c FROM survivors')).toEqual([{ c: 3 }])
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 30_000)
+
+  it('fails writes permanently once the worker exceeds maxRestarts', async () => {
+    const registry = new Sirannon({ driver: exitingDriver() })
+    try {
+      const crashed = await registry.open('fatal', join(dir, 'fatal.db'), {
+        writerWorker: { writeTimeoutMs: 2_000, maxRestarts: 2 },
+      })
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(crashed.execute(`INSERT INTO ${EXIT_TABLE} (n) VALUES (1)`)).rejects.toThrow(/exited with code/)
+      }
+
+      await expect(crashed.execute(`INSERT INTO ${EXIT_TABLE} (n) VALUES (1)`)).rejects.toMatchObject({
+        code: 'WRITER_WORKER_FATAL',
+      })
+      await expect(crashed.execute('SELECT 1')).rejects.toMatchObject({ code: 'WRITER_WORKER_FATAL' })
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 30_000)
 
   it('closes cleanly and can reopen', async () => {
     await openOffloaded()

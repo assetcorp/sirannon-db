@@ -149,5 +149,3 @@ __pycache__/
 *.py[cod]
 
 .nx/
-
-benchmarks/capacity/

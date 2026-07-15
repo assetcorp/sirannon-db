@@ -1,16 +1,3 @@
-// Boot the real Sirannon HTTP server for the benchmark. The harness drives this exactly as an
-// application would: JSON requests to /db/<id>/query, /execute, /transaction, and the bulk-load
-// endpoint over loopback. The database starts empty; the harness applies each workload's schema
-// and seed over the wire.
-//
-// Writer durability comes from BENCH_DURABILITY through the open option: 'full' fsyncs every commit
-// to match PostgreSQL synchronous_commit=on; 'normal' defers the fsync to match synchronous_commit
-// =off. Both run in WAL mode. Seeding uses the bulk-load endpoint, which loads each batch with sync
-// relaxed and then restores this configured level, so measured writes always run at it.
-//
-// The request-body limit is raised well above the load batch size the driver sends, so a seed batch
-// is never rejected; the driver keeps each batch within memory on its own side.
-
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -24,9 +11,7 @@ const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
 const WRITER_WORKER = !['off', 'false', '0', 'no'].includes((process.env.BENCH_WRITER_WORKER ?? '').toLowerCase())
-// uWebSockets.js stores its payload and backpressure limits in unsigned 32 bits, so anything
-// above that silently wraps; the limit is validated here so a configured value always takes
-// effect as written.
+// uWebSockets.js holds its payload limits in unsigned 32 bits and silently wraps past this.
 const UWS_LIMIT_BYTES = 4_294_967_295
 const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 1_073_741_824)
 if (!Number.isInteger(MAX_BODY_BYTES) || MAX_BODY_BYTES <= 0 || MAX_BODY_BYTES > UWS_LIMIT_BYTES) {
@@ -34,11 +19,6 @@ if (!Number.isInteger(MAX_BODY_BYTES) || MAX_BODY_BYTES <= 0 || MAX_BODY_BYTES >
   process.exit(1)
 }
 
-// BENCH_DATA_DIR points the database at a chosen directory (the harness uses the local NVMe
-// mount); without it the server keeps its throwaway temp directory. Each start begins from an
-// empty directory. Only plain files named after the benchmark database are ever deleted, and a
-// configured directory itself is never removed, so a mispointed variable can never delete
-// unrelated files or a mount point.
 const isBenchDatabaseFile = entry => entry.isFile() && entry.name.startsWith('bench.db')
 
 const wipeBenchDatabase = dir => {

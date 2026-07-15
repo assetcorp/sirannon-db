@@ -56,7 +56,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       const abort = initAbortHandler(res)
 
       if (!onRequestHook) {
-        if (!abort.aborted) {
+        if (abort.claim()) {
           res.upgrade<WSUserData>(
             { databaseId: dbId },
             secWebSocketKey,
@@ -78,7 +78,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
 
       runOnRequest(res, abort, ctx, onRequestHook)
         .then(allowed => {
-          if (abort.aborted || !allowed) return
+          if (!allowed || !abort.claim()) return
           res.upgrade<WSUserData>(
             { databaseId: dbId },
             secWebSocketKey,

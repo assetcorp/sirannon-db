@@ -7,6 +7,7 @@ export interface MockResponseState {
   status: string | undefined
   headers: Record<string, string>
   body: string | undefined
+  ends: number
 }
 
 export function createMockResponse() {
@@ -14,6 +15,7 @@ export function createMockResponse() {
     status: undefined,
     headers: {},
     body: undefined,
+    ends: 0,
   }
 
   let abortHandler: (() => void) | undefined
@@ -42,6 +44,7 @@ export function createMockResponse() {
     },
     end(payload?: string) {
       state.body = payload ?? ''
+      state.ends++
       return res
     },
   }

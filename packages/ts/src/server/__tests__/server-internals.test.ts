@@ -52,7 +52,7 @@ function createMockUws() {
 }
 
 async function loadServerModule(options?: {
-  initAbortValue?: { aborted: boolean; onAbort: (fn: () => void) => void }
+  initAbortValue?: { aborted: boolean; onAbort: (fn: () => void) => void; claim: () => boolean }
   readBodyImpl?: () => Promise<Buffer>
   sendErrorImpl?: (...args: unknown[]) => void
 }) {
@@ -67,6 +67,7 @@ async function loadServerModule(options?: {
       options?.initAbortValue ?? {
         aborted: false,
         onAbort: () => {},
+        claim: () => true,
       }
     )
   })
@@ -167,7 +168,7 @@ describe('server internals', () => {
 
   it('skips DB handler when request is marked aborted before body resolution', async () => {
     const { state, mocks, module } = await loadServerModule({
-      initAbortValue: { aborted: true, onAbort: () => {} },
+      initAbortValue: { aborted: true, onAbort: () => {}, claim: () => false },
       readBodyImpl: () => Promise.resolve(Buffer.from('{}')),
     })
     const sirannon = {

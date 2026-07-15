@@ -121,29 +121,32 @@ export type GroupOutcome = { ok: true; values: ExecuteResult[] } | { ok: false; 
 
 /**
  * Runs independent units in one transaction so a single commit fsync covers the
- * whole group. On any error the group is retried with a savepoint per unit, so
- * one failing unit fails only itself and leaves its neighbours committed. Units
- * run to completion in turn, so a unit only ever observes an earlier unit that
+ * whole group. A unit that fails is retried with a savepoint per unit, so one
+ * failing unit fails only itself and leaves its neighbours committed. Units run
+ * to completion in turn, so a unit only ever observes an earlier unit that
  * succeeded. Settles after the commit, so an acknowledged unit is as durable as
  * one committed alone.
+ *
+ * Only a failure before the commit is retried. A commit that reports an error
+ * may still have reached the disk, and re-running the units would apply every
+ * one of them twice.
  */
 export async function executeGroup(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
+  const outcomes: GroupOutcome[] = new Array(units.length)
   try {
     await conn.exec('BEGIN')
-    const outcomes: GroupOutcome[] = new Array(units.length)
     for (let i = 0; i < units.length; i++) {
       outcomes[i] = { ok: true, values: await runUnit(conn, units[i]) }
     }
-    await conn.exec('COMMIT')
-    return outcomes
   } catch {
-    try {
-      await conn.exec('ROLLBACK')
-    } catch {
-      /* nothing durable to preserve; the isolated retry re-runs the whole group */
-    }
+    await rollbackQuietly(conn)
     return executeGroupIsolated(conn, units)
   }
+
+  const failure = await execControl(conn, 'COMMIT')
+  if (!failure) return outcomes
+  await rollbackQuietly(conn)
+  return outcomes.map(() => ({ ok: false, error: failure }))
 }
 
 async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<ExecuteResult[]> {
@@ -155,52 +158,106 @@ async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<Execute
   return values
 }
 
-async function executeGroupIsolated(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
-  const outcomes: GroupOutcome[] = new Array(units.length)
-  await conn.exec('BEGIN')
+function controlError(err: unknown, sql: string): QueryError {
+  return new QueryError(err instanceof Error ? err.message : String(err), sql)
+}
+
+async function execControl(conn: SQLiteConnection, sql: string): Promise<QueryError | null> {
   try {
-    for (let i = 0; i < units.length; i++) {
-      outcomes[i] = await runIsolatedUnit(conn, units[i], `sirannon_gc_${i}`)
-    }
-    await conn.exec('COMMIT')
-    return outcomes
-  } catch (commitErr) {
-    try {
-      await conn.exec('ROLLBACK')
-    } catch {
-      /* the commit already failed; nothing is durable */
-    }
-    const error = new QueryError(commitErr instanceof Error ? commitErr.message : String(commitErr), 'COMMIT')
-    return outcomes.map(outcome => (!outcome || outcome.ok ? { ok: false, error } : outcome))
+    await conn.exec(sql)
+    return null
+  } catch (err) {
+    return controlError(err, sql)
   }
 }
 
-async function runIsolatedUnit(conn: SQLiteConnection, unit: GroupUnit, savepoint: string): Promise<GroupOutcome> {
-  for (const statement of unit.statements) {
-    try {
-      assertSqlAllowed(statement.sql)
-    } catch (err) {
-      return { ok: false, error: err }
-    }
-  }
-  let opened = false
+async function rollbackQuietly(conn: SQLiteConnection): Promise<void> {
   try {
-    await conn.exec(`SAVEPOINT ${savepoint}`)
-    opened = true
-    const values = await runUnit(conn, unit)
-    await conn.exec(`RELEASE ${savepoint}`)
-    return { ok: true, values }
+    await conn.exec('ROLLBACK')
+  } catch {
+    /* already rolled back */
+  }
+}
+
+/**
+ * `ON CONFLICT ROLLBACK`, a `RAISE(ROLLBACK)` trigger, `SQLITE_FULL` and I/O
+ * errors roll back the whole transaction, emptying the savepoint stack and
+ * leaving the connection in autocommit, where a later SAVEPOINT/RELEASE pair
+ * would commit a transaction of its own. `contained` is false once that is
+ * possible.
+ */
+interface UnitAttempt {
+  outcome: GroupOutcome
+  contained: boolean
+}
+
+async function executeGroupIsolated(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
+  const outcomes: GroupOutcome[] = new Array(units.length)
+  await conn.exec('BEGIN')
+  for (let i = 0; i < units.length; i++) {
+    const attempt = await runIsolatedUnit(conn, units[i], `sirannon_gc_${i}`)
+    outcomes[i] = attempt.outcome
+    if (!attempt.contained) return rerunSurvivorsAlone(conn, units, outcomes, i)
+  }
+
+  const failure = await execControl(conn, 'COMMIT')
+  if (!failure) return outcomes
+  await rollbackQuietly(conn)
+  return outcomes.map(outcome => (outcome.ok ? { ok: false, error: failure } : outcome))
+}
+
+async function runIsolatedUnit(conn: SQLiteConnection, unit: GroupUnit, savepoint: string): Promise<UnitAttempt> {
+  const notOpened = await execControl(conn, `SAVEPOINT ${savepoint}`)
+  if (notOpened) return { outcome: { ok: false, error: notOpened }, contained: false }
+
+  let values: ExecuteResult[]
+  try {
+    values = await runUnit(conn, unit)
   } catch (err) {
-    if (opened) {
-      try {
-        await conn.exec(`ROLLBACK TO ${savepoint}`)
-        await conn.exec(`RELEASE ${savepoint}`)
-      } catch {
-        /* the enclosing transaction will roll back if this savepoint cannot be unwound */
-      }
-    }
+    return { outcome: { ok: false, error: err }, contained: await unwind(conn, savepoint) }
+  }
+
+  const notReleased = await execControl(conn, `RELEASE ${savepoint}`)
+  if (notReleased) return { outcome: { ok: false, error: notReleased }, contained: false }
+  return { outcome: { ok: true, values }, contained: true }
+}
+
+async function unwind(conn: SQLiteConnection, savepoint: string): Promise<boolean> {
+  if (await execControl(conn, `ROLLBACK TO ${savepoint}`)) return false
+  return (await execControl(conn, `RELEASE ${savepoint}`)) === null
+}
+
+/** `failed` keeps its own error; the rest were rolled back undurably and are re-run. */
+async function rerunSurvivorsAlone(
+  conn: SQLiteConnection,
+  units: readonly GroupUnit[],
+  outcomes: GroupOutcome[],
+  failed: number,
+): Promise<GroupOutcome[]> {
+  await rollbackQuietly(conn)
+  for (let i = 0; i < units.length; i++) {
+    if (i === failed) continue
+    outcomes[i] = await runUnitAlone(conn, units[i])
+  }
+  return outcomes
+}
+
+async function runUnitAlone(conn: SQLiteConnection, unit: GroupUnit): Promise<GroupOutcome> {
+  const notBegun = await execControl(conn, 'BEGIN')
+  if (notBegun) return { ok: false, error: notBegun }
+
+  let values: ExecuteResult[]
+  try {
+    values = await runUnit(conn, unit)
+  } catch (err) {
+    await rollbackQuietly(conn)
     return { ok: false, error: err }
   }
+
+  const notCommitted = await execControl(conn, 'COMMIT')
+  if (!notCommitted) return { ok: true, values }
+  await rollbackQuietly(conn)
+  return { ok: false, error: notCommitted }
 }
 
 async function forEachBatchRow(

@@ -49,6 +49,66 @@ describe('Hooks integration', () => {
       await sir.shutdown()
     })
 
+    it('fires query hooks for every statement of a grouped transaction', async () => {
+      const beforeCalls: QueryHookContext[] = []
+      const afterCalls: (QueryHookContext & { durationMs: number })[] = []
+
+      const sir = new Sirannon({
+        driver: testDriver,
+        hooks: {
+          onBeforeQuery: ctx => {
+            beforeCalls.push(ctx)
+          },
+          onAfterQuery: ctx => {
+            afterCalls.push(ctx)
+          },
+        },
+      })
+
+      const db = await sir.open('main', join(tempDir, 'tx-hooks.db'))
+      await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, ref TEXT)')
+      beforeCalls.length = 0
+      afterCalls.length = 0
+
+      await db.executeTransaction([
+        { sql: 'INSERT INTO orders (ref) VALUES (?)', params: ['first'] },
+        { sql: 'INSERT INTO orders (ref) VALUES (?)', params: ['second'] },
+      ])
+
+      expect(beforeCalls.map(c => c.params)).toEqual([['first'], ['second']])
+      expect(afterCalls.map(c => c.params)).toEqual([['first'], ['second']])
+      expect(beforeCalls.every(c => c.databaseId === 'main')).toBe(true)
+      expect(afterCalls.every(c => c.durationMs >= 0)).toBe(true)
+
+      await sir.shutdown()
+    })
+
+    it('fires query hooks for a transaction that runs outside the group', async () => {
+      const beforeCalls: QueryHookContext[] = []
+
+      const sir = new Sirannon({
+        driver: testDriver,
+        hooks: {
+          onBeforeQuery: ctx => {
+            beforeCalls.push(ctx)
+          },
+        },
+      })
+
+      const db = await sir.open('main', join(tempDir, 'tx-ddl-hooks.db'))
+      await db.executeTransaction([
+        { sql: 'CREATE TABLE audit (id INTEGER PRIMARY KEY, note TEXT)' },
+        { sql: 'INSERT INTO audit (note) VALUES (?)', params: ['opened'] },
+      ])
+
+      expect(beforeCalls.map(c => c.sql)).toEqual([
+        'CREATE TABLE audit (id INTEGER PRIMARY KEY, note TEXT)',
+        'INSERT INTO audit (note) VALUES (?)',
+      ])
+
+      await sir.shutdown()
+    })
+
     it('fires onDatabaseOpen and onDatabaseClose hooks', async () => {
       const opened: string[] = []
       const closed: string[] = []

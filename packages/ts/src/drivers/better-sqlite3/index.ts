@@ -3,6 +3,7 @@ import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { WriterWorker } from '../../core/worker/host.js'
 
 export interface BetterSqlite3Options {
   busyTimeout?: number
@@ -84,9 +85,14 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
 }
 
 export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDriver {
+  const workerEntry = { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions }
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },
-    worker: { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions },
+    worker: workerEntry,
+    startWriterHost: async (path, options, hostOptions) => {
+      const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
+      return host.connection
+    },
     async open(path, options) {
       const Database = (await import('better-sqlite3')).default
       const db = new Database(path, { readonly: options?.readonly ?? false })

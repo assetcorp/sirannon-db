@@ -1,3 +1,5 @@
+import type { WorkerHostOptions } from '../worker/host.js'
+
 export interface RunResult {
   changes: number
   lastInsertRowId: number | bigint
@@ -83,4 +85,10 @@ export interface SQLiteDriver {
   readonly capabilities: DriverCapabilities
   open(path: string, options?: OpenOptions): Promise<SQLiteConnection>
   readonly worker?: DriverWorkerEntry
+  /**
+   * Offloads writes to a worker thread. Only a driver whose runtime has
+   * threads implements this, which is what keeps the thread machinery out of
+   * bundles built for runtimes that do not.
+   */
+  startWriterHost?(path: string, options: OpenOptions, hostOptions?: WorkerHostOptions): Promise<SQLiteConnection>
 }

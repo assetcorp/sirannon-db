@@ -104,7 +104,7 @@ export class Database {
   ): Promise<Database> {
     const writerWorker = resolveWriterWorkerConfig(options?.writerWorker)
     const readOnly = options?.readOnly ?? false
-    if (writerWorker.enabled && !readOnly && !driver.worker) {
+    if (writerWorker.enabled && !readOnly && !driver.startWriterHost) {
       throw new SirannonError(
         `writerWorker is enabled for database '${id}' but the driver does not carry a worker entry; use a driver that supports worker offload or disable writerWorker`,
         'WRITER_WORKER_UNSUPPORTED',

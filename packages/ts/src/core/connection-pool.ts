@@ -1,6 +1,6 @@
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ConnectionPoolError, SirannonError } from './errors.js'
-import { type WorkerHostOptions, WriterWorker } from './worker/host.js'
+import type { WorkerHostOptions } from './worker/host.js'
 
 export interface ConnectionPoolOptions {
   driver: SQLiteDriver
@@ -44,19 +44,13 @@ export class ConnectionPool {
     try {
       if (!readOnly) {
         if (options.useWriterWorker) {
-          if (!driver.worker) {
+          if (!driver.startWriterHost) {
             throw new SirannonError(
               'writerWorker is enabled but the driver does not carry a worker entry; use a driver that supports it or disable writerWorker',
               'WRITER_WORKER_UNSUPPORTED',
             )
           }
-          const host = await WriterWorker.start(
-            driver.worker,
-            path,
-            { walMode, synchronous },
-            options.workerHostOptions,
-          )
-          writer = host.connection
+          writer = await driver.startWriterHost(path, { walMode, synchronous }, options.workerHostOptions)
         } else {
           writer = await driver.open(path, { walMode, synchronous })
         }

@@ -207,10 +207,15 @@ export class WriterWorker {
           rowsLoaded: number
           changes: number
         }>,
-      runGroup: batch =>
+      runGroup: units =>
         this.request({
           kind: 'runGroup',
-          batch: batch.map(job => ({ sql: job.sql, params: job.params ? [...job.params] : [] })),
+          units: units.map(unit => ({
+            statements: unit.statements.map(statement => ({
+              sql: statement.sql,
+              params: statement.params ? [...statement.params] : [],
+            })),
+          })),
         }) as Promise<GroupRunOutcome[]>,
       transaction: async fn => {
         await conn.exec('BEGIN')

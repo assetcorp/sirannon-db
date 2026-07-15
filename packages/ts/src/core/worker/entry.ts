@@ -91,9 +91,9 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       return { rowsLoaded: req.paramsBatch.length, changes }
     }
     case 'runGroup': {
-      const outcomes = await executeGroup(requireConnection(), req.batch)
+      const outcomes = await executeGroup(requireConnection(), req.units)
       return outcomes.map<GroupRunOutcome>(outcome =>
-        outcome.ok ? { ok: true, result: outcome.value } : { ok: false, error: serializeError(outcome.error) },
+        outcome.ok ? { ok: true, results: outcome.values } : { ok: false, error: serializeError(outcome.error) },
       )
     }
     case 'close':

@@ -70,7 +70,7 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
       return
     }
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
@@ -107,7 +107,7 @@ export function handleExecute(sirannon: Sirannon, resolveTarget?: ServerExecutio
       return
     }
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
@@ -148,21 +148,20 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
       statements.push({ sql: stmt.sql, params: params.value })
     }
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
+    const txOptions = writeConcern.value ? { writeConcern: writeConcern.value } : undefined
     try {
-      const results = await target.transaction(
-        async tx => {
-          const txResults = []
-          for (const stmt of statements) {
-            if (abort.aborted) throw new Error('Request aborted')
-            txResults.push(await tx.execute(stmt.sql, stmt.params))
-          }
-          return txResults
-        },
-        writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
-      )
+      const results = target.executeTransaction
+        ? await target.executeTransaction(statements, txOptions)
+        : await target.transaction(async tx => {
+            const txResults = []
+            for (const stmt of statements) {
+              txResults.push(await tx.execute(stmt.sql, stmt.params))
+            }
+            return txResults
+          }, txOptions)
       if (abort.aborted) return
       sendJson(res, {
         results: results.map(toExecuteResponse),
@@ -195,7 +194,7 @@ export function handleBatch(sirannon: Sirannon, resolveTarget?: ServerExecutionT
     const paramsBatch = decodeBatchParams(res, body.paramsBatch)
     if (paramsBatch === null) return
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
@@ -244,7 +243,7 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
     const paramsBatch = decodeBatchParams(res, body.paramsBatch)
     if (paramsBatch === null) return
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     const bulkLoad = target.bulkLoad

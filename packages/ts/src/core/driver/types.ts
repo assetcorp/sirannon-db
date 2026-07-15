@@ -27,7 +27,7 @@ export interface GroupRunError {
   code?: string
 }
 
-export type GroupRunOutcome = { ok: true; result: RunResult } | { ok: false; error: GroupRunError }
+export type GroupRunOutcome = { ok: true; results: RunResult[] } | { ok: false; error: GroupRunError }
 
 export interface SQLiteConnection {
   exec(sql: string): Promise<void>
@@ -36,7 +36,14 @@ export interface SQLiteConnection {
   close(): Promise<void>
   runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
   runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>
-  runGroup?(batch: readonly { sql: string; params?: readonly unknown[] }[]): Promise<GroupRunOutcome[]>
+  /**
+   * Runs several independent units in one transaction, one outcome per unit in
+   * order. A unit is one write or one whole transaction, and a unit that fails
+   * must not disturb the others.
+   */
+  runGroup?(
+    units: readonly { statements: readonly { sql: string; params?: readonly unknown[] }[] }[],
+  ): Promise<GroupRunOutcome[]>
 }
 
 /**

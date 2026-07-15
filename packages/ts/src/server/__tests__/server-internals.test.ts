@@ -79,6 +79,10 @@ async function loadServerModule(options?: {
     default: uws,
     ...uws,
   }))
+  vi.doMock('../http-common.js', async importOriginal => {
+    const actual = await importOriginal<typeof import('../http-common.js')>()
+    return { ...actual, sendError }
+  })
   vi.doMock('../http-handler.js', () => ({
     handleQuery: () => queryRouteHandler,
     handleExecute: () => executeRouteHandler,
@@ -104,6 +108,7 @@ async function loadServerModule(options?: {
 afterEach(() => {
   vi.doUnmock('uWebSockets.js')
   vi.doUnmock('../http-handler.js')
+  vi.doUnmock('../http-common.js')
   vi.resetModules()
 })
 

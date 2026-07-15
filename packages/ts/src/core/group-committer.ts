@@ -1,5 +1,5 @@
 import type { GroupRunError, SQLiteConnection } from './driver/types.js'
-import { bindParams, execute, executeGroup, type GroupOutcome } from './query-executor.js'
+import { bindParams, execute, executeGroup, type GroupOutcome, type GroupStatement } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
 import type { WriterLock } from './writer-lock.js'
 
@@ -16,10 +16,17 @@ function isGroupable(sql: string): boolean {
   return DML_PREFIX_RE.test(sql)
 }
 
+/** A caller that groups a transaction this rejects loses the CDC trigger reinstatement DDL needs. */
+export function canGroupTransaction(statements: readonly GroupStatement[]): boolean {
+  for (const statement of statements) {
+    if (!isGroupable(statement.sql)) return false
+  }
+  return true
+}
+
 interface Job {
-  sql: string
-  params?: Params
-  resolve: (result: ExecuteResult) => void
+  statements: readonly GroupStatement[]
+  resolve: (values: ExecuteResult[]) => void
   reject: (error: unknown) => void
 }
 
@@ -29,12 +36,13 @@ interface GroupCommitterHooks {
 }
 
 /**
- * Coalesces concurrent single-statement writes waiting on the writer into one
- * transaction so a single commit fsync covers the whole group. Writes that
- * arrive while a group is committing form the next group, so the accumulation
- * window is the commit's own duration and no artificial delay is needed. Each
- * write still resolves with its own result or rejects with its own error, and
- * only after the group's commit, so durability is unchanged.
+ * Coalesces the writes waiting on the writer into one transaction so a single
+ * commit fsync covers the whole group. A unit is one lone write or one whole
+ * transaction, and the group treats both the same way. Work that arrives while a
+ * group is committing forms the next group, so the accumulation window is the
+ * commit's own duration and no artificial delay is needed. Each unit still
+ * resolves with its own results or rejects with its own error, and only after
+ * the group's commit, so durability is unchanged.
  */
 export class GroupCommitter {
   private readonly pending: Job[] = []
@@ -50,7 +58,18 @@ export class GroupCommitter {
 
   submit(sql: string, params?: Params): Promise<ExecuteResult> {
     return new Promise<ExecuteResult>((resolve, reject) => {
-      this.pending.push({ sql, params, resolve, reject })
+      this.pending.push({
+        statements: [{ sql, params }],
+        resolve: values => resolve(values[0]),
+        reject,
+      })
+      this.schedule()
+    })
+  }
+
+  submitTransaction(statements: readonly GroupStatement[]): Promise<ExecuteResult[]> {
+    return new Promise<ExecuteResult[]>((resolve, reject) => {
+      this.pending.push({ statements, resolve, reject })
       this.schedule()
     })
   }
@@ -88,19 +107,25 @@ export class GroupCommitter {
 
   private takeBatch(): Job[] {
     const pending = this.pending
-    if (!isGroupable(pending[0].sql)) return pending.splice(0, 1)
-    let n = 0
-    while (n < pending.length && n < this.maxGroup && isGroupable(pending[n].sql)) n++
+    if (!canGroupTransaction(pending[0].statements)) return pending.splice(0, 1)
+    let n = 1
+    let statements = pending[0].statements.length
+    while (n < pending.length && canGroupTransaction(pending[n].statements)) {
+      const size = pending[n].statements.length
+      if (statements + size > this.maxGroup) break
+      statements += size
+      n++
+    }
     return pending.splice(0, n)
   }
 
   private async flush(batch: Job[]): Promise<void> {
-    if (batch.length === 1) {
-      const job = batch[0]
+    const lone = batch[0]
+    if (batch.length === 1 && lone.statements.length === 1) {
       try {
-        job.resolve(await this.writerLock.run(() => this.runSingle(job)))
+        lone.resolve([await this.writerLock.run(() => this.runSingle(lone.statements[0]))])
       } catch (err) {
-        job.reject(err)
+        lone.reject(err)
       }
       return
     }
@@ -114,28 +139,30 @@ export class GroupCommitter {
     }
     for (let i = 0; i < batch.length; i++) {
       const outcome = outcomes[i]
-      if (outcome.ok) batch[i].resolve(outcome.value)
+      if (outcome.ok) batch[i].resolve(outcome.values)
       else batch[i].reject(outcome.error)
     }
   }
 
-  private async runSingle(job: Job): Promise<ExecuteResult> {
+  private async runSingle(statement: GroupStatement): Promise<ExecuteResult> {
     const writer = this.hooks.acquireWriter()
-    const result = await execute(writer, job.sql, job.params)
-    await this.hooks.afterCommit(writer, job.sql)
+    const result = await execute(writer, statement.sql, statement.params)
+    await this.hooks.afterCommit(writer, statement.sql)
     return result
   }
 
   private async runGroup(batch: Job[]): Promise<GroupOutcome[]> {
     const writer = this.hooks.acquireWriter()
-    const jobs = batch.map(job => ({ sql: job.sql, params: bindParams(job.params) }))
+    const units = batch.map(job => ({
+      statements: job.statements.map(statement => ({ sql: statement.sql, params: bindParams(statement.params) })),
+    }))
     if (writer.runGroup) {
-      const raw = await writer.runGroup(jobs)
+      const raw = await writer.runGroup(units)
       return raw.map(outcome =>
-        outcome.ok ? { ok: true, value: outcome.result } : { ok: false, error: toError(outcome.error) },
+        outcome.ok ? { ok: true, values: outcome.results } : { ok: false, error: toError(outcome.error) },
       )
     }
-    return executeGroup(writer, jobs)
+    return executeGroup(writer, units)
   }
 }
 

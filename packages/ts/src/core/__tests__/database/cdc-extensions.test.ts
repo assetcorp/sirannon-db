@@ -23,7 +23,7 @@ describe('Database', () => {
       await db.watch('posts')
 
       const stopFn = vi.fn()
-      ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = stopFn
+      ;(db as unknown as { cdc: { stopPolling: (() => void) | null } }).cdc.stopPolling = stopFn
       await db.unwatch('users')
 
       expect(stopFn).not.toHaveBeenCalled()
@@ -32,8 +32,9 @@ describe('Database', () => {
 
     it('throws when subscription manager is unexpectedly missing', async () => {
       const db = await createTestDb()
-      ;(db as unknown as { ensureCdc: () => void }).ensureCdc = () => {}
-      ;(db as unknown as { subscriptionManager: unknown }).subscriptionManager = null
+      const cdc = db as unknown as { cdc: { ensure: () => void; subscriptions: unknown } }
+      cdc.cdc.ensure = () => {}
+      cdc.cdc.subscriptions = null
 
       expect(() => db.on('users')).toThrow('subscriptionManager not initialized')
       await db.close()
@@ -44,7 +45,7 @@ describe('Database', () => {
       const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
 
-      ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
+      ;(db as unknown as { cdc: { ensurePolling: () => void } }).cdc.ensurePolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
       await db.close()
@@ -54,9 +55,9 @@ describe('Database', () => {
       const db = await createTestDb()
       const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
-      ;(db as unknown as { stopCdcPolling: (() => void) | null }).stopCdcPolling = vi.fn()
+      ;(db as unknown as { cdc: { stopPolling: (() => void) | null } }).cdc.stopPolling = vi.fn()
 
-      ;(db as unknown as { ensureCdcPolling: () => void }).ensureCdcPolling()
+      ;(db as unknown as { cdc: { ensurePolling: () => void } }).cdc.ensurePolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
       await db.close()

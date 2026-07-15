@@ -173,8 +173,10 @@ export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: un
 
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
 
+/** Replies are guarded because the resolver is awaited and uWS frees the response once it aborts. */
 export async function resolveExecutionTarget(
   res: HttpResponse,
+  abort: ResponseAbort,
   sirannon: Sirannon,
   id: string,
   resolver?: ServerExecutionTargetResolver,
@@ -183,6 +185,7 @@ export async function resolveExecutionTarget(
   try {
     target = resolver ? await resolver(id) : await sirannon.resolve(id)
   } catch (err) {
+    if (abort.aborted) return null
     if (err instanceof SirannonError) {
       sendError(res, httpStatusForError(err), err.code, err.message)
     } else {
@@ -190,6 +193,7 @@ export async function resolveExecutionTarget(
     }
     return null
   }
+  if (abort.aborted) return null
   if (!target) {
     sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${id}' not found`)
     return null

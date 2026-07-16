@@ -65,12 +65,23 @@ start_container() {
 # Read back from the live cgroup, so a cell can never report a limit it did not run under.
 verify_caps() {
   local cpus="$1" memory="$2"
-  local cpu_max memory_max expected_quota
+  local cpu_max memory_max expected_quota expected_bytes
   cpu_max="$(docker exec "$CONTAINER" cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo missing)"
   memory_max="$(docker exec "$CONTAINER" cat /sys/fs/cgroup/memory.max 2>/dev/null || echo missing)"
   expected_quota="$(awk -v c="$cpus" 'BEGIN { printf "%d", c * 100000 }')"
+  expected_bytes="$(awk -v m="$memory" 'BEGIN {
+    unit = tolower(substr(m, length(m)))
+    n = substr(m, 1, length(m) - 1)
+    if (unit == "g") printf "%d", n * 1024 * 1024 * 1024
+    else if (unit == "m") printf "%d", n * 1024 * 1024
+    else printf "%s", m
+  }')"
   if [ "${cpu_max% *}" != "$expected_quota" ]; then
     log "cpu.max is ${cpu_max}, expected quota ${expected_quota}; refusing to measure this cell"
+    return 1
+  fi
+  if [ "$memory_max" != "$expected_bytes" ]; then
+    log "memory.max is ${memory_max}, expected ${expected_bytes}; refusing to measure this cell"
     return 1
   fi
   printf '%s\n' "$memory_max" >"$CELL_DIR/memory.max"

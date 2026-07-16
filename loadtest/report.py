@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Summarise the load and stress test results."""
+"""Summarise the load and stress test results.
+
+Reports throughput only. The driver shares unpinned host cores with the
+container, so per-request latency from this harness is not a measurement.
+"""
 
 from __future__ import annotations
 
@@ -8,16 +12,6 @@ import sys
 from pathlib import Path
 
 RESULTS = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent / "results")
-SLO_P99_MS = float(sys.argv[2]) if len(sys.argv) > 2 else 25.0
-
-
-def sustained_point(sweep: list[dict]) -> dict | None:
-    ok = [
-        p
-        for p in sweep
-        if p["sustained"] and p["error_rate"] < 0.01 and p["latency_ms"]["p99"] <= SLO_P99_MS
-    ]
-    return max(ok, key=lambda p: p["target_rate"]) if ok else None
 
 
 def dominant_kind(point: dict) -> str:
@@ -55,26 +49,26 @@ def main() -> int:
         print(f"no results under {RESULTS}")
         return 1
 
-    print(f"{'cell':<44} {'sustained':>12} {'p99@sust':>9} {'peak':>10} {'overload':>28} {'recovery':>18}")
-    print("-" * 128)
+    print(f"{'cell':<44} {'peak ops/s':>10} {'overload':>28} {'recovery':>18}")
+    print("-" * 103)
     for cell in cells:
         status = (cell / "status").read_text().strip() if (cell / "status").exists() else "?"
         artifacts = list((cell / "runs" / "cell").glob("engine-sirannon-*.json"))
         if not artifacts:
-            print(f"{cell.name:<44} {status:>12}")
+            print(f"{cell.name:<44} {status:>10}")
             continue
-        data = json.loads(artifacts[0].read_text())
-        for w in data["workloads"]:
-            sweep = w["sweep"]
-            point = sustained_point(sweep)
-            peak = max(p["throughput"]["median_ops"] for p in sweep)
-            top = max(sweep, key=lambda p: p["target_rate"])
-            overload = f"{top['throughput']['median_ops']:.0f}/s e={top['error_rate']:.1%}{dominant_kind(top)}"
-            sust = f"{point['target_rate']}" if point else "none"
-            p99 = f"{point['latency_ms']['p99']:.1f}" if point else "-"
-            print(
-                f"{cell.name:<44} {sust:>12} {p99:>9} {peak:>10.0f} {overload:>28} {recovery(sweep):>18}"
-            )
+        for artifact in sorted(artifacts):
+            data = json.loads(artifact.read_text())
+            for w in data["workloads"]:
+                sweep = w["sweep"]
+                peak = max(p["throughput"]["median_ops"] for p in sweep)
+                top = max(sweep, key=lambda p: p["target_rate"])
+                overload = (
+                    f"{top['throughput']['median_ops']:.0f}/s "
+                    f"e={top['error_rate']:.1%}{dominant_kind(top)}"
+                )
+                label = f"{cell.name}/{w['workload']}"
+                print(f"{label:<44} {peak:>10.0f} {overload:>28} {recovery(sweep):>18}")
     return 0
 
 

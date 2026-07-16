@@ -150,4 +150,4 @@ __pycache__/
 
 .nx/
 
-loadtest/results/
+loadtest/results*/

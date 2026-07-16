@@ -4,6 +4,7 @@ import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
 
 export interface BetterSqlite3Options {
   busyTimeout?: number
@@ -93,6 +94,9 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
       return host.connection
     },
+    createWriterContext: nodeWriterContext,
+    createBackupEngine: nodeBackupEngine,
+    resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
       const Database = (await import('better-sqlite3')).default
       const db = new Database(path, { readonly: options?.readonly ?? false })

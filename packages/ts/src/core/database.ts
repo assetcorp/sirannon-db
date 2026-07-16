@@ -44,7 +44,7 @@ export class Database {
   private readonly driver: SQLiteDriver
   private readonly synchronous: SynchronousLevel
   private readonly walMode: boolean
-  private readonly writerLock = new WriterLock()
+  private readonly writerLock: WriterLock
   private readonly writeGate: WriteGate
   private readonly groupCommitter: GroupCommitter
   private readonly closeListeners: (() => void | Promise<void>)[] = []
@@ -55,10 +55,7 @@ export class Database {
   private readonly hookRegistry = new HookRegistry()
   private readonly observer: DatabaseObserver
 
-  private readonly backups = new DatabaseBackupController(
-    op => this.writerLock.run(op),
-    () => this.pool.acquireWriter(),
-  )
+  private readonly backups: DatabaseBackupController
 
   private constructor(
     id: string,
@@ -74,6 +71,12 @@ export class Database {
     this.pool = pool
     this.driver = driver
     this.writeGate = writeGate
+    this.writerLock = new WriterLock(driver.createWriterContext?.())
+    this.backups = new DatabaseBackupController(
+      op => this.writerLock.run(op),
+      () => this.pool.acquireWriter(),
+      driver.createBackupEngine?.(),
+    )
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true

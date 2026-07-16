@@ -1,8 +1,30 @@
+import type { BackupScheduleOptions } from '../types.js'
 import type { WorkerHostOptions } from '../worker/host.js'
 
 export interface RunResult {
   changes: number
   lastInsertRowId: number | bigint
+}
+
+/**
+ * Tells a caller running inside the operation that holds the writer from one
+ * merely waiting on it. A runtime without async context tracking cannot answer
+ * this, and answering it wrongly runs one caller's writes inside another
+ * caller's transaction.
+ */
+export interface WriterContext {
+  run<T>(operation: () => T): T
+  isActive(): boolean
+  exit<T>(operation: () => T): T
+}
+
+export interface BackupEngine {
+  backup(conn: SQLiteConnection, destPath: string): Promise<void>
+  schedule(
+    conn: SQLiteConnection,
+    options: BackupScheduleOptions,
+    runExclusive: (op: () => Promise<void>) => Promise<void>,
+  ): () => void
 }
 
 export interface BatchSummary {
@@ -91,4 +113,12 @@ export interface SQLiteDriver {
    * bundles built for runtimes that do not.
    */
   startWriterHost?(path: string, options: OpenOptions, hostOptions?: WorkerHostOptions): Promise<SQLiteConnection>
+  createWriterContext?(): WriterContext
+  createBackupEngine?(): BackupEngine
+  /**
+   * Makes an extension path absolute. Passing a bare name to `load_extension`
+   * would let the dynamic linker search its own paths and open a different
+   * library than the operator named.
+   */
+  resolveExtensionPath?(extensionPath: string): string
 }

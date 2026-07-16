@@ -1,4 +1,16 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
+import type { WriterContext } from './driver/types.js'
+
+/**
+ * Stands in for a runtime that cannot track async context. Reporting every
+ * caller as an outsider keeps a stranger's writes out of an open transaction;
+ * the cost is that a writer method called inside a transaction callback waits
+ * on the transaction that is waiting on it.
+ */
+const UNTRACKED: WriterContext = {
+  run: operation => operation(),
+  isActive: () => false,
+  exit: operation => operation(),
+}
 
 /**
  * Serialises writes onto the pool's single writer connection, which SQLite
@@ -6,15 +18,19 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  */
 export class WriterLock {
   private tail: Promise<unknown> = Promise.resolve()
-  private readonly held = new AsyncLocalStorage<true>()
+  private readonly context: WriterContext
+
+  constructor(context?: WriterContext) {
+    this.context = context ?? UNTRACKED
+  }
 
   run<T>(operation: () => Promise<T>): Promise<T> {
     // A call already inside a held operation (a writer method used within a
     // transaction callback) runs inline instead of queueing behind itself.
-    if (this.held.getStore()) {
+    if (this.context.isActive()) {
       return operation()
     }
-    const enter = () => this.held.run(true, operation)
+    const enter = () => this.context.run(operation)
     const ticket = this.tail.then(enter, enter)
     // Swallow on the tail only, so a rejection reaches its caller without
     // poisoning the queue for the operations behind it.
@@ -23,7 +39,7 @@ export class WriterLock {
   }
 
   isHeld(): boolean {
-    return this.held.getStore() === true
+    return this.context.isActive()
   }
 
   async settle(): Promise<void> {
@@ -36,7 +52,7 @@ export class WriterLock {
    * transaction.
    */
   detached<T>(operation: () => T): T {
-    return this.held.exit(operation)
+    return this.context.exit(operation)
   }
 }
 

@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
+    "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",

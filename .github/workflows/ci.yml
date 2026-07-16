@@ -47,14 +47,8 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Assert the browser bundle carries no writer-worker machinery
-        run: |
-          found=$(grep -rlE 'worker_threads|Writer worker exited with code' packages/ts/examples/web-wa-sqlite/dist/assets/ || true)
-          if [ -n "$found" ]; then
-            echo "The browser bundle contains writer-worker code it can never run:"
-            echo "$found"
-            exit 1
-          fi
+      - name: Assert browser entries carry no Node builtins
+        run: pnpm check:bundle
 
       - name: Test
         run: pnpm test

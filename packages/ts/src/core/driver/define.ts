@@ -13,5 +13,8 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver {
     open: config.open,
     ...(config.worker ? { worker: Object.freeze({ ...config.worker }) } : {}),
     ...(config.startWriterHost ? { startWriterHost: config.startWriterHost } : {}),
+    ...(config.createWriterContext ? { createWriterContext: config.createWriterContext } : {}),
+    ...(config.createBackupEngine ? { createBackupEngine: config.createBackupEngine } : {}),
+    ...(config.resolveExtensionPath ? { resolveExtensionPath: config.resolveExtensionPath } : {}),
   })
 }

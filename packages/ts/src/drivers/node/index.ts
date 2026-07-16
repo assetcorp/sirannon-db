@@ -4,6 +4,7 @@ import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
 
 export interface NodeSqliteOptions {
   busyTimeout?: number
@@ -18,6 +19,9 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
       return host.connection
     },
+    createWriterContext: nodeWriterContext,
+    createBackupEngine: nodeBackupEngine,
+    resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false })

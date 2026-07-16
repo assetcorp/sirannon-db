@@ -1,5 +1,3 @@
-export { BackupManager } from './backup/backup.js'
-export { BackupScheduler } from './backup/scheduler.js'
 export { isBulkLoadDurability, runBulkLoad } from './bulk-load.js'
 export { ChangeTracker } from './cdc/change-tracker.js'
 export type { ChangeTrackerOptions } from './cdc/types.js'

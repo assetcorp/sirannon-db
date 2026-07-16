@@ -77,7 +77,9 @@ for (const entry of BROWSER_ENTRIES) {
 }
 
 if (failed) {
-  console.error('\nA browser entry must not reach a Node builtin. Move the runtime-specific code behind a driver that only that runtime loads.')
+  console.error(
+    '\nA browser entry must not reach a Node builtin. Move the runtime-specific code behind a driver that only that runtime loads.',
+  )
   process.exit(1)
 }
 

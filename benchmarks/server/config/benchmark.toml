@@ -16,7 +16,8 @@ workloads = [
 ]
 
 [load]
-target_rates = [1000, 4000, 16000]
+target_rates = [1000, 2000, 4000, 8000, 16000, 32000, 64000]
+sweep_stop_steps = 1
 slo_p99_ms = 25.0
 max_in_flight = 256
 

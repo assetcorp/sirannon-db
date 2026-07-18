@@ -56,6 +56,7 @@ export interface WorkloadResult {
   operation_cost: Record<string, unknown>
   operating_point: Record<string, unknown>
   sweep: Record<string, unknown>[]
+  sweep_stopped_early: boolean
 }
 
 async function prepare(driver: Driver, workload: Workload, config: Config): Promise<void> {
@@ -176,8 +177,23 @@ async function runWorkload(
   const makeOp = (): RunOp => makeRunOp(driver, workload, new SeededRng(config.seed), zipf, config.dataSize)
 
   const sweep: Record<string, unknown>[] = []
+  let stoppedEarly = false
+  let stepsPastSaturation = -1
   for (const rate of config.targetRates) {
-    sweep.push(await measureRate(makeOp, rate, config, ceilingOps))
+    const point = await measureRate(makeOp, rate, config, ceilingOps)
+    sweep.push(point)
+    if (config.sweepStopSteps < 0) {
+      continue
+    }
+    if (point.sustained === true) {
+      stepsPastSaturation = -1
+      continue
+    }
+    stepsPastSaturation = stepsPastSaturation < 0 ? 0 : stepsPastSaturation + 1
+    if (stepsPastSaturation >= config.sweepStopSteps) {
+      stoppedEarly = rate !== config.targetRates[config.targetRates.length - 1]
+      break
+    }
   }
   return {
     workload: workload.name,
@@ -186,6 +202,7 @@ async function runWorkload(
     operation_cost: operationCost(driver, workload),
     operating_point: selectOperatingPoint(sweep, config.sloP99Ms),
     sweep,
+    sweep_stopped_early: stoppedEarly,
   }
 }
 

@@ -85,19 +85,18 @@ def _scaling_rows(sirannon: dict, postgres: dict, scaling_workloads: list[str]) 
         pg = postgres_workloads.get(name)
         if sir is None or pg is None:
             continue
+        sir_by_rate = {point["target_rate"]: point for point in _sweep_point(sir)}
         pg_by_rate = {point["target_rate"]: point for point in _sweep_point(pg)}
         curve: list[dict] = []
-        for sir_point in _sweep_point(sir):
-            rate = sir_point["target_rate"]
+        for rate in sorted(set(sir_by_rate) | set(pg_by_rate)):
+            sir_point = sir_by_rate.get(rate)
             pg_point = pg_by_rate.get(rate)
-            if pg_point is None:
-                continue
             curve.append({
                 "target_rate": rate,
-                "sirannon_ops": sir_point["throughput"]["median_ops"],
-                "postgres_ops": pg_point["throughput"]["median_ops"],
-                "sirannon_p99_ms": sir_point["latency_ms"]["p99"],
-                "postgres_p99_ms": pg_point["latency_ms"]["p99"],
+                "sirannon_ops": sir_point["throughput"]["median_ops"] if sir_point else None,
+                "postgres_ops": pg_point["throughput"]["median_ops"] if pg_point else None,
+                "sirannon_p99_ms": sir_point["latency_ms"]["p99"] if sir_point else None,
+                "postgres_p99_ms": pg_point["latency_ms"]["p99"] if pg_point else None,
             })
         scaling.append({"workload": name, "curve": curve})
     return scaling

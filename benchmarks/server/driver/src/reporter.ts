@@ -35,6 +35,7 @@ export function configBlock(config: Config): Record<string, unknown> {
     slo_p99_ms: config.sloP99Ms,
     max_in_flight: config.maxInFlight,
     target_rates: config.targetRates,
+    sweep_stop_steps: config.sweepStopSteps,
     workloads: config.workloads,
     scaling_workloads: config.scalingWorkloads,
     delivery: deliveryDisclosure(config),

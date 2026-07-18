@@ -107,9 +107,23 @@ def _setup_block(source: Source) -> str:
             f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator stays "
             "well above both engines, so every reported number reflects the database's speed."
         )
+    stop_steps = config.get("sweep_stop_steps", -1)
+    if is_number(stop_steps) and stop_steps >= 0:
+        if stop_steps == 0:
+            ending = "then stops"
+        elif stop_steps == 1:
+            ending = "runs one more rate, and stops"
+        else:
+            ending = f"runs {integer(stop_steps)} more rates, and stops"
+        sweep_text = (
+            f"sweeping target rates drawn from {rates or 'n/a'} requests per second. Each engine climbs the list "
+            f"until it fails to sustain a rate, {ending}, so the two engines can end their sweeps at different rates"
+        )
+    else:
+        sweep_text = f"sweeping target rates of {rates or 'n/a'} requests per second"
     bullets.append(
-        f"- **Workloads.** Every workload ran at {integer(config.get('data_size'))} rows, sweeping target rates of "
-        f"{rates or 'n/a'} requests per second, with a {decimal(config.get('warmup_seconds'), 0)} s warmup and a "
+        f"- **Workloads.** Every workload ran at {integer(config.get('data_size'))} rows, {sweep_text}, with a "
+        f"{decimal(config.get('warmup_seconds'), 0)} s warmup and a "
         f"{decimal(config.get('measure_seconds'), 0)} s measurement window under seed `{config.get('seed', 'n/a')}`. "
         f"Every rate ran {integer(config.get('runs'))} independent times, and each figure is the median with a "
         f"95% confidence interval. The service-level target for the operating point is a p99 under "
@@ -226,6 +240,16 @@ def _scaling_block(source: Source) -> str:
         f"{_DURABILITY_LABELS.get(name, name).lower()}. PostgreSQL relies on row-level locking and Sirannon on a "
         "single writer, so which one holds throughput as the rate rises depends on the workload."
     ]
+    has_gap = any(
+        any(point.get(key) is None for key in ("sirannon_ops", "postgres_ops"))
+        for entry in scaling
+        for point in entry.get("curve", [])
+    )
+    if has_gap:
+        parts.append(
+            "_An n/a cell marks a rate one engine never ran: its sweep had already stopped at a lower rate it "
+            "could not sustain. Where a column ends is that engine's limit._"
+        )
     for entry in scaling:
         parts.append(f"### {_label(entry.get('workload', 'n/a'))}")
         body = [

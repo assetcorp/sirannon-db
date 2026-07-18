@@ -28,6 +28,7 @@ export interface Config {
   maxInFlight: number
   workloads: string[]
   targetRates: number[]
+  sweepStopSteps: number
   scalingWorkloads: string[]
   driverCpus: number
   engineCpus: number
@@ -153,6 +154,7 @@ export function loadConfig(path: string): Config {
     maxInFlight: envInt('BENCH_MAX_IN_FLIGHT', asNumber(load.max_in_flight, 256)),
     workloads: envStrList('BENCH_WORKLOADS', asStringList(run.workloads)),
     targetRates: envIntList('BENCH_TARGET_RATES', asNumberList(load.target_rates)),
+    sweepStopSteps: envInt('BENCH_SWEEP_STOP_STEPS', asNumber(load.sweep_stop_steps, -1)),
     scalingWorkloads: envStrList('BENCH_SCALING_WORKLOADS', asStringList(scaling.workloads)),
     driverCpus: envFloat('BENCH_DRIVER_CPUS', asNumber(resources.driver_cpus, 2.0)),
     engineCpus: envFloat('BENCH_ENGINE_CPUS', asNumber(resources.engine_cpus, 2.0)),
@@ -189,6 +191,11 @@ function validate(config: Config): void {
     if (rate < 1) {
       throw new Error(`each target rate must be positive, got ${rate}`)
     }
+  }
+  if (!Number.isInteger(config.sweepStopSteps) || config.sweepStopSteps < -1) {
+    throw new Error(
+      `sweep_stop_steps must be an integer >= -1, where -1 runs every rate and 0 or more stops that many steps past the first unsustained rate, got ${config.sweepStopSteps}`,
+    )
   }
   if (config.postgres.port < 1 || config.postgres.port > 65535) {
     throw new Error(`postgres port must be 1-65535, got ${config.postgres.port}`)

@@ -117,6 +117,7 @@ run_cell() {
     BENCH_WARMUP_SECONDS="$WARMUP" \
     BENCH_MEASURE_SECONDS="$MEASURE" \
     BENCH_MAX_IN_FLIGHT="$MAX_IN_FLIGHT" \
+    BENCH_SWEEP_STOP_STEPS=-1 `# run every rate so the trailing recovery step always executes` \
     BENCH_RESULTS_DIR="$CELL_DIR" \
     BENCH_RUN_ID=cell \
     node src/cli.ts --engine sirannon --durability "$durability" ) \

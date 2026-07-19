@@ -36,6 +36,8 @@ export function configBlock(config: Config): Record<string, unknown> {
     max_in_flight: config.maxInFlight,
     target_rates: config.targetRates,
     sweep_stop_steps: config.sweepStopSteps,
+    soak_seconds: config.soakSeconds,
+    soak_workloads: config.soakWorkloads,
     workloads: config.workloads,
     scaling_workloads: config.scalingWorkloads,
     delivery: deliveryDisclosure(config),

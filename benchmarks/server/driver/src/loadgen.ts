@@ -3,6 +3,16 @@ import { maxOf, mean, percentile } from './stats.ts'
 
 export type RunOp = () => Promise<FailureCategory | null>
 
+export interface LoadBucket {
+  startSeconds: number
+  served: number
+  errors: number
+  achievedRate: number
+  p50Ms: number
+  p99Ms: number
+  maxMs: number
+}
+
 export interface LoadResult {
   targetRate: number
   achievedRate: number
@@ -26,6 +36,7 @@ export interface LoadResult {
   sustained: boolean
   reachedCap: boolean
   failures: FailureTally
+  buckets: LoadBucket[] | null
 }
 
 const SUSTAINED_FRACTION = 0.95
@@ -69,6 +80,7 @@ export async function runOpenLoop(
   warmupSeconds: number,
   measureSeconds: number,
   maxInFlight: number,
+  bucketSeconds = 0,
 ): Promise<LoadResult> {
   const semaphore = new Semaphore(maxInFlight)
   const intervalMs = 1000 / targetRate
@@ -76,6 +88,11 @@ export async function runOpenLoop(
   const start = performance.now()
   const warmupEnd = start + warmupSeconds * 1000
   const measureEnd = warmupEnd + measureSeconds * 1000
+
+  const bucketCount = bucketSeconds > 0 ? Math.ceil(measureSeconds / bucketSeconds) : 0
+  const bucketServed = new Array<number>(bucketCount).fill(0)
+  const bucketErrors = new Array<number>(bucketCount).fill(0)
+  const latencyBucketIndex: number[] = []
 
   const latenciesMs: number[] = []
   const failures = new FailureTally()
@@ -103,8 +120,24 @@ export async function runOpenLoop(
       semaphore.release()
     }
     const arrival = performance.now()
+    // Buckets key on the intended time, so a request delayed into a later wall-clock window still
+    // charges the window whose schedule it belonged to.
+    const bucket =
+      bucketCount > 0 && intendedInWindow
+        ? Math.min(bucketCount - 1, Math.floor((intendedTime - warmupEnd) / (bucketSeconds * 1000)))
+        : -1
     if (intendedInWindow && failure === null) {
       latenciesMs.push(arrival - intendedTime)
+      if (bucket >= 0) {
+        latencyBucketIndex.push(bucket)
+      }
+    }
+    if (bucket >= 0) {
+      if (failure === null) {
+        bucketServed[bucket] = (bucketServed[bucket] ?? 0) + 1
+      } else {
+        bucketErrors[bucket] = (bucketErrors[bucket] ?? 0) + 1
+      }
     }
     if (inMeasureWindow(arrival)) {
       if (failure === null) {
@@ -169,6 +202,24 @@ export async function runOpenLoop(
   const expectedInWindow = Math.round(targetRate * measureSeconds)
   const offeredSpanSeconds = (dispatchEnd - warmupEnd) / 1000
   const offeredRate = offeredSpanSeconds > 0 ? dispatchedInWindow / offeredSpanSeconds : 0.0
+
+  let buckets: LoadBucket[] | null = null
+  if (bucketCount > 0) {
+    const perBucket: number[][] = Array.from({ length: bucketCount }, () => [])
+    for (const [position, bucketIdx] of latencyBucketIndex.entries()) {
+      perBucket[bucketIdx]?.push(latenciesMs[position] ?? 0)
+    }
+    buckets = perBucket.map((samples, index) => ({
+      startSeconds: index * bucketSeconds,
+      served: bucketServed[index] ?? 0,
+      errors: bucketErrors[index] ?? 0,
+      achievedRate: (bucketServed[index] ?? 0) / Math.min(bucketSeconds, measureSeconds - index * bucketSeconds),
+      p50Ms: percentile(samples, 0.5),
+      p99Ms: percentile(samples, 0.99),
+      maxMs: maxOf(samples),
+    }))
+  }
+
   return {
     targetRate,
     achievedRate,
@@ -192,6 +243,7 @@ export async function runOpenLoop(
     sustained,
     reachedCap,
     failures,
+    buckets,
   }
 }
 

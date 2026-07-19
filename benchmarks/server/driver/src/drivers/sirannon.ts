@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { FailureClassifier, FailureKind } from '../failures.ts'
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
@@ -5,6 +7,18 @@ import type { SeedTable } from '../workloads/workload.ts'
 import { Driver, type TransactionStatement } from './driver.ts'
 
 const SEED_BATCH_ROWS = 25_000
+
+// The version of the SDK build the generator drives, which is the Sirannon version under test;
+// the server exposes no version endpoint.
+function sirannonPackageVersion(): string {
+  try {
+    const packagePath = resolve(import.meta.dirname, '../../../../../packages/ts/package.json')
+    const parsed = JSON.parse(readFileSync(packagePath, 'utf-8')) as { version?: unknown }
+    return typeof parsed.version === 'string' && parsed.version !== '' ? parsed.version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
 
 const SIRANNON_SHED = new Set(['WRITE_OVERLOADED'])
 const SIRANNON_TIMEOUT = new Set(['TIMEOUT', 'WRITER_WORKER_TIMEOUT'])
@@ -105,7 +119,9 @@ export class SirannonDriver extends Driver {
     const versionRows = (await this.database().query('SELECT sqlite_version() AS version')) as Array<
       Record<string, unknown>
     >
-    settings.version = versionRows[0] ? String(versionRows[0].version) : 'unknown'
+    settings.version = sirannonPackageVersion()
+    settings.storage_engine = 'sqlite'
+    settings.sqlite_version = versionRows[0] ? String(versionRows[0].version) : 'unknown'
     return settings
   }
 

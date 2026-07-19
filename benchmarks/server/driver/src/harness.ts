@@ -13,10 +13,17 @@ const ERROR_RATE_CEILING = 0.01
 const CEILING_MIN_SECONDS = 2
 const CEILING_MAX_SECONDS = 4
 const CEILING_STATEMENT = 'SELECT 1'
+const SOAK_BUCKET_SECONDS = 30
 
 const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
 const WORKLOAD_DEADLINE_FLOOR_MS = 120_000
+
+// Progress lines keep the streamed cloud log from going silent during long phases, so a quiet
+// stream means a stalled run instead of an ambiguous one, and each line names the phase to blame.
+function progress(message: string): void {
+  console.log(`[${new Date().toISOString().slice(11, 19)}] ${message}`)
+}
 
 function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   if (config.workloadTimeoutMs > 0) {
@@ -25,7 +32,11 @@ function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   const seedSeconds = config.dataSize / MIN_SEED_ROWS_PER_SEC
   const sweepSeconds =
     ceilingSeconds + config.targetRates.length * config.runs * (config.warmupSeconds + config.measureSeconds)
-  return Math.max(WORKLOAD_DEADLINE_FLOOR_MS, Math.ceil((seedSeconds + sweepSeconds) * WORKLOAD_DEADLINE_SAFETY) * 1000)
+  const soakSeconds = config.soakSeconds > 0 ? config.warmupSeconds + config.soakSeconds : 0
+  return Math.max(
+    WORKLOAD_DEADLINE_FLOOR_MS,
+    Math.ceil((seedSeconds + sweepSeconds + soakSeconds) * WORKLOAD_DEADLINE_SAFETY) * 1000,
+  )
 }
 
 function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
@@ -54,12 +65,14 @@ export interface WorkloadResult {
   category: string
   runs: number
   operation_cost: Record<string, unknown>
+  seed: Record<string, unknown>
   operating_point: Record<string, unknown>
   sweep: Record<string, unknown>[]
   sweep_stopped_early: boolean
+  soak: Record<string, unknown> | null
 }
 
-async function prepare(driver: Driver, workload: Workload, config: Config): Promise<void> {
+async function prepare(driver: Driver, workload: Workload, config: Config): Promise<Record<string, unknown>> {
   await driver.dropTables([...workload.tables])
   const schema = driver.dialect === 'sqlite' ? workload.sqliteSchema : workload.postgresSchema
   const statements = schema
@@ -69,7 +82,41 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
   await driver.executeDdl(statements)
   const seedRng = new SeededRng(config.seed)
   const seedTables = workload.seed(seedRng, config.dataSize)
-  await driver.seed(seedTables)
+  // Seed rows are one-shot lazy iterables, so the count rides along as the driver consumes them.
+  const counter = { rows: 0 }
+  const counted = seedTables.map(table => ({
+    ...table,
+    rows: (function* (source: Iterable<unknown[]>) {
+      for (const row of source) {
+        counter.rows += 1
+        yield row
+      }
+    })(table.rows),
+  }))
+  const seedStart = performance.now()
+  const ticker = setInterval(() => {
+    const elapsed = (performance.now() - seedStart) / 1000
+    progress(`seed ${workload.name}: ${counter.rows.toLocaleString('en-US')} rows in ${Math.round(elapsed)}s`)
+  }, 10_000)
+  let seconds: number
+  try {
+    await driver.seed(counted)
+  } finally {
+    clearInterval(ticker)
+    seconds = (performance.now() - seedStart) / 1000
+  }
+  progress(
+    `seed ${workload.name}: done, ${counter.rows.toLocaleString('en-US')} rows in ${seconds.toFixed(1)}s` +
+      (seconds > 0 ? ` (${Math.round(counter.rows / seconds).toLocaleString('en-US')} rows/s)` : ''),
+  )
+  return {
+    rows: counter.rows,
+    seconds,
+    rows_per_second: seconds > 0 ? counter.rows / seconds : 0,
+    note:
+      'Seeding is disclosed, never compared: each engine loads through its own fastest documented ' +
+      'path, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
+  }
 }
 
 function generatorBlock(passes: LoadResult[], config: Config): Record<string, unknown> {
@@ -166,13 +213,87 @@ function selectOperatingPoint(sweep: Record<string, unknown>[], sloP99Ms: number
   return { ...chosen, under_slo: false }
 }
 
+// One continuous pass at the operating point, long enough to cross both engines' checkpoint
+// cycles, which the sweep's short windows never contain. Windows key on the schedule, so a
+// request delayed by a checkpoint stall charges the window it was meant to be sent in.
+async function runSoak(
+  makeOp: () => RunOp,
+  operatingPoint: Record<string, unknown>,
+  config: Config,
+  workloadName: string,
+): Promise<Record<string, unknown>> {
+  if (operatingPoint.sustained !== true) {
+    return {
+      skipped: true,
+      reason: 'the sweep found no rate this engine sustained, so there is no operating point to hold',
+    }
+  }
+  const targetRate = operatingPoint.target_rate as number
+  progress(`soak ${workloadName}: holding ${targetRate.toLocaleString('en-US')}/s for ${config.soakSeconds}s`)
+  const soakStart = performance.now()
+  const ticker = setInterval(() => {
+    const elapsed = Math.round((performance.now() - soakStart) / 1000)
+    progress(`soak ${workloadName}: ${elapsed}s of ${Math.round(config.warmupSeconds + config.soakSeconds)}s`)
+  }, 60_000)
+  let pass: LoadResult
+  try {
+    pass = await runOpenLoop(
+      makeOp(),
+      targetRate,
+      config.warmupSeconds,
+      config.soakSeconds,
+      config.maxInFlight,
+      SOAK_BUCKET_SECONDS,
+    )
+  } finally {
+    clearInterval(ticker)
+  }
+  progress(
+    `soak ${workloadName}: done, achieved ${Math.round(pass.achievedRate).toLocaleString('en-US')}/s, p99 ${pass.p99Ms.toFixed(1)}ms`,
+  )
+  const windows = (pass.buckets ?? []).map(bucket => ({
+    start_seconds: bucket.startSeconds,
+    achieved_rate: bucket.achievedRate,
+    errors: bucket.errors,
+    p50_ms: bucket.p50Ms,
+    p99_ms: bucket.p99Ms,
+    max_ms: bucket.maxMs,
+  }))
+  const worstWindow = windows.reduce(
+    (worst: (typeof windows)[number] | null, window) => (worst === null || window.p99_ms > worst.p99_ms ? window : worst),
+    null,
+  )
+  return {
+    skipped: false,
+    target_rate: targetRate,
+    seconds: config.soakSeconds,
+    window_seconds: SOAK_BUCKET_SECONDS,
+    achieved_rate: pass.achievedRate,
+    held: pass.sustained && pass.errorRate < ERROR_RATE_CEILING,
+    p99_under_slo: pass.p99Ms <= config.sloP99Ms,
+    error_rate: pass.errorRate,
+    latency_ms: {
+      p50: pass.p50Ms,
+      p95: pass.p95Ms,
+      p99: pass.p99Ms,
+      p999: pass.p999Ms,
+      max: pass.maxMs,
+      mean: pass.meanMs,
+    },
+    worst_window: worstWindow,
+    windows,
+    generator: { offered_fraction: pass.offeredFraction, cap_occupancy: pass.capOccupancy },
+    failures: summarizeFailures([pass.failures]),
+  }
+}
+
 async function runWorkload(
   driver: Driver,
   workload: Workload,
   config: Config,
   ceilingOps: number,
 ): Promise<WorkloadResult> {
-  await prepare(driver, workload, config)
+  const seed = await prepare(driver, workload, config)
   const zipf = new ZipfianGenerator(config.dataSize)
   const makeOp = (): RunOp => makeRunOp(driver, workload, new SeededRng(config.seed), zipf, config.dataSize)
 
@@ -180,8 +301,13 @@ async function runWorkload(
   let stoppedEarly = false
   let stepsPastSaturation = -1
   for (const rate of config.targetRates) {
+    progress(`sweep ${workload.name}: measuring ${rate.toLocaleString('en-US')}/s (${config.runs} passes)`)
     const point = await measureRate(makeOp, rate, config, ceilingOps)
     sweep.push(point)
+    const p99 = (point.latency_ms as { p99: number }).p99
+    progress(
+      `sweep ${workload.name}: ${rate.toLocaleString('en-US')}/s ${point.sustained === true ? 'sustained' : 'not sustained'}, p99 ${p99.toFixed(1)}ms`,
+    )
     if (config.sweepStopSteps < 0) {
       continue
     }
@@ -195,19 +321,33 @@ async function runWorkload(
       break
     }
   }
+  const operatingPoint = selectOperatingPoint(sweep, config.sloP99Ms)
+  const soak =
+    config.soakSeconds > 0 && config.soakWorkloads.includes(workload.name)
+      ? await runSoak(makeOp, operatingPoint, config, workload.name)
+      : null
   return {
     workload: workload.name,
     category: workload.category,
     runs: config.runs,
     operation_cost: operationCost(driver, workload),
-    operating_point: selectOperatingPoint(sweep, config.sloP99Ms),
+    seed,
+    operating_point: operatingPoint,
     sweep,
     sweep_stopped_early: stoppedEarly,
+    soak,
   }
 }
 
 export async function runEngine(driver: Driver, config: Config): Promise<EngineResult> {
   const catalogue = buildWorkloads()
+  for (const name of config.soakWorkloads) {
+    if (!catalogue.has(name)) {
+      throw new Error(
+        `unknown soak workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`,
+      )
+    }
+  }
   const ceilingSeconds = Math.min(Math.max(config.measureSeconds, CEILING_MIN_SECONDS), CEILING_MAX_SECONDS)
   const ceilingFailures = new FailureInterner(driver.failureClassifier)
   const trivialOp: RunOp = async () => {

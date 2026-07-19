@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154
 
-SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10)
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
 
 resolve_ssh_key() {
   if [ -z "${SSH_KEY:-}" ]; then

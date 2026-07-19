@@ -115,14 +115,53 @@ cmd_logs() {
     return 0
   fi
   log "stream ~/bench.log until the run finishes (Ctrl-C detaches, run keeps going)"
-  # Single-quoted so $(cat bench.pid) expands on the VM, not on the control host.
-  # shellcheck disable=SC2016
-  prov_ssh 'tail -n +1 --follow=name --pid=$(cat bench.pid 2>/dev/null || echo 1) bench.log' || true
-  local st
-  st="$(prov_ssh 'cat bench.status 2>/dev/null || echo running')"
+
+  # The stream must survive dropped SSH connections: keepalives make a dead peer detectable, and
+  # this loop re-attaches and resumes from the last line already shown instead of hanging or
+  # re-dumping the whole log. A local mirror of the streamed lines is what makes resume possible.
+  local mirror detached=0 misses=0 shown next st
+  mirror="$(mktemp "${TMPDIR:-/tmp}/sirannon-bench-log.XXXXXX")"
+  trap 'detached=1' INT
+  while :; do
+    shown="$(wc -l <"$mirror" | tr -d ' ')"
+    next=$((shown + 1))
+    if [ "$shown" -gt 0 ]; then
+      log "stream reconnecting (resuming from line $next)"
+    fi
+    # Single-quoted so $(cat bench.pid) expands on the VM, not on the control host.
+    # shellcheck disable=SC2016
+    prov_ssh 'tail -n +'"$next"' --follow=name --pid=$(cat bench.pid 2>/dev/null || echo 1) bench.log' \
+      < /dev/null | tee -a "$mirror" || true
+    if [ "$detached" = "1" ]; then
+      break
+    fi
+    st="$(prov_ssh 'cat bench.status 2>/dev/null || echo running' </dev/null | tr -d '\r')" || st="unreachable"
+    case "$st" in
+      running | unreachable | "") ;;
+      *) break ;;
+    esac
+    if [ "$(wc -l <"$mirror" | tr -d ' ')" -eq "$shown" ]; then
+      misses=$((misses + 1))
+    else
+      misses=0
+    fi
+    if [ "$misses" -ge 20 ]; then
+      log "no progress after $misses reconnect attempts; giving up on the stream (the run may still be going)"
+      break
+    fi
+    sleep 5
+  done
+  trap - INT
+  rm -f "$mirror"
+
+  if [ "$detached" = "1" ]; then
+    log "still running (you detached); re-attach with: PROVIDER=$PROVIDER run-cloud.sh logs"
+    return 0
+  fi
+  st="$(prov_ssh 'cat bench.status 2>/dev/null || echo running' </dev/null | tr -d '\r')" || st="running"
   case "$st" in
     0) log "run finished cleanly" ;;
-    running) log "still running (you detached); re-attach with: PROVIDER=$PROVIDER run-cloud.sh logs" ;;
+    running) log "stream ended but the run may still be going; re-attach with: PROVIDER=$PROVIDER run-cloud.sh logs" ;;
     *) log "run reported failures (status $st); inspect with: PROVIDER=$PROVIDER run-cloud.sh ssh" ;;
   esac
 }

@@ -21,6 +21,10 @@ sweep_stop_steps = 1
 slo_p99_ms = 25.0
 max_in_flight = 256
 
+[soak]
+workloads = ["ycsb-a", "tpc-c-derived"]
+seconds = 1200
+
 [scaling]
 workloads = ["ycsb-c", "ycsb-a"]
 

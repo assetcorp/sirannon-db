@@ -6,6 +6,9 @@ import { Driver, type TransactionStatement } from './driver.ts'
 
 const SYNCHRONOUS_COMMIT: Record<string, string> = { full: 'on', matched: 'off' }
 const MAX_BIND_PARAMS = 60_000
+// The server-side statement_timeout must fire before the client-side query_timeout, so a stalled
+// query surfaces as SQLSTATE 57014 and classifies as a timeout instead of a codeless client error.
+const QUERY_TIMEOUT_MARGIN_MS = 5_000
 
 const SQLSTATE_CLASS_SHED = '53'
 const SQLSTATE_CLASS_CONNECTION = '08'
@@ -51,14 +54,16 @@ export class PostgresDriver extends Driver {
   private readonly config: PostgresConfig
   private readonly durability: string
   private readonly synchronousCommit: string
+  private readonly requestTimeoutMs: number
   private pool: Pool | null = null
   readonly failureClassifier: FailureClassifier = { codeOf: postgresCodeOf, kindOf: postgresKind }
 
-  constructor(config: PostgresConfig, durability: string) {
+  constructor(config: PostgresConfig, durability: string, requestTimeoutMs: number) {
     super()
     this.config = config
     this.durability = durability
     this.synchronousCommit = SYNCHRONOUS_COMMIT[durability] ?? 'off'
+    this.requestTimeoutMs = requestTimeoutMs
   }
 
   async connect(): Promise<void> {
@@ -69,7 +74,9 @@ export class PostgresDriver extends Driver {
       password: this.config.password,
       database: this.config.database,
       max: this.config.poolSize,
-      options: `-c synchronous_commit=${this.synchronousCommit}`,
+      connectionTimeoutMillis: this.requestTimeoutMs,
+      query_timeout: this.requestTimeoutMs + QUERY_TIMEOUT_MARGIN_MS,
+      options: `-c synchronous_commit=${this.synchronousCommit} -c statement_timeout=${this.requestTimeoutMs}`,
     })
     await this.read('SELECT 1', [])
   }
@@ -90,11 +97,14 @@ export class PostgresDriver extends Driver {
     const pool = this.poolOrThrow()
     const version = (await pool.query('SELECT version()')).rows[0].version as string
     const sync = (await pool.query('SHOW synchronous_commit')).rows[0].synchronous_commit as string
+    const statementTimeout = (await pool.query('SHOW statement_timeout')).rows[0].statement_timeout as string
     return {
       engine: 'postgres',
       delivery: this.delivery,
       durability_requested: this.durability,
       synchronous_commit: String(sync),
+      statement_timeout: String(statementTimeout),
+      request_timeout_ms: this.requestTimeoutMs,
       version: String(version),
       pool_size: this.config.poolSize,
       max_concurrent_transactions: this.config.poolSize,

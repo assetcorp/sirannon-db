@@ -8,7 +8,7 @@ export function buildDriver(engine: string, config: Config, durability: string):
     return new SirannonDriver(config.sirannon.baseUrl, config.sirannon.databaseId, durability, config.requestTimeoutMs)
   }
   if (engine === 'postgres') {
-    return new PostgresDriver(config.postgres, durability)
+    return new PostgresDriver(config.postgres, durability, config.requestTimeoutMs)
   }
   throw new Error(`unknown engine ${JSON.stringify(engine)}; expected 'sirannon' or 'postgres'`)
 }

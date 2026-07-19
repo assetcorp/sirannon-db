@@ -13,7 +13,8 @@ case "${PROFILE}" in
     : "${BENCH_WARMUP_SECONDS:=3}"
     : "${BENCH_MEASURE_SECONDS:=10}"
     : "${BENCH_TARGET_RATES:=1000,2000,4000,8000,16000,32000,64000}"
-    : "${BENCH_PASS_TIMEOUT:=5400}"
+    : "${BENCH_SOAK_SECONDS:=1200}"
+    : "${BENCH_PASS_TIMEOUT:=14400}"
     ;;
   smoke)
     SMOKE=1
@@ -23,7 +24,8 @@ case "${PROFILE}" in
     : "${BENCH_WARMUP_SECONDS:=1}"
     : "${BENCH_MEASURE_SECONDS:=3}"
     : "${BENCH_TARGET_RATES:=1000,4000,16000,64000}"
-    : "${BENCH_PASS_TIMEOUT:=1200}"
+    : "${BENCH_SOAK_SECONDS:=30}"
+    : "${BENCH_PASS_TIMEOUT:=1800}"
     ;;
   *)
     echo "unknown profile '${PROFILE}' (expected: cloud or smoke)" >&2
@@ -31,7 +33,7 @@ case "${PROFILE}" in
     ;;
 esac
 export BENCH_DATA_SIZE BENCH_DURABILITIES BENCH_RUNS BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_TARGET_RATES
-export BENCH_PASS_TIMEOUT
+export BENCH_SOAK_SECONDS BENCH_PASS_TIMEOUT
 export PYTHONUNBUFFERED=1
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
@@ -185,15 +187,31 @@ unit_stop() {
   sudo systemctl reset-failed "$unit" >/dev/null 2>&1 || true
 }
 
+# Login sessions (including anyone SSH-ing in to diagnose a run) live under user.slice, so pinning
+# that slice to the driver's cores means a diagnostic shell can never steal engine CPU mid-pass.
+confine_login_sessions() {
+  if sudo systemctl set-property --runtime user.slice AllowedCPUs="$DRIVER_CPUSET"; then
+    echo "login sessions confined to driver cores ${DRIVER_CPUSET}; SSH diagnosis is safe during passes"
+  else
+    echo "could not confine user.slice; avoid running commands over SSH during measured passes" >&2
+  fi
+}
+
+release_login_sessions() {
+  sudo systemctl set-property --runtime user.slice AllowedCPUs="" >/dev/null 2>&1 || true
+}
+
 # shellcheck disable=SC2329
 cleanup_units() {
   unit_stop bench-driver.service
   unit_stop bench-sirannon.service
   unit_stop bench-postgres.service
+  release_login_sessions
 }
 trap cleanup_units EXIT
 # A hard-killed prior run never reached its EXIT trap, so its units may still hold ports and cores.
 cleanup_units
+confine_login_sessions
 
 run_with_deadline() {
   local secs="$1"
@@ -341,6 +359,7 @@ driver_env_args() {
     BENCH_PG_PASSWORD BENCH_PG_DATABASE BENCH_PG_POOL_SIZE BENCH_RUN_ID BENCH_RESULTS_DIR \
     BENCH_MACHINE_LABEL BENCH_DATA_SIZE BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_RUNS \
     BENCH_SEED BENCH_WORKLOADS BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_SLO_P99_MS \
+    BENCH_SOAK_SECONDS BENCH_SOAK_WORKLOADS \
     BENCH_MAX_IN_FLIGHT BENCH_DRIVER_CPUS BENCH_ENGINE_CPUS BENCH_DRIVER_CPUSET \
     BENCH_ENGINE_CPUSET BENCH_ENGINE_MEMORY BENCH_CDC_SAMPLES BENCH_CDC_WARMUP; do
     if [ -n "${!var:-}" ]; then

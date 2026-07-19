@@ -41,13 +41,16 @@ def _date(comparison: dict) -> str:
     return created[:10] if isinstance(created, str) else ""
 
 
-def _engine_versions(comparison: dict) -> tuple[str, str]:
+def _engine_versions(comparison: dict) -> tuple[str, str, str]:
     for _, node in _durabilities(comparison):
-        sqlite = node.get("sirannon_engine", {}).get("version")
+        sirannon_engine = node.get("sirannon_engine", {})
+        sirannon = sirannon_engine.get("version")
+        sqlite = (sirannon_engine.get("settings") or {}).get("sqlite_version")
         postgres = node.get("postgres_engine", {}).get("version")
-        if sqlite or postgres:
-            return str(sqlite or "n/a"), str(postgres or "n/a")
-    return "n/a", "n/a"
+        if sirannon or sqlite or postgres:
+            short_postgres = str(postgres or "n/a").removeprefix("PostgreSQL ").split(" ")[0]
+            return str(sirannon or "n/a"), str(sqlite or "n/a"), short_postgres
+    return "n/a", "n/a", "n/a"
 
 
 def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
@@ -77,7 +80,7 @@ def _setup_block(source: Source) -> str:
     )
     machine = f"The run executed on {label}, which reports {host}." if label else f"The run host reports {host}."
 
-    sqlite_version, postgres_version = _engine_versions(comparison)
+    sirannon_version, sqlite_version, postgres_version = _engine_versions(comparison)
     durability_names = humanized_list([_DURABILITY_LABELS.get(name, name) for name, _ in _durabilities(comparison)])
     rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])])
     engine_cpus = delivery.get("engine_cpus")
@@ -91,7 +94,8 @@ def _setup_block(source: Source) -> str:
         f"- **Run.** These figures come from run `{source.run_id}`, recorded on {_date(comparison)} from commit "
         f"`{commit}`{dirty}. The full per-run report is in [the run report]({source.report_link}).",
         f"- **Machine.** {machine}",
-        f"- **Engines.** Sirannon runs on SQLite {sqlite_version}; PostgreSQL is {postgres_version}. Both run as "
+        f"- **Engines.** Sirannon {sirannon_version} (storage engine SQLite {sqlite_version}); PostgreSQL "
+        f"{postgres_version}. Both run as "
         f"native processes on dedicated cores under {cap_text} (cgroup v2), at "
         f"{durability_names or 'the recorded durability levels'}.",
         "- **Delivery.** One Node load generator drove both engines through the client each provides: Sirannon over "
@@ -129,6 +133,17 @@ def _setup_block(source: Source) -> str:
         f"95% confidence interval. The service-level target for the operating point is a p99 under "
         f"{decimal(config.get('slo_p99_ms'), 0)} ms."
     )
+    soak_seconds = config.get("soak_seconds")
+    soak_workloads = humanized_list([_label(name) for name in config.get("soak_workloads", [])])
+    if is_number(soak_seconds) and soak_seconds > 0 and soak_workloads:
+        if soak_seconds % 60 == 0:
+            duration = f"{integer(soak_seconds / 60)}-minute"
+        else:
+            duration = f"{integer(soak_seconds)}-second"
+        bullets.append(
+            f"- **Soak.** After the sweep, {soak_workloads} held each engine at its operating point for one "
+            f"continuous {duration} window, reported in 30-second slices."
+        )
     return "\n".join(bullets)
 
 
@@ -150,13 +165,17 @@ _METHODOLOGY = (
     "trims the data filesystem, and pauses for a fixed interval. The operating system page cache is dropped "
     "before each measured series, so neither engine starts warm from the other's run.\n\n"
     "The harness matches durability at two levels. Full durability sets PostgreSQL `synchronous_commit=on` "
-    "against SQLite `synchronous=FULL`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off` "
-    "against `synchronous=NORMAL` in WAL mode, so both defer the fsync and both can lose only the most recent "
-    "commits on power loss without corrupting.\n\n"
+    "against Sirannon `synchronous=full`, so both fsync every commit. Matched-relaxed sets `synchronous_commit=off` "
+    "against Sirannon `synchronous=normal` in WAL mode, so both defer the fsync and both can lose only the most "
+    "recent commits on power loss without corrupting.\n\n"
     "The load is open-loop. Requests arrive at a fixed target rate whether or not earlier requests have "
     "returned, and each request's latency counts from the time it was meant to be sent, which corrects for "
     "coordinated omission. The report uses tail-latency percentiles, and the operating point is the highest "
-    "offered rate the engine sustained while holding p99 under the recorded target."
+    "offered rate the engine sustained while holding p99 under the recorded target.\n\n"
+    "The sweep's measured windows are short, so on selected workloads the harness then holds each engine at "
+    "its operating point for one long continuous window that crosses both engines' checkpoint cycles, and "
+    "reports the pace and tail latency of every 30-second slice of it. This shows whether the operating "
+    "point survives the periodic housekeeping both engines defer, which a short window cannot contain."
 )
 
 
@@ -267,6 +286,54 @@ def _scaling_block(source: Source) -> str:
     return "\n\n".join(parts)
 
 
+def _soak_row(workload_label: str, engine: str, soak: object) -> list[str] | None:
+    if not isinstance(soak, dict):
+        return None
+    if soak.get("skipped"):
+        return [workload_label, engine, "n/a", "n/a", "n/a", "n/a", "n/a", "no rate sustained"]
+    latency = soak.get("latency_ms") or {}
+    worst = soak.get("worst_window") or {}
+    return [
+        workload_label,
+        engine,
+        integer(soak.get("target_rate")),
+        ops(soak.get("achieved_rate")),
+        ms(latency.get("p99")),
+        ms(worst.get("p99_ms")),
+        percent(soak.get("error_rate")),
+        "yes" if soak.get("held") else "no",
+    ]
+
+
+def _soak_block(source: Source) -> str:
+    durabilities = _durabilities(source.comparison)
+    headers = ["Workload", "Engine", "Rate held", "Achieved", "p99 ms", "Worst 30 s p99", "Errors", "Held"]
+    aligns = ["left", "left", "right", "right", "right", "right", "right", "left"]
+    parts: list[str] = []
+    for name, node in durabilities:
+        body: list[list[str]] = []
+        for row in node.get("workloads", []):
+            label = _label(row.get("workload", "n/a"))
+            for engine_name, key in (("Sirannon", "sirannon_soak"), ("PostgreSQL", "postgres_soak")):
+                rendered = _soak_row(label, engine_name, row.get(key))
+                if rendered is not None:
+                    body.append(rendered)
+        if not body:
+            continue
+        parts.append(f"### {_DURABILITY_LABELS.get(name, name)}")
+        parts.append(table(headers, aligns, body))
+    if not parts:
+        return "No soak results were recorded."
+    intro = (
+        "The sweep measures in short windows, so this section holds each engine at its operating point for one "
+        "long continuous window instead. The window is long enough to cross both engines' checkpoint cycles, "
+        "and the worst-30-second column shows the slowest slice of it, which is where a checkpoint stall "
+        "appears. An engine holds when it keeps at least 95% of the rate with under 1% errors across the "
+        "whole window."
+    )
+    return "\n\n".join([intro, *parts])
+
+
 def _features_block(source: Source) -> str:
     comparison = source.comparison
     parts: list[str] = []
@@ -333,6 +400,8 @@ def comparison_document(source: Source) -> str:
         _comparison_block(source),
         "## Throughput versus offered load",
         _scaling_block(source),
+        "## Holding the operating point",
+        _soak_block(source),
         "## Sirannon-only characterizations",
         _features_block(source),
     ]
@@ -346,6 +415,7 @@ def blocks(source: Source | None) -> dict[str, str]:
             "setup": _NO_RUN_NOTICE,
             "comparison": _NO_RUN_NOTICE,
             "scaling": _NO_RUN_NOTICE,
+            "soak": _NO_RUN_NOTICE,
             "features": _NO_RUN_NOTICE,
         }
     return {
@@ -353,5 +423,6 @@ def blocks(source: Source | None) -> dict[str, str]:
         "setup": _setup_block(source),
         "comparison": _comparison_block(source),
         "scaling": _scaling_block(source),
+        "soak": _soak_block(source),
         "features": _features_block(source),
     }

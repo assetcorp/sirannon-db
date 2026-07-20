@@ -1,7 +1,13 @@
 import { Worker } from 'node:worker_threads'
 import type { DriverWorkerEntry, GroupRunOutcome, OpenOptions, SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
-import { deserializeError, type WorkerRequest, type WorkerRequestBody, type WorkerResponse } from './protocol.js'
+import {
+  deserializeError,
+  WORKER_CANCELLED_CODE,
+  type WorkerRequest,
+  type WorkerRequestBody,
+  type WorkerResponse,
+} from './protocol.js'
 import { resolveWorkerScript } from './resolve-entry.js'
 
 export const DEFAULT_WRITE_TIMEOUT_MS = 30_000
@@ -17,6 +23,8 @@ interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
   timer: NodeJS.Timeout | null
+  graceTimer: NodeJS.Timeout | null
+  cancellable: boolean
 }
 
 type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
@@ -24,12 +32,15 @@ type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
 /**
  * Owns one writer worker thread and presents it as a {@link SQLiteConnection}.
  * A natural worker crash or non-zero exit rejects every in-flight request and
- * respawns. A per-operation deadline instead rejects only the stalled caller
- * and leaves the worker running, because a thread inside a synchronous native
- * SQLite call cannot be interrupted: terminating it would leak the connection's
- * file lock and can abort the whole process. A rejected write has an
- * indeterminate outcome, since its commit may still reach disk, so a caller
- * must reconcile state before retrying a non-idempotent write.
+ * respawns. A per-operation deadline leaves the worker running, because a
+ * thread inside a synchronous native SQLite call cannot be interrupted:
+ * terminating it would leak the connection's file lock and can abort the whole
+ * process. When the deadline expires the host asks the worker to cancel the
+ * operation. Work the worker has not started yet is skipped and rejected as
+ * retryable overload with a known outcome, a result that arrives within one
+ * further deadline is delivered normally, and an operation still unresolved
+ * after that grace window is rejected with an indeterminate outcome, so a
+ * caller must reconcile state before retrying a non-idempotent write.
  */
 export class WriterWorker {
   private worker: Worker | null = null
@@ -95,17 +106,56 @@ export class WriterWorker {
     const entry = this.pending.get(res.id)
     if (!entry) return
     this.pending.delete(res.id)
-    if (entry.timer) clearTimeout(entry.timer)
-    if (res.ok) entry.resolve(res.value)
-    else entry.reject(deserializeError(res.error))
+    clearPendingTimers(entry)
+    if (res.ok) {
+      entry.resolve(res.value)
+      return
+    }
+    if (res.error.code === WORKER_CANCELLED_CODE) {
+      entry.reject(
+        new SirannonError(
+          `The writer worker could not take this operation within ${this.timeoutMs}ms; it was not applied and is safe to retry`,
+          'WRITE_OVERLOADED',
+        ),
+      )
+      return
+    }
+    entry.reject(deserializeError(res.error))
   }
 
   private rejectPending(id: number, err: Error): void {
     const entry = this.pending.get(id)
     if (!entry) return
     this.pending.delete(id)
-    if (entry.timer) clearTimeout(entry.timer)
+    clearPendingTimers(entry)
     entry.reject(err)
+  }
+
+  private unresponsiveError(waitedMs: number): SirannonError {
+    return new SirannonError(
+      `Writer worker did not respond within ${waitedMs}ms; the operation's outcome is unknown`,
+      'WRITER_WORKER_TIMEOUT',
+    )
+  }
+
+  private onDeadline(id: number): void {
+    const entry = this.pending.get(id)
+    if (!entry) return
+    const worker = this.worker
+    if (!entry.cancellable || !worker) {
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs))
+      return
+    }
+    try {
+      worker.postMessage({ kind: 'cancel', id })
+    } catch {
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs))
+      return
+    }
+    entry.graceTimer = setTimeout(() => {
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs * 2))
+    }, this.timeoutMs)
+    entry.graceTimer.unref?.()
   }
 
   private fault(errLike: unknown): void {
@@ -114,7 +164,7 @@ export class WriterWorker {
     const dead = this.worker
     this.worker = null
     for (const entry of this.pending.values()) {
-      if (entry.timer) clearTimeout(entry.timer)
+      clearPendingTimers(entry)
       entry.reject(err)
     }
     this.pending.clear()
@@ -152,18 +202,11 @@ export class WriterWorker {
     return new Promise<unknown>((resolve, reject) => {
       let timer: NodeJS.Timeout | null = null
       if (this.timeoutMs > 0) {
-        timer = setTimeout(() => {
-          this.rejectPending(
-            id,
-            new SirannonError(
-              `Writer worker did not respond within ${this.timeoutMs}ms; the operation's outcome is unknown`,
-              'WRITER_WORKER_TIMEOUT',
-            ),
-          )
-        }, this.timeoutMs)
+        timer = setTimeout(() => this.onDeadline(id), this.timeoutMs)
         timer.unref?.()
       }
-      this.pending.set(id, { resolve, reject, timer })
+      const cancellable = request.kind !== 'open' && request.kind !== 'close'
+      this.pending.set(id, { resolve, reject, timer, graceTimer: null, cancellable })
       try {
         worker.postMessage(message)
       } catch (err) {
@@ -260,9 +303,14 @@ export class WriterWorker {
     }
     this.worker = null
     for (const entry of this.pending.values()) {
-      if (entry.timer) clearTimeout(entry.timer)
+      clearPendingTimers(entry)
       entry.reject(new SirannonError('Writer worker is closed', 'WRITER_WORKER_CLOSED'))
     }
     this.pending.clear()
   }
+}
+
+function clearPendingTimers(entry: PendingRequest): void {
+  if (entry.timer) clearTimeout(entry.timer)
+  if (entry.graceTimer) clearTimeout(entry.graceTimer)
 }

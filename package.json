@@ -5,7 +5,7 @@
   "description": "Monorepo for sirannon-db, a library that turns SQLite into a networked data layer with real-time subscriptions.",
   "author": "Delali (https://sondelali.com)",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "homepage": "https://sirannon.sondelali.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/assetcorp/sirannon-db.git"

@@ -254,7 +254,8 @@ async function runSoak(
     max_ms: bucket.maxMs,
   }))
   const worstWindow = windows.reduce(
-    (worst: (typeof windows)[number] | null, window) => (worst === null || window.p99_ms > worst.p99_ms ? window : worst),
+    (worst: (typeof windows)[number] | null, window) =>
+      worst === null || window.p99_ms > worst.p99_ms ? window : worst,
     null,
   )
   return {

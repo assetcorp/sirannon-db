@@ -74,7 +74,9 @@ prov_create() {
     log "(dry-run) would import key pair '$SSH_KEY_NAME', ensure security group '$SG_NAME' (SSH from your IP), resolve the latest Ubuntu 24.04 AMI, then:"
     _run aws ec2 run-instances --image-id "<ami>" --instance-type "$MACHINE_TYPE" \
       --key-name "$SSH_KEY_NAME" --security-group-ids "<sg>" \
-      --block-device-mappings "gp3 ${DISK_SIZE}GB root" \
+      --block-device-mappings "gp3 ${DISK_SIZE}GB root, delete on termination" \
+      --instance-initiated-shutdown-behavior terminate \
+      --user-data "<scheduled shutdown after ${VM_MAX_HOURS}h>" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$VM_NAME}]"
     return 0
   fi
@@ -85,18 +87,30 @@ prov_create() {
   sg="$(_aws_security_group)"
   ami="${AWS_AMI:-$(_aws_latest_ami)}"
   [ -n "$ami" ] && [ "$ami" != "None" ] || die "could not resolve Ubuntu 24.04 AMI in $AWS_REGION"
-  bdm="[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE},\"VolumeType\":\"gp3\"}}]"
+  bdm="[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]"
   local -a run_flags=(
     --image-id "$ami" --instance-type "$MACHINE_TYPE"
     --key-name "$SSH_KEY_NAME" --security-group-ids "$sg"
     --block-device-mappings "$bdm"
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$VM_NAME}]"
   )
+  if [ "$VM_MAX_HOURS" != "0" ]; then
+    run_flags+=(--instance-initiated-shutdown-behavior terminate)
+    run_flags+=(--user-data "$(printf '#!/bin/sh\nshutdown -h +%s\n' $(( VM_MAX_HOURS * 60 )))")
+  fi
   [ -n "${AWS_SUBNET:-}" ] && run_flags+=(--subnet-id "$AWS_SUBNET")
   _run aws ec2 run-instances "${run_flags[@]}" --query 'Instances[0].InstanceId' --output text
   log "wait for instance-running"
   _run aws ec2 wait instance-running \
     --filters "Name=tag:Name,Values=$VM_NAME" "Name=instance-state-name,Values=pending,running"
+}
+
+prov_lifetime_note() {
+  if [ "$VM_MAX_HOURS" = "0" ]; then
+    log "self-delete backstop disabled (VM_MAX_HOURS=0); the instance bills until 'down'"
+    return 0
+  fi
+  log "the instance halts and terminates itself about ${VM_MAX_HOURS}h after first boot (in-guest timer; a hung kernel defeats it, so verify with 'status')"
 }
 
 prov_delete() {

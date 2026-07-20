@@ -9,11 +9,19 @@ DISK_SIZE="${DISK_SIZE:-60}"
 DRY_RUN="${DRY_RUN:-0}"
 MACHINE_LABEL="${BENCH_MACHINE_LABEL:-}"
 MACHINE_TYPE="${MACHINE_TYPE:-}"
+VM_MAX_HOURS="${VM_MAX_HOURS:-24}"
+
+CLOUD_PROFILE_WORST_CASE_RUN_HOURS=18
+SMOKE_PROFILE_WORST_CASE_RUN_HOURS=2
 
 RESULTS_REL="benchmarks/server/results"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+case "$VM_MAX_HOURS" in
+  '' | *[!0-9]*) die "VM_MAX_HOURS must be a whole number of hours (0 disables the self-delete backstop)" ;;
+esac
 
 _run() {
   if [ "$DRY_RUN" = "1" ]; then
@@ -46,6 +54,7 @@ prov_wait_ssh() {
 cmd_up() {
   if [ "$DRY_RUN" != "1" ] && prov_exists; then
     log "$VM_NAME already exists"
+    prov_lifetime_note
     return 0
   fi
   log "create $VM_NAME ($MACHINE_TYPE)"
@@ -54,7 +63,31 @@ cmd_up() {
     [ "$reply" = "y" ] || [ "$reply" = "Y" ] || die "aborted"
   fi
   prov_create
+  prov_lifetime_note
   prov_wait_ssh
+}
+
+vm_lifetime_guard() {
+  [ "$DRY_RUN" = "1" ] && return 0
+  [ "$VM_MAX_HOURS" = "0" ] && return 0
+  declare -F prov_termination_epoch >/dev/null || return 0
+  local deadline now left_hours required
+  deadline="$(prov_termination_epoch)" || deadline=""
+  if [ -z "$deadline" ]; then
+    log "could not confirm a self-delete deadline on $VM_NAME; if it predates the backstop, recreate it (down, then up) to arm one"
+    return 0
+  fi
+  case "${BENCH_PROFILE:-cloud}" in
+    smoke) required="$SMOKE_PROFILE_WORST_CASE_RUN_HOURS" ;;
+    *) required="$CLOUD_PROFILE_WORST_CASE_RUN_HOURS" ;;
+  esac
+  now="$(date +%s)"
+  left_hours=$(( (deadline - now) / 3600 ))
+  [ "$left_hours" -lt 0 ] && left_hours=0
+  if [ $(( deadline - now )) -lt $(( required * 3600 )) ]; then
+    die "the VM self-deletes in about ${left_hours}h, but a '${BENCH_PROFILE:-cloud}' run can need up to ${required}h; recreate the VM (down, then up) or raise VM_MAX_HOURS"
+  fi
+  log "self-delete deadline is about ${left_hours}h away; a '${BENCH_PROFILE:-cloud}' run needs at most ${required}h"
 }
 
 cmd_sync() {
@@ -89,6 +122,7 @@ cmd_setup() {
 }
 
 cmd_run() {
+  vm_lifetime_guard
   log "launch the benchmark run (detached; survives an SSH drop)"
   local forward
   forward="$(printf '%q ' "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
@@ -263,6 +297,7 @@ Flags: --yes (skip billing prompt), --teardown (delete on exit, even if a step f
 
 Common env:
   VM_NAME, MACHINE_TYPE, DISK_SIZE (GB),
+  VM_MAX_HOURS (self-delete backstop, default 24; 0 disables; gcp/aws only),
   SSH_KEY (private key for hetzner/digitalocean/aws; the public key is <key>.pub),
   BENCH_PROFILE (cloud by default: 10,000,000 rows; smoke for a quick check),
   BENCH_MACHINE_LABEL, BENCH_DURABILITIES, BENCH_WORKLOADS, BENCH_TARGET_RATES,

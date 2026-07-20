@@ -71,3 +71,7 @@ prov_status() {
   doctl compute droplet list --format Name,Status,Region,Memory,VCPUs --no-header 2>/dev/null \
     | awk -v n="$VM_NAME" '$1 == n' || log "$VM_NAME not found"
 }
+
+prov_lifetime_note() {
+  log "digitalocean has no auto-delete backstop; if this machine dies mid-run the droplet bills until 'down'"
+}

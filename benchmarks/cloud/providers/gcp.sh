@@ -20,6 +20,12 @@ prov_exists() {
   gcloud compute instances describe "$VM_NAME" --project "$PROJECT" --zone "$ZONE" >/dev/null 2>&1
 }
 
+_gcp_termination_time() {
+  local at
+  at=$(( $(date +%s) + VM_MAX_HOURS * 3600 ))
+  date -u -r "$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ
+}
+
 prov_create() {
   # Must never be empty: expanding an empty array under 'set -u' aborts on macOS's bash 3.2.
   local -a flags=(
@@ -29,7 +35,48 @@ prov_create() {
     --boot-disk-size "${DISK_SIZE}GB" --boot-disk-type pd-balanced
   )
   [ -n "${MIN_CPU_PLATFORM:-}" ] && flags+=(--min-cpu-platform "$MIN_CPU_PLATFORM")
+  if [ "$VM_MAX_HOURS" != "0" ]; then
+    flags+=(--termination-time "$(_gcp_termination_time)" --instance-termination-action DELETE)
+  fi
   _run gcloud compute instances create "$VM_NAME" "${flags[@]}"
+}
+
+_gcp_deadline_rfc3339() {
+  local ts
+  ts="$(gcloud compute instances describe "$VM_NAME" --project "$PROJECT" --zone "$ZONE" \
+    --format='value(scheduling.terminationTime)' 2>/dev/null)"
+  [ -n "$ts" ] || ts="$(gcloud compute instances describe "$VM_NAME" --project "$PROJECT" --zone "$ZONE" \
+    --format='value(scheduling.terminationTimestamp)' 2>/dev/null)"
+  printf '%s' "$ts"
+}
+
+prov_termination_epoch() {
+  local ts
+  ts="$(_gcp_deadline_rfc3339)"
+  [ -n "$ts" ] || return 0
+  python3 - "$ts" 2>/dev/null <<'PY'
+import sys
+from datetime import datetime
+print(int(datetime.fromisoformat(sys.argv[1].strip().replace('Z', '+00:00')).timestamp()))
+PY
+}
+
+prov_lifetime_note() {
+  if [ "$VM_MAX_HOURS" = "0" ]; then
+    log "self-delete backstop disabled (VM_MAX_HOURS=0); the VM bills until 'down'"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "(dry-run) the VM would delete itself ${VM_MAX_HOURS}h after creation"
+    return 0
+  fi
+  local ts
+  ts="$(_gcp_deadline_rfc3339)"
+  if [ -n "$ts" ]; then
+    log "the VM deletes itself at $ts; fetch results before then"
+  else
+    log "warning: $VM_NAME has no self-delete deadline; recreate it (down, then up) to arm the backstop"
+  fi
 }
 
 prov_delete() {

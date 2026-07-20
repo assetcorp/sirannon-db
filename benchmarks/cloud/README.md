@@ -72,6 +72,7 @@ Every default is an environment variable:
 | `VM_NAME` | `sirannon-bench` | Instance name |
 | `MACHINE_TYPE` | per provider | Instance size |
 | `DISK_SIZE` | `60` | Boot disk size in GB (ignored by Hetzner, which bundles storage) |
+| `VM_MAX_HOURS` | `24` | Self-delete backstop in hours; `0` disables it (GCP and AWS only) |
 | `SSH_KEY` | `~/.ssh/id_ed25519` | Private key for the raw-SSH providers |
 | `BENCH_PROFILE` | `cloud` | Run profile: `cloud` (10,000,000 rows) or `smoke` (quick check) |
 | `BENCH_MACHINE_LABEL` | derived | Host label recorded in results |
@@ -94,6 +95,12 @@ Provider-specific variables: `GCP_PROJECT`, `GCP_ZONE`, `MIN_CPU_PLATFORM`, and 
 ## Security
 
 Hetzner and DigitalOcean expose port 22 on a public IP, so treat the VM as throwaway and always tear it down. AWS restricts port 22 to your own IP through the security group it creates. GCP with `USE_IAP=1` opens no public IP at all.
+
+## Self-delete backstop
+
+The `down` command and `--teardown` only run while `run-cloud.sh` itself is alive, so a machine that dies mid-run would leave the VM billing forever. `VM_MAX_HOURS` (default 24) caps that: on GCP the instance is created with a termination time and the DELETE action, so Google's control plane deletes it, its boot disk, and its local SSDs at the deadline even if the guest is hung; on AWS the instance schedules an in-guest halt and terminates on shutdown, which deletes the root volume. Hetzner and DigitalOcean have no equivalent, and the toolkit says so at create time.
+
+The 24-hour default clears the worst case where every timeout in a `cloud` run is fully exhausted (about 18 hours including provisioning). `run` refuses to start when the remaining lifetime is shorter than the profile could need, and `up` prints the exact deadline. Anything not fetched by the deadline is deleted with the VM, so after losing your connection to a run, fetch results before the printed time. Set `VM_MAX_HOURS=0` to disable the backstop, and rely on `down` alone.
 
 ## Results
 

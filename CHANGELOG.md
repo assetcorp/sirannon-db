@@ -1,3 +1,54 @@
+## 0.1.7 (2026-07-20)
+
+### 🚀 Features
+
+- introduce cloud benchmarking toolkit with support for multiple providers and automated result handling ([a98b3fc](https://github.com/assetcorp/sirannon-db/commit/a98b3fc))
+- add benchmark harness for Sirannon vs PostgreSQL comparison with Docker support and detailed reporting ([cf2cd86](https://github.com/assetcorp/sirannon-db/commit/cf2cd86))
+- add smoke preset for quick benchmarking and update README with usage instructions ([5f0e865](https://github.com/assetcorp/sirannon-db/commit/5f0e865))
+- enhance cloud benchmarking with new profile options and update documentation ([87495aa](https://github.com/assetcorp/sirannon-db/commit/87495aa))
+- add timezone support for backup scheduling, including daylight saving time handling and validation for unknown timezones ([8eb7677](https://github.com/assetcorp/sirannon-db/commit/8eb7677))
+- implement bulk load feature with configurable durability and synchronous levels, improving performance for batch operations ([3d8e494](https://github.com/assetcorp/sirannon-db/commit/3d8e494))
+- improve bulk load functionality with checkpointing ([fa8f4ba](https://github.com/assetcorp/sirannon-db/commit/fa8f4ba))
+- add batch and load methods to transport layers, enhancing bulk operation capabilities with configurable durability and request timeout ([c1faf3a](https://github.com/assetcorp/sirannon-db/commit/c1faf3a))
+- introduce timeout configurations and deadline handling in benchmark scripts and drivers to enhance stability and performance ([f2dffc9](https://github.com/assetcorp/sirannon-db/commit/f2dffc9))
+- improvr subscription with optional reset handling and backpressure management ([200976f](https://github.com/assetcorp/sirannon-db/commit/200976f))
+- enhance WebSocket transport with epoch handling and introduce ForbiddenSqlError for reserved table access ([87a1a62](https://github.com/assetcorp/sirannon-db/commit/87a1a62))
+- refine internal table access control by distinguishing between read and write operations for reserved identifiers ([8522ffc](https://github.com/assetcorp/sirannon-db/commit/8522ffc))
+- implement encoding and decoding for tagged values in WebSocket transport, enhancing support for BigInt and binary data in change events ([e916cfb](https://github.com/assetcorp/sirannon-db/commit/e916cfb))
+- implement value encoding for BigInt and BLOB types across transports ([765517b](https://github.com/assetcorp/sirannon-db/commit/765517b))
+- improve FieldMergeResolver and ConvergenceOracle to handle BigInt and BLOB types without throwing errors, and improve data comparison using canonicalisation for checksum ([2d669dc](https://github.com/assetcorp/sirannon-db/commit/2d669dc))
+- add queryForWire method for efficient single-pass reading of encoded rows, enhancing performance for BigInt and BLOB types across database operations ([827dab9](https://github.com/assetcorp/sirannon-db/commit/827dab9))
+- improve bulk load functionality with optional checkpoint control ([115cdba](https://github.com/assetcorp/sirannon-db/commit/115cdba))
+- implement loadAll method for efficient bulk loading with batching and durability control ([38fd3df](https://github.com/assetcorp/sirannon-db/commit/38fd3df))
+- reimplement the benchmarks agianst running in docker ([824d1d2](https://github.com/assetcorp/sirannon-db/commit/824d1d2))
+- enhance error handling and connection retries in measureCdcLatency function ([a3350b1](https://github.com/assetcorp/sirannon-db/commit/a3350b1))
+- implement soak phase in benchmarks to evaluate sustained performance over extended periods ([4791de7](https://github.com/assetcorp/sirannon-db/commit/4791de7))
+- add VM_MAX_HOURS variable for self-delete backstop in cloud benchmarks ([7872fe7](https://github.com/assetcorp/sirannon-db/commit/7872fe7))
+- **benchmark:** rewrite benchmark harness in node since sirannon runs note and node-pg is also available for postgress ([97f488c](https://github.com/assetcorp/sirannon-db/commit/97f488c))
+- **ts:** introduce writer worker for offloading disk writes ([56944a7](https://github.com/assetcorp/sirannon-db/commit/56944a7))
+- **ts:** add writerWorker option to Sirannon for configurable write handling ([4b54609](https://github.com/assetcorp/sirannon-db/commit/4b54609))
+- **ts:** implement GroupCommitter for batching concurrent writes in a single transaction ([e7d5a54](https://github.com/assetcorp/sirannon-db/commit/e7d5a54))
+- **ts:** add DatabaseCdcController for change data capture and enhance transaction handling ([717ac6c](https://github.com/assetcorp/sirannon-db/commit/717ac6c))
+- **ts:** introduce DatabaseObserver for improved query observability and metrics tracking ([2b2fe3b](https://github.com/assetcorp/sirannon-db/commit/2b2fe3b))
+- **ts:** implement pass classification and verdict determination for load testing ([4a20c89](https://github.com/assetcorp/sirannon-db/commit/4a20c89))
+- **ts:** enhance WebSocketTransport to support transactions and improve transaction handling in tests ([dd9804e](https://github.com/assetcorp/sirannon-db/commit/dd9804e))
+- **ts:** add support for writer worker offloading in SQLite drivers and enhance CI with browser bundle validation ([6445470](https://github.com/assetcorp/sirannon-db/commit/6445470))
+- **ts:** introduce bundle checking and backup engine support in SQLite drivers ([3b9f722](https://github.com/assetcorp/sirannon-db/commit/3b9f722))
+
+### 🩹 Fixes
+
+- properly parse env vars ([8891bcf](https://github.com/assetcorp/sirannon-db/commit/8891bcf))
+- update README and common script to clarify VM teardown behavior on exit ([bc908f1](https://github.com/assetcorp/sirannon-db/commit/bc908f1))
+- replace Math.max with custom maxOf function to handle large sample arrays without stack overflow in latency measurements ([96f0695](https://github.com/assetcorp/sirannon-db/commit/96f0695))
+- address issues with batch import durability and clean up code ([6a40c6e](https://github.com/assetcorp/sirannon-db/commit/6a40c6e))
+- address issues with memory leaks ([1c86df9](https://github.com/assetcorp/sirannon-db/commit/1c86df9))
+- **ts:** reject maxBodyBytes/backpressure above uWS 32-bit limit ([66e2413](https://github.com/assetcorp/sirannon-db/commit/66e2413))
+- **ts:** address worker crash issue ([d89eb4e](https://github.com/assetcorp/sirannon-db/commit/d89eb4e))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.6 (2026-07-05)
 
 ### 🚀 Features

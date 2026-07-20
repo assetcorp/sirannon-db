@@ -8,6 +8,7 @@ import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
 import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
+import { sleepingDriver, sleepSql } from './fixtures/sleeping-driver.js'
 
 let dir: string
 let sirannon: Sirannon
@@ -190,6 +191,74 @@ describe('writer worker offload', () => {
     const after = await db.execute('INSERT INTO recovered (n) VALUES (?)', [1])
     expect(after.changes).toBe(1)
   }, 40_000)
+
+  it('never applies a write whose caller was already rejected by the deadline', async () => {
+    const registry = new Sirannon({ driver: sleepingDriver() })
+    try {
+      const slowDb = await registry.open('abandoned', join(dir, 'abandoned.db'), {
+        writerWorker: { writeTimeoutMs: 500 },
+      })
+      await slowDb.execute('CREATE TABLE marker (n INTEGER)')
+
+      const slow = slowDb.execute(sleepSql(3000)).catch(() => {})
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const abandoned = slowDb.execute('INSERT INTO marker (n) VALUES (1)')
+
+      await expect(abandoned).rejects.toThrow()
+      await slow
+
+      await vi.waitFor(
+        async () => {
+          await expect(slowDb.execute('INSERT INTO marker (n) VALUES (2)')).resolves.toMatchObject({ changes: 1 })
+        },
+        { timeout: 15_000, interval: 200 },
+      )
+      const rows = await slowDb.query<{ n: number }>('SELECT n FROM marker ORDER BY n')
+      expect(rows).toEqual([{ n: 2 }])
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 30_000)
+
+  it('delivers the result of an operation that finishes after the deadline but before the grace expiry', async () => {
+    const registry = new Sirannon({ driver: sleepingDriver() })
+    try {
+      const slowDb = await registry.open('late', join(dir, 'late.db'), {
+        writerWorker: { writeTimeoutMs: 1_000 },
+      })
+      await expect(slowDb.execute(sleepSql(1500))).resolves.toBeDefined()
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 15_000)
+
+  it('sheds a queued write with a definite retryable error once the worker frees up inside the grace window', async () => {
+    const registry = new Sirannon({ driver: sleepingDriver() })
+    try {
+      const slowDb = await registry.open('shed', join(dir, 'shed.db'), {
+        writerWorker: { writeTimeoutMs: 1_000 },
+      })
+      await slowDb.execute('CREATE TABLE marker (n INTEGER)')
+
+      const slow = slowDb.execute(sleepSql(3500)).catch(() => {})
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const shed = slowDb.execute('INSERT INTO marker (n) VALUES (1)')
+
+      await expect(shed).rejects.toMatchObject({ code: 'WRITE_OVERLOADED' })
+      await slow
+
+      await vi.waitFor(
+        async () => {
+          await expect(slowDb.execute('INSERT INTO marker (n) VALUES (2)')).resolves.toMatchObject({ changes: 1 })
+        },
+        { timeout: 15_000, interval: 200 },
+      )
+      const rows = await slowDb.query<{ n: number }>('SELECT n FROM marker ORDER BY n')
+      expect(rows).toEqual([{ n: 2 }])
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 30_000)
 
   it('rejects the in-flight write and respawns when the worker exits on its own', async () => {
     const registry = new Sirannon({ driver: exitingDriver() })

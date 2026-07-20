@@ -2,7 +2,13 @@ import { parentPort } from 'node:worker_threads'
 import type { GroupRunOutcome, SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { executeGroup } from '../query-executor.js'
-import { serializeError, type WorkerRequest, type WorkerResult } from './protocol.js'
+import {
+  serializeError,
+  WORKER_CANCELLED_CODE,
+  type WorkerCancel,
+  type WorkerRequest,
+  type WorkerResult,
+} from './protocol.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 
@@ -104,7 +110,23 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
   }
 }
 
+const cancelledIds = new Set<number>()
+let latestDispatchedId = 0
+
 async function handle(req: WorkerRequest): Promise<void> {
+  latestDispatchedId = req.id
+  if (cancelledIds.delete(req.id)) {
+    port.postMessage({
+      id: req.id,
+      ok: false,
+      error: {
+        message: 'The caller abandoned this operation before the worker reached it, so it was not run',
+        name: 'SirannonError',
+        code: WORKER_CANCELLED_CODE,
+      },
+    })
+    return
+  }
   try {
     const value = await dispatch(req)
     port.postMessage({ id: req.id, ok: true, value })
@@ -113,7 +135,15 @@ async function handle(req: WorkerRequest): Promise<void> {
   }
 }
 
+function settleDeliveredMessages(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
 let tail: Promise<void> = Promise.resolve()
-port.on('message', (req: WorkerRequest) => {
-  tail = tail.then(() => handle(req))
+port.on('message', (msg: WorkerRequest | WorkerCancel) => {
+  if (msg.kind === 'cancel') {
+    if (msg.id > latestDispatchedId) cancelledIds.add(msg.id)
+    return
+  }
+  tail = tail.then(settleDeliveredMessages).then(() => handle(msg))
 })

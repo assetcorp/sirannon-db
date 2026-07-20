@@ -12,6 +12,10 @@ export type WorkerRequest =
   | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[] }[] }[] }
   | { id: number; kind: 'close' }
 
+export type WorkerCancel = { kind: 'cancel'; id: number }
+
+export const WORKER_CANCELLED_CODE = 'WRITER_WORKER_CANCELLED'
+
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 
 export type WorkerRequestBody = DistributiveOmit<WorkerRequest, 'id'>

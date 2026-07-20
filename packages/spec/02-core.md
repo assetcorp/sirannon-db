@@ -39,14 +39,19 @@ Sirannon {
 
 ```text
 SirannonOptions {
-  driver:     SQLiteDriver
-  hooks?:     HookConfig
-  metrics?:   MetricsConfig
-  lifecycle?: LifecycleConfig
+  driver:       SQLiteDriver
+  hooks?:       HookConfig
+  metrics?:     MetricsConfig
+  lifecycle?:   LifecycleConfig
+  writerWorker?: boolean or WriterWorkerOptions
 }
 ```
 
 The `driver` field is required. All other fields are optional.
+A `writerWorker` value on the registry is the default for every
+database it opens; a `writerWorker` value in `DatabaseOptions`
+overrides it for that database. The [Writer Worker](#writer-worker)
+section defines the option and its semantics.
 
 ### open(id, path, options?)
 
@@ -132,6 +137,7 @@ DatabaseOptions {
   walMode?:         boolean     (default: true)
   cdcPollInterval?: number      (default: 50, milliseconds, recommended)
   cdcRetention?:    number      (default: 3_600_000, milliseconds, recommended)
+  writerWorker?:    boolean or WriterWorkerOptions (default: off)
 }
 ```
 
@@ -286,6 +292,94 @@ code `CONNECTION_POOL_ERROR` if the pool is closed.
 Returns the writer connection. Throws with error code
 `CONNECTION_POOL_ERROR` if the pool is closed or if the pool is
 read-only.
+
+---
+
+## Writer Worker
+
+SQLite's write path is synchronous: a commit that waits on `fsync`,
+a checkpoint, or a long DDL statement blocks the thread it runs on.
+The writer worker moves the writer connection's execution off the
+caller's thread so that slow disk work does not block everything else the
+process is doing. Reads are unaffected; reader connections stay
+where they are.
+
+The execution mechanism is implementation-defined. The reference
+implementation uses a dedicated worker thread; another
+implementation may use a process or any equivalent isolation, but
+the option shape, the queue bound, the deadline outcomes, and the
+error codes below are normative.
+
+### WriterWorkerOptions
+
+The option is off by default. Passing `true` enables it with every
+default below; passing an object enables it with overrides.
+
+```text
+WriterWorkerOptions {
+  maxPendingWrites?: number  (default: 1024)
+  writeTimeoutMs?:   number  (default: 30_000, 0 disables)
+  maxRestarts?:      number  (default: 5)
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `maxPendingWrites` | 1024 | Writes allowed in flight before new writes are shed. Must be an integer of at least 1. |
+| `writeTimeoutMs` | 30,000 | Per-operation deadline in milliseconds. Must be an integer of at least 0, where 0 disables the deadline. |
+| `maxRestarts` | 5 | Times the worker restarts after crashing on its own before writes fail permanently. Must be an integer of at least 0. |
+
+A value that fails validation must be rejected with error code
+`INVALID_WRITER_WORKER`. Enabling the option with a driver that
+cannot execute the writer connection this way must fail at open
+with error code `WRITER_WORKER_UNSUPPORTED`.
+
+### Queue Bound
+
+The host must bound the writes it has accepted but not completed.
+When a new write arrives while `maxPendingWrites` writes are
+already in flight, the host must reject it with error code
+`WRITE_OVERLOADED` without handing it to the worker. This rejection
+is definite: the write never started, so the caller may retry it
+safely. The error should carry a retry-after hint as structured
+context (recommended: 1,000 milliseconds).
+
+### Deadline Outcomes
+
+A worker executing a synchronous native SQLite call cannot be
+interrupted, and killing it would leak the connection's file lock.
+The deadline therefore never terminates the worker. When an
+operation's deadline expires, the host must ask the worker to
+cancel it, and exactly one of three outcomes follows.
+
+1. The worker had not started the operation. It must skip the
+   work and report that back, and the host must reject the caller
+   with `WRITE_OVERLOADED`. The outcome is definite and the
+   caller may retry.
+2. The operation was already executing and its result arrives
+   within one further deadline (so within twice `writeTimeoutMs`
+   of dispatch). The host must deliver that result to the caller
+   as a normal completion.
+3. The operation is still unresolved after that grace window. The
+   host must reject the caller with `WRITER_WORKER_TIMEOUT`. This
+   outcome is indeterminate: the write may still apply afterwards,
+   so a caller must reconcile state before retrying a
+   non-idempotent write.
+
+Opening and closing the worker are not cancellable; a deadline on
+those rejects with `WRITER_WORKER_TIMEOUT` directly.
+
+### Crash and Restart
+
+A worker crash or unexpected exit must reject every in-flight
+request with error code `WRITER_WORKER_EXIT` and respawn the
+worker. After more than `maxRestarts` consecutive faults the host
+must stop restarting and fail every subsequent write with
+`WRITER_WORKER_FATAL`; a completed operation resets the fault
+count. A write sent while no worker is available fails with
+`WRITER_WORKER_UNAVAILABLE`, a write after close fails with
+`WRITER_WORKER_CLOSED`, and a handoff the host could not deliver
+fails with `WRITER_WORKER_POST_FAILED`.
 
 ---
 

@@ -4,7 +4,11 @@ This harness compares Sirannon against PostgreSQL on the same OLTP workloads, on
 
 ## What it measures
 
-The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve.
+The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve, and `BENCH_SWEEP_STOP_STEPS` can end it a set number of steps past the first unsustained rate instead of running every rate.
+
+A rate proven in short windows can still collapse under the engine's periodic housekeeping, so the harness can also hold the operating point for a long continuous window (`BENCH_SOAK_SECONDS`, on the workloads in `BENCH_SOAK_WORKLOADS`) and report the slowest 30-second slice, so a checkpoint or vacuum that spikes tail latency shows up instead of averaging away.
+
+Every measured request carries a finite timeout, each workload runs under a stall deadline sized to its expected duration, and each schema reset retries engine errors for a bounded budget. A stalled workload ends that engine's pass and keeps the workloads already measured, so one wedged engine cannot burn the machine or contaminate the next workload's numbers. The deadlines, the retry budget, and the timeout are all `BENCH_` variables.
 
 Alongside the head-to-head, the harness records three Sirannon characterizations PostgreSQL has no direct equivalent for: change-feed latency over Sirannon's built-in WebSocket feed, cold-start time, and the connection-scaling curve.
 

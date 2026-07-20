@@ -1,11 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { type Config, defaultConfigPath, loadConfig } from './config.ts'
 import { buildDriver } from './drivers/registry.ts'
 import { captureEnvironment } from './environment.ts'
 import { measureCdcLatency } from './features.ts'
-import { runEngine } from './harness.ts'
+import { type EngineResult, runEngine } from './harness.ts'
 import { buildEngineReport, clientSaturationBlock, configBlock } from './reporter.ts'
 import {
   defaultResultsDir,
@@ -54,12 +54,35 @@ async function run(
   durability: string,
   config: Config,
   wantFeatures: boolean,
+  environment: Record<string, unknown>,
+  savePartial: (report: Record<string, unknown>) => void,
 ): Promise<Record<string, unknown>> {
   const driver = buildDriver(engine, config, durability)
   await driver.connect()
   try {
     const engineInfo = await driver.info()
-    const engineResult = await runEngine(driver, config)
+    const reportOf = (result: EngineResult, features: Record<string, unknown>[]): Record<string, unknown> =>
+      buildEngineReport({
+        environment,
+        engine,
+        delivery: driver.delivery,
+        durability,
+        engineInfo,
+        config,
+        workloads: result.workloads as unknown as Record<string, unknown>[],
+        failedWorkloads: result.failedWorkloads,
+        features,
+        clientSaturation: clientSaturationBlock(
+          engine,
+          config,
+          result.clientCeiling,
+          result.clientBoundAny,
+          result.indeterminateAny,
+        ),
+      })
+    const engineResult = await runEngine(driver, config, snapshot =>
+      savePartial({ ...reportOf(snapshot, []), partial: true }),
+    )
 
     const features: Record<string, unknown>[] = []
     if (wantFeatures && engine === 'sirannon') {
@@ -79,25 +102,7 @@ async function run(
       }
     }
 
-    const environment = captureEnvironment(harnessVersion())
-    const clientSaturation = clientSaturationBlock(
-      engine,
-      config,
-      engineResult.clientCeiling,
-      engineResult.clientBoundAny,
-      engineResult.indeterminateAny,
-    )
-    return buildEngineReport({
-      environment,
-      engine,
-      delivery: driver.delivery,
-      durability,
-      engineInfo,
-      config,
-      workloads: engineResult.workloads as unknown as Record<string, unknown>[],
-      features,
-      clientSaturation,
-    })
+    return reportOf(engineResult, features)
   } finally {
     await driver.close()
   }
@@ -126,14 +131,30 @@ async function main(argv: string[]): Promise<number> {
   const resultsDir = values['results-dir'] ?? defaultResultsDir()
 
   const config = loadConfig(configPath)
-  const report = await run(engine, durability, config, values.features === true)
-
+  const environment = captureEnvironment(harnessVersion())
   const runId = resolveRunIdForWrite(values['run-id'] ?? null)
-  writeRunManifest(resultsDir, runId, report.environment as Record<string, unknown>, configBlock(config))
+  writeRunManifest(resultsDir, runId, environment, configBlock(config))
   const directory = runDirectory(resultsDir, runId)
   const artifact = validateArtifactName(`engine-${engine}-${durability}.json`)
-  const path = writeJson(join(directory, artifact), report)
+  const partialPath = join(directory, validateArtifactName(`engine-${engine}-${durability}.partial.json`))
 
+  const report = await run(engine, durability, config, values.features === true, environment, partial => {
+    writeJson(partialPath, partial)
+  })
+
+  const path = writeJson(join(directory, artifact), report)
+  if (existsSync(partialPath)) {
+    unlinkSync(partialPath)
+  }
+
+  const failed = report.failed_workloads as Record<string, unknown>[]
+  if (failed.length > 0) {
+    const names = failed.map(entry => String(entry.workload)).join(', ')
+    process.stderr.write(
+      `Recorded ${engine} (${durability} durability) to ${path} with ${failed.length} failed workload(s): ${names}\n`,
+    )
+    return 3
+  }
   process.stdout.write(`Recorded ${engine} (${durability} durability) to ${path}\n`)
   return 0
 }

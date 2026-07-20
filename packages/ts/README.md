@@ -469,7 +469,7 @@ const db = await sirannon.open('app', './data/app.db', {
 })
 ```
 
-`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` rejects the caller when a single operation stalls past it, so a hung flush fails loudly instead of hanging a client; the worker keeps running, since a thread inside a synchronous SQLite call cannot be interrupted safely, so a stalled write's outcome is indeterminate and a genuinely dead disk keeps rejecting writes until you restart the process. Raise it only for unusually large single operations. `maxRestarts` caps how many times the worker is respawned after it crashes on its own before writes fail permanently.
+`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` is the per-operation deadline, so a hung flush fails loudly instead of hanging a client. When it expires, the host asks the worker to cancel the operation; the worker itself keeps running, since a thread inside a synchronous SQLite call cannot be interrupted safely. Work the worker has not started yet is shed and rejected with `WRITE_OVERLOADED`, a known outcome that is safe to retry. A result that arrives within one further deadline is delivered normally, and an operation still unresolved after that grace window is rejected with `WRITER_WORKER_TIMEOUT`, an indeterminate outcome: the write may or may not have committed, so reconcile state before retrying a non-idempotent write. A genuinely dead disk keeps rejecting writes until you restart the process. Raise the deadline only for unusually large single operations, such as dropping a very large table. `maxRestarts` caps how many times the worker is respawned after it crashes on its own before writes fail permanently.
 
 ### HTTP routes
 
@@ -480,6 +480,7 @@ const db = await sirannon.open('app', './data/app.db', {
 | `POST` | `/db/:id/transaction` | Execute many statements atomically in one transaction, returns `{ results }` |
 | `POST` | `/db/:id/batch` | Apply one statement over many parameter sets in one transaction, returns `{ results }` |
 | `POST` | `/db/:id/load` | Bulk-load rows with relaxed durability, returns `{ rowsLoaded, changes }` |
+| `GET` | `/db/:id/cluster` | Cluster status for the database: role, replication group, current primary, primary term, read endpoints, and health; returns 404 when the server has no cluster status source configured |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/health/ready` | Readiness check with per-database status |
 
@@ -494,10 +495,18 @@ Connect to `ws://host:port/db/:id` and send JSON messages. Every message carries
 | `transaction` | `statements`, `writeConcern?` | `{ type: 'result', data: { results } }` |
 | `batch` | `sql`, `paramsBatch`, `writeConcern?` | `{ type: 'result', data: { results } }` |
 | `load` | `sql`, `paramsBatch`, `durability?`, `checkpoint?` | `{ type: 'result', data: { rowsLoaded, changes } }` |
-| `subscribe` | `table`, `filter?` | `{ type: 'subscribed' }` then `change` events |
+| `subscribe` | `table`, `filter?`, `sinceSeq?`, `epoch?` | `{ type: 'subscribed', seq?, epoch?, resync? }` then `change` events |
 | `unsubscribe` | - | `{ type: 'unsubscribed' }` |
 
 The `transaction`, `batch`, and `load` messages run every statement server-side in one transaction and reply once. The server never holds the write lock across a network round-trip, so it does not accept an interactive transaction where the client sends `BEGIN`, then more statements, then `COMMIT` over separate messages; a single slow or dead client would otherwise freeze every write to the database.
+
+Each `change` event carries the change `type` (`insert`, `update`, or `delete`), the `table`, the `row`, the `oldRow` for updates and deletes, the `seq` as a decimal string, and a `timestamp` in milliseconds since the epoch.
+
+A subscription can resume after a reconnect. Send `sinceSeq`, the highest `seq` the client has processed, as a decimal string, and the server replays every retained change with a greater `seq` before delivering live events. The `subscribed` reply carries `seq`, the sequence the subscription is live from, and `epoch`, which identifies the sequence space the changes come from; store both and echo `epoch` when resuming, so a cursor carried to a different database forces a resync instead of a silent replay of unrelated rows. When the requested `sinceSeq` falls below the retained history, or the `epoch` does not match, the reply sets `resync: true`: the subscription still starts live from now, and the client must treat its prior state as stale and re-read it. The server's `cdcRetentionMs` option bounds how far back a subscriber can resume. The client SDK handles all of this for you when `autoReconnect` is on.
+
+### Values over the wire
+
+Both transports round-trip every SQLite value, including 64-bit integers and binary blobs, even though the messages are JSON. A binary value crosses the wire as a hex envelope, `{ "__sirannon_blob": "<uppercase hex>" }`. An integer beyond JavaScript's safe range crosses as a decimal-string envelope, `{ "__sirannon_int": "<decimal string>" }`, while an integer inside the safe range narrows to a plain number. A `lastInsertRowId` beyond the safe range is returned as a decimal string. The same envelopes work in bind parameters, and the server rejects a malformed envelope instead of passing it to SQL. The client SDK encodes parameters and decodes query rows and change events for you, so `BigInt` and `Uint8Array` values round-trip with no application code. The normative definition is in the specification's server document, [`packages/spec/05-server.md`](../spec/05-server.md).
 
 ## Client SDK
 
@@ -997,6 +1006,15 @@ All errors extend `SirannonError` with a machine-readable `code` property:
 
 The server and the bulk-load path add a few more codes. `createServer` throws `SirannonError` with `INVALID_MAX_BODY_BYTES` when `maxBodyBytes` is not a positive integer or exceeds `4_294_967_295`, the largest value uWebSockets.js can store; a larger value would wrap modulo 2^32 and enforce a limit you never configured, so the server refuses to start instead. `INVALID_WS_BACKPRESSURE` guards `maxWebSocketBackpressureBytes` with the same bounds. A bulk load throws `INVALID_DURABILITY` when `durability` is neither `'off'` nor `'normal'`, and `DURABILITY_RESTORE_FAILED` when the load committed but the writer connection failed before its durability could be restored; treat that last code as 'the load succeeded, do not re-run it'. Over the wire the server also returns `PAYLOAD_TOO_LARGE` when a request or message exceeds `maxBodyBytes`, and `BULK_LOAD_UNSUPPORTED` when the resolved execution target for a database does not implement bulk load.
 
+The [writer worker](#writer-worker-offload-disk-writes) adds its own family of codes:
+
+| Code | When | Retry? |
+| --- | --- | --- |
+| `WRITE_OVERLOADED` | More writes are pending than `maxPendingWrites` allows, or a queued write was shed when an earlier operation's deadline expired. Over HTTP this maps to a 503 with a `Retry-After` header. | Yes; the write was never applied. |
+| `WRITER_WORKER_TIMEOUT` | An in-flight operation did not resolve within `writeTimeoutMs` plus the grace window. | Only after reconciling state; the outcome is indeterminate. |
+| `WRITER_WORKER_UNSUPPORTED` | `writerWorker` was enabled on a driver without a worker entry; the database refuses to open. | No; use a driver with a worker entry or turn the option off. |
+| `INVALID_WRITER_WORKER` | A `writerWorker` option is not an integer in its allowed range. | No; fix the configuration. |
+
 ```ts
 import { QueryError } from '@delali/sirannon-db'
 
@@ -1041,6 +1059,8 @@ try {
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
 | `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP request body and WebSocket message size in bytes; one value governs both transports, and it must be a positive integer no larger than `4_294_967_295` |
+| `maxWebSocketBackpressureBytes` | `number` | larger of `16_777_216` and `maxBodyBytes` | Maximum bytes buffered per WebSocket connection before the server closes it so the client reconnects rather than losing a frame silently; must be at least `maxBodyBytes` so a single frame fits, and no larger than `4_294_967_295` |
+| `cdcRetentionMs` | `number` | `3_600_000` | How long change events are retained for WebSocket CDC subscriptions; bounds both change-log growth and how far back a reconnecting subscriber can resume with `sinceSeq` |
 | `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
 
 ### `ClientOptions`

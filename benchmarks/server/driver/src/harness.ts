@@ -1,9 +1,12 @@
 import { classifyPass, majorityVerdict } from './classify.ts'
 import type { Config } from './config.ts'
 import type { Driver } from './drivers/driver.ts'
+import { engineCpuBlock, withEngineCores } from './engine-cpu.ts'
 import { FailureInterner, summarizeFailures } from './failures.ts'
 import { type ClientCeiling, type LoadResult, measureClientCeiling, type RunOp, runOpenLoop } from './loadgen.ts'
 import { makeRunOp, operationCost } from './operations.ts'
+import { prepare } from './prepare.ts'
+import { progress } from './progress.ts'
 import { SeededRng, ZipfianGenerator } from './rng.ts'
 import { median, summarizeMetric } from './stats.ts'
 import { buildWorkloads } from './workloads/catalogue.ts'
@@ -19,10 +22,6 @@ const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
 const WORKLOAD_DEADLINE_FLOOR_MS = 120_000
 
-function progress(message: string): void {
-  console.log(`[${new Date().toISOString().slice(11, 19)}] ${message}`)
-}
-
 function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   if (config.workloadTimeoutMs > 0) {
     return config.workloadTimeoutMs
@@ -37,11 +36,20 @@ function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   )
 }
 
+class WorkloadStallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkloadStallError'
+  }
+}
+
 function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`${label} exceeded its ${Math.round(ms / 1000)}s deadline and was aborted as a stall`))
+      reject(
+        new WorkloadStallError(`${label} exceeded its ${Math.round(ms / 1000)}s deadline and was aborted as a stall`),
+      )
     }, ms)
   })
   return Promise.race([work, deadline]).finally(() => {
@@ -53,6 +61,7 @@ function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T
 
 export interface EngineResult {
   workloads: WorkloadResult[]
+  failedWorkloads: Record<string, unknown>[]
   clientCeiling: ClientCeiling
   clientBoundAny: boolean
   indeterminateAny: boolean
@@ -68,52 +77,6 @@ export interface WorkloadResult {
   sweep: Record<string, unknown>[]
   sweep_stopped_early: boolean
   soak: Record<string, unknown> | null
-}
-
-async function prepare(driver: Driver, workload: Workload, config: Config): Promise<Record<string, unknown>> {
-  await driver.dropTables([...workload.tables])
-  const schema = driver.dialect === 'sqlite' ? workload.sqliteSchema : workload.postgresSchema
-  const statements = schema
-    .split(';')
-    .map(part => part.trim())
-    .filter(part => part.length > 0)
-  await driver.executeDdl(statements)
-  const seedRng = new SeededRng(config.seed)
-  const seedTables = workload.seed(seedRng, config.dataSize)
-  const counter = { rows: 0 }
-  const counted = seedTables.map(table => ({
-    ...table,
-    rows: (function* (source: Iterable<unknown[]>) {
-      for (const row of source) {
-        counter.rows += 1
-        yield row
-      }
-    })(table.rows),
-  }))
-  const seedStart = performance.now()
-  const ticker = setInterval(() => {
-    const elapsed = (performance.now() - seedStart) / 1000
-    progress(`seed ${workload.name}: ${counter.rows.toLocaleString('en-US')} rows in ${Math.round(elapsed)}s`)
-  }, 10_000)
-  let seconds: number
-  try {
-    await driver.seed(counted)
-  } finally {
-    clearInterval(ticker)
-    seconds = (performance.now() - seedStart) / 1000
-  }
-  progress(
-    `seed ${workload.name}: done, ${counter.rows.toLocaleString('en-US')} rows in ${seconds.toFixed(1)}s` +
-      (seconds > 0 ? ` (${Math.round(counter.rows / seconds).toLocaleString('en-US')} rows/s)` : ''),
-  )
-  return {
-    rows: counter.rows,
-    seconds,
-    rows_per_second: seconds > 0 ? counter.rows / seconds : 0,
-    note:
-      'Seeding is disclosed, never compared: each engine loads through its own fastest documented ' +
-      'path, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
-  }
 }
 
 function generatorBlock(passes: LoadResult[], config: Config): Record<string, unknown> {
@@ -147,9 +110,14 @@ async function measureRate(
   ceilingOps: number,
 ): Promise<Record<string, unknown>> {
   const passes: LoadResult[] = []
+  const coreSamples: Array<number | null> = []
   for (let run = 0; run < config.runs; run++) {
     const runOp = makeOp()
-    passes.push(await runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight))
+    const measured = await withEngineCores(config.engineCgroup, () =>
+      runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight),
+    )
+    passes.push(measured.result)
+    coreSamples.push(measured.coresUsed)
   }
 
   const throughputSamples = passes.map(pass => pass.achievedRate)
@@ -179,6 +147,7 @@ async function measureRate(
       mean: median(passes.map(pass => pass.meanMs)),
     },
     generator: generatorBlock(passes, config),
+    engine_cpu: engineCpuBlock(coreSamples, config.engineCpus),
     sustained: verdict === 'sustained',
     server_saturated: verdict === 'server_saturated' || verdict === 'both',
     client_bound: verdict === 'client_bound' || verdict === 'both',
@@ -230,15 +199,20 @@ async function runSoak(
     progress(`soak ${workloadName}: ${elapsed}s of ${Math.round(config.warmupSeconds + config.soakSeconds)}s`)
   }, 60_000)
   let pass: LoadResult
+  let soakCores: number | null
   try {
-    pass = await runOpenLoop(
-      makeOp(),
-      targetRate,
-      config.warmupSeconds,
-      config.soakSeconds,
-      config.maxInFlight,
-      SOAK_BUCKET_SECONDS,
+    const measured = await withEngineCores(config.engineCgroup, () =>
+      runOpenLoop(
+        makeOp(),
+        targetRate,
+        config.warmupSeconds,
+        config.soakSeconds,
+        config.maxInFlight,
+        SOAK_BUCKET_SECONDS,
+      ),
     )
+    pass = measured.result
+    soakCores = measured.coresUsed
   } finally {
     clearInterval(ticker)
   }
@@ -278,6 +252,7 @@ async function runSoak(
     worst_window: worstWindow,
     windows,
     generator: { offered_fraction: pass.offeredFraction, cap_occupancy: pass.capOccupancy },
+    engine_cpu: engineCpuBlock([soakCores], config.engineCpus),
     failures: summarizeFailures([pass.failures]),
   }
 }
@@ -334,7 +309,11 @@ async function runWorkload(
   }
 }
 
-export async function runEngine(driver: Driver, config: Config): Promise<EngineResult> {
+export async function runEngine(
+  driver: Driver,
+  config: Config,
+  onWorkload?: (snapshot: EngineResult) => void,
+): Promise<EngineResult> {
   const catalogue = buildWorkloads()
   for (const name of config.soakWorkloads) {
     if (!catalogue.has(name)) {
@@ -361,8 +340,16 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
   )
 
   const results: WorkloadResult[] = []
+  const failedWorkloads: Record<string, unknown>[] = []
   let clientBoundAny = false
   let indeterminateAny = false
+  const snapshot = (): EngineResult => ({
+    workloads: results,
+    failedWorkloads,
+    clientCeiling,
+    clientBoundAny,
+    indeterminateAny,
+  })
   for (const name of config.workloads) {
     const workload = catalogue.get(name)
     if (workload === undefined) {
@@ -370,18 +357,34 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
         `unknown workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`,
       )
     }
-    const result = await withDeadline(
-      runWorkload(driver, workload, config, clientCeiling.ceilingOps),
-      deadlineMs,
-      `workload ${name} (${driver.name}, ${config.dataSize} rows)`,
-    )
-    if (result.sweep.some(rate => rate.client_bound === true)) {
-      clientBoundAny = true
+    try {
+      const result = await withDeadline(
+        runWorkload(driver, workload, config, clientCeiling.ceilingOps),
+        deadlineMs,
+        `workload ${name} (${driver.name}, ${config.dataSize} rows)`,
+      )
+      if (result.sweep.some(rate => rate.client_bound === true)) {
+        clientBoundAny = true
+      }
+      if (result.sweep.some(rate => rate.limit_verdict === 'indeterminate')) {
+        indeterminateAny = true
+      }
+      results.push(result)
+    } catch (err) {
+      const code = err instanceof WorkloadStallError ? err.name : driver.failureClassifier.codeOf(err)
+      const message = err instanceof Error ? err.message : String(err)
+      failedWorkloads.push({ workload: name, error_code: code, error: message })
+      if (err instanceof WorkloadStallError) {
+        progress(
+          `workload ${name} stalled past its deadline; the abandoned attempt may still be issuing requests, ` +
+            'so the pass ends here instead of measuring the next workload against that interference',
+        )
+        onWorkload?.(snapshot())
+        throw err
+      }
+      progress(`workload ${name} failed (${code}); recording the failure and moving to the next workload`)
     }
-    if (result.sweep.some(rate => rate.limit_verdict === 'indeterminate')) {
-      indeterminateAny = true
-    }
-    results.push(result)
+    onWorkload?.(snapshot())
   }
-  return { workloads: results, clientCeiling, clientBoundAny, indeterminateAny }
+  return snapshot()
 }

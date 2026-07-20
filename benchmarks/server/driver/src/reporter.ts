@@ -36,6 +36,7 @@ export function configBlock(config: Config): Record<string, unknown> {
     max_in_flight: config.maxInFlight,
     target_rates: config.targetRates,
     sweep_stop_steps: config.sweepStopSteps,
+    prepare_retry_seconds: config.prepareRetrySeconds,
     soak_seconds: config.soakSeconds,
     soak_workloads: config.soakWorkloads,
     workloads: config.workloads,
@@ -91,6 +92,7 @@ export function buildEngineReport(args: {
   engineInfo: Record<string, unknown>
   config: Config
   workloads: Record<string, unknown>[]
+  failedWorkloads: Record<string, unknown>[]
   features: Record<string, unknown>[]
   clientSaturation: Record<string, unknown>
 }): Record<string, unknown> {
@@ -105,6 +107,7 @@ export function buildEngineReport(args: {
     },
     config: configBlock(args.config),
     workloads: args.workloads,
+    failed_workloads: args.failedWorkloads,
     features: args.features,
     client_saturation: args.clientSaturation,
   }

@@ -360,7 +360,7 @@ driver_env_args() {
     BENCH_MACHINE_LABEL BENCH_DATA_SIZE BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_RUNS \
     BENCH_SEED BENCH_WORKLOADS BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_SLO_P99_MS \
     BENCH_SOAK_SECONDS BENCH_SOAK_WORKLOADS \
-    BENCH_MAX_IN_FLIGHT BENCH_DRIVER_CPUS BENCH_ENGINE_CPUS BENCH_DRIVER_CPUSET \
+    BENCH_MAX_IN_FLIGHT BENCH_DRIVER_CPUS BENCH_ENGINE_CPUS BENCH_ENGINE_CGROUP BENCH_DRIVER_CPUSET \
     BENCH_ENGINE_CPUSET BENCH_ENGINE_MEMORY BENCH_CDC_SAMPLES BENCH_CDC_WARMUP; do
     if [ -n "${!var:-}" ]; then
       DRIVER_ENV_ARGS+=("--setenv=${var}=${!var}")
@@ -460,7 +460,8 @@ for durability in "${DURABILITY_LIST[@]}"; do
     && wait_probe "$(now_ms)" sirannon_probe >/dev/null \
     && verify_engine_cgroup bench-sirannon.service; then
     drop_caches
-    run_driver_pass "${sirannon_args[@]}" || status=1
+    BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-sirannon.service" \
+      run_driver_pass "${sirannon_args[@]}" || status=1
     record_engine_caps_proof bench-sirannon.service sirannon "$durability"
   else
     echo "sirannon is not healthy under the verified caps; skipping its ${durability} pass" >&2
@@ -474,7 +475,8 @@ for durability in "${DURABILITY_LIST[@]}"; do
     && wait_probe "$(now_ms)" pg_probe >/dev/null \
     && verify_engine_cgroup bench-postgres.service; then
     drop_caches
-    run_driver_pass --engine postgres --durability "$durability" || status=1
+    BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-postgres.service" \
+      run_driver_pass --engine postgres --durability "$durability" || status=1
     record_engine_caps_proof bench-postgres.service postgres "$durability"
   else
     echo "postgres is not healthy under the verified caps; skipping its ${durability} pass" >&2

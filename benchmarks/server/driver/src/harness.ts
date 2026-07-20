@@ -1,6 +1,7 @@
 import { classifyPass, majorityVerdict } from './classify.ts'
 import type { Config } from './config.ts'
 import type { Driver } from './drivers/driver.ts'
+import { engineCpuBlock, withEngineCores } from './engine-cpu.ts'
 import { FailureInterner, summarizeFailures } from './failures.ts'
 import { type ClientCeiling, type LoadResult, measureClientCeiling, type RunOp, runOpenLoop } from './loadgen.ts'
 import { makeRunOp, operationCost } from './operations.ts'
@@ -96,8 +97,9 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
     progress(`seed ${workload.name}: ${counter.rows.toLocaleString('en-US')} rows in ${Math.round(elapsed)}s`)
   }, 10_000)
   let seconds: number
+  let seedCores: number | null = null
   try {
-    await driver.seed(counted)
+    seedCores = (await withEngineCores(config.engineCgroup, () => driver.seed(counted))).coresUsed
   } finally {
     clearInterval(ticker)
     seconds = (performance.now() - seedStart) / 1000
@@ -110,6 +112,7 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
     rows: counter.rows,
     seconds,
     rows_per_second: seconds > 0 ? counter.rows / seconds : 0,
+    engine_cpu: engineCpuBlock([seedCores], config.engineCpus),
     note:
       'Seeding is disclosed, never compared: each engine loads through its own fastest documented ' +
       'path, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
@@ -147,9 +150,14 @@ async function measureRate(
   ceilingOps: number,
 ): Promise<Record<string, unknown>> {
   const passes: LoadResult[] = []
+  const coreSamples: Array<number | null> = []
   for (let run = 0; run < config.runs; run++) {
     const runOp = makeOp()
-    passes.push(await runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight))
+    const measured = await withEngineCores(config.engineCgroup, () =>
+      runOpenLoop(runOp, targetRate, config.warmupSeconds, config.measureSeconds, config.maxInFlight),
+    )
+    passes.push(measured.result)
+    coreSamples.push(measured.coresUsed)
   }
 
   const throughputSamples = passes.map(pass => pass.achievedRate)
@@ -179,6 +187,7 @@ async function measureRate(
       mean: median(passes.map(pass => pass.meanMs)),
     },
     generator: generatorBlock(passes, config),
+    engine_cpu: engineCpuBlock(coreSamples, config.engineCpus),
     sustained: verdict === 'sustained',
     server_saturated: verdict === 'server_saturated' || verdict === 'both',
     client_bound: verdict === 'client_bound' || verdict === 'both',
@@ -230,15 +239,20 @@ async function runSoak(
     progress(`soak ${workloadName}: ${elapsed}s of ${Math.round(config.warmupSeconds + config.soakSeconds)}s`)
   }, 60_000)
   let pass: LoadResult
+  let soakCores: number | null
   try {
-    pass = await runOpenLoop(
-      makeOp(),
-      targetRate,
-      config.warmupSeconds,
-      config.soakSeconds,
-      config.maxInFlight,
-      SOAK_BUCKET_SECONDS,
+    const measured = await withEngineCores(config.engineCgroup, () =>
+      runOpenLoop(
+        makeOp(),
+        targetRate,
+        config.warmupSeconds,
+        config.soakSeconds,
+        config.maxInFlight,
+        SOAK_BUCKET_SECONDS,
+      ),
     )
+    pass = measured.result
+    soakCores = measured.coresUsed
   } finally {
     clearInterval(ticker)
   }
@@ -278,6 +292,7 @@ async function runSoak(
     worst_window: worstWindow,
     windows,
     generator: { offered_fraction: pass.offeredFraction, cap_occupancy: pass.capOccupancy },
+    engine_cpu: engineCpuBlock([soakCores], config.engineCpus),
     failures: summarizeFailures([pass.failures]),
   }
 }

@@ -208,21 +208,23 @@ cmd_fetch() {
     return 0
   fi
 
-  local runs
-  runs="$(prov_ssh "find sirannon/$remote/runs -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null || true" | tr -d '\r')"
-  if [ -n "$runs" ]; then
-    mkdir -p "$dest/runs"
-    local run
+  local fetched="" dir runs run
+  for dir in runs .smoke/runs; do
+    runs="$(prov_ssh "find sirannon/$remote/$dir -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null || true" | tr -d '\r')"
+    [ -n "$runs" ] || continue
+    fetched=1
+    mkdir -p "$dest/$dir"
     for run in $runs; do
-      if [ -e "$dest/runs/$run" ]; then
+      if [ -e "$dest/$dir/$run" ]; then
         log "have run $run already, skipping"
         continue
       fi
       log "fetch run $run"
-      prov_scp_down "sirannon/$remote/runs/$run" "$dest/runs/"
+      prov_scp_down "sirannon/$remote/$dir/$run" "$dest/$dir/"
     done
-  else
-    log "no run directories under $remote/runs yet"
+  done
+  if [ -z "$fetched" ]; then
+    log "no run directories under $remote yet"
   fi
 
   log "results copied under $RESULTS_REL/ in this repo (not committed; commit the ones you publish)"

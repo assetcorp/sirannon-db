@@ -75,6 +75,15 @@ query execution, and related subsystems.
 | `INVALID_DRIVER` | SirannonError | Driver configuration failed validation. |
 | `SHUTDOWN` | SirannonError | Operation attempted after the registry was shut down. |
 | `SHUTDOWN_ERROR` | SirannonError | One or more errors occurred during registry shutdown. |
+| `INVALID_WRITER_WORKER` | SirannonError | Writer worker configuration failed validation. |
+| `WRITER_WORKER_UNSUPPORTED` | SirannonError | Writer worker enabled with a driver that cannot execute the writer this way. |
+| `WRITE_OVERLOADED` | WriteOverloadError | Write shed before starting; definite outcome, safe to retry, carries a retry-after hint. |
+| `WRITER_WORKER_TIMEOUT` | SirannonError | Writer worker gave no outcome within twice the write deadline; indeterminate, reconcile before retrying a non-idempotent write. |
+| `WRITER_WORKER_EXIT` | SirannonError | Writer worker crashed or exited; the in-flight request was rejected. |
+| `WRITER_WORKER_FATAL` | SirannonError | Writer worker exceeded its restart budget; writes fail permanently. |
+| `WRITER_WORKER_UNAVAILABLE` | SirannonError | Write sent while no writer worker is available. |
+| `WRITER_WORKER_CLOSED` | SirannonError | Write sent after the writer worker was closed. |
+| `WRITER_WORKER_POST_FAILED` | SirannonError | The host could not hand the operation to the writer worker. |
 
 ---
 
@@ -115,6 +124,8 @@ Errors originating from the HTTP and WebSocket server.
 | `EMPTY_BODY` | Server error | Request body is empty. |
 | `PAYLOAD_TOO_LARGE` | Server error | Request body exceeds the maximum size. |
 | `INTERNAL_ERROR` | Server error | An unexpected error occurred during request handling. |
+| `INVALID_MAX_BODY_BYTES` | Server error | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
+| `INVALID_WS_BACKPRESSURE` | Server error | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
 | `INVALID_MESSAGE` | WebSocket error | WebSocket message is missing required fields or has wrong types. |
 | `UNKNOWN_TYPE` | WebSocket error | WebSocket message has an unrecognised type. |
 | `HANDLER_CLOSED` | WebSocket error | The WebSocket handler is shutting down. |
@@ -148,9 +159,9 @@ Errors originating from the client SDK.
   match against message strings.
 - When an error carries additional context (e.g., `table` and
   `rowId` on `CONFLICT_ERROR`, `version` on `MIGRATION_ERROR`,
-  `sql` on `QUERY_ERROR`), implementations should attach these as
-  properties on the error object in addition to the code and
-  message.
+  `sql` on `QUERY_ERROR`, `retryAfterMs` on `WRITE_OVERLOADED`),
+  implementations should attach these as properties on the error
+  object in addition to the code and message.
 
 ---
 

@@ -46,6 +46,10 @@ prov_delete() {
   _run hcloud server delete "$VM_NAME"
 }
 
+prov_lifetime_note() {
+  log "hetzner has no auto-delete backstop; if this machine dies mid-run the server bills until 'down'"
+}
+
 prov_status() {
   hcloud server describe "$VM_NAME" 2>/dev/null || log "$VM_NAME not found"
 }

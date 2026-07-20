@@ -23,14 +23,35 @@ const SIRANNON_TIMEOUT = new Set(['TIMEOUT', 'WRITER_WORKER_TIMEOUT'])
 const SIRANNON_CONNECTION = new Set(['CONNECTION_ERROR', 'TRANSPORT_ERROR'])
 const SIRANNON_CLIENT = new Set(['INVALID_ARGUMENT', 'INVALID_RESPONSE', 'ROUTING_ERROR'])
 const SIRANNON_UNKNOWN = new Set(['UNKNOWN_ERROR'])
+const SYSCALL_TIMEOUT = new Set(['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT'])
+const SYSCALL_CONNECTION = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_SOCKET',
+])
 
 function remoteCodeOf(err: unknown): string | undefined {
   const code = (err as { code?: unknown }).code
   return typeof code === 'string' && code !== '' ? code : undefined
 }
 
+function syscallCodeOf(err: unknown): string | undefined {
+  const cause = (err as { cause?: unknown }).cause
+  return cause === undefined ? undefined : remoteCodeOf(cause)
+}
+
 function sirannonKind(code: string, err: unknown): FailureKind {
-  if (remoteCodeOf(err) === undefined) {
+  if (SYSCALL_TIMEOUT.has(code)) {
+    return 'timeout'
+  }
+  if (SYSCALL_CONNECTION.has(code)) {
+    return 'connection'
+  }
+  if (remoteCodeOf(err) === undefined && syscallCodeOf(err) === undefined) {
     return 'client_error'
   }
   if (SIRANNON_SHED.has(code)) {
@@ -52,7 +73,17 @@ function sirannonKind(code: string, err: unknown): FailureKind {
 }
 
 function sirannonCode(err: unknown): string {
-  return remoteCodeOf(err) ?? (err instanceof Error ? err.name : typeof err)
+  return remoteCodeOf(err) ?? syscallCodeOf(err) ?? (err instanceof Error ? err.name : typeof err)
+}
+
+function remoteCodeFromBody(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: { code?: unknown } }
+    const code = parsed.error?.code
+    return typeof code === 'string' && code !== '' ? code : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export class SirannonDriver extends Driver {
@@ -98,7 +129,13 @@ export class SirannonDriver extends Driver {
       body: JSON.stringify(body),
     })
     if (!response.ok) {
-      throw new Error(`POST ${path} returned ${response.status}: ${await response.text()}`)
+      const body = await response.text()
+      const error = new Error(`POST ${path} returned ${response.status}: ${body}`)
+      const code = remoteCodeFromBody(body)
+      if (code !== undefined) {
+        Object.assign(error, { code })
+      }
+      throw error
     }
     return (await response.json()) as Record<string, unknown>
   }

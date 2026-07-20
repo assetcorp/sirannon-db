@@ -5,6 +5,8 @@ import { engineCpuBlock, withEngineCores } from './engine-cpu.ts'
 import { FailureInterner, summarizeFailures } from './failures.ts'
 import { type ClientCeiling, type LoadResult, measureClientCeiling, type RunOp, runOpenLoop } from './loadgen.ts'
 import { makeRunOp, operationCost } from './operations.ts'
+import { prepare } from './prepare.ts'
+import { progress } from './progress.ts'
 import { SeededRng, ZipfianGenerator } from './rng.ts'
 import { median, summarizeMetric } from './stats.ts'
 import { buildWorkloads } from './workloads/catalogue.ts'
@@ -19,10 +21,6 @@ const SOAK_BUCKET_SECONDS = 30
 const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
 const WORKLOAD_DEADLINE_FLOOR_MS = 120_000
-
-function progress(message: string): void {
-  console.log(`[${new Date().toISOString().slice(11, 19)}] ${message}`)
-}
 
 function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   if (config.workloadTimeoutMs > 0) {
@@ -54,6 +52,7 @@ function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T
 
 export interface EngineResult {
   workloads: WorkloadResult[]
+  failedWorkloads: Record<string, unknown>[]
   clientCeiling: ClientCeiling
   clientBoundAny: boolean
   indeterminateAny: boolean
@@ -69,55 +68,6 @@ export interface WorkloadResult {
   sweep: Record<string, unknown>[]
   sweep_stopped_early: boolean
   soak: Record<string, unknown> | null
-}
-
-async function prepare(driver: Driver, workload: Workload, config: Config): Promise<Record<string, unknown>> {
-  await driver.dropTables([...workload.tables])
-  const schema = driver.dialect === 'sqlite' ? workload.sqliteSchema : workload.postgresSchema
-  const statements = schema
-    .split(';')
-    .map(part => part.trim())
-    .filter(part => part.length > 0)
-  await driver.executeDdl(statements)
-  const seedRng = new SeededRng(config.seed)
-  const seedTables = workload.seed(seedRng, config.dataSize)
-  const counter = { rows: 0 }
-  const counted = seedTables.map(table => ({
-    ...table,
-    rows: (function* (source: Iterable<unknown[]>) {
-      for (const row of source) {
-        counter.rows += 1
-        yield row
-      }
-    })(table.rows),
-  }))
-  const seedStart = performance.now()
-  const ticker = setInterval(() => {
-    const elapsed = (performance.now() - seedStart) / 1000
-    progress(`seed ${workload.name}: ${counter.rows.toLocaleString('en-US')} rows in ${Math.round(elapsed)}s`)
-  }, 10_000)
-  let seconds: number
-  let seedCores: number | null = null
-  try {
-    seedCores = (await withEngineCores(config.engineCgroup, () => driver.seed(counted))).coresUsed
-  } finally {
-    clearInterval(ticker)
-    seconds = (performance.now() - seedStart) / 1000
-  }
-  progress(
-    `seed ${workload.name}: done, ${counter.rows.toLocaleString('en-US')} rows in ${seconds.toFixed(1)}s` +
-      (seconds > 0 ? ` (${Math.round(counter.rows / seconds).toLocaleString('en-US')} rows/s)` : '') +
-      (seedCores !== null ? ` (engine ${seedCores.toFixed(1)} cores)` : ''),
-  )
-  return {
-    rows: counter.rows,
-    seconds,
-    rows_per_second: seconds > 0 ? counter.rows / seconds : 0,
-    engine_cpu: engineCpuBlock([seedCores], config.engineCpus),
-    note:
-      'Seeding is disclosed, never compared: each engine loads through its own fastest documented ' +
-      'path, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
-  }
 }
 
 function generatorBlock(passes: LoadResult[], config: Config): Record<string, unknown> {
@@ -350,7 +300,11 @@ async function runWorkload(
   }
 }
 
-export async function runEngine(driver: Driver, config: Config): Promise<EngineResult> {
+export async function runEngine(
+  driver: Driver,
+  config: Config,
+  onWorkload?: (snapshot: EngineResult) => void,
+): Promise<EngineResult> {
   const catalogue = buildWorkloads()
   for (const name of config.soakWorkloads) {
     if (!catalogue.has(name)) {
@@ -377,8 +331,16 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
   )
 
   const results: WorkloadResult[] = []
+  const failedWorkloads: Record<string, unknown>[] = []
   let clientBoundAny = false
   let indeterminateAny = false
+  const snapshot = (): EngineResult => ({
+    workloads: results,
+    failedWorkloads,
+    clientCeiling,
+    clientBoundAny,
+    indeterminateAny,
+  })
   for (const name of config.workloads) {
     const workload = catalogue.get(name)
     if (workload === undefined) {
@@ -386,18 +348,26 @@ export async function runEngine(driver: Driver, config: Config): Promise<EngineR
         `unknown workload ${JSON.stringify(name)}; known workloads are ${[...catalogue.keys()].sort().join(', ')}`,
       )
     }
-    const result = await withDeadline(
-      runWorkload(driver, workload, config, clientCeiling.ceilingOps),
-      deadlineMs,
-      `workload ${name} (${driver.name}, ${config.dataSize} rows)`,
-    )
-    if (result.sweep.some(rate => rate.client_bound === true)) {
-      clientBoundAny = true
+    try {
+      const result = await withDeadline(
+        runWorkload(driver, workload, config, clientCeiling.ceilingOps),
+        deadlineMs,
+        `workload ${name} (${driver.name}, ${config.dataSize} rows)`,
+      )
+      if (result.sweep.some(rate => rate.client_bound === true)) {
+        clientBoundAny = true
+      }
+      if (result.sweep.some(rate => rate.limit_verdict === 'indeterminate')) {
+        indeterminateAny = true
+      }
+      results.push(result)
+    } catch (err) {
+      const code = driver.failureClassifier.codeOf(err)
+      const message = err instanceof Error ? err.message : String(err)
+      progress(`workload ${name} failed (${code}); recording the failure and moving to the next workload`)
+      failedWorkloads.push({ workload: name, error_code: code, error: message })
     }
-    if (result.sweep.some(rate => rate.limit_verdict === 'indeterminate')) {
-      indeterminateAny = true
-    }
-    results.push(result)
+    onWorkload?.(snapshot())
   }
-  return { workloads: results, clientCeiling, clientBoundAny, indeterminateAny }
+  return snapshot()
 }

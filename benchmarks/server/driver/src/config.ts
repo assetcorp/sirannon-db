@@ -29,6 +29,7 @@ export interface Config {
   workloads: string[]
   targetRates: number[]
   sweepStopSteps: number
+  prepareRetrySeconds: number
   soakSeconds: number
   soakWorkloads: string[]
   scalingWorkloads: string[]
@@ -159,6 +160,7 @@ export function loadConfig(path: string): Config {
     workloads: envStrList('BENCH_WORKLOADS', asStringList(run.workloads)),
     targetRates: envIntList('BENCH_TARGET_RATES', asNumberList(load.target_rates)),
     sweepStopSteps: envInt('BENCH_SWEEP_STOP_STEPS', asNumber(load.sweep_stop_steps, -1)),
+    prepareRetrySeconds: envInt('BENCH_PREPARE_RETRY_SECONDS', asNumber(run.prepare_retry_seconds, 300)),
     soakSeconds: envInt('BENCH_SOAK_SECONDS', asNumber(soak.seconds, 0)),
     soakWorkloads: envStrList('BENCH_SOAK_WORKLOADS', asStringList(soak.workloads)),
     scalingWorkloads: envStrList('BENCH_SCALING_WORKLOADS', asStringList(scaling.workloads)),
@@ -202,6 +204,13 @@ function validate(config: Config): void {
   if (!Number.isInteger(config.sweepStopSteps) || config.sweepStopSteps < -1) {
     throw new Error(
       `sweep_stop_steps must be an integer >= -1, where -1 runs every rate and 0 or more stops that many steps past the first unsustained rate, got ${config.sweepStopSteps}`,
+    )
+  }
+  if (!Number.isInteger(config.prepareRetrySeconds) || config.prepareRetrySeconds < 0) {
+    throw new Error(
+      `prepare_retry_seconds must be an integer >= 0, where 0 fails a workload's schema reset on the first ` +
+        `engine error and a positive value keeps retrying for that many seconds while the engine recovers, ` +
+        `got ${config.prepareRetrySeconds}`,
     )
   }
   if (!Number.isInteger(config.soakSeconds) || config.soakSeconds < 0) {

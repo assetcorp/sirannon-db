@@ -25,7 +25,7 @@ export async function loadExtension(
   writer: SQLiteConnection,
   extensionPath: string,
 ): Promise<void> {
-  if (!driver.capabilities.extensions) {
+  if (!driver.capabilities.extensions || !driver.resolveExtensionPath) {
     throw new ExtensionError(extensionPath, 'Extensions are not supported by the current driver')
   }
 
@@ -44,8 +44,7 @@ export async function loadExtension(
     throw new ExtensionError(extensionPath, 'Extension path must not contain directory traversal segments')
   }
 
-  const { resolve } = await import('node:path')
-  const resolved = resolve(extensionPath)
+  const resolved = driver.resolveExtensionPath(extensionPath)
 
   try {
     const escaped = resolved.replace(/'/g, "''")

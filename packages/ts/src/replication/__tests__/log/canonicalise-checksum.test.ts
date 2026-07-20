@@ -37,6 +37,13 @@ describe('ReplicationLog', () => {
       expect(canonicaliseForChecksum(numberInput)).toBe(canonicaliseForChecksum(bigintInput))
     })
 
+    it('distinguishes adjacent BigInt values that a JS number cannot separate', () => {
+      const even = canonicaliseForChecksum({ balance: 9007199254740992n })
+      const odd = canonicaliseForChecksum({ balance: 9007199254740993n })
+      expect(even).not.toBe(odd)
+      expect(Number(9007199254740992n)).toBe(Number(9007199254740993n))
+    })
+
     it('produces the same string for a mixed number-and-BigInt object as for the all-BigInt equivalent', () => {
       const mixed = { id: 1, count: 99n, label: 'x' }
       const allBigint = { id: 1n, count: 99n, label: 'x' }

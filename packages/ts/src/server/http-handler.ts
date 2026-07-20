@@ -1,181 +1,55 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
+import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
+import type { ResponseAbort } from './http-common.js'
+import {
+  parseBody,
+  parseReadConcern,
+  parseWriteConcern,
+  resolveExecutionTarget,
+  sendCaughtError,
+  sendError,
+  sendJson,
+} from './http-common.js'
 import type {
-  ClusterStatusInfo,
-  ReadConcern,
-  ServerExecutionTarget,
-  ServerExecutionTargetResolver,
-  WriteConcern,
-} from '../core/types.js'
-import type {
+  BatchRequest,
   ClusterStatusResponse,
-  ErrorResponse,
   ExecuteRequest,
+  LoadRequest,
   QueryRequest,
   TransactionRequest,
 } from './protocol.js'
-import { toExecuteResponse } from './protocol.js'
+import {
+  decodeBoundParams,
+  loadCheckpointValidationError,
+  loadDurabilityValidationError,
+  paramsBatchValidationError,
+  toBulkLoadOptions,
+  toExecuteResponse,
+  transactionStatementsValidationError,
+} from './protocol.js'
+import { queryWireRows } from './wire-rows.js'
 
-export interface ResponseAbort {
-  readonly aborted: boolean
-  onAbort(fn: () => void): void
-}
-
-export function initAbortHandler(res: HttpResponse): ResponseAbort {
-  const listeners: (() => void)[] = []
-  let aborted = false
-
-  res.onAborted(() => {
-    aborted = true
-    for (const fn of listeners) fn()
-  })
-
-  return {
-    get aborted() {
-      return aborted
-    },
-    onAbort(fn) {
-      if (aborted) {
-        fn()
-      } else {
-        listeners.push(fn)
-      }
-    },
-  }
-}
-
-export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseAbort): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    if (abort.aborted) {
-      reject(new Error('Request aborted'))
-      return
-    }
-
-    let done = false
-    const chunks: Buffer[] = []
-    let totalLength = 0
-
-    abort.onAbort(() => {
-      if (done) return
-      done = true
-      reject(new Error('Request aborted'))
-    })
-
-    res.onData((chunk, isLast) => {
-      if (done || abort.aborted) return
-
-      totalLength += chunk.byteLength
-      if (totalLength > maxBytes) {
-        done = true
-        if (!abort.aborted) {
-          sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'Request body exceeds size limit')
-        }
-        reject(new Error('Payload too large'))
-        return
-      }
-
-      chunks.push(Buffer.from(chunk))
-
-      if (isLast) {
-        done = true
-        resolve(Buffer.concat(chunks))
-      }
-    })
-  })
-}
-
-function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
-  if (raw.length === 0) {
-    sendError(res, 400, 'EMPTY_BODY', 'Request body is empty')
-    return null
-  }
-
-  try {
-    return JSON.parse(raw.toString('utf-8')) as T
-  } catch {
-    sendError(res, 400, 'INVALID_JSON', 'Request body is not valid JSON')
-    return null
-  }
-}
-
-function sendJson(res: HttpResponse, data: unknown): void {
-  const payload = JSON.stringify(data)
-  res.cork(() => {
-    res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
-  })
-}
-
-export function sendError(
+function decodeBatchParams(
   res: HttpResponse,
-  status: number,
-  code: string,
-  message: string,
-  details?: Record<string, unknown>,
-): void {
-  const body: ErrorResponse = { error: details ? { code, message, details } : { code, message } }
-  const payload = JSON.stringify(body)
-  res.cork(() => {
-    res.writeStatus(`${status}`).writeHeader('Content-Type', 'application/json').end(payload)
-  })
+  raw: (Record<string, unknown> | unknown[])[],
+): (Record<string, unknown> | unknown[])[] | null {
+  const decoded: (Record<string, unknown> | unknown[])[] = []
+  for (const entry of raw) {
+    const result = decodeBoundParams(entry, 'paramsBatch')
+    if (!result.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', result.message)
+      return null
+    }
+    decoded.push(result.value as Record<string, unknown> | unknown[])
+  }
+  return decoded
 }
 
-function httpStatusForError(err: SirannonError): number {
-  switch (err.code) {
-    case 'DATABASE_NOT_FOUND':
-      return 404
-    case 'READ_ONLY':
-      return 403
-    case 'QUERY_ERROR':
-    case 'TRANSACTION_ERROR':
-      return 400
-    case 'STALE_PRIMARY':
-    case 'PROTOCOL_VERSION_MISMATCH':
-      return 409
-    case 'HOOK_DENIED':
-      return 403
-    case 'DATABASE_CLOSED':
-    case 'SHUTDOWN':
-    case 'READ_CONCERN_ERROR':
-    case 'COORDINATOR_UNAVAILABLE':
-    case 'AUTHORITY_LOST':
-    case 'NO_SAFE_PRIMARY':
-    case 'NODE_NOT_IN_SYNC':
-    case 'NODE_DRAINING':
-    case 'UNSAFE_RECOVERY_REQUIRED':
-      return 503
-    default:
-      return 500
-  }
-}
+export type { ResponseAbort } from './http-common.js'
+export { initAbortHandler, readBody, sendError } from './http-common.js'
 
 export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
-
-type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
-
-async function resolveExecutionTarget(
-  res: HttpResponse,
-  sirannon: Sirannon,
-  id: string,
-  resolver?: ServerExecutionTargetResolver,
-): Promise<ServerExecutionTarget | null> {
-  let target: ServerExecutionTarget | null | undefined
-  try {
-    target = resolver ? await resolver(id) : await sirannon.resolve(id)
-  } catch (err) {
-    if (err instanceof SirannonError) {
-      sendError(res, httpStatusForError(err), err.code, err.message)
-    } else {
-      sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-    }
-    return null
-  }
-  if (!target) {
-    sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${id}' not found`)
-    return null
-  }
-  return target
-}
 
 export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
@@ -190,24 +64,26 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
     const readConcern = parseReadConcern(res, body.readConcern)
     if (!readConcern.ok) return
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const params = decodeBoundParams(body.params, 'params')
+    if (!params.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', params.message)
+      return
+    }
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
-      const rows = await target.query(
+      const rows = await queryWireRows(
+        target,
         body.sql,
-        body.params,
+        params.value,
         readConcern.value ? { readConcern: readConcern.value } : undefined,
       )
       if (abort.aborted) return
       sendJson(res, { rows })
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -225,24 +101,25 @@ export function handleExecute(sirannon: Sirannon, resolveTarget?: ServerExecutio
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const params = decodeBoundParams(body.params, 'params')
+    if (!params.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', params.message)
+      return
+    }
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
       const result = await target.execute(
         body.sql,
-        body.params,
+        params.value,
         writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
       )
       if (abort.aborted) return
       sendJson(res, toExecuteResponse(result))
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
@@ -252,40 +129,77 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
     const body = parseBody<TransactionRequest>(res, rawBody)
     if (!body) return
 
-    if (!Array.isArray(body.statements)) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Field "statements" is required and must be an array')
-      return
-    }
-
-    if (body.statements.length === 0) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Transaction requires at least one statement')
+    const statementsError = transactionStatementsValidationError(body.statements)
+    if (statementsError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', statementsError)
       return
     }
 
     const writeConcern = parseWriteConcern(res, body.writeConcern)
     if (!writeConcern.ok) return
 
-    for (let i = 0; i < body.statements.length; i++) {
-      const stmt = body.statements[i]
-      if (!stmt.sql || typeof stmt.sql !== 'string') {
-        sendError(res, 400, 'INVALID_REQUEST', `Statement at index ${i} is missing a valid "sql" field`)
+    const statements: { sql: string; params?: Record<string, unknown> | unknown[] }[] = []
+    for (const stmt of body.statements) {
+      const params = decodeBoundParams(stmt.params, 'params')
+      if (!params.ok) {
+        sendError(res, 400, 'INVALID_REQUEST', params.message)
         return
       }
+      statements.push({ sql: stmt.sql, params: params.value })
     }
 
-    const target = await resolveExecutionTarget(res, sirannon, dbId, resolveTarget)
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
+    if (!target) return
+
+    const txOptions = writeConcern.value ? { writeConcern: writeConcern.value } : undefined
+    try {
+      const results = target.executeTransaction
+        ? await target.executeTransaction(statements, txOptions)
+        : await target.transaction(async tx => {
+            const txResults = []
+            for (const stmt of statements) {
+              txResults.push(await tx.execute(stmt.sql, stmt.params))
+            }
+            return txResults
+          }, txOptions)
+      if (abort.aborted) return
+      sendJson(res, {
+        results: results.map(toExecuteResponse),
+      })
+    } catch (err) {
+      sendCaughtError(res, abort, err)
+    }
+  }
+}
+
+export function handleBatch(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
+  return async (res, dbId, rawBody, abort) => {
+    const body = parseBody<BatchRequest>(res, rawBody)
+    if (!body) return
+
+    if (!body.sql || typeof body.sql !== 'string') {
+      sendError(res, 400, 'INVALID_REQUEST', 'Field "sql" is required and must be a string')
+      return
+    }
+
+    const paramsBatchError = paramsBatchValidationError(body.paramsBatch)
+    if (paramsBatchError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', paramsBatchError)
+      return
+    }
+
+    const writeConcern = parseWriteConcern(res, body.writeConcern)
+    if (!writeConcern.ok) return
+
+    const paramsBatch = decodeBatchParams(res, body.paramsBatch)
+    if (paramsBatch === null) return
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
       const results = await target.transaction(
-        async tx => {
-          const txResults = []
-          for (const stmt of body.statements) {
-            if (abort.aborted) throw new Error('Request aborted')
-            txResults.push(await tx.execute(stmt.sql, stmt.params))
-          }
-          return txResults
-        },
+        async tx => tx.executeBatch(body.sql, paramsBatch),
         writeConcern.value ? { writeConcern: writeConcern.value } : undefined,
       )
       if (abort.aborted) return
@@ -293,73 +207,59 @@ export function handleTransaction(sirannon: Sirannon, resolveTarget?: ServerExec
         results: results.map(toExecuteResponse),
       })
     } catch (err) {
-      if (abort.aborted) return
-      if (err instanceof SirannonError) {
-        sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err))
-      } else {
-        sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
-      }
+      sendCaughtError(res, abort, err)
     }
   }
 }
 
-function parseReadConcern(res: HttpResponse, value: unknown): ParseResult<ReadConcern> {
-  if (value === undefined) return { ok: true, value: undefined }
-  if (!isPlainRecord(value)) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern" must be an object when provided')
-    return { ok: false }
-  }
-  const keys = Object.keys(value)
-  if (keys.length !== 1 || !keys.includes('level')) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern" must contain only "level"')
-    return { ok: false }
-  }
-  if (!isReadConcernLevel(value.level)) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "readConcern.level" is invalid')
-    return { ok: false }
-  }
-  return { ok: true, value: { level: value.level } }
-}
+export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
+  return async (res, dbId, rawBody, abort) => {
+    const body = parseBody<LoadRequest>(res, rawBody)
+    if (!body) return
 
-function parseWriteConcern(res: HttpResponse, value: unknown): ParseResult<WriteConcern> {
-  if (value === undefined) return { ok: true, value: undefined }
-  if (!isPlainRecord(value)) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern" must be an object when provided')
-    return { ok: false }
-  }
-  const allowedKeys = new Set(['level', 'timeoutMs'])
-  if (!Object.keys(value).every(key => allowedKeys.has(key))) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern" contains unsupported keys')
-    return { ok: false }
-  }
-  if (!isWriteConcernLevel(value.level)) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern.level" is invalid')
-    return { ok: false }
-  }
-  const timeoutMs = value.timeoutMs
-  if (
-    timeoutMs !== undefined &&
-    (typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
-  ) {
-    sendError(res, 400, 'INVALID_REQUEST', 'Field "writeConcern.timeoutMs" must be a positive safe integer')
-    return { ok: false }
-  }
-  return {
-    ok: true,
-    value: timeoutMs === undefined ? { level: value.level } : { level: value.level, timeoutMs },
-  }
-}
+    if (!body.sql || typeof body.sql !== 'string') {
+      sendError(res, 400, 'INVALID_REQUEST', 'Field "sql" is required and must be a string')
+      return
+    }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+    const paramsBatchError = paramsBatchValidationError(body.paramsBatch)
+    if (paramsBatchError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', paramsBatchError)
+      return
+    }
 
-function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
-  return value === 'local' || value === 'majority' || value === 'linearizable'
-}
+    const durabilityError = loadDurabilityValidationError(body.durability)
+    if (durabilityError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', durabilityError)
+      return
+    }
 
-function isWriteConcernLevel(value: unknown): value is WriteConcern['level'] {
-  return value === 'local' || value === 'majority' || value === 'all'
+    const checkpointError = loadCheckpointValidationError(body.checkpoint)
+    if (checkpointError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', checkpointError)
+      return
+    }
+
+    const paramsBatch = decodeBatchParams(res, body.paramsBatch)
+    if (paramsBatch === null) return
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
+    if (!target) return
+
+    const bulkLoad = target.bulkLoad
+    if (typeof bulkLoad !== 'function') {
+      sendError(res, 501, 'BULK_LOAD_UNSUPPORTED', 'The execution target for this database does not support bulk load')
+      return
+    }
+
+    try {
+      const summary = await bulkLoad.call(target, body.sql, paramsBatch, toBulkLoadOptions(body))
+      if (abort.aborted) return
+      sendJson(res, summary)
+    } catch (err) {
+      sendCaughtError(res, abort, err)
+    }
+  }
 }
 
 export function handleClusterStatus(getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null) {
@@ -387,9 +287,4 @@ function toClusterStatusResponse(status: ClusterStatusInfo): ClusterStatusRespon
     })),
     primaryTerm: status.primaryTerm?.toString(),
   }
-}
-
-function errorDetails(err: SirannonError): Record<string, unknown> | undefined {
-  const details = (err as SirannonError & { details?: Record<string, unknown> }).details
-  return details && Object.keys(details).length > 0 ? details : undefined
 }

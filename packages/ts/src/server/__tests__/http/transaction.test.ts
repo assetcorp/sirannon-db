@@ -143,4 +143,18 @@ describe('POST /db/:id/transaction', () => {
     })
     expect(res.status).toBe(404)
   })
+
+  it('rejects a statement whose params is neither an object nor an array', async () => {
+    const res = await fetch(`${baseUrl}/db/test/transaction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        statements: [{ sql: 'INSERT INTO users (name, age) VALUES (?, ?)', params: 'nope' }],
+      }),
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as ApiResponse
+    expect(body.error.code).toBe('INVALID_REQUEST')
+    expect(body.error.message).toContain('index 0')
+  })
 })

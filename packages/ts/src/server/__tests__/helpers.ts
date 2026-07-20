@@ -1,12 +1,74 @@
+import type { HttpResponse } from 'uWebSockets.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
-import type { WSConnection } from '../ws-handler.js'
+import type { WSConnection, WSSendOutcome } from '../ws-connection.js'
+
+export interface MockResponseState {
+  status: string | undefined
+  headers: Record<string, string>
+  body: string | undefined
+  ends: number
+}
+
+export function createMockResponse() {
+  const state: MockResponseState = {
+    status: undefined,
+    headers: {},
+    body: undefined,
+    ends: 0,
+  }
+
+  let abortHandler: (() => void) | undefined
+  let dataHandler: ((chunk: ArrayBuffer, isLast: boolean) => void) | undefined
+
+  const res = {
+    onAborted(fn: () => void) {
+      abortHandler = fn
+      return res
+    },
+    onData(fn: (chunk: ArrayBuffer, isLast: boolean) => void) {
+      dataHandler = fn
+      return res
+    },
+    cork(fn: () => void) {
+      fn()
+      return res
+    },
+    writeStatus(status: string) {
+      state.status = status
+      return res
+    },
+    writeHeader(name: string, value: string) {
+      state.headers[name.toLowerCase()] = value
+      return res
+    },
+    end(payload?: string) {
+      state.body = payload ?? ''
+      state.ends++
+      return res
+    },
+  }
+
+  return {
+    res: res as unknown as HttpResponse,
+    state,
+    abort() {
+      abortHandler?.()
+    },
+    data(payload: string, isLast: boolean) {
+      const buf = Buffer.from(payload)
+      const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+      dataHandler?.(arrayBuffer, isLast)
+    },
+  }
+}
 
 export interface MockWSConnection extends WSConnection {
   messages: string[]
   closed: boolean
   closeCode?: number
   closeReason?: string
+  sendOutcome: WSSendOutcome
 }
 
 export function createMockConnection(): MockWSConnection {
@@ -15,8 +77,13 @@ export function createMockConnection(): MockWSConnection {
     closed: false,
     closeCode: undefined,
     closeReason: undefined,
-    send(data: string) {
+    sendOutcome: 'sent',
+    send(data: string): WSSendOutcome {
+      if (conn.sendOutcome === 'dropped') {
+        return 'dropped'
+      }
       conn.messages.push(data)
+      return conn.sendOutcome
     },
     close(code?: number, reason?: string) {
       conn.closed = true

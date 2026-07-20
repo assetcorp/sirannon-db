@@ -8,7 +8,7 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
-In matched-durability benchmarks against Postgres 17, Sirannon leads across single-client workloads because the database runs in your process with no network hop, and the margin narrows under concurrency where Postgres parallelises across its connection pool. Every published figure is generated from a recorded run on a disclosed machine, and the same benchmarks show where Postgres wins. See the full [methodology and results](benchmarks/BENCHMARKS.md).
+The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it provides and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](../../BENCHMARKS.md).
 
 See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
 
@@ -65,7 +65,7 @@ await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@e
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-Node.js 22+ users can skip the extra dependency by using the built-in `node:sqlite` module (requires the `--experimental-sqlite` flag):
+Node.js 22+ users can skip the extra dependency by using the built-in `node:sqlite` module. Node enables it by default from 22.13.0 and 23.4.0 onward; earlier 22.x releases need the `--experimental-sqlite` flag. The module is still experimental.
 
 ```ts
 import { nodeSqlite } from '@delali/sirannon-db/driver/node'
@@ -147,7 +147,7 @@ Sirannon-db separates the database engine from the library. You pick the driver 
 | Driver | Import | Runtime | Install |
 | --- | --- | --- | --- |
 | better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add -E better-sqlite3` |
-| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (use `--experimental-sqlite` flag) |
+| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (built in; flag-free from Node 22.13.0 and 23.4.0) |
 | wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser | `pnpm add -E wa-sqlite` |
 | Bun | `@delali/sirannon-db/driver/bun` | Bun | None (uses `bun:sqlite`) |
 | Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add -E expo-sqlite` |
@@ -164,6 +164,8 @@ const driver = nodeSqlite()
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
 ```
+
+You write a custom driver by passing `capabilities` and an `open` function to `defineDriver`. To let it run on a writer worker thread (see [Writer worker](#writer-worker-offload-disk-writes)), add a `worker` entry so the worker can rebuild it: a `specifier` the worker can import, the `exportName` of your factory, and a `config` value that survives a structured clone. The worker imports the module and calls the factory with the config, because the `open` function itself can't cross the thread boundary.
 
 ## Package exports
 
@@ -208,6 +210,39 @@ const total = await db.transaction(async tx => {
   return row
 })
 ```
+
+### Bulk load
+
+Loading a large dataset through many small committed transactions is slow and can stall the whole server. At `synchronous = full`, every commit calls `fsync`, and because the engine is synchronous, each `fsync` blocks the event loop until the disk confirms; tens of thousands of blocking `fsync` calls back to back stop the server from answering anything. `db.bulkLoad` runs the whole batch in one transaction under a relaxed durability level, then restores the configured level before it resolves.
+
+```ts
+const summary = await db.bulkLoad(
+  'INSERT INTO events (id, payload) VALUES (?, ?)',
+  rows, // an array of parameter arrays, one per row
+  { durability: 'off' },
+)
+// summary.rowsLoaded, summary.changes
+```
+
+The load holds the single writer for its whole duration, so no other write commits under the relaxed level and no two loads race on the durability setting. On success the WAL is checkpointed at the restored level, so the loaded rows are written into the main database file before the call resolves. That checkpoint runs synchronously and blocks the event loop for the length of the WAL flush, which grows with the size of the load.
+
+`durability` defaults to `'off'`. SQLite sanctions `'off'` for a load that starts from an empty database and that the operator can re-run after a power loss; a crash during an `'off'` load can corrupt the file, so recovery means re-running the load from scratch. Use `'normal'` for a load into a database that already holds data you cannot afford to lose, because it keeps WAL corruption safety while it still drops the per-commit `fsync`. Either way the configured `synchronous` level is restored when the load finishes, and a crash mid-load leaves the configured level in force on the next open, because `PRAGMA synchronous` is connection state that SQLite never stores in the database file.
+
+The result sums the row count and the changes rather than returning one object per row, so a load of millions of rows never holds millions of result objects in memory. Over the server, one load must fit under `maxBodyBytes`; send a larger dataset as several sequential loads, each of which restores durability on its own.
+
+For a dataset that spans more than one request, the client's `db.loadAll` batches it for you. Hand it a synchronous or asynchronous iterable of parameter sets; it splits the rows into batches, runs the one fsyncing WAL checkpoint once after the final batch, and restores the configured durability after every batch:
+
+```ts
+const summary = await db.loadAll(
+  'INSERT INTO events (id, payload) VALUES (?, ?)',
+  rowStream, // an iterable or async iterable of parameter arrays
+  { batchSize: 5000, durability: 'off' },
+)
+```
+
+`batchSize` defaults to 1000, and each batch is one request, so size it to stay under the server's `maxBodyBytes`. `loadAll` runs the finalize itself and keeps the checkpoint flag out of your code. On network-attached disks, where each checkpoint fsync is slow, this collapses hundreds of per-batch flushes into one flush at the end.
+
+The low-level `db.load` exposes the same behaviour through a `checkpoint` flag for callers that batch by hand: pass `{ checkpoint: false }` on every load but the last, so the WAL checkpoint runs once, after the final load. Each load still restores the configured durability, so an import you abandon partway keeps the writer at the configured level, and SQLite's automatic checkpoint keeps the WAL bounded during the import. Prefer `loadAll` unless you need that control, because a forgotten final `checkpoint: true` leaves the last pages in the WAL until the next checkpoint.
 
 ### Connection pooling
 
@@ -316,9 +351,12 @@ db.scheduleBackup({
   cron: '0 */6 * * *',      // every 6 hours
   destDir: './backups',
   maxFiles: 10,              // keep the 10 most recent
+  timezone: 'America/New_York', // optional; defaults to the host timezone
   onError: err => console.error('Backup failed:', err),
 })
 ```
+
+The cron expression supports five or six fields (an optional leading seconds field), ranges, steps, lists, month and weekday names, and `@daily`-style nicknames. It runs in `timezone` when you set one, and in the host's local timezone otherwise. When the clocks go forward for daylight saving time, the scheduler skips the missing hour; when they go back, it runs a backup timed for the repeated hour once. The scheduler does not backfill: if the host sleeps or the clock jumps forward past a scheduled time, that run is skipped rather than run late, and a backward clock step repeats nothing.
 
 ### Hooks
 
@@ -399,19 +437,67 @@ await server.listen()
 
 See the [Security](#security) section for authentication, TLS, and CORS configuration.
 
+The server offers three write shapes, on both transports. Reach for each one when:
+
+- **transaction** runs several *different* statements that must all succeed or all fail together, such as a debit on one row and a credit on another.
+- **batch** runs *one* statement many times with different values, such as inserting a thousand rows into the same table. It costs less than a transaction of a thousand near-identical statements, and it stays all-or-nothing.
+- **load** runs a batch for a large, from-scratch import. It relaxes durability while the rows go in and restores it afterward, so it trades power-loss safety during the load for speed; if the process dies mid-load, you re-run it.
+
+### Writer worker (offload disk writes)
+
+Under full durability every commit flushes to disk, and a WAL checkpoint flushes too. While the serving thread runs one of those flushes it can't accept or answer connections, so a burst of writes can push the server into refusing fresh connections. Turn on `writerWorker` to run writes, WAL checkpoints, bulk loads, migrations, and backups on a dedicated worker thread. The serving thread hands the work across and stays free to accept and answer connections. Reads stay on the serving thread, since they're fast and served from the page cache.
+
+```ts
+const db = await sirannon.open('app', './data/app.db', {
+  synchronous: 'full',
+  writerWorker: true,
+})
+```
+
+Full durability holds. A write returns to the client only after its flush completes on the worker, exactly as it does without offload. The built-in `better-sqlite3` and `node` drivers support offload, and a custom driver opts in by declaring a worker entry (see [Pluggable drivers](#pluggable-drivers)). Enabling `writerWorker` on a driver that can't support it fails at open with a clear error rather than quietly keeping writes on the serving thread.
+
+Pass an object instead of `true` to tune backpressure and the worker's lifecycle:
+
+```ts
+const db = await sirannon.open('app', './data/app.db', {
+  synchronous: 'full',
+  writerWorker: {
+    maxPendingWrites: 1024,
+    writeTimeoutMs: 30000,
+    maxRestarts: 5,
+  },
+})
+```
+
+`maxPendingWrites` bounds how many writes may be in flight before the server sheds load. Past it, a write returns HTTP 503 with a `Retry-After` header, and a `WRITE_OVERLOADED` error over WebSocket, so clients back off and retry instead of the server buffering without bound. Size it from your sustainable write rate times your worst-case write latency. `writeTimeoutMs` rejects the caller when a single operation stalls past it, so a hung flush fails loudly instead of hanging a client; the worker keeps running, since a thread inside a synchronous SQLite call cannot be interrupted safely, so a stalled write's outcome is indeterminate and a genuinely dead disk keeps rejecting writes until you restart the process. Raise it only for unusually large single operations. `maxRestarts` caps how many times the worker is respawned after it crashes on its own before writes fail permanently.
+
 ### HTTP routes
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/db/:id/query` | Execute a SELECT, returns `{ rows }` |
 | `POST` | `/db/:id/execute` | Execute a mutation, returns `{ changes, lastInsertRowId }` |
-| `POST` | `/db/:id/transaction` | Execute a batch of statements atomically, returns `{ results }` |
+| `POST` | `/db/:id/transaction` | Execute many statements atomically in one transaction, returns `{ results }` |
+| `POST` | `/db/:id/batch` | Apply one statement over many parameter sets in one transaction, returns `{ results }` |
+| `POST` | `/db/:id/load` | Bulk-load rows with relaxed durability, returns `{ rowsLoaded, changes }` |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/health/ready` | Readiness check with per-database status |
 
 ### WebSocket protocol
 
-Connect to `ws://host:port/db/:id` and send JSON messages for queries, executions, and CDC subscriptions. The server dispatches change events to subscribers in real time.
+Connect to `ws://host:port/db/:id` and send JSON messages. Every message carries a `type` and a client-chosen `id`, and every reply echoes that `id`. The server dispatches CDC change events to subscribers in real time.
+
+| Inbound `type` | Fields | Reply |
+| --- | --- | --- |
+| `query` | `sql`, `params?` | `{ type: 'result', data: { rows } }` |
+| `execute` | `sql`, `params?` | `{ type: 'result', data: { changes, lastInsertRowId } }` |
+| `transaction` | `statements`, `writeConcern?` | `{ type: 'result', data: { results } }` |
+| `batch` | `sql`, `paramsBatch`, `writeConcern?` | `{ type: 'result', data: { results } }` |
+| `load` | `sql`, `paramsBatch`, `durability?`, `checkpoint?` | `{ type: 'result', data: { rowsLoaded, changes } }` |
+| `subscribe` | `table`, `filter?` | `{ type: 'subscribed' }` then `change` events |
+| `unsubscribe` | - | `{ type: 'unsubscribed' }` |
+
+The `transaction`, `batch`, and `load` messages run every statement server-side in one transaction and reply once. The server never holds the write lock across a network round-trip, so it does not accept an interactive transaction where the client sends `BEGIN`, then more statements, then `COMMIT` over separate messages; a single slow or dead client would otherwise freeze every write to the database.
 
 ## Client SDK
 
@@ -432,7 +518,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
 
-const sub = db.subscribe('users', event => {
+const sub = await db.on('users').subscribe(event => {
   console.log('User changed:', event)
 })
 
@@ -909,6 +995,8 @@ All errors extend `SirannonError` with a machine-readable `code` property:
 | `MaxDatabasesError` | `MAX_DATABASES` | Capacity limit reached |
 | `ExtensionError` | `EXTENSION_ERROR` | SQLite extension load failure |
 
+The server and the bulk-load path add a few more codes. `createServer` throws `SirannonError` with `INVALID_MAX_BODY_BYTES` when `maxBodyBytes` is not a positive integer or exceeds `4_294_967_295`, the largest value uWebSockets.js can store; a larger value would wrap modulo 2^32 and enforce a limit you never configured, so the server refuses to start instead. `INVALID_WS_BACKPRESSURE` guards `maxWebSocketBackpressureBytes` with the same bounds. A bulk load throws `INVALID_DURABILITY` when `durability` is neither `'off'` nor `'normal'`, and `DURABILITY_RESTORE_FAILED` when the load committed but the writer connection failed before its durability could be restored; treat that last code as 'the load succeeded, do not re-run it'. Over the wire the server also returns `PAYLOAD_TOO_LARGE` when a request or message exceeds `maxBodyBytes`, and `BULK_LOAD_UNSUPPORTED` when the resolved execution target for a database does not implement bulk load.
+
 ```ts
 import { QueryError } from '@delali/sirannon-db'
 
@@ -940,8 +1028,10 @@ try {
 | `readOnly` | `boolean` | `false` | Open in read-only mode |
 | `readPoolSize` | `number` | `4` | Number of read connections |
 | `walMode` | `boolean` | `true` | Enable WAL mode |
+| `synchronous` | `'off' \| 'normal' \| 'full' \| 'extra'` | `'normal'` | Writer durability (`PRAGMA synchronous`); this is the level a bulk load restores when it finishes |
 | `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms (1 hour) |
+| `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so disk flushes never block the serving thread; see [Writer worker](#writer-worker-offload-disk-writes) |
 
 ### `ServerOptions`
 
@@ -950,6 +1040,7 @@ try {
 | `host` | `string` | `'127.0.0.1'` | Bind address |
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
+| `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP request body and WebSocket message size in bytes; one value governs both transports, and it must be a positive integer no larger than `4_294_967_295` |
 | `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
 
 ### `ClientOptions`
@@ -1008,7 +1099,7 @@ pnpm run dev
 
 ## Benchmarks
 
-The benchmark suite compares Sirannon's embedded SQLite performance against Postgres 17 across micro-operations, YCSB, TPC-C, and concurrency scaling. All benchmarks support driver switching via the `BENCH_DRIVER` environment variable (`better-sqlite3` or `node`). See [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md) for setup instructions, configuration, Docker-based fair comparisons, and statistical analysis methodology.
+The benchmark suite compares Sirannon against Postgres 17 on the same OLTP workloads, driving Sirannon over HTTP into its real server and Postgres over its socket, both in resource-capped containers at matched durability, under an open-loop load generator that corrects for coordinated omission. The harness is a Python project at the repository root under `benchmarks/server`. See [`BENCHMARKS.md`](../../BENCHMARKS.md) for the methodology and the latest results.
 
 ## Development
 

@@ -1,12 +1,15 @@
-import type { ChangeEvent, Params } from '../../core/types.js'
+import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
+import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
 import type {
+  BatchResponse,
   ExecuteResponse,
+  LoadResponse,
   QueryResponse,
   TransactionResponse,
   WSClientMessage,
   WSServerMessage,
 } from '../../server/protocol.js'
-import type { RemoteSubscription, Transport } from '../types.js'
+import type { RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
@@ -14,26 +17,27 @@ const DEFAULT_REQUEST_TIMEOUT = 30_000
 interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | undefined
 }
 
 interface ActiveSubscription {
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onReset: (() => void) | undefined
+  lastSeq: bigint | undefined
+  epoch: string | undefined
 }
 
 /**
  * WebSocket transport for sirannon-db. Connects to
- * `ws(s)://host:port/db/{id}` and supports query, execute,
- * and real-time CDC subscriptions over a single persistent connection.
+ * `ws(s)://host:port/db/{id}` and supports query, execute, transaction,
+ * batch, load, and real-time CDC subscriptions over a single persistent
+ * connection.
  *
  * Connections are established lazily on first use and will
  * auto-reconnect (with subscription restoration) when
  * `autoReconnect` is enabled.
- *
- * Transactions are not supported over WebSocket; use
- * {@link HttpTransport} for batch transactions.
  */
 type ClientWebSocket = InstanceType<typeof WebSocket>
 
@@ -71,26 +75,74 @@ export class WebSocketTransport implements Transport {
   async query(sql: string, params?: Params): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
-    return this.request<QueryResponse>({ type: 'query', id, sql, params })
+    const response = await this.request<QueryResponse>({
+      type: 'query',
+      id,
+      sql,
+      params: encodeTaggedValues(params) as Params | undefined,
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
     await this.ensureConnected()
     const id = this.nextId()
-    return this.request<ExecuteResponse>({ type: 'execute', id, sql, params })
+    return this.request<ExecuteResponse>({
+      type: 'execute',
+      id,
+      sql,
+      params: encodeTaggedValues(params) as Params | undefined,
+    })
   }
 
-  async transaction(_statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
-    throw new RemoteError(
-      'TRANSPORT_ERROR',
-      'Transactions are not supported over WebSocket. Use HTTP transport for batch transactions.',
-    )
+  async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<TransactionResponse>({
+      type: 'transaction',
+      id,
+      statements: statements.map(stmt => ({
+        sql: stmt.sql,
+        params: encodeTaggedValues(stmt.params) as Params | undefined,
+      })),
+    })
+  }
+
+  async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<BatchResponse>({
+      type: 'batch',
+      id,
+      sql,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry) as Params),
+      ...(writeConcern ? { writeConcern } : {}),
+    })
+  }
+
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<LoadResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<LoadResponse>({
+      type: 'load',
+      id,
+      sql,
+      paramsBatch: paramsBatch.map(entry => encodeTaggedValues(entry) as Params),
+      ...(durability ? { durability } : {}),
+      ...(checkpoint !== undefined ? { checkpoint } : {}),
+    })
   }
 
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -98,14 +150,21 @@ export class WebSocketTransport implements Transport {
     // Store the subscription before sending so the callback is
     // available if a change event arrives before the 'subscribed'
     // confirmation (unlikely but safe).
-    this.activeSubscriptions.set(id, { table, filter, callback })
+    this.activeSubscriptions.set(id, {
+      table,
+      filter,
+      callback,
+      onReset: options?.onReset,
+      lastSeq: undefined,
+      epoch: undefined,
+    })
 
     try {
       const msg: WSClientMessage = {
         type: 'subscribe',
         id,
         table,
-        ...(filter ? { filter } : {}),
+        ...(filter ? { filter: encodeTaggedValues(filter) as Record<string, unknown> } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {
@@ -224,6 +283,30 @@ export class WebSocketTransport implements Transport {
       }
 
       case 'subscribed': {
+        const sub = this.activeSubscriptions.get(msg.id)
+        if (sub) {
+          if (msg.epoch !== undefined) {
+            sub.epoch = msg.epoch
+          }
+          let baseline: bigint | undefined
+          if (msg.seq !== undefined) {
+            try {
+              baseline = BigInt(msg.seq)
+            } catch {
+              baseline = undefined
+            }
+          }
+          if (msg.resync) {
+            sub.lastSeq = baseline
+            try {
+              sub.onReset?.()
+            } catch {
+              // A failing reset handler must not disrupt message processing.
+            }
+          } else if (sub.lastSeq === undefined && baseline !== undefined) {
+            sub.lastSeq = baseline
+          }
+        }
         const pending = this.pendingRequests.get(msg.id)
         if (pending) {
           clearTimeout(pending.timer)
@@ -250,10 +333,16 @@ export class WebSocketTransport implements Transport {
             const event: ChangeEvent = {
               type: msg.event.type,
               table: msg.event.table,
-              row: msg.event.row,
-              oldRow: msg.event.oldRow,
+              row: decodeTaggedValues(msg.event.row) as Record<string, unknown>,
+              oldRow:
+                msg.event.oldRow === undefined
+                  ? undefined
+                  : (decodeTaggedValues(msg.event.oldRow) as Record<string, unknown>),
               seq: BigInt(msg.event.seq),
               timestamp: msg.event.timestamp,
+            }
+            if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
+              sub.lastSeq = event.seq
             }
             sub.callback(event)
           } catch {
@@ -311,7 +400,9 @@ export class WebSocketTransport implements Transport {
           type: 'subscribe',
           id,
           table: sub.table,
-          ...(sub.filter ? { filter: sub.filter } : {}),
+          ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
+          ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
+          ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
         }
         await this.request<void>(msg)
       } catch {
@@ -331,10 +422,13 @@ export class WebSocketTransport implements Transport {
         return
       }
 
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(id)
-        reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
-      }, this.requestTimeout)
+      const timer =
+        this.requestTimeout > 0
+          ? setTimeout(() => {
+              this.pendingRequests.delete(id)
+              reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
+            }, this.requestTimeout)
+          : undefined
 
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,

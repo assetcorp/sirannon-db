@@ -1,5 +1,12 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import {
+  APPLIED_CHANGES_TABLE,
+  COLUMN_VERSIONS_TABLE,
+  INTERNAL_TABLE_PREFIX,
+  PEER_STATE_TABLE,
+  SYNC_STATE_TABLE,
+} from '../../core/internal-tables.js'
 import { ReplicationError } from '../errors.js'
 import { IDENTIFIER_RE, validateDdlSafety } from './validators.js'
 
@@ -25,7 +32,7 @@ CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
 )`)
 
     await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS _sirannon_peer_state (
+CREATE TABLE IF NOT EXISTS ${PEER_STATE_TABLE} (
 	peer_node_id TEXT PRIMARY KEY,
 	last_acked_seq INTEGER NOT NULL DEFAULT 0,
 	last_received_hlc TEXT NOT NULL DEFAULT '',
@@ -33,7 +40,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_peer_state (
 )`)
 
     await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS _sirannon_applied_changes (
+CREATE TABLE IF NOT EXISTS ${APPLIED_CHANGES_TABLE} (
 	source_node_id TEXT NOT NULL,
 	source_seq INTEGER NOT NULL,
 	applied_at REAL NOT NULL,
@@ -41,7 +48,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_applied_changes (
 )`)
 
     await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
+CREATE TABLE IF NOT EXISTS ${COLUMN_VERSIONS_TABLE} (
 	table_name TEXT NOT NULL,
 	row_id TEXT NOT NULL,
 	column_name TEXT NOT NULL,
@@ -51,7 +58,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_column_versions (
 )`)
 
     await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
+CREATE TABLE IF NOT EXISTS ${SYNC_STATE_TABLE} (
 	table_name TEXT PRIMARY KEY,
 	status TEXT NOT NULL DEFAULT 'pending',
 	row_count INTEGER NOT NULL DEFAULT 0,
@@ -64,7 +71,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
 )`)
   }
 
-  async dumpSchema(conn: SQLiteConnection, excludePrefix: string = '_sirannon_'): Promise<string[]> {
+  async dumpSchema(conn: SQLiteConnection, excludePrefix: string = INTERNAL_TABLE_PREFIX): Promise<string[]> {
     const stmt = await conn.prepare(
       `SELECT type, name, sql FROM sqlite_master
        WHERE type IN ('table', 'index') AND name NOT LIKE ? AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL`,
@@ -108,7 +115,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
 
   async getTablesInFkOrder(conn: SQLiteConnection): Promise<string[]> {
     const stmt = await conn.prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_sirannon_%' AND name NOT LIKE 'sqlite_%'`,
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '${INTERNAL_TABLE_PREFIX}%' AND name NOT LIKE 'sqlite_%'`,
     )
     const tableRows = (await stmt.all()) as Array<{ name: string }>
     const tableNames = tableRows.map(r => r.name)
@@ -184,7 +191,7 @@ CREATE TABLE IF NOT EXISTS _sirannon_sync_state (
         for (const table of reversed) {
           await tx.exec(`DELETE FROM "${table}"`)
         }
-        await tx.exec(`DELETE FROM _sirannon_sync_state WHERE table_name != '__sync_meta__'`)
+        await tx.exec(`DELETE FROM ${SYNC_STATE_TABLE} WHERE table_name != '__sync_meta__'`)
       })
     } finally {
       await conn.exec('PRAGMA foreign_keys = ON')

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { APPLIED_CHANGES_TABLE } from '../../core/internal-tables.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
@@ -237,7 +238,7 @@ export class SyncJoiner {
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 
       const recordStmt = await engine.writerConn.prepare(
-        'INSERT OR IGNORE INTO _sirannon_applied_changes (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)',
+        `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
       )
       await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
 

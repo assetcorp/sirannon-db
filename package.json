@@ -5,7 +5,7 @@
   "description": "Monorepo for sirannon-db, a library that turns SQLite into a networked data layer with real-time subscriptions.",
   "author": "Delali (https://sondelali.com)",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "homepage": "https://sirannon.sondelali.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/assetcorp/sirannon-db.git"
@@ -19,9 +19,10 @@
     "test": "nx run-many -t test",
     "test:coverage": "nx run-many -t test:coverage",
     "typecheck": "nx run-many -t typecheck",
+    "check:bundle": "nx run-many -t check:bundle",
     "lint": "nx run-many -t lint",
     "format": "biome check --write .",
-    "check": "biome check ."
+    "check": "biome check --error-on-warnings ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.4",

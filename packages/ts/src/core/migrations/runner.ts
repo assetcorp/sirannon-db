@@ -1,10 +1,11 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
+import { MIGRATIONS_TABLE } from '../internal-tables.js'
 import { Transaction } from '../transaction.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
 
 const CREATE_TRACKING_TABLE = `
-  CREATE TABLE IF NOT EXISTS _sirannon_migrations (
+  CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
     version INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     applied_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
@@ -27,7 +28,7 @@ export class MigrationRunner {
     const appliedEntries: AppliedMigrationEntry[] = []
 
     await conn.transaction(async txConn => {
-      const insertStmt = await txConn.prepare('INSERT INTO _sirannon_migrations (version, name) VALUES (?, ?)')
+      const insertStmt = await txConn.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (version, name) VALUES (?, ?)`)
 
       for (const migration of pending) {
         try {
@@ -66,7 +67,7 @@ export class MigrationRunner {
 
     await conn.exec(CREATE_TRACKING_TABLE)
 
-    const selectStmt = await conn.prepare('SELECT version, name FROM _sirannon_migrations ORDER BY version DESC')
+    const selectStmt = await conn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
     const appliedRows = (await selectStmt.all()) as AppliedMigrationEntry[]
 
     if (appliedRows.length === 0) {
@@ -100,7 +101,7 @@ export class MigrationRunner {
     const rolledBackEntries: AppliedMigrationEntry[] = []
 
     await conn.transaction(async txConn => {
-      const deleteStmt = await txConn.prepare('DELETE FROM _sirannon_migrations WHERE version = ?')
+      const deleteStmt = await txConn.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE version = ?`)
 
       for (const entry of rollbackSet) {
         const migration = downByVersion.get(entry.version)
@@ -182,7 +183,7 @@ export class MigrationRunner {
   }
 
   private static async getAppliedVersions(conn: SQLiteConnection): Promise<Set<number>> {
-    const stmt = await conn.prepare('SELECT version FROM _sirannon_migrations ORDER BY version')
+    const stmt = await conn.prepare(`SELECT version FROM ${MIGRATIONS_TABLE} ORDER BY version`)
     const rows = (await stmt.all()) as { version: number }[]
     return new Set(rows.map(r => r.version))
   }

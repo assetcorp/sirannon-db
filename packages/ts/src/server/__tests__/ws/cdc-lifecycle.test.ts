@@ -181,12 +181,12 @@ describe('WSHandler', () => {
 
       await flushAsync(hasMessageCount(conn, 1))
 
-      const contexts = (
+      const registry = (
         handler as unknown as {
-          cdcContexts: Map<string, { tracker: { poll: () => unknown[] } }>
+          cdc: { get(databaseId: string): { tracker: { poll: () => unknown[] } } | undefined }
         }
-      ).cdcContexts
-      const ctx = contexts.get('mydb')
+      ).cdc
+      const ctx = registry.get('mydb')
       expect(ctx).toBeDefined()
 
       let pollCalls = 0

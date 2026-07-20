@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { decodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { COLUMN_VERSIONS_TABLE } from '../../core/internal-tables.js'
 import { HLC } from '../hlc.js'
 import type { ReplicationBatch, ReplicationChange } from '../types.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
@@ -122,7 +123,7 @@ export class BatchReader {
 
     for (const row of rows) {
       if (row.operation === 'DELETE') {
-        const delStmt = await tx.prepare('DELETE FROM _sirannon_column_versions WHERE table_name = ? AND row_id = ?')
+        const delStmt = await tx.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`)
         await delStmt.run(row.table_name, String(row.row_id))
         continue
       }
@@ -144,7 +145,7 @@ export class BatchReader {
       }
 
       const upsertStmt = await tx.prepare(
-        `INSERT INTO _sirannon_column_versions (table_name, row_id, column_name, hlc, node_id)
+        `INSERT INTO ${COLUMN_VERSIONS_TABLE} (table_name, row_id, column_name, hlc, node_id)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(table_name, row_id, column_name)
          DO UPDATE SET hlc = excluded.hlc, node_id = excluded.node_id`,

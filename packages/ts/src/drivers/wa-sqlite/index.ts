@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
 export interface WaSqliteOptions {
@@ -36,7 +37,7 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
           // WAL may not be supported by all VFS implementations
         }
       }
-      await sqlite3.exec(db, 'PRAGMA synchronous = NORMAL')
+      await sqlite3.exec(db, `PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       await sqlite3.exec(db, 'PRAGMA foreign_keys = ON')
 
       async function execStatements(

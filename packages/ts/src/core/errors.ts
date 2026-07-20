@@ -114,6 +114,19 @@ export class CDCError extends SirannonError {
 }
 
 /**
+ * Thrown when a caller reaches for a table Sirannon reserves for itself. The
+ * internal bookkeeping tables and SQLite's own catalogue are off limits to the
+ * query API so a caller cannot read or corrupt the change log, replication
+ * ledger, or schema catalogue.
+ */
+export class ForbiddenSqlError extends SirannonError {
+  constructor(message: string) {
+    super(message, 'FORBIDDEN_SQL')
+    this.name = 'ForbiddenSqlError'
+  }
+}
+
+/**
  * Thrown when a backup operation fails, whether that is an online backup via
  * the SQLite backup API or a file-level copy.
  */
@@ -144,6 +157,20 @@ export class MaxDatabasesError extends SirannonError {
   constructor(max: number) {
     super(`Maximum number of open databases (${max}) reached`, 'MAX_DATABASES')
     this.name = 'MaxDatabasesError'
+  }
+}
+
+/**
+ * Thrown when more writes are pending than the writer-worker limit allows. It
+ * signals load shedding, so the server maps it to a 503 with a Retry-After hint.
+ */
+export class WriteOverloadError extends SirannonError {
+  constructor(
+    public readonly limit: number,
+    public readonly retryAfterMs: number,
+  ) {
+    super(`Write rejected: ${limit} writes already pending`, 'WRITE_OVERLOADED')
+    this.name = 'WriteOverloadError'
   }
 }
 

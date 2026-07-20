@@ -28,7 +28,6 @@ export class SeededRng {
   }
 }
 
-// zeta, alpha, and eta follow the sampler in Gray et al., SIGMOD 1994, as YCSB uses it.
 export class ZipfianGenerator {
   private readonly items: number
   private readonly theta: number

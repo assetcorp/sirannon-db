@@ -23,8 +23,7 @@ const FIXED_TIMESTAMP = '2026-01-01T00:00:00.000Z'
 
 const ORDER_LINES = 4
 const MAX_LINE_QUANTITY = 5
-// TPC-C clause 2.4.2.2 restock quantity.
-const STOCK_REPLENISH = 91
+const TPCC_2_4_2_2_RESTOCK_QUANTITY = 91
 
 const INSERT_ORDER = 'INSERT INTO orders (customer_id, total, status, created_at) VALUES (?, ?, ?, ?)'
 const TAKE_STOCK = 'UPDATE products SET stock = CASE WHEN stock >= ? THEN stock - ? ELSE stock - ? + ? END WHERE id = ?'
@@ -128,7 +127,7 @@ export function oltpWorkloads(): Workload[] {
             const productCount = Math.min(ctx.dataSize, PRODUCT_COUNT_CAP)
             for (let line = 0; line < ORDER_LINES; line++) {
               const quantity = ctx.rng.below(MAX_LINE_QUANTITY) + 1
-              sets.push([quantity, quantity, quantity, STOCK_REPLENISH, ctx.rng.below(productCount) + 1])
+              sets.push([quantity, quantity, quantity, TPCC_2_4_2_2_RESTOCK_QUANTITY, ctx.rng.below(productCount) + 1])
             }
             sets.push([total, customerId])
             return sets

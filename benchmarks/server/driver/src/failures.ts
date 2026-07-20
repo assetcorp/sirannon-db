@@ -33,13 +33,11 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-// codeOf runs on every failure and must stay cheap; kindOf runs once per distinct code.
 export interface FailureClassifier {
   codeOf(err: unknown): string
   kindOf(code: string, err: unknown): FailureKind
 }
 
-// Must not outlive one pass, or a code's first exemplar is attributed to later rates and workloads.
 export class FailureInterner {
   private readonly byCode = new Map<string, FailureCategory>()
   private readonly classifier: FailureClassifier
@@ -72,7 +70,6 @@ interface FailureCount {
   count: number
 }
 
-// Keyed on object identity, so every category must come from one FailureInterner or counts split.
 export class FailureTally {
   private readonly byCategory = new Map<FailureCategory, FailureCount>()
 

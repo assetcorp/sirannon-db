@@ -5,7 +5,6 @@ const RUN_ID_ENV = 'BENCH_RUN_ID'
 const RUNS_DIRNAME = 'runs'
 export const MANIFEST_NAME = 'run.json'
 
-// The leading-alphanumeric class rejects '.' and '..'; widening it reopens path traversal.
 const SEGMENT = /^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/
 
 function pad(value: number, width: number): string {

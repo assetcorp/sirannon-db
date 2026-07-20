@@ -243,5 +243,63 @@ describe('SubscriptionManager', () => {
 
       expect(received).toHaveLength(0)
     })
+
+    it('matches BigInt filter values against BigInt row values beyond 2^53', () => {
+      const manager = new SubscriptionManager()
+      const received: ChangeEvent[] = []
+
+      manager.subscribe('ledgers', { balance: 9007199254740993n }, e => received.push(e))
+
+      manager.dispatch([
+        { type: 'insert', table: 'ledgers', row: { id: 1, balance: 9007199254740993n }, seq: 1n, timestamp: 1 },
+        { type: 'insert', table: 'ledgers', row: { id: 2, balance: 9007199254740995n }, seq: 2n, timestamp: 1 },
+      ])
+
+      expect(received).toHaveLength(1)
+      expect(received[0].row.id).toBe(1)
+    })
+
+    it('matches across the bigint/number boundary in both directions', () => {
+      const manager = new SubscriptionManager()
+      const received: ChangeEvent[] = []
+
+      manager.subscribe('ledgers', { balance: 42n }, e => received.push(e))
+      manager.subscribe('ledgers', { count: 7 }, e => received.push(e))
+
+      manager.dispatch([
+        { type: 'insert', table: 'ledgers', row: { id: 1, balance: 42, count: 0 }, seq: 1n, timestamp: 1 },
+        { type: 'insert', table: 'ledgers', row: { id: 2, balance: 0, count: 7n }, seq: 2n, timestamp: 1 },
+      ])
+
+      expect(received).toHaveLength(2)
+      expect(received.map(e => e.row.id)).toEqual([1, 2])
+    })
+
+    it('does not match a BigInt filter against a non-integer number', () => {
+      const manager = new SubscriptionManager()
+      const received: ChangeEvent[] = []
+
+      manager.subscribe('ledgers', { balance: 42n }, e => received.push(e))
+
+      manager.dispatch([{ type: 'insert', table: 'ledgers', row: { id: 1, balance: 42.5 }, seq: 1n, timestamp: 1 }])
+
+      expect(received).toHaveLength(0)
+    })
+
+    it('matches BLOB filter values by byte equality', () => {
+      const manager = new SubscriptionManager()
+      const received: ChangeEvent[] = []
+
+      manager.subscribe('files', { payload: Buffer.from([0x00, 0xff]) }, e => received.push(e))
+
+      manager.dispatch([
+        { type: 'insert', table: 'files', row: { id: 1, payload: Buffer.from([0x00, 0xff]) }, seq: 1n, timestamp: 1 },
+        { type: 'insert', table: 'files', row: { id: 2, payload: Buffer.from([0x00, 0xfe]) }, seq: 2n, timestamp: 1 },
+        { type: 'insert', table: 'files', row: { id: 3, payload: Buffer.from([0x00]) }, seq: 3n, timestamp: 1 },
+      ])
+
+      expect(received).toHaveLength(1)
+      expect(received[0].row.id).toBe(1)
+    })
   })
 })

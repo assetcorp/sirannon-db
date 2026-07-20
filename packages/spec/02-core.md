@@ -312,6 +312,18 @@ Before passing parameters to a prepared statement, normalise them:
   `[params]` for engines that expect positional binding of named
   parameter objects.
 
+### Reserved Identifiers
+
+The query API refuses any statement that reaches Sirannon's
+internal tables. Identifiers beginning with `_sirannon_` are
+private to the engine, so a read or a write against them fails
+with `FORBIDDEN_SQL`. You can still read the `sqlite_` catalogue,
+as you can in any SQL engine, but a statement that modifies it
+fails with the same code, and so do `PRAGMA writable_schema`,
+`ATTACH`, and `DETACH`. The engine maintains its own tables through
+internal connections that bypass this check, so change tracking,
+migrations, and replication keep working.
+
 ---
 
 ## Change Data Capture (CDC)
@@ -619,12 +631,27 @@ BackupScheduleOptions {
   cron:      string       (cron expression)
   destDir:   string
   maxFiles?: number       (default: 5, recommended)
+  timezone?: string       (IANA name; default: host time zone)
   onError?:  (error: Error) -> void
 }
 ```
 
 Scheduled backups execute on the cron schedule, create a backup
 in `destDir`, and rotate old files.
+
+Sirannon evaluates the cron expression in `timezone` when you
+supply one, and in the host's local time zone otherwise. When
+the clocks go forward for daylight saving time, the scheduler
+skips the missing hour, so a backup timed for that hour does not
+run that day. When the clocks go back, it runs a backup timed
+for the repeated hour once, at its first occurrence.
+
+The scheduler checks the time on a recurring tick and does not
+backfill. When the host sleeps or the clock jumps forward past a
+scheduled time, that occurrence is skipped rather than run late.
+When the clock steps backward, the scheduler waits until real
+time passes the last completed backup, so a rewind repeats
+nothing.
 
 ---
 

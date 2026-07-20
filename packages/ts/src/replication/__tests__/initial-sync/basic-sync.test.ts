@@ -99,6 +99,42 @@ describe('Initial Sync', () => {
       expect(idxRow?.name).toBe('idx_products_sku')
     })
 
+    it('syncs pre-existing rows with integers beyond 2^53 and BLOBs without corruption', async () => {
+      const primary = await ctx.createPrimary(NODE_P, [
+        'CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER, payload BLOB)',
+      ])
+      await primary.engine.start()
+
+      await primary.engine.execute("INSERT INTO ledgers VALUES (1, 9007199254740993, X'0001FFAB')")
+      await primary.engine.execute('INSERT INTO ledgers VALUES (2, 9223372036854775807, NULL)')
+      await primary.engine.execute('INSERT INTO ledgers VALUES (3, -9223372036854775808, NULL)')
+      await primary.engine.execute('INSERT INTO ledgers VALUES (4, 42, NULL)')
+
+      const replica = await ctx.createReplica(NODE_R)
+      await replica.engine.start()
+
+      await wait(2000)
+
+      const status = replica.engine.status()
+      expect(status.syncState?.phase).toBe('ready')
+
+      const textStmt = await replica.conn.prepare(
+        'SELECT CAST(balance AS TEXT) AS balance_text FROM ledgers ORDER BY id',
+      )
+      const textRows = (await textStmt.all()) as { balance_text: string }[]
+      expect(textRows.map(r => r.balance_text)).toEqual([
+        '9007199254740993',
+        '9223372036854775807',
+        '-9223372036854775808',
+        '42',
+      ])
+
+      const valueStmt = await replica.conn.prepare('SELECT balance, payload FROM ledgers WHERE id = 1')
+      const valueRow = (await valueStmt.get()) as { balance: unknown; payload: Uint8Array }
+      expect(valueRow.balance).toBe(9007199254740993n)
+      expect(Buffer.compare(Buffer.from(valueRow.payload), Buffer.from([0x00, 0x01, 0xff, 0xab]))).toBe(0)
+    })
+
     it('syncs empty database (schema only, no rows)', async () => {
       const primary = await ctx.createPrimary(NODE_P, ['CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)'])
       await primary.engine.start()

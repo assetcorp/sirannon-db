@@ -144,7 +144,10 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-# Benchmark results
-packages/ts/benchmarks/results/*.json
+# Python bytecode caches
+__pycache__/
+*.py[cod]
 
 .nx/
+
+loadtest/results*/

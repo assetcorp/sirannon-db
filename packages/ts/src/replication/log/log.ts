@@ -1,5 +1,6 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
+import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import type { HLC } from '../hlc.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, SyncPhase, SyncTableManifest } from '../types.js'
 import { BatchApplier } from './batch-applier.js'
@@ -30,7 +31,7 @@ export class ReplicationLog {
     conn: SQLiteConnection,
     localNodeId: string,
     hlc: HLC,
-    private readonly changesTable: string = '_sirannon_changes',
+    private readonly changesTable: string = CHANGES_TABLE,
     tracker?: ChangeTracker,
   ) {
     this.pkResolver = new PkResolver(conn)

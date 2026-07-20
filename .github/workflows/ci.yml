@@ -39,16 +39,46 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: pnpm nx run sirannon-ts:lint
+        run: pnpm lint
 
       - name: Typecheck
-        run: pnpm nx run sirannon-ts:typecheck
+        run: pnpm typecheck
 
       - name: Build
-        run: pnpm nx run sirannon-ts:build
+        run: pnpm build
+
+      - name: Assert browser entries carry no Node builtins
+        run: pnpm check:bundle
 
       - name: Test
-        run: pnpm nx run sirannon-ts:test
+        run: pnpm test
+
+  benchmarks-writeup:
+    name: Benchmarks writeup drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check BENCHMARKS.md matches the latest recorded run
+        run: python3 benchmarks/writeup/generate.py --check
+
+  benchmarks-harness:
+    name: Benchmarks harness tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the harness
+        working-directory: benchmarks/server
+        run: python3 -m pip install -e '.[dev]'
+
+      - name: Run harness tests
+        working-directory: benchmarks/server
+        run: python3 -m pytest -q
 
   e2e:
     name: Replication E2E (Node ${{ matrix.node-version }})

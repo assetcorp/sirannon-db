@@ -1,5 +1,5 @@
 import type { ChangeEvent } from '../core/types.js'
-import type { RemoteSubscription, RemoteSubscriptionBuilder, Transport } from './types.js'
+import type { RemoteSubscription, RemoteSubscriptionBuilder, SubscribeOptions, Transport } from './types.js'
 
 /**
  * Builds a remote CDC subscription with optional row-level filters.
@@ -20,8 +20,8 @@ export class RemoteSubscriptionBuilderImpl implements RemoteSubscriptionBuilder 
     return this
   }
 
-  subscribe(callback: (event: ChangeEvent) => void): Promise<RemoteSubscription> {
+  subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription> {
     const filter = Object.keys(this.conditions).length > 0 ? this.conditions : undefined
-    return this.transport.subscribe(this.table, filter, callback)
+    return this.transport.subscribe(this.table, filter, callback, options)
   }
 }

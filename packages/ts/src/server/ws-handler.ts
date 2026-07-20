@@ -1,33 +1,33 @@
-import { ChangeTracker } from '../core/cdc/change-tracker.js'
-import { SubscriptionManager } from '../core/cdc/subscription.js'
+import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Database } from '../core/database.js'
-import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
-import { toExecuteResponse } from './protocol.js'
+import { decodeBoundParams } from './protocol.js'
+import { CdcContextRegistry } from './ws-cdc.js'
+import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
+import type { WSConnection, WSSendOutcome } from './ws-connection.js'
+import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
+import type { WSOperationContext } from './ws-operations.js'
+import {
+  handleBatchMessage,
+  handleExecuteMessage,
+  handleLoadMessage,
+  handleQueryMessage,
+  handleTransactionMessage,
+} from './ws-operations.js'
 
-const DEFAULT_POLL_INTERVAL_MS = 50
+export type { WSConnection, WSSendOutcome } from './ws-connection.js'
+
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
-
-export interface WSConnection {
-  send(data: string): void
-  close(code?: number, reason?: string): void
-}
 
 interface ConnectionState {
   databaseId: string
   database: Database
   executionTarget: ServerExecutionTarget
   subscriptions: Map<string, Subscription>
-}
-
-interface CDCContext {
-  cdcConn: SQLiteConnection
-  tracker: ChangeTracker
-  manager: SubscriptionManager
-  stopPolling: () => void
+  overloaded: boolean
 }
 
 export class WSHandler {
@@ -35,14 +35,14 @@ export class WSHandler {
   private readonly maxPayloadLength: number
   private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
-  private readonly cdcContexts = new Map<string, CDCContext>()
-  private readonly cdcPending = new Map<string, Promise<CDCContext>>()
+  private readonly cdc: CdcContextRegistry
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.resolveExecutionTarget = options?.resolveExecutionTarget
+    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs)
   }
 
   async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
@@ -84,14 +84,27 @@ export class WSHandler {
       database,
       executionTarget,
       subscriptions: new Map(),
+      overloaded: false,
     })
+  }
+
+  /**
+   * Tears down a connection whose outbound buffer overflowed. Closing lets the
+   * client reject in-flight requests and reconnect; guarding on `overloaded`
+   * keeps a burst of dropped frames from repeatedly re-closing the socket.
+   */
+  handleOverload(conn: WSConnection): void {
+    const state = this.connections.get(conn)
+    if (!state || state.overloaded) return
+    state.overloaded = true
+    conn.close(WS_CLOSE_OVERLOADED, 'Connection overloaded: backpressure limit exceeded')
   }
 
   handleMessage(conn: WSConnection, data: string): void {
     const state = this.connections.get(conn)
     if (!state) return
 
-    if (data.length > this.maxPayloadLength) {
+    if (Buffer.byteLength(data) > this.maxPayloadLength) {
       this.sendError(conn, '', 'PAYLOAD_TOO_LARGE', 'Message exceeds maximum payload length')
       return
     }
@@ -115,7 +128,8 @@ export class WSHandler {
     }
 
     if (typeof msg.id !== 'string') {
-      this.sendError(conn, '', 'INVALID_MESSAGE', 'Message must have a string "id" field')
+      const echoId = typeof msg.id === 'number' || typeof msg.id === 'bigint' ? String(msg.id) : ''
+      this.sendError(conn, echoId, 'INVALID_MESSAGE', 'Message must have a string "id" field')
       return
     }
 
@@ -123,10 +137,19 @@ export class WSHandler {
 
     switch (msg.type) {
       case 'query':
-        this.handleQuery(conn, state, msg, id)
+        handleQueryMessage(this.operationContext(conn, state), msg, id)
         break
       case 'execute':
-        this.handleExecute(conn, state, msg, id)
+        handleExecuteMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'transaction':
+        handleTransactionMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'batch':
+        handleBatchMessage(this.operationContext(conn, state), msg, id)
+        break
+      case 'load':
+        handleLoadMessage(this.operationContext(conn, state), msg, id)
         break
       case 'subscribe':
         this.handleSubscribe(conn, state, msg, id)
@@ -148,7 +171,7 @@ export class WSHandler {
     }
     state.subscriptions.clear()
 
-    this.maybeCleanupCDC(state.databaseId)
+    this.cdc.maybeCleanup(state.databaseId)
     this.connections.delete(conn)
   }
 
@@ -169,68 +192,15 @@ export class WSHandler {
     }
     this.connections.clear()
 
-    for (const ctx of this.cdcContexts.values()) {
-      ctx.stopPolling()
-      try {
-        await ctx.cdcConn.close()
-      } catch {
-        /* best effort */
-      }
-    }
-    this.cdcContexts.clear()
+    await this.cdc.closeAll()
   }
 
-  private async handleQuery(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.sql !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Query message requires a "sql" string field')
-      return
-    }
-
-    if (!this.isValidParams(msg.params)) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"params" must be an object or array')
-      return
-    }
-
-    try {
-      const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const rows = await state.executionTarget.query(msg.sql, params)
-      this.send(conn, { type: 'result', id, data: { rows } })
-    } catch (err) {
-      this.sendSirannonError(conn, id, err)
-    }
-  }
-
-  private async handleExecute(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.sql !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Execute message requires a "sql" string field')
-      return
-    }
-
-    if (!this.isValidParams(msg.params)) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"params" must be an object or array')
-      return
-    }
-
-    try {
-      const params = (msg.params ?? undefined) as Record<string, unknown> | unknown[] | undefined
-      const result = await state.executionTarget.execute(msg.sql, params)
-      this.send(conn, {
-        type: 'result',
-        id,
-        data: toExecuteResponse(result),
-      })
-    } catch (err) {
-      this.sendSirannonError(conn, id, err)
+  private operationContext(conn: WSConnection, state: ConnectionState): WSOperationContext {
+    return {
+      target: state.executionTarget,
+      sendResult: (id, data) => this.send(conn, { type: 'result', id, data }),
+      sendError: (id, code, message) => this.sendError(conn, id, code, message),
+      sendCaughtError: (id, err) => this.sendSirannonError(conn, id, err),
     }
   }
 
@@ -269,25 +239,113 @@ export class WSHandler {
       return
     }
 
-    const filter = (msg.filter ?? undefined) as Record<string, unknown> | undefined
-    let ctx: CDCContext | null = null
+    const decodedFilter = decodeBoundParams(msg.filter, 'filter')
+    if (!decodedFilter.ok) {
+      this.sendError(conn, id, 'INVALID_MESSAGE', decodedFilter.message)
+      return
+    }
+    const filter = decodedFilter.value as Record<string, unknown> | undefined
 
+    let sinceSeq: bigint | undefined
+    if (msg.sinceSeq !== undefined) {
+      if (typeof msg.sinceSeq !== 'string' || !/^\d+$/.test(msg.sinceSeq)) {
+        this.sendError(conn, id, 'INVALID_MESSAGE', '"sinceSeq" must be a non-negative integer string')
+        return
+      }
+      sinceSeq = BigInt(msg.sinceSeq)
+    }
+
+    let clientEpoch: string | undefined
+    if (msg.epoch !== undefined) {
+      if (typeof msg.epoch !== 'string') {
+        this.sendError(conn, id, 'INVALID_MESSAGE', '"epoch" must be a string')
+        return
+      }
+      clientEpoch = msg.epoch
+    }
+
+    if (sinceSeq === undefined) {
+      await this.subscribeLive(conn, state, id, msg.table, filter)
+      return
+    }
+
+    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq, clientEpoch)
+  }
+
+  private async subscribeLive(
+    conn: WSConnection,
+    state: ConnectionState,
+    id: string,
+    table: string,
+    filter: Record<string, unknown> | undefined,
+  ): Promise<void> {
     try {
-      ctx = await this.ensureCDC(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, msg.table)
+      const ctx = await this.cdc.ensure(state.databaseId, state.database)
+      await ctx.tracker.watch(ctx.cdcConn, table)
 
-      const sub = ctx.manager.subscribe(msg.table, filter, (event: ChangeEvent) => {
+      const boundary = ctx.tracker.cursor
+      const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
         this.sendChange(conn, id, event)
       })
 
       state.subscriptions.set(id, sub)
-      this.send(conn, { type: 'subscribed', id })
+      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch })
     } catch (err) {
-      if (ctx?.manager.size === 0) {
-        this.maybeCleanupCDC(state.databaseId)
-      }
+      this.cdc.maybeCleanup(state.databaseId)
       this.sendSirannonError(conn, id, err)
     }
+  }
+
+  private async subscribeResuming(
+    conn: WSConnection,
+    state: ConnectionState,
+    id: string,
+    table: string,
+    filter: Record<string, unknown> | undefined,
+    sinceSeq: bigint,
+    clientEpoch: string | undefined,
+  ): Promise<void> {
+    let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
+    let primed: PrimedSubscription
+    let boundary: bigint
+    let resync: boolean
+    try {
+      ctx = await this.cdc.ensure(state.databaseId, state.database)
+      await ctx.tracker.watch(ctx.cdcConn, table)
+
+      boundary = ctx.tracker.cursor
+      primed = new PrimedSubscription(
+        sinceSeq,
+        event => this.sendChange(conn, id, event),
+        () => this.handleOverload(conn),
+      )
+      const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
+      state.subscriptions.set(id, sub)
+
+      const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
+      const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
+      resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
+      this.send(conn, {
+        type: 'subscribed',
+        id,
+        seq: boundary.toString(),
+        epoch: ctx.epoch,
+        ...(resync ? { resync: true } : {}),
+      })
+    } catch (err) {
+      this.cdc.maybeCleanup(state.databaseId)
+      this.sendSirannonError(conn, id, err)
+      return
+    }
+
+    if (!resync) {
+      try {
+        await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
+      } catch {
+        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch, resync: true })
+      }
+    }
+    primed.goLive()
   }
 
   private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
@@ -300,93 +358,7 @@ export class WSHandler {
     sub.unsubscribe()
     state.subscriptions.delete(id)
     this.send(conn, { type: 'unsubscribed', id })
-    this.maybeCleanupCDC(state.databaseId)
-  }
-
-  private async ensureCDC(databaseId: string, database: Database): Promise<CDCContext> {
-    const existing = this.cdcContexts.get(databaseId)
-    if (existing) return existing
-
-    const pending = this.cdcPending.get(databaseId)
-    if (pending) return pending
-
-    const promise = this.createCDCContext(database)
-    this.cdcPending.set(databaseId, promise)
-    try {
-      const ctx = await promise
-      if (this.closed) {
-        ctx.stopPolling()
-        await ctx.cdcConn.close().catch(() => {})
-        throw new SirannonError('WebSocket handler is shut down', 'HANDLER_CLOSED')
-      }
-      this.cdcContexts.set(databaseId, ctx)
-      return ctx
-    } finally {
-      this.cdcPending.delete(databaseId)
-    }
-  }
-
-  private async createCDCContext(database: Database): Promise<CDCContext> {
-    const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
-
-    const tracker = new ChangeTracker()
-    const manager = new SubscriptionManager()
-    try {
-      await tracker.advanceToLatest(cdcConn)
-    } catch (err) {
-      await cdcConn.close().catch(() => {})
-      throw err
-    }
-
-    let polling = false
-    let consecutiveErrors = 0
-    const MAX_CONSECUTIVE_ERRORS = 10
-
-    const stopPolling = () => {
-      clearInterval(interval)
-    }
-
-    const tick = async () => {
-      if (manager.size === 0) return
-      if (polling) return
-      polling = true
-      try {
-        const events = await tracker.poll(cdcConn)
-        if (events.length > 0) {
-          manager.dispatch(events)
-        }
-        consecutiveErrors = 0
-      } catch {
-        consecutiveErrors++
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          stopPolling()
-        }
-      } finally {
-        polling = false
-      }
-    }
-    const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
-      unref?: () => void
-    }
-    interval.unref?.()
-
-    return { cdcConn, tracker, manager, stopPolling }
-  }
-
-  private maybeCleanupCDC(databaseId: string): void {
-    const ctx = this.cdcContexts.get(databaseId)
-    if (!ctx || ctx.manager.size > 0) return
-
-    ctx.stopPolling()
-    ctx.cdcConn.close().catch(() => {
-      /* best effort */
-    })
-    this.cdcContexts.delete(databaseId)
-  }
-
-  private isValidParams(params: unknown): boolean {
-    if (params === undefined || params === null) return true
-    return typeof params === 'object'
+    this.cdc.maybeCleanup(state.databaseId)
   }
 
   private async resolveTarget(databaseId: string): Promise<ServerExecutionTarget | null> {
@@ -396,12 +368,19 @@ export class WSHandler {
     return (await this.resolveExecutionTarget(databaseId)) ?? null
   }
 
-  private send(conn: WSConnection, msg: WSServerMessage): void {
+  private send(conn: WSConnection, msg: WSServerMessage): WSSendOutcome {
+    let data: string
     try {
-      conn.send(JSON.stringify(msg))
+      data = JSON.stringify(msg)
     } catch {
-      // Connection might be closing; ignore send failures
+      this.handleOverload(conn)
+      return 'dropped'
     }
+    const outcome = conn.send(data)
+    if (outcome === 'dropped') {
+      this.handleOverload(conn)
+    }
+    return outcome
   }
 
   private sendError(conn: WSConnection, id: string, code: string, message: string): void {
@@ -414,15 +393,15 @@ export class WSHandler {
     this.sendError(conn, id, code, message)
   }
 
-  private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): void {
-    this.send(conn, {
+  private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
+    return this.send(conn, {
       type: 'change',
       id: subscriptionId,
       event: {
         type: event.type,
         table: event.table,
-        row: event.row as Record<string, unknown>,
-        oldRow: event.oldRow as Record<string, unknown> | undefined,
+        row: encodeTaggedValues(event.row) as Record<string, unknown>,
+        oldRow: event.oldRow === undefined ? undefined : (encodeTaggedValues(event.oldRow) as Record<string, unknown>),
         seq: event.seq.toString(),
         timestamp: event.timestamp,
       },

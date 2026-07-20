@@ -1,5 +1,6 @@
-import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
-import { ConnectionPoolError } from './errors.js'
+import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import { ConnectionPoolError, SirannonError } from './errors.js'
+import type { WorkerHostOptions } from './worker/host.js'
 
 export interface ConnectionPoolOptions {
   driver: SQLiteDriver
@@ -7,6 +8,9 @@ export interface ConnectionPoolOptions {
   readOnly?: boolean
   readPoolSize?: number
   walMode?: boolean
+  synchronous?: SynchronousLevel
+  useWriterWorker?: boolean
+  workerHostOptions?: WorkerHostOptions
 }
 
 async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promise<void> {
@@ -32,14 +36,24 @@ export class ConnectionPool {
   }
 
   static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
-    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true } = options
+    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true, synchronous } = options
 
     let writer: SQLiteConnection | null = null
     const readers: SQLiteConnection[] = []
 
     try {
       if (!readOnly) {
-        writer = await driver.open(path, { walMode })
+        if (options.useWriterWorker) {
+          if (!driver.startWriterHost) {
+            throw new SirannonError(
+              'writerWorker is enabled but the driver does not carry a worker entry; use a driver that supports it or disable writerWorker',
+              'WRITER_WORKER_UNSUPPORTED',
+            )
+          }
+          writer = await driver.startWriterHost(path, { walMode, synchronous }, options.workerHostOptions)
+        } else {
+          writer = await driver.open(path, { walMode, synchronous })
+        }
       }
 
       const poolSize = driver.capabilities.multipleConnections ? Math.max(readPoolSize, 1) : 0

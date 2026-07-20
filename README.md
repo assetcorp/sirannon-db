@@ -8,7 +8,9 @@
 
 Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
 
-In matched-durability benchmarks against Postgres 17, Sirannon leads across single-client workloads because the database runs in your process with no network hop, and the margin narrows under concurrency where Postgres parallelises across its connection pool. Every published figure is generated from a recorded run on a disclosed machine, and the same benchmarks show where Postgres wins. See the full [methodology and results](packages/ts/benchmarks/BENCHMARKS.md).
+Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).
+
+The benchmarks compare Sirannon against Postgres 17 on the same OLTP workloads, driving each engine through the client it provides and matching durability on both sides. Every published figure is generated from a recorded run on a disclosed machine, and the page shows where each engine wins. See the full [methodology and results](BENCHMARKS.md).
 
 See a three-node cluster keep serving through a primary failure in the [distributed entitlements example](packages/ts/examples/distributed-entitlements/), which runs the etcd coordinator, gRPC replication with mutual TLS, and fault injection on your machine.
 
@@ -20,7 +22,7 @@ Sirannon has two levels of maturity. The core data layer, the server, the client
 
 | Part | Status | Details |
 | --- | --- | --- |
-| Core engine (`@delali/sirannon-db`) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
+| Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `@delali/sirannon-db/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server runs client SQL by design, so read the [security section](packages/ts/README.md#security) before you expose it. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
 | Coordinator-backed automatic failover (`@delali/sirannon-db/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
@@ -86,6 +88,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 ## Features
 
 - **Queries and transactions** - Execute reads, writes, and batch operations. Transactions provide full ACID guarantees.
+- **Bulk load** - Load a large dataset in one transaction under relaxed durability, then restore the configured level, so a big import pays one durability barrier instead of one per row.
 - **Connection pooling** - 1 dedicated write connection + N read connections (default 4). WAL mode enabled by default for concurrent reads during writes.
 - **Change data capture (CDC)** - Watch tables for INSERT, UPDATE, and DELETE events in real time through SQLite triggers and configurable polling.
 - **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations, tracked in a `_sirannon_migrations` table. Supports rollback to any version.
@@ -93,7 +96,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Hooks** - Before/after hooks for queries, connections, and subscriptions. Throwing from a before-hook denies the operation.
 - **Metrics** - Plug in callbacks to collect query timing, connection events, and CDC activity.
 - **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
-- **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Includes health endpoints, CORS configuration, and an `onRequest` hook for authentication.
+- **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Query, execute, transaction, batch, and bulk-load routes on both transports, plus health endpoints, CORS configuration, a configurable body-size cap, and an `onRequest` hook for authentication.
 - **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
 - **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas. The production network transport is gRPC with TLS support.
 - **Coordinator-backed failover** - Use etcd-backed authority, primary terms, in-sync sets, and write concerns. Minority partitions fail closed for writes.
@@ -123,11 +126,11 @@ cd packages/ts/examples/distributed-entitlements && pnpm run dev
 
 ## Architecture
 
+Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
+
 <p align="center">
   <img src="docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
 </p>
-
-Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
 
 ## Distributed replication FAQ
 
@@ -192,7 +195,7 @@ Full API reference, code examples, and configuration tables are in the [TypeScri
 
 ## Benchmarks
 
-The benchmark suite compares Sirannon's embedded SQLite performance against Postgres 17 across micro-operations, YCSB, TPC-C, and concurrency scaling. All benchmarks support driver switching via the `BENCH_DRIVER` environment variable. See [`packages/ts/benchmarks/BENCHMARKS.md`](packages/ts/benchmarks/BENCHMARKS.md) for setup, configuration, and statistical analysis methodology.
+The benchmark suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records Sirannon-only characterizations: change-feed latency, cold start, and connection scaling. The harness is a Python project under [`benchmarks/server`](benchmarks/server); see [`BENCHMARKS.md`](BENCHMARKS.md) for the methodology and the latest results.
 
 ## Development
 

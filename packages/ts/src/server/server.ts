@@ -1,98 +1,82 @@
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
+import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   ClusterStatusInfo,
-  CorsOptions,
   OnRequestHook,
   ReplicationStatusInfo,
   RequestContext,
-  RequestDenial,
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
+import type { ResolvedCors } from './cors.js'
+import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
 import type { DbRouteHandler } from './http-handler.js'
 import {
+  handleBatch,
   handleClusterStatus,
   handleExecute,
+  handleLoad,
   handleQuery,
   handleTransaction,
   initAbortHandler,
   readBody,
   sendError,
 } from './http-handler.js'
-import type { WSConnection } from './ws-handler.js'
+import { decodeRemoteAddress, runOnRequest } from './request-hook.js'
 import { WSHandler } from './ws-handler.js'
+import { registerWebSocketRoute } from './ws-route.js'
 
-interface ResolvedCors {
-  origin: string | string[]
-  methods: string
-  headers: string
-}
+const DEFAULT_MAX_BODY_BYTES = 1_048_576
+const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
+/**
+ * uWebSockets.js reads maxPayloadLength and maxBackpressure into unsigned
+ * 32-bit fields (ToInt32 in the addon, unsigned int in the C++ core), so any
+ * larger value is silently applied modulo 2^32. Reject those at construction
+ * instead of running with a limit the caller never configured.
+ */
+const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 
-function resolveCors(cors: boolean | CorsOptions | undefined): ResolvedCors | null {
-  if (!cors) return null
-  if (cors === true) {
-    return {
-      origin: '*',
-      methods: 'GET, POST, OPTIONS',
-      headers: 'Content-Type, Authorization',
-    }
+function resolveMaxBodyBytes(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_BODY_BYTES
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new SirannonError(
+      'ServerOptions.maxBodyBytes must be a positive integer number of bytes',
+      'INVALID_MAX_BODY_BYTES',
+    )
   }
-  return {
-    origin: cors.origin ?? '*',
-    methods: cors.methods?.join(', ') ?? 'GET, POST, OPTIONS',
-    headers: cors.headers?.join(', ') ?? 'Content-Type, Authorization',
+  if (value > UWS_MAX_LIMIT_BYTES) {
+    throw new SirannonError(
+      `ServerOptions.maxBodyBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
+      'INVALID_MAX_BODY_BYTES',
+    )
   }
+  return value
 }
 
-function matchOrigin(cors: ResolvedCors, requestOrigin: string): string | null {
-  if (cors.origin === '*') return '*'
-  if (typeof cors.origin === 'string') return cors.origin
-  if (cors.origin.includes(requestOrigin)) return requestOrigin
-  return null
-}
-
-function writeCorsOrigin(res: uWS.HttpResponse, cors: ResolvedCors, requestOrigin: string): void {
-  const allowed = matchOrigin(cors, requestOrigin)
-  if (!allowed) return
-  res.writeHeader('Access-Control-Allow-Origin', allowed)
-  if (allowed !== '*') {
-    res.writeHeader('Vary', 'Origin')
+function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number): number {
+  const resolved = value ?? Math.max(DEFAULT_WS_BACKPRESSURE_BYTES, maxBodyBytes)
+  if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved <= 0) {
+    throw new SirannonError(
+      'ServerOptions.maxWebSocketBackpressureBytes must be a positive integer number of bytes',
+      'INVALID_WS_BACKPRESSURE',
+    )
   }
-}
-
-function selectWebSocketProtocol(header: string): string {
-  const [firstProtocol] = header.split(',')
-  return firstProtocol?.trim() ?? ''
-}
-
-function decodeRemoteAddress(res: uWS.HttpResponse): string {
-  return Buffer.from(res.getRemoteAddressAsText()).toString()
-}
-
-function isRequestDenial(value: unknown): value is RequestDenial {
-  return typeof value === 'object' && value !== null && 'status' in value
-}
-
-async function runOnRequest(res: uWS.HttpResponse, ctx: RequestContext, hook: OnRequestHook): Promise<boolean> {
-  try {
-    const result = await hook(ctx)
-    if (isRequestDenial(result)) {
-      sendError(res, result.status, result.code, result.message)
-      return false
-    }
-    return true
-  } catch {
-    sendError(res, 500, 'HOOK_ERROR', 'onRequest hook threw an error')
-    return false
+  if (resolved > UWS_MAX_LIMIT_BYTES) {
+    throw new SirannonError(
+      `ServerOptions.maxWebSocketBackpressureBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
+      'INVALID_WS_BACKPRESSURE',
+    )
   }
-}
-
-interface WSUserData {
-  databaseId: string
-  conn?: WSConnection
+  if (resolved < maxBodyBytes) {
+    throw new SirannonError(
+      'ServerOptions.maxWebSocketBackpressureBytes must be at least maxBodyBytes so a single frame fits',
+      'INVALID_WS_BACKPRESSURE',
+    )
+  }
+  return resolved
 }
 
 export class SirannonServer {
@@ -107,6 +91,8 @@ export class SirannonServer {
   private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
+  private readonly maxBodyBytes: number
+  private readonly maxWsBackpressureBytes: number
 
   constructor(sirannon: Sirannon, options?: ServerOptions) {
     this.sirannon = sirannon
@@ -117,7 +103,13 @@ export class SirannonServer {
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
-    this.wsHandler = new WSHandler(sirannon, { resolveExecutionTarget: this.resolveExecutionTarget })
+    this.maxBodyBytes = resolveMaxBodyBytes(options?.maxBodyBytes)
+    this.maxWsBackpressureBytes = resolveWsBackpressure(options?.maxWebSocketBackpressureBytes, this.maxBodyBytes)
+    this.wsHandler = new WSHandler(sirannon, {
+      resolveExecutionTarget: this.resolveExecutionTarget,
+      maxPayloadLength: this.maxBodyBytes,
+      cdcRetentionMs: options?.cdcRetentionMs,
+    })
     this.app = uWS.App()
     this.registerRoutes()
   }
@@ -178,6 +170,8 @@ export class SirannonServer {
       '/db/:id/transaction',
       this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
     )
+    this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
 
     this.registerWebSocketRoute()
 
@@ -187,104 +181,12 @@ export class SirannonServer {
   }
 
   private registerWebSocketRoute(): void {
-    const wsHandler = this.wsHandler
-    const onRequestHook = this.onRequestHook
-
-    this.app.ws<WSUserData>('/db/:id', {
-      maxPayloadLength: 1_048_576,
-      idleTimeout: 120,
-      sendPingsAutomatically: true,
-
-      upgrade: (res, req, context) => {
-        const dbId = req.getParameter(0) ?? ''
-        const url = req.getUrl()
-        const method = req.getMethod()
-        const secWebSocketKey = req.getHeader('sec-websocket-key')
-        const secWebSocketProtocol = req.getHeader('sec-websocket-protocol')
-        const selectedWebSocketProtocol = selectWebSocketProtocol(secWebSocketProtocol)
-        const secWebSocketExtensions = req.getHeader('sec-websocket-extensions')
-
-        const headers: Record<string, string> = {}
-        req.forEach((key, value) => {
-          headers[key] = value
-        })
-
-        const remoteAddress = decodeRemoteAddress(res)
-        let aborted = false
-        res.onAborted(() => {
-          aborted = true
-        })
-
-        if (!onRequestHook) {
-          if (!aborted) {
-            res.upgrade<WSUserData>(
-              { databaseId: dbId },
-              secWebSocketKey,
-              selectedWebSocketProtocol,
-              secWebSocketExtensions,
-              context,
-            )
-          }
-          return
-        }
-
-        const ctx: RequestContext = {
-          headers,
-          method,
-          path: url,
-          databaseId: dbId,
-          remoteAddress,
-        }
-
-        runOnRequest(res, ctx, onRequestHook)
-          .then(allowed => {
-            if (aborted || !allowed) return
-            res.upgrade<WSUserData>(
-              { databaseId: dbId },
-              secWebSocketKey,
-              selectedWebSocketProtocol,
-              secWebSocketExtensions,
-              context,
-            )
-          })
-          .catch(() => {})
-      },
-
-      open: ws => {
-        const userData = ws.getUserData()
-        const conn: WSConnection = {
-          send(data: string) {
-            try {
-              ws.send(data, false)
-            } catch {
-              /* connection may already be closing */
-            }
-          },
-          close(code?: number, reason?: string) {
-            try {
-              ws.end(code, reason)
-            } catch {
-              /* already closed */
-            }
-          },
-        }
-        userData.conn = conn
-        wsHandler.handleOpen(conn, userData.databaseId).catch(() => {})
-      },
-
-      message: (ws, message) => {
-        const userData = ws.getUserData()
-        if (!userData.conn) return
-        const text = Buffer.from(message).toString('utf-8')
-        wsHandler.handleMessage(userData.conn, text)
-      },
-
-      close: ws => {
-        const userData = ws.getUserData()
-        if (!userData.conn) return
-        wsHandler.handleClose(userData.conn)
-        userData.conn = undefined
-      },
+    registerWebSocketRoute({
+      app: this.app,
+      wsHandler: this.wsHandler,
+      onRequestHook: this.onRequestHook,
+      maxBodyBytes: this.maxBodyBytes,
+      maxBackpressureBytes: this.maxWsBackpressureBytes,
     })
   }
 
@@ -303,7 +205,7 @@ export class SirannonServer {
   private wrapDbRoute(handler: DbRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
     const onRequestHook = this.onRequestHook
     const corsHeaders = this.cors
-    const MAX_BODY = 1_048_576
+    const maxBody = this.maxBodyBytes
 
     return (res, req) => {
       const dbId = req.getParameter(0) ?? ''
@@ -315,12 +217,12 @@ export class SirannonServer {
       }
 
       const abort = initAbortHandler(res)
-      const bodyPromise = readBody(res, MAX_BODY, abort)
+      const bodyPromise = readBody(res, maxBody, abort)
 
       if (!onRequestHook) {
         bodyPromise
           .then(async rawBody => {
-            if (abort.aborted) return
+            if (!abort.claim()) return
             try {
               await handler(res, dbId, rawBody, abort)
             } catch {
@@ -347,11 +249,11 @@ export class SirannonServer {
         remoteAddress,
       }
 
-      const hookPromise = runOnRequest(res, ctx, onRequestHook)
+      const hookPromise = runOnRequest(res, abort, ctx, onRequestHook)
 
       Promise.all([bodyPromise, hookPromise])
         .then(async ([rawBody, allowed]) => {
-          if (abort.aborted || !allowed) return
+          if (!allowed || !abort.claim()) return
           try {
             await handler(res, dbId, rawBody, abort)
           } catch {
@@ -397,11 +299,11 @@ export class SirannonServer {
         remoteAddress: decodeRemoteAddress(res),
       }
 
-      runOnRequest(res, ctx, onRequestHook)
+      const abort = initAbortHandler(res)
+      runOnRequest(res, abort, ctx, onRequestHook)
         .then(allowed => {
-          if (allowed) {
-            handler(res, dbId)
-          }
+          if (!allowed || !abort.claim()) return
+          handler(res, dbId)
         })
         .catch(() => {})
     }

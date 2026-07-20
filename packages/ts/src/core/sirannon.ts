@@ -56,7 +56,7 @@ export class Sirannon {
         this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
       }
 
-      db = await Database.create(id, path, this._driver, options, {
+      db = await Database.create(id, path, this._driver, this.withRegistryDefaults(options), {
         parentHooks: this.hookRegistry,
         metrics: this.metricsCollector ?? undefined,
       })
@@ -115,6 +115,12 @@ export class Sirannon {
     })
 
     return db
+  }
+
+  private withRegistryDefaults(options?: DatabaseOptions): DatabaseOptions | undefined {
+    const fallback = this.options.writerWorker
+    if (fallback === undefined || options?.writerWorker !== undefined) return options
+    return { ...options, writerWorker: fallback }
   }
 
   async close(id: string): Promise<void> {

@@ -151,7 +151,7 @@ describe('Database', () => {
     it('swallows backup cancel errors during close', async () => {
       const dbPath = join(getTempDir(), 'close-cancel-error.db')
       const db = await Database.create('test', dbPath, testDriver)
-      ;(db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers.push(() => {
+      ;(db as unknown as { backups: { cancellers: (() => void)[] } }).backups.cancellers.push(() => {
         throw new Error('cancel failed')
       })
 
@@ -180,7 +180,7 @@ describe('Database', () => {
         destDir: join(getTempDir(), 'scheduled-backups'),
       })
 
-      const cancellers = (db as unknown as { scheduledBackupCancellers: (() => void)[] }).scheduledBackupCancellers
+      const cancellers = (db as unknown as { backups: { cancellers: (() => void)[] } }).backups.cancellers
       expect(cancellers).toHaveLength(1)
       await db.close()
     })

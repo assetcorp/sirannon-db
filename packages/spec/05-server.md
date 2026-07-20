@@ -83,6 +83,62 @@ with `DATABASE_NOT_FOUND`.
 
 ---
 
+## Value Encoding (Normative)
+
+JSON cannot carry two SQLite value types without loss. JSON
+numbers pass through IEEE 754 doubles, so integers outside the
+range -(2^53 - 1) to 2^53 - 1 lose precision, and JSON has no
+binary type. Both transports therefore wrap these values in
+tagged envelopes wherever a row or a bind parameter crosses the
+wire.
+
+```text
+IntegerEnvelope {
+  "__sirannon_int": string
+}
+
+BlobEnvelope {
+  "__sirannon_blob": string
+}
+```
+
+The `__sirannon_int` payload is the exact decimal representation
+of the integer: an optional leading minus sign followed by one to
+nineteen digits, with no whitespace, sign prefix `+`, exponent, or
+other characters. The `__sirannon_blob` payload is uppercase
+hexadecimal with two digits per byte; an empty string encodes an
+empty BLOB.
+
+These rules apply to query result rows on both transports, to the
+`row` and `oldRow` fields of change events, to bind parameters in
+`params`, statement `params`, and `paramsBatch` entries, and to
+subscription `filter` values. A filter value inside an
+`IntegerEnvelope` matches rows whose column holds that exact
+64-bit integer.
+
+Producers MUST wrap an integer column value outside the safe
+range in an `IntegerEnvelope` and MUST wrap every BLOB column
+value in a `BlobEnvelope`. Integer values inside the safe range
+are plain JSON numbers. All other value types keep their natural
+JSON representation.
+
+Consumers MUST treat a JSON object with exactly one key named
+`__sirannon_int` or `__sirannon_blob`, whose value is a string,
+as an envelope and decode it to the native value. Envelopes only
+appear in positions where a column value is expected. A stored
+TEXT value that resembles an envelope serialises as a JSON
+string, never as an object, so the two cannot collide.
+
+Servers MUST reject a malformed envelope payload in bind
+parameters instead of binding it: the HTTP transport responds
+with status 400 and code `INVALID_REQUEST`, and the WebSocket
+transport responds with code `INVALID_MESSAGE`.
+
+Consumers without the client SDK decode `__sirannon_int` with an
+arbitrary-precision integer type, for example Python `int` or
+Java `BigInteger`, and decode `__sirannon_blob` into a byte
+array.
+
 ## HTTP Endpoints (Normative)
 
 All database endpoints use the path prefix `/db/{id}` where `{id}`
@@ -122,6 +178,10 @@ ClusterStatusInfo {
 
 The `lastInsertRowId` field is a number when it fits in a JSON
 number, or a string for large 64-bit values.
+
+Values inside `rows` follow the Value Encoding rules: integers
+beyond the safe range and BLOB columns arrive as tagged
+envelopes.
 
 ### POST /db/{id}/query
 
@@ -250,7 +310,7 @@ machine-readable routing context, such as `currentPrimary`,
 | Status | Error Codes |
 |--------|-------------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR` |
-| 403 | `READ_ONLY`, `HOOK_DENIED` |
+| 403 | `READ_ONLY`, `HOOK_DENIED`, `FORBIDDEN_SQL` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH` |
 | 404 | `DATABASE_NOT_FOUND` |
 | 413 | `PAYLOAD_TOO_LARGE` |
@@ -288,10 +348,12 @@ supports queries, writes, and real-time CDC subscriptions.
 
 ```text
 WSSubscribeMessage {
-  type:    'subscribe'
-  id:      string
-  table:   string
-  filter?: Map<string, any>
+  type:      'subscribe'
+  id:        string
+  table:     string
+  filter?:   Map<string, any>
+  sinceSeq?: string
+  epoch?:    string
 }
 
 WSUnsubscribeMessage {
@@ -318,8 +380,11 @@ WSExecuteMessage {
 
 ```text
 WSSubscribedMessage {
-  type: 'subscribed'
-  id:   string
+  type:    'subscribed'
+  id:      string
+  seq?:    string
+  epoch?:  string
+  resync?: boolean
 }
 
 WSUnsubscribedMessage {
@@ -339,7 +404,15 @@ WSChangeMessage {
     timestamp:  number
   }
 }
+```
 
+Values inside `row` and `oldRow` follow the Value Encoding
+rules: integers beyond the safe range and BLOB columns arrive as
+tagged envelopes. The client SDK decodes them before invoking
+the subscription callback; consumers without the SDK decode them
+as described under Value Encoding.
+
+```text
 WSResultMessage {
   type: 'result'
   id:   string
@@ -362,6 +435,34 @@ All client messages must include a string `id` field. The server
 uses this `id` to correlate responses with requests. For
 subscriptions, the `id` becomes the subscription identifier used
 in subsequent change events and unsubscribe requests.
+
+### Subscription Resumption
+
+A subscription resumes across reconnects through the `sinceSeq`
+and `epoch` fields. Both `sinceSeq` and `seq` are decimal
+strings so sequence numbers beyond 2^53 - 1 survive JSON.
+
+`sinceSeq` carries the highest `seq` the client has already
+processed. When present, the server replays every retained
+change with a greater `seq` before delivering live events, so a
+reconnecting subscriber receives the changes it missed.
+
+`epoch` identifies the sequence space a cursor was issued from.
+The server reports it on the `subscribed` message; the client
+stores it and echoes it when resuming. A cursor presented with a
+different epoch belongs to another database, so the server
+forces a resync instead of replaying unrelated rows against it.
+
+The `seq` field of the `subscribed` message is the sequence
+number the subscription is live from. A client that has not yet
+received any change adopts it as its resume cursor, so a
+reconnect during an idle spell still replays what it missed.
+
+The server sets `resync: true` when the requested `sinceSeq`
+fell below the retained history or arrived with a foreign epoch,
+so the gap cannot be replayed. The subscription still starts
+live; the client must treat its prior state as stale and re-read
+the table.
 
 ### WebSocket Error Codes
 

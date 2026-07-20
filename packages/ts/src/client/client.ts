@@ -186,6 +186,7 @@ export class SirannonClient {
   private readonly webSocketProtocols: string | string[] | undefined
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
+  private readonly requestTimeout: number | undefined
   private readonly databases = new Map<string, RemoteDatabase>()
   private closed = false
 
@@ -224,6 +225,7 @@ export class SirannonClient {
       this.webSocketProtocols = topoOpts.webSocketProtocols
       this.autoReconnect = topoOpts.autoReconnect ?? true
       this.reconnectInterval = topoOpts.reconnectInterval ?? 1000
+      this.requestTimeout = topoOpts.requestTimeout
     } else {
       this.topologyEnabled = false
       this.primaryUrl = undefined
@@ -240,6 +242,7 @@ export class SirannonClient {
       this.webSocketProtocols = options?.webSocketProtocols
       this.autoReconnect = options?.autoReconnect ?? true
       this.reconnectInterval = options?.reconnectInterval ?? 1000
+      this.requestTimeout = options?.requestTimeout
     }
   }
 
@@ -291,6 +294,7 @@ export class SirannonClient {
       autoReconnect: this.autoReconnect,
       reconnectInterval: this.reconnectInterval,
       protocols: this.webSocketProtocols,
+      requestTimeout: this.requestTimeout,
     })
   }
 
@@ -517,15 +521,22 @@ export class SirannonClient {
   }
 }
 
-import type { ChangeEvent, Params } from '../core/types.js'
-import type { ExecuteResponse, QueryResponse, TransactionResponse } from '../server/protocol.js'
-import type { RemoteSubscription } from './types.js'
+import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../core/types.js'
+import type {
+  BatchResponse,
+  ExecuteResponse,
+  LoadResponse,
+  QueryResponse,
+  TransactionResponse,
+} from '../server/protocol.js'
+import type { RemoteSubscription, SubscribeOptions } from './types.js'
 
 interface TrackedRemoteSubscription {
   id: number
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onReset: (() => void) | undefined
   remote: RemoteSubscription | null
   active: boolean
 }
@@ -611,13 +622,47 @@ class TopologyAwareTransport implements Transport {
     }
   }
 
+  async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
+    const transport = await this.getWriteTransport()
+    try {
+      return await transport.batch(sql, paramsBatch, writeConcern)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.writeTransport = null
+        this.currentWriteUrl = ''
+      }
+      throw err
+    }
+  }
+
+  async load(
+    sql: string,
+    paramsBatch: Params[],
+    durability?: BulkLoadDurability,
+    checkpoint?: boolean,
+  ): Promise<LoadResponse> {
+    const transport = await this.getWriteTransport()
+    try {
+      return await transport.load(sql, paramsBatch, durability, checkpoint)
+    } catch (err) {
+      if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        await this.client._refreshClusterRouting(this.databaseId)
+        this.writeTransport = null
+        this.currentWriteUrl = ''
+      }
+      throw err
+    }
+  }
+
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     try {
-      return await this.subscribeOnCurrentEndpoint(table, filter, callback)
+      return await this.subscribeOnCurrentEndpoint(table, filter, callback, options)
     } catch (err) {
       if (this.client._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
         const hadActiveSubscriptions = this.activeSubscriptions.size > 0
@@ -628,7 +673,7 @@ class TopologyAwareTransport implements Transport {
         if (!hadActiveSubscriptions) {
           this.closeSubscriptionTransport()
         }
-        return this.subscribeOnCurrentEndpoint(table, filter, callback)
+        return this.subscribeOnCurrentEndpoint(table, filter, callback, options)
       }
       throw err
     }
@@ -671,15 +716,17 @@ class TopologyAwareTransport implements Transport {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
     return this.withSubscriptionOperation(async () => {
       const transport = await this.getSubscriptionTransport(this.client._getReadConcern())
-      const remote = await transport.subscribe(table, filter, callback)
+      const remote = await transport.subscribe(table, filter, callback, options)
       const subscription: TrackedRemoteSubscription = {
         id: ++this.nextSubscriptionId,
         table,
         filter,
         callback,
+        onReset: options?.onReset,
         remote,
         active: true,
       }
@@ -718,7 +765,9 @@ class TopologyAwareTransport implements Transport {
     try {
       for (const subscription of subscriptions) {
         if (!subscription.active) continue
-        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback)
+        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback, {
+          onReset: subscription.onReset,
+        })
         if (!subscription.active) {
           remote.unsubscribe()
           continue

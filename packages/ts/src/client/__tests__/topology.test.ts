@@ -34,6 +34,8 @@ function createDelayedSubscriptionTransport(gate: Promise<void>, closedIndexes: 
     query: async () => ({ rows: [] }),
     execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
     transaction: async () => ({ results: [] }),
+    batch: async () => ({ results: [] }),
+    load: async () => ({ rowsLoaded: 0, changes: 0 }),
     subscribe: async () => {
       await gate
       if (closed) {
@@ -65,6 +67,8 @@ function createRecordedSubscriptionTransport(
     query: async () => ({ rows: [] }),
     execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
     transaction: async () => ({ results: [] }),
+    batch: async () => ({ results: [] }),
+    load: async () => ({ rowsLoaded: 0, changes: 0 }),
     subscribe: async table => {
       if (closed) {
         throw new Error(`transport for ${endpoint} is closed`)

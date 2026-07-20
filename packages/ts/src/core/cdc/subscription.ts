@@ -51,7 +51,7 @@ export class SubscriptionManager {
       for (const id of ids) {
         const sub = this.subscriptions.get(id)
         if (!sub) continue
-        if (sub.filter && !matchesFilter(event, sub.filter)) {
+        if (sub.filter && !changeMatchesFilter(event, sub.filter)) {
           continue
         }
         try {
@@ -96,6 +96,7 @@ export function startPolling(
   manager: SubscriptionManager,
   intervalMs: number,
   onError?: (err: Error) => void,
+  runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>,
 ): () => void {
   let consecutiveErrors = 0
   let tickCount = 0
@@ -103,13 +104,18 @@ export function startPolling(
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
+  // Poll and cleanup read and write the shared writer connection, so they run
+  // under the same serialisation as ordinary writes; otherwise a tick reads
+  // rows a still-open transaction has not committed.
+  const exclusive = runExclusive ?? (<T>(operation: () => Promise<T>) => operation())
+
   const tick = async () => {
     if (manager.size === 0) return
     if (polling) return
     polling = true
 
     try {
-      const events = await tracker.poll(conn)
+      const events = await exclusive(() => tracker.poll(conn))
       if (events.length > 0) {
         manager.dispatch(events)
       }
@@ -118,7 +124,7 @@ export function startPolling(
       tickCount++
       if (tickCount >= CLEANUP_INTERVAL_TICKS) {
         tickCount = 0
-        await tracker.cleanup(conn)
+        await exclusive(() => tracker.cleanup(conn))
       }
     } catch (err) {
       consecutiveErrors++
@@ -143,12 +149,36 @@ export function startPolling(
   return stop
 }
 
-function matchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
+export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
   const target = event.type === 'delete' ? (event.oldRow ?? {}) : event.row
   for (const [key, value] of Object.entries(filter)) {
-    if ((target as Record<string, unknown>)[key] !== value) {
+    if (!filterValueMatches((target as Record<string, unknown>)[key], value)) {
       return false
     }
   }
   return true
+}
+
+/**
+ * Row values carry BigInt beyond the safe-integer range and Buffer for BLOB
+ * columns, while filters can hold either representation; comparing across the
+ * bigint/number boundary and by bytes keeps a filter matching the same column
+ * value regardless of which form each side arrived in.
+ */
+function filterValueMatches(rowValue: unknown, filterValue: unknown): boolean {
+  if (rowValue === filterValue) return true
+  if (typeof rowValue === 'bigint' && typeof filterValue === 'number') {
+    return Number.isInteger(filterValue) && BigInt(filterValue) === rowValue
+  }
+  if (typeof rowValue === 'number' && typeof filterValue === 'bigint') {
+    return Number.isInteger(rowValue) && BigInt(rowValue) === filterValue
+  }
+  if (rowValue instanceof Uint8Array && filterValue instanceof Uint8Array) {
+    if (rowValue.byteLength !== filterValue.byteLength) return false
+    for (let i = 0; i < rowValue.byteLength; i++) {
+      if (rowValue[i] !== filterValue[i]) return false
+    }
+    return true
+  }
+  return false
 }

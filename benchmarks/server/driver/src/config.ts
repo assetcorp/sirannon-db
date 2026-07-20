@@ -34,6 +34,7 @@ export interface Config {
   scalingWorkloads: string[]
   driverCpus: number
   engineCpus: number
+  engineCgroup: string | null
   requestTimeoutMs: number
   workloadTimeoutMs: number
 }
@@ -163,6 +164,7 @@ export function loadConfig(path: string): Config {
     scalingWorkloads: envStrList('BENCH_SCALING_WORKLOADS', asStringList(scaling.workloads)),
     driverCpus: envFloat('BENCH_DRIVER_CPUS', asNumber(resources.driver_cpus, 2.0)),
     engineCpus: envFloat('BENCH_ENGINE_CPUS', asNumber(resources.engine_cpus, 2.0)),
+    engineCgroup: present('BENCH_ENGINE_CGROUP') ?? null,
     requestTimeoutMs: envInt('BENCH_REQUEST_TIMEOUT_MS', asNumber(run.request_timeout_ms, 60_000)),
     workloadTimeoutMs: envInt('BENCH_WORKLOAD_TIMEOUT_MS', asNumber(run.workload_timeout_ms, 0)),
   }

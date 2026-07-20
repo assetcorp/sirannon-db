@@ -120,8 +120,6 @@ export async function runOpenLoop(
       semaphore.release()
     }
     const arrival = performance.now()
-    // Buckets key on the intended time, so a request delayed into a later wall-clock window still
-    // charges the window whose schedule it belonged to.
     const bucket =
       bucketCount > 0 && intendedInWindow
         ? Math.min(bucketCount - 1, Math.floor((intendedTime - warmupEnd) / (bucketSeconds * 1000)))

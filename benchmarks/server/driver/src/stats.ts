@@ -6,7 +6,6 @@ export function mean(samples: number[]): number {
   return samples.length > 0 ? samples.reduce((a, b) => a + b, 0) / samples.length : 0.0
 }
 
-// Not Math.max(...samples): a measurement window holds enough latencies to overflow the stack.
 export function maxOf(samples: number[]): number {
   let max = Number.NEGATIVE_INFINITY
   for (const value of samples) {

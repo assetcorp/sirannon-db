@@ -78,7 +78,6 @@ function cpusetSize(spec: string): number {
   return selected.size
 }
 
-// cgroup-v2 exposes these files even for an unrestricted process, so only a real cap counts.
 function resourceControl(): Record<string, unknown> {
   const cgroupPath = ownCgroupPath()
   const driverCpus = cgroupPath === null ? null : cgroupValue(cgroupPath, 'cpuset.cpus.effective')

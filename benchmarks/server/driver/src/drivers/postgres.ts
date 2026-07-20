@@ -6,8 +6,6 @@ import { Driver, type TransactionStatement } from './driver.ts'
 
 const SYNCHRONOUS_COMMIT: Record<string, string> = { full: 'on', matched: 'off' }
 const MAX_BIND_PARAMS = 60_000
-// The server-side statement_timeout must fire before the client-side query_timeout, so a stalled
-// query surfaces as SQLSTATE 57014 and classifies as a timeout instead of a codeless client error.
 const QUERY_TIMEOUT_MARGIN_MS = 5_000
 
 const SQLSTATE_CLASS_SHED = '53'
@@ -218,7 +216,6 @@ export class PostgresDriver extends Driver {
           poisoned = err instanceof Error ? err : new Error(String(err))
         }
       }
-      // Passing an error to release() destroys the session instead of returning it to the pool.
       client.release(poisoned)
     }
   }

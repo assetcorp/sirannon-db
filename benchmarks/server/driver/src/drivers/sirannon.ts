@@ -8,8 +8,6 @@ import { Driver, type TransactionStatement } from './driver.ts'
 
 const SEED_BATCH_ROWS = 25_000
 
-// The version of the SDK build the generator drives, which is the Sirannon version under test;
-// the server exposes no version endpoint.
 function sirannonPackageVersion(): string {
   try {
     const packagePath = resolve(import.meta.dirname, '../../../../../packages/ts/package.json')
@@ -32,7 +30,6 @@ function remoteCodeOf(err: unknown): string | undefined {
 }
 
 function sirannonKind(code: string, err: unknown): FailureKind {
-  // Re-reads err because sirannonCode substitutes err.name when the SDK reported no code at all.
   if (remoteCodeOf(err) === undefined) {
     return 'client_error'
   }
@@ -107,7 +104,6 @@ export class SirannonDriver extends Driver {
   }
 
   async info(): Promise<Record<string, unknown>> {
-    // A PRAGMA synchronous read would report the read pool's NORMAL, not the writer's durability.
     const settings: Record<string, unknown> = {
       engine: 'sirannon',
       delivery: this.delivery,

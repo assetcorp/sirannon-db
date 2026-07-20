@@ -19,8 +19,6 @@ const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
 const WORKLOAD_DEADLINE_FLOOR_MS = 120_000
 
-// Progress lines keep the streamed cloud log from going silent during long phases, so a quiet
-// stream means a stalled run instead of an ambiguous one, and each line names the phase to blame.
 function progress(message: string): void {
   console.log(`[${new Date().toISOString().slice(11, 19)}] ${message}`)
 }
@@ -82,7 +80,6 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
   await driver.executeDdl(statements)
   const seedRng = new SeededRng(config.seed)
   const seedTables = workload.seed(seedRng, config.dataSize)
-  // Seed rows are one-shot lazy iterables, so the count rides along as the driver consumes them.
   const counter = { rows: 0 }
   const counted = seedTables.map(table => ({
     ...table,
@@ -213,9 +210,6 @@ function selectOperatingPoint(sweep: Record<string, unknown>[], sloP99Ms: number
   return { ...chosen, under_slo: false }
 }
 
-// One continuous pass at the operating point, long enough to cross both engines' checkpoint
-// cycles, which the sweep's short windows never contain. Windows key on the schedule, so a
-// request delayed by a checkpoint stall charges the window it was meant to be sent in.
 async function runSoak(
   makeOp: () => RunOp,
   operatingPoint: Record<string, unknown>,

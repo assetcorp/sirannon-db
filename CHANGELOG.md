@@ -1,3 +1,19 @@
+## 0.1.8 (2026-07-20)
+
+### 🚀 Features
+
+- **benchmarks:** add engine cgroup support and improve CPU usage tracking in benchmarks ([d6bbcee](https://github.com/assetcorp/sirannon-db/commit/d6bbcee))
+- **benchmarks:** add prepare retry and request timeout configurations ([fc03813](https://github.com/assetcorp/sirannon-db/commit/fc03813))
+- **benchmarks:** introduce WorkloadStallError for improved deadline handling in workload execution ([d7db185](https://github.com/assetcorp/sirannon-db/commit/d7db185))
+
+### 🩹 Fixes
+
+- **ts:** ensure proper cancellation handling for worker requests and improve timeout management ([4c383a6](https://github.com/assetcorp/sirannon-db/commit/4c383a6))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.7 (2026-07-20)
 
 ### 🚀 Features

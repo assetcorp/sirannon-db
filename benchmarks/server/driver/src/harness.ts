@@ -106,7 +106,8 @@ async function prepare(driver: Driver, workload: Workload, config: Config): Prom
   }
   progress(
     `seed ${workload.name}: done, ${counter.rows.toLocaleString('en-US')} rows in ${seconds.toFixed(1)}s` +
-      (seconds > 0 ? ` (${Math.round(counter.rows / seconds).toLocaleString('en-US')} rows/s)` : ''),
+      (seconds > 0 ? ` (${Math.round(counter.rows / seconds).toLocaleString('en-US')} rows/s)` : '') +
+      (seedCores !== null ? ` (engine ${seedCores.toFixed(1)} cores)` : ''),
   )
   return {
     rows: counter.rows,

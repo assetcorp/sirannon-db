@@ -36,11 +36,20 @@ function workloadDeadlineMs(config: Config, ceilingSeconds: number): number {
   )
 }
 
+class WorkloadStallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkloadStallError'
+  }
+}
+
 function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`${label} exceeded its ${Math.round(ms / 1000)}s deadline and was aborted as a stall`))
+      reject(
+        new WorkloadStallError(`${label} exceeded its ${Math.round(ms / 1000)}s deadline and was aborted as a stall`),
+      )
     }, ms)
   })
   return Promise.race([work, deadline]).finally(() => {
@@ -362,10 +371,18 @@ export async function runEngine(
       }
       results.push(result)
     } catch (err) {
-      const code = driver.failureClassifier.codeOf(err)
+      const code = err instanceof WorkloadStallError ? err.name : driver.failureClassifier.codeOf(err)
       const message = err instanceof Error ? err.message : String(err)
-      progress(`workload ${name} failed (${code}); recording the failure and moving to the next workload`)
       failedWorkloads.push({ workload: name, error_code: code, error: message })
+      if (err instanceof WorkloadStallError) {
+        progress(
+          `workload ${name} stalled past its deadline; the abandoned attempt may still be issuing requests, ` +
+            'so the pass ends here instead of measuring the next workload against that interference',
+        )
+        onWorkload?.(snapshot())
+        throw err
+      }
+      progress(`workload ${name} failed (${code}); recording the failure and moving to the next workload`)
     }
     onWorkload?.(snapshot())
   }

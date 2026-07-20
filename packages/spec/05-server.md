@@ -17,6 +17,10 @@ ServerOptions {
   host?:                  string    (default: '127.0.0.1')
   port?:                  number    (default: 9876)
   cors?:                  boolean | CorsOptions
+  maxBodyBytes?:          number    (default: 1_048_576)
+  maxWebSocketBackpressureBytes?: number
+                          (default: max(16_777_216, maxBodyBytes))
+  cdcRetentionMs?:        number    (default: 3_600_000)
   onRequest?:             OnRequestHook
   resolveExecutionTarget?: (databaseId: string) ->
                             ServerExecutionTarget or null
@@ -36,6 +40,19 @@ CorsOptions {
 | `host` | `127.0.0.1` | Listening address |
 | `port` | `9876` | Listening port |
 | `cors` | disabled | CORS configuration |
+| `maxBodyBytes` | 1,048,576 | Largest accepted HTTP request body and WebSocket message, in bytes |
+| `maxWebSocketBackpressureBytes` | max(16,777,216, `maxBodyBytes`) | Outbound buffer bound per WebSocket connection, in bytes |
+| `cdcRetentionMs` | 3,600,000 | How long change events are retained for WebSocket subscription resumption, in milliseconds |
+
+`maxBodyBytes` must be a positive integer. An implementation whose
+transport stores the limit in a narrower type than the configured
+value must refuse to start with error code `INVALID_MAX_BODY_BYTES`
+rather than enforce a silently truncated limit; the reference
+implementation caps the value at 4,294,967,295 for this reason.
+`maxWebSocketBackpressureBytes` must be a positive integer of at
+least `maxBodyBytes`, so one reply frame always fits, and is
+subject to the same truncation rule with error code
+`INVALID_WS_BACKPRESSURE`.
 
 ### Request Hook
 
@@ -314,8 +331,15 @@ machine-readable routing context, such as `currentPrimary`,
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH` |
 | 404 | `DATABASE_NOT_FOUND` |
 | 413 | `PAYLOAD_TOO_LARGE` |
-| 500 | `INTERNAL_ERROR` |
-| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED` |
+| 500 | `INTERNAL_ERROR`, `WRITER_WORKER_TIMEOUT` |
+| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
+
+A `WRITE_OVERLOADED` response should carry a `Retry-After` header
+derived from the error's retry-after context, because the
+rejection is definite load shedding and the client's correct move
+is to retry after backing off. A `WRITER_WORKER_TIMEOUT` response
+maps to 500 because the outcome is indeterminate; a client must
+not blindly retry a non-idempotent write on it.
 
 When a coordinator-mode server receives a write but is not the
 current primary, it must either forward the write to the current
@@ -325,9 +349,9 @@ error response should include that endpoint as structured context.
 
 ### Request Size Limit
 
-The maximum HTTP request body size is 1,048,576 bytes (1 MB).
-Requests exceeding this limit must be rejected with status 413 and
-error code `PAYLOAD_TOO_LARGE`.
+The maximum HTTP request body size is `maxBodyBytes` (default
+1,048,576 bytes). Requests exceeding this limit must be rejected
+with status 413 and error code `PAYLOAD_TOO_LARGE`.
 
 ### Validation Rules
 
@@ -486,11 +510,30 @@ the table.
 | `READ_CONCERN_ERROR` | Requested read concern cannot be satisfied |
 | `NODE_NOT_IN_SYNC` | Node is not safe for the requested read or promotion |
 | `NODE_DRAINING` | Node is in maintenance drain mode |
+| `WRITE_OVERLOADED` | Write shed before starting; definite and safe to retry |
+| `WRITER_WORKER_TIMEOUT` | Write outcome unknown past the writer deadline's grace window |
 
 ### Payload Size
 
-The maximum WebSocket message size is 1,048,576 bytes (1 MB),
-configurable via `WSHandlerOptions.maxPayloadLength`.
+The maximum inbound WebSocket message size is `maxBodyBytes`
+(default 1,048,576 bytes); one option governs both transports. A
+message over the limit must be rejected with error code
+`PAYLOAD_TOO_LARGE`.
+
+### Outbound Backpressure
+
+A subscriber that reads more slowly than its change events arrive
+would otherwise buffer without bound inside the server. The server
+must bound each connection's outbound buffer by
+`maxWebSocketBackpressureBytes`. When a send would push a
+connection's buffered outbound data past that bound, the server
+must close the connection with close code 4290 rather than drop
+frames silently or keep buffering; a silently dropped reply or
+change event is worse than a lost connection, because the client
+cannot detect it. A client that receives close code 4290 should
+reconnect and resume its subscriptions through
+[Subscription Resumption](#subscription-resumption), which replays
+the events it missed.
 
 ### Idle Timeout
 

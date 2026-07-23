@@ -282,7 +282,7 @@ await db.unwatch('orders')
 
 ### Migrations
 
-Place numbered SQL files in a directory using the `.up.sql` / `.down.sql` convention. Each migration runs inside a transaction and is tracked in a `_sirannon_migrations` table so it only applies once. Down files are optional; rollback throws if a down file is missing for a version being rolled back.
+Place numbered SQL files in a directory using the `.up.sql` / `.down.sql` convention. Each migration runs inside a transaction and is tracked in a `_sirannon_migrations` table so it only applies once. The table stores a checksum of each applied migration's SQL, and a later `migrate` rejects an edited migration with `MIGRATION_CHECKSUM_MISMATCH`. After every migrate and rollback, `PRAGMA user_version` mirrors the highest applied version inside the same transaction, so external tools can read the schema version straight from the file header. Down files are optional; rollback throws if a down file is missing for a version being rolled back.
 
 ```txt
 migrations/
@@ -300,6 +300,8 @@ migrations/
   1709312400_create_users.up.sql
   1709312400_create_users.down.sql
 ```
+
+Versions must be integers from 1 to 2,147,483,647 so that they fit `PRAGMA user_version`. Unix-second timestamps stay inside that range; `YYYYMMDDHHMMSS`-style timestamps exceed it and are rejected.
 
 #### File-based migrations
 
@@ -359,6 +361,19 @@ await db.migrate(migrations)
 
 With webpack, build the map from `require.context('./migrations', false, /\.sql$/)` with the files loaded as source assets.
 
+#### Baseline migrations
+
+A long migration history slows down every fresh database and clutters the repository. A baseline migration squashes that history: write one file containing the full schema and mark it with the highest version it supersedes. A fresh database runs only the baseline plus the migrations after it. A database that already has history never executes the baseline; it keeps using its real history and continues past it.
+
+```ts
+const migrations = loadMigrations('./migrations', {
+  baseline: { version: 701, through: 700 },
+})
+await db.migrate(migrations)
+```
+
+`migrationsFromFiles` accepts the same option, and programmatic migrations carry it directly as `baseline: { through: 700 }` on the migration object. `through` must equal the highest version the baseline replaces. Keep the superseded files until every deployment has passed them, then delete them. A database that still needs a deleted file fails with `MIGRATION_BASELINE_GAP` before any migration runs.
+
 #### Registry migrations
 
 Declare the migration set once on the registry to roll out schema changes across many databases, such as one file per tenant. Every database opened through the registry, including tenants resolved lazily, applies the pending set before it serves its first request.
@@ -392,7 +407,7 @@ const sirannon = new Sirannon({
 
 In a bundled app, return `migrationsFromFiles(files)` from the function instead; see [Bundled migrations](#bundled-migrations).
 
-If a migration fails, the open fails with a `MigrationError` and the database stays unregistered, so a caller never receives a half-migrated database. A later open of the same database retries, and migrations already recorded in the tracking table are skipped. Concurrent `resolve` calls for the same cold tenant share one open, so the migration step runs once. Databases opened with `readOnly: true` skip the set.
+If a migration fails, the open fails with a `MigrationError` and the database stays unregistered, so a caller never receives a half-migrated database. A later open of the same database retries, and migrations already recorded in the tracking table are skipped. Concurrent `resolve` calls for the same cold tenant share one open, so the migration step runs once. When two processes migrate the same database file at once, each plans and applies inside one transaction: the loser waits out the busy timeout, retries on the winner's committed state, and skips what already ran. A process that still cannot get the write lock receives a `MigrationError` with code `MIGRATION_CONCURRENT`. Databases opened with `readOnly: true` skip the set.
 
 ### Backups
 

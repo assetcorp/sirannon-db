@@ -50,7 +50,7 @@ const databaseId = config.groupId
 const conn = await testDriver.open(config.dbPath)
 await conn.exec('PRAGMA journal_mode = WAL')
 
-const tracker = new ChangeTracker({ replication: true })
+const tracker = new ChangeTracker()
 if (config.seedSchema) {
   await conn.exec(SCHEMA)
   await tracker.watch(conn, 'failover_items')

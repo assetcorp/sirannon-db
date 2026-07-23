@@ -51,7 +51,7 @@ describe('ReplicationEngine error events', () => {
 
     if (tableSql) {
       await conn.exec(tableSql)
-      const tracker = new ChangeTracker({ replication: true })
+      const tracker = new ChangeTracker()
       const tableName = tableSql.match(/CREATE TABLE (\w+)/)?.[1]
       if (tableName) {
         await tracker.watch(conn, tableName)

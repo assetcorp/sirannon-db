@@ -111,7 +111,7 @@ describe('ReplicationEngine.transaction', () => {
     await conn.exec('PRAGMA journal_mode = WAL')
     openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await conn.exec(SCHEMA)
     await tracker.watch(conn, 'accounts')
     await tracker.watch(conn, 'ledger')

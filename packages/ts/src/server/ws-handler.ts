@@ -4,9 +4,7 @@ import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
-import { decodeBoundParams } from './protocol.js'
 import { CdcContextRegistry } from './ws-cdc.js'
-import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import type { WSOperationContext } from './ws-operations.js'
@@ -17,12 +15,14 @@ import {
   handleQueryMessage,
   handleTransactionMessage,
 } from './ws-operations.js'
+import type { WSSubscribeDeps } from './ws-subscribe.js'
+import { handleSubscribeMessage } from './ws-subscribe.js'
 
 export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
-interface ConnectionState {
+export interface ConnectionState {
   databaseId: string
   database: Database
   executionTarget: ServerExecutionTarget
@@ -152,7 +152,7 @@ export class WSHandler {
         handleLoadMessage(this.operationContext(conn, state), msg, id)
         break
       case 'subscribe':
-        this.handleSubscribe(conn, state, msg, id)
+        handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
         break
       case 'unsubscribe':
         this.handleUnsubscribe(conn, state, id)
@@ -204,148 +204,16 @@ export class WSHandler {
     }
   }
 
-  private async handleSubscribe(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.table !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Subscribe message requires a "table" string field')
-      return
+  private subscribeDeps(): WSSubscribeDeps {
+    return {
+      cdc: this.cdc,
+      sendSubscribed: (conn, id, seq, epoch, resync) =>
+        this.send(conn, { type: 'subscribed', id, seq, epoch, ...(resync ? { resync: true } : {}) }),
+      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
+      sendChange: (conn, id, event) => this.sendChange(conn, id, event),
+      handleOverload: conn => this.handleOverload(conn),
     }
-
-    if (state.subscriptions.has(id)) {
-      this.sendError(conn, id, 'DUPLICATE_SUBSCRIPTION', `Subscription '${id}' already exists on this connection`)
-      return
-    }
-
-    if (state.database.readOnly) {
-      this.sendError(conn, id, 'READ_ONLY', 'Subscriptions are not available on read-only databases')
-      return
-    }
-
-    if (state.database.path === ':memory:') {
-      this.sendError(conn, id, 'CDC_UNSUPPORTED', 'CDC subscriptions require file-based databases')
-      return
-    }
-
-    if (
-      msg.filter !== undefined &&
-      msg.filter !== null &&
-      (typeof msg.filter !== 'object' || Array.isArray(msg.filter))
-    ) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"filter" must be a plain object')
-      return
-    }
-
-    const decodedFilter = decodeBoundParams(msg.filter, 'filter')
-    if (!decodedFilter.ok) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', decodedFilter.message)
-      return
-    }
-    const filter = decodedFilter.value as Record<string, unknown> | undefined
-
-    let sinceSeq: bigint | undefined
-    if (msg.sinceSeq !== undefined) {
-      if (typeof msg.sinceSeq !== 'string' || !/^\d+$/.test(msg.sinceSeq)) {
-        this.sendError(conn, id, 'INVALID_MESSAGE', '"sinceSeq" must be a non-negative integer string')
-        return
-      }
-      sinceSeq = BigInt(msg.sinceSeq)
-    }
-
-    let clientEpoch: string | undefined
-    if (msg.epoch !== undefined) {
-      if (typeof msg.epoch !== 'string') {
-        this.sendError(conn, id, 'INVALID_MESSAGE', '"epoch" must be a string')
-        return
-      }
-      clientEpoch = msg.epoch
-    }
-
-    if (sinceSeq === undefined) {
-      await this.subscribeLive(conn, state, id, msg.table, filter)
-      return
-    }
-
-    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq, clientEpoch)
-  }
-
-  private async subscribeLive(
-    conn: WSConnection,
-    state: ConnectionState,
-    id: string,
-    table: string,
-    filter: Record<string, unknown> | undefined,
-  ): Promise<void> {
-    try {
-      const ctx = await this.cdc.ensure(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, table)
-
-      const boundary = ctx.tracker.cursor
-      const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
-        this.sendChange(conn, id, event)
-      })
-
-      state.subscriptions.set(id, sub)
-      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch })
-    } catch (err) {
-      this.cdc.maybeCleanup(state.databaseId)
-      this.sendSirannonError(conn, id, err)
-    }
-  }
-
-  private async subscribeResuming(
-    conn: WSConnection,
-    state: ConnectionState,
-    id: string,
-    table: string,
-    filter: Record<string, unknown> | undefined,
-    sinceSeq: bigint,
-    clientEpoch: string | undefined,
-  ): Promise<void> {
-    let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
-    let primed: PrimedSubscription
-    let boundary: bigint
-    let resync: boolean
-    try {
-      ctx = await this.cdc.ensure(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, table)
-
-      boundary = ctx.tracker.cursor
-      primed = new PrimedSubscription(
-        sinceSeq,
-        event => this.sendChange(conn, id, event),
-        () => this.handleOverload(conn),
-      )
-      const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
-      state.subscriptions.set(id, sub)
-
-      const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
-      const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
-      resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
-      this.send(conn, {
-        type: 'subscribed',
-        id,
-        seq: boundary.toString(),
-        epoch: ctx.epoch,
-        ...(resync ? { resync: true } : {}),
-      })
-    } catch (err) {
-      this.cdc.maybeCleanup(state.databaseId)
-      this.sendSirannonError(conn, id, err)
-      return
-    }
-
-    if (!resync) {
-      try {
-        await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
-      } catch {
-        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch, resync: true })
-      }
-    }
-    primed.goLive()
   }
 
   private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
@@ -404,6 +272,8 @@ export class WSHandler {
         oldRow: event.oldRow === undefined ? undefined : (encodeTaggedValues(event.oldRow) as Record<string, unknown>),
         seq: event.seq.toString(),
         timestamp: event.timestamp,
+        ...(event.hlc !== undefined ? { hlc: event.hlc } : {}),
+        ...(event.origin !== undefined ? { origin: event.origin } : {}),
       },
     })
   }

@@ -19,7 +19,6 @@ export class ChangeTracker {
   private readonly retentionMs: number
   private readonly changesTable: string
   private readonly pollBatchSize: number
-  private readonly replication: boolean
   private changesTableReady = false
   private changesTableEnsured = false
   private watchedTablesCache: ReadonlySet<string> | null = null
@@ -30,7 +29,6 @@ export class ChangeTracker {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
     this.changesTable = options?.changesTable ?? CHANGES_TABLE
     this.pollBatchSize = options?.pollBatchSize ?? DEFAULT_POLL_BATCH_SIZE
-    this.replication = options?.replication ?? false
 
     this.assertIdentifier(this.changesTable, 'changes table name')
   }
@@ -183,7 +181,7 @@ export class ChangeTracker {
     const stmt = await this.stmtCache.get(
       conn,
       'poll',
-      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
+      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, hlc
 			 FROM "${this.changesTable}"
 			 WHERE seq > ?
 			 ORDER BY seq ASC
@@ -230,7 +228,7 @@ export class ChangeTracker {
     const stmt = await this.stmtCache.get(
       conn,
       'read_since',
-      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
+      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, hlc
 			 FROM "${this.changesTable}"
 			 WHERE table_name = ? AND seq > ? AND seq <= ?
 			 ORDER BY seq ASC
@@ -267,6 +265,8 @@ export class ChangeTracker {
       oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
       seq: BigInt(row.seq),
       timestamp: row.changed_at,
+      ...(row.node_id ? { origin: row.node_id } : {}),
+      ...(row.hlc ? { hlc: row.hlc } : {}),
     }
   }
 
@@ -371,7 +371,7 @@ export class ChangeTracker {
       return
     }
 
-    await ensureChangesTable(conn, this.changesTable, { replication: this.replication })
+    await ensureChangesTable(conn, this.changesTable)
     this.changesTableEnsured = true
     this.changesTableReady = true
   }
@@ -382,6 +382,6 @@ export class ChangeTracker {
     columns: string[],
     pkColumns: string[],
   ): Promise<void> {
-    await installCdcTriggers(conn, this.changesTable, table, columns, pkColumns, this.replication)
+    await installCdcTriggers(conn, this.changesTable, table, columns, pkColumns)
   }
 }

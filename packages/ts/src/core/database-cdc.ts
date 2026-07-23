@@ -2,6 +2,8 @@ import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-t
 import { ChangeTracker } from './cdc/change-tracker.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
+import type { StampStatement } from './sync/stamper.js'
+import { SyncStamper } from './sync/stamper.js'
 import { Transaction } from './transaction.js'
 import type { SubscriptionBuilder } from './types.js'
 
@@ -11,6 +13,7 @@ export class DatabaseCdcController {
   private tracker: ChangeTracker | null = null
   private subscriptions: SubscriptionManager | null = null
   private stopPolling: (() => void) | null = null
+  private stamper: SyncStamper | null = null
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -25,8 +28,21 @@ export class DatabaseCdcController {
 
   async watch(table: string): Promise<void> {
     const { tracker } = this.ensure()
-    await this.runExclusive(() => tracker.watch(this.acquireWriter(), table))
+    await this.runExclusive(async () => {
+      await tracker.watch(this.acquireWriter(), table)
+      this.stamper ??= await SyncStamper.init(this.acquireWriter())
+    })
     this.ensurePolling()
+  }
+
+  stampStatements(options?: { persistClock?: boolean }): readonly StampStatement[] | null {
+    return this.stamper ? this.stamper.stampStatements(options) : null
+  }
+
+  async applyStamps(txConn: SQLiteConnection): Promise<void> {
+    if (this.stamper) {
+      await this.stamper.applyStamps(txConn)
+    }
   }
 
   async unwatch(table: string): Promise<void> {
@@ -52,7 +68,11 @@ export class DatabaseCdcController {
     }
 
     const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-    const result = await writer.transaction(txConn => fn(new CdcAwareTransaction(txConn, tracker, state)))
+    const result = await writer.transaction(async txConn => {
+      const value = await fn(new CdcAwareTransaction(txConn, tracker, state))
+      await this.applyStamps(txConn)
+      return value
+    })
 
     if (state.sawDdl && state.droppedTables.length > 0) {
       await tracker.pruneDroppedTables(writer, state.droppedTables)

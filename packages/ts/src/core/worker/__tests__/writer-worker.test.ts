@@ -112,6 +112,31 @@ describe('writer worker offload', () => {
     expect(event.type).toBe('insert')
     expect(event.table).toBe('watched')
     expect((event.row as { name: string }).name).toBe('live')
+    expect(event.origin).toMatch(/^[0-9a-f]{32}$/)
+    expect(event.hlc).toBeTruthy()
+  })
+
+  it('stamps concurrent worker writes with the persisted node identity', async () => {
+    await openOffloaded()
+    await db.execute('CREATE TABLE watched (id INTEGER PRIMARY KEY, name TEXT)')
+    await db.watch('watched')
+
+    await Promise.all(
+      Array.from({ length: 6 }, (_, i) => db.execute('INSERT INTO watched (name) VALUES (?)', [`w${i}`])),
+    )
+
+    await db.close()
+    const inspect = await betterSqlite3().open(join(dir, 'data.db'))
+    const stmt = await inspect.prepare('SELECT node_id, tx_id, hlc FROM _sirannon_changes ORDER BY seq')
+    const rows = (await stmt.all()) as { node_id: string; tx_id: string; hlc: string }[]
+    await inspect.close()
+    expect(rows).toHaveLength(6)
+    for (const row of rows) {
+      expect(row.node_id).toMatch(/^[0-9a-f]{32}$/)
+      expect(row.tx_id).toMatch(/^[0-9a-f]{32}$/)
+      expect(row.hlc).not.toBe('')
+    }
+    expect(new Set(rows.map(r => r.tx_id)).size).toBe(6)
   })
 
   it('offloads writes when the registry defaults the worker on', async () => {

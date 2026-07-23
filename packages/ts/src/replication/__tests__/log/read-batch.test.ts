@@ -51,7 +51,7 @@ describe('ReplicationLog', () => {
 
     it('decodes large integers from the __sirannon_int envelope back to BigInt', async () => {
       await conn.exec('CREATE TABLE counters (id INTEGER PRIMARY KEY, big INTEGER)')
-      const intTracker = new ChangeTracker({ replication: true })
+      const intTracker = new ChangeTracker()
       await intTracker.watch(conn, 'counters')
 
       const big = 9007199254740993n
@@ -73,7 +73,7 @@ describe('ReplicationLog', () => {
 
     it('decodes BLOB columns from the tagged hex envelope back to Buffer', async () => {
       await conn.exec('CREATE TABLE files (id INTEGER PRIMARY KEY, payload BLOB)')
-      const blobTracker = new ChangeTracker({ replication: true })
+      const blobTracker = new ChangeTracker()
       await blobTracker.watch(conn, 'files')
 
       const payload = Buffer.from([0x10, 0x20, 0x30, 0x00, 0xff])

@@ -34,6 +34,7 @@ interface Job {
 interface GroupCommitterHooks {
   acquireWriter: () => SQLiteConnection
   afterCommit: (writer: SQLiteConnection, sql: string) => Promise<void>
+  stampStatements: (options?: { persistClock?: boolean }) => readonly GroupStatement[] | null
 }
 
 /**
@@ -126,7 +127,7 @@ export class GroupCommitter {
 
   private async flush(batch: Job[]): Promise<void> {
     const lone = batch[0]
-    if (batch.length === 1 && lone.statements.length === 1) {
+    if (batch.length === 1 && lone.statements.length === 1 && !this.needsStamp(lone.statements[0].sql)) {
       try {
         lone.resolve([await this.writerLock.run(() => this.runSingle(lone.statements[0]))])
       } catch (err) {
@@ -144,23 +145,64 @@ export class GroupCommitter {
     }
     for (let i = 0; i < batch.length; i++) {
       const outcome = outcomes[i]
-      if (outcome.ok) batch[i].resolve(outcome.values)
+      if (outcome.ok) batch[i].resolve(outcome.values.slice(0, batch[i].statements.length))
       else batch[i].reject(outcome.error)
     }
   }
 
+  private needsStamp(sql: string): boolean {
+    if (!isGroupable(sql)) return false
+    const stamps = this.hooks.stampStatements()
+    return stamps !== null && stamps.length > 0
+  }
+
   private async runSingle(statement: GroupStatement): Promise<ExecuteResult> {
     const writer = this.hooks.acquireWriter()
-    const result = await execute(writer, statement.sql, statement.params)
+    const stamps = isGroupable(statement.sql) ? this.hooks.stampStatements() : null
+    const result =
+      stamps === null || stamps.length === 0
+        ? await execute(writer, statement.sql, statement.params)
+        : await this.runStampedAlone(writer, statement, stamps)
     await this.hooks.afterCommit(writer, statement.sql)
     return result
   }
 
+  private async runStampedAlone(
+    writer: SQLiteConnection,
+    statement: GroupStatement,
+    stamps: readonly GroupStatement[],
+  ): Promise<ExecuteResult> {
+    await writer.exec('SAVEPOINT sirannon_stamp')
+    try {
+      const result = await execute(writer, statement.sql, statement.params)
+      for (const stamp of stamps) {
+        await execute(writer, stamp.sql, stamp.params, stamp.trusted === true)
+      }
+      await writer.exec('RELEASE sirannon_stamp')
+      return result
+    } catch (err) {
+      try {
+        await writer.exec('ROLLBACK TO sirannon_stamp')
+        await writer.exec('RELEASE sirannon_stamp')
+      } catch {
+        /* the outer error is the one to surface */
+      }
+      throw err
+    }
+  }
+
   private async runGroup(batch: Job[]): Promise<GroupOutcome[]> {
     const writer = this.hooks.acquireWriter()
-    const units = batch.map(job => ({
-      statements: job.statements.map(statement => ({ sql: statement.sql, params: bindParams(statement.params) })),
-    }))
+    const units = batch.map((job, index) => {
+      const stamps = this.hooks.stampStatements({ persistClock: index === batch.length - 1 }) ?? []
+      return {
+        statements: [...job.statements, ...stamps].map(statement => ({
+          sql: statement.sql,
+          params: bindParams(statement.params),
+          ...(statement.trusted === true ? { trusted: true } : {}),
+        })),
+      }
+    })
     if (writer.runGroup) {
       const raw = await writer.runGroup(units)
       return raw.map(outcome =>

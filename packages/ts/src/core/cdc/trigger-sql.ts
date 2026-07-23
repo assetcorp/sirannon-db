@@ -28,15 +28,14 @@ export async function installCdcTriggers(
   table: string,
   columns: string[],
   pkColumns: string[],
-  replication: boolean,
 ): Promise<void> {
   const newJson = buildJsonObject(columns, 'NEW')
   const oldJson = buildJsonObject(columns, 'OLD')
   const newPk = buildPkRef(pkColumns, 'NEW')
   const oldPk = buildPkRef(pkColumns, 'OLD')
 
-  const replCols = replication ? ', node_id, tx_id, hlc' : ''
-  const replVals = replication ? ", '', '', ''" : ''
+  const replCols = ', node_id, tx_id, hlc'
+  const replVals = ", '', '', ''"
 
   await conn.exec(`
 			CREATE TRIGGER IF NOT EXISTS "${CDC_TRIGGER_PREFIX}${table}_insert"

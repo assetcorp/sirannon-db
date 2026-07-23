@@ -205,6 +205,8 @@ export interface WSChangeMessage {
     oldRow?: Record<string, unknown>
     seq: string
     timestamp: number
+    hlc?: string
+    origin?: string
   }
 }
 

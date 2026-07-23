@@ -260,6 +260,7 @@ export class WriterWorker {
             statements: unit.statements.map(statement => ({
               sql: statement.sql,
               params: statement.params ? [...statement.params] : [],
+              ...(statement.trusted === true ? { trusted: true } : {}),
             })),
           })),
         }) as Promise<GroupRunOutcome[]>,

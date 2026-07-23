@@ -66,7 +66,7 @@ export interface SQLiteConnection {
    * must not disturb the others.
    */
   runGroup?(
-    units: readonly { statements: readonly { sql: string; params?: readonly unknown[] }[] }[],
+    units: readonly { statements: readonly { sql: string; params?: readonly unknown[]; trusted?: boolean }[] }[],
   ): Promise<GroupRunOutcome[]>
 }
 

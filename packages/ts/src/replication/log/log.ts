@@ -47,6 +47,7 @@ export class ReplicationLog {
       this.pkResolver,
       fromNodeId => this.state.getLastAppliedSeq(fromNodeId),
       tracker,
+      changesTable,
     )
     this.stampOps = new StampOps(localNodeId, hlc, changesTable)
     this.dump = new DumpOps(conn, localNodeId, hlc, this.pkResolver)

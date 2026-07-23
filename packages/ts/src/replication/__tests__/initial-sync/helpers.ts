@@ -82,7 +82,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     for (const sql of tableSqls) {
       await conn.exec(sql)
       const tableName = sql.match(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i)?.[1]
@@ -119,7 +119,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
 
     const db = await Database.create(`db-${nodeId.slice(0, 8)}`, dbPath, testDriver)
     this.openDbs.push(db)
@@ -156,7 +156,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     for (const sql of tableSqls) {
       await conn.exec(sql)
       const tableName = sql.match(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i)?.[1]

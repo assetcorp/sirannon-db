@@ -95,6 +95,7 @@ export class Database {
     this.groupCommitter = new GroupCommitter(this.writerLock, {
       acquireWriter: () => this.pool.acquireWriter(),
       afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql),
+      stampStatements: options => this.cdc.stampStatements(options),
     })
   }
 
@@ -202,7 +203,13 @@ export class Database {
     sql: string,
     run: (txConn: SQLiteConnection) => Promise<T>,
   ): Promise<T> {
-    const result = await this.observer.track(sql, () => writer.transaction(run))
+    const result = await this.observer.track(sql, () =>
+      writer.transaction(async txConn => {
+        const value = await run(txConn)
+        await this.cdc.applyStamps(txConn)
+        return value
+      }),
+    )
     await applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql)
     return result
   }

@@ -1,6 +1,7 @@
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
 import type {
+  AckResponse,
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
@@ -148,8 +149,10 @@ export class WebSocketTransport implements Transport {
       filter,
       callback,
       onReset: options?.onReset,
-      lastSeq: undefined,
-      epoch: undefined,
+      onSubscribed: options?.onSubscribed,
+      deviceId: options?.deviceId,
+      lastSeq: options?.sinceSeq,
+      epoch: options?.epoch,
     })
 
     try {
@@ -158,6 +161,9 @@ export class WebSocketTransport implements Transport {
         id,
         table,
         ...(filter ? { filter: encodeTaggedValues(filter) as Record<string, unknown> } : {}),
+        ...(options?.sinceSeq !== undefined ? { sinceSeq: options.sinceSeq.toString() } : {}),
+        ...(options?.epoch !== undefined ? { epoch: options.epoch } : {}),
+        ...(options?.deviceId !== undefined ? { deviceId: options.deviceId } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {
@@ -173,6 +179,12 @@ export class WebSocketTransport implements Transport {
         }
       },
     }
+  }
+
+  async ack(deviceId: string, seq: bigint): Promise<AckResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<AckResponse>({ type: 'ack', id, deviceId, seq: seq.toString() })
   }
 
   close(): void {

@@ -1,10 +1,10 @@
-import { decodeTaggedValues } from '../../core/cdc/encoding.js'
-import type { SQLiteConnection } from '../../core/driver/types.js'
-import { computeChecksum } from '../../core/sync/checksum.js'
-import { HLC } from '../../core/sync/hlc.js'
-import type { ChangeRow } from '../../core/sync/internal-types.js'
-import type { PkResolver } from '../../core/sync/pk.js'
-import type { ReplicationBatch, ReplicationChange } from '../types.js'
+import { decodeTaggedValues } from '../cdc/encoding.js'
+import type { SQLiteConnection } from '../driver/types.js'
+import { computeChecksum } from './checksum.js'
+import { HLC } from './hlc.js'
+import type { ChangeRow } from './internal-types.js'
+import type { PkResolver } from './pk.js'
+import type { ReplicationBatch, ReplicationChange } from './types.js'
 
 export class BatchReader {
   constructor(
@@ -12,13 +12,15 @@ export class BatchReader {
     private readonly localNodeId: string,
     private readonly changesTable: string,
     private readonly pkResolver: PkResolver,
+    private readonly excludeDdl = false,
   ) {}
 
   async readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null> {
+    const ddlFilter = this.excludeDdl ? "AND operation != 'DDL'" : ''
     const stmt = await this.conn.prepare(
       `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, tx_id, hlc
        FROM "${this.changesTable}"
-       WHERE seq > ? AND node_id = ?
+       WHERE seq > ? AND node_id = ? ${ddlFilter}
        ORDER BY seq ASC
        LIMIT ?`,
     )

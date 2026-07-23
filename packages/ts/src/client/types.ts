@@ -15,6 +15,10 @@ export interface SubscribeOptions {
    * from the current moment; treat any prior state as stale and re-read.
    */
   onReset?: () => void
+  deviceId?: string
+  sinceSeq?: bigint
+  epoch?: string
+  onSubscribed?: (info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void
 }
 
 /**

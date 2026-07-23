@@ -6,11 +6,16 @@ export interface AppliedMigration {
   applied_at: number
 }
 
+export interface MigrationBaseline {
+  through: number
+}
+
 export interface Migration {
   version: number
   name: string
   up: string | ((tx: Transaction) => void | Promise<void>)
   down?: string | ((tx: Transaction) => void | Promise<void>)
+  baseline?: MigrationBaseline
 }
 
 export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>)

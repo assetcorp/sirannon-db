@@ -3,8 +3,10 @@ import { MigrationError } from '../errors.js'
 import { MIGRATIONS_TABLE } from '../internal-tables.js'
 import { ensureMigrationsTable } from '../system-catalog/index.js'
 import { Transaction } from '../transaction.js'
+import { planPendingMigrations, resolveEffectiveBaseline, SQLITE_USER_VERSION_MAX } from './baseline.js'
 import { type AppliedChecksumRow, migrationContentChecksum, reconcileMigrationChecksums } from './checksum.js'
 import { LAZY_DOWN_SQL, type LazyDownMigration } from './lazy-down.js'
+import { mirrorSchemaVersion, syncSchemaVersion } from './schema-version.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
 
 interface AppliedRow extends AppliedChecksumRow {
@@ -17,6 +19,7 @@ export class MigrationRunner {
     await ensureMigrationsTable(conn)
 
     const validated = MigrationRunner.validateMigrations(migrations)
+    const effectiveBaseline = resolveEffectiveBaseline(validated)
     const applied = await MigrationRunner.getAppliedRows(conn)
 
     const backfills = reconcileMigrationChecksums(validated, applied)
@@ -29,9 +32,10 @@ export class MigrationRunner {
       })
     }
 
-    const pending = validated.filter(m => !applied.has(m.version))
+    const pending = planPendingMigrations(validated, effectiveBaseline, new Set(applied.keys()))
 
     if (pending.length === 0) {
+      await syncSchemaVersion(conn, MigrationRunner.highestVersion(applied.keys()))
       return { applied: [], skipped: validated.length }
     }
 
@@ -60,6 +64,14 @@ export class MigrationRunner {
         await insertStmt.run(migration.version, migration.name, migrationContentChecksum(migration))
         appliedEntries.push({ version: migration.version, name: migration.name })
       }
+
+      await mirrorSchemaVersion(
+        txConn,
+        Math.max(
+          MigrationRunner.highestVersion(applied.keys()),
+          MigrationRunner.highestVersion(appliedEntries.map(e => e.version)),
+        ),
+      )
     })
 
     return {
@@ -139,6 +151,10 @@ export class MigrationRunner {
         await deleteStmt.run(entry.version)
         rolledBackEntries.push({ version: entry.version, name: entry.name })
       }
+
+      const rolledBackVersions = new Set(rollbackSet.map(r => r.version))
+      const remaining = appliedRows.find(row => !rolledBackVersions.has(row.version))
+      await mirrorSchemaVersion(txConn, remaining === undefined ? 0 : remaining.version)
     })
 
     return { rolledBack: rolledBackEntries }
@@ -165,9 +181,9 @@ export class MigrationRunner {
     const seenVersions = new Map<number, string>()
 
     for (const m of migrations) {
-      if (!Number.isSafeInteger(m.version) || m.version <= 0) {
+      if (!Number.isSafeInteger(m.version) || m.version <= 0 || m.version > SQLITE_USER_VERSION_MAX) {
         throw new MigrationError(
-          `Invalid migration version: ${m.version}`,
+          `Invalid migration version: ${m.version}. Versions must be integers from 1 to ${SQLITE_USER_VERSION_MAX} so they mirror to PRAGMA user_version`,
           typeof m.version === 'number' && Number.isFinite(m.version) ? m.version : 0,
           'MIGRATION_VALIDATION_ERROR',
         )
@@ -205,6 +221,14 @@ export class MigrationRunner {
     }
 
     return [...migrations].sort((a, b) => a.version - b.version)
+  }
+
+  private static highestVersion(versions: Iterable<number>): number {
+    let highest = 0
+    for (const version of versions) {
+      if (version > highest) highest = version
+    }
+    return highest
   }
 
   private static async getAppliedRows(conn: SQLiteConnection): Promise<Map<number, AppliedRow>> {

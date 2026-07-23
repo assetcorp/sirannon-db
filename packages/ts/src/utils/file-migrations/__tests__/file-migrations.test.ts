@@ -96,4 +96,18 @@ describe('loadMigrations', () => {
     const migrations = loadMigrations(tempDir)
     expect(migrations[0].down).toBeUndefined()
   })
+
+  it('marks the requested version as a baseline', () => {
+    writeFileSync(join(tempDir, '4_baseline_schema.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
+    writeFileSync(join(tempDir, '5_add_email.up.sql'), 'ALTER TABLE users ADD COLUMN email TEXT')
+
+    const migrations = loadMigrations(tempDir, { baseline: { version: 4, through: 3 } })
+    expect(migrations[0].baseline).toEqual({ through: 3 })
+    expect(migrations[1].baseline).toBeUndefined()
+  })
+
+  it('rejects a baseline option that matches no file', () => {
+    writeFileSync(join(tempDir, '5_add_email.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
+    expect(() => loadMigrations(tempDir, { baseline: { version: 4, through: 3 } })).toThrow(MigrationError)
+  })
 })

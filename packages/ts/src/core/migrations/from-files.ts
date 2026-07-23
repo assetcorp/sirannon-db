@@ -1,6 +1,11 @@
 import { MigrationError } from '../errors.js'
+import { applyBaselineOption, type BaselineFileOption } from './baseline.js'
 import { parseMigrationFilename } from './filename.js'
 import type { Migration } from './types.js'
+
+export interface MigrationsFromFilesOptions {
+  baseline?: BaselineFileOption
+}
 
 interface GroupedMigrationFiles {
   name: string
@@ -13,7 +18,7 @@ function basename(key: string): string {
   return separator === -1 ? key : key.slice(separator + 1)
 }
 
-export function migrationsFromFiles(files: Record<string, unknown>): Migration[] {
+export function migrationsFromFiles(files: Record<string, unknown>, options?: MigrationsFromFilesOptions): Migration[] {
   const grouped = new Map<number, GroupedMigrationFiles>()
 
   for (const [key, contents] of Object.entries(files)) {
@@ -81,5 +86,5 @@ export function migrationsFromFiles(files: Record<string, unknown>): Migration[]
   }
 
   migrations.sort((a, b) => a.version - b.version)
-  return migrations
+  return applyBaselineOption(migrations, options?.baseline)
 }

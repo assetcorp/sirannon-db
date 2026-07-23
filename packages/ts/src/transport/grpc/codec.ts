@@ -167,6 +167,7 @@ export function toSyncRequestPayload(req: SyncRequest): SyncRequestPayload {
     completedTables: req.completedTables,
     groupId: req.groupId ?? '',
     primaryTerm: req.primaryTerm ?? 0n,
+    supportsStreamVerification: req.supportsStreamVerification === true,
   }
 }
 
@@ -175,6 +176,7 @@ export function fromSyncRequestPayload(p: SyncRequestPayload): SyncRequest {
     requestId: p.requestId,
     joinerNodeId: p.joinerNodeId,
     completedTables: p.completedTables,
+    supportsStreamVerification: p.supportsStreamVerification === true ? true : undefined,
     groupId: p.groupId || undefined,
     primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
   }
@@ -217,7 +219,8 @@ export function toSyncCompletePayload(complete: SyncComplete): SyncCompletePaylo
     manifests: complete.manifests.map(m => ({
       table: m.table,
       rowCount: m.rowCount,
-      pkHash: m.pkHash,
+      pkHash: m.pkHash ?? '',
+      batchDigest: m.batchDigest ?? '',
     })),
     groupId: complete.groupId ?? '',
     primaryTerm: complete.primaryTerm ?? 0n,
@@ -232,7 +235,8 @@ export function fromSyncCompletePayload(p: SyncCompletePayload): SyncComplete {
       (m: ProtoSyncTableManifest): SyncTableManifest => ({
         table: m.table,
         rowCount: m.rowCount,
-        pkHash: m.pkHash,
+        pkHash: m.pkHash || undefined,
+        batchDigest: m.batchDigest || undefined,
       }),
     ),
     groupId: p.groupId || undefined,

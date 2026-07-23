@@ -260,6 +260,7 @@ message SyncRequestPayload {
   repeated string completed_tables = 3;
   string group_id = 4;
   int64 primary_term = 5;
+  bool supports_stream_verification = 6;
 }
 
 message SyncBatchPayload {
@@ -279,6 +280,7 @@ message SyncTableManifest {
   string table = 1;
   int64 row_count = 2;
   string pk_hash = 3;
+  string batch_digest = 4;
 }
 
 message SyncCompletePayload {

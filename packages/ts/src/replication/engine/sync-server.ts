@@ -6,12 +6,27 @@ import type { SyncAck, SyncBatch, SyncRequest, SyncTableManifest } from '../type
 import { IDENTIFIER_RE } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
+import { advanceStreamDigest } from './sync-verification.js'
 
 export class SyncServer {
   readonly activeSyncs = new Map<string, ActiveSyncSession>()
   readonly syncAckWaiters = new Map<string, SyncAckWaiter>()
 
   constructor(private readonly engine: ReplicationEngine) {}
+
+  private async rejectSyncRequest(fromPeerId: string, request: SyncRequest, error: string): Promise<void> {
+    await this.engine.config.transport.sendSyncAck(
+      fromPeerId,
+      this.engine.decorateSyncAck({
+        requestId: request.requestId,
+        joinerNodeId: request.joinerNodeId,
+        table: '__schema__',
+        batchIndex: -1,
+        success: false,
+        error,
+      }),
+    )
+  }
 
   async handleSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {
     const engine = this.engine
@@ -23,92 +38,32 @@ export class SyncServer {
         await engine.verifyPrimaryAuthority()
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        await engine.config.transport.sendSyncAck(
-          fromPeerId,
-          engine.decorateSyncAck({
-            requestId: request.requestId,
-            joinerNodeId: request.joinerNodeId,
-            table: '__schema__',
-            batchIndex: -1,
-            success: false,
-            error: wrappedErr.message,
-          }),
-        )
+        await this.rejectSyncRequest(fromPeerId, request, wrappedErr.message)
         return
       }
     } else if (!engine.config.topology.canWrite()) {
-      await engine.config.transport.sendSyncAck(
-        fromPeerId,
-        engine.decorateSyncAck({
-          requestId: request.requestId,
-          joinerNodeId: request.joinerNodeId,
-          table: '__schema__',
-          batchIndex: -1,
-          success: false,
-          error: 'This node cannot serve syncs',
-        }),
-      )
+      await this.rejectSyncRequest(fromPeerId, request, 'This node cannot serve syncs')
       return
     }
 
     if (this.activeSyncs.has(request.requestId)) {
-      await engine.config.transport.sendSyncAck(
-        fromPeerId,
-        engine.decorateSyncAck({
-          requestId: request.requestId,
-          joinerNodeId: request.joinerNodeId,
-          table: '__schema__',
-          batchIndex: -1,
-          success: false,
-          error: 'Duplicate requestId',
-        }),
-      )
+      await this.rejectSyncRequest(fromPeerId, request, 'Duplicate requestId')
       return
     }
 
     if (this.activeSyncs.size >= engine.maxConcurrentSyncs) {
-      await engine.config.transport.sendSyncAck(
-        fromPeerId,
-        engine.decorateSyncAck({
-          requestId: request.requestId,
-          joinerNodeId: request.joinerNodeId,
-          table: '__schema__',
-          batchIndex: -1,
-          success: false,
-          error: 'Sync capacity reached, retry later',
-        }),
-      )
+      await this.rejectSyncRequest(fromPeerId, request, 'Sync capacity reached, retry later')
       return
     }
 
     if (!engine.snapshotConnectionFactory) {
-      await engine.config.transport.sendSyncAck(
-        fromPeerId,
-        engine.decorateSyncAck({
-          requestId: request.requestId,
-          joinerNodeId: request.joinerNodeId,
-          table: '__schema__',
-          batchIndex: -1,
-          success: false,
-          error: 'No snapshot connection factory configured',
-        }),
-      )
+      await this.rejectSyncRequest(fromPeerId, request, 'No snapshot connection factory configured')
       return
     }
 
     for (const table of request.completedTables) {
       if (!IDENTIFIER_RE.test(table)) {
-        await engine.config.transport.sendSyncAck(
-          fromPeerId,
-          engine.decorateSyncAck({
-            requestId: request.requestId,
-            joinerNodeId: request.joinerNodeId,
-            table: '__schema__',
-            batchIndex: -1,
-            success: false,
-            error: `Invalid table name in completedTables: ${table}`,
-          }),
-        )
+        await this.rejectSyncRequest(fromPeerId, request, `Invalid table name in completedTables: ${table}`)
         return
       }
     }
@@ -117,16 +72,10 @@ export class SyncServer {
     try {
       readConn = await engine.snapshotConnectionFactory()
     } catch (err) {
-      await engine.config.transport.sendSyncAck(
+      await this.rejectSyncRequest(
         fromPeerId,
-        engine.decorateSyncAck({
-          requestId: request.requestId,
-          joinerNodeId: request.joinerNodeId,
-          table: '__schema__',
-          batchIndex: -1,
-          success: false,
-          error: `Failed to open snapshot connection: ${err instanceof Error ? err.message : String(err)}`,
-        }),
+        request,
+        `Failed to open snapshot connection: ${err instanceof Error ? err.message : String(err)}`,
       )
       return
     }
@@ -160,6 +109,8 @@ export class SyncServer {
       startedAt: Date.now(),
       timeoutTimer,
       aborted: false,
+      streamVerification: request.supportsStreamVerification === true,
+      tableDigests: new Map(),
     }
 
     this.activeSyncs.set(request.requestId, session)
@@ -282,6 +233,16 @@ export class SyncServer {
     return ackPromise
   }
 
+  private refreshSessionDeadline(session: ActiveSyncSession): void {
+    clearTimeout(session.timeoutTimer)
+    const timer = setTimeout(
+      () => this.abortSyncSession(session.requestId),
+      this.engine.maxSyncDurationMs,
+    ) as ReturnType<typeof setTimeout> & { unref?: () => void }
+    timer.unref?.()
+    session.timeoutTimer = timer
+  }
+
   private async serveSyncSession(session: ActiveSyncSession): Promise<void> {
     const engine = this.engine
     const schemaDdl = await engine.log.dumpSchema(session.readConn)
@@ -301,6 +262,7 @@ export class SyncServer {
       this.abortSyncSession(session.requestId)
       return
     }
+    this.refreshSessionDeadline(session)
 
     for (const table of session.tables) {
       if (session.aborted) return
@@ -325,23 +287,28 @@ export class SyncServer {
           this.abortSyncSession(session.requestId)
           return
         }
+        this.refreshSessionDeadline(session)
+        session.tableDigests.set(table, advanceStreamDigest(session.tableDigests.get(table), checksum, rows.length))
 
         batchIndex += 1
       }
 
       if (batchIndex === 0) {
+        const emptyChecksum = createHash('sha256').update(canonicaliseForChecksum([])).digest('hex')
         const emptyAck = await this.sendSyncBatchAndWaitForAck(session.joinerNodeId, {
           requestId: session.requestId,
           table,
           batchIndex: 0,
           rows: [],
-          checksum: createHash('sha256').update(canonicaliseForChecksum([])).digest('hex'),
+          checksum: emptyChecksum,
           isLastBatchForTable: true,
         })
         if (!emptyAck.success) {
           this.abortSyncSession(session.requestId)
           return
         }
+        this.refreshSessionDeadline(session)
+        session.tableDigests.set(table, advanceStreamDigest(undefined, emptyChecksum, 0))
       }
 
       session.completedTables.add(table)
@@ -351,7 +318,15 @@ export class SyncServer {
 
     const manifests: SyncTableManifest[] = []
     for (const table of session.tables) {
-      manifests.push(await engine.log.generateManifest(session.readConn, table))
+      if (session.streamVerification) {
+        const streamDigest = session.tableDigests.get(table)
+        if (!streamDigest) {
+          throw new SyncError(`Missing stream digest for table ${table}`, session.requestId)
+        }
+        manifests.push({ table, rowCount: streamDigest.rowCount, batchDigest: streamDigest.digest })
+      } else {
+        manifests.push(await engine.log.generateManifest(session.readConn, table))
+      }
     }
 
     await engine.config.transport.sendSyncComplete(

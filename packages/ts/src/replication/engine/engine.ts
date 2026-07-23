@@ -57,6 +57,7 @@ import { SenderLoop } from './sender-loop.js'
 import { startEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
+import type { TableStreamDigest } from './sync-verification.js'
 import { installTestHooks } from './test-hooks.js'
 
 const DEFAULT_COORDINATOR_SESSION_TTL_MS = 10_000
@@ -114,6 +115,7 @@ export class ReplicationEngine extends EventEmitter {
   highestSourceSeqSeen = 0n
   readonly appliedSeqByPeer = new Map<string, bigint>()
   readonly expectedBatchIndex = new Map<string, number>()
+  readonly syncTableDigests = new Map<string, TableStreamDigest>()
   syncState: SyncState = {
     phase: 'ready',
     sourcePeerId: null,

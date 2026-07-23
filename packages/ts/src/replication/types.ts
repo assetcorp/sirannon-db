@@ -248,6 +248,7 @@ export interface SyncRequest {
   requestId: string
   joinerNodeId: string
   completedTables: string[]
+  supportsStreamVerification?: boolean
   groupId?: string
   primaryTerm?: bigint
 }
@@ -268,7 +269,8 @@ export interface SyncBatch {
 export interface SyncTableManifest {
   table: string
   rowCount: number
-  pkHash: string
+  pkHash?: string
+  batchDigest?: string
 }
 
 export interface SyncComplete {

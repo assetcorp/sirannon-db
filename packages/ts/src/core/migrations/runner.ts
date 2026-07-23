@@ -5,6 +5,7 @@ import { ensureMigrationsTable } from '../system-catalog/index.js'
 import { Transaction } from '../transaction.js'
 import { planPendingMigrations, resolveEffectiveBaseline, SQLITE_USER_VERSION_MAX } from './baseline.js'
 import { type AppliedChecksumRow, migrationContentChecksum, reconcileMigrationChecksums } from './checksum.js'
+import { isConcurrentMigrationConflict } from './concurrency.js'
 import { LAZY_DOWN_SQL, type LazyDownMigration } from './lazy-down.js'
 import { mirrorSchemaVersion, syncSchemaVersion } from './schema-version.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
@@ -16,32 +17,58 @@ interface AppliedRow extends AppliedChecksumRow {
 // biome-ignore lint/complexity/noStaticOnlyClass: public API exported as a class namespace
 export class MigrationRunner {
   static async run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult> {
-    await ensureMigrationsTable(conn)
-
     const validated = MigrationRunner.validateMigrations(migrations)
     const effectiveBaseline = resolveEffectiveBaseline(validated)
-    const applied = await MigrationRunner.getAppliedRows(conn)
 
-    const backfills = reconcileMigrationChecksums(validated, applied)
-    if (backfills.length > 0) {
-      await conn.transaction(async txConn => {
+    return MigrationRunner.retryOnConcurrentConflict(() =>
+      MigrationRunner.applyPending(conn, validated, effectiveBaseline),
+    )
+  }
+
+  private static async retryOnConcurrentConflict<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation()
+    } catch (err) {
+      if (!isConcurrentMigrationConflict(err)) throw err
+    }
+
+    try {
+      return await operation()
+    } catch (err) {
+      if (!isConcurrentMigrationConflict(err)) throw err
+      throw new MigrationError(
+        'Another process is writing to the migration history and the busy timeout elapsed; retry once it finishes',
+        0,
+        'MIGRATION_CONCURRENT',
+      )
+    }
+  }
+
+  private static async applyPending(
+    conn: SQLiteConnection,
+    validated: Migration[],
+    effectiveBaseline: Migration | undefined,
+  ): Promise<MigrationResult> {
+    return conn.transaction(async txConn => {
+      await ensureMigrationsTable(txConn)
+      const applied = await MigrationRunner.getAppliedRows(txConn)
+
+      const backfills = reconcileMigrationChecksums(validated, applied)
+      if (backfills.length > 0) {
         const updateStmt = await txConn.prepare(`UPDATE ${MIGRATIONS_TABLE} SET checksum = ? WHERE version = ?`)
         for (const backfill of backfills) {
           await updateStmt.run(backfill.checksum, backfill.version)
         }
-      })
-    }
+      }
 
-    const pending = planPendingMigrations(validated, effectiveBaseline, new Set(applied.keys()))
+      const pending = planPendingMigrations(validated, effectiveBaseline, new Set(applied.keys()))
 
-    if (pending.length === 0) {
-      await syncSchemaVersion(conn, MigrationRunner.highestVersion(applied.keys()))
-      return { applied: [], skipped: validated.length }
-    }
+      if (pending.length === 0) {
+        await syncSchemaVersion(txConn, MigrationRunner.highestVersion(applied.keys()))
+        return { applied: [], skipped: validated.length }
+      }
 
-    const appliedEntries: AppliedMigrationEntry[] = []
-
-    await conn.transaction(async txConn => {
+      const appliedEntries: AppliedMigrationEntry[] = []
       const insertStmt = await txConn.prepare(
         `INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES (?, ?, ?)`,
       )
@@ -56,6 +83,7 @@ export class MigrationRunner {
           }
         } catch (err) {
           if (err instanceof MigrationError) throw err
+          if (isConcurrentMigrationConflict(err)) throw err
           throw new MigrationError(
             `Migration ${migration.version}_${migration.name} failed: ${err instanceof Error ? err.message : String(err)}`,
             migration.version,
@@ -72,12 +100,12 @@ export class MigrationRunner {
           MigrationRunner.highestVersion(appliedEntries.map(e => e.version)),
         ),
       )
-    })
 
-    return {
-      applied: appliedEntries,
-      skipped: validated.length - pending.length,
-    }
+      return {
+        applied: appliedEntries,
+        skipped: validated.length - pending.length,
+      }
+    })
   }
 
   static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
@@ -89,75 +117,78 @@ export class MigrationRunner {
       )
     }
 
-    await ensureMigrationsTable(conn)
-
-    const selectStmt = await conn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
-    const appliedRows = (await selectStmt.all()) as AppliedMigrationEntry[]
-
-    if (appliedRows.length === 0) {
-      return { rolledBack: [] }
-    }
-
-    let rollbackSet: AppliedMigrationEntry[]
-    if (version === undefined) {
-      rollbackSet = [appliedRows[0]]
-    } else {
-      rollbackSet = appliedRows.filter(row => row.version > version)
-    }
-
-    if (rollbackSet.length === 0) {
-      return { rolledBack: [] }
-    }
-
     MigrationRunner.validateMigrations(migrations)
-
-    const rollbackVersions = rollbackSet.map(r => r.version)
     const inputByVersion = new Map(migrations.map(m => [m.version, m]))
-    const downByVersion = new Map<number, Migration>()
-    for (const v of rollbackVersions) {
-      downByVersion.set(v, MigrationRunner.resolveDownMigration(inputByVersion.get(v), v))
-    }
 
-    const rolledBackEntries: AppliedMigrationEntry[] = []
+    return MigrationRunner.retryOnConcurrentConflict(() =>
+      conn.transaction(async txConn => {
+        await ensureMigrationsTable(txConn)
+        const selectStmt = await txConn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
+        const appliedRows = (await selectStmt.all()) as AppliedMigrationEntry[]
 
-    await conn.transaction(async txConn => {
-      const deleteStmt = await txConn.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE version = ?`)
+        if (appliedRows.length === 0) {
+          return { rolledBack: [] }
+        }
 
-      for (const entry of rollbackSet) {
-        const migration = downByVersion.get(entry.version)
-        if (!migration) {
-          throw new MigrationError(
-            `No down migration found for version ${entry.version}`,
+        let rollbackSet: AppliedMigrationEntry[]
+        if (version === undefined) {
+          rollbackSet = [appliedRows[0]]
+        } else {
+          rollbackSet = appliedRows.filter(row => row.version > version)
+        }
+
+        if (rollbackSet.length === 0) {
+          return { rolledBack: [] }
+        }
+
+        const downByVersion = new Map<number, Migration>()
+        for (const entry of rollbackSet) {
+          downByVersion.set(
             entry.version,
-            'MIGRATION_ROLLBACK_ERROR',
+            MigrationRunner.resolveDownMigration(inputByVersion.get(entry.version), entry.version),
           )
         }
 
-        try {
-          if (typeof migration.down === 'string') {
-            await txConn.exec(migration.down)
-          } else {
-            const result = migration.down?.(new Transaction(txConn))
-            if (result instanceof Promise) await result
+        const rolledBackEntries: AppliedMigrationEntry[] = []
+        const deleteStmt = await txConn.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE version = ?`)
+
+        for (const entry of rollbackSet) {
+          const migration = downByVersion.get(entry.version)
+          if (!migration) {
+            throw new MigrationError(
+              `No down migration found for version ${entry.version}`,
+              entry.version,
+              'MIGRATION_ROLLBACK_ERROR',
+            )
           }
-        } catch (err) {
-          if (err instanceof MigrationError) throw err
-          throw new MigrationError(
-            `Rollback of migration ${entry.version}_${entry.name} failed: ${err instanceof Error ? err.message : String(err)}`,
-            entry.version,
-            'MIGRATION_ROLLBACK_ERROR',
-          )
+
+          try {
+            if (typeof migration.down === 'string') {
+              await txConn.exec(migration.down)
+            } else {
+              const result = migration.down?.(new Transaction(txConn))
+              if (result instanceof Promise) await result
+            }
+          } catch (err) {
+            if (err instanceof MigrationError) throw err
+            if (isConcurrentMigrationConflict(err)) throw err
+            throw new MigrationError(
+              `Rollback of migration ${entry.version}_${entry.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+              entry.version,
+              'MIGRATION_ROLLBACK_ERROR',
+            )
+          }
+          await deleteStmt.run(entry.version)
+          rolledBackEntries.push({ version: entry.version, name: entry.name })
         }
-        await deleteStmt.run(entry.version)
-        rolledBackEntries.push({ version: entry.version, name: entry.name })
-      }
 
-      const rolledBackVersions = new Set(rollbackSet.map(r => r.version))
-      const remaining = appliedRows.find(row => !rolledBackVersions.has(row.version))
-      await mirrorSchemaVersion(txConn, remaining === undefined ? 0 : remaining.version)
-    })
+        const rolledBackVersions = new Set(rollbackSet.map(r => r.version))
+        const remaining = appliedRows.find(row => !rolledBackVersions.has(row.version))
+        await mirrorSchemaVersion(txConn, remaining === undefined ? 0 : remaining.version)
 
-    return { rolledBack: rolledBackEntries }
+        return { rolledBack: rolledBackEntries }
+      }),
+    )
   }
 
   private static resolveDownMigration(migration: Migration | undefined, version: number): Migration {

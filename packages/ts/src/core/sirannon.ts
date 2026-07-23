@@ -1,6 +1,6 @@
 import { Database } from './database.js'
 import type { SQLiteDriver } from './driver/types.js'
-import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from './errors.js'
+import { DatabaseAlreadyExistsError, DatabaseNotFoundError, MigrationError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
@@ -190,7 +190,11 @@ export class Sirannon {
     const loading = (async () => {
       const set = await source()
       if (!Array.isArray(set)) {
-        throw new SirannonError('The migrations source must return an array of migrations', 'MIGRATION_SOURCE_INVALID')
+        throw new MigrationError(
+          'The migrations source must return an array of migrations',
+          0,
+          'MIGRATION_SOURCE_INVALID',
+        )
       }
       return set
     })()

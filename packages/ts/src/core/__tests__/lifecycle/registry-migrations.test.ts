@@ -222,8 +222,8 @@ describe('registry migrations', () => {
     })
 
     const attempt = sir.open('main', join(tempDir, 'main.db'))
-    await expect(attempt).rejects.toThrow(SirannonError)
-    await expect(attempt).rejects.toMatchObject({ code: 'MIGRATION_SOURCE_INVALID' })
+    await expect(attempt).rejects.toThrow(MigrationError)
+    await expect(attempt).rejects.toMatchObject({ code: 'MIGRATION_SOURCE_INVALID', version: 0 })
     expect(sir.has('main')).toBe(false)
     await sir.shutdown()
   })

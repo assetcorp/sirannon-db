@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
 import { MIGRATIONS_TABLE } from '../internal-tables.js'
 import { Transaction } from '../transaction.js'
+import { LAZY_DOWN_SQL, type LazyDownMigration } from './lazy-down.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
 
 const CREATE_TRACKING_TABLE = `
@@ -91,11 +92,7 @@ export class MigrationRunner {
     const inputByVersion = new Map(migrations.map(m => [m.version, m]))
     const downByVersion = new Map<number, Migration>()
     for (const v of rollbackVersions) {
-      const m = inputByVersion.get(v)
-      if (!m || m.down === undefined) {
-        throw new MigrationError(`Migration version ${v} has no down migration`, v, 'MIGRATION_NO_DOWN')
-      }
-      downByVersion.set(v, m)
+      downByVersion.set(v, MigrationRunner.resolveDownMigration(inputByVersion.get(v), v))
     }
 
     const rolledBackEntries: AppliedMigrationEntry[] = []
@@ -134,6 +131,23 @@ export class MigrationRunner {
     })
 
     return { rolledBack: rolledBackEntries }
+  }
+
+  private static resolveDownMigration(migration: Migration | undefined, version: number): Migration {
+    if (!migration) {
+      throw new MigrationError(`Migration version ${version} has no down migration`, version, 'MIGRATION_NO_DOWN')
+    }
+
+    if (migration.down !== undefined) {
+      return migration
+    }
+
+    const readDown = (migration as LazyDownMigration)[LAZY_DOWN_SQL]
+    if (readDown === undefined) {
+      throw new MigrationError(`Migration version ${version} has no down migration`, version, 'MIGRATION_NO_DOWN')
+    }
+
+    return { version: migration.version, name: migration.name, up: migration.up, down: readDown() }
   }
 
   private static validateMigrations(migrations: Migration[]): Migration[] {

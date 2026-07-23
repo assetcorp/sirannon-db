@@ -5,7 +5,7 @@ import { DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
 import { createDatabaseRuntime } from './database-create.js'
 import { DatabaseObserver } from './database-observability.js'
-import { DatabaseSyncController } from './database-sync.js'
+import { DatabaseSyncController, type DeviceSyncPort } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
@@ -125,6 +125,11 @@ export class Database {
     this.ensureOpen()
     if (this.readOnly) throw new ReadOnlyError(this.id)
     return this.sync.applyChanges(batch, resolver)
+  }
+
+  deviceSync(): DeviceSyncPort {
+    this.ensureOpen()
+    return this.sync.devicePort()
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {

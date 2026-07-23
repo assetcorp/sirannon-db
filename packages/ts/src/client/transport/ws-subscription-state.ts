@@ -7,6 +7,8 @@ export interface ActiveSubscription {
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
   onReset: (() => void) | undefined
+  onSubscribed: ((info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void) | undefined
+  deviceId: string | undefined
   lastSeq: bigint | undefined
   epoch: string | undefined
 }
@@ -33,6 +35,9 @@ export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribe
   } else if (sub.lastSeq === undefined && baseline !== undefined) {
     sub.lastSeq = baseline
   }
+  try {
+    sub.onSubscribed?.({ seq: baseline, epoch: sub.epoch, resync: msg.resync === true })
+  } catch {}
 }
 
 export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessage): void {
@@ -65,5 +70,6 @@ export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WS
     ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
     ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
     ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
+    ...(sub.deviceId !== undefined ? { deviceId: sub.deviceId } : {}),
   }
 }

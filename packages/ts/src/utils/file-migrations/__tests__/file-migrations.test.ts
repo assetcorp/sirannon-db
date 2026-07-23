@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MigrationError } from '../../../core/errors.js'
-import { loadMigrations, readDownMigrations, readUpMigrations, scanDirectory } from '../index.js'
+import { loadMigrations, readUpMigrations, scanDirectory } from '../index.js'
 
 let tempDir: string
 
@@ -77,23 +77,6 @@ describe('readUpMigrations', () => {
   })
 })
 
-describe('readDownMigrations', () => {
-  it('reads down migration SQL', () => {
-    writeFileSync(join(tempDir, '1_create_users.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
-    writeFileSync(join(tempDir, '1_create_users.down.sql'), 'DROP TABLE users')
-    const scanned = scanDirectory(tempDir)
-    const downMigrations = readDownMigrations(scanned, [1])
-    expect(downMigrations).toHaveLength(1)
-    expect(downMigrations[0].down).toBe('DROP TABLE users')
-  })
-
-  it('throws when down file is missing', () => {
-    writeFileSync(join(tempDir, '1_create_users.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
-    const scanned = scanDirectory(tempDir)
-    expect(() => readDownMigrations(scanned, [1])).toThrow(MigrationError)
-  })
-})
-
 describe('loadMigrations', () => {
   it('loads migration objects from a directory', () => {
     writeFileSync(join(tempDir, '1_create_users.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
@@ -104,5 +87,13 @@ describe('loadMigrations', () => {
     expect(migrations[0].version).toBe(1)
     expect(migrations[1].version).toBe(2)
     expect(typeof migrations[0].up).toBe('string')
+  })
+
+  it('does not read down files during load', () => {
+    writeFileSync(join(tempDir, '1_create_users.up.sql'), 'CREATE TABLE users (id INTEGER PRIMARY KEY)')
+    writeFileSync(join(tempDir, '1_create_users.down.sql'), 'DROP TABLE users')
+
+    const migrations = loadMigrations(tempDir)
+    expect(migrations[0].down).toBeUndefined()
   })
 })

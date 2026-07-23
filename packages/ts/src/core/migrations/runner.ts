@@ -1,25 +1,34 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
 import { MIGRATIONS_TABLE } from '../internal-tables.js'
+import { ensureMigrationsTable } from '../system-catalog/index.js'
 import { Transaction } from '../transaction.js'
+import { type AppliedChecksumRow, migrationContentChecksum, reconcileMigrationChecksums } from './checksum.js'
 import { LAZY_DOWN_SQL, type LazyDownMigration } from './lazy-down.js'
 import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
 
-const CREATE_TRACKING_TABLE = `
-  CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    applied_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
-  )
-`
+interface AppliedRow extends AppliedChecksumRow {
+  name: string
+}
 
 // biome-ignore lint/complexity/noStaticOnlyClass: public API exported as a class namespace
 export class MigrationRunner {
   static async run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult> {
-    await conn.exec(CREATE_TRACKING_TABLE)
+    await ensureMigrationsTable(conn)
 
     const validated = MigrationRunner.validateMigrations(migrations)
-    const applied = await MigrationRunner.getAppliedVersions(conn)
+    const applied = await MigrationRunner.getAppliedRows(conn)
+
+    const backfills = reconcileMigrationChecksums(validated, applied)
+    if (backfills.length > 0) {
+      await conn.transaction(async txConn => {
+        const updateStmt = await txConn.prepare(`UPDATE ${MIGRATIONS_TABLE} SET checksum = ? WHERE version = ?`)
+        for (const backfill of backfills) {
+          await updateStmt.run(backfill.checksum, backfill.version)
+        }
+      })
+    }
+
     const pending = validated.filter(m => !applied.has(m.version))
 
     if (pending.length === 0) {
@@ -29,7 +38,9 @@ export class MigrationRunner {
     const appliedEntries: AppliedMigrationEntry[] = []
 
     await conn.transaction(async txConn => {
-      const insertStmt = await txConn.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (version, name) VALUES (?, ?)`)
+      const insertStmt = await txConn.prepare(
+        `INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES (?, ?, ?)`,
+      )
 
       for (const migration of pending) {
         try {
@@ -46,7 +57,7 @@ export class MigrationRunner {
             migration.version,
           )
         }
-        await insertStmt.run(migration.version, migration.name)
+        await insertStmt.run(migration.version, migration.name, migrationContentChecksum(migration))
         appliedEntries.push({ version: migration.version, name: migration.name })
       }
     })
@@ -66,7 +77,7 @@ export class MigrationRunner {
       )
     }
 
-    await conn.exec(CREATE_TRACKING_TABLE)
+    await ensureMigrationsTable(conn)
 
     const selectStmt = await conn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
     const appliedRows = (await selectStmt.all()) as AppliedMigrationEntry[]
@@ -196,9 +207,9 @@ export class MigrationRunner {
     return [...migrations].sort((a, b) => a.version - b.version)
   }
 
-  private static async getAppliedVersions(conn: SQLiteConnection): Promise<Set<number>> {
-    const stmt = await conn.prepare(`SELECT version FROM ${MIGRATIONS_TABLE} ORDER BY version`)
-    const rows = (await stmt.all()) as { version: number }[]
-    return new Set(rows.map(r => r.version))
+  private static async getAppliedRows(conn: SQLiteConnection): Promise<Map<number, AppliedRow>> {
+    const stmt = await conn.prepare(`SELECT version, name, checksum FROM ${MIGRATIONS_TABLE} ORDER BY version`)
+    const rows = (await stmt.all()) as { version: number; name: string; checksum: string | null }[]
+    return new Map(rows.map(r => [r.version, { name: r.name, checksum: r.checksum }]))
   }
 }

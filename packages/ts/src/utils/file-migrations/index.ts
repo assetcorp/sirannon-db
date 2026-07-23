@@ -114,7 +114,21 @@ export function readUpMigrations(scanned: ScannedMigration[]): Migration[] {
 }
 
 function readDownSql(downPath: string, version: number): string {
-  const downSql = readFileSync(downPath, 'utf-8').trim()
+  let contents: string
+  try {
+    contents = readFileSync(downPath, 'utf-8')
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'ENOENT') {
+      throw new MigrationError(`Down migration file no longer exists: ${downPath}`, version, 'MIGRATION_NO_DOWN')
+    }
+    throw new MigrationError(
+      `Failed to read down migration file ${downPath}: ${err instanceof Error ? err.message : String(err)}`,
+      version,
+      'MIGRATION_ROLLBACK_ERROR',
+    )
+  }
+
+  const downSql = contents.trim()
   if (downSql.length === 0) {
     throw new MigrationError(`Down migration file is empty: ${downPath}`, version, 'MIGRATION_VALIDATION_ERROR')
   }

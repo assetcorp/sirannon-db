@@ -1,10 +1,15 @@
-import { randomBytes } from 'node:crypto'
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import { META_TABLE } from '../internal-tables.js'
 import { ensureMetaTable } from '../system-catalog/index.js'
 
 const EPOCH_KEY = 'cdc_epoch'
+
+function randomHexId(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength)
+  globalThis.crypto.getRandomValues(bytes)
+  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+}
 
 /**
  * Returns a stable identifier for this database's change-log sequence space,
@@ -19,7 +24,7 @@ export async function ensureCdcEpoch(conn: SQLiteConnection): Promise<string> {
   await ensureMetaTable(conn)
 
   const insert = await conn.prepare(`INSERT OR IGNORE INTO "${META_TABLE}" (key, value) VALUES (?, ?)`)
-  await insert.run(EPOCH_KEY, randomBytes(16).toString('hex'))
+  await insert.run(EPOCH_KEY, randomHexId(16))
 
   const select = await conn.prepare(`SELECT value FROM "${META_TABLE}" WHERE key = ?`)
   const row = (await select.get(EPOCH_KEY)) as { value?: unknown } | undefined

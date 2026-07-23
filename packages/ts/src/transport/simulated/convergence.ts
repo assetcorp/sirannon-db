@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import { canonicaliseForChecksum } from '../../replication/log/canonicalise.js'
+import { canonicaliseForChecksum } from '../../core/sync/canonicalise.js'
 
 export interface NodeSnapshot {
   nodeId: string

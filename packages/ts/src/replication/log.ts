@@ -1,2 +1,2 @@
-export { canonicaliseForChecksum } from './log/canonicalise.js'
+export { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 export { ReplicationLog } from './log/log.js'

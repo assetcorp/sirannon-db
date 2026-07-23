@@ -5,7 +5,8 @@ import {
   PEER_STATE_TABLE,
   SYNC_STATE_TABLE,
 } from '../../core/internal-tables.js'
-import { HLC } from '../hlc.js'
+import { HLC } from '../../core/sync/hlc.js'
+import { isWellFormedHlc } from '../../core/sync/hlc-store.js'
 import type { SyncPhase } from '../types.js'
 
 export class StateOps {
@@ -201,20 +202,6 @@ export class StateOps {
     const row = (await stmt.get()) as { status: string } | undefined
     return row?.status === 'ready'
   }
-}
-
-function isWellFormedHlc(candidate: string): boolean {
-  if (candidate.length === 0) return false
-  let decoded: ReturnType<typeof HLC.decode>
-  try {
-    decoded = HLC.decode(candidate)
-  } catch {
-    return false
-  }
-  if (!Number.isInteger(decoded.wallMs) || decoded.wallMs < 0) return false
-  if (!Number.isInteger(decoded.logical) || decoded.logical < 0) return false
-  if (decoded.nodeId.length === 0) return false
-  return true
 }
 
 function mergeCandidate(current: string | null, candidate: string | null): string | null {

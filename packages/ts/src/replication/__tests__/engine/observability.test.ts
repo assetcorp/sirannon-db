@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { HLC } from '../../../core/sync/hlc.js'
 import { ReplicationEngine } from '../../engine.js'
-import { HLC } from '../../hlc.js'
 import { canonicaliseForChecksum } from '../../log.js'
 import { PrimaryReplicaTopology } from '../../topology/primary-replica.js'
 import {

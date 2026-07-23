@@ -1,16 +1,6 @@
-import { SirannonError } from '../core/errors.js'
+import { ReplicationError } from '../core/sync/errors.js'
 
-/** Base error for all replication-related failures. */
-export class ReplicationError extends SirannonError {
-  constructor(
-    message: string,
-    code: string = 'REPLICATION_ERROR',
-    public readonly details?: Record<string, unknown>,
-  ) {
-    super(message, code)
-    this.name = 'ReplicationError'
-  }
-}
+export { BatchValidationError, ReplicationError } from '../core/sync/errors.js'
 
 /** Thrown when a write conflict cannot be resolved automatically. */
 export class ConflictError extends ReplicationError {
@@ -29,14 +19,6 @@ export class TransportError extends ReplicationError {
   constructor(message: string) {
     super(message, 'TRANSPORT_ERROR')
     this.name = 'TransportError'
-  }
-}
-
-/** Thrown when an incoming replication batch fails integrity checks (checksum, schema, clock drift). */
-export class BatchValidationError extends ReplicationError {
-  constructor(message: string) {
-    super(message, 'BATCH_VALIDATION_ERROR')
-    this.name = 'BatchValidationError'
   }
 }
 

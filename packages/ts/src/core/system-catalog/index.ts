@@ -1,6 +1,6 @@
 export type { ChangesTableOptions } from './changes-table.js'
 export { ensureChangesTable } from './changes-table.js'
 export { assertSafeIdentifier, ensureColumn, tableColumns } from './columns.js'
-export { ensureMetaTable } from './meta-table.js'
+export { ensureMetaTable, getMetaValue, setMetaValue } from './meta-table.js'
 export { ensureMigrationsTable } from './migrations-table.js'
 export { ensureReplicationStateTables } from './replication-tables.js'

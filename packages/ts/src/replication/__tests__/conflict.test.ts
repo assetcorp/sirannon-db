@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { FieldMergeResolver } from '../conflict/field-merge.js'
-import { LWWResolver } from '../conflict/lww.js'
-import { PrimaryWinsResolver } from '../conflict/primary-wins.js'
+import { FieldMergeResolver } from '../../core/sync/conflict/field-merge.js'
+import { LWWResolver } from '../../core/sync/conflict/lww.js'
+import { PrimaryWinsResolver } from '../../core/sync/conflict/primary-wins.js'
 import type { ConflictContext, ReplicationChange } from '../types.js'
 
 function makeChange(overrides: Partial<ReplicationChange> = {}): ReplicationChange {

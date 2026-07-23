@@ -1,9 +1,9 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { INTERNAL_TABLE_PREFIX, SYNC_STATE_TABLE } from '../../core/internal-tables.js'
-import { ensureChangesTable, ensureReplicationStateTables } from '../../core/system-catalog/index.js'
+import { IDENTIFIER_RE, validateDdlSafety } from '../../core/sync/validators.js'
+import { ensureChangesTable, ensureMetaTable, ensureReplicationStateTables } from '../../core/system-catalog/index.js'
 import { ReplicationError } from '../errors.js'
-import { IDENTIFIER_RE, validateDdlSafety } from './validators.js'
 
 export class SchemaOps {
   constructor(
@@ -14,6 +14,7 @@ export class SchemaOps {
   async ensureReplicationTables(): Promise<void> {
     await ensureChangesTable(this.conn, this.changesTable, { replication: true })
     await ensureReplicationStateTables(this.conn)
+    await ensureMetaTable(this.conn)
   }
 
   async dumpSchema(conn: SQLiteConnection, excludePrefix: string = INTERNAL_TABLE_PREFIX): Promise<string[]> {

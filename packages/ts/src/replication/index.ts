@@ -1,6 +1,7 @@
-export { FieldMergeResolver } from './conflict/field-merge.js'
-export { LWWResolver } from './conflict/lww.js'
-export { PrimaryWinsResolver } from './conflict/primary-wins.js'
+export { FieldMergeResolver } from '../core/sync/conflict/field-merge.js'
+export { LWWResolver } from '../core/sync/conflict/lww.js'
+export { PrimaryWinsResolver } from '../core/sync/conflict/primary-wins.js'
+export { HLC } from '../core/sync/hlc.js'
 export type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
@@ -41,7 +42,6 @@ export {
   UnsafeRecoveryRequiredError,
   WriteConcernError,
 } from './errors.js'
-export { HLC } from './hlc.js'
 export { ReplicationLog } from './log.js'
 export { generateNodeId, validateNodeId } from './node-id.js'
 export { PeerTracker } from './peer-tracker.js'

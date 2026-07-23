@@ -1,12 +1,13 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
-import type { HLC } from '../hlc.js'
+import { BatchApplier } from '../../core/sync/batch-applier.js'
+import { DumpOps } from '../../core/sync/dump.js'
+import type { HLC } from '../../core/sync/hlc.js'
+import { PkResolver } from '../../core/sync/pk.js'
+import { StampOps } from '../../core/sync/stamp-ops.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, SyncPhase, SyncTableManifest } from '../types.js'
-import { BatchApplier } from './batch-applier.js'
 import { BatchReader } from './batch-reader.js'
-import { DumpOps } from './dump.js'
-import { PkResolver } from './pk.js'
 import { SchemaOps } from './schema.js'
 import { StateOps } from './state.js'
 
@@ -25,6 +26,7 @@ export class ReplicationLog {
   private readonly schema: SchemaOps
   private readonly batchReader: BatchReader
   private readonly batchApplier: BatchApplier
+  private readonly stampOps: StampOps
   private readonly dump: DumpOps
 
   constructor(
@@ -37,7 +39,7 @@ export class ReplicationLog {
     this.pkResolver = new PkResolver(conn)
     this.state = new StateOps(conn)
     this.schema = new SchemaOps(conn, changesTable)
-    this.batchReader = new BatchReader(conn, localNodeId, hlc, changesTable, this.pkResolver)
+    this.batchReader = new BatchReader(conn, localNodeId, changesTable, this.pkResolver)
     this.batchApplier = new BatchApplier(
       conn,
       localNodeId,
@@ -46,6 +48,7 @@ export class ReplicationLog {
       fromNodeId => this.state.getLastAppliedSeq(fromNodeId),
       tracker,
     )
+    this.stampOps = new StampOps(localNodeId, hlc, changesTable)
     this.dump = new DumpOps(conn, localNodeId, hlc, this.pkResolver)
   }
 
@@ -58,11 +61,11 @@ export class ReplicationLog {
   }
 
   stampChanges(tx: SQLiteConnection, afterSeq: bigint, txId: string): Promise<void> {
-    return this.batchReader.stampChanges(tx, afterSeq, txId)
+    return this.stampOps.stampChanges(tx, afterSeq, txId)
   }
 
   updateColumnVersions(tx: SQLiteConnection, afterSeq: bigint): Promise<void> {
-    return this.batchReader.updateColumnVersions(tx, afterSeq)
+    return this.stampOps.updateColumnVersions(tx, afterSeq)
   }
 
   applyBatch(

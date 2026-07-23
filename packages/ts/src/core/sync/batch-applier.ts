@@ -1,13 +1,13 @@
-import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
-import type { SQLiteConnection } from '../../core/driver/types.js'
-import { APPLIED_CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../../core/internal-tables.js'
-import { extractDroppedTable } from '../engine/constants.js'
-import { BatchValidationError } from '../errors.js'
-import type { HLC } from '../hlc.js'
-import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from '../types.js'
-import { computeChecksum } from './batch-reader.js'
+import type { ChangeTracker } from '../cdc/change-tracker.js'
+import type { SQLiteConnection } from '../driver/types.js'
+import { APPLIED_CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../internal-tables.js'
+import { computeChecksum } from './checksum.js'
+import { BatchValidationError } from './errors.js'
+import type { HLC } from './hlc.js'
+import { persistHlcClock } from './hlc-store.js'
 import type { PkResolver } from './pk.js'
-import { IDENTIFIER_RE, validateDdlSafety, validateIdentifier } from './validators.js'
+import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
+import { extractDroppedTable, IDENTIFIER_RE, validateDdlSafety, validateIdentifier } from './validators.js'
 
 export class BatchApplier {
   constructor(
@@ -173,7 +173,8 @@ export class BatchApplier {
     }
 
     try {
-      this.hlc.receive(batch.hlcRange.max)
+      const merged = this.hlc.receive(batch.hlcRange.max)
+      await persistHlcClock(this.conn, merged)
     } catch {
       /* batch is already durable; HLC merge failure should not surface as a batch error */
     }

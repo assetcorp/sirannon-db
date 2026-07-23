@@ -1,15 +1,7 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { APPLIED_CHANGES_TABLE, COLUMN_VERSIONS_TABLE, PEER_STATE_TABLE, SYNC_STATE_TABLE } from '../internal-tables.js'
 
-export async function ensureReplicationStateTables(conn: SQLiteConnection): Promise<void> {
-  await conn.exec(`
-CREATE TABLE IF NOT EXISTS "${PEER_STATE_TABLE}" (
-  peer_node_id TEXT PRIMARY KEY,
-  last_acked_seq INTEGER NOT NULL DEFAULT 0,
-  last_received_hlc TEXT NOT NULL DEFAULT '',
-  updated_at REAL NOT NULL
-)`)
-
+export async function ensureBatchApplyTables(conn: SQLiteConnection): Promise<void> {
   await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${APPLIED_CHANGES_TABLE}" (
   source_node_id TEXT NOT NULL,
@@ -27,6 +19,18 @@ CREATE TABLE IF NOT EXISTS "${COLUMN_VERSIONS_TABLE}" (
   node_id TEXT NOT NULL,
   PRIMARY KEY (table_name, row_id, column_name)
 )`)
+}
+
+export async function ensureReplicationStateTables(conn: SQLiteConnection): Promise<void> {
+  await conn.exec(`
+CREATE TABLE IF NOT EXISTS "${PEER_STATE_TABLE}" (
+  peer_node_id TEXT PRIMARY KEY,
+  last_acked_seq INTEGER NOT NULL DEFAULT 0,
+  last_received_hlc TEXT NOT NULL DEFAULT '',
+  updated_at REAL NOT NULL
+)`)
+
+  await ensureBatchApplyTables(conn)
 
   await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${SYNC_STATE_TABLE}" (

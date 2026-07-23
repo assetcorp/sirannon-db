@@ -6,6 +6,7 @@ import { BatchValidationError } from './errors.js'
 import type { HLC } from './hlc.js'
 import { persistHlcClock } from './hlc-store.js'
 import type { PkResolver } from './pk.js'
+import { findRowByPk } from './row-lookup.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
 import { extractDroppedTable, IDENTIFIER_RE, validateDdlSafety, validateIdentifier } from './validators.js'
 
@@ -234,7 +235,13 @@ export class BatchApplier {
       `SELECT MAX(hlc) as max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`,
     )
     const row = (await stmt.get(table, rowId)) as { max_hlc: string | null } | undefined
-    return row?.max_hlc ?? null
+    if (row?.max_hlc) return row.max_hlc
+
+    const logStmt = await tx.prepare(
+      `SELECT MAX(hlc) as max_hlc FROM "${this.changesTable}" WHERE table_name = ? AND row_id = ? AND hlc != ''`,
+    )
+    const logRow = (await logStmt.get(table, rowId)) as { max_hlc: string | null } | undefined
+    return logRow?.max_hlc ?? null
   }
 
   private async insertRow(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
@@ -370,26 +377,4 @@ export class BatchApplier {
       await upsertStmt.run(change.table, change.rowId, col, change.hlc, change.nodeId)
     }
   }
-}
-
-async function findRowByPk(
-  tx: SQLiteConnection,
-  table: string,
-  pkColumns: string[],
-  sourceData: Record<string, unknown>,
-): Promise<Record<string, unknown> | undefined> {
-  const conditions: string[] = []
-  const values: unknown[] = []
-
-  for (const col of pkColumns) {
-    if (!validateIdentifier(col)) return undefined
-    if (!(col in sourceData)) return undefined
-    conditions.push(`"${col}" = ?`)
-    values.push(sourceData[col])
-  }
-
-  if (conditions.length === 0) return undefined
-
-  const stmt = await tx.prepare(`SELECT * FROM "${table}" WHERE ${conditions.join(' AND ')} LIMIT 1`)
-  return stmt.get<Record<string, unknown>>(...values)
 }

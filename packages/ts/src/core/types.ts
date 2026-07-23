@@ -51,9 +51,7 @@ export interface ChangeEvent<T = Record<string, unknown>> {
   oldRow?: T
   seq: bigint
   timestamp: number
-  /** Hybrid logical clock stamp of the originating write, when stamped. */
   hlc?: string
-  /** Node id of the writer that produced the change, when stamped. */
   origin?: string
 }
 

@@ -184,9 +184,7 @@ export class GroupCommitter {
       try {
         await writer.exec('ROLLBACK TO sirannon_stamp')
         await writer.exec('RELEASE sirannon_stamp')
-      } catch {
-        /* the outer error is the one to surface */
-      }
+      } catch {}
       throw err
     }
   }

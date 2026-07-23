@@ -30,9 +30,14 @@ export class DatabaseCdcController {
     const { tracker } = this.ensure()
     await this.runExclusive(async () => {
       await tracker.watch(this.acquireWriter(), table)
-      this.stamper ??= await SyncStamper.init(this.acquireWriter())
+      await this.ensureStamper()
     })
     this.ensurePolling()
+  }
+
+  async ensureStamper(): Promise<SyncStamper> {
+    this.stamper ??= await SyncStamper.init(this.acquireWriter())
+    return this.stamper
   }
 
   stampStatements(options?: { persistClock?: boolean }): readonly StampStatement[] | null {

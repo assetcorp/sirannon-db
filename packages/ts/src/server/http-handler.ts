@@ -28,6 +28,8 @@ import {
   toExecuteResponse,
   transactionStatementsValidationError,
 } from './protocol.js'
+import type { ChangesRequest } from './sync-protocol.js'
+import { decodeSyncBatch, syncBatchValidationError, toChangesResponse } from './sync-protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
 function decodeBatchParams(
@@ -256,6 +258,41 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
       const summary = await bulkLoad.call(target, body.sql, paramsBatch, toBulkLoadOptions(body))
       if (abort.aborted) return
       sendJson(res, summary)
+    } catch (err) {
+      sendCaughtError(res, abort, err)
+    }
+  }
+}
+
+export function handleChanges(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
+  return async (res, dbId, rawBody, abort) => {
+    const body = parseBody<ChangesRequest>(res, rawBody)
+    if (!body) return
+
+    const batchError = syncBatchValidationError(body.batch)
+    if (batchError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', batchError)
+      return
+    }
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
+    if (!target) return
+
+    const applyChanges = target.applyChanges
+    if (typeof applyChanges !== 'function') {
+      sendError(
+        res,
+        501,
+        'SYNC_UNSUPPORTED',
+        'The execution target for this database does not support applying sync changes',
+      )
+      return
+    }
+
+    try {
+      const result = await applyChanges.call(target, decodeSyncBatch(body.batch))
+      if (abort.aborted) return
+      sendJson(res, toChangesResponse(result))
     } catch (err) {
       sendCaughtError(res, abort, err)
     }

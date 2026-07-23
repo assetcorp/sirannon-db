@@ -89,6 +89,7 @@ async function loadServerModule(options?: {
     handleExecute: () => executeRouteHandler,
     handleTransaction: () => transactionRouteHandler,
     handleBatch: () => vi.fn(),
+    handleChanges: () => vi.fn(),
     handleLoad: () => vi.fn(),
     handleClusterStatus: () => vi.fn(),
     initAbortHandler,

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { MigrationError } from '../../core/errors.js'
+import { parseMigrationFilename } from '../../core/migrations/filename.js'
 import type { Migration } from '../../core/migrations/types.js'
 
 export interface ScannedMigration {
@@ -9,8 +10,6 @@ export interface ScannedMigration {
   upPath: string
   downPath: string | null
 }
-
-const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.(up|down)\.sql$/
 
 function hasControlCharacters(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
@@ -52,16 +51,10 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
   for (const entry of entries) {
     if (!entry.isFile()) continue
 
-    const match = MIGRATION_FILENAME_PATTERN.exec(entry.name)
-    if (!match) continue
+    const parsed = parseMigrationFilename(entry.name)
+    if (!parsed) continue
 
-    const version = parseInt(match[1], 10)
-    const name = match[2]
-    const direction = match[3] as 'up' | 'down'
-
-    if (!Number.isFinite(version) || version <= 0 || !Number.isSafeInteger(version)) {
-      throw new MigrationError(`Invalid migration version: ${match[1]}`, version, 'MIGRATION_VALIDATION_ERROR')
-    }
+    const { version, name, direction } = parsed
 
     const existing = grouped.get(version)
     if (existing && existing.name !== name) {

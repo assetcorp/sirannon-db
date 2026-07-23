@@ -176,6 +176,58 @@ describe('registry migrations', () => {
     await sir.shutdown()
   })
 
+  it('accepts a source function and invokes it once across many opens', async () => {
+    let sourceCalls = 0
+    const sir = new Sirannon({
+      driver: testDriver,
+      migrations: () => {
+        sourceCalls++
+        return Promise.resolve([createUsersTable])
+      },
+    })
+
+    const first = await sir.open('a', join(tempDir, 'a.db'))
+    const second = await sir.open('b', join(tempDir, 'b.db'))
+    expect(await first.query('SELECT id FROM users')).toEqual([])
+    expect(await second.query('SELECT id FROM users')).toEqual([])
+    expect(sourceCalls).toBe(1)
+    await sir.shutdown()
+  })
+
+  it('fails the open and retries the source function on the next open after it throws', async () => {
+    let sourceCalls = 0
+    const sir = new Sirannon({
+      driver: testDriver,
+      migrations: () => {
+        sourceCalls++
+        if (sourceCalls === 1) throw new Error('bundle not ready')
+        return [createUsersTable]
+      },
+    })
+
+    const attempt = sir.open('main', join(tempDir, 'main.db'))
+    await expect(attempt).rejects.toMatchObject({ code: 'DATABASE_OPEN_FAILED' })
+    expect(sir.has('main')).toBe(false)
+
+    const db = await sir.open('main', join(tempDir, 'main.db'))
+    expect(await db.query('SELECT id FROM users')).toEqual([])
+    expect(sourceCalls).toBe(2)
+    await sir.shutdown()
+  })
+
+  it('fails the open with MIGRATION_SOURCE_INVALID when the source returns a non-array', async () => {
+    const sir = new Sirannon({
+      driver: testDriver,
+      migrations: () => ({}) as unknown as [],
+    })
+
+    const attempt = sir.open('main', join(tempDir, 'main.db'))
+    await expect(attempt).rejects.toThrow(SirannonError)
+    await expect(attempt).rejects.toMatchObject({ code: 'MIGRATION_SOURCE_INVALID' })
+    expect(sir.has('main')).toBe(false)
+    await sir.shutdown()
+  })
+
   it('leaves behaviour unchanged when no migration set is declared', async () => {
     const sir = new Sirannon({ driver: testDriver })
     const db = await sir.open('main', join(tempDir, 'main.db'))

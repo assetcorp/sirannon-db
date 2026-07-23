@@ -66,6 +66,7 @@ query execution, and related subsystems.
 | `MIGRATION_VALIDATION_ERROR` | MigrationError | Migration definitions failed validation (bad version, duplicate, invalid name). |
 | `MIGRATION_DUPLICATE_VERSION` | MigrationError | Two migrations share the same version number. |
 | `MIGRATION_NO_DOWN` | MigrationError | Rollback requested but the migration has no `down` definition. |
+| `MIGRATION_SOURCE_INVALID` | SirannonError | The registry migration source returned a value other than a list of migrations. |
 | `HOOK_DENIED` | HookDeniedError | A before-hook rejected the operation. |
 | `CDC_ERROR` | CDCError | The change-data-capture pipeline encountered an unrecoverable error. |
 | `BACKUP_ERROR` | BackupError | A backup operation failed (path validation, VACUUM, rotation). |

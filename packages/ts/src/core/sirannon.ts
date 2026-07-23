@@ -4,6 +4,7 @@ import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from
 import { HookRegistry } from './hooks/registry.js'
 import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
+import type { Migration } from './migrations/types.js'
 import type {
   AfterQueryHook,
   BeforeConnectHook,
@@ -18,6 +19,7 @@ export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private readonly opening = new Set<string>()
   private readonly resolving = new Map<string, Promise<Database | undefined>>()
+  private migrationSet: Promise<Migration[]> | null = null
   private _shutdown = false
 
   private readonly _driver: SQLiteDriver
@@ -172,9 +174,34 @@ export class Sirannon {
   }
 
   private async applyRegistryMigrations(db: Database): Promise<void> {
-    const migrations = this.options.migrations
-    if (!migrations || migrations.length === 0 || db.readOnly) return
+    if (this.options.migrations === undefined || db.readOnly) return
+    const migrations = await this.loadMigrationSet()
+    if (migrations.length === 0) return
     await db.migrate(migrations)
+  }
+
+  private loadMigrationSet(): Promise<Migration[]> {
+    const source = this.options.migrations
+    if (source === undefined || Array.isArray(source)) {
+      return Promise.resolve(source ?? [])
+    }
+    if (this.migrationSet) return this.migrationSet
+
+    const loading = (async () => {
+      const set = await source()
+      if (!Array.isArray(set)) {
+        throw new SirannonError('The migrations source must return an array of migrations', 'MIGRATION_SOURCE_INVALID')
+      }
+      return set
+    })()
+
+    loading.catch(() => {
+      if (this.migrationSet === loading) {
+        this.migrationSet = null
+      }
+    })
+    this.migrationSet = loading
+    return loading
   }
 
   has(id: string): boolean {

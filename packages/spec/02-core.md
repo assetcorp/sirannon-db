@@ -43,11 +43,15 @@ SirannonOptions {
   hooks?:       HookConfig
   metrics?:     MetricsConfig
   lifecycle?:   LifecycleConfig
+  migrations?:  List<Migration>
   writerWorker?: boolean or WriterWorkerOptions
 }
 ```
 
 The `driver` field is required. All other fields are optional.
+The `migrations` field declares a registry-wide migration set; the
+[Registry Migrations](#registry-migrations) section defines its
+semantics.
 A `writerWorker` value on the registry is the default for every
 database it opens; a `writerWorker` value in `DatabaseOptions`
 overrides it for that database. The [Writer Worker](#writer-worker)
@@ -63,6 +67,10 @@ throw with error code `SHUTDOWN`.
 The method creates a connection pool for the database, configures
 CDC if needed, and invokes any registered `beforeConnect` and
 `databaseOpen` hooks.
+
+If the registry declares a `migrations` set, `open` applies all
+pending migrations before it registers the database, as defined in
+[Registry Migrations](#registry-migrations).
 
 ### close(id)
 
@@ -81,6 +89,12 @@ Returns the database registered under `id`. If the database is not
 found and a lifecycle resolver is configured, attempts to auto-open
 the database using the resolver. Returns `undefined` if the
 database cannot be resolved.
+
+Concurrent `resolve` calls for the same unregistered `id` must
+share one auto-open: the first call performs the open, including
+any registry migrations, and every concurrent call receives the
+same result or the same error. Two concurrent calls must never
+race the open or the migration step.
 
 ### shutdown()
 
@@ -672,6 +686,41 @@ Migration {
 
 If any migration fails, the transaction rolls back. Throw with
 error code `MIGRATION_ERROR` and include the version number.
+
+### Registry Migrations
+
+A registry may declare a migration set once, in
+`SirannonOptions.migrations`, so that an operator hosting many
+databases (for example one file per tenant) can roll out schema
+changes without opening and migrating every file individually. The
+rollout is pull-based: each database applies the pending set the
+next time it opens, whether through a direct `open` call or through
+the lifecycle resolver.
+
+When the registry declares a `migrations` set, `open` must apply
+every pending migration from the set, using the execution rules
+above, after it creates the database's connections and before it
+registers the database. A caller must never observe a database
+through `get`, `resolve`, or `databases()` while its migrations are
+incomplete.
+
+If a migration fails, `open` must close the database, leave it
+unregistered, and rethrow the migration error unchanged, so the
+caller receives the error code and the failing version number. If
+the migration step fails for any other reason, such as a disk
+fault while reading the tracking table, `open` must close the
+database, leave it unregistered, and throw with error code
+`DATABASE_OPEN_FAILED`. A later `open` of the same `id` may retry;
+the runner skips migrations already recorded in the tracking
+table.
+
+`open` skips the set for a database opened with `readOnly: true`: a
+read-only connection cannot create the tracking table or alter the
+schema, so the open succeeds and leaves the schema unchanged.
+
+When the registry declares no `migrations` set, `open` behaves
+exactly as specified above: it runs no migration step and creates
+no tracking table.
 
 ### Rollback
 

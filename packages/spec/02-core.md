@@ -43,9 +43,12 @@ SirannonOptions {
   hooks?:       HookConfig
   metrics?:     MetricsConfig
   lifecycle?:   LifecycleConfig
-  migrations?:  List<Migration>
+  migrations?:  MigrationSource
   writerWorker?: boolean or WriterWorkerOptions
 }
+
+MigrationSource = List<Migration>
+               or () -> List<Migration>, synchronous or asynchronous
 ```
 
 The `driver` field is required. All other fields are optional.
@@ -672,6 +675,24 @@ Migration {
 }
 ```
 
+### Migration Files Map
+
+The core package must provide a pure function,
+`migrationsFromFiles(files)`, converting a map of filename to SQL
+text into a sorted `List<Migration>`, so that an application whose
+bundler inlines `.sql` files as strings (for example Vite's
+`import.meta.glob` with `?raw`, or webpack's `require.context`) can
+build its migration set without filesystem access at run time.
+
+Keys may carry any path prefix; only the final path segment is
+parsed, and it must match `<version>_<name>.up.sql` or
+`<version>_<name>.down.sql`. The function must throw with error
+code `MIGRATION_VALIDATION_ERROR` for a key whose final segment
+does not match, a value other than a string, empty SQL, or a
+version with no up file, and with `MIGRATION_DUPLICATE_VERSION`
+when two entries collide on a version. An empty map returns an
+empty list.
+
 ### Migration Execution
 
 1. Validate all migrations: version must be a positive safe
@@ -696,6 +717,17 @@ changes without opening and migrating every file individually. The
 rollout is pull-based: each database applies the pending set the
 next time it opens, whether through a direct `open` call or through
 the lifecycle resolver.
+
+The `migrations` field accepts either the list itself or a function
+returning the list, so that an application can load the set from
+wherever its migrations live, such as a directory on disk or SQL
+bundled into the build. The registry invokes the function at most
+once, on the first open needing the set, and caches the result for
+its lifetime. If the function throws, or returns a value other than
+a list, that open must fail with error code
+`MIGRATION_SOURCE_INVALID` for a non-list value or the function's
+own error otherwise, the database must not be registered, and the
+next open must invoke the function again.
 
 When the registry declares a `migrations` set, `open` must apply
 every pending migration from the set, using the execution rules

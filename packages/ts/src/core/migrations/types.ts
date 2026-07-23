@@ -13,6 +13,8 @@ export interface Migration {
   down?: string | ((tx: Transaction) => void | Promise<void>)
 }
 
+export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>)
+
 export interface AppliedMigrationEntry {
   version: number
   name: string

@@ -340,6 +340,25 @@ await db.rollback(migrations)        // undo last migration
 await db.rollback(migrations, 0)     // undo everything
 ```
 
+#### Bundled migrations
+
+Bundlers such as Vite and webpack inline `.sql` files as strings at build time, so an app deployed as a bundle (Next.js, serverless) needs no filesystem access to load its migrations. Pass the bundler's map to `migrationsFromFiles` and it returns the same sorted, validated set `loadMigrations` produces from a directory:
+
+```ts
+import { migrationsFromFiles } from '@delali/sirannon-db'
+
+const files = import.meta.glob('./migrations/*.sql', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+const migrations = migrationsFromFiles(files)
+await db.migrate(migrations)
+```
+
+With webpack, build the map from `require.context('./migrations', false, /\.sql$/)` with the files loaded as source assets.
+
 #### Registry migrations
 
 Declare the migration set once on the registry to roll out schema changes across many databases, such as one file per tenant. Every database opened through the registry, including tenants resolved lazily, applies the pending set before it serves its first request.
@@ -359,6 +378,19 @@ const sirannon = new Sirannon({
 
 const db = await sirannon.resolve('tenant-42')
 ```
+
+The `migrations` option also accepts a function returning the set, synchronous or asynchronous, so you can load it from wherever your migrations live. The registry invokes the function once, on the first open needing the set, and caches the result:
+
+```ts
+import { loadMigrations } from '@delali/sirannon-db/file-migrations'
+
+const sirannon = new Sirannon({
+  driver,
+  migrations: () => loadMigrations('./migrations'),
+})
+```
+
+In a bundled app, return `migrationsFromFiles(files)` from the function instead; see [Bundled migrations](#bundled-migrations).
 
 If a migration fails, the open fails with a `MigrationError` and the database stays unregistered, so a caller never receives a half-migrated database. A later open of the same database retries, and migrations already recorded in the tracking table are skipped. Concurrent `resolve` calls for the same cold tenant share one open, so the migration step runs once. Databases opened with `readOnly: true` skip the set.
 
@@ -1062,7 +1094,7 @@ try {
 | `hooks` | `HookConfig` | No | Before/after hooks for queries, connections, subscriptions |
 | `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
-| `migrations` | `Migration[]` | No | Migration set applied to every writable database before it registers |
+| `migrations` | `MigrationSource` | No | Migration set, or a function returning it, applied to every writable database before it registers |
 
 ### `DatabaseOptions`
 

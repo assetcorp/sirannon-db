@@ -1,4 +1,4 @@
-import type { SQLiteConnection } from '../../core/driver/types.js'
+import type { SQLiteConnection } from '../driver/types.js'
 import type { ColumnInfoRow } from './internal-types.js'
 
 export class PkResolver {

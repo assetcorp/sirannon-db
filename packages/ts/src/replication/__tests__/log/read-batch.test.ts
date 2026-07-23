@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../../core/driver/types.js'
-import { HLC } from '../../hlc.js'
+import { HLC } from '../../../core/sync/hlc.js'
 import { canonicaliseForChecksum, ReplicationLog } from '../../log.js'
 import { createTestDb, NODE_A, setupTrackerAndTable } from './helpers.js'
 

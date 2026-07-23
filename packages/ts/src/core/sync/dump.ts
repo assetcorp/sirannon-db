@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { SQLiteConnection } from '../../core/driver/types.js'
-import { ReplicationError } from '../errors.js'
-import type { HLC } from '../hlc.js'
-import type { ReplicationBatch, ReplicationChange, SyncTableManifest } from '../types.js'
-import { computeChecksum } from './batch-reader.js'
+import type { SQLiteConnection } from '../driver/types.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
+import { computeChecksum } from './checksum.js'
+import { ReplicationError } from './errors.js'
+import type { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
+import type { ReplicationBatch, ReplicationChange, SyncTableManifest } from './types.js'
 import { IDENTIFIER_RE } from './validators.js'
 
 export class DumpOps {

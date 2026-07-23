@@ -1,5 +1,5 @@
+import { canonicaliseForChecksum } from '../canonicalise.js'
 import { HLC } from '../hlc.js'
-import { canonicaliseForChecksum } from '../log/canonicalise.js'
 import type { ConflictContext, ConflictResolution, ConflictResolver } from '../types.js'
 import { LWWResolver } from './lww.js'
 

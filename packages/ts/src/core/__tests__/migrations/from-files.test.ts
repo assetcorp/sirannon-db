@@ -92,4 +92,31 @@ describe('migrationsFromFiles', () => {
   it('rejects version zero', () => {
     expect(() => migrationsFromFiles({ '0_create_users.up.sql': 'CREATE TABLE users (id)' })).toThrow(MigrationError)
   })
+
+  it('marks the requested version as a baseline', () => {
+    const migrations = migrationsFromFiles(
+      {
+        '004_baseline_schema.up.sql': 'CREATE TABLE users (id INTEGER PRIMARY KEY)',
+        '005_add_orders.up.sql': 'CREATE TABLE orders (id INTEGER PRIMARY KEY)',
+      },
+      { baseline: { version: 4, through: 3 } },
+    )
+
+    expect(migrations[0].baseline).toEqual({ through: 3 })
+    expect(migrations[1].baseline).toBeUndefined()
+  })
+
+  it('rejects a baseline option that matches no file', () => {
+    const attempt = () =>
+      migrationsFromFiles(
+        { '005_add_orders.up.sql': 'CREATE TABLE orders (id INTEGER PRIMARY KEY)' },
+        { baseline: { version: 4, through: 3 } },
+      )
+    expect(attempt).toThrow(MigrationError)
+    try {
+      attempt()
+    } catch (err) {
+      expect((err as MigrationError).code).toBe('MIGRATION_VALIDATION_ERROR')
+    }
+  })
 })

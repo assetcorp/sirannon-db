@@ -1,9 +1,14 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { MigrationError } from '../../core/errors.js'
+import { applyBaselineOption, type BaselineFileOption } from '../../core/migrations/baseline.js'
 import { parseMigrationFilename } from '../../core/migrations/filename.js'
 import { LAZY_DOWN_SQL } from '../../core/migrations/lazy-down.js'
 import type { Migration } from '../../core/migrations/types.js'
+
+export interface LoadMigrationsOptions {
+  baseline?: BaselineFileOption
+}
 
 export interface ScannedMigration {
   version: number
@@ -144,7 +149,7 @@ function attachLazyDown(migration: Migration, downPath: string): void {
   })
 }
 
-export function loadMigrations(dirPath: string): Migration[] {
+export function loadMigrations(dirPath: string, options?: LoadMigrationsOptions): Migration[] {
   const scanned = scanDirectory(dirPath)
   const migrations = readUpMigrations(scanned)
   for (let i = 0; i < migrations.length; i++) {
@@ -153,5 +158,5 @@ export function loadMigrations(dirPath: string): Migration[] {
       attachLazyDown(migrations[i], downPath)
     }
   }
-  return migrations
+  return applyBaselineOption(migrations, options?.baseline)
 }

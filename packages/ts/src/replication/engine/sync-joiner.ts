@@ -158,20 +158,33 @@ export class SyncJoiner {
       }
 
       if (batch.rows.length > 0) {
-        const columns = Object.keys(batch.rows[0]).filter(c => IDENTIFIER_RE.test(c))
-        if (columns.length > 0) {
-          const placeholders = columns.map(() => '?').join(', ')
-          const colNames = columns.map(c => `"${c}"`).join(', ')
-          const insertSql = `INSERT INTO "${batch.table}" (${colNames}) VALUES (${placeholders})`
-
-          await engine.writerConn.transaction(async tx => {
-            const stmt = await tx.prepare(insertSql)
-            for (const row of batch.rows) {
-              const values = columns.map(c => row[c])
-              await stmt.run(...values)
-            }
-          })
+        const columns = Object.keys(batch.rows[0])
+        if (columns.length === 0) {
+          throw new SyncError(`No columns in sync batch for ${batch.table}`)
         }
+        for (const col of columns) {
+          if (!IDENTIFIER_RE.test(col)) {
+            throw new SyncError(`Invalid column name '${col}' in sync batch for ${batch.table}`)
+          }
+        }
+        const columnSet = new Set(columns)
+        for (const row of batch.rows) {
+          const keys = Object.keys(row)
+          if (keys.length !== columns.length || keys.some(k => !columnSet.has(k))) {
+            throw new SyncError(`Row columns do not match batch columns for ${batch.table}`)
+          }
+        }
+        const placeholders = columns.map(() => '?').join(', ')
+        const colNames = columns.map(c => `"${c}"`).join(', ')
+        const insertSql = `INSERT INTO "${batch.table}" (${colNames}) VALUES (${placeholders})`
+
+        await engine.writerConn.transaction(async tx => {
+          const stmt = await tx.prepare(insertSql)
+          for (const row of batch.rows) {
+            const values = columns.map(c => row[c])
+            await stmt.run(...values)
+          }
+        })
       }
 
       engine.syncTableDigests.set(

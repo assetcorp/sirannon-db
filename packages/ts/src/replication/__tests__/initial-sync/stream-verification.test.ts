@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReplicationEngine } from '../../engine/engine.js'
+import { SyncJoiner } from '../../engine/sync-joiner.js'
 import { SyncServer } from '../../engine/sync-server.js'
 import { advanceStreamDigest, matchesStreamDigest } from '../../engine/sync-verification.js'
+import { canonicaliseForChecksum } from '../../log.js'
 import type { ReplicationErrorEvent, SyncAck, SyncBatch, SyncComplete } from '../../types.js'
 import { NODE_P, NODE_R, SyncTestContext, wait } from './helpers.js'
 
@@ -136,6 +139,81 @@ describe('stream digest verification', () => {
     expect(manifest.batchDigest).toBeUndefined()
     expect(harness.generateManifest).toHaveBeenCalledTimes(1)
     expect(harness.errors).toEqual([])
+  })
+
+  function createJoinerHarness() {
+    const sentAcks: SyncAck[] = []
+    const engine = {
+      nodeId: 'node-b',
+      tracker: { unwatch: vi.fn(async () => undefined) },
+      writerConn: {
+        exec: vi.fn(async () => undefined),
+        transaction: vi.fn(async () => undefined),
+      },
+      syncState: { phase: 'syncing', sourcePeerId: 'node-a', completedTables: [] },
+      expectedBatchIndex: new Map<string, number>(),
+      syncTableDigests: new Map(),
+      log: { setSyncTableStatus: vi.fn(async () => undefined) },
+      config: {
+        transport: {
+          sendSyncAck: async (_peerId: string, ack: SyncAck) => {
+            sentAcks.push(ack)
+          },
+        },
+      },
+      decorateSyncAck: <T>(ack: T): T => ack,
+      emitError: vi.fn(),
+    } as unknown as ReplicationEngine
+    return { engine, sentAcks, joiner: new SyncJoiner(engine) }
+  }
+
+  async function deliverRows(harness: ReturnType<typeof createJoinerHarness>, rows: Record<string, unknown>[]) {
+    await harness.joiner.handleSyncBatchReceived(
+      {
+        requestId: 'sync-request-column-validation',
+        table: 'accounts',
+        batchIndex: 0,
+        rows,
+        checksum: createHash('sha256').update(canonicaliseForChecksum(rows)).digest('hex'),
+        isLastBatchForTable: true,
+      },
+      'node-a',
+    )
+  }
+
+  function expectRejected(harness: ReturnType<typeof createJoinerHarness>, message: string) {
+    expect(harness.sentAcks).toHaveLength(1)
+    expect(harness.sentAcks[0].success).toBe(false)
+    expect(harness.sentAcks[0].error).toContain(message)
+    expect(harness.engine.syncTableDigests.size).toBe(0)
+    expect(harness.engine.writerConn.transaction).not.toHaveBeenCalled()
+  }
+
+  it('rejects a batch whose rows contain only invalid column names', async () => {
+    const harness = createJoinerHarness()
+    await deliverRows(harness, [{ 'not a valid column': 1 }])
+    expectRejected(harness, 'Invalid column name')
+  })
+
+  it('rejects a batch mixing valid and invalid column names instead of dropping the invalid ones', async () => {
+    const harness = createJoinerHarness()
+    await deliverRows(harness, [{ id: 1, 'drop table': 2 }])
+    expectRejected(harness, 'Invalid column name')
+  })
+
+  it('rejects a batch whose later rows have different columns than the first row', async () => {
+    const harness = createJoinerHarness()
+    await deliverRows(harness, [
+      { id: 1, owner: 'a' },
+      { id: 2, extra: 'b' },
+    ])
+    expectRejected(harness, 'Row columns do not match batch columns')
+  })
+
+  it('rejects a batch of rows with no columns at all', async () => {
+    const harness = createJoinerHarness()
+    await deliverRows(harness, [{}])
+    expectRejected(harness, 'No columns in sync batch')
   })
 })
 

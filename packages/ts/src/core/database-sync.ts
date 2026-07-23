@@ -5,6 +5,14 @@ import { BatchApplier } from './sync/batch-applier.js'
 import { BatchReader } from './sync/batch-reader.js'
 import { LWWResolver } from './sync/conflict/lww.js'
 import { PkResolver } from './sync/pk.js'
+import {
+  abortSnapshotLoad,
+  applySnapshotSchema,
+  beginSnapshotLoad,
+  endSnapshotLoad,
+  loadSnapshotPage,
+  snapshotLoadPending,
+} from './sync/snapshot-apply.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import {
   ensureBatchApplyTables,
@@ -34,6 +42,12 @@ export interface DeviceSyncPort {
   getPullState(): Promise<DeviceSyncPullState | null>
   setPullState(seq: bigint, epoch?: string): Promise<void>
   protectUnpushedChanges(pushedSeq: bigint): void
+  snapshotLoadPending(): Promise<boolean>
+  beginSnapshotLoad(tables: readonly string[]): Promise<void>
+  applySnapshotSchema(schema: readonly string[]): Promise<void>
+  loadSnapshotPage(table: string, rows: readonly Record<string, unknown>[]): Promise<void>
+  endSnapshotLoad(tables: readonly string[]): Promise<void>
+  abortSnapshotLoad(): Promise<void>
 }
 
 export class DatabaseSyncController {
@@ -77,6 +91,14 @@ export class DatabaseSyncController {
         this.localPruneBoundary = pushedSeq
         this.applyLocalPruneBoundary()
       },
+      snapshotLoadPending: () => this.runExclusive(() => snapshotLoadPending(this.acquireWriter())),
+      beginSnapshotLoad: tables =>
+        this.runExclusive(() => beginSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker)),
+      applySnapshotSchema: schema => this.runExclusive(() => applySnapshotSchema(this.acquireWriter(), schema)),
+      loadSnapshotPage: (table, rows) => this.runExclusive(() => loadSnapshotPage(this.acquireWriter(), table, rows)),
+      endSnapshotLoad: tables =>
+        this.runExclusive(() => endSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker)),
+      abortSnapshotLoad: () => this.runExclusive(() => abortSnapshotLoad(this.acquireWriter())),
     }
   }
 

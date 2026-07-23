@@ -2,6 +2,8 @@ import type { Database } from '../core/database.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import type { ChangeEvent } from '../core/types.js'
 import { toBaseUrl, toWsUrl } from './endpoint-urls.js'
+import type { SnapshotProgress } from './snapshot-loader.js'
+import { downloadDatabaseSnapshot } from './snapshot-loader.js'
 import { pushSyncBatch } from './sync-push.js'
 import { WebSocketTransport } from './transport/ws.js'
 import type { RemoteSubscription } from './types.js'
@@ -25,7 +27,12 @@ export interface SyncControllerOptions {
   onResyncRequired?: () => void
 }
 
-export type SyncState = 'stopped' | 'starting' | 'running' | 'paused'
+export type SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapshotting'
+
+export interface SnapshotOptions {
+  pageSize?: number
+  onProgress?: (progress: SnapshotProgress) => void
+}
 
 export interface SyncStatus {
   state: SyncState
@@ -93,6 +100,9 @@ export class SyncController {
       this.pullSeq = pullState?.seq ?? null
       this.pullEpoch = pullState?.epoch
       this.lastAckedSeq = null
+      if (await this.port.snapshotLoadPending()) {
+        this.resyncRequired = true
+      }
       await this.openPullStream()
       this.state = 'running'
     } catch (err) {
@@ -232,22 +242,61 @@ export class SyncController {
     }
   }
 
+  async downloadSnapshot(options?: SnapshotOptions): Promise<void> {
+    if (this.state !== 'running' && this.state !== 'paused') {
+      throw new Error('Snapshot download requires a started sync controller')
+    }
+    const port = this.port
+    if (port === null) {
+      throw new Error('Snapshot download requires a started sync controller')
+    }
+
+    this.teardownStream()
+    this.state = 'snapshotting'
+    try {
+      while (await this.pushNextBatch(port)) {}
+      await downloadDatabaseSnapshot(port, {
+        url: this.baseUrl,
+        databaseId: this.options.databaseId,
+        headers: this.options.headers,
+        pageSize: options?.pageSize,
+        requestTimeoutMs: this.options.requestTimeout,
+        onProgress: options?.onProgress,
+      })
+      this.resyncRequired = false
+      this.lastError = null
+    } catch (err) {
+      this.recordError(err)
+      this.resyncRequired = true
+      this.state = 'paused'
+      throw err
+    }
+    this.state = 'stopped'
+    await this.start()
+  }
+
+  private async pushNextBatch(port: DeviceSyncPort): Promise<boolean> {
+    const batch = await port.readOutboxBatch(this.pushCursor, this.batchSize)
+    if (batch === null) {
+      this.pushCaughtUp = true
+      return false
+    }
+    this.pushCaughtUp = false
+    await pushSyncBatch(this.baseUrl, this.options.databaseId, batch, this.options.headers)
+    this.pushCursor = batch.toSeq
+    await port.setPushCursor(batch.toSeq)
+    port.protectUnpushedChanges(batch.toSeq)
+    return true
+  }
+
   private async drainOutbox(): Promise<void> {
     if (this.pushing || this.state !== 'running' || this.port === null) return
     if (Date.now() < this.nextPushAttemptAt) return
     this.pushing = true
     try {
       while (this.state === 'running') {
-        const batch = await this.port.readOutboxBatch(this.pushCursor, this.batchSize)
-        if (batch === null) {
-          this.pushCaughtUp = true
-          break
-        }
-        this.pushCaughtUp = false
-        await pushSyncBatch(this.baseUrl, this.options.databaseId, batch, this.options.headers)
-        this.pushCursor = batch.toSeq
-        await this.port.setPushCursor(batch.toSeq)
-        this.port.protectUnpushedChanges(batch.toSeq)
+        const pushed = await this.pushNextBatch(this.port)
+        if (!pushed) break
         this.consecutivePushFailures = 0
         this.nextPushAttemptAt = 0
         this.lastError = null

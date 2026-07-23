@@ -1,12 +1,7 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import {
-  APPLIED_CHANGES_TABLE,
-  COLUMN_VERSIONS_TABLE,
-  INTERNAL_TABLE_PREFIX,
-  PEER_STATE_TABLE,
-  SYNC_STATE_TABLE,
-} from '../../core/internal-tables.js'
+import { INTERNAL_TABLE_PREFIX, SYNC_STATE_TABLE } from '../../core/internal-tables.js'
+import { ensureChangesTable, ensureReplicationStateTables } from '../../core/system-catalog/index.js'
 import { ReplicationError } from '../errors.js'
 import { IDENTIFIER_RE, validateDdlSafety } from './validators.js'
 
@@ -17,58 +12,8 @@ export class SchemaOps {
   ) {}
 
   async ensureReplicationTables(): Promise<void> {
-    await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
-	seq INTEGER PRIMARY KEY AUTOINCREMENT,
-	table_name TEXT NOT NULL,
-	operation TEXT NOT NULL,
-	row_id TEXT NOT NULL,
-	changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-	old_data TEXT,
-	new_data TEXT,
-	node_id TEXT NOT NULL DEFAULT '',
-	tx_id TEXT NOT NULL DEFAULT '',
-	hlc TEXT NOT NULL DEFAULT ''
-)`)
-
-    await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS ${PEER_STATE_TABLE} (
-	peer_node_id TEXT PRIMARY KEY,
-	last_acked_seq INTEGER NOT NULL DEFAULT 0,
-	last_received_hlc TEXT NOT NULL DEFAULT '',
-	updated_at REAL NOT NULL
-)`)
-
-    await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS ${APPLIED_CHANGES_TABLE} (
-	source_node_id TEXT NOT NULL,
-	source_seq INTEGER NOT NULL,
-	applied_at REAL NOT NULL,
-	PRIMARY KEY (source_node_id, source_seq)
-)`)
-
-    await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS ${COLUMN_VERSIONS_TABLE} (
-	table_name TEXT NOT NULL,
-	row_id TEXT NOT NULL,
-	column_name TEXT NOT NULL,
-	hlc TEXT NOT NULL,
-	node_id TEXT NOT NULL,
-	PRIMARY KEY (table_name, row_id, column_name)
-)`)
-
-    await this.conn.exec(`
-CREATE TABLE IF NOT EXISTS ${SYNC_STATE_TABLE} (
-	table_name TEXT PRIMARY KEY,
-	status TEXT NOT NULL DEFAULT 'pending',
-	row_count INTEGER NOT NULL DEFAULT 0,
-	pk_hash TEXT NOT NULL DEFAULT '',
-	snapshot_seq INTEGER,
-	source_peer_id TEXT,
-	started_at REAL,
-	completed_at REAL,
-	request_id TEXT
-)`)
+    await ensureChangesTable(this.conn, this.changesTable, { replication: true })
+    await ensureReplicationStateTables(this.conn)
   }
 
   async dumpSchema(conn: SQLiteConnection, excludePrefix: string = INTERNAL_TABLE_PREFIX): Promise<string[]> {

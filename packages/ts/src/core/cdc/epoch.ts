@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import { META_TABLE } from '../internal-tables.js'
+import { ensureMetaTable } from '../system-catalog/index.js'
 
 const EPOCH_KEY = 'cdc_epoch'
 
@@ -15,7 +16,7 @@ const EPOCH_KEY = 'cdc_epoch'
  * of replaying another file's rows against a foreign cursor.
  */
 export async function ensureCdcEpoch(conn: SQLiteConnection): Promise<string> {
-  await conn.exec(`CREATE TABLE IF NOT EXISTS "${META_TABLE}" (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+  await ensureMetaTable(conn)
 
   const insert = await conn.prepare(`INSERT OR IGNORE INTO "${META_TABLE}" (key, value) VALUES (?, ?)`)
   await insert.run(EPOCH_KEY, randomBytes(16).toString('hex'))

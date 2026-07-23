@@ -1,10 +1,13 @@
-import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
+import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError, ForbiddenSqlError } from '../errors.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
+import { ensureChangesTable } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
 import { decodeTaggedValues } from './encoding.js'
+import { StatementCache } from './statement-cache.js'
+import { tableColumnNames, tablePkColumns } from './table-info.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
-import type { ChangeRow, ChangeTrackerOptions, ColumnInfo, WatchedTableInfo } from './types.js'
+import type { ChangeRow, ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
 const DEFAULT_POLL_BATCH_SIZE = 1000
@@ -18,8 +21,9 @@ export class ChangeTracker {
   private readonly pollBatchSize: number
   private readonly replication: boolean
   private changesTableReady = false
+  private changesTableEnsured = false
   private watchedTablesCache: ReadonlySet<string> | null = null
-  private readonly stmtCache = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
+  private readonly stmtCache = new StatementCache()
   private pruneBoundary: bigint | null = null
 
   constructor(options?: ChangeTrackerOptions) {
@@ -38,7 +42,7 @@ export class ChangeTracker {
     }
     await this.ensureChangesTable(conn)
 
-    const columns = await this.getColumns(conn, table)
+    const columns = await tableColumnNames(conn, table)
     if (columns.length === 0) {
       throw new CDCError(`Table '${table}' does not exist or has no columns`)
     }
@@ -47,7 +51,7 @@ export class ChangeTracker {
       this.assertIdentifier(col, `column name in table '${table}'`)
     }
 
-    const pkColumns = await this.getPkColumns(conn, table)
+    const pkColumns = await tablePkColumns(conn, table)
     const existing = this.watched.get(table)
 
     if (existing) {
@@ -56,7 +60,7 @@ export class ChangeTracker {
         return
       }
       await conn.transaction(async txConn => {
-        await this.dropTriggers(txConn, table)
+        await dropCdcTriggers(txConn, table)
         await this.installTriggers(txConn, table, columns, pkColumns)
       })
     } else {
@@ -71,7 +75,7 @@ export class ChangeTracker {
       return
     }
 
-    await this.dropTriggers(conn, table)
+    await dropCdcTriggers(conn, table)
     this.watched.delete(table)
     this.watchedTablesCache = null
   }
@@ -108,7 +112,7 @@ export class ChangeTracker {
       const existing = this.watched.get(table)
       if (!existing) continue
 
-      const columns = await this.getColumns(conn, table)
+      const columns = await tableColumnNames(conn, table)
       if (columns.length === 0) {
         continue
       }
@@ -122,8 +126,8 @@ export class ChangeTracker {
         continue
       }
 
-      const pkColumns = await this.getPkColumns(conn, table)
-      await this.dropTriggers(conn, table)
+      const pkColumns = await tablePkColumns(conn, table)
+      await dropCdcTriggers(conn, table)
       await this.installTriggers(conn, table, columns, pkColumns)
       this.watched.set(table, { table, columns, pkColumns })
       anyMutated = true
@@ -159,7 +163,7 @@ export class ChangeTracker {
       if (!this.watched.has(table)) {
         continue
       }
-      await this.dropTriggers(conn, table)
+      await dropCdcTriggers(conn, table)
       this.watched.delete(table)
       mutated = true
     }
@@ -176,7 +180,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.getStmt(
+    const stmt = await this.stmtCache.get(
       conn,
       'poll',
       `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
@@ -223,7 +227,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.getStmt(
+    const stmt = await this.stmtCache.get(
       conn,
       'read_since',
       `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data
@@ -246,7 +250,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.getStmt(conn, 'min_seq', `SELECT MIN(seq) AS seq FROM "${this.changesTable}"`)
+    const stmt = await this.stmtCache.get(conn, 'min_seq', `SELECT MIN(seq) AS seq FROM "${this.changesTable}"`)
     const row = (await stmt.get()) as { seq?: unknown } | undefined
     const seq = row?.seq
     if (seq === undefined || seq === null) {
@@ -274,7 +278,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.getStmt(conn, 'latest_seq', `SELECT MAX(seq) AS seq FROM "${this.changesTable}"`)
+    const stmt = await this.stmtCache.get(conn, 'latest_seq', `SELECT MAX(seq) AS seq FROM "${this.changesTable}"`)
     const row = (await stmt.get()) as { seq?: unknown } | undefined
     const seq = row?.seq
     if (seq === undefined || seq === null) {
@@ -299,7 +303,7 @@ export class ChangeTracker {
     const seqBound = this.computeSeqBound()
 
     if (seqBound !== null) {
-      const stmt = await this.getStmt(
+      const stmt = await this.stmtCache.get(
         conn,
         'cleanup_coordinated',
         `DELETE FROM "${this.changesTable}" WHERE changed_at < ? AND seq <= ?`,
@@ -308,7 +312,7 @@ export class ChangeTracker {
       return result.changes
     }
 
-    const stmt = await this.getStmt(conn, 'cleanup', `DELETE FROM "${this.changesTable}" WHERE changed_at < ?`)
+    const stmt = await this.stmtCache.get(conn, 'cleanup', `DELETE FROM "${this.changesTable}" WHERE changed_at < ?`)
     const result = await stmt.run(cutoff)
     return result.changes
   }
@@ -363,87 +367,13 @@ export class ChangeTracker {
   }
 
   private async ensureChangesTable(conn: SQLiteConnection): Promise<void> {
-    if (this.changesTableReady) {
+    if (this.changesTableEnsured) {
       return
     }
 
-    if (this.replication) {
-      await conn.exec(`
-CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  table_name TEXT NOT NULL,
-  operation TEXT NOT NULL,
-  row_id TEXT NOT NULL,
-  changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-  old_data TEXT,
-  new_data TEXT,
-  node_id TEXT NOT NULL DEFAULT '',
-  tx_id TEXT NOT NULL DEFAULT '',
-  hlc TEXT NOT NULL DEFAULT ''
-)`)
-      await conn.exec(
-        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
-      )
-      await conn.exec(
-        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_node_id" ON "${this.changesTable}" (node_id)`,
-      )
-      await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_hlc" ON "${this.changesTable}" (hlc)`)
-    } else {
-      await conn.exec(`
-CREATE TABLE IF NOT EXISTS "${this.changesTable}" (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  table_name TEXT NOT NULL,
-  operation TEXT NOT NULL,
-  row_id TEXT NOT NULL,
-  changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
-  old_data TEXT,
-  new_data TEXT
-)`)
-      await conn.exec(
-        `CREATE INDEX IF NOT EXISTS "idx_${this.changesTable}_changed_at" ON "${this.changesTable}" (changed_at)`,
-      )
-    }
+    await ensureChangesTable(conn, this.changesTable, { replication: this.replication })
+    this.changesTableEnsured = true
     this.changesTableReady = true
-  }
-
-  private async getColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
-    const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
-    const info = (await stmt.all()) as ColumnInfo[]
-    return info.map(col => col.name)
-  }
-
-  private async getPkColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
-    const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
-    const info = (await stmt.all()) as ColumnInfo[]
-    return info
-      .filter(col => col.pk > 0)
-      .sort((a, b) => a.pk - b.pk)
-      .map(col => col.name)
-  }
-
-  private async dropTriggers(conn: SQLiteConnection, table: string): Promise<void> {
-    await dropCdcTriggers(conn, table)
-  }
-
-  private async getStmt(conn: SQLiteConnection, key: string, sql: string): Promise<SQLiteStatement> {
-    let stmts = this.stmtCache.get(conn)
-    if (!stmts) {
-      stmts = new Map()
-      this.stmtCache.set(conn, stmts)
-    }
-
-    const existing = stmts.get(key)
-    if (existing) return existing
-
-    const pending = conn.prepare(sql)
-    stmts.set(key, pending)
-
-    try {
-      return await pending
-    } catch (err) {
-      stmts.delete(key)
-      throw err
-    }
   }
 
   private async installTriggers(

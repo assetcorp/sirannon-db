@@ -16,6 +16,7 @@ import { handleLiveness, handleReadiness } from './health.js'
 import type { DbRouteHandler } from './http-handler.js'
 import {
   handleBatch,
+  handleChanges,
   handleClusterStatus,
   handleExecute,
   handleLoad,
@@ -109,6 +110,7 @@ export class SirannonServer {
       resolveExecutionTarget: this.resolveExecutionTarget,
       maxPayloadLength: this.maxBodyBytes,
       cdcRetentionMs: options?.cdcRetentionMs,
+      deviceCursorRetentionMs: options?.deviceCursorRetentionMs,
     })
     this.app = uWS.App()
     this.registerRoutes()
@@ -172,6 +174,7 @@ export class SirannonServer {
     )
     this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
     this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
 
     this.registerWebSocketRoute()
 

@@ -1,3 +1,4 @@
+import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { Transaction } from './transaction.js'
 import type { ClusterStatusInfo, ExecuteResult, Params, QueryOptions } from './types.js'
 
@@ -77,6 +78,10 @@ export interface ServerExecutionTarget {
    * of silently degrading to per-statement writes.
    */
   bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>
+  applyChanges?(
+    batch: ReplicationBatch,
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult>
 }
 
 export type ServerExecutionTargetResolver = (
@@ -114,6 +119,7 @@ export interface ServerOptions {
    * (one hour).
    */
   cdcRetentionMs?: number
+  deviceCursorRetentionMs?: number
   onRequest?: OnRequestHook
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
@@ -155,6 +161,7 @@ export interface WSHandlerOptions {
   maxPayloadLength?: number
   /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
   cdcRetentionMs?: number
+  deviceCursorRetentionMs?: number
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 

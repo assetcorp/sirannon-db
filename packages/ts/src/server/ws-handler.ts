@@ -4,6 +4,7 @@ import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import type { WSServerMessage } from './protocol.js'
+import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
@@ -42,7 +43,7 @@ export class WSHandler {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.resolveExecutionTarget = options?.resolveExecutionTarget
-    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs)
+    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
   }
 
   async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
@@ -157,6 +158,9 @@ export class WSHandler {
       case 'unsubscribe':
         this.handleUnsubscribe(conn, state, id)
         break
+      case 'ack':
+        handleAckMessage(this.subscribeDeps(), conn, state, msg, id)
+        break
       default:
         this.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${msg.type}'`)
     }
@@ -209,6 +213,7 @@ export class WSHandler {
       cdc: this.cdc,
       sendSubscribed: (conn, id, seq, epoch, resync) =>
         this.send(conn, { type: 'subscribed', id, seq, epoch, ...(resync ? { resync: true } : {}) }),
+      sendResult: (conn, id, data) => this.send(conn, { type: 'result', id, data }),
       sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
       sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
       sendChange: (conn, id, event) => this.sendChange(conn, id, event),

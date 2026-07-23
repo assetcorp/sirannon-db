@@ -70,6 +70,11 @@ export interface LoadRequest {
 
 export type LoadResponse = BulkLoadResult
 
+export interface AckResponse {
+  acked: boolean
+  seq: string
+}
+
 export interface ErrorResponse {
   error: {
     code: string
@@ -85,6 +90,7 @@ export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
 export type WSClientMessage =
   | WSSubscribeMessage
   | WSUnsubscribeMessage
+  | WSAckMessage
   | WSQueryMessage
   | WSExecuteMessage
   | WSTransactionMessage
@@ -110,11 +116,19 @@ export interface WSSubscribeMessage {
    * resync rather than replay foreign rows against it.
    */
   epoch?: string
+  deviceId?: string
 }
 
 export interface WSUnsubscribeMessage {
   type: 'unsubscribe'
   id: string
+}
+
+export interface WSAckMessage {
+  type: 'ack'
+  id: string
+  deviceId: string
+  seq: string
 }
 
 export interface WSQueryMessage {
@@ -213,7 +227,7 @@ export interface WSChangeMessage {
 export interface WSResultMessage {
   type: 'result'
   id: string
-  data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse
+  data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse | AckResponse
 }
 
 export interface WSErrorMessage {

@@ -1,9 +1,11 @@
 import { runBulkLoad } from './bulk-load.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
-import { ConnectionPool } from './connection-pool.js'
+import type { ConnectionPool } from './connection-pool.js'
 import { DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
+import { createDatabaseRuntime } from './database-create.js'
 import { DatabaseObserver } from './database-observability.js'
+import { DatabaseSyncController } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
@@ -14,6 +16,7 @@ import type { MetricsCollector } from './metrics/collector.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
+import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -27,8 +30,7 @@ import type {
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
-import { resolveWriterWorkerConfig } from './worker/config.js'
-import { WriteGate } from './worker/gate.js'
+import type { WriteGate } from './worker/gate.js'
 import { WriterLock } from './writer-lock.js'
 
 export interface DatabaseInternals {
@@ -51,6 +53,7 @@ export class Database {
   private _closed = false
 
   private readonly cdc: DatabaseCdcController
+  private readonly sync: DatabaseSyncController
 
   private readonly hookRegistry = new HookRegistry()
   private readonly observer: DatabaseObserver
@@ -92,6 +95,11 @@ export class Database {
       options?.cdcPollInterval ?? 50,
       options?.cdcRetention ?? 3_600_000,
     )
+    this.sync = new DatabaseSyncController(
+      op => this.writeGate.run(() => this.writerLock.run(op)),
+      () => this.pool.acquireWriter(),
+      this.cdc,
+    )
     this.groupCommitter = new GroupCommitter(this.writerLock, {
       acquireWriter: () => this.pool.acquireWriter(),
       afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql),
@@ -106,28 +114,17 @@ export class Database {
     options?: DatabaseOptions,
     internals?: DatabaseInternals,
   ): Promise<Database> {
-    const writerWorker = resolveWriterWorkerConfig(options?.writerWorker)
-    const readOnly = options?.readOnly ?? false
-    if (writerWorker.enabled && !readOnly && !driver.startWriterHost) {
-      throw new SirannonError(
-        `writerWorker is enabled for database '${id}' but the driver does not carry a worker entry; use a driver that supports worker offload or disable writerWorker`,
-        'WRITER_WORKER_UNSUPPORTED',
-      )
-    }
+    const runtime = await createDatabaseRuntime(id, path, driver, options)
+    return new Database(id, path, runtime.pool, driver, runtime.writeGate, options, internals)
+  }
 
-    const pool = await ConnectionPool.create({
-      driver,
-      path,
-      readOnly: options?.readOnly,
-      readPoolSize: options?.readPoolSize ?? 4,
-      walMode: options?.walMode ?? true,
-      synchronous: options?.synchronous,
-      useWriterWorker: writerWorker.enabled && !readOnly,
-      workerHostOptions: writerWorker.host,
-    })
-
-    const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
-    return new Database(id, path, pool, driver, writeGate, options, internals)
+  async applyChanges(
+    batch: ReplicationBatch,
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    return this.sync.applyChanges(batch, resolver)
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {

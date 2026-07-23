@@ -1,5 +1,7 @@
 import type { ChangeEvent } from '../core/types.js'
+import type { AckResponse } from './protocol.js'
 import { decodeBoundParams } from './protocol.js'
+import { isValidDeviceId } from './sync-protocol.js'
 import type { CdcContextRegistry } from './ws-cdc.js'
 import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
@@ -8,6 +10,7 @@ import type { ConnectionState } from './ws-handler.js'
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
   sendSubscribed(conn: WSConnection, id: string, seq: string, epoch: string, resync: boolean): void
+  sendResult(conn: WSConnection, id: string, data: AckResponse): void
   sendError(conn: WSConnection, id: string, code: string, message: string): void
   sendSirannonError(conn: WSConnection, id: string, err: unknown): void
   sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome
@@ -75,12 +78,33 @@ export async function handleSubscribeMessage(
     clientEpoch = msg.epoch
   }
 
+  let deviceId: string | undefined
+  if (msg.deviceId !== undefined) {
+    if (!isValidDeviceId(msg.deviceId)) {
+      deps.sendError(conn, id, 'INVALID_MESSAGE', '"deviceId" must be a 32-hex device id')
+      return
+    }
+    deviceId = msg.deviceId
+  }
+
   if (sinceSeq === undefined) {
-    await subscribeLive(deps, conn, state, id, msg.table, filter)
+    await subscribeLive(deps, conn, state, id, msg.table, filter, deviceId)
     return
   }
 
-  await subscribeResuming(deps, conn, state, id, msg.table, filter, sinceSeq, clientEpoch)
+  await subscribeResuming(deps, conn, state, id, msg.table, filter, sinceSeq, clientEpoch, deviceId)
+}
+
+function withEchoSuppression(
+  deps: WSSubscribeDeps,
+  conn: WSConnection,
+  id: string,
+  deviceId: string | undefined,
+): (event: ChangeEvent) => WSSendOutcome {
+  return event => {
+    if (deviceId !== undefined && event.origin === deviceId) return 'sent'
+    return deps.sendChange(conn, id, event)
+  }
 }
 
 async function subscribeLive(
@@ -90,14 +114,16 @@ async function subscribeLive(
   id: string,
   table: string,
   filter: Record<string, unknown> | undefined,
+  deviceId: string | undefined,
 ): Promise<void> {
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
 
+    const deliver = withEchoSuppression(deps, conn, id, deviceId)
     const boundary = ctx.tracker.cursor
     const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
-      deps.sendChange(conn, id, event)
+      deliver(event)
     })
 
     state.subscriptions.set(id, sub)
@@ -117,6 +143,7 @@ async function subscribeResuming(
   filter: Record<string, unknown> | undefined,
   sinceSeq: bigint,
   clientEpoch: string | undefined,
+  deviceId: string | undefined,
 ): Promise<void> {
   let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
   let primed: PrimedSubscription
@@ -126,10 +153,11 @@ async function subscribeResuming(
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
 
+    const deliver = withEchoSuppression(deps, conn, id, deviceId)
     boundary = ctx.tracker.cursor
     primed = new PrimedSubscription(
       sinceSeq,
-      event => deps.sendChange(conn, id, event),
+      event => deliver(event),
       () => deps.handleOverload(conn),
     )
     const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))

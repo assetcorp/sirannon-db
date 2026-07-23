@@ -147,6 +147,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'TRANSACTION_ERROR':
     case 'INVALID_DURABILITY':
     case 'INVALID_SYNCHRONOUS':
+    case 'BATCH_VALIDATION_ERROR':
       return 400
     case 'STALE_PRIMARY':
     case 'PROTOCOL_VERSION_MISMATCH':

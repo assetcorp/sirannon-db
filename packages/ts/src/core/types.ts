@@ -1,4 +1,5 @@
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import type { Migration } from './migrations/types.js'
 import type { Transaction } from './transaction.js'
 
 /** Query parameter types: named (object) or positional (array). */
@@ -187,6 +188,7 @@ export interface SirannonOptions {
   hooks?: HookConfig
   metrics?: MetricsConfig
   lifecycle?: LifecycleConfig
+  migrations?: Migration[]
   writerWorker?: boolean | WriterWorkerOptions
 }
 

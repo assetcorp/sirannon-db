@@ -17,6 +17,7 @@ import type {
 export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private readonly opening = new Set<string>()
+  private readonly resolving = new Map<string, Promise<Database | undefined>>()
   private _shutdown = false
 
   private readonly _driver: SQLiteDriver
@@ -69,7 +70,18 @@ export class Sirannon {
       )
     }
 
-    this.opening.delete(id)
+    try {
+      await this.applyRegistryMigrations(db)
+    } catch (err) {
+      await db.close().catch(() => {})
+      if (err instanceof SirannonError) throw err
+      throw new SirannonError(
+        `Failed to migrate database '${id}' at '${path}': ${err instanceof Error ? err.message : String(err)}`,
+        'DATABASE_OPEN_FAILED',
+      )
+    } finally {
+      this.opening.delete(id)
+    }
 
     if (this._shutdown) {
       await db.close().catch(() => {})
@@ -146,7 +158,23 @@ export class Sirannon {
     const db = this.get(id)
     if (db) return db
     if (this._shutdown) return undefined
-    return this.lifecycleManager?.resolve(id)
+    const manager = this.lifecycleManager
+    if (!manager) return undefined
+
+    const pending = this.resolving.get(id)
+    if (pending) return pending
+
+    const inFlight = manager.resolve(id).finally(() => {
+      this.resolving.delete(id)
+    })
+    this.resolving.set(id, inFlight)
+    return inFlight
+  }
+
+  private async applyRegistryMigrations(db: Database): Promise<void> {
+    const migrations = this.options.migrations
+    if (!migrations || migrations.length === 0 || db.readOnly) return
+    await db.migrate(migrations)
   }
 
   has(id: string): boolean {

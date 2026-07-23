@@ -973,6 +973,7 @@ SyncRequest {
   groupId?:        string
   primaryTerm?:    bigint
   completedTables: List<string>
+  supportsStreamVerification?: boolean
 }
 
 SyncBatch {
@@ -997,9 +998,10 @@ SyncComplete {
 }
 
 SyncTableManifest {
-  table:    string
-  rowCount: number
-  pkHash:   string
+  table:        string
+  rowCount:     number
+  pkHash?:      string
+  batchDigest?: string
 }
 
 SyncAck {
@@ -1036,7 +1038,8 @@ that is not a non-negative integer and fall back to zero.
 4. Replica acknowledges each batch with `SyncAck`.
 5. Primary sends `SyncComplete` with per-table manifests and the
    snapshot sequence number.
-6. Replica verifies manifests (row count and primary key hash).
+6. Replica verifies manifests (row count and either the stream
+   batch digest or the legacy primary key hash).
 7. Replica transitions to `catching-up` and applies changes that
    accumulated since `snapshotSeq`.
 8. When the replica's lag drops below `maxSyncLagBeforeReady`,
@@ -1049,10 +1052,27 @@ starting at 0. The receiver must reject out-of-order batches.
 
 ### Manifest Verification
 
-The `pkHash` in each manifest is the SHA-256 hex digest of all
-primary key values in the table, concatenated in primary key order.
-The receiver recomputes this hash locally and compares it against
-the manifest. A mismatch indicates data corruption during sync.
+When the joiner sets `supportsStreamVerification`, the source sends
+`batchDigest`: a chained SHA-256 hex digest over the table's batch
+checksums in batch order, starting from the empty string, with each
+step hashing the previous digest concatenated with the next batch's
+`checksum`. An empty table contributes one empty batch. `rowCount`
+is the total number of rows streamed. Both sides accumulate these
+values during the stream, so neither side re-reads a table.
+
+Without the flag, the source sends the legacy `pkHash`: the SHA-256
+hex digest of all primary key values in primary key order, which
+the joiner recomputes by re-reading the table. A manifest with a
+`batchDigest` is verified by stream digest; otherwise by `pkHash`;
+a manifest with neither fails. On any mismatch the joiner wipes the
+synced tables and restarts the sync.
+
+### Sync Progress Deadline
+
+The source's `maxSyncDurationMs` deadline restarts on every
+acknowledged batch, so the permitted total duration scales with the
+data. The source aborts the session when no batch is acknowledged
+within the deadline.
 
 ---
 

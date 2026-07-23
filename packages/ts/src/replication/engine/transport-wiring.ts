@@ -173,6 +173,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.emitError({ error: wrappedErr, operation: 'peer-disconnect-pragma-restore', peerId, recoverable: false })
       })
       engine.expectedBatchIndex.clear()
+      engine.syncTableDigests.clear()
       engine.log.setSyncMeta('pending').catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         engine.emitError({ error: wrappedErr, operation: 'sync-meta-write', peerId, recoverable: false })

@@ -5,6 +5,7 @@ import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
+import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
@@ -55,6 +56,7 @@ export class SyncJoiner {
       const savedState = await engine.log.getSyncState()
       const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
       const requestId = randomUUID()
+      engine.syncTableDigests.clear()
       await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
       await engine.config.transport.requestSync(
         sourcePeerId,
@@ -62,6 +64,7 @@ export class SyncJoiner {
           requestId,
           joinerNodeId: engine.nodeId,
           completedTables,
+          supportsStreamVerification: true,
         }),
       )
     } catch (err: unknown) {
@@ -149,6 +152,7 @@ export class SyncJoiner {
       }
 
       if (batch.batchIndex === 0 && !engine.syncState.completedTables.includes(batch.table)) {
+        engine.syncTableDigests.delete(batch.table)
         await engine.tracker.unwatch(engine.writerConn, batch.table)
         await engine.writerConn.exec(`DELETE FROM "${batch.table}"`)
       }
@@ -169,6 +173,11 @@ export class SyncJoiner {
           })
         }
       }
+
+      engine.syncTableDigests.set(
+        batch.table,
+        advanceStreamDigest(engine.syncTableDigests.get(batch.table), batch.checksum, batch.rows.length),
+      )
 
       if (batch.isLastBatchForTable) {
         await engine.log.setSyncTableStatus(batch.table, 'completed')
@@ -219,7 +228,10 @@ export class SyncJoiner {
       await engine.writerConn.exec('PRAGMA foreign_keys = ON')
 
       for (const manifest of complete.manifests) {
-        const valid = await engine.log.verifyManifest(manifest)
+        const valid =
+          manifest.batchDigest !== undefined
+            ? matchesStreamDigest(manifest, engine.syncTableDigests.get(manifest.table))
+            : await engine.log.verifyManifest(manifest)
         if (!valid) {
           await engine.log.wipeTables(
             engine.writerConn,
@@ -229,11 +241,13 @@ export class SyncJoiner {
           engine.syncState.phase = 'pending'
           engine.syncState.completedTables = []
           engine.expectedBatchIndex.clear()
+          engine.syncTableDigests.clear()
           await engine.log.setSyncMeta('pending')
           await this.initiateSync()
           return
         }
       }
+      engine.syncTableDigests.clear()
 
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 

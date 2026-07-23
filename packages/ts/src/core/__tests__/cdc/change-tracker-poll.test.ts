@@ -164,6 +164,21 @@ describe('ChangeTracker', () => {
       expect(events).toHaveLength(1)
       expect(events[0].row.name).toBe('Alice')
     })
+
+    it('a replication tracker that polled a narrow changes table still upgrades it on watch', async () => {
+      await tracker.watch(conn, 'users')
+      await insertUser(conn, 'Alice')
+
+      const replicationTracker = new ChangeTracker({ replication: true })
+      await replicationTracker.poll(conn)
+      await replicationTracker.watch(conn, 'users')
+
+      const stmt = await conn.prepare('PRAGMA table_info(_sirannon_changes)')
+      const columns = ((await stmt.all()) as { name: string }[]).map(c => c.name)
+      expect(columns).toContain('node_id')
+      expect(columns).toContain('tx_id')
+      expect(columns).toContain('hlc')
+    })
   })
 
   describe('multiple tables', () => {

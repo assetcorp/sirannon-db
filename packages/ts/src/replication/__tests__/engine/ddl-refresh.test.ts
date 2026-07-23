@@ -25,7 +25,7 @@ describe('ReplicationEngine', () => {
       harness.setWriterConn(conn)
 
       await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
-      const tracker = new ChangeTracker({ replication: true })
+      const tracker = new ChangeTracker()
       await tracker.watch(conn, 'inventory')
 
       const db = await Database.create('ddl', dbPath, testDriver)
@@ -57,7 +57,7 @@ describe('ReplicationEngine', () => {
       harness.setWriterConn(conn)
 
       await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
-      const tracker = new ChangeTracker({ replication: true })
+      const tracker = new ChangeTracker()
       await tracker.watch(conn, 'inventory')
 
       const db = await Database.create('ddl-fwd', dbPath, testDriver)

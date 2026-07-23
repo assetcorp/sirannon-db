@@ -395,7 +395,7 @@ describe('ReplicationEngine coordinator mode', () => {
 
   it('rejoins a non-divergent former primary through sync even when static topology says primary', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await tracker.watch(conn, 'items')
     const coordinator = new InMemoryClusterCoordinator()
     await coordinator.setReplicationGroupState({
@@ -430,7 +430,7 @@ describe('ReplicationEngine coordinator mode', () => {
 
   it('starts rejoin sync when a coordinator update points pending repair at a connected primary', async () => {
     const { db, conn } = await createDbAndConn(harness, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await tracker.watch(conn, 'items')
     const coordinator = new InMemoryClusterCoordinator()
     await coordinator.setReplicationGroupState({

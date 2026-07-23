@@ -1,23 +1,9 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { assertSafeIdentifier, ensureColumn } from './columns.js'
+import { ensureMetaTable } from './meta-table.js'
 
-export interface ChangesTableOptions {
-  replication: boolean
-}
-
-export async function ensureChangesTable(
-  conn: SQLiteConnection,
-  tableName: string,
-  options: ChangesTableOptions,
-): Promise<void> {
+export async function ensureChangesTable(conn: SQLiteConnection, tableName: string): Promise<void> {
   assertSafeIdentifier(tableName)
-
-  const replicationColumns = options.replication
-    ? `,
-  node_id TEXT NOT NULL DEFAULT '',
-  tx_id TEXT NOT NULL DEFAULT '',
-  hlc TEXT NOT NULL DEFAULT ''`
-    : ''
 
   await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${tableName}" (
@@ -27,19 +13,19 @@ CREATE TABLE IF NOT EXISTS "${tableName}" (
   row_id TEXT NOT NULL,
   changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
   old_data TEXT,
-  new_data TEXT${replicationColumns}
+  new_data TEXT,
+  node_id TEXT NOT NULL DEFAULT '',
+  tx_id TEXT NOT NULL DEFAULT '',
+  hlc TEXT NOT NULL DEFAULT ''
 )`)
 
-  if (options.replication) {
-    await ensureColumn(conn, tableName, 'node_id', 'TEXT', '')
-    await ensureColumn(conn, tableName, 'tx_id', 'TEXT', '')
-    await ensureColumn(conn, tableName, 'hlc', 'TEXT', '')
-  }
+  await ensureColumn(conn, tableName, 'node_id', 'TEXT', '')
+  await ensureColumn(conn, tableName, 'tx_id', 'TEXT', '')
+  await ensureColumn(conn, tableName, 'hlc', 'TEXT', '')
 
   await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${tableName}_changed_at" ON "${tableName}" (changed_at)`)
+  await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${tableName}_node_id" ON "${tableName}" (node_id)`)
+  await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${tableName}_hlc" ON "${tableName}" (hlc)`)
 
-  if (options.replication) {
-    await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${tableName}_node_id" ON "${tableName}" (node_id)`)
-    await conn.exec(`CREATE INDEX IF NOT EXISTS "idx_${tableName}_hlc" ON "${tableName}" (hlc)`)
-  }
+  await ensureMetaTable(conn)
 }

@@ -1,6 +1,6 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import { APPLIED_CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../internal-tables.js'
+import { APPLIED_CHANGES_TABLE, CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../internal-tables.js'
 import { computeChecksum } from './checksum.js'
 import { BatchValidationError } from './errors.js'
 import type { HLC } from './hlc.js'
@@ -17,6 +17,7 @@ export class BatchApplier {
     private readonly pkResolver: PkResolver,
     private readonly getLastAppliedSeq: (fromNodeId: string) => Promise<bigint>,
     private readonly tracker?: ChangeTracker,
+    private readonly changesTable: string = CHANGES_TABLE,
   ) {}
 
   async applyBatch(
@@ -73,9 +74,10 @@ export class BatchApplier {
       }
     }
 
-    for (const [_txId, txChanges] of changesByTx) {
+    for (const [txId, txChanges] of changesByTx) {
       const txDroppedTables: string[] = []
       const result = await this.conn.transaction(async tx => {
+        const seqBefore = await this.maxChangeSeq(tx)
         let txApplied = 0
         let txSkipped = 0
         let txConflicts = 0
@@ -152,6 +154,8 @@ export class BatchApplier {
           }
         }
 
+        await this.stampAppliedEcho(tx, seqBefore, batch.sourceNodeId, txId, txChanges)
+
         return { txApplied, txSkipped, txConflicts }
       })
 
@@ -180,6 +184,31 @@ export class BatchApplier {
     }
 
     return { applied, skipped, conflicts, droppedTables }
+  }
+
+  private async maxChangeSeq(tx: SQLiteConnection): Promise<string> {
+    const stmt = await tx.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${this.changesTable}"`)
+    const row = (await stmt.get()) as { seq?: unknown } | undefined
+    return String(row?.seq ?? 0)
+  }
+
+  private async stampAppliedEcho(
+    tx: SQLiteConnection,
+    seqBefore: string,
+    sourceNodeId: string,
+    txId: string,
+    txChanges: readonly ReplicationChange[],
+  ): Promise<void> {
+    let maxHlc = ''
+    for (const change of txChanges) {
+      if (change.hlc > maxHlc) {
+        maxHlc = change.hlc
+      }
+    }
+    const stmt = await tx.prepare(
+      `UPDATE "${this.changesTable}" SET node_id = ?, tx_id = ?, hlc = ? WHERE seq > ? AND node_id = ''`,
+    )
+    await stmt.run(sourceNodeId, txId, maxHlc, seqBefore)
   }
 
   private async findExistingRow(

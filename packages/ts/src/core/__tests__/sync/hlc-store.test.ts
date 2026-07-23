@@ -68,7 +68,7 @@ describe('persistHlcClock and loadPersistedHlc', () => {
 describe('StampOps clock persistence', () => {
   it('persists the stamping HLC in the same transaction as the stamp', async () => {
     conn = await testDriver.open(':memory:')
-    await ensureChangesTable(conn, CHANGES_TABLE_NAME, { replication: true })
+    await ensureChangesTable(conn, CHANGES_TABLE_NAME)
     await ensureMetaTable(conn)
     const insert = await conn.prepare(
       `INSERT INTO "${CHANGES_TABLE_NAME}" (table_name, operation, row_id, old_data, new_data) VALUES (?, ?, ?, ?, ?)`,
@@ -89,7 +89,7 @@ describe('StampOps clock persistence', () => {
 
   it('rolls the persisted clock back together with a failed transaction', async () => {
     conn = await testDriver.open(':memory:')
-    await ensureChangesTable(conn, CHANGES_TABLE_NAME, { replication: true })
+    await ensureChangesTable(conn, CHANGES_TABLE_NAME)
     await ensureMetaTable(conn)
     const insert = await conn.prepare(
       `INSERT INTO "${CHANGES_TABLE_NAME}" (table_name, operation, row_id, old_data, new_data) VALUES (?, ?, ?, ?, ?)`,

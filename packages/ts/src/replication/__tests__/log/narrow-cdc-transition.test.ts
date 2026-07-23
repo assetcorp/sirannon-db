@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../../core/internal-tables.js'
 import { HLC } from '../../../core/sync/hlc.js'
@@ -9,13 +8,26 @@ import { createTestDb, NODE_A } from './helpers.js'
 
 describe('enabling replication on a database with an existing narrow change log', () => {
   let conn: SQLiteConnection
-  let tracker: ChangeTracker
 
   beforeEach(async () => {
     conn = await createTestDb()
-    tracker = new ChangeTracker()
     await conn.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)')
-    await tracker.watch(conn, 'users')
+    await conn.exec(`
+CREATE TABLE "${CHANGES_TABLE}" (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  table_name TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  changed_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+  old_data TEXT,
+  new_data TEXT
+)`)
+    await conn.exec(
+      `CREATE TRIGGER "_sirannon_trg_users_insert" AFTER INSERT ON "users" BEGIN
+         INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data)
+         VALUES ('users', 'INSERT', NEW.id, json_object('id', NEW.id, 'name', NEW.name));
+       END`,
+    )
     const insert = await conn.prepare("INSERT INTO users (id, name) VALUES (1, 'Alice')")
     await insert.run()
   })

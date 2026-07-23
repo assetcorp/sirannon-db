@@ -165,11 +165,11 @@ describe('ChangeTracker', () => {
       expect(events[0].row.name).toBe('Alice')
     })
 
-    it('a replication tracker that polled a narrow changes table still upgrades it on watch', async () => {
+    it('a tracker that polled a narrow changes table still upgrades it on watch', async () => {
       await tracker.watch(conn, 'users')
       await insertUser(conn, 'Alice')
 
-      const replicationTracker = new ChangeTracker({ replication: true })
+      const replicationTracker = new ChangeTracker()
       await replicationTracker.poll(conn)
       await replicationTracker.watch(conn, 'users')
 

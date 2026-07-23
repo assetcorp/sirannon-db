@@ -104,8 +104,15 @@ export async function queryOne<T = Record<string, unknown>>(
   }
 }
 
-export async function execute(conn: SQLiteConnection, sql: string, params?: Params): Promise<ExecuteResult> {
-  assertSqlAllowed(sql)
+export async function execute(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+  trusted = false,
+): Promise<ExecuteResult> {
+  if (!trusted) {
+    assertSqlAllowed(sql)
+  }
   try {
     const stmt = await getStatement(conn, sql)
     const result = await stmt.run(...bindParams(params))
@@ -121,6 +128,7 @@ export async function execute(conn: SQLiteConnection, sql: string, params?: Para
 export interface GroupStatement {
   sql: string
   params?: Params
+  trusted?: boolean
 }
 
 /** The unit, not the statement, is the boundary a savepoint wraps and a failure is confined to. */
@@ -164,7 +172,7 @@ async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<Execute
   const values: ExecuteResult[] = new Array(unit.statements.length)
   for (let i = 0; i < unit.statements.length; i++) {
     const statement = unit.statements[i]
-    values[i] = await execute(conn, statement.sql, statement.params)
+    values[i] = await execute(conn, statement.sql, statement.params, statement.trusted === true)
   }
   return values
 }

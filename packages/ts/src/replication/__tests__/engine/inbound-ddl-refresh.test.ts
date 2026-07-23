@@ -83,7 +83,7 @@ describe('ReplicationEngine inbound batch trigger refresh', () => {
     await conn.exec('PRAGMA journal_mode = WAL')
     openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     if (schemaSql) {
       await conn.exec(schemaSql)
     }

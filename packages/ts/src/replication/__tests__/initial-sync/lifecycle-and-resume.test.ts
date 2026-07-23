@@ -56,7 +56,7 @@ describe('Initial Sync', () => {
       ctx.openConns.push(conn)
 
       await conn.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
-      const tracker = new ChangeTracker({ replication: true })
+      const tracker = new ChangeTracker()
       await tracker.watch(conn, 'items')
 
       const db = await Database.create('oob-db', dbPath, testDriver)
@@ -84,7 +84,7 @@ describe('Initial Sync', () => {
       ctx.openConns.push(conn)
 
       await conn.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
-      const tracker = new ChangeTracker({ replication: true })
+      const tracker = new ChangeTracker()
       await tracker.watch(conn, 'items')
 
       const db = await Database.create('resume-db', dbPath, testDriver)

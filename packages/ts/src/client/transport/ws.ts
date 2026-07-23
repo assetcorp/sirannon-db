@@ -11,6 +11,10 @@ import type {
 } from '../../server/protocol.js'
 import type { RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
+import type { ClientWebSocket } from './ws-connect.js'
+import { openWebSocket } from './ws-connect.js'
+import type { ActiveSubscription } from './ws-subscription-state.js'
+import { applySubscribedMessage, buildResubscribeMessage, deliverChangeMessage } from './ws-subscription-state.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
 
@@ -18,15 +22,6 @@ interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
   timer: ReturnType<typeof setTimeout> | undefined
-}
-
-interface ActiveSubscription {
-  table: string
-  filter: Record<string, unknown> | undefined
-  callback: (event: ChangeEvent) => void
-  onReset: (() => void) | undefined
-  lastSeq: bigint | undefined
-  epoch: string | undefined
 }
 
 /**
@@ -39,8 +34,6 @@ interface ActiveSubscription {
  * auto-reconnect (with subscription restoration) when
  * `autoReconnect` is enabled.
  */
-type ClientWebSocket = InstanceType<typeof WebSocket>
-
 export class WebSocketTransport implements Transport {
   private ws: ClientWebSocket | null = null
   private readonly url: string
@@ -219,47 +212,15 @@ export class WebSocketTransport implements Transport {
   }
 
   private connect(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      let settled = false
-      const ws = this.protocols === undefined ? new WebSocket(this.url) : new WebSocket(this.url, this.protocols)
-
-      const onOpen = () => {
-        settled = true
+    return openWebSocket(this.url, this.protocols, {
+      onConnected: ws => {
         this.ws = ws
-        resolve()
-      }
-
-      const onError = () => {
-        if (!settled) {
-          settled = true
-          reject(new RemoteError('CONNECTION_ERROR', `Failed to connect to ${this.url}`))
-        }
-      }
-
-      const onClose = (event: CloseEvent) => {
-        ws.removeEventListener('open', onOpen)
-        ws.removeEventListener('error', onError)
-
-        if (!settled) {
-          settled = true
-          reject(
-            new RemoteError('CONNECTION_ERROR', `Connection closed during handshake: ${event.code} ${event.reason}`),
-          )
-          return
-        }
-
+      },
+      onDisconnected: () => {
         this.ws = null
         this.handleDisconnect()
-      }
-
-      const onMessage = (event: MessageEvent) => {
-        this.handleMessage(String(event.data))
-      }
-
-      ws.addEventListener('open', onOpen)
-      ws.addEventListener('error', onError)
-      ws.addEventListener('close', onClose)
-      ws.addEventListener('message', onMessage)
+      },
+      onMessage: raw => this.handleMessage(raw),
     })
   }
 
@@ -285,27 +246,7 @@ export class WebSocketTransport implements Transport {
       case 'subscribed': {
         const sub = this.activeSubscriptions.get(msg.id)
         if (sub) {
-          if (msg.epoch !== undefined) {
-            sub.epoch = msg.epoch
-          }
-          let baseline: bigint | undefined
-          if (msg.seq !== undefined) {
-            try {
-              baseline = BigInt(msg.seq)
-            } catch {
-              baseline = undefined
-            }
-          }
-          if (msg.resync) {
-            sub.lastSeq = baseline
-            try {
-              sub.onReset?.()
-            } catch {
-              // A failing reset handler must not disrupt message processing.
-            }
-          } else if (sub.lastSeq === undefined && baseline !== undefined) {
-            sub.lastSeq = baseline
-          }
+          applySubscribedMessage(sub, msg)
         }
         const pending = this.pendingRequests.get(msg.id)
         if (pending) {
@@ -329,27 +270,7 @@ export class WebSocketTransport implements Transport {
       case 'change': {
         const sub = this.activeSubscriptions.get(msg.id)
         if (sub) {
-          try {
-            const event: ChangeEvent = {
-              type: msg.event.type,
-              table: msg.event.table,
-              row: decodeTaggedValues(msg.event.row) as Record<string, unknown>,
-              oldRow:
-                msg.event.oldRow === undefined
-                  ? undefined
-                  : (decodeTaggedValues(msg.event.oldRow) as Record<string, unknown>),
-              seq: BigInt(msg.event.seq),
-              timestamp: msg.event.timestamp,
-            }
-            if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
-              sub.lastSeq = event.seq
-            }
-            sub.callback(event)
-          } catch {
-            // Swallow errors from BigInt conversion on malformed data
-            // and subscriber callback errors to prevent one broken
-            // message from disrupting the processing loop.
-          }
+          deliverChangeMessage(sub, msg)
         }
         break
       }
@@ -396,15 +317,7 @@ export class WebSocketTransport implements Transport {
     for (const [id, sub] of entries) {
       if (this.closed) break
       try {
-        const msg: WSClientMessage = {
-          type: 'subscribe',
-          id,
-          table: sub.table,
-          ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
-          ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
-          ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
-        }
-        await this.request<void>(msg)
+        await this.request<void>(buildResubscribeMessage(id, sub))
       } catch {
         // If a particular subscription can't be restored, remove it
         // so we don't keep retrying a broken subscription.

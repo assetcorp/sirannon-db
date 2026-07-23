@@ -32,7 +32,7 @@ describe('ReplicationLog.applyBatch inbound DDL trigger refresh', () => {
   })
 
   async function setupReplicaState(): Promise<{ log: ReplicationLog; tracker: ChangeTracker }> {
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
     await tracker.watch(conn, 'inventory')
 
@@ -223,7 +223,7 @@ describe('ReplicationLog.applyBatch inbound DDL trigger refresh', () => {
   })
 
   it('prunes the dropped table while refreshing triggers for surviving tables in the same batch', async () => {
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await conn.exec('CREATE TABLE inventory (id INTEGER PRIMARY KEY, sku TEXT NOT NULL)')
     await conn.exec('CREATE TABLE accounts (id INTEGER PRIMARY KEY, holder TEXT NOT NULL)')
     await tracker.watch(conn, 'inventory')

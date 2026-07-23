@@ -12,7 +12,7 @@ export class SchemaOps {
   ) {}
 
   async ensureReplicationTables(): Promise<void> {
-    await ensureChangesTable(this.conn, this.changesTable, { replication: true })
+    await ensureChangesTable(this.conn, this.changesTable)
     await ensureReplicationStateTables(this.conn)
     await ensureMetaTable(this.conn)
   }

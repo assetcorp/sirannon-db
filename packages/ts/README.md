@@ -340,6 +340,28 @@ await db.rollback(migrations)        // undo last migration
 await db.rollback(migrations, 0)     // undo everything
 ```
 
+#### Registry migrations
+
+Declare the migration set once on the registry to roll out schema changes across many databases, such as one file per tenant. Every database opened through the registry, including tenants resolved lazily, applies the pending set before it serves its first request.
+
+```ts
+const sirannon = new Sirannon({
+  driver,
+  migrations: [
+    { version: 1, name: 'create_users', up: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)' },
+  ],
+  lifecycle: {
+    autoOpen: {
+      resolver: id => ({ path: `/data/tenants/${id}.db` }),
+    },
+  },
+})
+
+const db = await sirannon.resolve('tenant-42')
+```
+
+If a migration fails, the open fails with a `MigrationError` and the database stays unregistered, so a caller never receives a half-migrated database. A later open of the same database retries, and migrations already recorded in the tracking table are skipped. Concurrent `resolve` calls for the same cold tenant share one open, so the migration step runs once. Databases opened with `readOnly: true` skip the set.
+
 ### Backups
 
 One-shot backups use `VACUUM INTO` for a consistent snapshot. Scheduled backups run on a cron expression with automatic file rotation.
@@ -417,6 +439,8 @@ const sirannon = new Sirannon({
 // Databases resolve on first access:
 const db = await sirannon.resolve('tenant-42') // opens /data/tenants/tenant-42.db
 ```
+
+Pair the resolver with a registry `migrations` set to migrate each tenant when it opens; see [Registry migrations](#registry-migrations).
 
 ## Server
 
@@ -1038,6 +1062,7 @@ try {
 | `hooks` | `HookConfig` | No | Before/after hooks for queries, connections, subscriptions |
 | `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
+| `migrations` | `Migration[]` | No | Migration set applied to every writable database before it registers |
 
 ### `DatabaseOptions`
 

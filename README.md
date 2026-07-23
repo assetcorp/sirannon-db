@@ -91,7 +91,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Bulk load** - Load a large dataset in one transaction under relaxed durability, then restore the configured level, so a big import pays one durability barrier instead of one per row.
 - **Connection pooling** - 1 dedicated write connection + N read connections (default 4). WAL mode enabled by default for concurrent reads during writes.
 - **Change data capture (CDC)** - Watch tables for INSERT, UPDATE, and DELETE events in real time through SQLite triggers and configurable polling.
-- **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations, tracked in a `_sirannon_migrations` table. Supports rollback to any version.
+- **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations, tracked in a `_sirannon_migrations` table. Supports rollback to any version. A migration set declared on the registry applies to every database it opens, including lazily resolved tenants.
 - **Backups** - One-shot snapshots via `VACUUM INTO` and scheduled backups on a cron expression with automatic file rotation.
 - **Hooks** - Before/after hooks for queries, connections, and subscriptions. Throwing from a before-hook denies the operation.
 - **Metrics** - Plug in callbacks to collect query timing, connection events, and CDC activity.

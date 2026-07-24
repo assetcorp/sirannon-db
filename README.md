@@ -6,7 +6,7 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. Coordinator mode adds etcd-backed authority and automatic failover.
+Build a networked SQLite service with connection pooling, change data capture, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while Sirannon nodes replicate primary-owned changes over gRPC. End-user devices sync a whole local database offline-first over the same server. Coordinator mode adds etcd-backed authority and automatic failover.
 
 Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).
 
@@ -24,6 +24,7 @@ Sirannon has two levels of maturity. The core data layer, the server, the client
 | --- | --- | --- |
 | Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files with continuous integration on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `@delali/sirannon-db/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server runs client SQL by design, so read the [security section](packages/ts/README.md#security) before you expose it. |
+| Device sync (`@delali/sirannon-db/client`) | Experimental | Offline-first, bidirectional sync between an end-user device's local database and a server, with push, live pull, snapshot resync, a migration handshake, and capability negotiation. It is new and not yet proven in production. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
 | Coordinator-backed automatic failover (`@delali/sirannon-db/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
 | Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers run today but have no TypeScript declarations yet. |
@@ -79,7 +80,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` / `.down.sql` files from a directory |
 | `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation, also re-exported from the core entry |
 | `@delali/sirannon-db/server` | HTTP + WebSocket server powered by uWebSockets.js |
-| `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect and subscription restore |
+| `@delali/sirannon-db/client` | Browser/Node.js client SDK with auto-reconnect, subscription restore, and the device sync controller |
 | `@delali/sirannon-db/replication` | Replication engine, primary-replica topology, HLC, write concerns, and conflict resolvers |
 | `@delali/sirannon-db/replication/coordinator/etcd` | etcd-backed cluster coordinator for primary authority and automatic failover |
 | `@delali/sirannon-db/transport/grpc` | gRPC replication transport with TLS support |
@@ -98,6 +99,7 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
 - **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Query, execute, transaction, batch, and bulk-load routes on both transports, plus health endpoints, CORS configuration, a configurable body-size cap, and an `onRequest` hook for authentication.
 - **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
+- **Device sync** - Keep an end-user device's local database in step with a server, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over WebSocket, with snapshot resync, a migration handshake, and capability negotiation. See the [device sync guide](packages/ts/README.md#device-sync).
 - **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas. The production network transport is gRPC with TLS support.
 - **Coordinator-backed failover** - Use etcd-backed authority, primary terms, in-sync sets, and write concerns. Minority partitions fail closed for writes.
 - **Deterministic batch application** - Choose LWW, PrimaryWins, FieldMerge, or a custom resolver when an incoming replicated change targets an existing row.
@@ -131,6 +133,10 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 <p align="center">
   <img src="docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
 </p>
+
+## Device sync
+
+Device sync keeps an end-user device's local database in step with a server database, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over the WebSocket, applying both sides through the same conflict resolvers replication uses. Each user gets their own database file, and a device syncs the whole database. A fresh device, or one too far behind to resume, resyncs from a server snapshot; a device applies schema changes through a migration handshake, and a client refuses to sync against a server that does not advertise device sync. Device sync is distinct from server-to-server replication: a device is not a replication peer and holds no primary authority. The [device sync guide](packages/ts/README.md#device-sync) covers setup, and the [specification](packages/spec/08-device-sync.md) defines the wire protocol.
 
 ## Distributed replication FAQ
 

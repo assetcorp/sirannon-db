@@ -624,6 +624,70 @@ await httpDb.transaction([
 httpClient.close()
 ```
 
+## Device sync
+
+Device sync keeps an end-user device's local database and a server database in step, offline-first and bidirectional. A device pushes its own writes to the server and pulls other writes live over a WebSocket, applying each side's changes through the same conflict resolvers replication uses. A device is not a replication peer and holds no primary authority. Each user gets their own database file, and a device syncs the whole database, so there is no partial sync to configure. The [device sync specification](../spec/08-device-sync.md) defines the wire protocol.
+
+Device sync differs from [distributed replication](#distributed-replication): replication moves primary-owned changes between servers over gRPC, while device sync connects one end-user device to a server over HTTP and WebSocket.
+
+### Server side
+
+The device-sync routes are built into the server. Watch the tables you want to sync, then start the server as usual. It serves the push route, the live pull with acknowledgements and echo suppression, snapshots, the migration handshake, and a capabilities endpoint without extra configuration.
+
+```ts
+import { Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import { createServer } from '@delali/sirannon-db/server'
+
+const sirannon = new Sirannon({ driver: betterSqlite3() })
+const db = await sirannon.open('app', './data/app.db')
+await db.watch('tasks')
+
+const server = createServer(sirannon, { port: 9876 })
+await server.listen()
+```
+
+### Device side
+
+On the device, open a local database with a browser or React Native driver, then drive the sync loop with a `SyncController`. Construct it with the server URL, the database id, and the tables to sync.
+
+```ts
+import { Sirannon } from '@delali/sirannon-db'
+import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
+import { SyncController } from '@delali/sirannon-db/client'
+
+const sirannon = new Sirannon({ driver: waSqlite() })
+const db = await sirannon.open('app', 'app.db')
+await db.watch('tasks')
+
+const sync = new SyncController(db, {
+  url: 'https://api.example.com',
+  databaseId: 'app',
+  tables: ['tasks'],
+  onChange: event => applyPulledChange(event),
+  onResyncRequired: () => warnBeforeWipe(),
+  onSnapshotProgress: progress => showProgress(progress),
+})
+
+await sync.start()
+```
+
+`start()` verifies the server's capabilities, reconciles the migration handshake, opens the live pull, and starts the push loop. Call `sync.pause()` to tear the loops down and keep the cursors, `sync.resume()` to restart them, and `sync.stop()` when you are done. `await sync.status()` returns a `SyncStatus` with the sync state, the pending push count, the last pushed and pulled sequences, whether the push is caught up, and the last error.
+
+The controller pushes the device's own writes and receives the rest, but applying a pulled change to the local database is the application's decision. The controller passes each pulled change to `onChange`, and your code applies it however the app expects, so that the UI and the local rows agree.
+
+### Snapshot resync
+
+A fresh device, or one that has fallen too far behind to resume, replaces its whole database from a server snapshot. With `autoResync` on (the default), the controller schedules the download on start, on a server resync signal, and after a failed download, backing off between retries. `onSnapshotProgress` reports table and row progress. While a snapshot loads, every read and write on the local database fails with `SNAPSHOT_IN_PROGRESS`, so hold local writes until `status()` leaves the `snapshotting` state. A resync replaces local data, so the controller calls `onResyncRequired` before the wipe to let you warn the user.
+
+### Migration handshake
+
+A device applies schema changes through the migration handshake, never through the change feed. On each push and subscribe, a device reports its schema version, the highest applied migration version. A server ahead of the device refuses the request with `MIGRATION_REQUIRED`; the controller then fetches the missing migrations, verifies each one's checksum, applies them through the migration runner, and retries. A device ahead of the server is refused with `SCHEMA_AHEAD`. A history that has diverged, or a migration the server cannot serve as SQL, forces a snapshot resync. Share one migration set across your server, web, and mobile builds so that every side agrees on the schema; see [Migrations](#migrations) for how to declare it.
+
+### Retention and eviction
+
+The server records how far each device has acknowledged and prunes the change log to the oldest sequence a live device still needs, so a device that has only written its own changes does not hold retention back. A device idle past the retention window, 30 days by default, is evicted and resyncs from a snapshot on its next start.
+
 ## Distributed replication
 
 <p align="center">

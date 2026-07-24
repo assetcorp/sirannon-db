@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SirannonClient } from '../../client/index.js'
+import { HLC } from '../../core/sync/hlc.js'
 import { createEtcdCoordinator, type EtcdClusterCoordinator } from '../../replication/coordinator/etcd.js'
 import { canonicaliseForChecksum } from '../../replication/log.js'
 import type {
@@ -1162,8 +1163,8 @@ function staleBatch(sourceNodeId: string, primaryTerm: bigint, rowId: number): R
     fromSeq: 1n,
     toSeq: 1n,
     hlcRange: {
-      min: `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`,
-      max: `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`,
+      min: HLC.encode(Date.now(), 0, sourceNodeId),
+      max: HLC.encode(Date.now(), 0, sourceNodeId),
     },
     changes,
     checksum: createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex'),
@@ -1218,7 +1219,7 @@ function staleSyncBatch(primaryTerm: bigint, rowId: number): SyncBatch {
 }
 
 function staleInsertChange(sourceNodeId: string, rowId: number, note: string): ReplicationChange {
-  const hlc = `${Date.now().toString(16).padStart(12, '0')}-0000-${sourceNodeId}`
+  const hlc = HLC.encode(Date.now(), 0, sourceNodeId)
   return {
     table: 'failover_items',
     operation: 'insert',

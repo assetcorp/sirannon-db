@@ -102,7 +102,7 @@ describe('Database.applyChanges', () => {
     db = await openWatched('conflict.db')
     await db.execute("INSERT INTO notes (id, body) VALUES (10, 'local original')")
 
-    const staleHlc = `${'0'.repeat(12)}-0000-${DEVICE}`
+    const staleHlc = HLC.encode(0, 0, DEVICE)
     const stale = deviceChange({
       operation: 'update',
       hlc: staleHlc,

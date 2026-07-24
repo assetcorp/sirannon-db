@@ -6,6 +6,7 @@ import { unrefTimer } from './http-json.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
 import { syncDeviceMigrations } from './migration-sync.js'
 import { downloadDatabaseSnapshot } from './snapshot-loader.js'
+import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
 import { PullStream } from './sync-pull-stream.js'
 import { pushSyncBatch } from './sync-push.js'
@@ -29,6 +30,7 @@ export class SyncController {
 
   private port: DeviceSyncPort | null = null
   private deviceId: string | null = null
+  private capabilities: string[] | null = null
   private schemaVersion: number | null = null
   private state: SyncState = 'stopped'
   private pushCursor = 0n
@@ -72,6 +74,7 @@ export class SyncController {
     if (this.state === 'running' || this.state === 'starting') return
     this.state = 'starting'
     try {
+      await this.verifyCapabilities()
       this.port ??= this.db.deviceSync()
       this.deviceId = (await this.port.identity()).nodeId
       this.pushCursor = await this.port.getPushCursor()
@@ -134,6 +137,7 @@ export class SyncController {
     return {
       state: this.state,
       deviceId: this.deviceId,
+      serverCapabilities: this.capabilities,
       schemaVersion: this.schemaVersion,
       pendingPushCount,
       lastPushedSeq: this.pushCursor,
@@ -146,6 +150,20 @@ export class SyncController {
 
   triggerPush(): void {
     void this.drainOutbox()
+  }
+
+  private async verifyCapabilities(): Promise<void> {
+    if (this.capabilities !== null) return
+    try {
+      this.capabilities = await verifyDeviceSyncCapabilities({
+        url: this.baseUrl,
+        headers: this.options.headers,
+        requestTimeoutMs: this.options.requestTimeout,
+      })
+    } catch (err) {
+      if (err instanceof RemoteError && err.code === 'SYNC_UNSUPPORTED') throw err
+      this.recordError(err)
+    }
   }
 
   private async localSchemaVersion(): Promise<number> {

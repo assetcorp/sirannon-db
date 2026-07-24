@@ -1,5 +1,7 @@
 import type { Transaction } from '../transaction.js'
 
+export const MIGRATION_NAME_RE = /^\w+$/
+
 export interface AppliedMigration {
   version: number
   name: string

@@ -1,14 +1,12 @@
 import type { Database } from '../core/database.js'
 import { MigrationError } from '../core/errors.js'
 import { migrationChecksum } from '../core/migrations/checksum.js'
-import type { Migration } from '../core/migrations/types.js'
+import { MIGRATION_NAME_RE, type Migration } from '../core/migrations/types.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { MigrationListEntry, MigrationListRequest, MigrationListResponse } from '../server/http-migrations.js'
 import { isValidSchemaVersion } from '../server/sync-protocol.js'
 import { postJson } from './http-json.js'
 import { RemoteError } from './types.js'
-
-const MIGRATION_NAME_RE = /^\w+$/
 
 export interface MigrationSyncOptions {
   url: string

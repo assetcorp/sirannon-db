@@ -7,24 +7,14 @@ export function unrefTimer(timer: ReturnType<typeof setTimeout> | ReturnType<typ
   unrefable.unref?.()
 }
 
-export async function postJson(
-  url: string,
-  body: unknown,
-  headers: Record<string, string> | undefined,
-  timeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
-): Promise<unknown> {
+async function requestJson(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   unrefTimer(timer)
 
   let response: Response
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
+    response = await fetch(url, { ...init, signal: controller.signal })
   } catch (err) {
     throw new RemoteError(
       'CONNECTION_ERROR',
@@ -49,4 +39,29 @@ export async function postJson(
     )
   }
   return data
+}
+
+export async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> | undefined,
+  timeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
+  return requestJson(
+    url,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    },
+    timeoutMs,
+  )
+}
+
+export async function getJson(
+  url: string,
+  headers: Record<string, string> | undefined,
+  timeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
+  return requestJson(url, { method: 'GET', headers: { ...headers } }, timeoutMs)
 }

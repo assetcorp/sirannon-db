@@ -1,4 +1,5 @@
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
+import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type { ClusterStatusInfo, ExecuteResult, Params, QueryOptions } from './types.js'
 
@@ -82,6 +83,7 @@ export interface ServerExecutionTarget {
     batch: ReplicationBatch,
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult>
+  appliedMigrations?(): Promise<AppliedMigrationRow[]>
 }
 
 export type ServerExecutionTargetResolver = (

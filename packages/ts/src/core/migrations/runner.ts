@@ -1,7 +1,7 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
 import { MIGRATIONS_TABLE } from '../internal-tables.js'
-import { ensureMigrationsTable } from '../system-catalog/index.js'
+import { appliedMigrationRows, ensureMigrationsTable } from '../system-catalog/index.js'
 import { Transaction } from '../transaction.js'
 import { planPendingMigrations, resolveEffectiveBaseline, SQLITE_USER_VERSION_MAX } from './baseline.js'
 import { type AppliedChecksumRow, migrationContentChecksum, reconcileMigrationChecksums } from './checksum.js'
@@ -263,8 +263,7 @@ export class MigrationRunner {
   }
 
   private static async getAppliedRows(conn: SQLiteConnection): Promise<Map<number, AppliedRow>> {
-    const stmt = await conn.prepare(`SELECT version, name, checksum FROM ${MIGRATIONS_TABLE} ORDER BY version`)
-    const rows = (await stmt.all()) as { version: number; name: string; checksum: string | null }[]
+    const rows = await appliedMigrationRows(conn)
     return new Map(rows.map(r => [r.version, { name: r.name, checksum: r.checksum }]))
   }
 }

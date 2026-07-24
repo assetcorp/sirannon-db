@@ -43,9 +43,7 @@ export async function beginSnapshotLoad(
     }
     const reversed = [...tables].reverse()
     for (const table of reversed) {
-      if (await tableExists(tx, table)) {
-        await tx.exec(`DELETE FROM "${table}"`)
-      }
+      await tx.exec(`DROP TABLE IF EXISTS "${table}"`)
     }
   })
 }

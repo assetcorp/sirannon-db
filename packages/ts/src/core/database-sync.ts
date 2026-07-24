@@ -1,6 +1,7 @@
 import type { DatabaseCdcController } from './database-cdc.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from './internal-tables.js'
+import { mirrorSchemaVersion } from './migrations/schema-version.js'
 import { BatchApplier } from './sync/batch-applier.js'
 import { BatchReader } from './sync/batch-reader.js'
 import { LWWResolver } from './sync/conflict/lww.js'
@@ -16,10 +17,13 @@ import {
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import { SEQ_STRING_RE } from './sync/validators.js'
 import {
+  type AppliedMigrationRow,
   ensureBatchApplyTables,
   ensureChangesTable,
   ensureMetaTable,
   getMetaValue,
+  highestMigrationVersion,
+  replaceMigrationHistory,
   setMetaValue,
 } from './system-catalog/index.js'
 
@@ -47,6 +51,7 @@ export interface DeviceSyncPort {
   beginSnapshotLoad(tables: readonly string[]): Promise<void>
   applySnapshotSchema(schema: readonly string[]): Promise<void>
   loadSnapshotPage(table: string, rows: readonly Record<string, unknown>[]): Promise<void>
+  replaceMigrationHistory(rows: readonly AppliedMigrationRow[]): Promise<void>
   endSnapshotLoad(tables: readonly string[]): Promise<void>
   abortSnapshotLoad(): Promise<void>
 }
@@ -97,6 +102,7 @@ export class DatabaseSyncController {
       beginSnapshotLoad: tables => this.beginSnapshotLoad(tables),
       applySnapshotSchema: schema => this.runExclusive(() => applySnapshotSchema(this.acquireWriter(), schema)),
       loadSnapshotPage: (table, rows) => this.runExclusive(() => loadSnapshotPage(this.acquireWriter(), table, rows)),
+      replaceMigrationHistory: rows => this.replaceMigrationHistory(rows),
       endSnapshotLoad: tables => this.endSnapshotLoad(tables),
       abortSnapshotLoad: () => this.runExclusive(() => abortSnapshotLoad(this.acquireWriter())),
     }
@@ -108,6 +114,14 @@ export class DatabaseSyncController {
 
   seedSnapshotGate(): void {
     this.snapshotGate = true
+  }
+
+  private replaceMigrationHistory(rows: readonly AppliedMigrationRow[]): Promise<void> {
+    return this.runExclusive(async () => {
+      const writer = this.acquireWriter()
+      await replaceMigrationHistory(writer, rows)
+      await mirrorSchemaVersion(writer, highestMigrationVersion(rows))
+    })
   }
 
   private async beginSnapshotLoad(tables: readonly string[]): Promise<void> {

@@ -19,9 +19,11 @@ afterEach(async () => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
+const NOTES_DDL = 'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)'
+
 async function openWatched(name: string): Promise<Database> {
   const database = await Database.create('snapshot', join(tempDir, name), testDriver)
-  await database.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
+  await database.execute(NOTES_DDL)
   await database.watch('notes')
   return database
 }
@@ -36,6 +38,7 @@ describe('snapshot apply port', () => {
     await port.beginSnapshotLoad(['notes'])
     expect(await port.snapshotLoadPending()).toBe(true)
 
+    await port.applySnapshotSchema([NOTES_DDL])
     await port.loadSnapshotPage('notes', [
       { id: 10, body: 'from server' },
       { id: 11, body: 'also from server' },
@@ -60,6 +63,7 @@ describe('snapshot apply port', () => {
     db = await openWatched('rewatch.db')
     const port = db.deviceSync()
     await port.beginSnapshotLoad(['notes'])
+    await port.applySnapshotSchema([NOTES_DDL])
     await port.loadSnapshotPage('notes', [{ id: 1, body: 'server' }])
     await port.endSnapshotLoad(['notes'])
 
@@ -92,6 +96,7 @@ describe('snapshot apply port', () => {
     db = await openWatched('reject.db')
     const port = db.deviceSync()
     await port.beginSnapshotLoad(['notes'])
+    await port.applySnapshotSchema([NOTES_DDL])
 
     await expect(port.loadSnapshotPage('notes', [{ 'bad name!': 1 }])).rejects.toThrow(/Invalid column name/)
     await expect(port.loadSnapshotPage('notes', [{ id: 1, body: 'a' }, { id: 2 }])).rejects.toThrow(

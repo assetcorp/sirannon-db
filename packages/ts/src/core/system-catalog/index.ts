@@ -2,7 +2,13 @@ export { ensureChangesTable, maxChangeHlc, maxChangeSeq } from './changes-table.
 export { assertSafeIdentifier, ensureColumn, tableColumns } from './columns.js'
 export { ensureDeviceCursorsTable } from './device-cursors-table.js'
 export { deleteMetaValue, ensureMetaTable, getMetaValue, initMetaValue, setMetaValue } from './meta-table.js'
-export { ensureMigrationsTable } from './migrations-table.js'
+export {
+  type AppliedMigrationRow,
+  appliedMigrationRows,
+  ensureMigrationsTable,
+  highestMigrationVersion,
+  replaceMigrationHistory,
+} from './migrations-table.js'
 export {
   ensureBatchApplyTables,
   ensureReplicationStateTables,

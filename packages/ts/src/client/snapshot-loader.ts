@@ -45,9 +45,22 @@ function validateManifest(raw: unknown): SnapshotManifestResponse {
     record.epoch.length === 0 ||
     !Array.isArray(record.schema) ||
     record.schema.some(ddl => typeof ddl !== 'string') ||
-    !Array.isArray(record.tables)
+    !Array.isArray(record.tables) ||
+    !Array.isArray(record.migrations)
   ) {
     throw new RemoteError('INVALID_RESPONSE', 'Snapshot manifest is malformed')
+  }
+  for (const migration of record.migrations) {
+    if (
+      typeof migration !== 'object' ||
+      migration === null ||
+      !Number.isSafeInteger((migration as { version?: unknown }).version) ||
+      typeof (migration as { name?: unknown }).name !== 'string' ||
+      ((migration as { checksum?: unknown }).checksum !== null &&
+        typeof (migration as { checksum?: unknown }).checksum !== 'string')
+    ) {
+      throw new RemoteError('INVALID_RESPONSE', 'Snapshot manifest migration entry is malformed')
+    }
   }
   for (const table of record.tables) {
     if (
@@ -138,6 +151,7 @@ export async function downloadDatabaseSnapshot(
       }
     }
 
+    await port.replaceMigrationHistory(manifest.migrations)
     const startSeq = BigInt(manifest.startSeq)
     await port.setPullState(startSeq, manifest.epoch)
     await port.endSnapshotLoad(tables)

@@ -26,6 +26,7 @@ import {
   readBody,
   sendError,
 } from './http-handler.js'
+import { handleMigrationList } from './http-migrations.js'
 import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
 import { decodeRemoteAddress, runOnRequest } from './request-hook.js'
 import { WSHandler } from './ws-handler.js'
@@ -176,6 +177,7 @@ export class SirannonServer {
     this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
     this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
     this.app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
     this.app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
     this.app.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
 

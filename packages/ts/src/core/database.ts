@@ -15,10 +15,11 @@ import type { HookRegistry } from './hooks/registry.js'
 
 export type { DatabaseInternals } from './database-create.js'
 
-import { MigrationRunner } from './migrations/runner.js'
+import { migrateWithTriggerRefresh, readAppliedMigrations, rollbackWithTriggerRefresh } from './database-migrations.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
+import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -287,12 +288,21 @@ export class Database {
 
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
-    return this.writerLock.run(() => MigrationRunner.run(this.pool.acquireWriter(), migrations))
+    return this.writerLock.run(() =>
+      migrateWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations),
+    )
+  }
+
+  async appliedMigrations(): Promise<AppliedMigrationRow[]> {
+    this.ensureNotClosed()
+    return this.writerLock.run(() => readAppliedMigrations(this.pool.acquireWriter()))
   }
 
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
-    return this.writerLock.run(() => MigrationRunner.rollback(this.pool.acquireWriter(), migrations, version))
+    return this.writerLock.run(() =>
+      rollbackWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations, version),
+    )
   }
 
   async backup(destPath: string): Promise<void> {

@@ -173,6 +173,10 @@ export class Sirannon {
     return inFlight
   }
 
+  registryMigrations(): Promise<Migration[]> {
+    return this.loadMigrationSet()
+  }
+
   private async applyRegistryMigrations(db: Database): Promise<void> {
     if (this.options.migrations === undefined || db.readOnly) return
     const migrations = await this.loadMigrationSet()

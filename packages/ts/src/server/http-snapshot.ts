@@ -4,13 +4,13 @@ import { decodeTaggedValues, encodeTaggedValues, encodeWireRowsInPlace } from '.
 import { ensureCdcEpoch } from '../core/cdc/epoch.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
-import { CHANGES_TABLE } from '../core/internal-tables.js'
+import { CHANGES_TABLE, MIGRATIONS_TABLE } from '../core/internal-tables.js'
 import type { Sirannon } from '../core/sirannon.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 import { dumpTablePages } from '../core/sync/dump.js'
 import { PkResolver } from '../core/sync/pk.js'
 import { dumpSchema, tablesInFkOrder } from '../core/sync/schema-dump.js'
-import { countTableRows, maxChangeSeq, tableExists } from '../core/system-catalog/index.js'
+import { appliedMigrationRows, countTableRows, maxChangeSeq, tableExists } from '../core/system-catalog/index.js'
 import type { ResponseAbort } from './http-common.js'
 import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbRouteHandler } from './http-handler.js'
@@ -69,6 +69,8 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
           tables.push({ name, rowCount: await countTableRows(conn, name) })
         }
 
+        const migrations = (await tableExists(conn, MIGRATIONS_TABLE)) ? await appliedMigrationRows(conn) : []
+
         if (abort.aborted) return
         const manifest: SnapshotManifestResponse = {
           databaseId: dbId,
@@ -76,6 +78,7 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
           epoch,
           schema,
           tables,
+          migrations,
         }
         sendJson(res, manifest)
       } finally {

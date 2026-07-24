@@ -32,9 +32,13 @@ export async function pushSyncBatch(
   batch: ReplicationBatch,
   headers?: Record<string, string>,
   timeoutMs?: number,
+  schemaVersion?: number,
 ): Promise<ChangesResponse> {
   const url = `${baseUrl}/db/${encodeURIComponent(databaseId)}/changes`
-  const body: ChangesRequest = { batch: encodeSyncBatch(batch) }
+  const body: ChangesRequest = {
+    batch: encodeSyncBatch(batch),
+    ...(schemaVersion !== undefined ? { schemaVersion } : {}),
+  }
   const data = await postJson(url, body, headers, timeoutMs)
 
   const result = data as Partial<ChangesResponse>

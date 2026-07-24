@@ -1,7 +1,8 @@
+import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { AckResponse } from './protocol.js'
 import { decodeBoundParams } from './protocol.js'
-import { isValidDeviceId } from './sync-protocol.js'
+import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from './sync-protocol.js'
 import type { CdcContextRegistry } from './ws-cdc.js'
 import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
@@ -85,6 +86,25 @@ export async function handleSubscribeMessage(
       return
     }
     deviceId = msg.deviceId
+  }
+
+  if (deviceId !== undefined) {
+    if (msg.schemaVersion !== undefined && !isValidSchemaVersion(msg.schemaVersion)) {
+      deps.sendError(conn, id, 'INVALID_MESSAGE', '"schemaVersion" must be a non-negative integer')
+      return
+    }
+    let refusal: ReturnType<typeof schemaVersionGateRefusal>
+    try {
+      const serverVersion = highestMigrationVersion(await state.database.appliedMigrations())
+      refusal = schemaVersionGateRefusal(msg.schemaVersion ?? 0, serverVersion)
+    } catch (err) {
+      deps.sendSirannonError(conn, id, err)
+      return
+    }
+    if (refusal !== null) {
+      deps.sendError(conn, id, refusal.code, refusal.message)
+      return
+    }
   }
 
   if (sinceSeq === undefined) {

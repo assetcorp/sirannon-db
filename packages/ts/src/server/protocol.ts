@@ -117,6 +117,7 @@ export interface WSSubscribeMessage {
    */
   epoch?: string
   deviceId?: string
+  schemaVersion?: number
 }
 
 export interface WSUnsubscribeMessage {

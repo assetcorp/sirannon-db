@@ -95,8 +95,7 @@ describe('ReplicationEngine', () => {
       harness.transport.addPeer(NODE_B, 'primary')
 
       const farFutureMs = Date.now() + 100_000
-      const wallHex = farFutureMs.toString(16).padStart(12, '0')
-      const hlcVal = `${wallHex}-0000-${NODE_B}`
+      const hlcVal = HLC.encode(farFutureMs, 0, NODE_B)
 
       const changes = [
         {

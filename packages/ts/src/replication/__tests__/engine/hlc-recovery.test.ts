@@ -124,8 +124,7 @@ describe('ReplicationEngine HLC recovery on restart', () => {
     harness.transport.addPeer(NODE_B, 'primary')
 
     const farFutureMs = Date.now() + 60_000
-    const wallHex = farFutureMs.toString(16).padStart(12, '0')
-    const remoteHlcVal = `${wallHex}-0000-${NODE_B}`
+    const remoteHlcVal = HLC.encode(farFutureMs, 0, NODE_B)
 
     await harness.transport.triggerBatchReceived(buildBatchFromHlc(remoteHlcVal, 9, 1n), NODE_B)
 
@@ -163,8 +162,7 @@ describe('ReplicationEngine HLC recovery on restart', () => {
     await engineA.stop()
 
     const farFutureMs = Date.now() + 120_000
-    const wallHex = farFutureMs.toString(16).padStart(12, '0')
-    const remoteHlcVal = `${wallHex}-0000-${NODE_B}`
+    const remoteHlcVal = HLC.encode(farFutureMs, 0, NODE_B)
     const seedRemote = await conn.prepare(
       `INSERT INTO _sirannon_column_versions (table_name, row_id, column_name, hlc, node_id)
        VALUES (?, ?, ?, ?, ?)`,
@@ -190,8 +188,7 @@ describe('ReplicationEngine HLC recovery on restart', () => {
     await engineA.start()
 
     const farFutureMs = Date.now() + 5 * 60_000
-    const wallHex = farFutureMs.toString(16).padStart(12, '0')
-    const farFutureHlc = `${wallHex}-0003-${NODE_A}`
+    const farFutureHlc = HLC.encode(farFutureMs, 3, NODE_A)
     const insertStmt = await conn.prepare(
       `INSERT INTO _sirannon_column_versions (table_name, row_id, column_name, hlc, node_id)
        VALUES (?, ?, ?, ?, ?)`,

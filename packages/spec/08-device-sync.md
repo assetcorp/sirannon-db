@@ -27,7 +27,7 @@ cursors in `_sirannon_meta`:
 | `node_id` | The device identity. |
 | `hlc_clock` | The persisted HLC. |
 | `device_sync_pushed_seq` | Highest local `seq` acknowledged by the server on push. |
-| `device_sync_pull_seq` | Highest server `seq` pulled. |
+| `device_sync_pull_seq` | Highest server `seq` applied locally. |
 | `device_sync_pull_epoch` | The epoch the pull cursor belongs to. |
 | `device_sync_snapshot_state` | Set to `loading` while a snapshot load runs, cleared on completion. |
 
@@ -68,6 +68,11 @@ batch as follows:
   to that device.
 
 `applyChanges` returns `ApplyResult { applied, skipped, conflicts }`.
+
+A device applies pulled changes from the live stream under the same rules, one
+`txId` group per transaction, with no checksum and no batch envelope. It writes
+`device_sync_pull_seq` inside the group's transaction and records nothing in
+`_sirannon_applied_changes`.
 
 ---
 
@@ -138,17 +143,27 @@ identity:
 writes back. Resumption and the `resync` signal follow the WebSocket rules; a
 `sinceSeq` presented with an epoch other than the current one forces a resync.
 
-The device acknowledges what it has processed so the server can advance the
-device cursor and prune:
+Each change carries `rowId`, `txId`, and `txEnd`. A device buffers a transaction
+until the change marked `txEnd` arrives, applies the group with its resolver, and
+advances `device_sync_pull_seq` in the same transaction.
+
+The device acknowledges what it has applied so the server can advance the device
+cursor and prune:
 
 ```text
 { type: 'ack', id, deviceId, seq }  ->  result { acked: true, seq }
 ```
 
 `seq` is a decimal string. The acknowledgement upserts the device cursor
-monotonically. A device sends an acknowledgement on a debounce (recommended
-2,000 ms) for the highest sequence it has received, never for the baseline cursor
-the subscription started from.
+monotonically. A device acknowledges only a sequence it has applied and
+committed, never the baseline cursor the subscription started from. It
+acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit
+while more than half the delivery window is outstanding.
+
+The server holds delivery to a device once the highest sequence sent runs more
+than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's
+acknowledged cursor, and resumes on the next acknowledgement. Held changes remain
+in the change log and are delivered in order.
 
 ---
 
@@ -250,7 +265,10 @@ A device-sync server announces exactly these capabilities, and all are required 
 device sync:
 
 `sync.push`, `sync.echo-suppression`, `sync.ack`, `sync.resume`, `sync.snapshot`,
-`sync.migrations`, `sync.schema-gate`.
+`sync.migrations`, `sync.schema-gate`, `sync.stream-apply`.
+
+`sync.stream-apply` covers the `rowId`, `txId`, and `txEnd` fields and the
+acknowledgement-paced delivery window.
 
 Before syncing, a client fetches `/capabilities`. A `404` (the server predates
 device sync) or a missing required capability fails with `SYNC_UNSUPPORTED`, naming
@@ -271,7 +289,7 @@ SyncControllerOptions {
   headers?, batchSize? (100), pushIntervalMs? (1000), ackIntervalMs? (2000),
   maxPushRetryDelayMs? (30000), requestTimeout? (30000),
   autoResync? (true), snapshotRetryDelayMs? (5000), maxSnapshotRetryDelayMs? (300000),
-  snapshotPageSize?,
+  snapshotPageSize?, resolver?,
   onChange?, onResyncRequired?, onSnapshotProgress?
 }
 
@@ -300,10 +318,10 @@ SyncStatus {
   batches (default 100), advancing the cursor and the retention boundary per batch;
   a failure backs off exponentially to a cap (default 30,000 ms). A push refused
   with `MIGRATION_REQUIRED` reconciles migrations and retries.
-- **pull** runs its own WebSocket subscription with echo suppression, persists the
-  `device_sync_pull_seq` and `device_sync_pull_epoch` cursors, and acknowledges on
-  the debounce. A server resync signal marks a resync required and calls
-  `onResyncRequired`.
+- **pull** runs its own WebSocket subscription with echo suppression, applies each
+  transaction with `resolver` (defaulting to LWW), commits `device_sync_pull_seq`
+  with the group, persists `device_sync_pull_epoch`, and acknowledges each commit.
+  A server resync signal marks a resync required and calls `onResyncRequired`.
 - **auto-resync**, when enabled, schedules a snapshot download on a start with a
   pending load, on a server resync signal, and on a snapshot failure, backing off
   exponentially (first attempt immediate, then `snapshotRetryDelayMs` doubling to
@@ -311,5 +329,4 @@ SyncStatus {
 - **pause** tears down the loops and persists cursors; **resume** restarts;
   **stop** tears down and persists.
 
-Applying pulled changes into the local database is the application's
-responsibility: the controller delivers each pulled change through `onChange`.
+`onChange` reports each pulled change after the controller commits it.

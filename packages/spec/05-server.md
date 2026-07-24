@@ -17,6 +17,7 @@ ServerOptions {
   maxWebSocketBackpressureBytes?: number   (default: max(16_777_216, maxBodyBytes))
   cdcRetentionMs?:                number   (default: 3_600_000)
   deviceCursorRetentionMs?:       number   (default: 2_592_000_000)   -- see 08-device-sync.md
+  maxUnacknowledgedChanges?:      number   (default: 1_000)           -- see 08-device-sync.md
   onRequest?:                     OnRequestHook
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
@@ -201,7 +202,7 @@ subscriptions.
 ```text
 { type: 'subscribed',   id, seq?, epoch?, resync? }
 { type: 'unsubscribed', id }
-{ type: 'change',       id, event: { type, table, row, oldRow?, seq, timestamp, hlc?, origin? } }
+{ type: 'change',       id, event: { type, table, row, oldRow?, seq, timestamp, hlc?, origin?, rowId?, txId?, txEnd? } }
 { type: 'result',       id, data }     -- data is a query, execute, transaction, batch, load, or ack response
 { type: 'error',        id, error: { code, message } }
 ```
@@ -211,8 +212,9 @@ reply; for a subscription the `id` is the subscription identifier. `sinceSeq`,
 `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe
 integer range survive JSON. Change-event `row` and `oldRow` follow the value
 encoding; `hlc` and `origin` carry the change's timestamp and origin node when
-stamped. The `deviceId`, `schemaVersion`, and `ack` fields drive device sync (see
-[08-device-sync.md](08-device-sync.md)).
+stamped. A stamped change also carries `rowId` and `txId`, and `txEnd` is true on
+the last change of a transaction. The `deviceId`, `schemaVersion`, and `ack`
+fields drive device sync (see [08-device-sync.md](08-device-sync.md)).
 
 A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE`
 when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for
@@ -242,7 +244,10 @@ change event the client cannot detect is worse than a lost connection. A client
 that receives 4290 should reconnect and resume through subscription resumption. The
 server also closes with 1013 while shutting down, and 1008 when the database is
 not found, closed, or the target resolves to none. The recommended idle timeout is
-120 seconds with automatic ping/pong.
+120 seconds with automatic ping/pong. A subscription presenting a `deviceId` is
+also paced by acknowledgements: the server holds delivery once the highest
+sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's
+acknowledged cursor, and resumes on the next `ack`.
 
 ---
 

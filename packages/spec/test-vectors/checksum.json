@@ -1,9 +1,20 @@
 {
-  "description": "Test vectors for batch and sync checksums. Checksums are SHA-256 hex digests of the JSON-serialised payload. All implementations must produce identical checksums for identical JSON input.",
+  "description": "Test vectors for batch and sync checksums. A checksum is the lowercase SHA-256 hex digest of the canonical form of the payload. Canonicalisation is defined in 03-replication.md and is distinct from JSON.stringify. All implementations must produce identical checksums for identical input.",
 
   "algorithm": "sha256",
-  "input_encoding": "JSON.stringify(payload) as UTF-8 bytes",
+  "input_encoding": "canonicaliseForChecksum(payload) as UTF-8 bytes",
   "output_encoding": "lowercase hexadecimal",
+
+  "canonicalisation": {
+    "null": "the literal null",
+    "boolean": "the literal true or false",
+    "string": "a JSON-escaped string",
+    "integer": "an integer or 64-bit integer becomes {\"__sint\":\"<decimal>\"}",
+    "float": "a finite non-integer number is its JSON number; a non-finite number is null",
+    "bytes": "a byte array becomes {\"__blob\":\"<base64>\"}",
+    "array": "elements canonicalised in order",
+    "object": "keys sorted ascending, keys with an absent value skipped, each rendered as \"key\":value"
+  },
 
   "batch_checksum": [
     {
@@ -21,14 +32,16 @@
           "oldData": null
         }
       ],
-      "expected": "3ac63372c4dc13de3cc530117ec7995ec1fa81cde06980f6965659714b564206",
-      "note": "Checksum is computed over JSON.stringify(changes), not per-change"
+      "canonical": "[{\"hlc\":\"018bcfe56800-0001-node-a\",\"newData\":{\"id\":{\"__sint\":\"1\"},\"status\":\"pending\",\"total\":42.5},\"nodeId\":\"node-a\",\"oldData\":null,\"operation\":\"insert\",\"primaryKey\":{\"id\":{\"__sint\":\"1\"}},\"rowId\":\"1\",\"table\":\"orders\",\"txId\":\"tx-001\"}]",
+      "expected": "b5a73daf01cdf1b1d5c0f1e6fc916fd5b465ade7adcb1a4790e539f6c35fbe6b",
+      "note": "The checksum is computed over the canonical form of the whole changes array, not per change. Object keys are sorted and integers are tagged with __sint."
     },
     {
       "name": "Empty changes array",
       "changes": [],
+      "canonical": "[]",
       "expected": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "note": "SHA-256 of the string '[]'"
+      "note": "SHA-256 of the string '[]'."
     }
   ],
 
@@ -39,15 +52,17 @@
         { "id": 1, "name": "Alice", "email": "alice@example.com" },
         { "id": 2, "name": "Bob", "email": "bob@example.com" }
       ],
-      "expected": "cb21b8e35df6c436a16477624efdadcb6d5e6c32459f1ae88d3aef03833dc60c",
-      "note": "Sync batch checksums use the same algorithm over JSON.stringify(rows)"
+      "canonical": "[{\"email\":\"alice@example.com\",\"id\":{\"__sint\":\"1\"},\"name\":\"Alice\"},{\"email\":\"bob@example.com\",\"id\":{\"__sint\":\"2\"},\"name\":\"Bob\"}]",
+      "expected": "d77f7863f0a03146686e46b322d78dbb96bd044835a27b13d2285e7833f89e98",
+      "note": "Sync batch, schema, and manifest checksums use the same canonicalisation over their payload."
     }
   ],
 
   "notes": [
-    "JSON serialisation must produce deterministic output. Field order in objects must match the insertion order of the source language's map/object type.",
-    "Floating-point numbers serialise per JSON spec (42.5 not 42.50).",
-    "null values are preserved in serialisation.",
-    "Implementations that use a different JSON serialisation library must verify output matches these vectors exactly."
+    "Canonicalisation sorts object keys ascending, so field insertion order does not affect the digest.",
+    "An integer value is tagged as {\"__sint\":\"<decimal>\"}; a finite non-integer number serialises as a plain JSON number, for example 42.5.",
+    "A byte array is tagged as {\"__blob\":\"<base64>\"}.",
+    "An object key whose value is absent is skipped; a null value is kept as null.",
+    "The pure-language SHA-256 used by the reference implementation and a standard crypto SHA-256 produce identical digests for these inputs."
   ]
 }

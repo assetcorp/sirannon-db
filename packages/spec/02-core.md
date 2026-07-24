@@ -1,19 +1,15 @@
 # Sirannon Core Specification
 
-This document defines the core database management layer: the
-registry that manages multiple named databases, the connection
-pool, query execution with statement caching, change data capture,
-hooks, lifecycle management, migrations, backups, and metrics
-collection. All Sirannon implementations must follow the contracts
-defined here.
+The core layer manages named databases, connection pooling, write serialisation,
+query execution, change data capture, hooks, lifecycle, migrations, bulk loading,
+backups, and metrics. Every Sirannon implementation must follow these contracts.
 
 ---
 
 ## Registry (Sirannon)
 
-The Sirannon registry is the top-level object that manages
-multiple named databases. Each database is identified by a unique
-string ID.
+The registry is the top-level object that manages many named databases, each
+identified by a unique string ID.
 
 ```text
 Sirannon {
@@ -25,93 +21,59 @@ Sirannon {
   resolve(id: string): async -> Database or null
   has(id: string): boolean
   databases(): Map<string, Database>
+  registryMigrations(): async -> List<Migration>
   shutdown(): async -> void
 
-  onBeforeQuery(hook: BeforeQueryHook): void
-  onAfterQuery(hook: AfterQueryHook): void
-  onBeforeConnect(hook: BeforeConnectHook): void
-  onDatabaseOpen(hook: DatabaseOpenHook): void
-  onDatabaseClose(hook: DatabaseCloseHook): void
+  onBeforeQuery(hook): DisposeFn
+  onAfterQuery(hook): DisposeFn
+  onBeforeConnect(hook): DisposeFn
+  onDatabaseOpen(hook): DisposeFn
+  onDatabaseClose(hook): DisposeFn
 }
-```
 
-### SirannonOptions
-
-```text
 SirannonOptions {
-  driver:       SQLiteDriver
-  hooks?:       HookConfig
-  metrics?:     MetricsConfig
-  lifecycle?:   LifecycleConfig
-  migrations?:  MigrationSource
+  driver:        SQLiteDriver          (required)
+  hooks?:        HookConfig
+  metrics?:      MetricsConfig
+  lifecycle?:    LifecycleConfig
+  migrations?:   List<Migration> or (() -> List<Migration>, sync or async)
   writerWorker?: boolean or WriterWorkerOptions
 }
-
-MigrationSource = List<Migration>
-               or () -> List<Migration>, synchronous or asynchronous
 ```
 
-The `driver` field is required. All other fields are optional.
-The `migrations` field declares a registry-wide migration set; the
-[Registry Migrations](#registry-migrations) section defines its
-semantics.
-A `writerWorker` value on the registry is the default for every
-database it opens; a `writerWorker` value in `DatabaseOptions`
-overrides it for that database. The [Writer Worker](#writer-worker)
-section defines the option and its semantics.
+A `writerWorker` on the registry is the default for every database it opens; a
+`writerWorker` in `DatabaseOptions` overrides it for that database.
 
-### open(id, path, options?)
-
-Opens a database file at `path` and registers it under `id`. If
-`id` is already registered, throw with error code
-`DATABASE_ALREADY_EXISTS`. If the registry has been shut down,
-throw with error code `SHUTDOWN`.
-
-The method creates a connection pool for the database, configures
-CDC if needed, and invokes any registered `beforeConnect` and
-`databaseOpen` hooks.
-
-If the registry declares a `migrations` set, `open` applies all
-pending migrations before it registers the database, as defined in
-[Registry Migrations](#registry-migrations).
-
-### close(id)
-
-Closes the database registered under `id` and removes it from the
-registry. If `id` is not found, throw with error code
-`DATABASE_NOT_FOUND`. Invokes any registered `databaseClose` hooks.
-
-### get(id)
-
-Returns the database registered under `id`, or `undefined` if not
-found. This is a synchronous lookup with no side effects.
-
-### resolve(id)
-
-Returns the database registered under `id`. If the database is not
-found and a lifecycle resolver is configured, attempts to auto-open
-the database using the resolver. Returns `undefined` if the
-database cannot be resolved.
-
-Concurrent `resolve` calls for the same unregistered `id` must
-share one auto-open: the first call performs the open, including
-any registry migrations, and every concurrent call receives the
-same result or the same error. Two concurrent calls must never
-race the open or the migration step.
-
-### shutdown()
-
-Closes all open databases and marks the registry as shut down.
-After shutdown, all methods except `databases()` must throw with
-error code `SHUTDOWN`.
+- **open** opens the file at `path` and registers it under `id`. A duplicate
+  `id` (registered or opening) fails with `DATABASE_ALREADY_EXISTS`; a
+  shut-down registry fails with `SHUTDOWN`. `open` creates the connection pool,
+  fires `beforeConnect` then `databaseOpen`, and, when a registry `migrations`
+  set is declared, applies every pending migration before registering the
+  database (see [Registry Migrations](#registry-migrations)). No caller may
+  observe a database through `get`, `resolve`, or `databases()` before its
+  migrations complete.
+- **close** closes the database under `id` and fires `databaseClose`. An unknown
+  `id` fails with `DATABASE_NOT_FOUND`.
+- **get** returns the registered database, or null. It is synchronous and has no
+  side effect beyond marking the database recently used.
+- **resolve** returns the registered database, or auto-opens it through the
+  lifecycle resolver when one is configured, or returns nothing. Concurrent
+  `resolve` calls for the same unregistered `id` share one auto-open: the first
+  performs the open and its migrations, and every concurrent call receives the
+  same result or error.
+- **has** reports whether `id` is registered.
+- **databases** returns a copy of the registered map.
+- **registryMigrations** returns the resolved registry migration set.
+- **shutdown** closes every database and marks the registry shut down; it is
+  idempotent and fails with `SHUTDOWN_ERROR` when a close fails. After shutdown,
+  `open` and `close` fail with `SHUTDOWN`, while `get`, `has`, and `resolve`
+  report no database.
 
 ---
 
 ## Database
 
-A single database instance backed by a SQLite file (or in-memory
-database). Provides query execution, CDC subscriptions, migrations,
-and backups.
+A single database backed by a SQLite file or an in-memory database.
 
 ```text
 Database {
@@ -121,216 +83,123 @@ Database {
   readonly closed: boolean
   readonly readerCount: number
 
-  query<T>(sql: string, params?: Params, options?: QueryOptions): async -> List<T>
-  queryOne<T>(sql: string, params?: Params, options?: QueryOptions): async -> T or null
-  execute(sql: string, params?: Params, options?: QueryOptions): async -> ExecuteResult
-  executeBatch(sql: string, paramsBatch: List<Params>, options?: QueryOptions): async -> List<ExecuteResult>
+  query<T>(sql, params?, options?): async -> List<T>
+  queryOne<T>(sql, params?, options?): async -> T or null
+  execute(sql, params?, options?): async -> ExecuteResult
+  executeBatch(sql, paramsBatch, options?): async -> List<ExecuteResult>
+  executeTransaction(statements, options?): async -> List<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) -> async T): async -> T
+  bulkLoad(sql, paramsBatch, options?): async -> BulkLoadResult
 
-  watch(table: string): async -> void
-  unwatch(table: string): async -> void
-  on(table: string): SubscriptionBuilder
+  applyChanges(batch, resolver?): async -> ApplyResult     -- see 08-device-sync.md
+  deviceSync(): DeviceSyncPort                              -- see 08-device-sync.md
 
-  migrate(migrations: List<Migration>): async -> MigrationResult
-  rollback(migrations: List<Migration>, version?: number): async -> RollbackResult
+  watch(table): async -> void
+  unwatch(table): async -> void
+  on(table): SubscriptionBuilder
 
-  backup(destPath: string): async -> void
-  scheduleBackup(options: BackupScheduleOptions): void
+  migrate(migrations): async -> MigrationResult
+  rollback(migrations, version?): async -> RollbackResult
+  appliedMigrations(): async -> List<AppliedMigration>
 
-  loadExtension(extensionPath: string): async -> void
+  backup(destPath): async -> void
+  scheduleBackup(options): void
+  loadExtension(extensionPath): async -> void
 
-  onBeforeQuery(hook: BeforeQueryHook): void
-  onAfterQuery(hook: AfterQueryHook): void
+  onBeforeQuery(hook): DisposeFn
+  onAfterQuery(hook): DisposeFn
+  addCloseListener(fn): void
   close(): async -> void
 }
-```
 
-### DatabaseOptions
-
-```text
 DatabaseOptions {
-  readOnly?:        boolean     (default: false)
-  readPoolSize?:    number      (default: 4, recommended)
-  walMode?:         boolean     (default: true)
-  cdcPollInterval?: number      (default: 50, milliseconds, recommended)
-  cdcRetention?:    number      (default: 3_600_000, milliseconds, recommended)
+  readOnly?:        boolean          (default: false)
+  readPoolSize?:    number           (default: 4, recommended)
+  walMode?:         boolean          (default: true)
+  synchronous?:     SynchronousLevel (default: 'normal')
+  cdcPollInterval?: number           (default: 50 ms, recommended)
+  cdcRetention?:    number           (default: 3_600_000 ms, recommended)
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
 }
+
+ExecuteResult   { changes: number, lastInsertRowId: number or bigint }
+Params          = Map<string, any> or List<any>
 ```
 
-### Query Parameters
+- **query / queryOne** run a read on a reader connection and fire query hooks.
+  `queryOne` returns the first row or null.
+- **execute** runs one write on the writer connection. A read-only database fails
+  with `READ_ONLY`. Writes are coalesced by [group commit](#group-commit).
+- **executeBatch** runs `sql` once per parameter set in one writer transaction,
+  returning one result each; the batch is atomic.
+- **executeTransaction** runs a fixed list of statements atomically, sharing a
+  group commit when every statement is groupable.
+- **transaction** runs `fn` inside one writer transaction, committing on success
+  and rolling back on failure.
+- **bulkLoad** loads many rows at relaxed durability; see [Bulk Load](#bulk-load).
+- **watch** installs CDC triggers on the table and starts the poll loop.
+  **unwatch** removes them and stops polling once no table is watched. **on**
+  returns a subscription builder; a subscription receives events only for tables
+  that are watched.
+- **query options** carry `writeConcern` and `readConcern`. The core layer passes
+  them to hooks and, for a replication execution target, to the replication
+  engine, which enforces their meaning (see [03-replication.md](03-replication.md)).
+  Plain core execution does not otherwise act on them.
+- **close** stops CDC polling, cancels scheduled backups, drains pending grouped
+  writes, closes the pool, and runs close listeners. Afterwards every method
+  fails with `DATABASE_CLOSED`. While a device-sync snapshot load is in progress,
+  reads and writes fail with `SNAPSHOT_IN_PROGRESS` (see [08-device-sync.md](08-device-sync.md)).
 
-```text
-Params = Map<string, any> or List<any>
-```
+---
 
-Named parameters (object) or positional parameters (array). See
-[01-driver.md](01-driver.md#parameter-binding) for binding rules.
+## Group Commit
 
-### QueryOptions
-
-```text
-QueryOptions {
-  writeConcern?: WriteConcern
-  readConcern?:  ReadConcern
-}
-
-WriteConcern {
-  level:      'local' | 'majority' | 'all'
-  timeoutMs?: number
-}
-
-ReadConcern {
-  level: 'local' | 'majority' | 'linearizable'
-}
-```
-
-Write concern levels control replication durability guarantees.
-Read concern levels control which durability point a read may
-observe.
-
-In static primary-replica mode, `majority` and `all` are evaluated
-against connected replication peers, as defined in
-[03-replication.md](03-replication.md#write-concern). In
-coordinator mode, `majority` is evaluated against the configured
-voting data-bearing nodes in the replication group. It is not
-calculated from the peers currently connected to the primary.
-
-Read concern levels have these meanings:
-
-- `local`: Read from the selected node's local state. This can
-  return data that is not yet majority durable and must be an
-  explicit opt-in when coordinator mode is enabled.
-- `majority`: Read data that has reached the group's majority
-  commit point.
-- `linearizable`: Read from the current primary after the primary
-  proves live authority for the current primary term.
-
-When a read concern cannot be satisfied, the operation must fail
-with `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, or
-`STALE_PRIMARY`, depending on the failing condition.
-
-### ExecuteResult
-
-```text
-ExecuteResult {
-  changes:          number
-  lastInsertRowId:  number or bigint
-}
-```
-
-### query(sql, params?, options?)
-
-Executes a read query and returns all matching rows. Uses a reader
-connection from the pool. Fires `beforeQuery` hooks before
-execution and `afterQuery` hooks after execution.
-
-### execute(sql, params?, options?)
-
-Executes a write statement (INSERT, UPDATE, DELETE). Uses the
-writer connection. Throws with error code `READ_ONLY` on read-only
-databases. Fires query hooks.
-
-### executeBatch(sql, paramsBatch, options?)
-
-Executes the same SQL statement multiple times, once per entry in
-`paramsBatch`. Uses the writer connection. Returns one
-`ExecuteResult` per parameter set.
-
-### transaction(fn)
-
-Runs `fn` inside a SQLite transaction on the writer connection.
-Commits on success, rolls back on failure. Throws with error code
-`READ_ONLY` on read-only databases.
-
-### watch(table)
-
-Installs CDC triggers on the named table and starts polling for
-changes. See the [CDC](#change-data-capture-cdc) section.
-
-### on(table)
-
-Returns a `SubscriptionBuilder` for the named table. Calling
-`on(table)` does not install triggers; triggers are installed when
-the first subscription is created.
-
-### close()
-
-Stops CDC polling, cancels scheduled backups, closes the connection
-pool, and invokes close listeners. After calling `close()`, all
-methods must throw with error code `DATABASE_CLOSED`.
+Writes submitted concurrently are coalesced so one `fsync` commits many. The
+writer forms a group from the statements waiting when a commit finishes; the
+accumulation window is the previous commit's own duration, with no timer. Only
+data-modifying statements (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`) are grouped;
+DDL, PRAGMA, and other statements run alone. A group holds at most 1000
+statements (recommended). The group runs as one transaction; a statement that
+fails before commit is isolated with a savepoint so only that unit fails, while
+a failure at commit fails every unit in the group and is not retried, because the
+commit may already have reached disk.
 
 ---
 
 ## Connection Pool
 
-The connection pool maintains a dedicated writer connection and a
-set of reader connections for concurrent read access.
-
-```text
-ConnectionPool {
-  static create(options: ConnectionPoolOptions): async -> ConnectionPool
-
-  acquireReader(): SQLiteConnection
-  acquireWriter(): SQLiteConnection
-  close(): async -> void
-
-  readonly readerCount: number
-  readonly isReadOnly: boolean
-}
-```
-
-### Pool Configuration
+The pool holds one writer connection and a set of reader connections.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `readPoolSize` | 4 (recommended) | Number of reader connections. |
-| `readOnly` | `false` | Skip creating a writer connection. |
-| `walMode` | `true` | Enable WAL mode on the writer. |
+| `readPoolSize` | 4 (recommended) | Reader connection count. |
+| `readOnly` | `false` | Skip the writer connection. |
+| `walMode` | `true` | WAL mode on the writer. |
 
-### Pool Creation Rules
+Creation rules:
 
-1. If `readOnly` is `false`, create one writer connection with WAL
-   mode enabled.
-2. If the driver reports `capabilities.multipleConnections = true`,
-   create `max(readPoolSize, 1)` reader connections. Each reader is
-   opened with `readonly = true`.
-3. If the driver does not support multiple connections, create zero
-   readers. All reads go through the writer.
+1. When not read-only, create one writer with WAL mode.
+2. When the driver reports `multipleConnections`, create `max(readPoolSize, 1)`
+   readers, each opened read-only. Otherwise create no readers and route reads
+   through the writer under the writer lock.
 
-### acquireReader()
+`acquireReader` returns the next reader by round-robin, or the writer when no
+readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
+`acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when
+the pool is closed or read-only.
 
-Returns the next reader connection using round-robin selection. If
-no readers exist, returns the writer connection. Throws with error
-code `CONNECTION_POOL_ERROR` if the pool is closed.
-
-### acquireWriter()
-
-Returns the writer connection. Throws with error code
-`CONNECTION_POOL_ERROR` if the pool is closed or if the pool is
-read-only.
+Write work on the writer connection is serialised by a writer lock so grouped
+writes, transactions, migrations, backups, and extension loads never overlap.
 
 ---
 
 ## Writer Worker
 
-SQLite's write path is synchronous: a commit that waits on `fsync`,
-a checkpoint, or a long DDL statement blocks the thread it runs on.
-The writer worker moves the writer connection's execution off the
-caller's thread so that slow disk work does not block everything else the
-process is doing. Reads are unaffected; reader connections stay
-where they are.
-
-The execution mechanism is implementation-defined. The reference
-implementation uses a dedicated worker thread; another
-implementation may use a process or any equivalent isolation, but
-the option shape, the queue bound, the deadline outcomes, and the
-error codes below are normative.
-
-### WriterWorkerOptions
-
-The option is off by default. Passing `true` enables it with every
-default below; passing an object enables it with overrides.
+SQLite's write path is synchronous: a commit waiting on `fsync`, a checkpoint,
+or a long DDL statement blocks its thread. The writer worker moves writer
+execution off the caller's thread. Reads are unaffected. The isolation mechanism
+is implementation-defined; the option shape, the queue bound, the deadline
+outcomes, and the error codes below are normative.
 
 ```text
 WriterWorkerOptions {
@@ -340,116 +209,98 @@ WriterWorkerOptions {
 }
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `maxPendingWrites` | 1024 | Writes allowed in flight before new writes are shed. Must be an integer of at least 1. |
-| `writeTimeoutMs` | 30,000 | Per-operation deadline in milliseconds. Must be an integer of at least 0, where 0 disables the deadline. |
-| `maxRestarts` | 5 | Times the worker restarts after crashing on its own before writes fail permanently. Must be an integer of at least 0. |
+`maxPendingWrites` must be at least 1, `writeTimeoutMs` at least 0,
+`maxRestarts` at least 0; a value that fails validation fails with
+`INVALID_WRITER_WORKER`. Enabling the worker with a driver that cannot run the
+writer this way fails at open with `WRITER_WORKER_UNSUPPORTED`.
 
-A value that fails validation must be rejected with error code
-`INVALID_WRITER_WORKER`. Enabling the option with a driver that
-cannot execute the writer connection this way must fail at open
-with error code `WRITER_WORKER_UNSUPPORTED`.
-
-### Queue Bound
-
-The host must bound the writes it has accepted but not completed.
-When a new write arrives while `maxPendingWrites` writes are
-already in flight, the host must reject it with error code
-`WRITE_OVERLOADED` without handing it to the worker. This rejection
-is definite: the write never started, so the caller may retry it
-safely. The error should carry a retry-after hint as structured
-context (recommended: 1,000 milliseconds).
-
-### Deadline Outcomes
-
-A worker executing a synchronous native SQLite call cannot be
-interrupted, and killing it would leak the connection's file lock.
-The deadline therefore never terminates the worker. When an
-operation's deadline expires, the host must ask the worker to
-cancel it, and exactly one of three outcomes follows.
-
-1. The worker had not started the operation. It must skip the
-   work and report that back, and the host must reject the caller
-   with `WRITE_OVERLOADED`. The outcome is definite and the
-   caller may retry.
-2. The operation was already executing and its result arrives
-   within one further deadline (so within twice `writeTimeoutMs`
-   of dispatch). The host must deliver that result to the caller
-   as a normal completion.
-3. The operation is still unresolved after that grace window. The
-   host must reject the caller with `WRITER_WORKER_TIMEOUT`. This
-   outcome is indeterminate: the write may still apply afterwards,
-   so a caller must reconcile state before retrying a
-   non-idempotent write.
-
-Opening and closing the worker are not cancellable; a deadline on
-those rejects with `WRITER_WORKER_TIMEOUT` directly.
-
-### Crash and Restart
-
-A worker crash or unexpected exit must reject every in-flight
-request with error code `WRITER_WORKER_EXIT` and respawn the
-worker. After more than `maxRestarts` consecutive faults the host
-must stop restarting and fail every subsequent write with
-`WRITER_WORKER_FATAL`; a completed operation resets the fault
-count. A write sent while no worker is available fails with
-`WRITER_WORKER_UNAVAILABLE`, a write after close fails with
-`WRITER_WORKER_CLOSED`, and a handoff the host could not deliver
-fails with `WRITER_WORKER_POST_FAILED`.
+- **Queue bound.** A write arriving while `maxPendingWrites` writes are in flight
+  is rejected with `WRITE_OVERLOADED` before it reaches the worker. The rejection
+  is definite (the write never started, so a retry is safe) and carries a
+  retry-after hint (recommended 1000 ms).
+- **Deadline.** A synchronous native call cannot be interrupted, so the deadline
+  never terminates the worker. When it expires, exactly one outcome follows: the
+  work had not started, so it is skipped and the caller is rejected with
+  `WRITE_OVERLOADED` (definite, retryable); or the result arrives within one
+  further deadline (within twice `writeTimeoutMs`) and is delivered as a normal
+  completion; or the work is still unresolved and the caller is rejected with
+  `WRITER_WORKER_TIMEOUT` (indeterminate, so a non-idempotent write must be
+  reconciled before retry). A deadline on open or close rejects with
+  `WRITER_WORKER_TIMEOUT`.
+- **Crash and restart.** A crash or exit rejects every in-flight write with
+  `WRITER_WORKER_EXIT` and respawns the worker; a completed write resets the
+  fault count; past `maxRestarts` faults, writes fail with `WRITER_WORKER_FATAL`.
+  A write with no worker available fails with `WRITER_WORKER_UNAVAILABLE`, after
+  close with `WRITER_WORKER_CLOSED`, and a failed handoff with
+  `WRITER_WORKER_POST_FAILED`.
 
 ---
 
-## Query Execution and Statement Caching
+## Query Execution
 
-Sirannon caches prepared statements to avoid repeated parsing.
+### Statement Cache
 
-### Cache Behaviour
-
-- Each connection maintains its own statement cache.
-- The recommended cache capacity is 128 statements.
-- When the cache exceeds capacity, the oldest entry is evicted.
-- Failed statement preparation removes the entry from the cache.
-- The cache is implementation-defined in its eviction strategy, but
-  must produce correct results for repeated queries.
+Each connection caches prepared statements. The recommended capacity is 128 with
+oldest-first eviction; a failed preparation removes the entry. The eviction
+strategy is implementation-defined but must return correct results for repeated
+queries.
 
 ### Parameter Normalisation
 
-Before passing parameters to a prepared statement, normalise them:
-
-- `undefined` or omitted: empty array.
-- Array: pass as-is.
-- Object (named parameters): wrap in a single-element array
-  `[params]` for engines that expect positional binding of named
-  parameter objects.
+Before binding: omitted parameters become an empty list; a list passes through;
+a named-parameter object is wrapped in a single-element list for engines that
+bind named-parameter objects positionally.
 
 ### Reserved Identifiers
 
-The query API refuses any statement that reaches Sirannon's
-internal tables. Identifiers beginning with `_sirannon_` are
-private to the engine, so a read or a write against them fails
-with `FORBIDDEN_SQL`. You can still read the `sqlite_` catalogue,
-as you can in any SQL engine, but a statement that modifies it
-fails with the same code, and so do `PRAGMA writable_schema`,
-`ATTACH`, and `DETACH`. The engine maintains its own tables through
-internal connections that bypass this check, so change tracking,
-migrations, and replication keep working.
+The query API refuses any statement that reaches Sirannon's internal tables.
+An identifier beginning with `_sirannon` is reserved, so a read or write against
+it fails with `FORBIDDEN_SQL`. The `sqlite_` catalogue is readable, but a
+statement that modifies it fails with the same code, as do `PRAGMA
+writable_schema`, `ATTACH`, and `DETACH`. Write verbs recognised for the
+catalogue rule are `insert`, `update`, `delete`, `replace`, `create`, `alter`,
+`drop`, `vacuum`, and `reindex`. The engine maintains its own tables through
+internal connections that bypass this guard, so change tracking, migrations, and
+replication keep working.
+
+---
+
+## Tagged Value Encoding (Normative)
+
+JSON cannot carry two SQLite value types without loss: integers outside the safe
+range -(2^53 - 1) to 2^53 - 1 lose precision as IEEE 754 doubles, and JSON has
+no binary type. Wherever a column value crosses the wire or is stored in the
+change log as JSON, these two values take tagged envelopes:
+
+```text
+IntegerEnvelope { "__sirannon_int":  string }   -- exact decimal, 1 to 19 digits, optional leading '-'
+BlobEnvelope    { "__sirannon_blob": string }   -- uppercase hexadecimal, two digits per byte
+```
+
+An integer inside the safe range is a plain JSON number; an integer outside it
+takes an `IntegerEnvelope`. Every BLOB takes a `BlobEnvelope`; an empty string
+encodes an empty BLOB. All other value types keep their natural JSON form. A
+consumer treats a JSON object with exactly one key, `__sirannon_int` or
+`__sirannon_blob` and a string value, as an envelope and decodes it; envelopes
+appear only where a column value is expected, so a stored TEXT value that
+resembles one serialises as a JSON string and cannot collide. A malformed
+envelope payload must be rejected rather than bound or decoded. This encoding is
+used by [query result rows and bind parameters](05-server.md#value-encoding),
+by change events, and by device-sync change batches.
 
 ---
 
 ## Change Data Capture (CDC)
 
-CDC records row-level changes using SQLite triggers that write to
-a tracking table. A polling loop reads new changes and dispatches
-them to subscribers.
+CDC records row-level changes with SQLite triggers that write to a tracking
+table, which a poll loop reads and dispatches to subscribers.
 
-### Changes Table
+### Change Log
 
-The tracking table is named `_sirannon_changes`. When replication
-is active, the table includes additional columns for node tracking:
+The tracking table is `_sirannon_changes`:
 
 ```sql
-CREATE TABLE IF NOT EXISTS _sirannon_changes (
+CREATE TABLE _sirannon_changes (
   seq         INTEGER PRIMARY KEY AUTOINCREMENT,
   table_name  TEXT NOT NULL,
   operation   TEXT NOT NULL,
@@ -463,417 +314,293 @@ CREATE TABLE IF NOT EXISTS _sirannon_changes (
 )
 ```
 
-The `node_id`, `tx_id`, and `hlc` columns are present when
-replication is enabled. Without replication, implementations may
-omit these columns.
+The `node_id`, `tx_id`, and `hlc` columns are always present and carry the sync
+metadata described in [08-device-sync.md](08-device-sync.md); an unstamped local
+change has all three empty. Implementations create indexes on `changed_at`,
+`node_id`, and `hlc`.
 
-Implementations must create these indexes:
+### Triggers
 
-```sql
-CREATE INDEX IF NOT EXISTS idx__sirannon_changes_changed_at
-  ON _sirannon_changes (changed_at)
-```
+For each watched table, three `AFTER` triggers are installed, named
+`_sirannon_trg_{table}_insert`, `_sirannon_trg_{table}_update`, and
+`_sirannon_trg_{table}_delete`. Each inserts a change row with:
 
-### Trigger Installation
+- `operation`: `'INSERT'`, `'UPDATE'`, or `'DELETE'` (stored upper case).
+- `row_id`: the affected row's primary key. With one key column it is that
+  value; with several it is the values joined by `-`; with no primary key it is
+  the SQLite `rowid`.
+- `new_data`, `old_data`: a JSON object of the row's column values, each value
+  encoded by the [Tagged Value Encoding](#tagged-value-encoding-normative). The
+  column list is fixed when the trigger is created, so a table altered with
+  `ADD COLUMN` needs its triggers reinstalled.
+- `node_id`, `tx_id`, `hlc`: written empty; local writes are stamped afterwards
+  (see [08-device-sync.md](08-device-sync.md)).
 
-For each watched table, three `AFTER` triggers must be installed:
+Table and column names used in trigger SQL must match `^[a-zA-Z_][a-zA-Z0-9_]*$`;
+names that do not match must be rejected.
 
-- `_sirannon_trg_{table}_insert` (AFTER INSERT)
-- `_sirannon_trg_{table}_update` (AFTER UPDATE)
-- `_sirannon_trg_{table}_delete` (AFTER DELETE)
+### CDC Epoch
 
-Each trigger inserts a row into `_sirannon_changes` with:
+Each database file holds a random epoch string in `_sirannon_meta` under
+`cdc_epoch`, minted once and stable for the file's lifetime. It identifies the
+file's `seq` space so a resume cursor carried from another file is recognised as
+foreign and forces a resync rather than replaying unrelated rows.
 
-- `table_name`: the watched table name.
-- `operation`: `'INSERT'`, `'UPDATE'`, or `'DELETE'`.
-- `row_id`: the primary key value(s) of the affected row,
-  serialised as a JSON string when composite.
-- `new_data`: a JSON object of all column values from `NEW`
-  (INSERT, UPDATE).
-- `old_data`: a JSON object of all column values from `OLD`
-  (UPDATE, DELETE).
+### Polling and Cleanup
 
-### Identifier Validation
+The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a
+recommended 1000 rows per poll at a recommended 50 ms interval, and skips the
+query when no subscriber is active. Old rows are pruned periodically (recommended
+every 100 poll ticks) by deleting rows older than the retention window
+(recommended 3,600,000 ms); when a prune boundary is set, deletion is also bounded
+by `seq` so unacknowledged changes are retained.
 
-Table and column names used in trigger SQL must match the pattern
-`/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Implementations must reject names
-that do not match, to prevent SQL injection through dynamic
-identifier construction.
-
-### Polling
-
-The polling loop reads new changes from `_sirannon_changes` where
-`seq > lastSeq`. The recommended poll interval is 50 milliseconds.
-The recommended batch size per poll is 1000 rows.
-
-If no subscribers are active, the polling loop should skip the
-query to avoid unnecessary I/O.
-
-### Cleanup
-
-Old change records must be cleaned up periodically. The
-recommended retention period is 1 hour (3,600,000 milliseconds).
-Cleanup deletes rows where `changed_at` is older than the
-retention threshold.
-
-The recommended cleanup frequency is every 100 poll ticks.
-
-### Change Events
+### Change Events and Subscriptions
 
 ```text
 ChangeEvent<T> {
-  type:       'insert' | 'update' | 'delete'
-  table:      string
-  row:        T
-  oldRow?:    T
-  seq:        bigint
-  timestamp:  number
+  type:      'insert' | 'update' | 'delete'
+  table:     string
+  row:       T
+  oldRow?:   T
+  seq:       bigint
+  timestamp: number
+  hlc?:      string
+  origin?:   string
 }
-```
 
-The `oldRow` field is present for update and delete events.
-
----
-
-## Subscriptions
-
-Subscriptions allow callers to receive CDC events for a specific
-table with optional filtering.
-
-```text
 SubscriptionBuilder {
   filter(conditions: Map<string, any>): SubscriptionBuilder
-  subscribe(callback: (event: ChangeEvent) -> void): Subscription
-}
-
-Subscription {
-  unsubscribe(): void
+  subscribe(callback: (event) -> void): Subscription
 }
 ```
 
-### Filter Matching
-
-When a filter is provided, events are matched by comparing each
-filter key-value pair against the event's row data. For delete
-events, the filter is matched against `oldRow` instead of `row`.
-All filter conditions must match for the event to be delivered.
-
-### Error Isolation
-
-Errors thrown by subscription callbacks must not prevent delivery
-to other subscribers. Implementations must catch and suppress
-callback errors.
+`oldRow` is present for updates and deletes. `origin` carries the change's
+`node_id` and `hlc` its timestamp when stamped. A filter matches when every
+key-value pair equals the event row's value (matched against `oldRow` for a
+delete). An error thrown by one subscription callback must not stop delivery to
+others.
 
 ---
 
-## Hook System
+## System Catalogue
 
-Hooks provide event-driven extensibility points for database
-operations. Hooks registered on the Sirannon registry apply to all
-databases. Hooks registered on a specific database apply only to
-that database.
+Sirannon keeps its own tables under the `_sirannon_` prefix: `_sirannon_changes`
+(above), `_sirannon_meta` (a `key TEXT PRIMARY KEY, value TEXT NOT NULL` store),
+`_sirannon_migrations` (below), and the replication and device-sync tables
+defined in [03-replication.md](03-replication.md) and
+[08-device-sync.md](08-device-sync.md). The meta table holds `cdc_epoch`,
+`node_id`, `hlc_clock`, and the device-sync cursor keys.
 
-### Hook Events
+---
 
-| Event | Context | Invocation | Can Deny? |
-|-------|---------|------------|-----------|
-| `beforeQuery` | `{ databaseId, sql, params?, writeConcern?, readConcern? }` | Before query execution | Yes (throw to deny) |
-| `afterQuery` | `{ databaseId, sql, params?, durationMs }` | After query execution | No |
-| `beforeConnect` | `{ databaseId, path }` | Before connection opens | Yes (throw to deny) |
-| `databaseOpen` | `{ databaseId, path }` | After database opens | No |
-| `databaseClose` | `{ databaseId, path }` | After database closes | No |
-| `beforeSubscribe` | `{ databaseId, table, filter? }` | Before subscription creates | Yes (throw to deny) |
+## Hooks
 
-### Before-Hook Denial
+Hooks registered on the registry apply to every database and run before
+database-level hooks for the same event, in registration order.
 
-Before-hooks (beforeQuery, beforeConnect, beforeSubscribe) can
-deny an operation by throwing. The thrown error propagates to the
-caller. When a before-hook throws, implementations must throw with
-error code `HOOK_DENIED`.
+| Event | Context | When | Can deny |
+|-------|---------|------|----------|
+| `beforeQuery` | `{ databaseId, sql, params?, writeConcern?, readConcern? }` | Before a query | Yes |
+| `afterQuery` | `{ databaseId, sql, params?, durationMs }` | After a query | No |
+| `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
+| `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
+| `databaseClose` | `{ databaseId, path }` | After a database closes | No |
 
-### Hook Registration
-
-Hooks are registered via dedicated methods (e.g., `onBeforeQuery`)
-or through a `HookConfig` object at construction time. The config
-object accepts either a single hook function or an array of hook
-functions per event.
-
-Registration returns a dispose function that removes the hook.
-Calling dispose more than once is a no-op.
-
-### Invocation Order
-
-Hooks for the same event are invoked in registration order.
-Registry-level hooks run before database-level hooks.
+A before-hook that throws aborts the operation, and its error propagates to the
+caller. Query and connection hooks run synchronously; a hook that returns a
+promise fails. Hooks are registered through the dedicated methods or a
+`HookConfig` object that accepts one function or a list per event. Each `on…`
+registrar returns a `DisposeFn` (a `() -> void`) that removes the hook;
+disposing more than once is a no-op.
 
 ---
 
 ## Lifecycle Management
 
-The lifecycle manager provides auto-open, idle timeout, and LRU
-eviction for databases.
-
-### LifecycleConfig
-
 ```text
 LifecycleConfig {
-  autoOpen?: {
-    resolver: (id: string) -> { path: string, options?: DatabaseOptions } or null
-  }
-  idleTimeout?: number    (0 = disabled, milliseconds)
-  maxOpen?:     number    (0 = unlimited)
+  autoOpen?:   { resolver: (id) -> { path, options? } or null }
+  idleTimeout?: number   (0 disables)
+  maxOpen?:     number   (0 = unlimited)
 }
 ```
 
-### Auto-Open
-
-When a `resolve(id)` call finds no registered database and a
-resolver is configured, the lifecycle manager calls the resolver.
-If the resolver returns a path and options, the database is
-auto-opened and registered.
-
-### Idle Timeout
-
-When `idleTimeout` is greater than zero, the lifecycle manager
-periodically checks for databases that have not been accessed
-within the timeout window. Idle databases are closed automatically.
-
-The recommended check interval is `min(max(floor(timeout / 2), 100), 60000)` milliseconds.
-
-### LRU Eviction
-
-When `maxOpen` is reached and a new database needs to open, the
-lifecycle manager evicts the least-recently-used database to make
-room. If no evictable database exists, throw with error code
-`MAX_DATABASES`.
+When `resolve(id)` finds no registered database and a resolver is configured, the
+resolver is called and any returned path is auto-opened and registered. When
+`idleTimeout` is above zero, databases idle past the window are closed on a
+recurring check (recommended interval `min(max(floor(timeout / 2), 100), 60000)`
+ms). When `maxOpen` is reached, the least-recently-used database is evicted to
+make room, or the open fails with `MAX_DATABASES` when nothing is evictable.
 
 ---
 
 ## Migrations
 
-The migration system provides schema versioning with transactional
-execution and optional rollback.
-
 ### Tracking Table
 
 ```sql
-CREATE TABLE IF NOT EXISTS _sirannon_migrations (
+CREATE TABLE _sirannon_migrations (
   version    INTEGER PRIMARY KEY,
   name       TEXT NOT NULL,
-  applied_at REAL NOT NULL DEFAULT (unixepoch('subsec'))
+  applied_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+  checksum   TEXT
 )
 ```
+
+The highest applied `version` is mirrored into `PRAGMA user_version`.
 
 ### Migration Definition
 
 ```text
 Migration {
-  version: number    (positive integer)
-  name:    string    (alphanumeric + underscores)
-  up:      string | function(tx: Transaction) -> async void
-  down?:   string | function(tx: Transaction) -> async void
+  version:   number    (positive integer, at most 2_147_483_647)
+  name:      string    (matches ^\w+$)
+  up:        string or (tx: Transaction) -> async void
+  down?:     string or (tx: Transaction) -> async void
+  baseline?: { through: number }
 }
 ```
 
-### Migration Files Map
+The version cap is 2,147,483,647 because it mirrors to `PRAGMA user_version`, a
+signed 32-bit value.
 
-The core package must provide a pure function,
-`migrationsFromFiles(files)`, converting a map of filename to SQL
-text into a sorted `List<Migration>`, so that an application whose
-bundler inlines `.sql` files as strings (for example Vite's
-`import.meta.glob` with `?raw`, or webpack's `require.context`) can
-build its migration set without filesystem access at run time.
+### Checksum (Normative)
 
-Keys may carry any path prefix; only the final path segment is
-parsed, and it must match `<version>_<name>.up.sql` or
-`<version>_<name>.down.sql`. The function must throw with error
-code `MIGRATION_VALIDATION_ERROR` for a key whose final segment
-does not match, a value other than a string, empty SQL, or a
-version with no up file, and with `MIGRATION_DUPLICATE_VERSION`
-when two entries collide on a version. An empty map returns an
-empty list.
+A string `up` migration carries a checksum: the 64-bit FNV-1a hash of the up SQL
+with line endings normalised to `\n` and surrounding whitespace trimmed,
+rendered as 16 lowercase hexadecimal digits. A function migration has no
+checksum. When a migration runs, a stored checksum that differs from the
+recomputed value fails with `MIGRATION_CHECKSUM_MISMATCH`; a null stored checksum
+is backfilled. The checksum is normative because the device-sync migration
+handshake serves and verifies `up` SQL by it (see [08-device-sync.md](08-device-sync.md)).
 
-### Migration Execution
+### Execution
 
-1. Validate all migrations: version must be a positive safe
-   integer, name must match `/^\w+$/`, no duplicate versions.
-2. Query the tracking table for already-applied versions.
-3. Filter to pending migrations, sorted by version ascending.
-4. For each pending migration, execute inside a transaction:
-   - If `up` is a string, execute it as SQL.
-   - If `up` is a function, call it with a transaction handle.
-   - Insert a tracking record.
-5. Return the count of applied and skipped migrations.
+Migrations are validated (positive integer version within the cap, name matching
+`^\w+$`, no duplicate versions, non-empty SQL), sorted ascending, and each
+pending migration runs in its own transaction that executes the `up` and inserts
+a tracking row with the content checksum. A failure rolls that migration back and
+fails with `MIGRATION_ERROR` carrying the version; validation failures fail with
+`MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. A concurrent
+attempt is retried once and otherwise fails with `MIGRATION_CONCURRENT`.
 
-If any migration fails, the transaction rolls back. Throw with
-error code `MIGRATION_ERROR` and include the version number.
+### Baseline
+
+A migration marked `baseline: { through }` squashes history up to `through`.
+`through` must be at least 1 and below the migration's own version, and no
+non-baseline migration may fall inside `(through, version)`. On an empty history
+the baseline plus every migration above `through` applies; on a history already
+at or above `through` the baseline is skipped and only migrations above `through`
+apply; a history below `through` with the bridging migrations absent fails with
+`MIGRATION_BASELINE_GAP`.
 
 ### Registry Migrations
 
-A registry may declare a migration set once, in
-`SirannonOptions.migrations`, so that an operator hosting many
-databases (for example one file per tenant) can roll out schema
-changes without opening and migrating every file individually. The
-rollout is pull-based: each database applies the pending set the
-next time it opens, whether through a direct `open` call or through
-the lifecycle resolver.
+A registry may declare one migration set in `SirannonOptions.migrations`, so an
+operator hosting many databases (for example one file per tenant) rolls out
+schema changes without opening each file. The rollout is pull-based: each
+database applies the pending set the next time it opens, through a direct `open`
+or the lifecycle resolver.
 
-The `migrations` field accepts either the list itself or a function
-returning the list, so that an application can load the set from
-wherever its migrations live, such as a directory on disk or SQL
-bundled into the build. The registry invokes the function at most
-once, on the first open needing the set, and caches the result for
-its lifetime. If the function throws, or returns a value other than
-a list, that open must fail with error code
-`MIGRATION_SOURCE_INVALID` for a non-list value or the function's
-own error otherwise, the database must not be registered, and the
-next open must invoke the function again.
-
-When the registry declares a `migrations` set, `open` must apply
-every pending migration from the set, using the execution rules
-above, after it creates the database's connections and before it
-registers the database. A caller must never observe a database
-through `get`, `resolve`, or `databases()` while its migrations are
-incomplete.
-
-If a migration fails, `open` must close the database, leave it
-unregistered, and rethrow the migration error unchanged, so the
-caller receives the error code and the failing version number. If
-the migration step fails for any other reason, such as a disk
-fault while reading the tracking table, `open` must close the
-database, leave it unregistered, and throw with error code
-`DATABASE_OPEN_FAILED`. A later `open` of the same `id` may retry;
-the runner skips migrations already recorded in the tracking
-table.
-
-`open` skips the set for a database opened with `readOnly: true`: a
-read-only connection cannot create the tracking table or alter the
-schema, so the open succeeds and leaves the schema unchanged.
-
-When the registry declares no `migrations` set, `open` behaves
-exactly as specified above: it runs no migration step and creates
-no tracking table.
+The set is a list or a function returning a list. The registry calls the function
+at most once, on the first open that needs it, and caches the result. A function
+that throws fails that open with its own error; a non-list result fails with
+`MIGRATION_SOURCE_INVALID`; either way the database is left unregistered and the
+next open retries. `open` applies every pending migration after creating the
+connections and before registering the database. A migration failure closes the
+database, leaves it unregistered, and rethrows the migration error unchanged; any
+other failure of the step throws `DATABASE_OPEN_FAILED`. A read-only open skips
+the set, because a read-only connection cannot create the tracking table. When no
+set is declared, `open` runs no migration step and creates no tracking table.
 
 ### Rollback
 
-Rollback reverses applied migrations in descending version order.
-If no target version is specified, only the latest migration is
-rolled back. Each rollback executes the migration's `down` field
-inside a transaction. If `down` is undefined, throw with error code
+Rollback reverses applied migrations in descending version order. With no target
+it reverses only the latest; with a target it reverses every version above the
+target. Each runs the migration's `down` in a transaction, then removes the
+tracking row and re-mirrors `user_version`. A missing `down` fails with
 `MIGRATION_NO_DOWN`.
+
+### File Migration Sources
+
+An implementation should provide `migrationsFromFiles(files)`, a pure function
+turning a map of filename to SQL text into a sorted migration list, so an
+application whose bundler inlines `.sql` files can build its set without run-time
+filesystem access. Only the final path segment is parsed, matching
+`<version>_<name>.up.sql` or `<version>_<name>.down.sql`. A segment that does not
+match, a non-string value, empty SQL, or a version with no up file fails with
+`MIGRATION_VALIDATION_ERROR`; a version collision fails with
+`MIGRATION_DUPLICATE_VERSION`. A directory loader that reads SQL from disk is
+also provided; it rejects control characters and `..` path segments.
+
+---
+
+## Bulk Load
+
+```text
+BulkLoadOptions {
+  durability?: 'off' | 'normal'  (default: 'off')
+  checkpoint?: boolean           (default: true)
+}
+
+BulkLoadResult { rowsLoaded: number, changes: number }
+```
+
+`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows
+in one transaction, then always restores the configured durability level, on
+success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a
+failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`.
+When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL
+checkpoint runs afterwards, retrying a few times and deferring rather than failing
+when a reader holds pages.
 
 ---
 
 ## Backups
 
-Backups create point-in-time snapshots of a database file.
-
-### backup(destPath)
-
-Creates a backup using SQLite's `VACUUM INTO` command:
-
-```sql
-VACUUM INTO '{escaped_path}'
-```
-
-Path validation rules:
-
-- Reject paths containing null bytes.
-- Reject paths containing control characters (code points <= 0x1F).
-- Reject paths containing `..` path traversal segments.
-- Reject paths where the destination file already exists.
-
-The parent directory is created recursively if it does not exist.
-On failure, the implementation should make a best-effort attempt to
-clean up the partial file before throwing with error code
-`BACKUP_ERROR`.
-
-### File Naming
-
-The recommended filename format is `backup-{ISO timestamp}.db`,
-with colons and periods replaced by hyphens.
-
-### Rotation
-
-The recommended rotation behaviour: given a directory and a
-`maxFiles` count, list all files matching `backup-*.db`, sort by
-modification time descending, and delete files beyond `maxFiles`.
-
-### Scheduled Backups
+`backup(destPath)` creates a point-in-time snapshot with `VACUUM INTO`. Paths
+containing null bytes, control characters, or `..` segments, and destinations
+that already exist, are rejected; the parent directory is created recursively; a
+failure makes a best-effort cleanup of the partial file and then fails with
+`BACKUP_ERROR`. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`.
+The recommended filename is `backup-{ISO timestamp}.db` with colons and periods
+replaced by hyphens.
 
 ```text
 BackupScheduleOptions {
-  cron:      string       (cron expression)
+  cron:      string
   destDir:   string
-  maxFiles?: number       (default: 5, recommended)
-  timezone?: string       (IANA name; default: host time zone)
-  onError?:  (error: Error) -> void
+  maxFiles?: number   (default: 5, recommended)
+  timezone?: string   (IANA name; default: host time zone)
+  onError?:  (error) -> void
 }
 ```
 
-Scheduled backups execute on the cron schedule, create a backup
-in `destDir`, and rotate old files.
-
-Sirannon evaluates the cron expression in `timezone` when you
-supply one, and in the host's local time zone otherwise. When
-the clocks go forward for daylight saving time, the scheduler
-skips the missing hour, so a backup timed for that hour does not
-run that day. When the clocks go back, it runs a backup timed
-for the repeated hour once, at its first occurrence.
-
-The scheduler checks the time on a recurring tick and does not
-backfill. When the host sleeps or the clock jumps forward past a
-scheduled time, that occurrence is skipped rather than run late.
-When the clock steps backward, the scheduler waits until real
-time passes the last completed backup, so a rewind repeats
-nothing.
+`scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates
+files matching `backup-*.db` beyond `maxFiles` by modification time. The cron
+expression is evaluated in `timezone` when supplied, otherwise the host zone. The
+scheduler checks the time on a recurring tick and does not backfill: a scheduled
+time skipped while the host sleeps or the clock jumps forward is not run late,
+and a backward clock step repeats nothing until real time passes the last
+completed backup. Across a daylight-saving forward transition the missing hour is
+skipped; across a backward transition a time in the repeated hour runs once.
 
 ---
 
 ## Metrics
 
-The metrics system provides optional telemetry callbacks for query
-performance, connection events, and CDC activity.
-
-### MetricsConfig
-
 ```text
 MetricsConfig {
-  onQueryComplete?:    (metrics: QueryMetrics) -> void
-  onConnectionOpen?:   (metrics: ConnectionMetrics) -> void
-  onConnectionClose?:  (metrics: ConnectionMetrics) -> void
-  onCDCEvent?:         (metrics: CDCMetrics) -> void
+  onQueryComplete?:   (metrics: QueryMetrics) -> void
+  onConnectionOpen?:  (metrics: ConnectionMetrics) -> void
+  onConnectionClose?: (metrics: ConnectionMetrics) -> void
 }
+
+QueryMetrics       { databaseId: string, sql: string, durationMs: number, error?: boolean }
+ConnectionMetrics  { databaseId: string, path: string, readerCount: number, event: 'open' | 'close' }
 ```
 
-### Metric Types
-
-```text
-QueryMetrics {
-  databaseId:    string
-  sql:           string
-  durationMs:    number
-  rowsReturned?: number
-  changes?:      number
-  error?:        boolean
-}
-
-ConnectionMetrics {
-  databaseId:  string
-  path:        string
-  readerCount: number
-  event:       'open' | 'close'
-}
-
-CDCMetrics {
-  databaseId:      string
-  table:           string
-  operation:       'insert' | 'update' | 'delete'
-  subscriberCount: number
-}
-```
-
-### Error Isolation
-
-Errors thrown by metrics callbacks must not affect database
-operations. Implementations must catch and suppress callback errors.
+Metrics callbacks are optional and configured only when `metrics` is supplied.
+`onConnectionClose` reports `readerCount` as 0. An error thrown by a metrics
+callback must not affect database operations.

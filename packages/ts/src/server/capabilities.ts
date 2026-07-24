@@ -9,6 +9,7 @@ export const REQUIRED_DEVICE_SYNC_CAPABILITIES = [
   'sync.snapshot',
   'sync.migrations',
   'sync.schema-gate',
+  'sync.stream-apply',
 ] as const
 
 export const SERVER_CAPABILITIES: readonly string[] = REQUIRED_DEVICE_SYNC_CAPABILITIES

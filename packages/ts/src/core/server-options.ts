@@ -122,6 +122,7 @@ export interface ServerOptions {
    */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
+  maxUnacknowledgedChanges?: number
   onRequest?: OnRequestHook
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
@@ -164,6 +165,7 @@ export interface WSHandlerOptions {
   /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
+  maxUnacknowledgedChanges?: number
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 

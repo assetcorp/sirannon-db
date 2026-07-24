@@ -5,6 +5,7 @@ import { mirrorSchemaVersion } from './migrations/schema-version.js'
 import { BatchApplier } from './sync/batch-applier.js'
 import { BatchReader } from './sync/batch-reader.js'
 import { LWWResolver } from './sync/conflict/lww.js'
+import { REMOTE_ORIGIN_NODE_ID } from './sync/origins.js'
 import { PkResolver } from './sync/pk.js'
 import {
   abortSnapshotLoad,
@@ -14,7 +15,7 @@ import {
   loadSnapshotPage,
   snapshotLoadPending,
 } from './sync/snapshot-apply.js'
-import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
+import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './sync/types.js'
 import { SEQ_STRING_RE } from './sync/validators.js'
 import {
   type AppliedMigrationRow,
@@ -40,6 +41,11 @@ export interface DeviceSyncPullState {
 
 export interface DeviceSyncPort {
   identity(): Promise<{ nodeId: string }>
+  applyPulledTransaction(
+    changes: readonly ReplicationChange[],
+    pullSeq: bigint,
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult>
   readOutboxBatch(afterSeq: bigint, limit: number): Promise<ReplicationBatch | null>
   countOutboxPending(afterSeq: bigint): Promise<number>
   getPushCursor(): Promise<bigint>
@@ -88,6 +94,7 @@ export class DatabaseSyncController {
   devicePort(): DeviceSyncPort {
     return {
       identity: () => this.runExclusive(async () => ({ nodeId: (await this.cdc.ensureStamper()).nodeId })),
+      applyPulledTransaction: (changes, pullSeq, resolver) => this.applyPulledTransaction(changes, pullSeq, resolver),
       readOutboxBatch: (afterSeq, limit) => this.readOutboxBatch(afterSeq, limit),
       countOutboxPending: afterSeq => this.countOutboxPending(afterSeq),
       getPushCursor: () => this.getMetaSeq(PUSHED_SEQ_META_KEY).then(seq => seq ?? 0n),
@@ -114,6 +121,44 @@ export class DatabaseSyncController {
 
   seedSnapshotGate(): void {
     this.snapshotGate = true
+  }
+
+  private applyPulledTransaction(
+    changes: readonly ReplicationChange[],
+    pullSeq: bigint,
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult> {
+    return this.runExclusive(async () => {
+      if (changes.length === 0) {
+        return { applied: 0, skipped: 0, conflicts: 0, droppedTables: [] }
+      }
+
+      await this.ensureMeta()
+      const applier = await this.ensureApplier()
+
+      let maxHlc = ''
+      let sourceNodeId = REMOTE_ORIGIN_NODE_ID
+      for (const change of changes) {
+        if (change.hlc > maxHlc) maxHlc = change.hlc
+        if (sourceNodeId === REMOTE_ORIGIN_NODE_ID && change.nodeId !== '') sourceNodeId = change.nodeId
+      }
+
+      const result = await applier.applyGroup({
+        sourceNodeId,
+        txId: changes[0].txId,
+        changes,
+        resolver: resolver ?? this.defaultResolver,
+        withinTx: tx => setMetaValue(tx, PULL_SEQ_META_KEY, pullSeq.toString()),
+      })
+
+      if (result.droppedTables.length > 0) {
+        await this.cdc.changeTracker?.pruneDroppedTables(this.acquireWriter(), result.droppedTables)
+      }
+      if (maxHlc !== '') {
+        await applier.mergeHlc(maxHlc)
+      }
+      return result
+    })
   }
 
   private replaceMigrationHistory(rows: readonly AppliedMigrationRow[]): Promise<void> {

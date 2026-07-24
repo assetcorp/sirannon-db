@@ -187,7 +187,7 @@ subscriptions.
 ### Client Messages
 
 ```text
-{ type: 'subscribe',   id, table, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion? }
+{ type: 'subscribe',   id, table, tables?, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion? }
 { type: 'unsubscribe', id }
 { type: 'ack',         id, deviceId, seq }              -- see 08-device-sync.md
 { type: 'query',       id, sql, params? }
@@ -218,7 +218,9 @@ fields drive device sync (see [08-device-sync.md](08-device-sync.md)).
 
 A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE`
 when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for
-an unrecognised type. A subscription needs a string `table`; a duplicate `id`
+an unrecognised type. A subscription needs a string `table`, or a `tables` array
+of 1 to 500 table names in place of it; `tables` requires a `deviceId`. A
+duplicate `id`
 fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an
 in-memory database with `CDC_UNSUPPORTED`.
 

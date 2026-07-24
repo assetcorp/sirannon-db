@@ -1,4 +1,11 @@
-export { ensureChangesTable, maxChangeHlc, maxChangeSeq } from './changes-table.js'
+export {
+  ensureChangesTable,
+  maxChangeHlc,
+  maxChangeSeq,
+  selectChangesAfterSeqSql,
+  selectTableChangesInRangeSql,
+  selectTablesChangesInRangeSql,
+} from './changes-table.js'
 export { assertSafeIdentifier, ensureColumn, tableColumns } from './columns.js'
 export { ensureDeviceCursorsTable } from './device-cursors-table.js'
 export { deleteMetaValue, ensureMetaTable, getMetaValue, initMetaValue, setMetaValue } from './meta-table.js'

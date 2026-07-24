@@ -6,10 +6,14 @@ import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from 
 import type { CdcContextRegistry } from './ws-cdc.js'
 import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
+import { subscribeDevice } from './ws-device-subscribe.js'
 import type { ConnectionState } from './ws-handler.js'
+
+const MAX_SUBSCRIBED_TABLES = 500
 
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
+  maxUnacknowledgedChanges: number
   sendSubscribed(conn: WSConnection, id: string, seq: string, epoch: string, resync: boolean): void
   sendResult(conn: WSConnection, id: string, data: AckResponse): void
   sendError(conn: WSConnection, id: string, code: string, message: string): void
@@ -25,8 +29,9 @@ export async function handleSubscribeMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  if (typeof msg.table !== 'string') {
-    deps.sendError(conn, id, 'INVALID_MESSAGE', 'Subscribe message requires a "table" string field')
+  const tables = readTableSet(msg)
+  if (typeof tables === 'string') {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', tables)
     return
   }
 
@@ -107,24 +112,45 @@ export async function handleSubscribeMessage(
     }
   }
 
-  if (sinceSeq === undefined) {
-    await subscribeLive(deps, conn, state, id, msg.table, filter, deviceId)
+  if (deviceId !== undefined) {
+    await subscribeDevice(deps, conn, state, { id, tables, filter, sinceSeq, clientEpoch, deviceId })
     return
   }
 
-  await subscribeResuming(deps, conn, state, id, msg.table, filter, sinceSeq, clientEpoch, deviceId)
+  if (tables.length > 1) {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"tables" requires a "deviceId"')
+    return
+  }
+
+  const table = tables[0]
+  if (sinceSeq === undefined) {
+    await subscribeLive(deps, conn, state, id, table, filter)
+    return
+  }
+
+  await subscribeResuming(deps, conn, state, id, table, filter, sinceSeq, clientEpoch)
 }
 
-function withEchoSuppression(
-  deps: WSSubscribeDeps,
-  conn: WSConnection,
-  id: string,
-  deviceId: string | undefined,
-): (event: ChangeEvent) => WSSendOutcome {
-  return event => {
-    if (deviceId !== undefined && event.origin === deviceId) return 'sent'
-    return deps.sendChange(conn, id, event)
+function readTableSet(msg: Record<string, unknown>): string[] | string {
+  if (msg.tables !== undefined) {
+    if (!Array.isArray(msg.tables) || msg.tables.length === 0) {
+      return '"tables" must be a non-empty array of table names'
+    }
+    if (msg.tables.length > MAX_SUBSCRIBED_TABLES) {
+      return `"tables" must hold at most ${MAX_SUBSCRIBED_TABLES} table names`
+    }
+    for (const table of msg.tables) {
+      if (typeof table !== 'string' || table.length === 0) {
+        return '"tables" must hold non-empty table names'
+      }
+    }
+    return msg.tables as string[]
   }
+
+  if (typeof msg.table !== 'string') {
+    return 'Subscribe message requires a "table" string field'
+  }
+  return [msg.table]
 }
 
 async function subscribeLive(
@@ -134,13 +160,12 @@ async function subscribeLive(
   id: string,
   table: string,
   filter: Record<string, unknown> | undefined,
-  deviceId: string | undefined,
 ): Promise<void> {
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
 
-    const deliver = withEchoSuppression(deps, conn, id, deviceId)
+    const deliver = (event: ChangeEvent): WSSendOutcome => deps.sendChange(conn, id, event)
     const boundary = ctx.tracker.cursor
     const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
       deliver(event)
@@ -163,7 +188,6 @@ async function subscribeResuming(
   filter: Record<string, unknown> | undefined,
   sinceSeq: bigint,
   clientEpoch: string | undefined,
-  deviceId: string | undefined,
 ): Promise<void> {
   let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
   let primed: PrimedSubscription
@@ -173,7 +197,7 @@ async function subscribeResuming(
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
 
-    const deliver = withEchoSuppression(deps, conn, id, deviceId)
+    const deliver = (event: ChangeEvent): WSSendOutcome => deps.sendChange(conn, id, event)
     boundary = ctx.tracker.cursor
     primed = new PrimedSubscription(
       sinceSeq,

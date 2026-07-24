@@ -135,8 +135,13 @@ A device pulls other writes over the WebSocket subscription
 identity:
 
 ```text
-{ type: 'subscribe', id, table, sinceSeq?, epoch?, deviceId, schemaVersion? }
+{ type: 'subscribe', id, tables, sinceSeq?, epoch?, deviceId, schemaVersion? }
 ```
+
+A device subscribes once for its whole table set, so its changes arrive in one
+ascending stream and a transaction spanning tables stays contiguous. It resumes
+from `device_sync_pull_seq`, the highest sequence it has applied, on both a first
+subscribe and a reconnect.
 
 `deviceId` is a 32-hex device id. The server does not deliver a change whose
 `origin` equals the subscribing `deviceId`, so a device never receives its own

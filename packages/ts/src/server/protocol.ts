@@ -101,6 +101,7 @@ export interface WSSubscribeMessage {
   type: 'subscribe'
   id: string
   table: string
+  tables?: string[]
   filter?: Record<string, unknown>
   /**
    * Highest `seq` the client has already processed. When present, the server
@@ -222,6 +223,9 @@ export interface WSChangeMessage {
     timestamp: number
     hlc?: string
     origin?: string
+    rowId?: string
+    txId?: string
+    txEnd?: boolean
   }
 }
 

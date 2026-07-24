@@ -5,6 +5,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
+import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
@@ -182,7 +183,7 @@ export class ReplicationEngine extends EventEmitter {
 
     if (this.syncState.phase === 'syncing') {
       try {
-        await this.writerConn.exec('PRAGMA foreign_keys = ON')
+        await setForeignKeysEnabled(this.writerConn, true)
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         this.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })

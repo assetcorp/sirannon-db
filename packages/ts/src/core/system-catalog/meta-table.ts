@@ -12,6 +12,16 @@ export async function getMetaValue(conn: SQLiteConnection, key: string): Promise
   return typeof value === 'string' ? value : null
 }
 
+export async function initMetaValue(conn: SQLiteConnection, key: string, value: string): Promise<void> {
+  const stmt = await conn.prepare(`INSERT OR IGNORE INTO "${META_TABLE}" (key, value) VALUES (?, ?)`)
+  await stmt.run(key, value)
+}
+
+export async function deleteMetaValue(conn: SQLiteConnection, key: string): Promise<void> {
+  const stmt = await conn.prepare(`DELETE FROM "${META_TABLE}" WHERE key = ?`)
+  await stmt.run(key)
+}
+
 export async function setMetaValue(conn: SQLiteConnection, key: string, value: string): Promise<void> {
   const stmt = await conn.prepare(
     `INSERT INTO "${META_TABLE}" (key, value) VALUES (?, ?)

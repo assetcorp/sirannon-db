@@ -1,7 +1,14 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { META_TABLE } from '../internal-tables.js'
-import { ensureMetaTable, getMetaValue, setMetaValue } from '../system-catalog/index.js'
+import {
+  deleteMetaValue,
+  ensureMetaTable,
+  getMetaValue,
+  setForeignKeysEnabled,
+  setMetaValue,
+  tableExists,
+} from '../system-catalog/index.js'
 import { ReplicationError } from './errors.js'
 import { IDENTIFIER_RE, validateDdlSafety } from './validators.js'
 
@@ -17,7 +24,7 @@ function assertTableNames(tables: readonly string[]): void {
 }
 
 export async function snapshotLoadPending(conn: SQLiteConnection): Promise<boolean> {
-  await ensureMetaTable(conn)
+  if (!(await tableExists(conn, META_TABLE))) return false
   return (await getMetaValue(conn, SNAPSHOT_STATE_META_KEY)) !== null
 }
 
@@ -29,15 +36,14 @@ export async function beginSnapshotLoad(
   assertTableNames(tables)
   await ensureMetaTable(conn)
   await setMetaValue(conn, SNAPSHOT_STATE_META_KEY, SNAPSHOT_STATE_LOADING)
-  await conn.exec('PRAGMA foreign_keys = OFF')
+  await setForeignKeysEnabled(conn, false)
   await conn.transaction(async tx => {
     for (const table of tables) {
       await tracker?.unwatch(tx, table)
     }
     const reversed = [...tables].reverse()
     for (const table of reversed) {
-      const exists = await tx.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-      if (await exists.get(table)) {
+      if (await tableExists(tx, table)) {
         await tx.exec(`DELETE FROM "${table}"`)
       }
     }
@@ -104,11 +110,10 @@ export async function endSnapshotLoad(
   for (const table of tables) {
     await tracker?.watch(conn, table)
   }
-  await conn.exec('PRAGMA foreign_keys = ON')
-  const clear = await conn.prepare(`DELETE FROM "${META_TABLE}" WHERE key = ?`)
-  await clear.run(SNAPSHOT_STATE_META_KEY)
+  await setForeignKeysEnabled(conn, true)
+  await deleteMetaValue(conn, SNAPSHOT_STATE_META_KEY)
 }
 
 export async function abortSnapshotLoad(conn: SQLiteConnection): Promise<void> {
-  await conn.exec('PRAGMA foreign_keys = ON')
+  await setForeignKeysEnabled(conn, true)
 }

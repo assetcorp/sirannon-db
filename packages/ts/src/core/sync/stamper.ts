@@ -1,7 +1,8 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import { CHANGES_TABLE, META_TABLE } from '../internal-tables.js'
-import { ensureMetaTable, getMetaValue } from '../system-catalog/index.js'
+import { randomHex } from '../random-hex.js'
+import { ensureMetaTable, getMetaValue, initMetaValue, maxChangeHlc } from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 import { HLC_CLOCK_META_KEY, isWellFormedHlc, loadPersistedHlc } from './hlc-store.js'
 
@@ -11,12 +12,6 @@ export interface StampStatement {
   sql: string
   params: unknown[]
   trusted: true
-}
-
-function randomHex(byteLength: number): string {
-  const bytes = new Uint8Array(byteLength)
-  globalThis.crypto.getRandomValues(bytes)
-  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
 }
 
 export class SyncStamper {
@@ -29,8 +24,7 @@ export class SyncStamper {
   static async init(conn: SQLiteConnection, changesTable: string = CHANGES_TABLE): Promise<SyncStamper> {
     await ensureMetaTable(conn)
 
-    const insert = await conn.prepare(`INSERT OR IGNORE INTO "${META_TABLE}" (key, value) VALUES (?, ?)`)
-    await insert.run(NODE_ID_META_KEY, randomHex(16))
+    await initMetaValue(conn, NODE_ID_META_KEY, randomHex(16))
     const nodeId = await getMetaValue(conn, NODE_ID_META_KEY)
     if (nodeId === null || nodeId.length === 0) {
       throw new CDCError('Failed to read the persisted node identity')
@@ -41,10 +35,9 @@ export class SyncStamper {
     if (persisted !== null) {
       hlc.receive(persisted)
     }
-    const maxStmt = await conn.prepare(`SELECT MAX(hlc) AS hlc FROM "${changesTable}" WHERE hlc != ''`)
-    const row = (await maxStmt.get()) as { hlc?: unknown } | undefined
-    if (typeof row?.hlc === 'string' && isWellFormedHlc(row.hlc)) {
-      hlc.receive(row.hlc)
+    const persistedMax = await maxChangeHlc(conn, changesTable)
+    if (persistedMax !== null && isWellFormedHlc(persistedMax)) {
+      hlc.receive(persistedMax)
     }
 
     return new SyncStamper(nodeId, hlc, changesTable)

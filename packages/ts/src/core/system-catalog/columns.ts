@@ -1,13 +1,10 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
+import { tableColumnNames } from './sqlite-catalog.js'
 
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SAFE_COLUMN_TYPE = /^[A-Za-z]+$/
 const SAFE_DEFAULT_TEXT = /^[A-Za-z0-9_]*$/
-
-interface ColumnInfoRow {
-  name: string
-}
 
 export function assertSafeIdentifier(value: string): void {
   if (!SAFE_IDENTIFIER.test(value)) {
@@ -17,9 +14,7 @@ export function assertSafeIdentifier(value: string): void {
 
 export async function tableColumns(conn: SQLiteConnection, table: string): Promise<Set<string>> {
   assertSafeIdentifier(table)
-  const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
-  const info = (await stmt.all()) as ColumnInfoRow[]
-  return new Set(info.map(col => col.name))
+  return new Set(await tableColumnNames(conn, table))
 }
 
 export async function ensureColumn(

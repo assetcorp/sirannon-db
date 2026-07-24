@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { SQLiteConnection } from '../driver/types.js'
+import { countTableRows } from '../system-catalog/index.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
 import { computeChecksum } from './checksum.js'
 import { ReplicationError } from './errors.js'
@@ -21,9 +22,7 @@ export class DumpOps {
       throw new ReplicationError(`Invalid table name: ${table}`)
     }
 
-    const countStmt = await this.conn.prepare(`SELECT COUNT(*) as cnt FROM "${table}"`)
-    const countRow = (await countStmt.get()) as { cnt: number } | undefined
-    const total = countRow?.cnt ?? 0
+    const total = await countTableRows(this.conn, table)
 
     if (total === 0) return
 
@@ -105,9 +104,7 @@ export class DumpOps {
       throw new ReplicationError(`Invalid table name: ${table}`)
     }
 
-    const countStmt = await conn.prepare(`SELECT COUNT(*) as cnt FROM "${table}"`)
-    const countRow = (await countStmt.get()) as { cnt: number } | undefined
-    const rowCount = countRow?.cnt ?? 0
+    const rowCount = await countTableRows(conn, table)
 
     const hash = createHash('sha256')
     const pkColumns = await this.pkResolver.forTableOnConnection(conn, table)

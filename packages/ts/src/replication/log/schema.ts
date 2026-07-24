@@ -3,7 +3,12 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { INTERNAL_TABLE_PREFIX, SYNC_STATE_TABLE } from '../../core/internal-tables.js'
 import { dumpSchema, tablesInFkOrder } from '../../core/sync/schema-dump.js'
 import { IDENTIFIER_RE } from '../../core/sync/validators.js'
-import { ensureChangesTable, ensureMetaTable, ensureReplicationStateTables } from '../../core/system-catalog/index.js'
+import {
+  ensureChangesTable,
+  ensureMetaTable,
+  ensureReplicationStateTables,
+  setForeignKeysEnabled,
+} from '../../core/system-catalog/index.js'
 import { ReplicationError } from '../errors.js'
 
 export class SchemaOps {
@@ -33,7 +38,7 @@ export class SchemaOps {
       }
     }
 
-    await conn.exec('PRAGMA foreign_keys = OFF')
+    await setForeignKeysEnabled(conn, false)
     try {
       await conn.transaction(async tx => {
         for (const table of tables) {
@@ -46,7 +51,7 @@ export class SchemaOps {
         await tx.exec(`DELETE FROM ${SYNC_STATE_TABLE} WHERE table_name != '__sync_meta__'`)
       })
     } finally {
-      await conn.exec('PRAGMA foreign_keys = ON')
+      await setForeignKeysEnabled(conn, true)
     }
   }
 }

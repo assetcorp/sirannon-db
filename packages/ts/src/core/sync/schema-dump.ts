@@ -1,21 +1,13 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { INTERNAL_TABLE_PREFIX } from '../internal-tables.js'
+import { referencedTables, userSchemaObjects, userTableNames } from '../system-catalog/index.js'
 import { validateDdlSafety } from './validators.js'
 
 export async function dumpSchema(
   conn: SQLiteConnection,
   excludePrefix: string = INTERNAL_TABLE_PREFIX,
 ): Promise<string[]> {
-  const stmt = await conn.prepare(
-    `SELECT type, name, tbl_name, sql FROM sqlite_master
-     WHERE type IN ('table', 'index') AND name NOT LIKE ? AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL`,
-  )
-  const rows = (await stmt.all(`${excludePrefix}%`)) as Array<{
-    type: string
-    name: string
-    tbl_name: string
-    sql: string
-  }>
+  const rows = await userSchemaObjects(conn, excludePrefix)
 
   const filtered = rows.filter(row => {
     if (row.name.startsWith(excludePrefix)) return false
@@ -55,11 +47,7 @@ export async function dumpSchema(
 }
 
 export async function tablesInFkOrder(conn: SQLiteConnection): Promise<string[]> {
-  const stmt = await conn.prepare(
-    `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '${INTERNAL_TABLE_PREFIX}%' AND name NOT LIKE 'sqlite_%'`,
-  )
-  const tableRows = (await stmt.all()) as Array<{ name: string }>
-  const tableNames = tableRows.map(r => r.name)
+  const tableNames = await userTableNames(conn, INTERNAL_TABLE_PREFIX)
 
   const adjacency = new Map<string, Set<string>>()
   const inDegree = new Map<string, number>()
@@ -70,11 +58,9 @@ export async function tablesInFkOrder(conn: SQLiteConnection): Promise<string[]>
   }
 
   for (const name of tableNames) {
-    const fkStmt = await conn.prepare(`PRAGMA foreign_key_list("${name}")`)
-    const fks = (await fkStmt.all()) as Array<{ table: string }>
-    for (const fk of fks) {
-      if (tableNames.includes(fk.table) && fk.table !== name) {
-        const deps = adjacency.get(fk.table)
+    for (const referenced of await referencedTables(conn, name)) {
+      if (tableNames.includes(referenced) && referenced !== name) {
+        const deps = adjacency.get(referenced)
         if (deps && !deps.has(name)) {
           deps.add(name)
           inDegree.set(name, (inDegree.get(name) ?? 0) + 1)

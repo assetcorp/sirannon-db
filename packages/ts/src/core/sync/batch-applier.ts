@@ -1,6 +1,7 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { APPLIED_CHANGES_TABLE, CHANGES_TABLE, COLUMN_VERSIONS_TABLE } from '../internal-tables.js'
+import { maxChangeSeq, prepareAppliedChangesInsert } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
 import { BatchValidationError } from './errors.js'
 import type { HLC } from './hlc.js'
@@ -168,9 +169,7 @@ export class BatchApplier {
       }
     }
 
-    const recordStmt = await this.conn.prepare(
-      `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
-    )
+    const recordStmt = await prepareAppliedChangesInsert(this.conn)
     const nowSec = Date.now() / 1000
     for (let seq = batch.fromSeq; seq <= batch.toSeq; seq += 1n) {
       if (appliedSeqSet?.has(seq.toString())) continue
@@ -188,9 +187,7 @@ export class BatchApplier {
   }
 
   private async maxChangeSeq(tx: SQLiteConnection): Promise<string> {
-    const stmt = await tx.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${this.changesTable}"`)
-    const row = (await stmt.get()) as { seq?: unknown } | undefined
-    return String(row?.seq ?? 0)
+    return (await maxChangeSeq(tx, this.changesTable)).toString()
   }
 
   private async stampAppliedEcho(

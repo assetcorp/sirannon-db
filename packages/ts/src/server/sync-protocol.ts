@@ -1,10 +1,10 @@
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { ApplyResult, ReplicationBatch, ReplicationChange } from '../core/sync/types.js'
+import { SEQ_STRING_RE } from '../core/sync/validators.js'
 
 export const MAX_SYNC_BATCH_CHANGES = 1000
 
 const NODE_ID_RE = /^[0-9a-f]{32}$/
-const SEQ_RE = /^\d{1,19}$/
 const TABLE_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 const OPERATIONS = new Set(['insert', 'update', 'delete'])
 
@@ -78,10 +78,10 @@ export function syncBatchValidationError(raw: unknown): string | null {
   if (typeof raw.batchId !== 'string' || raw.batchId.length === 0 || raw.batchId.length > 128) {
     return '"batch.batchId" must be a non-empty string of at most 128 characters'
   }
-  if (typeof raw.fromSeq !== 'string' || !SEQ_RE.test(raw.fromSeq)) {
+  if (typeof raw.fromSeq !== 'string' || !SEQ_STRING_RE.test(raw.fromSeq)) {
     return '"batch.fromSeq" must be a positive integer string'
   }
-  if (typeof raw.toSeq !== 'string' || !SEQ_RE.test(raw.toSeq)) {
+  if (typeof raw.toSeq !== 'string' || !SEQ_STRING_RE.test(raw.toSeq)) {
     return '"batch.toSeq" must be a positive integer string'
   }
   if (BigInt(raw.fromSeq) > BigInt(raw.toSeq)) return '"batch.fromSeq" must not exceed "batch.toSeq"'

@@ -1,6 +1,21 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import { CHANGES_TABLE } from '../internal-tables.js'
 import { assertSafeIdentifier, ensureColumn } from './columns.js'
 import { ensureMetaTable } from './meta-table.js'
+
+export async function maxChangeSeq(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<bigint> {
+  const stmt = await conn.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${tableName}"`)
+  const row = (await stmt.get()) as { seq?: unknown } | undefined
+  const seq = row?.seq
+  if (seq === undefined || seq === null) return 0n
+  return typeof seq === 'bigint' ? seq : BigInt(String(seq))
+}
+
+export async function maxChangeHlc(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<string | null> {
+  const stmt = await conn.prepare(`SELECT MAX(hlc) AS hlc FROM "${tableName}" WHERE hlc != ''`)
+  const row = (await stmt.get()) as { hlc?: unknown } | undefined
+  return typeof row?.hlc === 'string' && row.hlc.length > 0 ? row.hlc : null
+}
 
 export async function ensureChangesTable(conn: SQLiteConnection, tableName: string): Promise<void> {
   assertSafeIdentifier(tableName)

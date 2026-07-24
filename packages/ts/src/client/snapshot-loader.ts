@@ -2,13 +2,13 @@ import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 import { sha256Hex } from '../core/sync/sha256.js'
-import { IDENTIFIER_RE } from '../core/sync/validators.js'
+import { IDENTIFIER_RE, SEQ_STRING_RE } from '../core/sync/validators.js'
 import type { SnapshotManifestResponse, SnapshotPageResponse } from '../server/snapshot-protocol.js'
 import { toBaseUrl } from './endpoint-urls.js'
+import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS, postJson } from './http-json.js'
 import { RemoteError } from './types.js'
 
 const DEFAULT_SNAPSHOT_PAGE_ROWS = 500
-const DEFAULT_SNAPSHOT_REQUEST_TIMEOUT_MS = 30_000
 
 export interface SnapshotProgress {
   table: string
@@ -34,58 +34,13 @@ export interface SnapshotDownloadResult {
   loadedRows: number
 }
 
-async function postJson(
-  url: string,
-  body: unknown,
-  headers: Record<string, string> | undefined,
-  timeoutMs: number,
-): Promise<unknown> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  const unrefable = timer as unknown as { unref?: () => void }
-  unrefable.unref?.()
-
-  let response: Response
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-  } catch (err) {
-    throw new RemoteError(
-      'CONNECTION_ERROR',
-      `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  } finally {
-    clearTimeout(timer)
-  }
-
-  let data: unknown
-  try {
-    data = await response.json()
-  } catch {
-    throw new RemoteError('INVALID_RESPONSE', `Server returned non-JSON response (HTTP ${response.status})`)
-  }
-
-  if (!response.ok) {
-    const errorData = data as { error?: { code?: string; message?: string } }
-    throw new RemoteError(
-      errorData.error?.code ?? 'UNKNOWN_ERROR',
-      errorData.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
-  return data
-}
-
 function validateManifest(raw: unknown): SnapshotManifestResponse {
   const record = raw as Partial<SnapshotManifestResponse> | null
   if (
     record === null ||
     typeof record !== 'object' ||
     typeof record.startSeq !== 'string' ||
-    !/^\d{1,19}$/.test(record.startSeq) ||
+    !SEQ_STRING_RE.test(record.startSeq) ||
     typeof record.epoch !== 'string' ||
     record.epoch.length === 0 ||
     !Array.isArray(record.schema) ||
@@ -129,7 +84,7 @@ export async function downloadDatabaseSnapshot(
   const baseUrl = toBaseUrl(options.url)
   const encodedId = encodeURIComponent(options.databaseId)
   const pageSize = options.pageSize ?? DEFAULT_SNAPSHOT_PAGE_ROWS
-  const timeoutMs = options.requestTimeoutMs ?? DEFAULT_SNAPSHOT_REQUEST_TIMEOUT_MS
+  const timeoutMs = options.requestTimeoutMs ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS
 
   const manifest = validateManifest(
     await postJson(`${baseUrl}/db/${encodedId}/snapshot`, {}, options.headers, timeoutMs),

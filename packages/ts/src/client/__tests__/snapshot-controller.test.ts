@@ -8,7 +8,7 @@ import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import type { SnapshotProgress } from '../snapshot-loader.js'
-import { SyncController } from '../sync-controller.js'
+import { SyncController, type SyncControllerOptions } from '../sync-controller.js'
 
 const driver = betterSqlite3()
 
@@ -58,13 +58,15 @@ afterEach(async () => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-function makeController(): SyncController {
+function makeController(overrides?: Partial<SyncControllerOptions>): SyncController {
   const controller = new SyncController(deviceDb, {
     url: baseUrl,
     databaseId: 'appdb',
     tables: ['notes'],
     pushIntervalMs: 50,
     ackIntervalMs: 50,
+    autoResync: false,
+    ...overrides,
   })
   controllers.push(controller)
   return controller
@@ -141,5 +143,44 @@ describe('SyncController.downloadSnapshot', () => {
   it('requires a started controller', async () => {
     const controller = makeController()
     await expect(controller.downloadSnapshot()).rejects.toThrow(/started sync controller/)
+  })
+
+  it('blocks reads and writes on the device while a snapshot load is incomplete', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+
+    await expect(deviceDb.query('SELECT 1 FROM notes')).rejects.toThrow(/sync snapshot/)
+    await expect(deviceDb.execute("INSERT INTO notes (id, body) VALUES (500, 'x')")).rejects.toThrow(/sync snapshot/)
+
+    await port.loadSnapshotPage('notes', [{ id: 1, body: 'server' }])
+    await port.endSnapshotLoad(['notes'])
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(1)
+  })
+
+  it('keeps the device blocked after reopening with an interrupted load marker', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+    await deviceDb.close()
+
+    deviceDb = await deviceSirannon.open('appdb2', join(tempDir, 'device.db'))
+    await expect(deviceDb.query('SELECT 1 FROM notes')).rejects.toThrow(/sync snapshot/)
+    expect(await deviceDb.deviceSync().snapshotLoadPending()).toBe(true)
+  })
+
+  it('automatically resyncs an interrupted snapshot load', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+
+    const controller = makeController({ autoResync: true, snapshotRetryDelayMs: 50 })
+    await controller.start()
+
+    await until(async () => {
+      const status = await controller.status()
+      return !status.resyncRequired && status.state === 'running'
+    })
+    expect(await deviceDb.deviceSync().snapshotLoadPending()).toBe(false)
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
   })
 })

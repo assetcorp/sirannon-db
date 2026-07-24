@@ -1,5 +1,7 @@
 export const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
+export const SEQ_STRING_RE = /^\d{1,19}$/
+
 export const SAFE_DDL_RE =
   /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
 

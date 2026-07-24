@@ -1,18 +1,20 @@
 import { runBulkLoad } from './bulk-load.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import type { ConnectionPool } from './connection-pool.js'
-import { DatabaseBackupController } from './database-backup.js'
-import { DatabaseCdcController } from './database-cdc.js'
-import { createDatabaseRuntime } from './database-create.js'
-import { DatabaseObserver } from './database-observability.js'
-import { DatabaseSyncController, type DeviceSyncPort } from './database-sync.js'
+import type { DatabaseBackupController } from './database-backup.js'
+import type { DatabaseCdcController } from './database-cdc.js'
+import { createDatabaseRuntime, type DatabaseInternals, type DatabaseRuntime } from './database-create.js'
+import type { DatabaseObserver } from './database-observability.js'
+import type { DatabaseSyncController, DeviceSyncPort } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
-import { canGroupTransaction, GroupCommitter } from './group-committer.js'
-import { HookRegistry } from './hooks/registry.js'
-import type { MetricsCollector } from './metrics/collector.js'
+import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
+import type { HookRegistry } from './hooks/registry.js'
+
+export type { DatabaseInternals } from './database-create.js'
+
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
 import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
@@ -31,12 +33,7 @@ import type {
   SubscriptionBuilder,
 } from './types.js'
 import type { WriteGate } from './worker/gate.js'
-import { WriterLock } from './writer-lock.js'
-
-export interface DatabaseInternals {
-  parentHooks?: HookRegistry
-  metrics?: MetricsCollector
-}
+import type { WriterLock } from './writer-lock.js'
 
 export class Database {
   readonly id: string
@@ -55,7 +52,7 @@ export class Database {
   private readonly cdc: DatabaseCdcController
   private readonly sync: DatabaseSyncController
 
-  private readonly hookRegistry = new HookRegistry()
+  private readonly hookRegistry: HookRegistry
   private readonly observer: DatabaseObserver
 
   private readonly backups: DatabaseBackupController
@@ -63,48 +60,25 @@ export class Database {
   private constructor(
     id: string,
     path: string,
-    pool: ConnectionPool,
     driver: SQLiteDriver,
-    writeGate: WriteGate,
+    runtime: DatabaseRuntime,
     options?: DatabaseOptions,
-    internals?: DatabaseInternals,
   ) {
     this.id = id
     this.path = path
-    this.pool = pool
     this.driver = driver
-    this.writeGate = writeGate
-    this.writerLock = new WriterLock(driver.createWriterContext?.())
-    this.backups = new DatabaseBackupController(
-      op => this.writerLock.run(op),
-      () => this.pool.acquireWriter(),
-      driver.createBackupEngine?.(),
-    )
+    this.pool = runtime.pool
+    this.writeGate = runtime.writeGate
+    this.writerLock = runtime.writerLock
+    this.hookRegistry = runtime.hookRegistry
+    this.observer = runtime.observer
+    this.backups = runtime.backups
+    this.cdc = runtime.cdc
+    this.sync = runtime.sync
+    this.groupCommitter = runtime.groupCommitter
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
-    this.observer = new DatabaseObserver(
-      id,
-      this.hookRegistry,
-      internals?.parentHooks ?? null,
-      internals?.metrics ?? null,
-    )
-    this.cdc = new DatabaseCdcController(
-      op => this.writerLock.run(op),
-      () => this.pool.acquireWriter(),
-      options?.cdcPollInterval ?? 50,
-      options?.cdcRetention ?? 3_600_000,
-    )
-    this.sync = new DatabaseSyncController(
-      op => this.writeGate.run(() => this.writerLock.run(op)),
-      () => this.pool.acquireWriter(),
-      this.cdc,
-    )
-    this.groupCommitter = new GroupCommitter(this.writerLock, {
-      acquireWriter: () => this.pool.acquireWriter(),
-      afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql),
-      stampStatements: options => this.cdc.stampStatements(options),
-    })
   }
 
   static async create(
@@ -114,8 +88,8 @@ export class Database {
     options?: DatabaseOptions,
     internals?: DatabaseInternals,
   ): Promise<Database> {
-    const runtime = await createDatabaseRuntime(id, path, driver, options)
-    return new Database(id, path, runtime.pool, driver, runtime.writeGate, options, internals)
+    const runtime = await createDatabaseRuntime(id, path, driver, options, internals)
+    return new Database(id, path, driver, runtime, options)
   }
 
   async applyChanges(
@@ -128,7 +102,7 @@ export class Database {
   }
 
   deviceSync(): DeviceSyncPort {
-    this.ensureOpen()
+    this.ensureNotClosed()
     return this.sync.devicePort()
   }
 
@@ -345,7 +319,7 @@ export class Database {
   }
 
   addCloseListener(fn: () => void | Promise<void>): void {
-    this.ensureOpen()
+    this.ensureNotClosed()
     this.closeListeners.push(fn)
   }
 
@@ -387,6 +361,16 @@ export class Database {
   }
 
   private ensureOpen(): void {
+    this.ensureNotClosed()
+    if (this.sync.snapshotLoadBlocked) {
+      throw new SirannonError(
+        `Database '${this.id}' is replacing its data from a sync snapshot; retry once the snapshot load completes`,
+        'SNAPSHOT_IN_PROGRESS',
+      )
+    }
+  }
+
+  private ensureNotClosed(): void {
     if (this._closed) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }

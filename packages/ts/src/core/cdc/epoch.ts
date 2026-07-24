@@ -1,15 +1,9 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
-import { META_TABLE } from '../internal-tables.js'
-import { ensureMetaTable } from '../system-catalog/index.js'
+import { randomHex } from '../random-hex.js'
+import { ensureMetaTable, getMetaValue, initMetaValue } from '../system-catalog/index.js'
 
 const EPOCH_KEY = 'cdc_epoch'
-
-function randomHexId(byteLength: number): string {
-  const bytes = new Uint8Array(byteLength)
-  globalThis.crypto.getRandomValues(bytes)
-  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
-}
 
 /**
  * Returns a stable identifier for this database's change-log sequence space,
@@ -22,14 +16,10 @@ function randomHexId(byteLength: number): string {
  */
 export async function ensureCdcEpoch(conn: SQLiteConnection): Promise<string> {
   await ensureMetaTable(conn)
+  await initMetaValue(conn, EPOCH_KEY, randomHex(16))
 
-  const insert = await conn.prepare(`INSERT OR IGNORE INTO "${META_TABLE}" (key, value) VALUES (?, ?)`)
-  await insert.run(EPOCH_KEY, randomHexId(16))
-
-  const select = await conn.prepare(`SELECT value FROM "${META_TABLE}" WHERE key = ?`)
-  const row = (await select.get(EPOCH_KEY)) as { value?: unknown } | undefined
-  const value = row?.value
-  if (typeof value !== 'string' || value.length === 0) {
+  const value = await getMetaValue(conn, EPOCH_KEY)
+  if (value === null || value.length === 0) {
     throw new CDCError('Failed to read the CDC epoch identifier')
   }
   return value

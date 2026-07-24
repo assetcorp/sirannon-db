@@ -14,7 +14,14 @@ const MAX_SUBSCRIBED_TABLES = 500
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
   maxUnacknowledgedChanges: number
-  sendSubscribed(conn: WSConnection, id: string, seq: string, epoch: string, resync: boolean): void
+  sendSubscribed(
+    conn: WSConnection,
+    id: string,
+    seq: string,
+    epoch: string,
+    resync: boolean,
+    maxUnacknowledgedChanges?: number,
+  ): void
   sendResult(conn: WSConnection, id: string, data: AckResponse): void
   sendError(conn: WSConnection, id: string, code: string, message: string): void
   sendSirannonError(conn: WSConnection, id: string, err: unknown): void

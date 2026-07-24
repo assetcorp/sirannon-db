@@ -29,6 +29,7 @@ cursors in `_sirannon_meta`:
 | `device_sync_pushed_seq` | Highest local `seq` acknowledged by the server on push. |
 | `device_sync_pull_seq` | Highest server `seq` applied locally. |
 | `device_sync_pull_epoch` | The epoch the pull cursor belongs to. |
+| `device_sync_resync_required` | Set when the server signals a resync, cleared when a snapshot completes. |
 | `device_sync_snapshot_state` | Set to `loading` while a snapshot load runs, cleared on completion. |
 
 ---
@@ -145,7 +146,9 @@ subscribe and a reconnect.
 
 `deviceId` is a 32-hex device id. The server does not deliver a change whose
 `origin` equals the subscribing `deviceId`, so a device never receives its own
-writes back. Resumption and the `resync` signal follow the WebSocket rules; a
+writes back. It also withholds an unstamped change, which carries no origin and
+no timestamp; a device gains those rows by applying the migration that wrote
+them. Resumption and the `resync` signal follow the WebSocket rules; a
 `sinceSeq` presented with an epoch other than the current one forces a resync.
 
 Each change carries `rowId`, `txId`, and `txEnd`. A device buffers a transaction
@@ -167,8 +170,11 @@ while more than half the delivery window is outstanding.
 
 The server holds delivery to a device once the highest sequence sent runs more
 than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's
-acknowledged cursor, and resumes on the next acknowledgement. Held changes remain
-in the change log and are delivered in order.
+acknowledged cursor, and resumes on the next acknowledgement. The window is
+measured per transaction, so a transaction larger than the window is still
+delivered whole. Held changes remain in the change log and are delivered in
+order. The server reports the window on `subscribed`, and a device acknowledges
+immediately once it holds more than half of it.
 
 ---
 
@@ -252,6 +258,10 @@ matches) is returned without SQL, and the device must resync from a snapshot to
 gain it. The device re-verifies each served `up` against its `checksum` before
 applying it through the migration runner, and applies the missing migrations in
 order.
+
+A resync signal does not move the pull cursor. The device records
+`device_sync_resync_required` and keeps its cursor where it is, so a restart
+before the snapshot runs still knows the copy is stale.
 
 A device whose applied history diverges from the server's (an overlapping version
 whose checksum differs, or a gap in the shared history) or that hits a baseline

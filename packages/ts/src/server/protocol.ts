@@ -187,6 +187,11 @@ export interface WSSubscribedMessage {
   type: 'subscribed'
   id: string
   /**
+   * How far a device may run ahead of its acknowledged cursor before the
+   * server holds delivery. Present only for a device subscription.
+   */
+  maxUnacknowledgedChanges?: number
+  /**
    * The seq the subscription is live from. A client that has not yet seen any
    * change adopts this as its resume cursor, so a reconnect during an idle
    * spell still replays what it missed instead of silently skipping it.

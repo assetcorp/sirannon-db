@@ -23,6 +23,7 @@ export interface PullStreamHooks {
   onChange?: (event: ChangeEvent) => void
   onResyncRequired(): void
   onApplyFailure(err: unknown): void
+  onApplySuccess(): void
   recordError(err: unknown): void
 }
 
@@ -37,6 +38,7 @@ export class PullStream {
   private queue: ChangeEvent[][] = []
   private draining = false
   private failed = false
+  private serverWindow: number | null = null
   pullSeq: bigint | null = null
   pullEpoch: string | undefined
 
@@ -100,16 +102,24 @@ export class PullStream {
     }
   }
 
-  private handleSubscribed(info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }): void {
+  private handleSubscribed(info: {
+    seq: bigint | undefined
+    epoch: string | undefined
+    resync: boolean
+    maxUnacknowledgedChanges: number | undefined
+  }): void {
+    this.group = []
+    if (info.maxUnacknowledgedChanges !== undefined && info.maxUnacknowledgedChanges > 0) {
+      this.serverWindow = info.maxUnacknowledgedChanges
+    }
+    if (info.resync) {
+      this.hooks.onResyncRequired()
+      return
+    }
     if (info.epoch !== undefined) {
       this.pullEpoch = info.epoch
     }
-    if (info.resync) {
-      if (info.seq !== undefined) {
-        this.pullSeq = info.seq
-      }
-      this.hooks.onResyncRequired()
-    } else if (this.pullSeq === null && info.seq !== undefined) {
+    if (this.pullSeq === null && info.seq !== undefined) {
       this.pullSeq = info.seq
     }
     if (this.ackBaseSeq === null) {
@@ -159,6 +169,7 @@ export class PullStream {
     if (this.pullSeq === null || last.seq > this.pullSeq) {
       this.pullSeq = last.seq
     }
+    this.hooks.onApplySuccess()
     for (const event of group) {
       this.hooks.onChange?.(event)
     }
@@ -166,7 +177,12 @@ export class PullStream {
   }
 
   private scheduleAckFlush(): void {
-    const threshold = BigInt(this.config.immediateAckAfterChanges ?? DEFAULT_IMMEDIATE_ACK_AFTER_CHANGES)
+    const configured =
+      this.config.immediateAckAfterChanges ??
+      (this.serverWindow === null
+        ? DEFAULT_IMMEDIATE_ACK_AFTER_CHANGES
+        : Math.max(1, Math.floor(this.serverWindow / 2)))
+    const threshold = BigInt(configured)
     const base = this.lastAckedSeq ?? this.ackBaseSeq
     const outstanding = this.pullSeq !== null && base !== null ? this.pullSeq - base : 0n
     if (outstanding > threshold) {

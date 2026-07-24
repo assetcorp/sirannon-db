@@ -9,6 +9,8 @@ import { decodeTaggedValues } from './encoding.js'
 import type { StatementCache } from './statement-cache.js'
 import type { ChangeRow } from './types.js'
 
+const MAX_TRANSACTION_CARRY_ROWS = 50_000
+
 export interface PollResult {
   events: ChangeEvent[]
   lastSeq: bigint
@@ -45,13 +47,35 @@ export async function pollChanges(
   const emitted = rows.length > batchSize ? rows.slice(0, batchSize) : rows
   const lastEmitted = emitted[emitted.length - 1]
   const peekedBeyondBatch = rows[batchSize]
+  const openTxId = lastEmitted.tx_id
 
-  return {
-    events: emitted.map(rowToEvent),
-    lastSeq: BigInt(lastEmitted.seq),
-    atTxBoundary:
-      peekedBeyondBatch === undefined || !lastEmitted.tx_id || (peekedBeyondBatch.tx_id ?? '') !== lastEmitted.tx_id,
+  const events = emitted.map(rowToEvent)
+  let lastSeq = BigInt(lastEmitted.seq)
+
+  if (peekedBeyondBatch === undefined || !openTxId || (peekedBeyondBatch.tx_id ?? '') !== openTxId) {
+    return { events, lastSeq, atTxBoundary: true }
   }
+
+  let carried = 0
+  while (carried < MAX_TRANSACTION_CARRY_ROWS) {
+    const tail = (await stmt.all(lastSeq.toString(), batchSize)) as ChangeRow[]
+    if (tail.length === 0) {
+      return { events, lastSeq, atTxBoundary: true }
+    }
+    for (const row of tail) {
+      if ((row.tx_id ?? '') !== openTxId) {
+        return { events, lastSeq, atTxBoundary: true }
+      }
+      events.push(rowToEvent(row))
+      lastSeq = BigInt(row.seq)
+      carried += 1
+    }
+    if (tail.length < batchSize) {
+      return { events, lastSeq, atTxBoundary: true }
+    }
+  }
+
+  return { events, lastSeq, atTxBoundary: false }
 }
 
 export async function readSinceOneTable(

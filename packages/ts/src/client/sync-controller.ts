@@ -70,6 +70,9 @@ export class SyncController {
         onChange: options.onChange,
         onResyncRequired: () => this.markResyncRequired(),
         onApplyFailure: err => this.handleApplyFailure(err),
+        onApplySuccess: () => {
+          this.consecutivePullFailures = 0
+        },
         recordError: err => this.recordError(err),
       },
     )
@@ -87,7 +90,7 @@ export class SyncController {
       const pullState = await this.port.getPullState()
       this.pull.pullSeq = pullState?.seq ?? null
       this.pull.pullEpoch = pullState?.epoch
-      if (await this.port.snapshotLoadPending()) {
+      if ((await this.port.snapshotLoadPending()) || (await this.port.getResyncRequired())) {
         this.resyncRequired = true
       }
       if (!this.resyncRequired) {
@@ -196,6 +199,7 @@ export class SyncController {
 
   private markResyncRequired(): void {
     this.resyncRequired = true
+    void this.port?.setResyncRequired(true).catch(err => this.recordError(err))
     try {
       this.options.onResyncRequired?.()
     } catch {}
@@ -256,6 +260,7 @@ export class SyncController {
         onProgress: options?.onProgress,
       })
       this.schemaVersion = await this.localSchemaVersion()
+      await port.setResyncRequired(false)
       this.resyncRequired = false
       this.consecutiveResyncFailures = 0
       this.lastError = null
@@ -368,7 +373,6 @@ export class SyncController {
     if (this.state !== 'running' || this.deviceId === null || this.resyncRequired) return
     try {
       await this.pull.open(this.deviceId, this.schemaVersion ?? 0)
-      this.consecutivePullFailures = 0
     } catch (err) {
       this.handleApplyFailure(err)
     }

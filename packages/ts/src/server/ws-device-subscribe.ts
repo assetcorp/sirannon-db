@@ -39,7 +39,7 @@ export async function subscribeDevice(
   }
 
   const { ctx, stream, primed, boundary, resync } = active
-  deps.sendSubscribed(conn, request.id, boundary.toString(), ctx.epoch, resync)
+  deps.sendSubscribed(conn, request.id, boundary.toString(), ctx.epoch, resync, deps.maxUnacknowledgedChanges)
 
   if (primed === null) return
 
@@ -47,7 +47,7 @@ export async function subscribeDevice(
     try {
       await primed.replayTables(ctx.tracker, ctx.cdcConn, request.tables, request.filter, boundary)
     } catch {
-      deps.sendSubscribed(conn, request.id, boundary.toString(), ctx.epoch, true)
+      deps.sendSubscribed(conn, request.id, boundary.toString(), ctx.epoch, true, deps.maxUnacknowledgedChanges)
     }
   }
   primed.goLive()
@@ -75,7 +75,7 @@ async function openDeviceSubscription(
   })
 
   const deliver = (event: ChangeEvent): WSSendOutcome => {
-    if (event.origin === deviceId) return 'sent'
+    if (event.origin === deviceId || event.origin === undefined) return 'sent'
     stream.receive(event)
     return stream.stopped ? 'dropped' : 'sent'
   }

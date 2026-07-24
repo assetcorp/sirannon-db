@@ -159,12 +159,17 @@ for that row, or, absent any, the highest `hlc` in the change log for it.
 **LWW (last-writer-wins), the default.**
 
 ```text
+if remoteChange.operation == 'delete': return accept_remote
 if localHlc is null: return accept_remote
 c = compare(remoteHlc, localHlc)
 if c > 0: return accept_remote
 if c < 0: return keep_local
 if remoteChange.nodeId > localChange.nodeId: return accept_remote else keep_local
 ```
+
+A delete wins over a concurrent update in either direction: a remote delete is
+accepted whatever the timestamps say, and a remote update against a row already
+deleted locally is skipped because the row is absent.
 
 **PrimaryWins.** Constructed with the primary node ID.
 

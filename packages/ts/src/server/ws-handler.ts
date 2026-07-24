@@ -218,8 +218,15 @@ export class WSHandler {
     return {
       cdc: this.cdc,
       maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
-      sendSubscribed: (conn, id, seq, epoch, resync) =>
-        this.send(conn, { type: 'subscribed', id, seq, epoch, ...(resync ? { resync: true } : {}) }),
+      sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
+        this.send(conn, {
+          type: 'subscribed',
+          id,
+          seq,
+          epoch,
+          ...(resync ? { resync: true } : {}),
+          ...(maxUnacknowledgedChanges !== undefined ? { maxUnacknowledgedChanges } : {}),
+        }),
       sendResult: (conn, id, data) => this.send(conn, { type: 'result', id, data }),
       sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
       sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),

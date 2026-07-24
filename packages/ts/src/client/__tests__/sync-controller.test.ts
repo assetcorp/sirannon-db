@@ -207,6 +207,15 @@ describe('SyncController pull', () => {
     }
   })
 
+  it('remembers across a restart that it still owes a resync', async () => {
+    await deviceDb.deviceSync().setResyncRequired(true)
+
+    const controller = makeController({ autoResync: false })
+    await controller.start()
+
+    expect((await controller.status()).resyncRequired).toBe(true)
+  })
+
   it('applies a transaction spanning tables as one local transaction', async () => {
     await serverDb.execute('CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT)')
     await serverDb.watch('tags')

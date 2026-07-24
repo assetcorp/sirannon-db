@@ -7,7 +7,14 @@ export interface ActiveSubscription {
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
   onReset: (() => void) | undefined
-  onSubscribed: ((info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void) | undefined
+  onSubscribed:
+    | ((info: {
+        seq: bigint | undefined
+        epoch: string | undefined
+        resync: boolean
+        maxUnacknowledgedChanges: number | undefined
+      }) => void)
+    | undefined
   deviceId: string | undefined
   tables: readonly string[] | undefined
   schemaVersion: number | undefined
@@ -39,7 +46,12 @@ export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribe
     sub.lastSeq = baseline
   }
   try {
-    sub.onSubscribed?.({ seq: baseline, epoch: sub.epoch, resync: msg.resync === true })
+    sub.onSubscribed?.({
+      seq: baseline,
+      epoch: sub.epoch,
+      resync: msg.resync === true,
+      maxUnacknowledgedChanges: msg.maxUnacknowledgedChanges,
+    })
   } catch {}
 }
 

@@ -4,7 +4,10 @@ import type { ConflictContext, ConflictResolution, ConflictResolver } from '../t
 /**
  * Last-Writer-Wins conflict resolver.
  *
- * Compares the remote HLC against the local HLC. The higher timestamp wins.
+ * A remote delete is accepted whatever the timestamps say, so a delete wins over
+ * a concurrent update and a deleted row is never resurrected.
+ *
+ * Otherwise compares the remote HLC against the local HLC. The higher timestamp wins.
  * When both timestamps are equal (concurrent writes within the same
  * millisecond and logical tick), the tie is broken deterministically by
  * comparing node IDs lexicographically, so that every node reaches the same
@@ -14,6 +17,10 @@ import type { ConflictContext, ConflictResolution, ConflictResolver } from '../t
  */
 export class LWWResolver implements ConflictResolver {
   resolve(ctx: ConflictContext): ConflictResolution {
+    if (ctx.remoteChange.operation === 'delete') {
+      return { action: 'accept_remote' }
+    }
+
     if (ctx.localHlc === null) {
       return { action: 'accept_remote' }
     }

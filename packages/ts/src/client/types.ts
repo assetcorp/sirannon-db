@@ -21,7 +21,12 @@ export interface SubscribeOptions {
   getResumeSeq?: () => bigint | undefined
   sinceSeq?: bigint
   epoch?: string
-  onSubscribed?: (info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void
+  onSubscribed?: (info: {
+    seq: bigint | undefined
+    epoch: string | undefined
+    resync: boolean
+    maxUnacknowledgedChanges: number | undefined
+  }) => void
 }
 
 /**

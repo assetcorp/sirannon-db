@@ -33,6 +33,7 @@ type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 const PUSHED_SEQ_META_KEY = 'device_sync_pushed_seq'
 const PULL_SEQ_META_KEY = 'device_sync_pull_seq'
 const PULL_EPOCH_META_KEY = 'device_sync_pull_epoch'
+const RESYNC_REQUIRED_META_KEY = 'device_sync_resync_required'
 
 export interface DeviceSyncPullState {
   seq: bigint
@@ -51,6 +52,8 @@ export interface DeviceSyncPort {
   getPushCursor(): Promise<bigint>
   setPushCursor(seq: bigint): Promise<void>
   getPullState(): Promise<DeviceSyncPullState | null>
+  getResyncRequired(): Promise<boolean>
+  setResyncRequired(required: boolean): Promise<void>
   setPullState(seq: bigint, epoch?: string): Promise<void>
   protectUnpushedChanges(pushedSeq: bigint): void
   snapshotLoadPending(): Promise<boolean>
@@ -100,6 +103,8 @@ export class DatabaseSyncController {
       getPushCursor: () => this.getMetaSeq(PUSHED_SEQ_META_KEY).then(seq => seq ?? 0n),
       setPushCursor: seq => this.setMetaSeq(PUSHED_SEQ_META_KEY, seq),
       getPullState: () => this.getPullState(),
+      getResyncRequired: () => this.getResyncRequired(),
+      setResyncRequired: required => this.setResyncRequired(required),
       setPullState: (seq, epoch) => this.setPullState(seq, epoch),
       protectUnpushedChanges: pushedSeq => {
         this.localPruneBoundary = pushedSeq
@@ -209,6 +214,20 @@ export class DatabaseSyncController {
       )
       const row = (await stmt.get(afterSeq.toString(), stamper.nodeId)) as { pending: number | bigint }
       return Number(row.pending)
+    })
+  }
+
+  private getResyncRequired(): Promise<boolean> {
+    return this.runExclusive(async () => {
+      const writer = await this.ensureMeta()
+      return (await getMetaValue(writer, RESYNC_REQUIRED_META_KEY)) === '1'
+    })
+  }
+
+  private setResyncRequired(required: boolean): Promise<void> {
+    return this.runExclusive(async () => {
+      const writer = await this.ensureMeta()
+      await setMetaValue(writer, RESYNC_REQUIRED_META_KEY, required ? '1' : '0')
     })
   }
 

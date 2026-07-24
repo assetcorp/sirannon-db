@@ -25,6 +25,11 @@ export async function handleAckMessage(
   const seq = BigInt(msg.seq)
   try {
     await state.database.runCdcMaintenance(writer => upsertDeviceAck(writer, deviceId, seq))
+    for (const stream of state.deviceStreams.values()) {
+      if (stream.deviceId === deviceId) {
+        stream.onAck(seq)
+      }
+    }
     deps.sendResult(conn, id, { acked: true, seq: seq.toString() })
   } catch (err) {
     deps.sendSirannonError(conn, id, err)

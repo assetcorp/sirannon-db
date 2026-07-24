@@ -3,6 +3,25 @@ import { CHANGES_TABLE } from '../internal-tables.js'
 import { assertSafeIdentifier, ensureColumn } from './columns.js'
 import { ensureMetaTable } from './meta-table.js'
 
+const CHANGE_LOG_COLUMNS = 'seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, tx_id, hlc'
+
+export function selectChangesAfterSeqSql(tableName: string): string {
+  return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}" WHERE seq > ? ORDER BY seq ASC LIMIT ?`
+}
+
+export function selectTableChangesInRangeSql(tableName: string): string {
+  return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}"
+          WHERE table_name = ? AND seq > ? AND seq <= ?
+          ORDER BY seq ASC LIMIT ?`
+}
+
+export function selectTablesChangesInRangeSql(tableName: string, tableCount: number): string {
+  const placeholders = Array.from({ length: tableCount }, () => '?').join(', ')
+  return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}"
+          WHERE table_name IN (${placeholders}) AND seq > ? AND seq <= ?
+          ORDER BY seq ASC LIMIT ?`
+}
+
 export async function maxChangeSeq(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<bigint> {
   const stmt = await conn.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${tableName}"`)
   const row = (await stmt.get()) as { seq?: unknown } | undefined

@@ -129,6 +129,7 @@ export class CdcContextRegistry {
         if (events.length > 0) {
           manager.dispatch(events)
         }
+        manager.endBatch(tracker.pollEndedAtTxBoundary)
         consecutiveErrors = 0
 
         tickCount++

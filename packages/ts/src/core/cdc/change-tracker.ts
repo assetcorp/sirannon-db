@@ -9,10 +9,10 @@ import {
   tablePkColumns,
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
-import { decodeTaggedValues } from './encoding.js'
+import { pollChanges, readSinceOneTable, readSinceTables } from './change-log-reader.js'
 import { StatementCache } from './statement-cache.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
-import type { ChangeRow, ChangeTrackerOptions, WatchedTableInfo } from './types.js'
+import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
 const DEFAULT_POLL_BATCH_SIZE = 1000
@@ -29,6 +29,7 @@ export class ChangeTracker {
   private watchedTablesCache: ReadonlySet<string> | null = null
   private readonly stmtCache = new StatementCache()
   private pruneBoundary: bigint | null = null
+  private lastPollAtTxBoundary = true
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
@@ -183,27 +184,21 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.stmtCache.get(
-      conn,
-      'poll',
-      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, hlc
-			 FROM "${this.changesTable}"
-			 WHERE seq > ?
-			 ORDER BY seq ASC
-			 LIMIT ?`,
-    )
+    const result = await pollChanges(conn, this.stmtCache, this.changesTable, this.lastSeq, this.pollBatchSize)
 
-    const rows = (await stmt.all(this.lastSeq.toString(), this.pollBatchSize)) as ChangeRow[]
-
-    if (rows.length === 0) {
+    if (result === null) {
+      this.lastPollAtTxBoundary = true
       return []
     }
 
-    const events = rows.map(row => this.rowToEvent(row))
+    this.lastPollAtTxBoundary = result.atTxBoundary
+    this.lastSeq = result.lastSeq
 
-    this.lastSeq = BigInt(rows[rows.length - 1].seq)
+    return result.events
+  }
 
-    return events
+  get pollEndedAtTxBoundary(): boolean {
+    return this.lastPollAtTxBoundary
   }
 
   /** The highest seq already polled; live subscribers receive events beyond it. */
@@ -230,18 +225,25 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.stmtCache.get(
-      conn,
-      'read_since',
-      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, hlc
-			 FROM "${this.changesTable}"
-			 WHERE table_name = ? AND seq > ? AND seq <= ?
-			 ORDER BY seq ASC
-			 LIMIT ?`,
-    )
+    return readSinceOneTable(conn, this.stmtCache, this.changesTable, table, afterSeq, upToSeq, limit)
+  }
 
-    const rows = (await stmt.all(table, afterSeq.toString(), upToSeq.toString(), limit)) as ChangeRow[]
-    return rows.map(row => this.rowToEvent(row))
+  async readSinceTables(
+    conn: SQLiteConnection,
+    tables: readonly string[],
+    afterSeq: bigint,
+    upToSeq: bigint,
+    limit: number,
+  ): Promise<ChangeEvent[]> {
+    if (tables.length === 0) return []
+    if (!this.changesTableReady) {
+      await this.detectChangesTable(conn)
+      if (!this.changesTableReady) {
+        return []
+      }
+    }
+
+    return readSinceTables(conn, this.stmtCache, this.changesTable, tables, afterSeq, upToSeq, limit)
   }
 
   /** The lowest retained seq, or `null` when the change log is empty. */
@@ -260,19 +262,6 @@ export class ChangeTracker {
       return null
     }
     return typeof seq === 'bigint' ? seq : BigInt(String(seq))
-  }
-
-  private rowToEvent(row: ChangeRow): ChangeEvent {
-    return {
-      type: row.operation.toLowerCase() as 'insert' | 'update' | 'delete',
-      table: row.table_name,
-      row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
-      oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
-      seq: BigInt(row.seq),
-      timestamp: row.changed_at,
-      ...(row.node_id ? { origin: row.node_id } : {}),
-      ...(row.hlc ? { hlc: row.hlc } : {}),
-    }
   }
 
   async advanceToLatest(conn: SQLiteConnection): Promise<void> {

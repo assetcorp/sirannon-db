@@ -664,7 +664,7 @@ const sync = new SyncController(db, {
   url: 'https://api.example.com',
   databaseId: 'app',
   tables: ['tasks'],
-  onChange: event => applyPulledChange(event),
+  onChange: event => refreshView(event.table),
   onResyncRequired: () => warnBeforeWipe(),
   onSnapshotProgress: progress => showProgress(progress),
 })
@@ -674,7 +674,7 @@ await sync.start()
 
 `start()` verifies the server's capabilities, reconciles the migration handshake, opens the live pull, and starts the push loop. Call `sync.pause()` to tear the loops down and keep the cursors, `sync.resume()` to restart them, and `sync.stop()` when you are done. `await sync.status()` returns a `SyncStatus` with the sync state, the pending push count, the last pushed and pulled sequences, whether the push is caught up, and the last error.
 
-The controller pushes the device's own writes and receives the rest, but applying a pulled change to the local database is the application's decision. The controller passes each pulled change to `onChange`, and your code applies it however the app expects, so that the UI and the local rows agree.
+The controller pushes the device's own writes and applies everything it pulls. It takes each server transaction as one group and writes it to the local database in a single transaction, along with the pull cursor, so a device that stops part-way through resumes from the last transaction it committed. Conflicts run through the `resolver` option, which defaults to last-write-wins on the HLC. `onChange` reports each pulled change after that commit, so your view refreshes from rows the device has already stored.
 
 ### Snapshot resync
 

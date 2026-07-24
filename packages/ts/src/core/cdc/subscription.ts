@@ -13,6 +13,7 @@ export class SubscriptionManager {
   private nextId = 1
   private readonly subscriptions = new Map<number, InternalSubscription>()
   private readonly byTable = new Map<string, Set<number>>()
+  private readonly batchEndListeners = new Set<(atTxBoundary: boolean) => void>()
 
   subscribe(
     table: string,
@@ -60,6 +61,19 @@ export class SubscriptionManager {
           /* subscriber errors must not break other subscribers */
         }
       }
+    }
+  }
+
+  addBatchEndListener(listener: (atTxBoundary: boolean) => void): () => void {
+    this.batchEndListeners.add(listener)
+    return () => {
+      this.batchEndListeners.delete(listener)
+    }
+  }
+
+  endBatch(atTxBoundary: boolean): void {
+    for (const listener of this.batchEndListeners) {
+      listener(atTxBoundary)
     }
   }
 

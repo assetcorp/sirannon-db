@@ -8,6 +8,8 @@ import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
+import type { DeviceChangeStream } from './ws-device-stream.js'
+import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
 import type { WSOperationContext } from './ws-operations.js'
 import {
   handleBatchMessage,
@@ -28,6 +30,7 @@ export interface ConnectionState {
   database: Database
   executionTarget: ServerExecutionTarget
   subscriptions: Map<string, Subscription>
+  deviceStreams: Map<string, DeviceChangeStream>
   overloaded: boolean
 }
 
@@ -37,11 +40,13 @@ export class WSHandler {
   private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdc: CdcContextRegistry
+  private readonly maxUnacknowledgedChanges: number
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
     this.sirannon = sirannon
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
+    this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
   }
@@ -85,6 +90,7 @@ export class WSHandler {
       database,
       executionTarget,
       subscriptions: new Map(),
+      deviceStreams: new Map(),
       overloaded: false,
     })
   }
@@ -211,6 +217,7 @@ export class WSHandler {
   private subscribeDeps(): WSSubscribeDeps {
     return {
       cdc: this.cdc,
+      maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
       sendSubscribed: (conn, id, seq, epoch, resync) =>
         this.send(conn, { type: 'subscribed', id, seq, epoch, ...(resync ? { resync: true } : {}) }),
       sendResult: (conn, id, data) => this.send(conn, { type: 'result', id, data }),
@@ -279,6 +286,9 @@ export class WSHandler {
         timestamp: event.timestamp,
         ...(event.hlc !== undefined ? { hlc: event.hlc } : {}),
         ...(event.origin !== undefined ? { origin: event.origin } : {}),
+        ...(event.rowId !== undefined ? { rowId: event.rowId } : {}),
+        ...(event.txId !== undefined ? { txId: event.txId } : {}),
+        ...(event.txEnd === true ? { txEnd: true } : {}),
       },
     })
   }

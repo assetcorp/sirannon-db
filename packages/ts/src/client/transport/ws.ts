@@ -151,8 +151,10 @@ export class WebSocketTransport implements Transport {
       onReset: options?.onReset,
       onSubscribed: options?.onSubscribed,
       deviceId: options?.deviceId,
+      tables: options?.tables,
       schemaVersion: options?.schemaVersion,
       lastSeq: options?.sinceSeq,
+      resumeSeq: options?.getResumeSeq,
       epoch: options?.epoch,
     })
 
@@ -162,6 +164,7 @@ export class WebSocketTransport implements Transport {
         id,
         table,
         ...(filter ? { filter: encodeTaggedValues(filter) as Record<string, unknown> } : {}),
+        ...(options?.tables !== undefined ? { tables: [...options.tables] } : {}),
         ...(options?.sinceSeq !== undefined ? { sinceSeq: options.sinceSeq.toString() } : {}),
         ...(options?.epoch !== undefined ? { epoch: options.epoch } : {}),
         ...(options?.deviceId !== undefined ? { deviceId: options.deviceId } : {}),

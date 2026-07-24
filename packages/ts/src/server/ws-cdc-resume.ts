@@ -77,16 +77,26 @@ export class PrimedSubscription {
     this.bufferBytes = nextBytes
   }
 
-  async replay(
+  replay(
     tracker: ChangeTracker,
     conn: SQLiteConnection,
     table: string,
     filter: Record<string, unknown> | undefined,
     boundary: bigint,
   ): Promise<void> {
+    return this.replayTables(tracker, conn, [table], filter, boundary)
+  }
+
+  async replayTables(
+    tracker: ChangeTracker,
+    conn: SQLiteConnection,
+    tables: readonly string[],
+    filter: Record<string, unknown> | undefined,
+    boundary: bigint,
+  ): Promise<void> {
     let cursor = this.sinceSeq
     while (this.mode === 'priming' && cursor < boundary) {
-      const events = await tracker.readSince(conn, table, cursor, boundary, REPLAY_BATCH_SIZE)
+      const events = await tracker.readSinceTables(conn, tables, cursor, boundary, REPLAY_BATCH_SIZE)
       if (events.length === 0) break
 
       for (const event of events) {

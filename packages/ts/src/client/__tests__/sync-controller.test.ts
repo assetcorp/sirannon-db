@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../core/database.js'
-import { DEVICE_CURSORS_TABLE } from '../../core/internal-tables.js'
+import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../../core/internal-tables.js'
 import { Sirannon } from '../../core/sirannon.js'
 import type { ChangeEvent } from '../../core/types.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
@@ -164,5 +164,101 @@ describe('SyncController pull', () => {
     const pullState = await deviceDb.deviceSync().getPullState()
     expect(pullState).not.toBeNull()
     expect(pullState?.seq).toBe(status.lastPulledSeq)
+  })
+
+  it('writes pulled changes into the local database and commits the cursor with them', async () => {
+    const controller = makeController()
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (21, 'from server')")
+
+    await until(async () => (await deviceDb.query('SELECT body FROM notes WHERE id = 21')).length === 1)
+    const rows = (await deviceDb.query('SELECT body FROM notes WHERE id = 21')) as { body: string }[]
+    expect(rows[0].body).toBe('from server')
+
+    const pullState = await deviceDb.deviceSync().getPullState()
+    expect(pullState?.seq).toBe((await controller.status()).lastPulledSeq)
+  })
+
+  it('applies a server transaction as one local transaction', async () => {
+    const controller = makeController()
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    await serverDb.transaction(async tx => {
+      await tx.execute("INSERT INTO notes (id, body) VALUES (31, 'first')")
+      await tx.execute("INSERT INTO notes (id, body) VALUES (32, 'second')")
+    })
+
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id IN (31, 32)')).length === 2)
+
+    const inspect = await driver.open(join(tempDir, 'device.db'))
+    try {
+      const stmt = await inspect.prepare(
+        `SELECT row_id, tx_id FROM ${CHANGES_TABLE} WHERE table_name = 'notes' AND row_id IN ('31', '32')`,
+      )
+      const changeRows = (await stmt.all()) as { row_id: string; tx_id: string }[]
+      expect(changeRows).toHaveLength(2)
+      expect(changeRows[0].tx_id).toBe(changeRows[1].tx_id)
+      expect(changeRows[0].tx_id).not.toBe('')
+    } finally {
+      await inspect.close()
+    }
+  })
+
+  it('applies a transaction spanning tables as one local transaction', async () => {
+    await serverDb.execute('CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT)')
+    await serverDb.watch('tags')
+    await deviceDb.execute('CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT)')
+    await deviceDb.watch('tags')
+
+    const controller = makeController({ tables: ['notes', 'tags'] })
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    await serverDb.transaction(async tx => {
+      await tx.execute("INSERT INTO notes (id, body) VALUES (51, 'note')")
+      await tx.execute("INSERT INTO tags (id, label) VALUES (51, 'tag')")
+    })
+
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 51')).length === 1)
+    await until(async () => (await deviceDb.query('SELECT id FROM tags WHERE id = 51')).length === 1)
+
+    const inspect = await driver.open(join(tempDir, 'device.db'))
+    try {
+      const stmt = await inspect.prepare(
+        `SELECT table_name, tx_id FROM ${CHANGES_TABLE} WHERE row_id = '51' ORDER BY seq`,
+      )
+      const changeRows = (await stmt.all()) as { table_name: string; tx_id: string }[]
+      expect(changeRows.map(row => row.table_name)).toEqual(['notes', 'tags'])
+      expect(changeRows[0].tx_id).toBe(changeRows[1].tx_id)
+    } finally {
+      await inspect.close()
+    }
+  })
+
+  it('leaves the cursor where it was when applying a pulled change fails', async () => {
+    const controller = makeController({
+      resolver: {
+        resolve: () => {
+          throw new Error('resolver refused the change')
+        },
+      },
+    })
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    await deviceDb.execute("INSERT INTO notes (id, body) VALUES (41, 'device version')")
+    await until(async () => (await serverDb.query('SELECT id FROM notes WHERE id = 41')).length === 1)
+
+    const cursorBefore = (await deviceDb.deviceSync().getPullState())?.seq ?? null
+    await serverDb.execute("UPDATE notes SET body = 'server version' WHERE id = 41")
+
+    await until(async () => (await controller.status()).lastError !== null)
+
+    const rows = (await deviceDb.query('SELECT body FROM notes WHERE id = 41')) as { body: string }[]
+    expect(rows[0].body).toBe('device version')
+    expect((await deviceDb.deviceSync().getPullState())?.seq ?? null).toBe(cursorBefore)
   })
 })

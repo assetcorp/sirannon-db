@@ -1,3 +1,4 @@
+import type { ConflictResolver } from '../core/sync/types.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { SnapshotProgress } from './snapshot-loader.js'
 
@@ -15,6 +16,8 @@ export interface SyncControllerOptions {
   snapshotRetryDelayMs?: number
   maxSnapshotRetryDelayMs?: number
   snapshotPageSize?: number
+  immediateAckAfterChanges?: number
+  resolver?: ConflictResolver | ((table: string) => ConflictResolver)
   onChange?: (event: ChangeEvent) => void
   onResyncRequired?: () => void
   onSnapshotProgress?: (progress: SnapshotProgress) => void

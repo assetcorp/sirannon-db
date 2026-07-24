@@ -42,6 +42,8 @@ export class SyncController {
   private resyncRequired = false
   private resyncTimer: ReturnType<typeof setTimeout> | null = null
   private consecutiveResyncFailures = 0
+  private pullRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private consecutivePullFailures = 0
   private lastError: { code: string; message: string } | null = null
 
   constructor(
@@ -59,12 +61,15 @@ export class SyncController {
         tables: options.tables,
         ackIntervalMs: options.ackIntervalMs ?? DEFAULT_ACK_INTERVAL_MS,
         requestTimeout: options.requestTimeout,
+        immediateAckAfterChanges: options.immediateAckAfterChanges,
+        resolver: options.resolver,
       },
       {
         isRunning: () => this.state === 'running',
         port: () => this.port,
         onChange: options.onChange,
         onResyncRequired: () => this.markResyncRequired(),
+        onApplyFailure: err => this.handleApplyFailure(err),
         recordError: err => this.recordError(err),
       },
     )
@@ -345,6 +350,30 @@ export class SyncController {
     this.lastError = { code, message: err instanceof Error ? err.message : String(err) }
   }
 
+  private handleApplyFailure(err: unknown): void {
+    this.recordError(err)
+    this.pull.teardown()
+    if (this.state !== 'running' || this.pullRetryTimer !== null) return
+
+    const delay = Math.min(this.pushIntervalMs * 2 ** this.consecutivePullFailures, this.maxPushRetryDelayMs)
+    this.consecutivePullFailures += 1
+    this.pullRetryTimer = setTimeout(() => {
+      this.pullRetryTimer = null
+      void this.reopenPull()
+    }, delay)
+    unrefTimer(this.pullRetryTimer)
+  }
+
+  private async reopenPull(): Promise<void> {
+    if (this.state !== 'running' || this.deviceId === null || this.resyncRequired) return
+    try {
+      await this.pull.open(this.deviceId, this.schemaVersion ?? 0)
+      this.consecutivePullFailures = 0
+    } catch (err) {
+      this.handleApplyFailure(err)
+    }
+  }
+
   private teardownStream(): void {
     if (this.pushTimer !== null) {
       clearInterval(this.pushTimer)
@@ -353,6 +382,10 @@ export class SyncController {
     if (this.resyncTimer !== null) {
       clearTimeout(this.resyncTimer)
       this.resyncTimer = null
+    }
+    if (this.pullRetryTimer !== null) {
+      clearTimeout(this.pullRetryTimer)
+      this.pullRetryTimer = null
     }
     this.pull.teardown()
   }

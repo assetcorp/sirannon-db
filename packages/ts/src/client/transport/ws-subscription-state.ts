@@ -9,8 +9,10 @@ export interface ActiveSubscription {
   onReset: (() => void) | undefined
   onSubscribed: ((info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void) | undefined
   deviceId: string | undefined
+  tables: readonly string[] | undefined
   schemaVersion: number | undefined
   lastSeq: bigint | undefined
+  resumeSeq: (() => bigint | undefined) | undefined
   epoch: string | undefined
 }
 
@@ -53,6 +55,9 @@ export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessa
       timestamp: msg.event.timestamp,
       ...(msg.event.hlc !== undefined ? { hlc: msg.event.hlc } : {}),
       ...(msg.event.origin !== undefined ? { origin: msg.event.origin } : {}),
+      ...(msg.event.rowId !== undefined ? { rowId: msg.event.rowId } : {}),
+      ...(msg.event.txId !== undefined ? { txId: msg.event.txId } : {}),
+      ...(msg.event.txEnd === true ? { txEnd: true } : {}),
     }
     if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
       sub.lastSeq = event.seq
@@ -64,12 +69,14 @@ export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessa
 }
 
 export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WSClientMessage {
+  const resumeFrom = sub.resumeSeq === undefined ? sub.lastSeq : sub.resumeSeq()
   return {
     type: 'subscribe',
     id,
     table: sub.table,
+    ...(sub.tables !== undefined ? { tables: [...sub.tables] } : {}),
     ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
-    ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
+    ...(resumeFrom !== undefined ? { sinceSeq: resumeFrom.toString() } : {}),
     ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
     ...(sub.deviceId !== undefined ? { deviceId: sub.deviceId } : {}),
     ...(sub.schemaVersion !== undefined ? { schemaVersion: sub.schemaVersion } : {}),

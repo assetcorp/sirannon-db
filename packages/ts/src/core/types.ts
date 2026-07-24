@@ -53,6 +53,9 @@ export interface ChangeEvent<T = Record<string, unknown>> {
   timestamp: number
   hlc?: string
   origin?: string
+  rowId?: string
+  txId?: string
+  txEnd?: boolean
 }
 
 /** Context passed to query hooks. */

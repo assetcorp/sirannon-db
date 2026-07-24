@@ -114,6 +114,7 @@ export class SirannonServer {
       maxPayloadLength: this.maxBodyBytes,
       cdcRetentionMs: options?.cdcRetentionMs,
       deviceCursorRetentionMs: options?.deviceCursorRetentionMs,
+      maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,
     })
     this.app = uWS.App()
     this.registerRoutes()

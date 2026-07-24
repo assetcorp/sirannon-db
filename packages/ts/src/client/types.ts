@@ -16,6 +16,7 @@ export interface SubscribeOptions {
    */
   onReset?: () => void
   deviceId?: string
+  schemaVersion?: number
   sinceSeq?: bigint
   epoch?: string
   onSubscribed?: (info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void

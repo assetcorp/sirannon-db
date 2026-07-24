@@ -9,6 +9,7 @@ export interface ActiveSubscription {
   onReset: (() => void) | undefined
   onSubscribed: ((info: { seq: bigint | undefined; epoch: string | undefined; resync: boolean }) => void) | undefined
   deviceId: string | undefined
+  schemaVersion: number | undefined
   lastSeq: bigint | undefined
   epoch: string | undefined
 }
@@ -71,5 +72,6 @@ export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WS
     ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
     ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
     ...(sub.deviceId !== undefined ? { deviceId: sub.deviceId } : {}),
+    ...(sub.schemaVersion !== undefined ? { schemaVersion: sub.schemaVersion } : {}),
   }
 }

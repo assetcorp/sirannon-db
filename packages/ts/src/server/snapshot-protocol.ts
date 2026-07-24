@@ -11,6 +11,7 @@ export interface SnapshotManifestResponse {
   epoch: string
   schema: string[]
   tables: { name: string; rowCount: number }[]
+  migrations: { version: number; name: string; checksum: string | null }[]
 }
 
 export interface SnapshotPageRequest {

@@ -152,6 +152,7 @@ describe('SyncController.downloadSnapshot', () => {
     await expect(deviceDb.query('SELECT 1 FROM notes')).rejects.toThrow(/sync snapshot/)
     await expect(deviceDb.execute("INSERT INTO notes (id, body) VALUES (500, 'x')")).rejects.toThrow(/sync snapshot/)
 
+    await port.applySnapshotSchema(['CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT, weight INTEGER, art BLOB)'])
     await port.loadSnapshotPage('notes', [{ id: 1, body: 'server' }])
     await port.endSnapshotLoad(['notes'])
     expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(1)

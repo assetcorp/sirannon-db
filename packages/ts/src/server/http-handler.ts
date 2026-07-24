@@ -1,5 +1,6 @@
 import type { HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
+import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
 import {
@@ -29,7 +30,13 @@ import {
   transactionStatementsValidationError,
 } from './protocol.js'
 import type { ChangesRequest } from './sync-protocol.js'
-import { decodeSyncBatch, syncBatchValidationError, toChangesResponse } from './sync-protocol.js'
+import {
+  decodeSyncBatch,
+  schemaVersionGateRefusal,
+  schemaVersionValidationError,
+  syncBatchValidationError,
+  toChangesResponse,
+} from './sync-protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
 function decodeBatchParams(
@@ -275,8 +282,30 @@ export function handleChanges(sirannon: Sirannon, resolveTarget?: ServerExecutio
       return
     }
 
+    const schemaVersionError = schemaVersionValidationError(body.schemaVersion)
+    if (schemaVersionError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', schemaVersionError)
+      return
+    }
+
     const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
+
+    const appliedMigrations = target.appliedMigrations
+    if (typeof appliedMigrations === 'function') {
+      try {
+        const serverVersion = highestMigrationVersion(await appliedMigrations.call(target))
+        const refusal = schemaVersionGateRefusal(body.schemaVersion ?? 0, serverVersion)
+        if (refusal !== null) {
+          if (abort.aborted) return
+          sendError(res, 409, refusal.code, refusal.message, { serverVersion })
+          return
+        }
+      } catch (err) {
+        sendCaughtError(res, abort, err)
+        return
+      }
+    }
 
     const applyChanges = target.applyChanges
     if (typeof applyChanges !== 'function') {

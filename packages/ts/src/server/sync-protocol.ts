@@ -1,4 +1,5 @@
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
+import { SQLITE_USER_VERSION_MAX } from '../core/migrations/baseline.js'
 import type { ApplyResult, ReplicationBatch, ReplicationChange } from '../core/sync/types.js'
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
 
@@ -9,6 +10,7 @@ const TABLE_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 const OPERATIONS = new Set(['insert', 'update', 'delete'])
 
 export interface ChangesRequest {
+  schemaVersion?: number
   batch: {
     sourceNodeId: string
     batchId: string
@@ -38,6 +40,47 @@ export interface ChangesResponse {
 
 export function isValidDeviceId(candidate: unknown): candidate is string {
   return typeof candidate === 'string' && NODE_ID_RE.test(candidate)
+}
+
+export function isValidSchemaVersion(candidate: unknown): candidate is number {
+  return (
+    typeof candidate === 'number' &&
+    Number.isSafeInteger(candidate) &&
+    candidate >= 0 &&
+    candidate <= SQLITE_USER_VERSION_MAX
+  )
+}
+
+export function schemaVersionValidationError(candidate: unknown): string | null {
+  if (candidate === undefined) return null
+  if (!isValidSchemaVersion(candidate)) {
+    return `"schemaVersion" must be an integer from 0 to ${SQLITE_USER_VERSION_MAX}`
+  }
+  return null
+}
+
+export interface SchemaVersionGateRefusal {
+  code: 'MIGRATION_REQUIRED' | 'SCHEMA_AHEAD'
+  message: string
+}
+
+export function schemaVersionGateRefusal(
+  deviceVersion: number,
+  serverVersion: number,
+): SchemaVersionGateRefusal | null {
+  if (deviceVersion < serverVersion) {
+    return {
+      code: 'MIGRATION_REQUIRED',
+      message: `Device schema version ${deviceVersion} is behind server version ${serverVersion}; apply the missing migrations before syncing`,
+    }
+  }
+  if (deviceVersion > serverVersion) {
+    return {
+      code: 'SCHEMA_AHEAD',
+      message: `Device schema version ${deviceVersion} is ahead of server version ${serverVersion}; the server must be migrated before this device can sync`,
+    }
+  }
+  return null
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

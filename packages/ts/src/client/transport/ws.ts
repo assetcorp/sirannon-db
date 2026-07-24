@@ -151,6 +151,7 @@ export class WebSocketTransport implements Transport {
       onReset: options?.onReset,
       onSubscribed: options?.onSubscribed,
       deviceId: options?.deviceId,
+      schemaVersion: options?.schemaVersion,
       lastSeq: options?.sinceSeq,
       epoch: options?.epoch,
     })
@@ -164,6 +165,7 @@ export class WebSocketTransport implements Transport {
         ...(options?.sinceSeq !== undefined ? { sinceSeq: options.sinceSeq.toString() } : {}),
         ...(options?.epoch !== undefined ? { epoch: options.epoch } : {}),
         ...(options?.deviceId !== undefined ? { deviceId: options.deviceId } : {}),
+        ...(options?.schemaVersion !== undefined ? { schemaVersion: options.schemaVersion } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {

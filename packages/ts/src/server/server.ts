@@ -10,6 +10,7 @@ import type {
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
+import { handleCapabilities } from './capabilities.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
@@ -164,6 +165,7 @@ export class SirannonServer {
       })
     }
 
+    this.app.get('/capabilities', this.withCors(handleCapabilities()))
     this.app.get('/health', this.withCors(handleLiveness()))
     this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
     this.app.get('/db/:id/cluster', this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus)))

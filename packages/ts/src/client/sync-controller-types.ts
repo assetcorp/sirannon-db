@@ -30,6 +30,7 @@ export interface SnapshotOptions {
 export interface SyncStatus {
   state: SyncState
   deviceId: string | null
+  serverCapabilities: string[] | null
   schemaVersion: number | null
   pendingPushCount: number
   lastPushedSeq: bigint

@@ -8,7 +8,13 @@ import { type AppliedChecksumRow, migrationContentChecksum, reconcileMigrationCh
 import { isConcurrentMigrationConflict } from './concurrency.js'
 import { LAZY_DOWN_SQL, type LazyDownMigration } from './lazy-down.js'
 import { mirrorSchemaVersion, syncSchemaVersion } from './schema-version.js'
-import type { AppliedMigrationEntry, Migration, MigrationResult, RollbackResult } from './types.js'
+import {
+  type AppliedMigrationEntry,
+  MIGRATION_NAME_RE,
+  type Migration,
+  type MigrationResult,
+  type RollbackResult,
+} from './types.js'
 
 interface AppliedRow extends AppliedChecksumRow {
   name: string
@@ -220,7 +226,7 @@ export class MigrationRunner {
         )
       }
 
-      if (!/^\w+$/.test(m.name)) {
+      if (!MIGRATION_NAME_RE.test(m.name)) {
         throw new MigrationError(`Invalid migration name: '${m.name}'`, m.version, 'MIGRATION_VALIDATION_ERROR')
       }
 

@@ -56,7 +56,8 @@ describe('spec HLC vectors', () => {
   const vectors = loadVectors<HlcVectors>('hlc.json')
 
   for (const v of vectors.encoding) {
-    it(`HLC encoding round-trips: ${v.expected}`, () => {
+    it(`HLC encoding: ${v.expected}`, () => {
+      expect(HLC.encode(v.input.wallMs, v.input.logical, v.input.nodeId)).toBe(v.expected)
       expect(HLC.decode(v.expected)).toEqual(v.input)
     })
   }

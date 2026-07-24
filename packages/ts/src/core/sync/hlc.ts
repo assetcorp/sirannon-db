@@ -43,7 +43,7 @@ export class HLC {
       }
     }
 
-    return this.encode(this.wallMs, this.logical, this.nodeId)
+    return HLC.encode(this.wallMs, this.logical, this.nodeId)
   }
 
   /** Merge a remote HLC timestamp into the local clock and return the updated value. */
@@ -67,7 +67,7 @@ export class HLC {
       throw new ReplicationError('HLC logical counter overflow')
     }
 
-    return this.encode(this.wallMs, this.logical, this.nodeId)
+    return HLC.encode(this.wallMs, this.logical, this.nodeId)
   }
 
   /** Lexicographic comparison of two encoded HLC strings. Returns -1, 0, or 1. */
@@ -90,7 +90,7 @@ export class HLC {
     }
   }
 
-  private encode(wallMs: number, logical: number, nodeId: string): string {
+  static encode(wallMs: number, logical: number, nodeId: string): string {
     const wallHex = wallMs.toString(16).padStart(12, '0')
     const logicalHex = logical.toString(16).padStart(4, '0')
     return `${wallHex}-${logicalHex}-${nodeId}`

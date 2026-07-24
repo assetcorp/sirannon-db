@@ -1,201 +1,107 @@
 # Sirannon Replication Specification
 
-This document defines the distributed replication system: the
-replication engine, Hybrid Logical Clocks, the replication log,
-primary-replica topology, coordinator-backed failover, conflict
-resolution, peer tracking, first sync, and write forwarding. All
-Sirannon implementations must follow the contracts defined here.
-
----
-
-## Overview
-
-Sirannon replicates changes between nodes using a primary-replica
-model. A single primary node per replication group accepts writes
-and distributes them to replicas as batched change sets. Each
-change carries a Hybrid Logical Clock (HLC) timestamp for causal
-ordering.
+Replication distributes writes between Sirannon nodes. A single primary per
+replication group accepts writes and sends them to replicas as batched change
+sets, each change carrying a Hybrid Logical Clock timestamp for causal ordering.
+This document covers server-to-server replication; end-user device sync is a
+separate feature defined in [08-device-sync.md](08-device-sync.md).
 
 Sirannon supports two authority modes:
 
-- **Static mode**: the primary and replicas are configured outside
-  the replication engine. Static mode has no Sirannon-owned
-  automatic failover.
-- **Coordinator mode**: Sirannon uses a real cluster coordinator
-  to own primary authority, node liveness, safe promotion, client
-  routing metadata, and fail-closed write behaviour.
+- **Static mode.** The primary and replicas are configured outside the engine.
+  Static mode has no Sirannon-owned automatic failover.
+- **Coordinator mode.** A linearisable cluster coordinator owns primary
+  authority, node liveness, safe promotion, client routing metadata, and
+  fail-closed write behaviour.
 
-Conflict resolvers are batch-application primitives. A receiver
-uses one when an incoming data change targets a row that already
-exists locally. They do not provide multi-writer authority or make
-automatic failover safe.
+Conflict resolvers are batch-application primitives; a receiver uses one when an
+incoming change targets a row that already exists locally. They do not grant
+multi-writer authority and do not make failover safe.
 
 ---
 
 ## Hybrid Logical Clock (HLC)
 
-The HLC provides causal ordering across nodes without relying on
-perfectly synchronised wall clocks. Each node maintains its own HLC
-instance.
-
-### HLC State
+Each node keeps one HLC that orders events causally without relying on
+synchronised wall clocks.
 
 ```text
-HLC {
-  wallMs:  number    (wall-clock time in milliseconds)
-  logical: number    (logical counter, 0 to 65535)
-  nodeId:  string    (unique node identifier)
-}
+HLC { wallMs: number, logical: number (0 to 65535), nodeId: string }
 ```
 
-### Encoded Format
-
-An HLC timestamp is encoded as a single string:
+### Encoded Format (Normative)
 
 ```text
 {wallMs_hex}-{logical_hex}-{nodeId}
 ```
 
-- `wallMs_hex`: 12-character zero-padded hexadecimal representation
-  of the wall-clock milliseconds.
-- `logical_hex`: 4-character zero-padded hexadecimal representation
-  of the logical counter.
-- `nodeId`: the node identifier string (may contain hyphens).
+`wallMs_hex` is 12 zero-padded hexadecimal digits of the wall-clock milliseconds;
+`logical_hex` is 4 zero-padded hexadecimal digits of the logical counter; `nodeId`
+is the node identifier, which may contain hyphens. All implementations must
+produce and parse this encoding. The encoded string orders by plain lexicographic
+comparison, which preserves causal order.
 
-This format is **normative**. All implementations must produce
-and parse this exact encoding. The encoded string is directly
-comparable using lexicographic string comparison, which preserves
-causal ordering.
-
-### now()
-
-Generates a new HLC timestamp for a local event.
+### Operations
 
 ```text
-function now():
-  physicalMs = currentTimeMillis()
-  if physicalMs > wallMs:
-    wallMs = physicalMs
-    logical = 0
-  else:
-    logical = logical + 1
-  if logical > MAX_LOGICAL (65535):
-    throw ReplicationError('HLC logical counter overflow')
+now():
+  physical = currentTimeMillis()
+  if physical > wallMs: wallMs = physical; logical = 0
+  else:                 logical = logical + 1
+  if logical > 65535: fail with REPLICATION_ERROR (HLC overflow)
   return encode(wallMs, logical, nodeId)
+
+receive(remote):
+  r = decode(remote)
+  physical = currentTimeMillis()
+  if physical > max(wallMs, r.wallMs): wallMs = physical; logical = 0
+  else if r.wallMs > wallMs:           wallMs = r.wallMs; logical = r.logical + 1
+  else if wallMs > r.wallMs:           logical = logical + 1
+  else:                                logical = max(logical, r.logical) + 1
+  if logical > 65535: fail with REPLICATION_ERROR (HLC overflow)
+  return encode(wallMs, logical, nodeId)
+
+compare(a, b): lexicographic string comparison, returns -1, 0, or 1
+decode(s):     split on '-'; needs at least 3 parts; nodeId is every part from the third onward
 ```
 
-### receive(remote)
-
-Merges a remote HLC timestamp into the local clock. Called when a
-replication batch arrives from another node.
-
-```text
-function receive(remote: string):
-  remoteWallMs, remoteLogical, _ = decode(remote)
-  physicalMs = currentTimeMillis()
-
-  if physicalMs > max(wallMs, remoteWallMs):
-    wallMs = physicalMs
-    logical = 0
-  else if remoteWallMs > wallMs:
-    wallMs = remoteWallMs
-    logical = remoteLogical + 1
-  else if wallMs > remoteWallMs:
-    logical = logical + 1
-  else:
-    logical = max(logical, remoteLogical) + 1
-
-  if logical > MAX_LOGICAL (65535):
-    throw ReplicationError('HLC logical counter overflow')
-  return encode(wallMs, logical, nodeId)
-```
-
-### compare(a, b)
-
-Compares two encoded HLC timestamps. Returns `-1`, `0`, or `1`.
-Because the encoding is lexicographically orderable, this is a
-direct string comparison.
-
-### decode(hlc)
-
-Parses an encoded HLC string into its components. Throws if the
-format is invalid.
-
-### Test Vectors
-
-See [test-vectors/hlc.json](test-vectors/hlc.json) for encoding,
-decoding, and comparison test cases.
+The clock is persisted in `_sirannon_meta` under `hlc_clock`. On start, a node
+seeds its clock from the persisted value and from the highest `hlc` observed in
+the change log and per-column version table, so it never moves backwards. See
+[test-vectors/hlc.json](test-vectors/hlc.json).
 
 ---
 
-## Replication Log
+## Replication Tables
 
-The replication log tracks all local changes and manages the
-application of remote changes.
-
-### Internal Tables
-
-Implementations must create these tables when replication is
-enabled. Table names and schemas are recommended; implementations
-may use different internal storage as long as they produce
-conforming batch messages.
-
-**Change tracking (shared with CDC):**
-
-```sql
-CREATE TABLE _sirannon_changes (
-  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
-  table_name  TEXT NOT NULL,
-  operation   TEXT NOT NULL,
-  row_id      TEXT NOT NULL,
-  changed_at  REAL NOT NULL DEFAULT (unixepoch('subsec')),
-  old_data    TEXT,
-  new_data    TEXT,
-  node_id     TEXT NOT NULL DEFAULT '',
-  tx_id       TEXT NOT NULL DEFAULT '',
-  hlc         TEXT NOT NULL DEFAULT ''
-)
-```
-
-**Peer state:**
+Replication uses the shared change log (`_sirannon_changes`, see
+[02-core.md](02-core.md#change-log)) plus these tables:
 
 ```sql
 CREATE TABLE _sirannon_peer_state (
-  peer_node_id     TEXT PRIMARY KEY,
-  last_acked_seq   INTEGER NOT NULL DEFAULT 0,
+  peer_node_id      TEXT PRIMARY KEY,
+  last_acked_seq    INTEGER NOT NULL DEFAULT 0,
   last_received_hlc TEXT NOT NULL DEFAULT '',
-  updated_at       REAL NOT NULL
-)
-```
+  updated_at        REAL NOT NULL
+);
 
-**Applied changes (deduplication):**
-
-```sql
-CREATE TABLE _sirannon_applied_changes (
+CREATE TABLE _sirannon_applied_changes (   -- idempotency ledger
   source_node_id TEXT NOT NULL,
   source_seq     INTEGER NOT NULL,
   applied_at     REAL NOT NULL,
   PRIMARY KEY (source_node_id, source_seq)
-)
-```
+);
 
-**Per-column HLC versions (for field-merge conflict resolution):**
-
-```sql
-CREATE TABLE _sirannon_column_versions (
+CREATE TABLE _sirannon_column_versions (   -- per-column HLC for field-merge
   table_name  TEXT NOT NULL,
   row_id      TEXT NOT NULL,
   column_name TEXT NOT NULL,
   hlc         TEXT NOT NULL,
   node_id     TEXT NOT NULL,
   PRIMARY KEY (table_name, row_id, column_name)
-)
-```
+);
 
-**Sync state:**
-
-```sql
-CREATE TABLE _sirannon_sync_state (
+CREATE TABLE _sirannon_sync_state (        -- first-sync progress
   table_name     TEXT PRIMARY KEY,
   status         TEXT NOT NULL DEFAULT 'pending',
   row_count      INTEGER NOT NULL DEFAULT 0,
@@ -205,436 +111,101 @@ CREATE TABLE _sirannon_sync_state (
   started_at     REAL,
   completed_at   REAL,
   request_id     TEXT
-)
+);
 ```
 
-### readBatch(afterSeq, batchSize)
-
-Reads local changes from `_sirannon_changes` where
-`seq > afterSeq` and `node_id = localNodeId`, limited to
-`batchSize` rows. Returns a `ReplicationBatch` or `null` if no
-changes are pending.
-
-### applyBatch(batch, resolver)
-
-Applies a remote batch to the local database. For each change:
-
-1. Validate the batch checksum against a recomputed checksum.
-2. Skip already-applied changes (deduplication via
-   `_sirannon_applied_changes`).
-3. For each change, check if the target row exists locally.
-4. If no local row exists, apply the change directly.
-5. If a local row exists, invoke the conflict resolver.
-6. Record the applied change for future deduplication.
-7. Merge the remote HLC into the local clock via `receive()`.
-
-### stampChanges(tx, afterSeq, txId)
-
-Stamps unstamped local changes (those with empty `node_id`) with
-the local node ID, a transaction ID, and a fresh HLC timestamp.
-This is called after each local write to mark changes as belonging
-to this node.
+A node reads its outgoing batch from `_sirannon_changes` where `seq > afterSeq`
+and `node_id = localNodeId`. It records applied remote changes in
+`_sirannon_applied_changes` for deduplication and merges each remote HLC into its
+clock through `receive`.
 
 ---
 
 ## Primary-Replica Topology
 
-Sirannon uses a primary-replica topology where a single primary
-node accepts writes and replicates to read replicas. In static
-mode, the configured role determines write authority. In
-coordinator mode, the current primary and its primary term are
-read from the coordinator.
-
 ```text
-PrimaryReplicaTopology {
-  role: 'primary' | 'replica'
-
-  canWrite(): boolean
-    -> role === 'primary'
-
-  shouldReplicateTo(peerId, peerRole): boolean
-    -> role === 'primary' AND peerRole === 'replica'
-
-  shouldAcceptFrom(peerId, peerRole): boolean
-    -> role === 'replica' AND peerRole === 'primary'
-
-  requiresConflictResolution(): boolean
-    -> false
-}
+canWrite():                 role == 'primary'
+shouldReplicateTo(peer):    role == 'primary' and peer.role == 'replica'
+shouldAcceptFrom(peer):     role == 'replica' and peer.role == 'primary'
 ```
 
-### Rules
-
-- Only the primary can write. Replicas must reject direct writes
-  with error code `TOPOLOGY_ERROR`.
-- Replication flows in one direction: primary to replicas.
-- Replicas only accept batches from a node with role `primary`.
-- In coordinator mode, a node with local role `primary` can write
-  only when it also holds current authority for the replication
-  group and primary term.
-- Under normal operation, no conflicts occur because writes are
-  serialised through a single node.
-
-### Failover
-
-Static mode has no Sirannon-owned automatic failover. If a static
-primary fails, writes remain unavailable until an external system
-or operator promotes another node and reroutes clients.
-
-Coordinator mode makes automatic failover part of the Sirannon
-contract. See [Coordinator-Backed Failover](#coordinator-backed-failover).
-
----
-
-## Coordinator-Backed Failover
-
-Coordinator mode uses a linearizable cluster coordinator to store
-authority metadata and provide watches. The first production
-coordinator backend is etcd. In-memory coordinators are allowed
-only for tests and local development.
-
-The coordinator stores only authority metadata:
-
-- controller lease;
-- node session leases;
-- replication-group configuration;
-- current primary;
-- primary term;
-- in-sync set;
-- compact progress markers.
-
-The coordinator must not store user rows or the full replication
-log.
-
-### Replication Group
-
-A replication group is the set of Sirannon nodes that hold copies
-of the same database and share one primary authority. Primary
-authority, write concern, read concern, promotion, maintenance
-mode, and repair state are scoped to a replication group.
-
-A Sirannon process may host more than one replication group.
-There is no process-wide global primary.
-
-### Stable Node Identity
-
-Each data-bearing node must have a stable persisted identity tied
-to its local database copy. A restarted process that uses the same
-durable database copy must reuse the same node identity. A new
-empty node must receive a new identity and sync from the current
-primary before it can serve safe reads or become promotable.
-
-Coordinator leases represent a running node session. They do not
-replace stable node identity.
-
-### Controller Election
-
-Coordinator mode has one active controller per Sirannon cluster.
-Controller-capable Sirannon processes compete for the controller
-lease in the coordinator. The process that holds the lease makes
-failover decisions. Standby controllers watch the lease and may
-take over when the active controller loses authority.
-
-Dedicated controller-only Sirannon processes are allowed, but the
-default deployment model is that normal controller-capable nodes
-can stand by for the controller role.
-
-### Node Liveness
-
-etcd lease expiry or explicit deregistration is the authoritative
-node-death signal. A transport disconnect is connection state. It
-may make a replica lag or leave the in-sync set, but it must not
-by itself trigger primary promotion.
-
-### Primary Term and Fencing
-
-Each replication group has a monotonically increasing `primaryTerm`.
-Every coordinator-mode write path and replication message must
-carry the current term. Promotion atomically increments the term
-and records the new primary.
-
-Nodes must apply these fencing rules:
-
-- A primary may accept writes only while it can prove current
-  coordinator authority for the group and term.
-- If authority renewal or verification fails, the primary must
-  fail closed for new writes and fail in-flight writes that cannot
-  prove current authority.
-- Replicas must reject batches, sync messages, and forwarded
-  writes from stale terms or non-current primaries.
-- A former primary that observes a newer term must demote and
-  compare its history before rejoining. A safe node rejoins through
-  sync; a node with local-only writes remains faulted.
-
-### In-Sync Set
-
-The in-sync set contains replicas proven current enough for safe
-reads and safe promotion. A live node is not automatically in
-sync.
-
-If a replica falls behind, fails to acknowledge writes in time, or
-reports a storage or sync error, the controller must remove it
-from the in-sync set before acknowledging writes that exclude it.
-The replica can return to the in-sync set only after catch-up
-proves that it is current for the group's required durability
-point.
-
-### Promotion Rules
-
-Automatic promotion may choose only a replica that meets all of
-these conditions:
-
-- its node session lease is alive;
-- it is in the replication group's in-sync set;
-- it has no known storage, checksum, sync, or repair error;
-- the controller can atomically advance the group's primary term
-  and record the replica as current primary.
-
-If no replica meets these conditions, Sirannon must fail closed
-with `NO_SAFE_PRIMARY`. It must not promote an arbitrary live
-replica.
-
-### Minimum Production Shape
-
-Production-safe automatic write failover requires at least three
-voting data-bearing Sirannon nodes in a replication group. One
-node has no failover. Two nodes can replicate, but one survivor
-cannot prove majority authority after the other node is lost.
-
-### Returning Former Primary
-
-A returning former primary must not merge local-only divergent
-writes into the current primary. It must demote and compare its
-local history with the current primary's acknowledged history. If
-the former primary contains local-only writes, the coordinator must
-remove it from the in-sync set, mark it faulted, and keep it out of
-majority-read, write, and promotion paths. An explicit local read
-may inspect quarantined data for operator recovery.
-
-The current contract does not define an automatic divergent-history
-merge or a high-level repair command. An operator must rebuild,
-restore, or otherwise remediate a faulted node before it can rejoin.
-Conflict resolvers used during batch application are not a
-substitute for term fencing or safe promotion.
-
-### Maintenance Mode
-
-Coordinator mode must provide maintenance-mode primitives:
-
-- drain a node;
-- move primary duty away from a node before planned work;
-- remove replicas from safe read and promotion sets when needed;
-- wait for in-flight work to complete or fail cleanly;
-- deregister the running session after the cluster adjusts;
-- rejoin and catch up after restart.
-
-Sirannon does not provision machines, containers, pods, or
-volumes. Deployment infrastructure creates or restarts servers.
-Sirannon detects node registration through the coordinator,
-assigns replication work, validates catch-up, and marks nodes safe
-only after they are current.
-
-### Recovery when no safe primary exists
-
-When Sirannon cannot prove a safe primary, it must fail closed. This
-specification does not define a force-promotion or unsafe-recovery
-API. Operators can restore a backup, rebuild a node, or repair the
-deployment outside Sirannon, then rejoin a node through the normal
-sync path. Sirannon must not weaken promotion rules automatically.
-
-### Rolling Upgrade Compatibility
-
-Nodes must register package, spec, and protocol compatibility
-metadata with the coordinator. The controller must reject
-incompatible major protocol changes. Mixed minor or patch levels
-are allowed only when metadata formats, wire formats, and safety
-semantics remain compatible.
-
-New durable metadata or new failover safety semantics require an
-explicit cluster compatibility gate before activation.
-
-### Coordinator-Mode Conformance Invariants
-
-Coordinator mode does not conform to this specification unless its
-test suite proves these invariants with a real coordinator and
-real multi-node Sirannon groups:
-
-- at most one writable primary per replication group and primary
-  term;
-- no loss of a write acknowledged with production `majority` write
-  concern when only the failed primary is lost;
-- stale primaries reject writes, replication batches, forwarded
-  transactions, and sync messages;
-- minority partitions fail closed for writes;
-- only in-sync replicas are promoted;
-- clients reroute writes to the new primary or receive a clear
-  error;
-- returning former primaries rejoin through sync when their history
-  is safe, while nodes with local-only writes remain quarantined;
-- health state reports write availability, read availability,
-  coordinator status, current primary, primary term, and repair
-  state accurately.
+- Only a primary writes. A replica rejects a direct write with `TOPOLOGY_ERROR`
+  in static mode and `STALE_PRIMARY` in coordinator mode.
+- Replication flows one way, primary to replicas. A replica accepts batches only
+  from a primary.
+- In coordinator mode, a node with local role `primary` may write only while it
+  also holds current authority for the group and primary term.
+- Under normal operation no conflicts occur, because writes serialise through one
+  node.
 
 ---
 
 ## Conflict Resolution
 
-Conflict resolvers determine the outcome when an incoming data
-change targets a row that already exists on the receiving node.
-The batch applier invokes the resolver for this case during normal
-replication and first-sync catch-up.
-
-Conflict resolvers must not be used to make normal automatic
-failover safe. Coordinator-mode failover prevents two writable
-primaries through leases, primary terms, in-sync sets, and
-fail-closed promotion. The replication module does not expose a
-high-level workflow for merging divergent former-primary history.
-
-All three built-in resolvers are **normative**. Every
-implementation must ship them, and they must produce identical
-results for identical inputs across all languages.
-
-### ConflictResolver Interface
+A resolver decides the outcome when an incoming change targets a row that already
+exists on the receiving node. The batch applier invokes it during normal
+replication and first-sync catch-up. All three resolvers are normative and must
+produce identical results across languages. See
+[test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
 
 ```text
-ConflictResolver {
-  resolve(ctx: ConflictContext): ConflictResolution or async ConflictResolution
-}
-
-ConflictContext {
-  table:        string
-  rowId:        string
-  localChange:  ReplicationChange or null
-  remoteChange: ReplicationChange
-  localHlc:     string or null
-  remoteHlc:    string
-}
-
-ConflictResolution {
-  action:      'accept_remote' | 'keep_local' | 'merge'
-  mergedData?: Map<string, any>
-}
+ConflictContext { table, rowId, localChange or null, remoteChange, localHlc or null, remoteHlc }
+ConflictResolution { action: 'accept_remote' | 'keep_local' | 'merge', mergedData? }
 ```
 
-### LWW Resolver (Last-Writer-Wins)
+The local HLC for a row is the highest `hlc` recorded in `_sirannon_column_versions`
+for that row, or, absent any, the highest `hlc` in the change log for it.
 
-The default resolver. Compares HLC timestamps to determine the
-winner.
+**LWW (last-writer-wins), the default.**
 
 ```text
-function resolve(ctx):
-  if ctx.localHlc is null:
-    return { action: 'accept_remote' }
-
-  cmp = HLC.compare(ctx.remoteHlc, ctx.localHlc)
-
-  if cmp > 0:
-    return { action: 'accept_remote' }
-  if cmp < 0:
-    return { action: 'keep_local' }
-
-  // Tie-break: lexicographic nodeId comparison
-  if ctx.remoteChange.nodeId > ctx.localChange.nodeId:
-    return { action: 'accept_remote' }
-
-  return { action: 'keep_local' }
+if localHlc is null: return accept_remote
+c = compare(remoteHlc, localHlc)
+if c > 0: return accept_remote
+if c < 0: return keep_local
+if remoteChange.nodeId > localChange.nodeId: return accept_remote else keep_local
 ```
 
-**Determinism guarantee.** Because HLC comparison is deterministic
-and node ID tie-breaking uses lexicographic ordering, every node
-reaches the same resolution without coordination.
-
-### PrimaryWins Resolver
-
-Unconditional primary authority. Designed for primary-replica
-topologies where the primary's version should always take
-precedence during split-brain recovery.
+**PrimaryWins.** Constructed with the primary node ID.
 
 ```text
-function resolve(ctx):
-  if ctx.remoteChange.nodeId === primaryNodeId:
-    return { action: 'accept_remote' }
-  if ctx.localChange?.nodeId === primaryNodeId:
-    return { action: 'keep_local' }
-  // Neither side is primary; fall back to LWW
-  return lwwResolver.resolve(ctx)
+if remoteChange.nodeId == primaryNodeId: return accept_remote
+if localChange.nodeId == primaryNodeId:  return keep_local
+return LWW(ctx)
 ```
 
-Requires the primary node ID at construction time.
-
-### FieldMerge Resolver
-
-Merges non-overlapping column changes. When two nodes modify
-different columns of the same row, both changes are preserved.
-When both nodes modify the same column, per-column HLC timestamps
-determine the winner.
+**FieldMerge.** Merges non-overlapping column changes; per-column HLC decides an
+overlap.
 
 ```text
-function resolve(ctx):
-  columnVersions = getColumnVersions(ctx.table, ctx.rowId)
-
-  if columnVersions is empty:
-    return lwwResolver.resolve(ctx)
-
-  localData  = ctx.localChange?.newData or {}
-  remoteData = ctx.remoteChange.newData or {}
-  oldData    = ctx.remoteChange.oldData or {}
-
-  localChanged  = columns where localData[col] != oldData[col]
-  remoteChanged = columns where remoteData[col] != oldData[col]
-  overlapping   = intersection of localChanged and remoteChanged
-
-  merged = { ...localData }
-
-  if overlapping is empty:
-    // Non-overlapping: merge both sides
-    for col in remoteChanged:
-      merged[col] = remoteData[col]
-    return { action: 'merge', mergedData: merged }
-
-  // Overlapping: per-column HLC resolution
-  for col in overlapping:
-    colVersion = columnVersions.get(col)
-    cmp = HLC.compare(ctx.remoteHlc, colVersion.hlc)
-    if cmp > 0:
-      merged[col] = remoteData[col]
-    else if cmp === 0 AND ctx.remoteChange.nodeId > colVersion.nodeId:
-      merged[col] = remoteData[col]
-
-  for col in remoteChanged where col not in overlapping:
-    merged[col] = remoteData[col]
-
-  return { action: 'merge', mergedData: merged }
+versions = columnVersions(table, rowId)
+if versions is empty: return LWW(ctx)
+localChanged  = columns where localData[col]  != oldData[col]
+remoteChanged = columns where remoteData[col] != oldData[col]
+overlap       = localChanged intersect remoteChanged
+merged = copy of localData
+for col in remoteChanged not in overlap: merged[col] = remoteData[col]
+for col in overlap:
+  if compare(remoteHlc, versions[col].hlc) > 0: merged[col] = remoteData[col]
+  else if equal and remoteChange.nodeId > versions[col].nodeId: merged[col] = remoteData[col]
+return merge(merged)
 ```
-
-Requires a `getColumnVersions` function at construction time that
-reads from the `_sirannon_column_versions` table.
-
-### Test Vectors
-
-See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json)
-for resolution test cases covering all three resolvers.
 
 ---
 
-## Replication Batch
-
-A batch is the unit of replication between nodes. It contains one
-or more changes with a checksum for integrity verification.
-
-### ReplicationBatch (Normative Wire Format)
+## Batches (Normative Wire Format)
 
 ```text
 ReplicationBatch {
-  sourceNodeId:  string
-  batchId:       string
-  groupId?:      string
-  primaryTerm?:  bigint
-  fromSeq:       bigint
-  toSeq:         bigint
-  hlcRange:      { min: string, max: string }
-  changes:       List<ReplicationChange>
-  checksum:      string
+  sourceNodeId: string
+  batchId:      string          -- "{nodeId}-{fromSeq}-{toSeq}"
+  groupId?:     string
+  primaryTerm?: number
+  fromSeq:      number
+  toSeq:        number
+  hlcRange:     { min: string, max: string }
+  changes:      List<ReplicationChange>
+  checksum:     string
 }
 
 ReplicationChange {
@@ -649,453 +220,302 @@ ReplicationChange {
   oldData:       Map<string, any> or null
   ddlStatement?: string
 }
+
+ReplicationAck { batchId: string, groupId?, primaryTerm?, ackedSeq: number, nodeId: string }
 ```
 
-### Batch ID Format
+A batch holds at most 1000 changes (normative); a sender splits larger sets.
+`groupId` and `primaryTerm` are required in coordinator mode and absent or ignored
+in static mode; a coordinator-mode receiver rejects a batch or acknowledgement
+whose term does not match its current view with `STALE_PRIMARY`.
 
-```text
-{nodeId}-{fromSeq}-{toSeq}
-```
+### Checksum (Normative)
 
-### Checksum
+The checksum is the lowercase SHA-256 hex digest of the canonical form of the
+`changes` list. Canonicalisation is transport-independent, computed over decoded
+native values:
 
-The checksum is the SHA-256 hex digest of the canonical changes
-list. Canonicalisation sorts object keys, preserves array order,
-encodes integers as decimal strings tagged with `__sint`, encodes
-byte arrays as base64 strings tagged with `__blob`, and omits
-undefined object fields. The checksum is independent of protobuf
-wire encoding. Both sender and receiver must calculate and compare
-it. A mismatch must result in error code
-`BATCH_VALIDATION_ERROR`.
+- null is `null`; a boolean is `true` or `false`; a string is its JSON string.
+- An integer or a 64-bit integer is `{"__sint":"<decimal>"}`; a finite
+  non-integer number is its JSON number; a non-finite number is `null`.
+- A byte array is `{"__blob":"<base64>"}`.
+- An array is its elements canonicalised in order.
+- An object lists its keys sorted ascending, skips keys whose value is absent,
+  and renders each as `"key":value`.
 
-### Maximum Batch Size
-
-The maximum number of changes in a single batch must not exceed
-1000. This is a normative cap to prevent memory exhaustion on
-receiving nodes. Senders must split larger change sets into
-multiple batches.
-
-### ReplicationAck (Normative Wire Format)
-
-```text
-ReplicationAck {
-  batchId:      string
-  groupId?:     string
-  primaryTerm?: bigint
-  ackedSeq:     bigint
-  nodeId:       string
-}
-```
-
-`groupId` and `primaryTerm` are required in coordinator mode and
-absent or ignored in static mode. A receiver in coordinator mode
-must reject a batch or acknowledgement whose term does not match
-the receiver's current view of the replication group.
+This canonical form is distinct from the
+[tagged value encoding](02-core.md#tagged-value-encoding-normative) used on the
+JSON wire. Both sender and receiver compute and compare the checksum; a mismatch
+fails with `BATCH_VALIDATION_ERROR`.
 
 ---
 
 ## Replication Engine
 
-The engine orchestrates change batching, transmission, reception,
-and application.
+### Configuration and Defaults
 
-### Configuration
+| Parameter | Default | Normative |
+|-----------|---------|-----------|
+| `batchSize` | 100 | No |
+| `batchIntervalMs` | 100 | No |
+| `maxPendingBatches` | 10 | No |
+| `maxBatchChanges` | 1000 | Yes |
+| `maxClockDriftMs` | 60,000 | Yes |
+| `ackTimeoutMs` | 5,000 | Yes |
+| `initialSync` | true | No |
+| `syncBatchSize` | 10,000 | No |
+| `maxConcurrentSyncs` | 2 | No |
+| `maxSyncDurationMs` | 1,800,000 | No |
+| `maxSyncLagBeforeReady` | 100 | No |
+| `syncAckTimeoutMs` | 30,000 | No |
+| `catchUpDeadlineMs` | 600,000 | No |
+| `coordinator.sessionTtlMs` | 10,000 | Yes |
+| `coordinator.controller` (enabled) | true | Yes |
+| `coordinator.controller.leaseTtlMs` | 10,000 | Yes |
+| `coordinator.controller.tickIntervalMs` | 1,000 | No |
 
-```text
-ReplicationConfig {
-  nodeId?:                  string
-  topology:                 Topology
-  transport:                ReplicationTransport
-  transportConfig?:         TransportConfig
-  writeForwarding?:         boolean
-  conflictResolvers?:       Map<string, ConflictResolver>
-  defaultConflictResolver?: ConflictResolver
-  batchSize?:               number
-  batchIntervalMs?:         number
-  maxPendingBatches?:       number
-  snapshotThreshold?:       number
-  maxClockDriftMs?:         number
-  maxBatchChanges?:         number
-  ackTimeoutMs?:            number
-  onBeforeForwardedQuery?:  function(sql, params)
-  flowControl?:             FlowControlConfig
-  initialSync?:             boolean
-  syncBatchSize?:           number
-  maxConcurrentSyncs?:      number
-  maxSyncDurationMs?:       number
-  maxSyncLagBeforeReady?:   number
-  syncAckTimeoutMs?:        number
-  catchUpDeadlineMs?:       number
-  resumeFromSeq?:           bigint
-  snapshotConnectionFactory?: async -> SQLiteConnection
-  changeTracker?:           ChangeTracker
-  coordinator?:             CoordinatorModeConfig
-}
-
-FlowControlConfig {
-  maxLagSeconds?: number
-  onLagExceeded?: function(peerId, lagMs)
-}
-
-CoordinatorModeConfig {
-  clusterId:                   string
-  groupId:                     string
-  endpoint?:                   string
-  votingDataBearingNodeIds?:   List<string>
-  coordinator:                 ClusterCoordinator
-  sessionTtlMs?:               number
-  controller?:                 boolean or CoordinatorControllerConfig
-  compatibility?:              CoordinatorCompatibilityMetadata
-}
-
-CoordinatorControllerConfig {
-  enabled?:       boolean
-  holderId?:      string
-  leaseTtlMs?:    number
-  tickIntervalMs?: number
-}
-```
-
-Static mode generates `nodeId` when it is omitted. Coordinator mode
-requires a stable, persisted `nodeId` and rejects configuration that
-does not provide one.
-
-`ClusterCoordinator` is supplied as an object rather than selected
-by a mode string. The TypeScript package provides an etcd adapter
-for production and an in-memory adapter for tests. Production etcd
-connections require HTTPS and an authenticated identity. Insecure
-coordinator access requires explicit opt-in and is limited to tests
-and local development.
-
-`snapshotThreshold` is reserved in the current TypeScript API and
-has no runtime effect.
-
-### Default Values
-
-| Parameter | Default | Normative? |
-|-----------|---------|------------|
-| `batchSize` | 100 (recommended) | No |
-| `batchIntervalMs` | 100 ms (recommended) | No |
-| `maxClockDriftMs` | 60,000 ms | Yes |
-| `maxPendingBatches` | 10 (recommended) | No |
-| `maxBatchChanges` | 1,000 | Yes |
-| `ackTimeoutMs` | 5,000 ms | Yes |
-| `initialSync` | `true` | No |
-| `syncBatchSize` | 10,000 (recommended) | No |
-| `maxConcurrentSyncs` | 2 (recommended) | No |
-| `maxSyncDurationMs` | 1,800,000 ms (recommended) | No |
-| `maxSyncLagBeforeReady` | 100 sequences | No |
-| `syncAckTimeoutMs` | 30,000 ms | No |
-| `catchUpDeadlineMs` | 600,000 ms | No |
-| `coordinator.sessionTtlMs` | 10,000 ms | Yes |
-| `coordinator.controller` | enabled | Yes |
-| `coordinator.controller.leaseTtlMs` | 10,000 ms | Yes |
-| `coordinator.controller.tickIntervalMs` | 1,000 ms | No |
+Static mode generates a `nodeId` when none is given; coordinator mode requires a
+stable persisted `nodeId` and rejects a configuration without one. The
+`snapshotThreshold` field is reserved and has no run-time effect.
 
 ### Sender Loop
 
-The sender loop runs every `batchIntervalMs` milliseconds:
-
-1. For each connected peer where `topology.shouldReplicateTo()`
-   returns `true`:
-   a. Check that `pendingBatches < maxPendingBatches`.
-   b. Read a batch from the replication log.
-   c. Send the batch via the transport.
-   d. Record the batch as in-flight.
-2. Expire in-flight batches that exceed `ackTimeoutMs`.
-3. On expiry, reset `lastSentSeq` to retry from the expired
-   batch's starting sequence.
+Every `batchIntervalMs`, for each peer the topology replicates to (in coordinator
+mode, every peer while the node holds authority), the sender expires in-flight
+batches older than `ackTimeoutMs`, skips the peer while `pendingBatches` reaches
+`maxPendingBatches`, reads one batch from the peer's `lastSentSeq`, and sends it.
+An expired batch rewinds `lastSentSeq` to retransmit from the lost batch.
 
 ### Batch Reception
 
-When a batch arrives from a remote node:
-
-1. Verify the sender is an authorised peer via
-   `topology.shouldAcceptFrom()`.
-2. Verify the HLC timestamps are within `maxClockDriftMs` of the
-   local clock.
-3. Apply the batch via the replication log.
-4. Send an acknowledgement back to the sender.
+A batch is accepted only while the node is `ready` or `catching-up`. The receiver
+checks that `sourceNodeId` matches the sending peer, that the peer is known, that
+static-mode topology allows the sender, that the coordinator term is current, that
+`changes` does not exceed `maxBatchChanges`, and that `hlcRange.max` is within
+`maxClockDriftMs` of the local clock. It applies the batch, prunes tables dropped
+by replicated DDL, records the applied sequence, and returns a `ReplicationAck`.
 
 ### Write Concern
 
-After executing a write, the engine can wait for replication
-acknowledgements:
+After a local commit the engine can wait for acknowledgements.
 
-- `local`: Return immediately after local commit.
-- `majority`: Wait for `floor(connectedPeers / 2) + 1` peers to
-  acknowledge. Reject with `WRITE_CONCERN_ERROR` on timeout.
-- `all`: Wait for all connected peers to acknowledge. Reject with
-  `WRITE_CONCERN_ERROR` on timeout or if any peer disconnects.
+- `local`: return after the local commit.
+- `majority`: static mode waits for `floor(connectedPeers / 2) + 1` peers;
+  coordinator mode waits for a majority of the configured voting data-bearing
+  nodes, counting the primary's own durable commit.
+- `all`: static mode waits for all connected peers; coordinator mode waits for all
+  configured voting nodes that are not drained.
 
-When a write does not specify a concern, static mode returns after
-the local commit and coordinator mode uses `majority`.
-
-In coordinator mode, `majority` is calculated from configured
-voting data-bearing nodes in the replication group, including the
-primary's local durable commit. It is not calculated from currently
-connected peers. A successful coordinator-mode `majority` write
-means the write survives automatic primary failover when only the
-failed primary is lost and an eligible in-sync replica remains.
-
-In coordinator mode, `all` means all configured voting data-bearing
-nodes that are not explicitly drained from the group.
-
-`local` writes in coordinator mode are explicit opt-in operations.
-They are not failover-safe and must not be the default for
-production high-availability configurations.
+A concern not met within the timeout (default 5,000 ms) fails with
+`WRITE_CONCERN_ERROR`. When a write states no concern, static mode returns after
+the local commit and coordinator mode uses `majority`. A coordinator-mode
+`majority` write survives automatic failover when only the failed primary is lost
+and an eligible in-sync replica remains; `local` is an explicit opt-in and is not
+failover-safe.
 
 ### Read Concern
 
-Read concern controls which durability point a read may observe.
+Read concern is enforced in coordinator mode; static mode ignores it.
 
-- `local`: Read the selected node's local state. In coordinator
-  mode, this mode can observe data that may later be quarantined
-  after failover and must be selected explicitly.
-- `majority`: Read data that has reached the replication group's
-  majority commit point.
-- `linearizable`: Read from the current primary after it proves
-  live authority for the current primary term.
+- `local`: read local state, which may later be quarantined after failover.
+- `majority`: the node must be in the in-sync set and not draining or repairing.
+- `linearizable`: read from the current primary after it proves live authority for
+  the term.
 
-If the requested read concern cannot be satisfied, the read must
-fail rather than silently returning a weaker result.
+A read concern that cannot be met fails rather than returning a weaker result.
 
 ---
 
 ## Write Forwarding
 
-When `writeForwarding` is enabled on a replica, write operations
-are forwarded to the primary instead of being rejected.
+When `writeForwarding` is enabled on a replica, `execute` and `executeBatch`
+forward to the primary instead of being rejected; `transaction` is never forwarded
+and fails with `TOPOLOGY_ERROR` on a non-writable node. The forwarder targets the
+connected primary (in coordinator mode, the current primary for the group) and
+sends the statements under the current `groupId` and `primaryTerm`; a receiver
+that no longer holds the term rejects with `STALE_PRIMARY`. With no primary
+reachable, forwarding fails with `TOPOLOGY_ERROR`.
 
 ```text
-function execute(sql, params, options):
-  if topology.canWrite():
-    return executeLocally(sql, params, options)
-  if writeForwarding:
-    return forwardStatements([{ sql, params }], options)
-  throw TopologyError('This node cannot accept writes')
-```
-
-The forwarding mechanism finds the connected peer with role
-`primary` and sends a `ForwardedTransaction` message. If no
-primary is connected, throw with error code `TOPOLOGY_ERROR`.
-
-In coordinator mode, forwarding must target the current primary
-recorded for the replication group. The forwarded request must
-carry `groupId` and `primaryTerm`. A receiver must reject a
-forwarded request with `STALE_PRIMARY` when it no longer holds the
-current primary term.
-
-### ForwardedTransaction (Normative Wire Format)
-
-```text
-ForwardedTransaction {
-  statements:  List<{ sql: string, params?: Params }>
-  requestId:   string
-  groupId?:    string
-  primaryTerm?: bigint
-}
-
-ForwardedTransactionResult {
-  results:    List<{ changes: number, lastInsertRowId: number or string }>
-  requestId:  string
-  groupId?:   string
-  primaryTerm?: bigint
-}
+ForwardedTransaction       { statements: List<{ sql, params? }>, requestId, groupId?, primaryTerm? }
+ForwardedTransactionResult { results: List<{ changes, lastInsertRowId }>, requestId, groupId?, primaryTerm? }
 ```
 
 ---
 
 ## Peer Tracking
 
-The peer tracker maintains state for each connected peer.
-
 ```text
 PeerState {
   nodeId:          string
-  groupId?:        string
-  lastAckedSeq:    bigint
-  lastSentSeq:     bigint
+  lastAckedSeq:    number
+  lastSentSeq:     number
   lastReceivedHlc: string
   connected:       boolean
-  inSync?:         boolean
-  draining?:       boolean
-  lastPrimaryTerm?: bigint
   pendingBatches:  number
-  inFlightBatches: List<InFlightBatch>
-}
-
-InFlightBatch {
-  batchId:  string
-  fromSeq:  bigint
-  toSeq:    bigint
-  sentAt:   number
+  inFlightBatches: List<{ batchId, fromSeq, toSeq, sentAt }>
 }
 ```
 
-### Acknowledgment Handling
-
-When an ack arrives, update `lastAckedSeq`, remove the
-acknowledged batch from `inFlightBatches`, and decrement
-`pendingBatches`.
-
-### Batch Timeout
-
-In-flight batches that exceed `ackTimeoutMs` are expired. On
-expiry, reset `lastSentSeq` to `earliestFromSeq - 1` to
-retransmit starting from the lost batch.
+An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the
+acked sequence, and decrements `pendingBatches`. An in-flight batch older than
+`ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so
+retransmission resumes there.
 
 ---
 
 ## First Sync
 
-When a replica joins the cluster for the first time, it performs
-a first sync to receive a full snapshot of the primary's data.
-
-### Sync Phases
+A replica that joins for the first time copies a full snapshot from its source.
 
 ```text
 pending -> syncing -> catching-up -> ready
 ```
 
-1. **pending**: Replica is waiting to find a sync source.
-2. **syncing**: Replica is receiving snapshot data.
-3. **catching-up**: Snapshot is complete; replica is applying
-   changes that accumulated during the sync.
-4. **ready**: Replica is fully synchronised and serving reads.
-
-### Sync Protocol Messages (Normative Wire Format)
+### Sync Messages (Normative Wire Format)
 
 ```text
-SyncRequest {
-  requestId:       string
-  joinerNodeId:    string
-  groupId?:        string
-  primaryTerm?:    bigint
-  completedTables: List<string>
-  supportsStreamVerification?: boolean
-}
-
-SyncBatch {
-  requestId:          string
-  groupId?:           string
-  primaryTerm?:       bigint
-  table:              string
-  batchIndex:         number
-  rows:               List<Map<string, any>>
-  schema?:            List<string>
-  checksum:           string
-  isLastBatchForTable: boolean
-  totalTables?:       number
-}
-
-SyncComplete {
-  requestId:   string
-  groupId?:    string
-  primaryTerm?: bigint
-  snapshotSeq: bigint
-  manifests:   List<SyncTableManifest>
-}
-
-SyncTableManifest {
-  table:        string
-  rowCount:     number
-  pkHash?:      string
-  batchDigest?: string
-}
-
-SyncAck {
-  requestId:   string
-  joinerNodeId: string
-  groupId?:    string
-  primaryTerm?: bigint
-  table:        string
-  batchIndex:   number
-  success:      boolean
-  error?:       string
-}
+SyncRequest { requestId, joinerNodeId, completedTables: List<string>, groupId?, primaryTerm?, supportsStreamVerification? }
+SyncBatch   { requestId, table, batchIndex, rows: List<Map>, schema?: List<string>, checksum,
+              isLastBatchForTable, totalTables?, groupId?, primaryTerm? }
+SyncComplete { requestId, snapshotSeq, manifests: List<SyncTableManifest>, groupId?, primaryTerm? }
+SyncTableManifest { table, rowCount, pkHash?, batchDigest? }
+SyncAck      { requestId, joinerNodeId, table, batchIndex, success, error?, groupId?, primaryTerm? }
 ```
 
-`groupId` and `primaryTerm` are required for sync messages in
-coordinator mode. A replica must restart sync when the primary
-term changes before the sync completes.
+### Flow
 
-The primary sets `totalTables` on the schema batch to the full
-number of tables the joiner will receive once the sync completes,
-counting tables the joiner already finished in a resumed sync.
-The joiner uses this value as the denominator for sync progress
-against `completedTables`. The field is advisory: a primary that
-predates it omits it, and the joiner then reports a total of zero
-until the sync finishes. A joiner must reject a `totalTables`
-that is not a non-negative integer and fall back to zero.
+1. The joiner sends a `SyncRequest`, listing any tables a resumed sync already
+   finished, and always setting `supportsStreamVerification`.
+2. The source holds a read snapshot, records `snapshotSeq` as its current
+   sequence, sends the table schemas as a first batch, then streams each table's
+   rows in `SyncBatch` messages ordered by `batchIndex` from 0. The schema batch
+   carries `totalTables`, the full count the joiner will receive; a source that
+   predates the field omits it and the joiner reports a total of 0.
+3. The joiner acknowledges each batch; an out-of-order `batchIndex` is rejected.
+   On the first batch of a table it clears the target table, then inserts each
+   batch's rows after re-verifying the batch checksum.
+4. The source sends `SyncComplete` with a per-table manifest.
+5. The joiner verifies each manifest, transitions to `catching-up`, and applies
+   changes accumulated since `snapshotSeq`. When its lag falls below
+   `maxSyncLagBeforeReady` (or the catch-up deadline passes), it becomes `ready`.
 
-### Sync Flow
-
-1. Replica sends `SyncRequest` to primary.
-2. Primary sends table schemas as DDL batches.
-3. Primary sends table rows as `SyncBatch` messages, ordered by
-   table and batch index.
-4. Replica acknowledges each batch with `SyncAck`.
-5. Primary sends `SyncComplete` with per-table manifests and the
-   snapshot sequence number.
-6. Replica verifies manifests (row count and either the stream
-   batch digest or the legacy primary key hash).
-7. Replica transitions to `catching-up` and applies changes that
-   accumulated since `snapshotSeq`.
-8. When the replica's lag drops below `maxSyncLagBeforeReady`,
-   it transitions to `ready`.
-
-### Batch Ordering
-
-Sync batches for each table must arrive in order by `batchIndex`,
-starting at 0. The receiver must reject out-of-order batches.
+The source's `maxSyncDurationMs` deadline restarts on every acknowledged batch, so
+the permitted duration scales with the data; the source aborts when no batch is
+acknowledged within it. A term change before completion restarts the sync.
 
 ### Manifest Verification
 
-When the joiner sets `supportsStreamVerification`, the source sends
-`batchDigest`: a chained SHA-256 hex digest over the table's batch
-checksums in batch order, starting from the empty string, with each
-step hashing the previous digest concatenated with the next batch's
-`checksum`. An empty table contributes one empty batch. `rowCount`
-is the total number of rows streamed. Both sides accumulate these
-values during the stream, so neither side re-reads a table.
-
-Without the flag, the source sends the legacy `pkHash`: the SHA-256
-hex digest of all primary key values in primary key order, which
-the joiner recomputes by re-reading the table. A manifest with a
-`batchDigest` is verified by stream digest; otherwise by `pkHash`;
-a manifest with neither fails. On any mismatch the joiner wipes the
-synced tables and restarts the sync.
-
-### Sync Progress Deadline
-
-The source's `maxSyncDurationMs` deadline restarts on every
-acknowledged batch, so the permitted total duration scales with the
-data. The source aborts the session when no batch is acknowledged
-within the deadline.
+With `supportsStreamVerification`, the source sends `batchDigest`: a chained
+SHA-256 hex digest over the table's batch checksums in order, starting from the
+empty string, each step hashing the previous digest concatenated with the next
+batch's `checksum`; an empty table contributes one empty batch. `rowCount` is the
+total rows streamed. Both sides accumulate these during the stream, so neither
+re-reads a table. Without the flag, the source sends `pkHash`, the SHA-256 hex
+digest of all primary key values in primary-key order, which the joiner recomputes
+by re-reading the table. A manifest is verified by `batchDigest` when present,
+otherwise by `pkHash`; a manifest with neither fails. Any mismatch wipes the synced
+tables and restarts the sync.
 
 ---
 
 ## DDL Safety
 
-When applying DDL statements received via replication, the engine
-must validate them against an allowlist:
+DDL received through replication or first sync is validated against an allowlist.
+Allowed statements begin with `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`,
+`DROP TABLE`, `CREATE INDEX`, or `DROP INDEX`. A statement is rejected when it
+contains `;`, contains `AS SELECT`, or references `load_extension`, `ATTACH`,
+`randomblob`, `zeroblob`, `writefile`, `readfile`, or `fts3_tokenizer`. A DDL
+statement that fails validation fails with `BATCH_VALIDATION_ERROR`.
 
-**Allowed prefixes:**
+---
 
-- `CREATE TABLE`
-- `ALTER TABLE ... ADD COLUMN`
-- `DROP TABLE`
-- `CREATE INDEX`
-- `DROP INDEX`
+## Coordinator-Backed Failover
 
-**Rejected patterns:**
+Coordinator mode uses a linearisable coordinator to store authority metadata and
+provide watches. The first production backend is etcd; an in-memory backend is
+allowed for tests and local development. The coordinator stores only authority
+metadata (controller lease, node session leases, group configuration, current
+primary, primary term, in-sync set, and compact progress markers) and never user
+rows or the replication log.
 
-- Statements containing `;` (multiple statements).
-- Statements containing `AS SELECT` (views, CTAs).
-- Statements referencing dangerous functions: `load_extension`,
-  `ATTACH`, `randomblob`, `zeroblob`, `writefile`, `readfile`,
-  `fts3_tokenizer`.
+The coordinator must provide, at least: acquiring and renewing a controller
+lease; registering, reading, and deregistering node session leases; reading,
+writing, and watching replication-group state; comparing and advancing the primary
+term atomically; and admitting a node to the in-sync set only against a proven
+durability point.
 
-Implementations must reject any DDL that does not pass validation
-with error code `BATCH_VALIDATION_ERROR`.
+### Replication Group and Node Identity
+
+A replication group is the set of nodes holding copies of one database and sharing
+one primary authority; a process may host several groups, with no process-wide
+global primary. Each data-bearing node has a stable persisted identity tied to its
+durable database copy: a restarted process reusing that copy reuses its identity,
+while a new empty node receives a new identity and must sync before serving safe
+reads or becoming promotable. Session leases represent a running session and do
+not replace stable identity.
+
+### Term Fencing
+
+Each group has a monotonically increasing `primaryTerm`. Every coordinator-mode
+write path and replication message carries the current term; promotion atomically
+increments the term and records the new primary. A primary may accept writes only
+while it proves current authority, and must fail closed for new writes and for
+in-flight writes that cannot prove it when renewal fails. Replicas reject batches,
+sync messages, and forwarded writes from a stale term or a non-current primary. A
+former primary that observes a newer term demotes and compares its history: a safe
+node rejoins through sync, while a node with local-only writes is removed from the
+in-sync set, marked faulted, and kept out of the read, write, and promotion paths
+until an operator remediates it.
+
+### In-Sync Set and Promotion
+
+The in-sync set holds replicas proven current enough for safe reads and promotion;
+a live node is not automatically in sync. A node is admitted to the set only when
+its applied sequence reaches the group's recorded durability point, and only by
+the current primary. A replica that falls behind, misses acknowledgements, or
+reports a storage or sync error is removed before writes that exclude it are
+acknowledged.
+
+Automatic promotion may choose only a replica whose session lease is alive, that
+is in the in-sync set, that has no storage, checksum, sync, or repair error, and
+whose promotion the controller can record while atomically advancing the term. When
+no replica qualifies, Sirannon fails closed with `NO_SAFE_PRIMARY` and does not
+promote an arbitrary node. Production-safe automatic write failover requires at
+least three voting data-bearing nodes in a group.
+
+### Controller, Liveness, and Maintenance
+
+One active controller per cluster holds the controller lease and makes failover
+decisions; standby controllers watch the lease and take over on loss. Coordinator
+lease expiry or explicit deregistration is the authoritative node-death signal; a
+transport disconnect is connection state that may drop a replica from the in-sync
+set but must not by itself trigger promotion. Coordinator mode provides
+maintenance primitives to drain a node, move primary duty before planned work,
+remove replicas from safe sets, wait for in-flight work, deregister a session, and
+rejoin after restart. Sirannon does not provision infrastructure; it detects
+registration through the coordinator, assigns work, validates catch-up, and marks
+a node safe only once it is current.
+
+### Recovery and Rolling Upgrades
+
+When Sirannon cannot prove a safe primary, it fails closed; there is no
+force-promotion or unsafe-recovery API. An operator restores a backup, rebuilds a
+node, or repairs the deployment, then rejoins through the normal sync path. Nodes
+register package, spec, and protocol compatibility metadata; the controller
+rejects an incompatible major protocol change and allows mixed minor or patch
+levels only while metadata formats, wire formats, and safety semantics stay
+compatible. New durable metadata or new safety semantics require an explicit
+cluster compatibility gate before activation.
+
+### Conformance Invariants
+
+Coordinator mode conforms only when its test suite proves, with a real coordinator
+and real multi-node groups: at most one writable primary per group and term; no
+loss of a `majority`-acknowledged write when only the failed primary is lost; stale
+primaries reject writes, batches, forwarded transactions, and sync messages;
+minority partitions fail closed for writes; only in-sync replicas are promoted;
+clients reroute writes to the new primary or receive a clear error; returning former
+primaries rejoin through sync when safe and are quarantined when they hold
+local-only writes; and health state reports write availability, read availability,
+coordinator status, current primary, primary term, and repair state accurately.

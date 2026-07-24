@@ -1,12 +1,8 @@
 # Sirannon Server Specification
 
-This document defines the HTTP and WebSocket server protocol that
-exposes Sirannon databases over the network. It covers endpoint
-paths, request and response formats, the WebSocket subscription
-protocol, and health endpoints. All Sirannon implementations that
-ship a server module must follow these contracts. The endpoint
-paths and message formats are normative for client-server
-interoperability.
+The server exposes databases over HTTP and WebSocket. Endpoint paths and message
+formats are normative for client-server interoperability. Every implementation
+that ships a server module must follow these contracts.
 
 ---
 
@@ -14,621 +10,277 @@ interoperability.
 
 ```text
 ServerOptions {
-  host?:                  string    (default: '127.0.0.1')
-  port?:                  number    (default: 9876)
-  cors?:                  boolean | CorsOptions
-  maxBodyBytes?:          number    (default: 1_048_576)
-  maxWebSocketBackpressureBytes?: number
-                          (default: max(16_777_216, maxBodyBytes))
-  cdcRetentionMs?:        number    (default: 3_600_000)
-  onRequest?:             OnRequestHook
-  resolveExecutionTarget?: (databaseId: string) ->
-                            ServerExecutionTarget or null
-  getReplicationStatus?:  () -> ReplicationStatusInfo or null
-  getClusterStatus?:      (databaseId: string) -> ClusterStatusInfo or null
+  host?:                          string   (default: '127.0.0.1')
+  port?:                          number   (default: 9876)
+  cors?:                          boolean or CorsOptions
+  maxBodyBytes?:                  number   (default: 1_048_576)
+  maxWebSocketBackpressureBytes?: number   (default: max(16_777_216, maxBodyBytes))
+  cdcRetentionMs?:                number   (default: 3_600_000)
+  deviceCursorRetentionMs?:       number   (default: 2_592_000_000)   -- see 08-device-sync.md
+  onRequest?:                     OnRequestHook
+  resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
+  getReplicationStatus?:          () -> ReplicationStatusInfo or null
+  getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
 }
 
-CorsOptions {
-  origin?:  string or List<string>
-  methods?: List<string>
-  headers?: List<string>
-}
+CorsOptions { origin?: string or List<string>, methods?: List<string>, headers?: List<string> }
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `host` | `127.0.0.1` | Listening address |
-| `port` | `9876` | Listening port |
-| `cors` | disabled | CORS configuration |
-| `maxBodyBytes` | 1,048,576 | Largest accepted HTTP request body and WebSocket message, in bytes |
-| `maxWebSocketBackpressureBytes` | max(16,777,216, `maxBodyBytes`) | Outbound buffer bound per WebSocket connection, in bytes |
-| `cdcRetentionMs` | 3,600,000 | How long change events are retained for WebSocket subscription resumption, in milliseconds |
-
-`maxBodyBytes` must be a positive integer. An implementation whose
-transport stores the limit in a narrower type than the configured
-value must refuse to start with error code `INVALID_MAX_BODY_BYTES`
-rather than enforce a silently truncated limit; the reference
-implementation caps the value at 4,294,967,295 for this reason.
-`maxWebSocketBackpressureBytes` must be a positive integer of at
-least `maxBodyBytes`, so one reply frame always fits, and is
-subject to the same truncation rule with error code
-`INVALID_WS_BACKPRESSURE`.
+`maxBodyBytes` must be a positive integer; a transport that stores the limit in a
+narrower type than the configured value must refuse to start with
+`INVALID_MAX_BODY_BYTES` rather than enforce a truncated limit (the reference caps
+the value at 4,294,967,295). `maxWebSocketBackpressureBytes` must be a positive
+integer of at least `maxBodyBytes`, so one reply frame always fits, and is subject
+to the same rule with `INVALID_WS_BACKPRESSURE`.
 
 ### Request Hook
 
 ```text
-OnRequestHook = (ctx: RequestContext) -> null or RequestDenial or async (null or RequestDenial)
-
-RequestContext {
-  headers:       Map<string, string>
-  method:        string
-  path:          string
-  databaseId?:   string
-  remoteAddress: string
-}
-
-RequestDenial {
-  status:  number
-  code:    string
-  message: string
-}
+OnRequestHook = (ctx: RequestContext) -> (null or RequestDenial) or async (null or RequestDenial)
+RequestContext { headers: Map<string, string>, method, path, databaseId?, remoteAddress }
+RequestDenial  { status: number, code: string, message: string }
 ```
 
-The `onRequest` hook runs before every HTTP and WebSocket request.
-Returning a `RequestDenial` rejects the request with the specified
-status code and error body. Returning `undefined` allows the
-request to proceed.
+The `onRequest` hook runs before every `/db/{id}` request: the HTTP data routes,
+`GET /db/{id}/cluster`, and the WebSocket upgrade. It does not run for
+`GET /health`, `GET /health/ready`, or `GET /capabilities`. Returning a
+`RequestDenial` rejects the request with that status, code, and message. Returning
+nothing allows it. A hook that throws rejects with status 500 and code
+`HOOK_ERROR`. The server has no built-in authentication; authentication is done
+in the hook.
 
-### Replication Execution Target
+### Execution Target
 
 ```text
-TransactionFunction<T> = (tx: Transaction) -> async T
-
 ServerExecutionTarget {
-  query(sql: string, params?: Params, options?: QueryOptions): async -> List<Map<string, any>>
-  execute(sql: string, params?: Params, options?: QueryOptions): async -> ExecuteResult
-  transaction<T>(fn: TransactionFunction<T>, options?: QueryOptions): async -> T
+  query(sql, params?, options?):        async -> List<Map<string, any>>
+  execute(sql, params?, options?):      async -> ExecuteResult
+  transaction(fn, options?):            async -> any
+  executeTransaction?(statements, options?): async -> List<ExecuteResult>
+  bulkLoad?(sql, paramsBatch, options?):     async -> BulkLoadResult
+  queryForWire?(sql, params?, options?):     async -> List<Map<string, any>>
+  applyChanges?(batch):                      async -> ApplyResult      -- see 08-device-sync.md
+  appliedMigrations?():                      async -> List<AppliedMigration>  -- see 08-device-sync.md
 }
 ```
 
-In coordinator mode, the server must send `query`, `execute`, and
-`transaction` requests to the database's replication execution
-target. The target enforces primary authority checks, sync
-readiness checks, forwarding, and production write concern
-semantics. If the resolver returns `null`, the server responds
-with `DATABASE_NOT_FOUND`.
+The server resolves a target for each database through `resolveExecutionTarget`,
+or the registry when none is configured. A resolver returning null fails with
+`DATABASE_NOT_FOUND`. In coordinator mode the target enforces primary authority,
+sync readiness, forwarding, and write concern. Optional members gate features: a
+target without `bulkLoad` fails `/load` with `501 BULK_LOAD_UNSUPPORTED`, and one
+without `applyChanges` fails `/changes` with `501 SYNC_UNSUPPORTED`.
 
 ---
 
-## Value Encoding (Normative)
+## Value Encoding
 
-JSON cannot carry two SQLite value types without loss. JSON
-numbers pass through IEEE 754 doubles, so integers outside the
-range -(2^53 - 1) to 2^53 - 1 lose precision, and JSON has no
-binary type. Both transports therefore wrap these values in
-tagged envelopes wherever a row or a bind parameter crosses the
-wire.
+Query result rows, the `row` and `oldRow` of change events, bind parameters
+(`params`, statement `params`, `paramsBatch`), and subscription `filter` values
+all follow the [tagged value encoding](02-core.md#tagged-value-encoding-normative):
+an integer outside the safe range arrives as `{"__sirannon_int":"<decimal>"}` and a
+BLOB as `{"__sirannon_blob":"<uppercase hex>"}`. A consumer without the client SDK
+decodes `__sirannon_int` into an arbitrary-precision integer and `__sirannon_blob`
+into a byte array. A malformed envelope in bind parameters is rejected rather than
+bound: HTTP responds with `400 INVALID_REQUEST` and WebSocket with
+`INVALID_MESSAGE`. A `filter` value inside an integer envelope matches rows holding
+that exact 64-bit integer.
 
-```text
-IntegerEnvelope {
-  "__sirannon_int": string
-}
-
-BlobEnvelope {
-  "__sirannon_blob": string
-}
-```
-
-The `__sirannon_int` payload is the exact decimal representation
-of the integer: an optional leading minus sign followed by one to
-nineteen digits, with no whitespace, sign prefix `+`, exponent, or
-other characters. The `__sirannon_blob` payload is uppercase
-hexadecimal with two digits per byte; an empty string encodes an
-empty BLOB.
-
-These rules apply to query result rows on both transports, to the
-`row` and `oldRow` fields of change events, to bind parameters in
-`params`, statement `params`, and `paramsBatch` entries, and to
-subscription `filter` values. A filter value inside an
-`IntegerEnvelope` matches rows whose column holds that exact
-64-bit integer.
-
-Producers MUST wrap an integer column value outside the safe
-range in an `IntegerEnvelope` and MUST wrap every BLOB column
-value in a `BlobEnvelope`. Integer values inside the safe range
-are plain JSON numbers. All other value types keep their natural
-JSON representation.
-
-Consumers MUST treat a JSON object with exactly one key named
-`__sirannon_int` or `__sirannon_blob`, whose value is a string,
-as an envelope and decode it to the native value. Envelopes only
-appear in positions where a column value is expected. A stored
-TEXT value that resembles an envelope serialises as a JSON
-string, never as an object, so the two cannot collide.
-
-Servers MUST reject a malformed envelope payload in bind
-parameters instead of binding it: the HTTP transport responds
-with status 400 and code `INVALID_REQUEST`, and the WebSocket
-transport responds with code `INVALID_MESSAGE`.
-
-Consumers without the client SDK decode `__sirannon_int` with an
-arbitrary-precision integer type, for example Python `int` or
-Java `BigInteger`, and decode `__sirannon_blob` into a byte
-array.
+---
 
 ## HTTP Endpoints (Normative)
 
-All database endpoints use the path prefix `/db/{id}` where `{id}`
-is the URL-encoded database identifier.
+Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded
+database identifier.
 
-### Response Types
+| Method + path | Purpose |
+|---------------|---------|
+| `POST /db/{id}/query` | Run a read query |
+| `POST /db/{id}/execute` | Run a write |
+| `POST /db/{id}/transaction` | Run statements atomically |
+| `POST /db/{id}/batch` | Run one statement over many parameter sets, atomically |
+| `POST /db/{id}/load` | Bulk-load rows at relaxed durability |
+| `POST /db/{id}/changes` | Apply a device-sync change batch (see [08-device-sync.md](08-device-sync.md)) |
+| `POST /db/{id}/migrations` | List applied migrations (see [08-device-sync.md](08-device-sync.md)) |
+| `POST /db/{id}/snapshot` | Snapshot manifest (see [08-device-sync.md](08-device-sync.md)) |
+| `POST /db/{id}/snapshot/page` | Snapshot page (see [08-device-sync.md](08-device-sync.md)) |
+| `GET /db/{id}/cluster` | Routing and authority metadata |
+| `GET /capabilities` | Announced server capabilities (see [08-device-sync.md](08-device-sync.md)) |
+| `GET /health`, `GET /health/ready` | Liveness and readiness |
+
+Request and response bodies are JSON. `lastInsertRowId` is a JSON number when it
+fits, otherwise a decimal string.
 
 ```text
-QueryResponse {
-  rows: List<Map<string, any>>
-}
-
-ExecuteResponse {
-  changes:         number
-  lastInsertRowId: number or string
-}
-
-TransactionResponse {
-  results: List<ExecuteResponse>
-}
-
-ClusterStatusInfo {
-  databaseId:         string
-  replicationGroupId?: string
-  role?:             'primary' | 'replica'
-  currentPrimary?:   { nodeId: string, endpoint: string } or null
-  primaryTerm?:      bigint
-  readEndpoints?:    List<{
-    nodeId: string,
-    endpoint: string,
-    readConcerns: List<'local' | 'majority' | 'linearizable'>
-  }>
-  health:            'healthy' | 'degraded' | 'failing_over' |
-                     'unavailable' | 'repairing' | 'syncing'
-}
+POST /db/{id}/query        { sql, params?, readConcern? }        -> { rows: List<Map> }
+POST /db/{id}/execute      { sql, params?, writeConcern? }       -> { changes, lastInsertRowId }
+POST /db/{id}/transaction  { statements: List<{sql, params?}>, writeConcern? } -> { results: List<Execute> }
+POST /db/{id}/batch        { sql, paramsBatch, writeConcern? }   -> { results: List<Execute> }
+POST /db/{id}/load         { sql, paramsBatch, durability?, checkpoint? } -> { rowsLoaded, changes }
 ```
 
-The `lastInsertRowId` field is a number when it fits in a JSON
-number, or a string for large 64-bit values.
-
-Values inside `rows` follow the Value Encoding rules: integers
-beyond the safe range and BLOB columns arrive as tagged
-envelopes.
-
-### POST /db/{id}/query
-
-Executes a read query and returns matching rows.
-
-**Request:**
-
-```json
-{
-  "sql": "SELECT * FROM orders WHERE status = ?",
-  "params": ["pending"]
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "rows": [
-    { "id": 1, "status": "pending", "total": 42.50 }
-  ]
-}
-```
-
-### POST /db/{id}/execute
-
-Executes a write statement.
-
-**Request:**
-
-```json
-{
-  "sql": "INSERT INTO orders (status, total) VALUES (?, ?)",
-  "params": ["pending", 42.50]
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "changes": 1,
-  "lastInsertRowId": 7
-}
-```
-
-### POST /db/{id}/transaction
-
-Executes multiple statements as a single atomic transaction.
-
-**Request:**
-
-```json
-{
-  "statements": [
-    { "sql": "UPDATE accounts SET balance = balance - ? WHERE id = ?", "params": [100, 1] },
-    { "sql": "UPDATE accounts SET balance = balance + ? WHERE id = ?", "params": [100, 2] }
-  ]
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "results": [
-    { "changes": 1, "lastInsertRowId": 0 },
-    { "changes": 1, "lastInsertRowId": 0 }
-  ]
-}
-```
+`readConcern` carries only `{ level }`; `writeConcern` carries `{ level, timeoutMs? }`.
+A transaction needs at least one statement; a batch and a load need at least one
+parameter set.
 
 ### GET /db/{id}/cluster
 
-Returns routing and authority metadata for the database. This
-endpoint is required when coordinator mode is enabled and optional
-in static mode.
+Returns routing metadata; required in coordinator mode, optional in static mode.
+With no `getClusterStatus` configured it fails with `404 NOT_FOUND`.
 
-**Response (200):**
-
-```json
-{
-  "databaseId": "orders",
-  "replicationGroupId": "orders-group",
-  "role": "replica",
-  "currentPrimary": {
-    "nodeId": "node-a",
-    "endpoint": "https://node-a.example.com/db/orders"
-  },
-  "primaryTerm": "42",
-  "readEndpoints": [
-    {
-      "nodeId": "node-b",
-      "endpoint": "https://node-b.example.com/db/orders",
-      "readConcerns": ["local", "majority"]
-    }
-  ],
-  "health": "healthy"
+```text
+ClusterStatusInfo {
+  databaseId:          string
+  replicationGroupId?: string
+  role?:               'primary' | 'replica'
+  currentPrimary?:     { nodeId, endpoint } or null
+  primaryTerm?:        string          -- string, to preserve 64-bit precision
+  readEndpoints?:      List<{ nodeId, endpoint, readConcerns: List<'local'|'majority'|'linearizable'> }>
+  health:              'healthy' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
 }
 ```
 
-`primaryTerm` is encoded as a string to preserve 64-bit precision
-in JSON. If no safe primary exists, `currentPrimary` is `null` and
-the response health is `unavailable`.
+When no safe primary exists, `currentPrimary` is null and `health` is
+`unavailable`.
 
-### Error Response Format
-
-All error responses use this format:
+### Error Responses
 
 ```json
-{
-  "error": {
-    "code": "QUERY_ERROR",
-    "message": "no such table: orders",
-    "details": {}
-  }
-}
+{ "error": { "code": "QUERY_ERROR", "message": "no such table: orders", "details": {} } }
 ```
 
-`details` is optional. Coordinator-mode errors should use it for
-machine-readable routing context, such as `currentPrimary`,
-`primaryTerm`, or `replicationGroupId`.
+`details` is present only when non-empty; coordinator-mode errors use it for
+routing context such as `currentPrimary`, `primaryTerm`, or `serverVersion`.
 
-### HTTP Status Code Mapping
+### HTTP Status Codes
 
-| Status | Error Codes |
-|--------|-------------|
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR` |
-| 403 | `READ_ONLY`, `HOOK_DENIED`, `FORBIDDEN_SQL` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH` |
-| 404 | `DATABASE_NOT_FOUND` |
+| Status | Codes |
+|--------|-------|
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED` |
+| 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD` |
 | 413 | `PAYLOAD_TOO_LARGE` |
-| 500 | `INTERNAL_ERROR`, `WRITER_WORKER_TIMEOUT` |
+| 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED` |
 | 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
 
-A `WRITE_OVERLOADED` response should carry a `Retry-After` header
-derived from the error's retry-after context, because the
-rejection is definite load shedding and the client's correct move
-is to retry after backing off. A `WRITER_WORKER_TIMEOUT` response
-maps to 500 because the outcome is indeterminate; a client must
-not blindly retry a non-idempotent write on it.
+A code not listed defaults to 500. A `WRITE_OVERLOADED` response carries a
+`Retry-After` header in seconds, because the rejection is definite load shedding.
+`WRITER_WORKER_TIMEOUT` maps to 500 because its outcome is indeterminate. A
+coordinator-mode server that is not the current primary either forwards the write
+or rejects with `STALE_PRIMARY`, including the known primary endpoint as
+structured context when it has one.
 
-When a coordinator-mode server receives a write but is not the
-current primary, it must either forward the write to the current
-primary under the current term or reject the request with
-`STALE_PRIMARY`. If it knows the current primary endpoint, the
-error response should include that endpoint as structured context.
-
-### Request Size Limit
-
-The maximum HTTP request body size is `maxBodyBytes` (default
-1,048,576 bytes). Requests exceeding this limit must be rejected
-with status 413 and error code `PAYLOAD_TOO_LARGE`.
-
-### Validation Rules
-
-- Request body must be valid JSON.
-- The `sql` field is required and must be a string.
-- The `params` field must be an object or array if provided.
-- Transaction requests must contain at least one statement.
+A request body over `maxBodyBytes` is rejected with `413 PAYLOAD_TOO_LARGE` before
+it is fully buffered; an empty body fails with `400 EMPTY_BODY` and invalid JSON
+with `400 INVALID_JSON`.
 
 ---
 
 ## WebSocket Protocol (Normative)
 
-WebSocket connections are established at `/db/{id}` where `{id}`
-is the URL-encoded database identifier. The WebSocket protocol
-supports queries, writes, and real-time CDC subscriptions.
+A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC
+subscriptions.
 
-### Client Messages (Inbound)
-
-```text
-WSSubscribeMessage {
-  type:      'subscribe'
-  id:        string
-  table:     string
-  filter?:   Map<string, any>
-  sinceSeq?: string
-  epoch?:    string
-}
-
-WSUnsubscribeMessage {
-  type: 'unsubscribe'
-  id:   string
-}
-
-WSQueryMessage {
-  type:    'query'
-  id:      string
-  sql:     string
-  params?: Map<string, any> or List<any>
-}
-
-WSExecuteMessage {
-  type:    'execute'
-  id:      string
-  sql:     string
-  params?: Map<string, any> or List<any>
-}
-```
-
-### Server Messages (Outbound)
+### Client Messages
 
 ```text
-WSSubscribedMessage {
-  type:    'subscribed'
-  id:      string
-  seq?:    string
-  epoch?:  string
-  resync?: boolean
-}
-
-WSUnsubscribedMessage {
-  type: 'unsubscribed'
-  id:   string
-}
-
-WSChangeMessage {
-  type:  'change'
-  id:    string
-  event: {
-    type:       'insert' | 'update' | 'delete'
-    table:      string
-    row:        Map<string, any>
-    oldRow?:    Map<string, any>
-    seq:        string
-    timestamp:  number
-  }
-}
+{ type: 'subscribe',   id, table, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion? }
+{ type: 'unsubscribe', id }
+{ type: 'ack',         id, deviceId, seq }              -- see 08-device-sync.md
+{ type: 'query',       id, sql, params? }
+{ type: 'execute',     id, sql, params? }
+{ type: 'transaction', id, statements, writeConcern? }
+{ type: 'batch',       id, sql, paramsBatch, writeConcern? }
+{ type: 'load',        id, sql, paramsBatch, durability?, checkpoint? }
 ```
 
-Values inside `row` and `oldRow` follow the Value Encoding
-rules: integers beyond the safe range and BLOB columns arrive as
-tagged envelopes. The client SDK decodes them before invoking
-the subscription callback; consumers without the SDK decode them
-as described under Value Encoding.
+### Server Messages
 
 ```text
-WSResultMessage {
-  type: 'result'
-  id:   string
-  data: QueryResponse | ExecuteResponse
-}
-
-WSErrorMessage {
-  type:  'error'
-  id:    string
-  error: {
-    code:    string
-    message: string
-  }
-}
+{ type: 'subscribed',   id, seq?, epoch?, resync? }
+{ type: 'unsubscribed', id }
+{ type: 'change',       id, event: { type, table, row, oldRow?, seq, timestamp, hlc?, origin? } }
+{ type: 'result',       id, data }     -- data is a query, execute, transaction, batch, load, or ack response
+{ type: 'error',        id, error: { code, message } }
 ```
 
-### Message Routing
+Every client message carries a string `id` the server echoes to correlate the
+reply; for a subscription the `id` is the subscription identifier. `sinceSeq`,
+`seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe
+integer range survive JSON. Change-event `row` and `oldRow` follow the value
+encoding; `hlc` and `origin` carry the change's timestamp and origin node when
+stamped. The `deviceId`, `schemaVersion`, and `ack` fields drive device sync (see
+[08-device-sync.md](08-device-sync.md)).
 
-All client messages must include a string `id` field. The server
-uses this `id` to correlate responses with requests. For
-subscriptions, the `id` becomes the subscription identifier used
-in subsequent change events and unsubscribe requests.
+A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE`
+when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for
+an unrecognised type. A subscription needs a string `table`; a duplicate `id`
+fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an
+in-memory database with `CDC_UNSUPPORTED`.
 
 ### Subscription Resumption
 
-A subscription resumes across reconnects through the `sinceSeq`
-and `epoch` fields. Both `sinceSeq` and `seq` are decimal
-strings so sequence numbers beyond 2^53 - 1 survive JSON.
+`sinceSeq` carries the highest `seq` the client has processed. When present, the
+server replays every retained change with a greater `seq` before delivering live
+events. `epoch` identifies the sequence space a cursor came from; the server
+reports it on `subscribed`, and a cursor presented with a different epoch forces a
+resync instead of a foreign replay. The `subscribed` message's `seq` is the
+sequence the subscription is live from; a client that has seen no change adopts it
+as its resume cursor. The server sets `resync: true` when `sinceSeq` fell below
+the retained history or arrived with a foreign epoch; the subscription still starts
+live, and the client must treat its prior state as stale and re-read the table.
 
-`sinceSeq` carries the highest `seq` the client has already
-processed. When present, the server replays every retained
-change with a greater `seq` before delivering live events, so a
-reconnecting subscriber receives the changes it missed.
+### Backpressure and Limits
 
-`epoch` identifies the sequence space a cursor was issued from.
-The server reports it on the `subscribed` message; the client
-stores it and echoes it when resuming. A cursor presented with a
-different epoch belongs to another database, so the server
-forces a resync instead of replaying unrelated rows against it.
-
-The `seq` field of the `subscribed` message is the sequence
-number the subscription is live from. A client that has not yet
-received any change adopts it as its resume cursor, so a
-reconnect during an idle spell still replays what it missed.
-
-The server sets `resync: true` when the requested `sinceSeq`
-fell below the retained history or arrived with a foreign epoch,
-so the gap cannot be replayed. The subscription still starts
-live; the client must treat its prior state as stale and re-read
-the table.
-
-### WebSocket Error Codes
-
-| Code | Description |
-|------|-------------|
-| `INVALID_JSON` | Message failed JSON parsing |
-| `INVALID_MESSAGE` | Missing required fields or wrong types |
-| `UNKNOWN_TYPE` | Unrecognised message type |
-| `DATABASE_NOT_FOUND` | Database does not exist |
-| `DATABASE_CLOSED` | Database is closed |
-| `HANDLER_CLOSED` | Server is shutting down |
-| `PAYLOAD_TOO_LARGE` | Message exceeds maximum payload size |
-| `DUPLICATE_SUBSCRIPTION` | Subscription ID already in use |
-| `SUBSCRIPTION_NOT_FOUND` | Unsubscribe target does not exist |
-| `READ_ONLY` | Write or subscription on read-only database |
-| `CDC_UNSUPPORTED` | Subscriptions require file-based databases |
-| `STALE_PRIMARY` | Request reached a stale or non-primary node |
-| `COORDINATOR_UNAVAILABLE` | Coordinator authority cannot be proven |
-| `AUTHORITY_LOST` | Node lost authority while handling the request |
-| `NO_SAFE_PRIMARY` | No safe primary exists for the replication group |
-| `READ_CONCERN_ERROR` | Requested read concern cannot be satisfied |
-| `NODE_NOT_IN_SYNC` | Node is not safe for the requested read or promotion |
-| `NODE_DRAINING` | Node is in maintenance drain mode |
-| `WRITE_OVERLOADED` | Write shed before starting; definite and safe to retry |
-| `WRITER_WORKER_TIMEOUT` | Write outcome unknown past the writer deadline's grace window |
-
-### Payload Size
-
-The maximum inbound WebSocket message size is `maxBodyBytes`
-(default 1,048,576 bytes); one option governs both transports. A
-message over the limit must be rejected with error code
-`PAYLOAD_TOO_LARGE`.
-
-### Outbound Backpressure
-
-A subscriber that reads more slowly than its change events arrive
-would otherwise buffer without bound inside the server. The server
-must bound each connection's outbound buffer by
-`maxWebSocketBackpressureBytes`. When a send would push a
-connection's buffered outbound data past that bound, the server
-must close the connection with close code 4290 rather than drop
-frames silently or keep buffering; a silently dropped reply or
-change event is worse than a lost connection, because the client
-cannot detect it. A client that receives close code 4290 should
-reconnect and resume its subscriptions through
-[Subscription Resumption](#subscription-resumption), which replays
-the events it missed.
-
-### Idle Timeout
-
-The recommended WebSocket idle timeout is 120 seconds with
-automatic ping/pong keepalives.
+An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The
+server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`;
+when a send would push the buffer past the bound, the server closes the connection
+with close code 4290 rather than drop a frame silently, because a dropped reply or
+change event the client cannot detect is worse than a lost connection. A client
+that receives 4290 should reconnect and resume through subscription resumption. The
+server also closes with 1013 while shutting down, and 1008 when the database is
+not found, closed, or the target resolves to none. The recommended idle timeout is
+120 seconds with automatic ping/pong.
 
 ---
 
 ## Health Endpoints
 
-### GET /health
+`GET /health` returns `{ "status": "ok" }` while the process runs.
 
-Liveness probe. Returns 200 if the server process is running.
-
-**Response:**
-
-```json
-{
-  "status": "ok"
-}
-```
-
-### GET /health/ready
-
-Readiness probe. Returns database status and optional replication
-and cluster information.
-
-**Response:**
+`GET /health/ready` returns database status and, when `getReplicationStatus` is
+configured, replication status:
 
 ```json
 {
   "status": "ok",
-  "databases": [
-    { "id": "orders", "readOnly": false, "closed": false }
-  ],
+  "databases": [ { "id": "orders", "readOnly": false, "closed": false } ],
   "replication": {
-    "role": "primary",
-    "writeForwarding": false,
-    "peers": 2,
-    "localSeq": "1547",
-    "replicationGroupId": "orders-group",
-    "primaryTerm": "42",
-    "currentPrimary": "node-a",
-    "coordinator": {
-      "connected": true,
-      "authority": true
-    },
-    "controller": {
-      "state": "standby"
-    },
-    "inSyncReplicas": ["node-b", "node-c"],
-    "laggingReplicas": [],
-    "syncState": "ready",
-    "readAvailability": "available",
-    "writeAvailability": "available"
+    "role": "primary", "writeForwarding": false, "peers": 2, "localSeq": "1547",
+    "replicationGroupId": "orders-group", "primaryTerm": "42", "currentPrimary": "node-a",
+    "coordinator": { "connected": true, "authority": true },
+    "controller": { "state": "standby" },
+    "inSyncReplicas": ["node-b", "node-c"], "laggingReplicas": [],
+    "syncState": "ready", "readAvailability": "available", "writeAvailability": "available"
   }
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `status` | `'ok'`, `'degraded'`, `'failing_over'`, `'unavailable'`, `'repairing'`, or `'syncing'` |
-| `databases` | Array of database status entries |
-| `replication` | Present only when `getReplicationStatus` is configured |
-| `localSeq` | String representation of the bigint sequence number |
-
-Coordinator-mode readiness must distinguish these states:
-
-- `ok`: the node can serve its advertised read and write roles;
-- `degraded`: the node can serve traffic, but one or more peers
-  are lagging, draining, or unavailable;
-- `failing_over`: the controller is moving primary authority or
-  clients must refresh routing;
-- `unavailable`: the node cannot satisfy its advertised read or
-  write role;
-- `repairing`: the node is quarantining divergent writes or
-  waiting for operator recovery;
-- `syncing`: the node is copying data or catching up before it can
-  serve its advertised role.
+`localSeq` and `primaryTerm` are stringified. The readiness `status` is `ok`, or
+`degraded` when a database is closed or a replica is lagging, `syncing` while a node
+copies or catches up, `failing_over` while the controller is active and writes are
+unavailable, and `unavailable` when both read and write are unavailable.
 
 ---
 
 ## CORS
 
-When CORS is enabled, the server must handle preflight `OPTIONS`
-requests and attach the appropriate headers to responses.
-
-### Default CORS Headers
-
-```text
-Access-Control-Allow-Origin:  * (or specific origins from config)
-Access-Control-Allow-Methods: GET, POST, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization
-Access-Control-Max-Age:       86400
-```
-
-When the origin list is not `*`, the `Vary: Origin` header must be
-included.
+When CORS is enabled the server answers preflight `OPTIONS` requests with
+`204 No Content` and the allow headers, and attaches
+`Access-Control-Allow-Origin` to responses. Defaults are origin `*`, methods
+`GET, POST, OPTIONS`, headers `Content-Type, Authorization`, and
+`Access-Control-Max-Age: 86400`. A string origin is echoed; a list origin is
+echoed only when the request origin is listed. When the resolved origin is not
+`*`, the response includes `Vary: Origin`.

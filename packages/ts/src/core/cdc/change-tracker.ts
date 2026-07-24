@@ -1,11 +1,16 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError, ForbiddenSqlError } from '../errors.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
-import { ensureChangesTable } from '../system-catalog/index.js'
+import {
+  ensureChangesTable,
+  maxChangeSeq,
+  tableColumnNames,
+  tableExists,
+  tablePkColumns,
+} from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
 import { decodeTaggedValues } from './encoding.js'
 import { StatementCache } from './statement-cache.js'
-import { tableColumnNames, tablePkColumns } from './table-info.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeRow, ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
@@ -278,14 +283,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.stmtCache.get(conn, 'latest_seq', `SELECT MAX(seq) AS seq FROM "${this.changesTable}"`)
-    const row = (await stmt.get()) as { seq?: unknown } | undefined
-    const seq = row?.seq
-    if (seq === undefined || seq === null) {
-      return
-    }
-
-    const latestSeq = typeof seq === 'bigint' ? seq : BigInt(String(seq))
+    const latestSeq = await maxChangeSeq(conn, this.changesTable)
     if (latestSeq > this.lastSeq) {
       this.lastSeq = latestSeq
     }
@@ -359,9 +357,7 @@ export class ChangeTracker {
   }
 
   private async detectChangesTable(conn: SQLiteConnection): Promise<void> {
-    const stmt = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
-    const row = await stmt.get(this.changesTable)
-    if (row) {
+    if (await tableExists(conn, this.changesTable)) {
       this.changesTableReady = true
     }
   }

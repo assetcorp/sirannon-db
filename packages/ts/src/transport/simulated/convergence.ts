@@ -1,5 +1,6 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { canonicaliseForChecksum } from '../../core/sync/canonicalise.js'
+import { tableColumnNames, tablePkColumns } from '../../core/system-catalog/index.js'
 
 export interface NodeSnapshot {
   nodeId: string
@@ -32,20 +33,13 @@ export interface ConvergenceResult {
 }
 
 async function getTableColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
-  const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
-  const info = (await stmt.all()) as Array<{ name: string; pk: number }>
-  return info.map(col => col.name)
+  return tableColumnNames(conn, table)
 }
 
 async function getPrimaryKeyColumns(conn: SQLiteConnection, table: string): Promise<string[]> {
-  const stmt = await conn.prepare(`PRAGMA table_info("${table}")`)
-  const info = (await stmt.all()) as Array<{ name: string; pk: number }>
-  const pkCols = info
-    .filter(col => col.pk > 0)
-    .sort((a, b) => a.pk - b.pk)
-    .map(col => col.name)
+  const pkCols = await tablePkColumns(conn, table)
   if (pkCols.length === 0) {
-    return info.map(col => col.name)
+    return tableColumnNames(conn, table)
   }
   return pkCols
 }

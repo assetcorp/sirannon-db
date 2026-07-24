@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { APPLIED_CHANGES_TABLE } from '../../core/internal-tables.js'
+import { prepareAppliedChangesInsert, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
@@ -124,7 +124,7 @@ export class SyncJoiner {
               throw new SyncError(`Unsafe DDL in schema batch: ${ddl}`)
             }
           }
-          await engine.writerConn.exec('PRAGMA foreign_keys = OFF')
+          await setForeignKeysEnabled(engine.writerConn, false)
           for (const ddl of batch.schema) {
             let saferDdl = ddl.replace(/^\s*CREATE\s+TABLE\b/i, 'CREATE TABLE IF NOT EXISTS')
             saferDdl = saferDdl.replace(/^\s*CREATE\s+INDEX\b/i, 'CREATE INDEX IF NOT EXISTS')
@@ -238,7 +238,7 @@ export class SyncJoiner {
         }
       }
 
-      await engine.writerConn.exec('PRAGMA foreign_keys = ON')
+      await setForeignKeysEnabled(engine.writerConn, true)
 
       for (const manifest of complete.manifests) {
         const valid =
@@ -264,9 +264,7 @@ export class SyncJoiner {
 
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 
-      const recordStmt = await engine.writerConn.prepare(
-        `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
-      )
+      const recordStmt = await prepareAppliedChangesInsert(engine.writerConn)
       await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
 
       const previousApplied = engine.appliedSeqByPeer.get(fromPeerId) ?? 0n
@@ -282,7 +280,7 @@ export class SyncJoiner {
       this.startCatchUpCheck()
     } catch {
       try {
-        await engine.writerConn.exec('PRAGMA foreign_keys = ON')
+        await setForeignKeysEnabled(engine.writerConn, true)
       } catch (pragmaErr: unknown) {
         const wrappedErr = pragmaErr instanceof Error ? pragmaErr : new Error(String(pragmaErr))
         engine.emitError({ error: wrappedErr, operation: 'sync-complete-pragma-restore', recoverable: false })

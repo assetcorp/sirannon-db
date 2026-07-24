@@ -1,7 +1,7 @@
 import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { ReplicationBatch } from '../core/sync/types.js'
-import type { ErrorResponse } from '../server/protocol.js'
 import type { ChangesRequest, ChangesResponse } from '../server/sync-protocol.js'
+import { postJson } from './http-json.js'
 import { RemoteError } from './types.js'
 
 export function encodeSyncBatch(batch: ReplicationBatch): ChangesRequest['batch'] {
@@ -31,38 +31,11 @@ export async function pushSyncBatch(
   databaseId: string,
   batch: ReplicationBatch,
   headers?: Record<string, string>,
+  timeoutMs?: number,
 ): Promise<ChangesResponse> {
   const url = `${baseUrl}/db/${encodeURIComponent(databaseId)}/changes`
   const body: ChangesRequest = { batch: encodeSyncBatch(batch) }
-
-  let response: Response
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-    })
-  } catch (err) {
-    throw new RemoteError(
-      'CONNECTION_ERROR',
-      `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
-
-  let data: unknown
-  try {
-    data = await response.json()
-  } catch {
-    throw new RemoteError('INVALID_RESPONSE', `Server returned non-JSON response (HTTP ${response.status})`)
-  }
-
-  if (!response.ok) {
-    const errorData = data as ErrorResponse
-    throw new RemoteError(
-      errorData.error?.code ?? 'UNKNOWN_ERROR',
-      errorData.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
+  const data = await postJson(url, body, headers, timeoutMs)
 
   const result = data as Partial<ChangesResponse>
   if (

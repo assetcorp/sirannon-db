@@ -1,6 +1,6 @@
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../core/internal-tables.js'
-import { ensureDeviceCursorsTable } from '../core/system-catalog/index.js'
+import { ensureDeviceCursorsTable, maxChangeSeq, tableExists } from '../core/system-catalog/index.js'
 
 export const DEFAULT_DEVICE_CURSOR_RETENTION_MS = 30 * 24 * 3_600_000
 
@@ -23,11 +23,6 @@ export async function evictStaleDeviceCursors(conn: SQLiteConnection, retentionM
   return result.changes
 }
 
-async function tableExists(conn: SQLiteConnection, table: string): Promise<boolean> {
-  const stmt = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-  return (await stmt.get(table)) !== undefined
-}
-
 export async function effectiveMinDeviceCursor(
   conn: SQLiteConnection,
   retentionMs: number,
@@ -44,9 +39,7 @@ export async function effectiveMinDeviceCursor(
   const nextForeignStmt = await conn.prepare(
     `SELECT MIN(seq) AS seq FROM "${changesTable}" WHERE seq > ? AND node_id != ?`,
   )
-  const maxSeqStmt = await conn.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${changesTable}"`)
-  const maxRow = (await maxSeqStmt.get()) as { seq: number | bigint }
-  const maxSeq = BigInt(maxRow.seq)
+  const maxSeq = await maxChangeSeq(conn, changesTable)
 
   let min: bigint | null = null
   for (const cursor of cursors) {

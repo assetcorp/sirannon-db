@@ -2,6 +2,7 @@ import type { Database } from '../core/database.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import type { ChangeEvent } from '../core/types.js'
 import { toBaseUrl, toWsUrl } from './endpoint-urls.js'
+import { unrefTimer } from './http-json.js'
 import type { SnapshotProgress } from './snapshot-loader.js'
 import { downloadDatabaseSnapshot } from './snapshot-loader.js'
 import { pushSyncBatch } from './sync-push.js'
@@ -12,6 +13,8 @@ const DEFAULT_BATCH_SIZE = 100
 const DEFAULT_PUSH_INTERVAL_MS = 1_000
 const DEFAULT_ACK_INTERVAL_MS = 2_000
 const DEFAULT_MAX_PUSH_RETRY_DELAY_MS = 30_000
+const DEFAULT_SNAPSHOT_RETRY_DELAY_MS = 5_000
+const DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS = 300_000
 
 export interface SyncControllerOptions {
   url: string
@@ -23,8 +26,13 @@ export interface SyncControllerOptions {
   ackIntervalMs?: number
   maxPushRetryDelayMs?: number
   requestTimeout?: number
+  autoResync?: boolean
+  snapshotRetryDelayMs?: number
+  maxSnapshotRetryDelayMs?: number
+  snapshotPageSize?: number
   onChange?: (event: ChangeEvent) => void
   onResyncRequired?: () => void
+  onSnapshotProgress?: (progress: SnapshotProgress) => void
 }
 
 export type SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapshotting'
@@ -43,11 +51,6 @@ export interface SyncStatus {
   pushCaughtUp: boolean
   resyncRequired: boolean
   lastError: { code: string; message: string } | null
-}
-
-function unref(timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>): void {
-  const unrefable = timer as unknown as { unref?: () => void }
-  unrefable.unref?.()
 }
 
 export class SyncController {
@@ -74,6 +77,8 @@ export class SyncController {
   private nextPushAttemptAt = 0
   private pushCaughtUp = false
   private resyncRequired = false
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null
+  private consecutiveResyncFailures = 0
   private lastError: { code: string; message: string } | null = null
 
   constructor(
@@ -113,8 +118,11 @@ export class SyncController {
     this.pushTimer = setInterval(() => {
       void this.drainOutbox()
     }, this.pushIntervalMs)
-    unref(this.pushTimer)
+    unrefTimer(this.pushTimer)
     void this.drainOutbox()
+    if (this.resyncRequired) {
+      this.scheduleAutoResync()
+    }
   }
 
   pause(): void {
@@ -184,6 +192,7 @@ export class SyncController {
       if (info.seq !== undefined) {
         this.pullSeq = info.seq
       }
+      this.scheduleAutoResync()
     } else if (this.pullSeq === null && info.seq !== undefined) {
       this.pullSeq = info.seq
     }
@@ -205,6 +214,36 @@ export class SyncController {
     try {
       this.options.onResyncRequired?.()
     } catch {}
+    this.scheduleAutoResync()
+  }
+
+  private scheduleAutoResync(): void {
+    if (this.options.autoResync === false) return
+    if (this.resyncTimer !== null || this.state === 'snapshotting') return
+    const baseDelay = this.options.snapshotRetryDelayMs ?? DEFAULT_SNAPSHOT_RETRY_DELAY_MS
+    const maxDelay = this.options.maxSnapshotRetryDelayMs ?? DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS
+    const delay =
+      this.consecutiveResyncFailures === 0
+        ? 0
+        : Math.min(baseDelay * 2 ** (this.consecutiveResyncFailures - 1), maxDelay)
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = null
+      void this.attemptAutoResync()
+    }, delay)
+    unrefTimer(this.resyncTimer)
+  }
+
+  private async attemptAutoResync(): Promise<void> {
+    if (this.state !== 'running') return
+    if (!this.resyncRequired) return
+    try {
+      await this.downloadSnapshot({
+        pageSize: this.options.snapshotPageSize,
+        onProgress: this.options.onSnapshotProgress,
+      })
+    } catch {
+      this.scheduleAutoResync()
+    }
   }
 
   private scheduleAckFlush(): void {
@@ -213,7 +252,7 @@ export class SyncController {
       this.ackTimer = null
       void this.flushAck()
     }, this.ackIntervalMs)
-    unref(this.ackTimer)
+    unrefTimer(this.ackTimer)
   }
 
   private async flushAck(): Promise<void> {
@@ -243,6 +282,9 @@ export class SyncController {
   }
 
   async downloadSnapshot(options?: SnapshotOptions): Promise<void> {
+    if (this.state === 'snapshotting') {
+      throw new Error('A snapshot download is already in progress')
+    }
     if (this.state !== 'running' && this.state !== 'paused') {
       throw new Error('Snapshot download requires a started sync controller')
     }
@@ -264,11 +306,18 @@ export class SyncController {
         onProgress: options?.onProgress,
       })
       this.resyncRequired = false
+      this.consecutiveResyncFailures = 0
       this.lastError = null
     } catch (err) {
       this.recordError(err)
       this.resyncRequired = true
-      this.state = 'paused'
+      this.consecutiveResyncFailures += 1
+      this.state = 'stopped'
+      try {
+        await this.start()
+      } catch {
+        this.state = 'paused'
+      }
       throw err
     }
     this.state = 'stopped'
@@ -324,6 +373,10 @@ export class SyncController {
     if (this.ackTimer !== null) {
       clearTimeout(this.ackTimer)
       this.ackTimer = null
+    }
+    if (this.resyncTimer !== null) {
+      clearTimeout(this.resyncTimer)
+      this.resyncTimer = null
     }
     for (const subscription of this.subscriptions) {
       subscription.unsubscribe()

@@ -7,6 +7,7 @@ import {
 } from '../../core/internal-tables.js'
 import { HLC } from '../../core/sync/hlc.js'
 import { isWellFormedHlc } from '../../core/sync/hlc-store.js'
+import { maxChangeHlc, maxChangeSeq } from '../../core/system-catalog/index.js'
 import type { SyncPhase } from '../types.js'
 
 export class StateOps {
@@ -45,9 +46,7 @@ export class StateOps {
   async recoverMaxObservedHlc(changesTable: string): Promise<string | null> {
     let best: string | null = null
 
-    const changesStmt = await this.conn.prepare(`SELECT MAX(hlc) AS max_hlc FROM "${changesTable}" WHERE hlc != ''`)
-    const changesRow = (await changesStmt.get()) as { max_hlc: string | null } | undefined
-    best = mergeCandidate(best, changesRow?.max_hlc ?? null)
+    best = mergeCandidate(best, await maxChangeHlc(this.conn, changesTable))
 
     const versionsStmt = await this.conn.prepare(
       `SELECT MAX(hlc) AS max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE hlc != ''`,
@@ -94,12 +93,7 @@ export class StateOps {
   }
 
   async getLocalSeq(changesTable: string): Promise<bigint> {
-    const stmt = await this.conn.prepare(`SELECT MAX(seq) as max_seq FROM "${changesTable}"`)
-    const row = (await stmt.get()) as { max_seq: number | null } | undefined
-    if (!row || row.max_seq === null) {
-      return 0n
-    }
-    return BigInt(row.max_seq)
+    return maxChangeSeq(this.conn, changesTable)
   }
 
   async getMinAckedSeq(): Promise<bigint | null> {

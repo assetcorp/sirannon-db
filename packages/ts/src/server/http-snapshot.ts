@@ -10,6 +10,7 @@ import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 import { dumpTablePages } from '../core/sync/dump.js'
 import { PkResolver } from '../core/sync/pk.js'
 import { dumpSchema, tablesInFkOrder } from '../core/sync/schema-dump.js'
+import { countTableRows, maxChangeSeq, tableExists } from '../core/system-catalog/index.js'
 import type { ResponseAbort } from './http-common.js'
 import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbRouteHandler } from './http-handler.js'
@@ -42,14 +43,9 @@ async function resolveSnapshotDatabase(
   return database
 }
 
-async function maxChangeSeq(conn: SQLiteConnection): Promise<bigint> {
-  const exists = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-  if (!(await exists.get(CHANGES_TABLE))) return 0n
-  const stmt = await conn.prepare(`SELECT MAX(seq) AS seq FROM "${CHANGES_TABLE}"`)
-  const row = (await stmt.get()) as { seq?: unknown } | undefined
-  const seq = row?.seq
-  if (seq === undefined || seq === null) return 0n
-  return typeof seq === 'bigint' ? seq : BigInt(String(seq))
+async function changeLogStartSeq(conn: SQLiteConnection): Promise<bigint> {
+  if (!(await tableExists(conn, CHANGES_TABLE))) return 0n
+  return maxChangeSeq(conn)
 }
 
 export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
@@ -65,14 +61,12 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
 
       const conn = await sirannon.driver.open(database.path, { walMode: true })
       try {
-        const startSeq = await maxChangeSeq(conn)
+        const startSeq = await changeLogStartSeq(conn)
         const schema = await dumpSchema(conn)
         const tableNames = await tablesInFkOrder(conn)
         const tables: SnapshotManifestResponse['tables'] = []
         for (const name of tableNames) {
-          const countStmt = await conn.prepare(`SELECT COUNT(*) AS cnt FROM "${name}"`)
-          const countRow = (await countStmt.get()) as { cnt: number | bigint } | undefined
-          tables.push({ name, rowCount: Number(countRow?.cnt ?? 0) })
+          tables.push({ name, rowCount: await countTableRows(conn, name) })
         }
 
         if (abort.aborted) return
@@ -128,8 +122,7 @@ export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
     try {
       const conn = await sirannon.driver.open(database.path, { walMode: true })
       try {
-        const exists = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-        if (!(await exists.get(body.table))) {
+        if (!(await tableExists(conn, body.table))) {
           sendError(res, 404, 'TABLE_NOT_FOUND', `Table '${body.table}' not found`)
           return
         }

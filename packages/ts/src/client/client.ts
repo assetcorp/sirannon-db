@@ -4,6 +4,7 @@ import type { ClusterRoutingState, TopologyRouting } from './cluster-routing.js'
 import { clusterRoutingChanged, parseClusterRouting } from './cluster-routing.js'
 import { RemoteDatabase } from './database-proxy.js'
 import { toBaseUrl, toServerBaseUrl, toWsUrl } from './endpoint-urls.js'
+import { unrefTimer } from './http-json.js'
 import { TopologyAwareTransport } from './topology-transport.js'
 import { HttpTransport } from './transport/http.js'
 import { WebSocketTransport } from './transport/ws.js'
@@ -275,10 +276,7 @@ export class SirannonClient implements TopologyRouting {
         const start = performance.now()
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 5_000)
-        const unrefable = timeout as unknown as { unref?: () => void }
-        if (typeof unrefable.unref === 'function') {
-          unrefable.unref()
-        }
+        unrefTimer(timeout)
         try {
           const init: RequestInit = { signal: controller.signal as RequestInit['signal'] }
           const response = await fetch(`${url}/health`, init)
@@ -305,8 +303,7 @@ export class SirannonClient implements TopologyRouting {
       const base = toServerBaseUrl(endpoint, databaseId)
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS)
-      const unrefable = timeout as unknown as { unref?: () => void }
-      unrefable.unref?.()
+      unrefTimer(timeout)
       let next: ClusterRoutingState | null = null
       try {
         const response = await fetch(`${base}/db/${encodedId}/cluster`, {

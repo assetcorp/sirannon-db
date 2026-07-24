@@ -1,3 +1,4 @@
+import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { ReplicationEngine } from './engine.js'
 import { delayAckIfConfigured } from './test-hooks.js'
@@ -168,7 +169,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
     if (engine.syncState.phase === 'syncing' && engine.syncState.sourcePeerId === peerId) {
       engine.syncState.phase = 'pending'
       engine.syncState.sourcePeerId = null
-      engine.writerConn.exec('PRAGMA foreign_keys = ON').catch((err: unknown) => {
+      setForeignKeysEnabled(engine.writerConn, true).catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         engine.emitError({ error: wrappedErr, operation: 'peer-disconnect-pragma-restore', peerId, recoverable: false })
       })

@@ -14,6 +14,7 @@ import {
   snapshotLoadPending,
 } from './sync/snapshot-apply.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
+import { SEQ_STRING_RE } from './sync/validators.js'
 import {
   ensureBatchApplyTables,
   ensureChangesTable,
@@ -56,6 +57,7 @@ export class DatabaseSyncController {
   private metaReady = false
   private outboxReader: BatchReader | null = null
   private localPruneBoundary: bigint | null = null
+  private snapshotGate = false
   private readonly defaultResolver = new LWWResolver()
 
   constructor(
@@ -92,14 +94,35 @@ export class DatabaseSyncController {
         this.applyLocalPruneBoundary()
       },
       snapshotLoadPending: () => this.runExclusive(() => snapshotLoadPending(this.acquireWriter())),
-      beginSnapshotLoad: tables =>
-        this.runExclusive(() => beginSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker)),
+      beginSnapshotLoad: tables => this.beginSnapshotLoad(tables),
       applySnapshotSchema: schema => this.runExclusive(() => applySnapshotSchema(this.acquireWriter(), schema)),
       loadSnapshotPage: (table, rows) => this.runExclusive(() => loadSnapshotPage(this.acquireWriter(), table, rows)),
-      endSnapshotLoad: tables =>
-        this.runExclusive(() => endSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker)),
+      endSnapshotLoad: tables => this.endSnapshotLoad(tables),
       abortSnapshotLoad: () => this.runExclusive(() => abortSnapshotLoad(this.acquireWriter())),
     }
+  }
+
+  get snapshotLoadBlocked(): boolean {
+    return this.snapshotGate
+  }
+
+  seedSnapshotGate(): void {
+    this.snapshotGate = true
+  }
+
+  private async beginSnapshotLoad(tables: readonly string[]): Promise<void> {
+    this.snapshotGate = true
+    try {
+      await this.runExclusive(() => beginSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker))
+    } catch (err) {
+      this.snapshotGate = await this.runExclusive(() => snapshotLoadPending(this.acquireWriter()))
+      throw err
+    }
+  }
+
+  private async endSnapshotLoad(tables: readonly string[]): Promise<void> {
+    await this.runExclusive(() => endSnapshotLoad(this.acquireWriter(), tables, this.cdc.changeTracker))
+    this.snapshotGate = false
   }
 
   private applyLocalPruneBoundary(): void {
@@ -134,7 +157,7 @@ export class DatabaseSyncController {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
       const seq = await getMetaValue(writer, PULL_SEQ_META_KEY)
-      if (seq === null || !/^\d{1,19}$/.test(seq)) return null
+      if (seq === null || !SEQ_STRING_RE.test(seq)) return null
       const epoch = await getMetaValue(writer, PULL_EPOCH_META_KEY)
       return { seq: BigInt(seq), epoch: epoch ?? undefined }
     })
@@ -154,7 +177,7 @@ export class DatabaseSyncController {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
       const value = await getMetaValue(writer, key)
-      if (value === null || !/^\d{1,19}$/.test(value)) return null
+      if (value === null || !SEQ_STRING_RE.test(value)) return null
       return BigInt(value)
     })
   }

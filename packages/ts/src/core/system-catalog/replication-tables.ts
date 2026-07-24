@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS "${COLUMN_VERSIONS_TABLE}" (
 )`)
 }
 
+export function prepareAppliedChangesInsert(conn: SQLiteConnection): ReturnType<SQLiteConnection['prepare']> {
+  return conn.prepare(
+    `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
+  )
+}
+
 export async function ensureReplicationStateTables(conn: SQLiteConnection): Promise<void> {
   await conn.exec(`
 CREATE TABLE IF NOT EXISTS "${PEER_STATE_TABLE}" (

@@ -115,9 +115,6 @@ export class SyncController {
           this.schemaVersion = await this.localSchemaVersion()
         }
       }
-      if (!this.resyncRequired && pullState === null && this.options.autoResync !== false) {
-        this.resyncRequired = true
-      }
       if (!this.resyncRequired) {
         await this.openPull()
       }
@@ -271,7 +268,7 @@ export class SyncController {
         headers: this.options.headers,
         pageSize: options?.pageSize,
         requestTimeoutMs: this.options.requestTimeout,
-        onProgress: options?.onProgress,
+        onProgress: options?.onProgress ?? this.options.onSnapshotProgress,
       })
       this.schemaVersion = await this.localSchemaVersion()
       await port.setResyncRequired(false)

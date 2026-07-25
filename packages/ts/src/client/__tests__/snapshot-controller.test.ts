@@ -169,22 +169,8 @@ describe('SyncController.downloadSnapshot', () => {
     expect(await deviceDb.deviceSync().snapshotLoadPending()).toBe(true)
   })
 
-  it('copies the existing server rows onto a device that has never pulled', async () => {
+  it('leaves the first copy to the application and syncs live once it lands', async () => {
     const controller = makeController({ autoResync: true, snapshotRetryDelayMs: 50 })
-    await controller.start()
-
-    await until(async () => {
-      const status = await controller.status()
-      return !status.resyncRequired && status.state === 'running'
-    })
-    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
-
-    await serverDb.execute("INSERT INTO notes (id, body) VALUES (13, 'after the initial copy')")
-    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 13')).length === 1)
-  })
-
-  it('leaves the initial copy to the application when auto-resync is off', async () => {
-    const controller = makeController({ autoResync: false })
     await controller.start()
 
     const status = await controller.status()
@@ -194,6 +180,33 @@ describe('SyncController.downloadSnapshot', () => {
 
     await controller.downloadSnapshot()
     expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+    expect((await controller.status()).state).toBe('running')
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (13, 'after the first copy')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 13')).length === 1)
+  })
+
+  it('reports progress to the controller callback when the call passes none', async () => {
+    const loaded: number[] = []
+    const controller = makeController({ onSnapshotProgress: progress => loaded.push(progress.loadedRows) })
+    await controller.start()
+
+    await controller.downloadSnapshot()
+
+    expect(loaded.length).toBeGreaterThan(0)
+    expect(loaded[loaded.length - 1]).toBe(12)
+  })
+
+  it('prefers the progress callback passed to the call over the controller one', async () => {
+    const fromController: number[] = []
+    const fromCall: number[] = []
+    const controller = makeController({ onSnapshotProgress: () => fromController.push(1) })
+    await controller.start()
+
+    await controller.downloadSnapshot({ onProgress: progress => fromCall.push(progress.loadedRows) })
+
+    expect(fromCall.length).toBeGreaterThan(0)
+    expect(fromController).toHaveLength(0)
   })
 
   it('automatically resyncs an interrupted snapshot load', async () => {

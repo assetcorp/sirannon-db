@@ -104,7 +104,6 @@ beforeEach(async () => {
     tables: ['notes'],
     pushIntervalMs: 50,
     ackIntervalMs: 50,
-    autoResync: false,
   })
 })
 

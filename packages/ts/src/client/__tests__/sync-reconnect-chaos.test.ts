@@ -61,7 +61,6 @@ function makeController(overrides?: Partial<SyncControllerOptions>): SyncControl
     tables: ['notes'],
     pushIntervalMs: 50,
     ackIntervalMs: 50,
-    autoResync: false,
     ...overrides,
   })
   controllers.push(controller)

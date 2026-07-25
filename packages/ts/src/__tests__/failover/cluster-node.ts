@@ -1,19 +1,24 @@
 import { testDriver } from '../../core/__tests__/helpers/test-driver.js'
 import { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import { Sirannon } from '../../core/sirannon.js'
-import type { ClusterStatusInfo, QueryOptions, ReplicationStatusInfo } from '../../core/types.js'
+import type { QueryOptions } from '../../core/types.js'
 import { createEtcdCoordinator } from '../../replication/coordinator/etcd.js'
 import { ReplicationEngine } from '../../replication/engine.js'
 import { PrimaryReplicaTopology } from '../../replication/topology/primary-replica.js'
-import type {
-  ForwardedTransaction,
-  ReplicationBatch,
-  ReplicationStatus,
-  SyncBatch,
-  SyncRequest,
-} from '../../replication/types.js'
 import { createServer, type SirannonServer } from '../../server/index.js'
 import { GrpcReplicationTransport } from '../../transport/grpc/index.js'
+import {
+  arrayPayload,
+  numberPayload,
+  optionalArrayPayload,
+  parseBatch,
+  parseForwardRequest,
+  parseSyncBatch,
+  parseSyncRequest,
+  serializeError,
+  stringPayload,
+} from './cluster-node-payloads.js'
+import { toClusterStatusInfo, toReplicationStatusInfo } from './cluster-node-status.js'
 import type { FailoverNodeConfig, SerializedError } from './node-process.js'
 import { serializeJson } from './node-process.js'
 
@@ -124,7 +129,7 @@ server = createServer(sirannon, {
   port: config.httpPort,
   resolveExecutionTarget: id => (id === databaseId ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
-  getClusterStatus: id => toClusterStatusInfo(id, engine.status()),
+  getClusterStatus: id => toClusterStatusInfo(config, id, engine.status()),
 })
 await server.listen()
 process.send?.({ type: 'ready', nodeId: config.nodeId })
@@ -262,191 +267,4 @@ function sendResponse(id: number, ok: boolean, result?: unknown, error?: Seriali
     result,
     error,
   })
-}
-
-function serializeError(err: unknown): SerializedError {
-  if (!(err instanceof Error)) {
-    return {
-      name: 'Error',
-      message: String(err),
-    }
-  }
-  const withCode = err as Error & {
-    code?: string
-    details?: Record<string, unknown>
-  }
-  return {
-    name: err.name,
-    message: err.message,
-    code: withCode.code,
-    details: withCode.details,
-  }
-}
-
-function stringPayload(payload: Record<string, unknown>, key: string): string {
-  const value = payload[key]
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`Payload field '${key}' must be a non-empty string`)
-  }
-  return value
-}
-
-function optionalArrayPayload(payload: Record<string, unknown>, key: string): unknown[] | undefined {
-  const value = payload[key]
-  if (value === undefined) return undefined
-  if (!Array.isArray(value)) {
-    throw new Error(`Payload field '${key}' must be an array when present`)
-  }
-  return value
-}
-
-function numberPayload(payload: Record<string, unknown>, key: string): number {
-  const value = payload[key]
-  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
-    throw new Error(`Payload field '${key}' must be a safe integer`)
-  }
-  return value
-}
-
-function arrayPayload(payload: Record<string, unknown>, key: string): unknown[] {
-  const value = optionalArrayPayload(payload, key)
-  if (!value) {
-    throw new Error(`Payload field '${key}' is required`)
-  }
-  return value
-}
-
-function parseBatch(value: unknown): ReplicationBatch {
-  const batch = objectPayload(value, 'batch') as unknown as ReplicationBatch & {
-    fromSeq: string
-    toSeq: string
-    primaryTerm?: string
-  }
-  return {
-    ...batch,
-    fromSeq: BigInt(batch.fromSeq),
-    toSeq: BigInt(batch.toSeq),
-    primaryTerm: batch.primaryTerm === undefined ? undefined : BigInt(batch.primaryTerm),
-  }
-}
-
-function parseSyncRequest(value: unknown): SyncRequest {
-  const request = objectPayload(value, 'request') as unknown as SyncRequest & {
-    primaryTerm?: string
-  }
-  return {
-    ...request,
-    primaryTerm: request.primaryTerm === undefined ? undefined : BigInt(request.primaryTerm),
-  }
-}
-
-function parseSyncBatch(value: unknown): SyncBatch {
-  const batch = objectPayload(value, 'sync batch') as unknown as SyncBatch & {
-    primaryTerm?: string
-  }
-  return {
-    ...batch,
-    primaryTerm: batch.primaryTerm === undefined ? undefined : BigInt(batch.primaryTerm),
-  }
-}
-
-function parseForwardRequest(value: unknown): ForwardedTransaction {
-  const request = objectPayload(value, 'forward request') as unknown as ForwardedTransaction & {
-    primaryTerm?: string
-  }
-  return {
-    ...request,
-    primaryTerm: request.primaryTerm === undefined ? undefined : BigInt(request.primaryTerm),
-  }
-}
-
-function objectPayload(value: unknown, name: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`Payload field '${name}' must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function toReplicationStatusInfo(status: ReplicationStatus): ReplicationStatusInfo {
-  return {
-    role: status.role,
-    writeForwarding: true,
-    peers: status.peers.length,
-    localSeq: BigInt(status.localSeq),
-    replicationGroupId: status.coordinator?.groupId,
-    primaryTerm: status.coordinator?.primaryTerm,
-    currentPrimary: status.coordinator?.currentPrimary?.nodeId,
-    coordinator: status.coordinator
-      ? {
-          connected: true,
-          authority: status.coordinator.authority,
-        }
-      : undefined,
-    controller: status.coordinator
-      ? {
-          state: status.coordinator.controllerState,
-        }
-      : undefined,
-    inSyncReplicas: status.coordinator?.inSyncNodeIds.filter(
-      nodeId => nodeId !== status.coordinator?.currentPrimary?.nodeId,
-    ),
-    laggingReplicas: status.coordinator?.votingDataBearingNodeIds.filter(
-      nodeId => !status.coordinator?.inSyncNodeIds.includes(nodeId),
-    ),
-    syncState: status.syncState?.phase,
-    readAvailability: readAvailability(status),
-    writeAvailability: writeAvailability(status),
-  }
-}
-
-function toClusterStatusInfo(id: string, status: ReplicationStatus): ClusterStatusInfo | null {
-  if (id !== databaseId) return null
-  const coordinator = status.coordinator
-  return {
-    databaseId,
-    replicationGroupId: coordinator?.groupId,
-    role: status.role,
-    currentPrimary: coordinator?.currentPrimary
-      ? { ...coordinator.currentPrimary }
-      : (coordinator?.currentPrimary ?? null),
-    primaryTerm: coordinator?.primaryTerm,
-    readEndpoints: coordinator?.inSyncNodeIds.map(nodeId => ({
-      nodeId,
-      endpoint: config.httpEndpoints[nodeId] ?? '',
-      readConcerns: ['local', 'majority'],
-    })),
-    health: clusterHealth(status),
-  }
-}
-
-function clusterHealth(status: ReplicationStatus): ClusterStatusInfo['health'] {
-  if (status.syncState?.phase === 'syncing' || status.syncState?.phase === 'catching-up') return 'syncing'
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(config.nodeId)) return 'repairing'
-  if (coordinator.authority && writeAvailability(status) === 'unavailable') return 'failing_over'
-  if (readAvailability(status) === 'unavailable' && writeAvailability(status) === 'unavailable') return 'unavailable'
-  if (coordinator.faultedNodeIds.length > 0 || coordinator.drainingNodeIds.length > 0) return 'degraded'
-  return 'healthy'
-}
-
-function readAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return coordinator.inSyncNodeIds.includes(status.nodeId) ? 'available' : 'unavailable'
-}
-
-function writeAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (!coordinator.authority) return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
 }

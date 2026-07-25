@@ -92,14 +92,14 @@ Sirannon-db separates the database engine from the library. Pick the driver that
 - **Bulk load** - Load a large dataset in one transaction under relaxed durability, then restore the configured level, so a big import pays one durability barrier instead of one per row.
 - **Connection pooling** - 1 dedicated write connection + N read connections (default 4). WAL mode enabled by default for concurrent reads during writes.
 - **Change data capture (CDC)** - Watch tables for INSERT, UPDATE, and DELETE events in real time through SQLite triggers and configurable polling.
-- **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations are tracked with content checksums in a `_sirannon_migrations` table and mirrored to `PRAGMA user_version`. You can roll back to any version, squash a long history into one baseline migration, and let two processes migrate the same database at once: one wins, the other retries and skips what already ran. A migration set declared on the registry applies to every database it opens, including lazily resolved tenants. The [TypeScript README](packages/ts/README.md#migrations) holds the full guide.
+- **Migrations** - File-based (numbered `.up.sql` / `.down.sql`) or programmatic migrations are tracked with content checksums in a `_sirannon_migrations` table and mirrored to `PRAGMA user_version`. You can roll back to any version, squash a long history into one baseline migration, and let two processes migrate the same database at once: one wins, the other retries and skips what already ran. A migration set declared on the registry applies to every database it opens, including lazily resolved tenants. The [core engine guide](docs/core.md#migrations) holds the full guide.
 - **Backups** - One-shot snapshots via `VACUUM INTO` and scheduled backups on a cron expression with automatic file rotation.
 - **Hooks** - Before/after hooks for queries, connections, and subscriptions. Throwing from a before-hook denies the operation.
 - **Metrics** - Plug in callbacks to collect query timing, connection events, and CDC activity.
 - **Lifecycle management** - Auto-open databases on first access with idle timeouts and LRU eviction for multi-tenant setups.
 - **Server** - Expose any `Sirannon` instance over HTTP and WebSocket with a single function call. Query, execute, transaction, batch, and bulk-load routes on both transports, plus health endpoints, CORS configuration, a configurable body-size cap, and an `onRequest` hook for authentication.
 - **Client SDK** - Async API mirroring the core `Database` interface. Supports HTTP and WebSocket transports with automatic reconnection and subscription restoration.
-- **Device sync** - Keep an end-user device's local database in step with a server, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over WebSocket, with snapshot resync, a migration handshake, and capability negotiation. See the [device sync guide](packages/ts/README.md#device-sync).
+- **Device sync** - Keep an end-user device's local database in step with a server, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over WebSocket, with snapshot resync, a migration handshake, and capability negotiation. See the [device sync guide](docs/device-sync.md).
 - **Distributed replication** - Replicate HLC-stamped change batches from a primary node to read replicas. The production network transport is gRPC with TLS support.
 - **Coordinator-backed failover** - Use etcd-backed authority, primary terms, in-sync sets, and write concerns. Minority partitions fail closed for writes.
 - **Deterministic batch application** - Choose LWW, PrimaryWins, FieldMerge, or a custom resolver when an incoming replicated change targets an existing row.
@@ -136,7 +136,7 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 
 ## Device sync
 
-Device sync keeps an end-user device's local database in step with a server database, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over the WebSocket, applying both sides through the same conflict resolvers replication uses. Each user gets their own database file, and a device syncs the whole database. A fresh device, or one too far behind to resume, resyncs from a server snapshot; a device applies schema changes through a migration handshake, and a client refuses to sync against a server that does not advertise device sync. Device sync is distinct from server-to-server replication: a device is not a replication peer and holds no primary authority. The [device sync guide](packages/ts/README.md#device-sync) covers setup, and the [specification](packages/spec/08-device-sync.md) defines the wire protocol.
+Device sync keeps an end-user device's local database in step with a server database, offline-first and bidirectional. A device pushes its own writes and pulls other writes live over the WebSocket, applying both sides through the same conflict resolvers replication uses. Each user gets their own database file, and a device syncs the whole database. A fresh device, or one too far behind to resume, resyncs from a server snapshot; a device applies schema changes through a migration handshake, and a client refuses to sync against a server that does not advertise device sync. Device sync is distinct from server-to-server replication: a device is not a replication peer and holds no primary authority. The [device sync guide](docs/device-sync.md) covers setup, and the [specification](packages/spec/08-device-sync.md) defines the wire protocol.
 
 ## Distributed replication FAQ
 
@@ -197,7 +197,19 @@ Sirannon-db is designed to be secure by default in its core operations:
 
 ## Documentation
 
-Full API reference, code examples, and configuration tables are in the [TypeScript package README](packages/ts/README.md).
+The [TypeScript package README](packages/ts/README.md) gets you installed and running. The guides under [`docs/`](docs/) hold the reference depth:
+
+| Guide | What it covers |
+| --- | --- |
+| [Core engine](docs/core.md) | Bulk load, migrations, backups, hooks, metrics, and the multi-tenant lifecycle |
+| [Server](docs/server.md) | HTTP routes, WebSocket messages, write shapes, the writer worker, and value encoding |
+| [Client SDK](docs/client.md) | Connecting over HTTP or WebSocket, subscriptions, and transactions |
+| [Device sync](docs/device-sync.md) | Offline-first two-way sync between a device's local database and a server |
+| [Distributed replication](docs/replication.md) | Primary-replica replication, first sync, write concerns, coordinator failover, conflict resolvers, and transports |
+| [Configuration reference](docs/configuration.md) | Every option table, from `SirannonOptions` to `TransportConfig` |
+| [Errors](docs/errors.md) | Every error class, its code, and whether the call is safe to retry |
+
+The decision records behind the replication design are in [`docs/adr/`](docs/adr/).
 
 ## Benchmarks
 

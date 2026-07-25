@@ -1,0 +1,48 @@
+@media (max-width: 1040px) {
+  .control-band,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-panel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(100vw - 20px, 1480px);
+    padding-top: 10px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-bottom: 12px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .mode-switcher,
+  .metrics-grid,
+  .add-product-form {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-option {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    min-height: 0;
+  }
+
+  .mode-option:last-child {
+    border-bottom: 0;
+  }
+
+  .brand-block h1 {
+    font-size: 1rem;
+  }
+}

@@ -1,11 +1,11 @@
 import { decodeTaggedValues } from '../cdc/encoding.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import {
-  prepareColumnVersionRowDeleteUpToHlc,
-  prepareNewerColumnVersionUpsert,
+  prepareDeleteRowColumnVersionsUpToHlc,
+  prepareUpsertNewerColumnVersion,
   selectNodeChangesAfterSeqSql,
-  setMetaValue,
-  stampChangesAfterSeqSql,
+  updateChangeStampsAfterSeqSql,
+  upsertMetaValue,
 } from '../system-catalog/index.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
 import type { HLC } from './hlc.js'
@@ -23,7 +23,7 @@ export async function recordLocalColumnVersions(
 
   for (const row of rows) {
     if (row.operation === 'DELETE') {
-      const delStmt = await prepareColumnVersionRowDeleteUpToHlc(tx)
+      const delStmt = await prepareDeleteRowColumnVersionsUpToHlc(tx)
       await delStmt.run(row.table_name, String(row.row_id), row.hlc)
       continue
     }
@@ -44,7 +44,7 @@ export async function recordLocalColumnVersions(
       }
     }
 
-    const upsertStmt = await prepareNewerColumnVersionUpsert(tx)
+    const upsertStmt = await prepareUpsertNewerColumnVersion(tx)
 
     for (const col of changedCols) {
       await upsertStmt.run(row.table_name, String(row.row_id), col, row.hlc, row.node_id)
@@ -61,9 +61,9 @@ export class StampOps {
 
   async stampChanges(tx: SQLiteConnection, afterSeq: bigint, txId: string): Promise<void> {
     const hlcValue = this.hlc.now()
-    const stmt = await tx.prepare(stampChangesAfterSeqSql(this.changesTable))
+    const stmt = await tx.prepare(updateChangeStampsAfterSeqSql(this.changesTable))
     await stmt.run(this.localNodeId, txId, hlcValue, afterSeq.toString())
-    await setMetaValue(tx, HLC_CLOCK_META_KEY, hlcValue)
+    await upsertMetaValue(tx, HLC_CLOCK_META_KEY, hlcValue)
   }
 
   updateColumnVersions(tx: SQLiteConnection, afterSeq: bigint): Promise<void> {

@@ -1,9 +1,9 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import {
-  maxColumnVersionHlcForRow,
-  maxRowChangeHlc,
-  prepareColumnVersionRowDelete,
-  prepareColumnVersionUpsert,
+  prepareDeleteRowColumnVersions,
+  prepareUpsertColumnVersion,
+  selectMaxColumnVersionHlcForRow,
+  selectMaxRowChangeHlc,
 } from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
@@ -33,8 +33,8 @@ export class RowWriter {
   }
 
   async getLocalHlcForRow(tx: SQLiteConnection, table: string, rowId: string): Promise<string | null> {
-    const versioned = await maxColumnVersionHlcForRow(tx, table, rowId)
-    const logged = await maxRowChangeHlc(tx, this.changesTable, table, rowId)
+    const versioned = await selectMaxColumnVersionHlcForRow(tx, table, rowId)
+    const logged = await selectMaxRowChangeHlc(tx, this.changesTable, table, rowId)
 
     if (versioned === null) return logged
     if (logged === null) return versioned
@@ -155,14 +155,14 @@ export class RowWriter {
     data: Record<string, unknown> | null,
   ): Promise<void> {
     if (change.operation === 'delete') {
-      const delStmt = await prepareColumnVersionRowDelete(tx)
+      const delStmt = await prepareDeleteRowColumnVersions(tx)
       await delStmt.run(change.table, change.rowId)
       return
     }
 
     if (!data) return
 
-    const upsertStmt = await prepareColumnVersionUpsert(tx)
+    const upsertStmt = await prepareUpsertColumnVersion(tx)
 
     for (const col of Object.keys(data)) {
       if (!validateIdentifier(col)) continue

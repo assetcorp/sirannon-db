@@ -6,10 +6,11 @@ Read the file you're editing and follow what it already does. The rules below co
 
 ## Rules
 
-- Leave `packages/spec` alone. The developer owns every spec change and makes it directly. When your work needs a different wire format, value encoding, client-facing error code, or replication invariant, say so and wait for their decision. DO NOT implement anything agaisnt the spec without their approval.
+- Leave `packages/spec` alone. The developer owns every spec change and makes it directly. When your work needs a different wire format, value encoding, client-facing error code, or replication invariant, say so and wait for their decision. Write no code against a spec change they have not approved.
 - Treat the spec test vectors as fixed. When your change breaks that test, revert the change or raise it with the developer.
 - Keep every file under 400 lines. Measure a file when you touch it, and split it before your change pushes it over.
 - Put every statement against a `_sirannon_*` table in `core/system-catalog/`, one module per table, exported as a function that owns both the SQL and the shape it returns. Copy `meta-table.ts`. Keep SQL out of the call site, whether it creates, reads, or writes.
+- Name each of those functions after the verb of the statement it runs: `select`, `insert`, `update`, `delete`, or `upsert`, and `selectMax`, `selectMin`, or `selectCount` for an aggregate. Use `ensure` for the idempotent `CREATE`, `prepare<Verb>` when you return a prepared statement for a loop, and a `Sql` suffix when you return the statement text. A `PRAGMA` helper and a function wrapping several statements take a descriptive name instead.
 - Take internal table names from the constants in `core/internal-tables.ts`. Add columns with `ensureColumn`. Keep `CREATE TRIGGER` in `core/cdc/trigger-sql.ts`.
 - Let a `SirannonError` propagate unchanged, because its code is what the server maps to an HTTP status.
 - Run `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm check:bundle`, and `pnpm test` before you report a change done.

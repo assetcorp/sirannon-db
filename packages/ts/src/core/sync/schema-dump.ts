@@ -1,13 +1,13 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { INTERNAL_TABLE_PREFIX } from '../internal-tables.js'
-import { referencedTables, userSchemaObjects, userTableNames } from '../system-catalog/index.js'
+import { referencedTables, selectUserSchemaObjects, selectUserTableNames } from '../system-catalog/index.js'
 import { validateDdlSafety } from './validators.js'
 
 export async function dumpSchema(
   conn: SQLiteConnection,
   excludePrefix: string = INTERNAL_TABLE_PREFIX,
 ): Promise<string[]> {
-  const rows = await userSchemaObjects(conn, excludePrefix)
+  const rows = await selectUserSchemaObjects(conn, excludePrefix)
 
   const filtered = rows.filter(row => {
     if (row.name.startsWith(excludePrefix)) return false
@@ -47,7 +47,7 @@ export async function dumpSchema(
 }
 
 export async function tablesInFkOrder(conn: SQLiteConnection): Promise<string[]> {
-  const tableNames = await userTableNames(conn, INTERNAL_TABLE_PREFIX)
+  const tableNames = await selectUserTableNames(conn, INTERNAL_TABLE_PREFIX)
 
   const adjacency = new Map<string, Set<string>>()
   const inDegree = new Map<string, number>()

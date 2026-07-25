@@ -11,4 +11,4 @@ The chaos layer must reproduce four scenarios from the plan: connection drops mi
 
 ## When to revisit
 
-If a future scenario needs byte-level chaos that the in-process hooks cannot express — for example, half-broken connections, throughput throttling per byte, or simulated jitter — we adopt Toxiproxy at that point rather than pre-emptively. The `__setAckDelayMs` hook is explicitly debug-only and stays out of the public API.
+A future scenario may need byte-level chaos that the in-process hooks cannot express, such as half-broken connections, throughput throttling per byte, or simulated jitter. We adopt Toxiproxy at that point, not pre-emptively. The `__setAckDelayMs` hook is debug-only and stays out of the public API.

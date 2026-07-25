@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { prepareAppliedChangesInsert, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
+import { prepareInsertAppliedChange, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
@@ -264,7 +264,7 @@ export class SyncJoiner {
 
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 
-      const recordStmt = await prepareAppliedChangesInsert(engine.writerConn)
+      const recordStmt = await prepareInsertAppliedChange(engine.writerConn)
       await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
 
       const previousApplied = engine.appliedSeqByPeer.get(fromPeerId) ?? 0n

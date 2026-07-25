@@ -4,7 +4,7 @@ import { META_TABLE } from '../../internal-tables.js'
 import { HLC } from '../../sync/hlc.js'
 import { HLC_CLOCK_META_KEY, isWellFormedHlc, loadPersistedHlc, persistHlcClock } from '../../sync/hlc-store.js'
 import { StampOps } from '../../sync/stamp-ops.js'
-import { ensureChangesTable, ensureMetaTable, getMetaValue } from '../../system-catalog/index.js'
+import { ensureChangesTable, ensureMetaTable, selectMetaValue } from '../../system-catalog/index.js'
 import { testDriver } from '../helpers/test-driver.js'
 
 const NODE_ID = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
@@ -84,7 +84,7 @@ describe('StampOps clock persistence', () => {
     const stampedStmt = await conn.prepare(`SELECT hlc FROM "${CHANGES_TABLE_NAME}" WHERE row_id = ?`)
     const stamped = (await stampedStmt.get('1')) as { hlc: string }
     expect(isWellFormedHlc(stamped.hlc)).toBe(true)
-    expect(await getMetaValue(conn, HLC_CLOCK_META_KEY)).toBe(stamped.hlc)
+    expect(await selectMetaValue(conn, HLC_CLOCK_META_KEY)).toBe(stamped.hlc)
   })
 
   it('rolls the persisted clock back together with a failed transaction', async () => {
@@ -105,6 +105,6 @@ describe('StampOps clock persistence', () => {
       }),
     ).rejects.toThrow('forced rollback')
 
-    expect(await getMetaValue(conn, HLC_CLOCK_META_KEY)).toBeNull()
+    expect(await selectMetaValue(conn, HLC_CLOCK_META_KEY)).toBeNull()
   })
 })

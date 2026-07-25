@@ -4,10 +4,10 @@ import { META_TABLE } from '../internal-tables.js'
 import {
   deleteMetaValue,
   ensureMetaTable,
-  getMetaValue,
+  selectMetaValue,
+  selectTableExists,
   setForeignKeysEnabled,
-  setMetaValue,
-  tableExists,
+  upsertMetaValue,
 } from '../system-catalog/index.js'
 import { ReplicationError } from './errors.js'
 import { IDENTIFIER_RE, validateDdlSafety } from './validators.js'
@@ -24,8 +24,8 @@ function assertTableNames(tables: readonly string[]): void {
 }
 
 export async function snapshotLoadPending(conn: SQLiteConnection): Promise<boolean> {
-  if (!(await tableExists(conn, META_TABLE))) return false
-  return (await getMetaValue(conn, SNAPSHOT_STATE_META_KEY)) !== null
+  if (!(await selectTableExists(conn, META_TABLE))) return false
+  return (await selectMetaValue(conn, SNAPSHOT_STATE_META_KEY)) !== null
 }
 
 export async function beginSnapshotLoad(
@@ -35,7 +35,7 @@ export async function beginSnapshotLoad(
 ): Promise<void> {
   assertTableNames(tables)
   await ensureMetaTable(conn)
-  await setMetaValue(conn, SNAPSHOT_STATE_META_KEY, SNAPSHOT_STATE_LOADING)
+  await upsertMetaValue(conn, SNAPSHOT_STATE_META_KEY, SNAPSHOT_STATE_LOADING)
   await setForeignKeysEnabled(conn, false)
   await conn.transaction(async tx => {
     for (const table of tables) {

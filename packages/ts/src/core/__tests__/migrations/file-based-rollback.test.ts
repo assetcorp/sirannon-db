@@ -15,7 +15,7 @@ function writeMigration(version: number, name: string, up: string, down?: string
   }
 }
 
-async function tableExists(db: Awaited<ReturnType<typeof createTestDb>>, table: string): Promise<boolean> {
+async function selectTableExists(db: Awaited<ReturnType<typeof createTestDb>>, table: string): Promise<boolean> {
   const rows = await db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [
     table,
   ])
@@ -42,8 +42,8 @@ describe('file-based rollback', () => {
     const result = await db.rollback(migrations)
 
     expect(result.rolledBack.map(r => r.version)).toEqual([2])
-    expect(await tableExists(db, 'posts')).toBe(false)
-    expect(await tableExists(db, 'users')).toBe(true)
+    expect(await selectTableExists(db, 'posts')).toBe(false)
+    expect(await selectTableExists(db, 'users')).toBe(true)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [2], skipped: 1 })
 
     await db.close()
@@ -60,13 +60,13 @@ describe('file-based rollback', () => {
 
     const migrations = loadMigrations(ctx.migrationsDir)
     await db.migrate(migrations)
-    expect(await tableExists(db, 'users')).toBe(true)
-    expect(await tableExists(db, 'posts')).toBe(true)
+    expect(await selectTableExists(db, 'users')).toBe(true)
+    expect(await selectTableExists(db, 'posts')).toBe(true)
 
     await db.rollback(migrations, 0)
 
-    expect(await tableExists(db, 'users')).toBe(false)
-    expect(await tableExists(db, 'posts')).toBe(false)
+    expect(await selectTableExists(db, 'users')).toBe(false)
+    expect(await selectTableExists(db, 'posts')).toBe(false)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [1], skipped: 0 })
 
     await db.close()
@@ -84,9 +84,9 @@ describe('file-based rollback', () => {
     const result = await db.rollback(migrations, 1)
 
     expect(result.rolledBack.map(r => r.version)).toEqual([3, 2])
-    expect(await tableExists(db, 'tags')).toBe(false)
-    expect(await tableExists(db, 'posts')).toBe(false)
-    expect(await tableExists(db, 'users')).toBe(true)
+    expect(await selectTableExists(db, 'tags')).toBe(false)
+    expect(await selectTableExists(db, 'posts')).toBe(false)
+    expect(await selectTableExists(db, 'users')).toBe(true)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [2, 3], skipped: 1 })
 
     await db.close()
@@ -103,8 +103,8 @@ describe('file-based rollback', () => {
     const result = await db.rollback(migrations, 0)
 
     expect(result.rolledBack.map(r => r.version)).toEqual([2, 1])
-    expect(await tableExists(db, 'posts')).toBe(false)
-    expect(await tableExists(db, 'users')).toBe(false)
+    expect(await selectTableExists(db, 'posts')).toBe(false)
+    expect(await selectTableExists(db, 'users')).toBe(false)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [1, 2], skipped: 0 })
 
     await db.close()
@@ -127,8 +127,8 @@ describe('file-based rollback', () => {
       expect((err as MigrationError).version).toBe(2)
     }
 
-    expect(await tableExists(db, 'posts')).toBe(true)
-    expect(await tableExists(db, 'users')).toBe(true)
+    expect(await selectTableExists(db, 'posts')).toBe(true)
+    expect(await selectTableExists(db, 'users')).toBe(true)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [], skipped: 2 })
 
     await db.close()
@@ -145,8 +145,8 @@ describe('file-based rollback', () => {
     const result = await db.rollback(migrations)
 
     expect(result.rolledBack.map(r => r.version)).toEqual([2])
-    expect(await tableExists(db, 'posts')).toBe(false)
-    expect(await tableExists(db, 'users')).toBe(true)
+    expect(await selectTableExists(db, 'posts')).toBe(false)
+    expect(await selectTableExists(db, 'users')).toBe(true)
     expect(await reapplicableVersions(db, migrations)).toEqual({ applied: [2], skipped: 1 })
 
     await db.close()

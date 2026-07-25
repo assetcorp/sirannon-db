@@ -37,7 +37,7 @@ export function selectOutboundChangesSql(tableName: string, excludeDdl: boolean)
           ORDER BY seq ASC LIMIT ?`
 }
 
-export async function countOutboundChanges(
+export async function selectCountOutboundChanges(
   conn: SQLiteConnection,
   tableName: string,
   afterSeq: bigint,
@@ -50,7 +50,7 @@ export async function countOutboundChanges(
   return Number(row.pending)
 }
 
-export async function recordDdlChange(
+export async function insertDdlChange(
   conn: SQLiteConnection,
   tableName: string,
   entry: { ddlStatement: string; nodeId: string; txId: string; hlc: string },
@@ -62,19 +62,19 @@ export async function recordDdlChange(
   await stmt.run(JSON.stringify({ ddlStatement: entry.ddlStatement }), entry.nodeId, entry.txId, entry.hlc)
 }
 
-export function stampChangesAfterSeqSql(tableName: string): string {
+export function updateChangeStampsAfterSeqSql(tableName: string): string {
   return `UPDATE "${tableName}" SET node_id = ?, tx_id = ?, hlc = ? WHERE seq > ? AND node_id = ''`
 }
 
-export function stampUnstampedChangesSql(tableName: string): string {
+export function updateUnstampedChangeStampsSql(tableName: string): string {
   return `UPDATE "${tableName}" SET node_id = ?, tx_id = ?, hlc = ? WHERE node_id = ''`
 }
 
-export function minChangeSeqSql(tableName: string): string {
+export function selectMinChangeSeqSql(tableName: string): string {
   return `SELECT MIN(seq) AS seq FROM "${tableName}"`
 }
 
-export function nextForeignChangeSeqSql(tableName: string): string {
+export function selectMinForeignChangeSeqSql(tableName: string): string {
   return `SELECT MIN(seq) AS seq FROM "${tableName}" WHERE seq > ? AND node_id != ?`
 }
 
@@ -86,7 +86,7 @@ export function deleteChangesBeforeUpToSeqSql(tableName: string): string {
   return `DELETE FROM "${tableName}" WHERE changed_at < ? AND seq <= ?`
 }
 
-export async function maxRowChangeHlc(
+export async function selectMaxRowChangeHlc(
   conn: SQLiteConnection,
   tableName: string,
   rowTable: string,
@@ -99,7 +99,7 @@ export async function maxRowChangeHlc(
   return row?.max_hlc ?? null
 }
 
-export async function maxChangeSeq(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<bigint> {
+export async function selectMaxChangeSeq(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<bigint> {
   const stmt = await conn.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM "${tableName}"`)
   const row = (await stmt.get()) as { seq?: unknown } | undefined
   const seq = row?.seq
@@ -107,7 +107,10 @@ export async function maxChangeSeq(conn: SQLiteConnection, tableName: string = C
   return typeof seq === 'bigint' ? seq : BigInt(String(seq))
 }
 
-export async function maxChangeHlc(conn: SQLiteConnection, tableName: string = CHANGES_TABLE): Promise<string | null> {
+export async function selectMaxChangeHlc(
+  conn: SQLiteConnection,
+  tableName: string = CHANGES_TABLE,
+): Promise<string | null> {
   const stmt = await conn.prepare(`SELECT MAX(hlc) AS hlc FROM "${tableName}" WHERE hlc != ''`)
   const row = (await stmt.get()) as { hlc?: unknown } | undefined
   return typeof row?.hlc === 'string' && row.hlc.length > 0 ? row.hlc : null

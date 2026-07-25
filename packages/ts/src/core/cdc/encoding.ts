@@ -38,6 +38,9 @@ function encodeTaggedLeaf(value: unknown): unknown {
   return value
 }
 
+// Never call this on the CDC path. Every subscriber receives the same
+// ChangeEvent object, so mutating its rows corrupts what the other subscribers
+// read. This is for rows materialised for a single response.
 export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]

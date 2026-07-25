@@ -2,14 +2,14 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { HLC } from '../../core/sync/hlc.js'
 import { isWellFormedHlc } from '../../core/sync/hlc-store.js'
 import {
-  completedSyncTableNames,
-  maxAppliedSourceSeq,
-  maxChangeHlc,
-  maxChangeSeq,
-  maxColumnVersionHlc,
-  minPeerAckedSeq,
-  peerAckedSeq,
-  syncMetaRow,
+  selectCompletedSyncTableNames,
+  selectMaxAppliedSourceSeq,
+  selectMaxChangeHlc,
+  selectMaxChangeSeq,
+  selectMaxColumnVersionHlc,
+  selectMinPeerAckedSeq,
+  selectPeerAckedSeq,
+  selectSyncMetaRow,
   upsertPeerAckedSeq,
   upsertSyncMeta,
   upsertSyncTableStatus,
@@ -24,14 +24,14 @@ export class StateOps {
   async recoverMaxObservedHlc(changesTable: string): Promise<string | null> {
     let best: string | null = null
 
-    best = mergeCandidate(best, await maxChangeHlc(this.conn, changesTable))
-    best = mergeCandidate(best, await maxColumnVersionHlc(this.conn))
+    best = mergeCandidate(best, await selectMaxChangeHlc(this.conn, changesTable))
+    best = mergeCandidate(best, await selectMaxColumnVersionHlc(this.conn))
 
     return best
   }
 
   getLastAppliedSeq(fromNodeId: string): Promise<bigint> {
-    return maxAppliedSourceSeq(this.conn, fromNodeId)
+    return selectMaxAppliedSourceSeq(this.conn, fromNodeId)
   }
 
   setLastAppliedSeq(fromNodeId: string, seq: bigint): Promise<void> {
@@ -39,15 +39,15 @@ export class StateOps {
   }
 
   getPeerAckedSeq(peerNodeId: string): Promise<bigint> {
-    return peerAckedSeq(this.conn, peerNodeId)
+    return selectPeerAckedSeq(this.conn, peerNodeId)
   }
 
   async getLocalSeq(changesTable: string): Promise<bigint> {
-    return maxChangeSeq(this.conn, changesTable)
+    return selectMaxChangeSeq(this.conn, changesTable)
   }
 
   async getMinAckedSeq(): Promise<bigint | null> {
-    let result = await minPeerAckedSeq(this.conn)
+    let result = await selectMinPeerAckedSeq(this.conn)
 
     for (const syncSeq of this.activeSyncSnapshotSeqs) {
       if (result === null || syncSeq < result) {
@@ -92,7 +92,7 @@ export class StateOps {
     snapshotSeq: bigint | null
     sourcePeerId: string | null
   }> {
-    const meta = await syncMetaRow(this.conn)
+    const meta = await selectSyncMetaRow(this.conn)
 
     if (!meta) {
       return { phase: 'ready', completedTables: [], snapshotSeq: null, sourcePeerId: null }
@@ -100,14 +100,14 @@ export class StateOps {
 
     return {
       phase: meta.status as SyncPhase,
-      completedTables: await completedSyncTableNames(this.conn),
+      completedTables: await selectCompletedSyncTableNames(this.conn),
       snapshotSeq: meta.snapshotSeq,
       sourcePeerId: meta.sourcePeerId,
     }
   }
 
   async isSyncCompleted(): Promise<boolean> {
-    const meta = await syncMetaRow(this.conn)
+    const meta = await selectSyncMetaRow(this.conn)
     return meta?.status === 'ready'
   }
 }

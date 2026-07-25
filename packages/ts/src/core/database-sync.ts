@@ -20,16 +20,16 @@ import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange
 import { SEQ_STRING_RE } from './sync/validators.js'
 import {
   type AppliedMigrationRow,
-  countOutboundChanges,
   ensureBatchApplyTables,
   ensureChangesTable,
   ensureMetaTable,
-  getMetaValue,
   highestMigrationVersion,
-  maxAppliedSourceSeq,
-  maxChangeSeq,
   replaceMigrationHistory,
-  setMetaValue,
+  selectCountOutboundChanges,
+  selectMaxAppliedSourceSeq,
+  selectMaxChangeSeq,
+  selectMetaValue,
+  upsertMetaValue,
 } from './system-catalog/index.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
@@ -158,7 +158,7 @@ export class DatabaseSyncController {
         txId: changes[0].txId,
         changes,
         resolver: resolver ?? this.defaultResolver,
-        withinTx: tx => setMetaValue(tx, PULL_SEQ_META_KEY, pullSeq.toString()),
+        withinTx: tx => upsertMetaValue(tx, PULL_SEQ_META_KEY, pullSeq.toString()),
       })
 
       if (result.droppedTables.length > 0) {
@@ -214,30 +214,30 @@ export class DatabaseSyncController {
       const writer = this.acquireWriter()
       await this.ensureSyncTables(writer)
       const stamper = await this.cdc.ensureStamper()
-      return countOutboundChanges(writer, CHANGES_TABLE, afterSeq, stamper.nodeId)
+      return selectCountOutboundChanges(writer, CHANGES_TABLE, afterSeq, stamper.nodeId)
     })
   }
 
   private getResyncRequired(): Promise<boolean> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      return (await getMetaValue(writer, RESYNC_REQUIRED_META_KEY)) === '1'
+      return (await selectMetaValue(writer, RESYNC_REQUIRED_META_KEY)) === '1'
     })
   }
 
   private setResyncRequired(required: boolean): Promise<void> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      await setMetaValue(writer, RESYNC_REQUIRED_META_KEY, required ? '1' : '0')
+      await upsertMetaValue(writer, RESYNC_REQUIRED_META_KEY, required ? '1' : '0')
     })
   }
 
   private getPullState(): Promise<DeviceSyncPullState | null> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      const seq = await getMetaValue(writer, PULL_SEQ_META_KEY)
+      const seq = await selectMetaValue(writer, PULL_SEQ_META_KEY)
       if (seq === null || !SEQ_STRING_RE.test(seq)) return null
-      const epoch = await getMetaValue(writer, PULL_EPOCH_META_KEY)
+      const epoch = await selectMetaValue(writer, PULL_EPOCH_META_KEY)
       return { seq: BigInt(seq), epoch: epoch ?? undefined }
     })
   }
@@ -245,9 +245,9 @@ export class DatabaseSyncController {
   private setPullState(seq: bigint, epoch?: string): Promise<void> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      await setMetaValue(writer, PULL_SEQ_META_KEY, seq.toString())
+      await upsertMetaValue(writer, PULL_SEQ_META_KEY, seq.toString())
       if (epoch !== undefined) {
-        await setMetaValue(writer, PULL_EPOCH_META_KEY, epoch)
+        await upsertMetaValue(writer, PULL_EPOCH_META_KEY, epoch)
       }
     })
   }
@@ -255,7 +255,7 @@ export class DatabaseSyncController {
   private getMetaSeq(key: string): Promise<bigint | null> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      const value = await getMetaValue(writer, key)
+      const value = await selectMetaValue(writer, key)
       if (value === null || !SEQ_STRING_RE.test(value)) return null
       return BigInt(value)
     })
@@ -264,7 +264,7 @@ export class DatabaseSyncController {
   private setMetaSeq(key: string, seq: bigint): Promise<void> {
     return this.runExclusive(async () => {
       const writer = await this.ensureMeta()
-      await setMetaValue(writer, key, seq.toString())
+      await upsertMetaValue(writer, key, seq.toString())
     })
   }
 
@@ -313,15 +313,15 @@ export class DatabaseSyncController {
   }
 
   private async catchUpLocalColumnVersions(tx: SQLiteConnection, localNodeId: string): Promise<void> {
-    const recorded = await getMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY)
+    const recorded = await selectMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY)
     const afterSeq = recorded !== null && SEQ_STRING_RE.test(recorded) ? BigInt(recorded) : 0n
-    const latestSeq = await maxChangeSeq(tx, CHANGES_TABLE)
+    const latestSeq = await selectMaxChangeSeq(tx, CHANGES_TABLE)
     if (latestSeq <= afterSeq) return
     await recordLocalColumnVersions(tx, CHANGES_TABLE, localNodeId, afterSeq)
-    await setMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY, latestSeq.toString())
+    await upsertMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY, latestSeq.toString())
   }
 
   private lastAppliedSeq(fromNodeId: string): Promise<bigint> {
-    return maxAppliedSourceSeq(this.acquireWriter(), fromNodeId)
+    return selectMaxAppliedSourceSeq(this.acquireWriter(), fromNodeId)
   }
 }

@@ -20,13 +20,13 @@ CREATE TABLE IF NOT EXISTS "${COLUMN_VERSIONS_TABLE}" (
 )`)
 }
 
-export async function maxColumnVersionHlc(conn: SQLiteConnection): Promise<string | null> {
+export async function selectMaxColumnVersionHlc(conn: SQLiteConnection): Promise<string | null> {
   const stmt = await conn.prepare(`SELECT MAX(hlc) AS max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE hlc != ''`)
   const row = (await stmt.get()) as { max_hlc?: string | null } | undefined
   return row?.max_hlc ?? null
 }
 
-export async function maxColumnVersionHlcForRow(
+export async function selectMaxColumnVersionHlcForRow(
   conn: SQLiteConnection,
   tableName: string,
   rowId: string,
@@ -38,19 +38,19 @@ export async function maxColumnVersionHlcForRow(
   return row?.max_hlc ?? null
 }
 
-export function prepareColumnVersionUpsert(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareUpsertColumnVersion(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(UPSERT_COLUMN_VERSION)
 }
 
-export function prepareNewerColumnVersionUpsert(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareUpsertNewerColumnVersion(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`${UPSERT_COLUMN_VERSION}
        WHERE excluded.hlc > ${COLUMN_VERSIONS_TABLE}.hlc`)
 }
 
-export function prepareColumnVersionRowDelete(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareDeleteRowColumnVersions(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`)
 }
 
-export function prepareColumnVersionRowDeleteUpToHlc(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareDeleteRowColumnVersionsUpToHlc(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ? AND hlc <= ?`)
 }

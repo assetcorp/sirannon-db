@@ -71,7 +71,7 @@ export async function upsertSyncMeta(
   )
 }
 
-export async function syncMetaRow(conn: SQLiteConnection): Promise<SyncMetaRow | null> {
+export async function selectSyncMetaRow(conn: SQLiteConnection): Promise<SyncMetaRow | null> {
   const stmt = await conn.prepare(
     `SELECT status, snapshot_seq, source_peer_id FROM ${SYNC_STATE_TABLE} WHERE table_name = '${SYNC_META_ROW}'`,
   )
@@ -88,7 +88,7 @@ export async function syncMetaRow(conn: SQLiteConnection): Promise<SyncMetaRow |
   }
 }
 
-export async function completedSyncTableNames(conn: SQLiteConnection): Promise<string[]> {
+export async function selectCompletedSyncTableNames(conn: SQLiteConnection): Promise<string[]> {
   const stmt = await conn.prepare(
     `SELECT table_name FROM ${SYNC_STATE_TABLE} WHERE table_name != '${SYNC_META_ROW}' AND status = 'completed'`,
   )

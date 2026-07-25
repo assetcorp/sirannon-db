@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { SQLiteConnection } from '../driver/types.js'
-import { countTableRows } from '../system-catalog/index.js'
+import { selectCountTableRows } from '../system-catalog/index.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
 import { computeChecksum } from './checksum.js'
 import { ReplicationError } from './errors.js'
@@ -22,7 +22,7 @@ export class DumpOps {
       throw new ReplicationError(`Invalid table name: ${table}`)
     }
 
-    const total = await countTableRows(this.conn, table)
+    const total = await selectCountTableRows(this.conn, table)
 
     if (total === 0) return
 
@@ -104,7 +104,7 @@ export class DumpOps {
       throw new ReplicationError(`Invalid table name: ${table}`)
     }
 
-    const rowCount = await countTableRows(conn, table)
+    const rowCount = await selectCountTableRows(conn, table)
 
     const hash = createHash('sha256')
     const pkColumns = await this.pkResolver.forTableOnConnection(conn, table)

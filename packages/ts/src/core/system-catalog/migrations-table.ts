@@ -29,7 +29,7 @@ export async function ensureMigrationsTable(conn: SQLiteConnection): Promise<voi
   await ensureColumn(conn, MIGRATIONS_TABLE, 'checksum', 'TEXT')
 }
 
-export async function appliedMigrationRows(conn: SQLiteConnection): Promise<AppliedMigrationRow[]> {
+export async function selectAppliedMigrations(conn: SQLiteConnection): Promise<AppliedMigrationRow[]> {
   const stmt = await conn.prepare(`SELECT version, name, checksum FROM ${MIGRATIONS_TABLE} ORDER BY version`)
   return (await stmt.all()) as AppliedMigrationRow[]
 }
@@ -48,20 +48,20 @@ export async function replaceMigrationHistory(
   })
 }
 
-export async function appliedMigrationEntriesNewestFirst(conn: SQLiteConnection): Promise<MigrationEntryRow[]> {
+export async function selectAppliedMigrationsNewestFirst(conn: SQLiteConnection): Promise<MigrationEntryRow[]> {
   const stmt = await conn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
   return (await stmt.all()) as MigrationEntryRow[]
 }
 
-export function prepareMigrationInsert(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareInsertMigration(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES (?, ?, ?)`)
 }
 
-export function prepareMigrationChecksumUpdate(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareUpdateMigrationChecksum(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`UPDATE ${MIGRATIONS_TABLE} SET checksum = ? WHERE version = ?`)
 }
 
-export function prepareMigrationDelete(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareDeleteMigration(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE version = ?`)
 }
 

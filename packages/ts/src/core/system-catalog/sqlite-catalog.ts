@@ -12,7 +12,7 @@ export interface SchemaObjectRow {
   sql: string
 }
 
-export async function tableExists(conn: SQLiteConnection, table: string): Promise<boolean> {
+export async function selectTableExists(conn: SQLiteConnection, table: string): Promise<boolean> {
   const stmt = await conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
   return Boolean(await stmt.get(table))
 }
@@ -33,7 +33,7 @@ export async function tablePkColumns(conn: SQLiteConnection, table: string): Pro
     .map(col => col.name)
 }
 
-export async function countTableRows(conn: SQLiteConnection, table: string): Promise<number> {
+export async function selectCountTableRows(conn: SQLiteConnection, table: string): Promise<number> {
   const stmt = await conn.prepare(`SELECT COUNT(*) AS cnt FROM "${table}"`)
   const row = (await stmt.get()) as { cnt: number | bigint } | undefined
   return Number(row?.cnt ?? 0)
@@ -49,7 +49,10 @@ export async function setForeignKeysEnabled(conn: SQLiteConnection, enabled: boo
   await conn.exec(enabled ? 'PRAGMA foreign_keys = ON' : 'PRAGMA foreign_keys = OFF')
 }
 
-export async function userSchemaObjects(conn: SQLiteConnection, excludePrefix: string): Promise<SchemaObjectRow[]> {
+export async function selectUserSchemaObjects(
+  conn: SQLiteConnection,
+  excludePrefix: string,
+): Promise<SchemaObjectRow[]> {
   const stmt = await conn.prepare(
     `SELECT type, name, tbl_name, sql FROM sqlite_master
      WHERE type IN ('table', 'index') AND name NOT LIKE ? AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL`,
@@ -57,7 +60,7 @@ export async function userSchemaObjects(conn: SQLiteConnection, excludePrefix: s
   return (await stmt.all(`${excludePrefix}%`)) as SchemaObjectRow[]
 }
 
-export async function userTableNames(conn: SQLiteConnection, excludePrefix: string): Promise<string[]> {
+export async function selectUserTableNames(conn: SQLiteConnection, excludePrefix: string): Promise<string[]> {
   const stmt = await conn.prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE ? AND name NOT LIKE 'sqlite_%'",
   )

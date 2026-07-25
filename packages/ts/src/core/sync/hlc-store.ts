@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import { ensureMetaTable, getMetaValue, setMetaValue } from '../system-catalog/index.js'
+import { ensureMetaTable, selectMetaValue, upsertMetaValue } from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 
 export const HLC_CLOCK_META_KEY = 'hlc_clock'
@@ -20,12 +20,12 @@ export function isWellFormedHlc(candidate: string): boolean {
 
 export async function persistHlcClock(conn: SQLiteConnection, encoded: string): Promise<void> {
   await ensureMetaTable(conn)
-  await setMetaValue(conn, HLC_CLOCK_META_KEY, encoded)
+  await upsertMetaValue(conn, HLC_CLOCK_META_KEY, encoded)
 }
 
 export async function loadPersistedHlc(conn: SQLiteConnection): Promise<string | null> {
   await ensureMetaTable(conn)
-  const value = await getMetaValue(conn, HLC_CLOCK_META_KEY)
+  const value = await selectMetaValue(conn, HLC_CLOCK_META_KEY)
   if (value === null || !isWellFormedHlc(value)) return null
   return value
 }

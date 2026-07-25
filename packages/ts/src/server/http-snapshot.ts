@@ -10,7 +10,12 @@ import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 import { dumpTablePages } from '../core/sync/dump.js'
 import { PkResolver } from '../core/sync/pk.js'
 import { dumpSchema, tablesInFkOrder } from '../core/sync/schema-dump.js'
-import { appliedMigrationRows, countTableRows, maxChangeSeq, tableExists } from '../core/system-catalog/index.js'
+import {
+  selectAppliedMigrations,
+  selectCountTableRows,
+  selectMaxChangeSeq,
+  selectTableExists,
+} from '../core/system-catalog/index.js'
 import type { ResponseAbort } from './http-common.js'
 import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbRouteHandler } from './http-handler.js'
@@ -44,8 +49,8 @@ async function resolveSnapshotDatabase(
 }
 
 async function changeLogStartSeq(conn: SQLiteConnection): Promise<bigint> {
-  if (!(await tableExists(conn, CHANGES_TABLE))) return 0n
-  return maxChangeSeq(conn)
+  if (!(await selectTableExists(conn, CHANGES_TABLE))) return 0n
+  return selectMaxChangeSeq(conn)
 }
 
 export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
@@ -66,10 +71,10 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
         const tableNames = await tablesInFkOrder(conn)
         const tables: SnapshotManifestResponse['tables'] = []
         for (const name of tableNames) {
-          tables.push({ name, rowCount: await countTableRows(conn, name) })
+          tables.push({ name, rowCount: await selectCountTableRows(conn, name) })
         }
 
-        const migrations = (await tableExists(conn, MIGRATIONS_TABLE)) ? await appliedMigrationRows(conn) : []
+        const migrations = (await selectTableExists(conn, MIGRATIONS_TABLE)) ? await selectAppliedMigrations(conn) : []
 
         if (abort.aborted) return
         const manifest: SnapshotManifestResponse = {
@@ -125,7 +130,7 @@ export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
     try {
       const conn = await sirannon.driver.open(database.path, { walMode: true })
       try {
-        if (!(await tableExists(conn, body.table))) {
+        if (!(await selectTableExists(conn, body.table))) {
           sendError(res, 404, 'TABLE_NOT_FOUND', `Table '${body.table}' not found`)
           return
         }

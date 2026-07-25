@@ -27,7 +27,7 @@ pnpm typecheck   # run the TypeScript compiler
 pnpm format      # apply Biome formatting
 ```
 
-The replication end-to-end, failover, and soak suites run from the TypeScript package, because they start Docker containers for etcd, gRPC, and fault injection.
+The replication end-to-end, failover, and soak suites run from the TypeScript package. The end-to-end and soak suites need no Docker: they run two nodes in one process over loopback gRPC. Only the failover suite starts Docker containers, which it uses for etcd and fault injection, so it runs locally rather than in continuous integration.
 
 ```bash
 cd packages/ts

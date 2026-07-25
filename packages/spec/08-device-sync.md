@@ -180,8 +180,9 @@ immediately once it holds more than half of it.
 
 ## Snapshot Download
 
-A fresh device, or one too far behind to resume, replaces its whole database from
-a server snapshot.
+A device replaces its whole database from a server snapshot. A device that has
+fallen too far behind to resume resyncs automatically. A device syncing for the
+first time requests its copy with `downloadSnapshot()`.
 
 ```text
 POST /db/{id}/snapshot

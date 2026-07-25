@@ -82,7 +82,7 @@ async function startSettled(controller: SyncController): Promise<void> {
 
 describe('SyncController push', () => {
   it('reports a local write as outstanding until the outbox drains', async () => {
-    const controller = makeController({ autoResync: false, pushIntervalMs: 5_000 })
+    const controller = makeController({ pushIntervalMs: 5_000 })
     await controller.start()
 
     const atStart = await controller.status()

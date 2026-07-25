@@ -2,19 +2,17 @@ import { randomUUID } from 'node:crypto'
 import type { RemoteDatabase } from '@delali/sirannon-db/client'
 import { SirannonClient } from '@delali/sirannon-db/client'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
-import { getMajorityWriteAvailability } from './cluster-readiness'
+import { assertMajorityWriteAvailable, fetchClusterNodes } from './cluster-status'
 import type {
   ApplyBillingEventInput,
   AuditRecord,
   BillingEvent,
-  ClusterNode,
   CustomerEntitlement,
   RecordUsageInput,
   UsageEvent,
 } from './schemas'
 import {
   applyBillingEventInputSchema,
-  clusterNodeSchema,
   controlPlaneSnapshotSchema,
   createCustomerInputSchema,
   recordUsageInputSchema,
@@ -42,22 +40,11 @@ import {
   INSERT_USAGE_EVENT_SQL,
   RESET_SEQUENCE_SQL,
   SEED_CUSTOMERS,
-  toServerBaseUrl,
   UPDATE_CUSTOMER_FROM_BILLING_SQL,
   UPDATE_ENTITLEMENT_FROM_BILLING_SQL,
   USAGE_EVENTS_SQL,
 } from './sql'
-
-interface ClusterStatusResponse {
-  databaseId?: unknown
-  role?: unknown
-  currentPrimary?: unknown
-  primaryTerm?: unknown
-  readEndpoints?: unknown
-  health?: unknown
-}
-
-const TOXIPROXY_REQUEST_TIMEOUT_MS = 3_000
+import { setProxyEnabled } from './toxiproxy'
 
 const getServerHttpDb = createServerOnlyFn((): RemoteDatabase => {
   const token = process.env.SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
@@ -278,115 +265,6 @@ async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingE
   ])
 }
 
-async function fetchClusterNodes(): Promise<ClusterNode[]> {
-  const token = process.env.SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
-  const endpoints = clusterEndpointsFromEnv(process.env.SIRANNON_CLUSTER_ENDPOINTS)
-  const results = await Promise.all(endpoints.map(endpoint => fetchClusterNode(endpoint, token)))
-  return results.map(result => clusterNodeSchema.parse(result))
-}
-
-async function assertMajorityWriteAvailable(): Promise<void> {
-  const availability = getMajorityWriteAvailability(await fetchClusterNodes())
-  if (!availability.available) {
-    throw new Error(`Write blocked: ${availability.reason}`)
-  }
-}
-
-async function fetchClusterNode(endpoint: string, token: string): Promise<ClusterNode> {
-  const baseUrl = toServerBaseUrl(endpoint)
-  const nodeId = nodeIdFromEndpoint(baseUrl)
-
-  try {
-    const response = await fetch(`${baseUrl}/db/${DATABASE_ID}/cluster`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(2_000),
-    })
-    if (!response.ok) {
-      return {
-        nodeId,
-        endpoint: baseUrl,
-        reachable: false,
-        currentPrimary: null,
-        primaryTerm: null,
-        readEndpoints: 0,
-        error: `HTTP ${response.status}`,
-      }
-    }
-
-    const data = (await response.json()) as ClusterStatusResponse
-    return {
-      nodeId,
-      endpoint: baseUrl,
-      reachable: true,
-      role: typeof data.role === 'string' ? data.role : undefined,
-      health: parseHealth(data.health),
-      currentPrimary: parseCurrentPrimary(data.currentPrimary),
-      primaryTerm: data.primaryTerm === undefined || data.primaryTerm === null ? null : String(data.primaryTerm),
-      readEndpoints: Array.isArray(data.readEndpoints) ? data.readEndpoints.length : 0,
-      error: null,
-    }
-  } catch (error) {
-    return {
-      nodeId,
-      endpoint: baseUrl,
-      reachable: false,
-      currentPrimary: null,
-      primaryTerm: null,
-      readEndpoints: 0,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
-async function setProxyEnabled(proxyName: string, enabled: boolean): Promise<void> {
-  const url = process.env.TOXIPROXY_URL ?? 'http://127.0.0.1:8474'
-  let response: Response
-  try {
-    response = await fetchWithTimeout(
-      `${url}/proxies/${encodeURIComponent(proxyName)}`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ enabled }),
-      },
-      TOXIPROXY_REQUEST_TIMEOUT_MS,
-    )
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw new Error(
-        `Toxiproxy failed to update ${proxyName}: request timed out after ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms`,
-      )
-    }
-    throw error
-  }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(`Toxiproxy failed to update ${proxyName}: HTTP ${response.status} ${body}`)
-  }
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => {
-    controller.abort()
-  }, timeoutMs)
-
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
-}
-
 function createExternalId(name: string): string {
   const slug = name
     .toLowerCase()
@@ -395,33 +273,4 @@ function createExternalId(name: string): string {
     .slice(0, 32)
   const safeSlug = slug.length > 0 ? slug : 'customer'
   return `cus_${safeSlug}_${randomUUID().slice(0, 8)}`
-}
-
-function nodeIdFromEndpoint(endpoint: string): string {
-  if (endpoint.includes('7301')) return 'node-a'
-  if (endpoint.includes('7302')) return 'node-b'
-  if (endpoint.includes('7303')) return 'node-c'
-  return endpoint
-}
-
-function parseCurrentPrimary(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return null
-  }
-  const nodeId = (value as Record<string, unknown>).nodeId
-  return typeof nodeId === 'string' ? nodeId : null
-}
-
-function parseHealth(value: unknown): ClusterNode['health'] {
-  if (
-    value === 'healthy' ||
-    value === 'degraded' ||
-    value === 'failing_over' ||
-    value === 'unavailable' ||
-    value === 'repairing' ||
-    value === 'syncing'
-  ) {
-    return value
-  }
-  return undefined
 }

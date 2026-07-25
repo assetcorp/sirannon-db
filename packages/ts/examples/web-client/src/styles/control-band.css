@@ -1,0 +1,105 @@
+.control-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 12px;
+  align-items: stretch;
+  margin-top: 14px;
+}
+
+.mode-switcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.mode-option {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 88px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-option:last-child {
+  border-right: 0;
+}
+
+.mode-option:hover,
+.mode-option.active {
+  background: var(--surface-muted);
+}
+
+.mode-option.active {
+  box-shadow: inset 0 -2px 0 var(--blue);
+}
+
+.mode-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  color: var(--blue);
+}
+
+.mode-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mode-copy strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.mode-copy span,
+.mode-copy small {
+  color: var(--muted);
+  line-height: 1.32;
+}
+
+.mode-copy span {
+  font-size: 0.78rem;
+}
+
+.mode-copy small {
+  font-size: 0.76rem;
+}
+
+.live-signal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  color: var(--green);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.live-signal output {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.live-signal strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.live-signal span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,55 @@
+.activity-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  background: #ffffff;
+}
+
+.activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.activity-item.allocated .activity-dot {
+  background: var(--blue);
+}
+
+.activity-item.received .activity-dot {
+  background: var(--green);
+}
+
+.activity-item.created .activity-dot {
+  background: var(--amber);
+}
+
+.activity-item div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.activity-item strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.activity-item span:last-child {
+  color: var(--muted);
+  font-size: 0.74rem;
+}

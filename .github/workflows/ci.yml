@@ -50,6 +50,9 @@ jobs:
       - name: Assert browser entries carry no Node builtins
         run: pnpm check:bundle
 
+      - name: Assert a consumer of the published types compiles
+        run: pnpm check:types
+
       - name: Test
         run: pnpm test
 

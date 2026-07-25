@@ -1,3 +1,11 @@
+export { FieldMergeResolver } from '../core/sync/conflict/field-merge.js'
+export { LWWResolver } from '../core/sync/conflict/lww.js'
+export { PrimaryWinsResolver } from '../core/sync/conflict/primary-wins.js'
+export type {
+  ConflictContext,
+  ConflictResolution,
+  ConflictResolver,
+} from '../core/sync/types.js'
 export { SirannonClient, type TopologyAwareClientOptions } from './client.js'
 export { type LoadAllOptions, RemoteDatabase } from './database-proxy.js'
 export {

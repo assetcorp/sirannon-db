@@ -33,7 +33,7 @@ export async function upsertPeerAckedSeq(
   await stmt.run(peerNodeId, seq.toString(), updatedAt)
 }
 
-export async function peerAckedSeq(conn: SQLiteConnection, peerNodeId: string): Promise<bigint> {
+export async function selectPeerAckedSeq(conn: SQLiteConnection, peerNodeId: string): Promise<bigint> {
   const stmt = await conn.prepare(`SELECT last_acked_seq FROM ${PEER_STATE_TABLE} WHERE peer_node_id = ?`)
   const row = (await stmt.get(peerNodeId)) as { last_acked_seq?: SeqValue } | undefined
   const seq = row?.last_acked_seq
@@ -41,7 +41,7 @@ export async function peerAckedSeq(conn: SQLiteConnection, peerNodeId: string): 
   return typeof seq === 'bigint' ? seq : BigInt(String(seq))
 }
 
-export async function minPeerAckedSeq(conn: SQLiteConnection): Promise<bigint | null> {
+export async function selectMinPeerAckedSeq(conn: SQLiteConnection): Promise<bigint | null> {
   const stmt = await conn.prepare(`SELECT MIN(last_acked_seq) AS min_seq, COUNT(*) AS cnt FROM ${PEER_STATE_TABLE}`)
   const row = (await stmt.get()) as { min_seq?: SeqValue; cnt?: number | bigint } | undefined
   if (row === undefined || Number(row.cnt ?? 0) === 0) return null

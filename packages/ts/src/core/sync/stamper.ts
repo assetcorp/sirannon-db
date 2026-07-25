@@ -4,11 +4,11 @@ import { CHANGES_TABLE } from '../internal-tables.js'
 import { randomHex } from '../random-hex.js'
 import {
   ensureMetaTable,
-  getMetaValue,
-  initMetaValue,
-  maxChangeHlc,
-  SET_META_VALUE_SQL,
-  stampUnstampedChangesSql,
+  insertMetaValueIfAbsent,
+  selectMaxChangeHlc,
+  selectMetaValue,
+  UPSERT_META_VALUE_SQL,
+  updateUnstampedChangeStampsSql,
 } from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 import { HLC_CLOCK_META_KEY, isWellFormedHlc, loadPersistedHlc } from './hlc-store.js'
@@ -31,8 +31,8 @@ export class SyncStamper {
   static async init(conn: SQLiteConnection, changesTable: string = CHANGES_TABLE): Promise<SyncStamper> {
     await ensureMetaTable(conn)
 
-    await initMetaValue(conn, NODE_ID_META_KEY, randomHex(16))
-    const nodeId = await getMetaValue(conn, NODE_ID_META_KEY)
+    await insertMetaValueIfAbsent(conn, NODE_ID_META_KEY, randomHex(16))
+    const nodeId = await selectMetaValue(conn, NODE_ID_META_KEY)
     if (nodeId === null || nodeId.length === 0) {
       throw new CDCError('Failed to read the persisted node identity')
     }
@@ -42,7 +42,7 @@ export class SyncStamper {
     if (persisted !== null) {
       hlc.receive(persisted)
     }
-    const persistedMax = await maxChangeHlc(conn, changesTable)
+    const persistedMax = await selectMaxChangeHlc(conn, changesTable)
     if (persistedMax !== null && isWellFormedHlc(persistedMax)) {
       hlc.receive(persistedMax)
     }
@@ -55,14 +55,14 @@ export class SyncStamper {
     const txId = randomHex(16)
     const statements: StampStatement[] = [
       {
-        sql: stampUnstampedChangesSql(this.changesTable),
+        sql: updateUnstampedChangeStampsSql(this.changesTable),
         params: [this.nodeId, txId, hlcValue],
         trusted: true,
       },
     ]
     if (options?.persistClock !== false) {
       statements.push({
-        sql: SET_META_VALUE_SQL,
+        sql: UPSERT_META_VALUE_SQL,
         params: [HLC_CLOCK_META_KEY, hlcValue],
         trusted: true,
       })

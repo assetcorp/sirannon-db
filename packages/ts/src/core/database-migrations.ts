@@ -3,7 +3,7 @@ import type { SQLiteConnection } from './driver/types.js'
 import { MIGRATIONS_TABLE } from './internal-tables.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { type AppliedMigrationRow, appliedMigrationRows, tableExists } from './system-catalog/index.js'
+import { type AppliedMigrationRow, selectAppliedMigrations, selectTableExists } from './system-catalog/index.js'
 
 async function refreshTriggersAfterSchemaChange(tracker: ChangeTracker | null, conn: SQLiteConnection): Promise<void> {
   if (!tracker || tracker.watchedTables.size === 0) return
@@ -32,6 +32,6 @@ export async function rollbackWithTriggerRefresh(
 }
 
 export async function readAppliedMigrations(conn: SQLiteConnection): Promise<AppliedMigrationRow[]> {
-  if (!(await tableExists(conn, MIGRATIONS_TABLE))) return []
-  return appliedMigrationRows(conn)
+  if (!(await selectTableExists(conn, MIGRATIONS_TABLE))) return []
+  return selectAppliedMigrations(conn)
 }

@@ -1,6 +1,6 @@
 # Replication E2E uses same-process gRPC on loopback with mTLS everywhere
 
-The replication system needs validation under real wire conditions, not just the in-memory transport used by integration tests. We stand up two `Sirannon` instances in the same Node process, connect them over real gRPC on loopback, and drive every scenario through the public driver API. Same-process keeps the harness in one debuggable stack with no IPC overhead while still exercising real gRPC, real protobuf encoding, and the full mTLS handshake. Tests run with mTLS in every scenario (not just one) so regressions in the CN-matches-nodeId validation surface on every run. Two-process and Docker-based topologies were considered and rejected for v1; we can add OS-level failure simulation later if a real gap shows up.
+The replication system needs validation under real wire conditions, which the in-memory transport used by integration tests cannot provide. We stand up two `Sirannon` instances in the same Node process, connect them over real gRPC on loopback, and drive every scenario through the public driver API. Same-process keeps the harness in one debuggable stack with no IPC overhead while still exercising real gRPC, real protobuf encoding, and the full mTLS handshake. Every scenario runs with mTLS, so a regression in the CN-matches-nodeId validation surfaces on every run. Two-process and Docker-based topologies were considered and rejected for v1; we can add OS-level failure simulation once a scenario needs a failure the in-process harness cannot produce.
 
 ## Conventions
 

@@ -5,10 +5,10 @@ import {
   deleteChangesBeforeSql,
   deleteChangesBeforeUpToSeqSql,
   ensureChangesTable,
-  maxChangeSeq,
-  minChangeSeqSql,
+  selectMaxChangeSeq,
+  selectMinChangeSeqSql,
+  selectTableExists,
   tableColumnNames,
-  tableExists,
   tablePkColumns,
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
@@ -258,7 +258,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.stmtCache.get(conn, 'min_seq', minChangeSeqSql(this.changesTable))
+    const stmt = await this.stmtCache.get(conn, 'min_seq', selectMinChangeSeqSql(this.changesTable))
     const row = (await stmt.get()) as { seq?: unknown } | undefined
     const seq = row?.seq
     if (seq === undefined || seq === null) {
@@ -275,7 +275,7 @@ export class ChangeTracker {
       }
     }
 
-    const latestSeq = await maxChangeSeq(conn, this.changesTable)
+    const latestSeq = await selectMaxChangeSeq(conn, this.changesTable)
     if (latestSeq > this.lastSeq) {
       this.lastSeq = latestSeq
     }
@@ -349,7 +349,7 @@ export class ChangeTracker {
   }
 
   private async detectChangesTable(conn: SQLiteConnection): Promise<void> {
-    if (await tableExists(conn, this.changesTable)) {
+    if (await selectTableExists(conn, this.changesTable)) {
       this.changesTableReady = true
     }
   }

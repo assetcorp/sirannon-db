@@ -2,11 +2,11 @@ import type { SQLiteConnection } from '../core/driver/types.js'
 import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../core/internal-tables.js'
 import {
   deleteDeviceCursorsUpdatedBefore,
-  deviceCursorRows,
   ensureDeviceCursorsTable,
-  maxChangeSeq,
-  nextForeignChangeSeqSql,
-  tableExists,
+  selectDeviceCursors,
+  selectMaxChangeSeq,
+  selectMinForeignChangeSeqSql,
+  selectTableExists,
   upsertDeviceCursor,
 } from '../core/system-catalog/index.js'
 
@@ -26,15 +26,15 @@ export async function effectiveMinDeviceCursor(
   retentionMs: number,
   changesTable: string = CHANGES_TABLE,
 ): Promise<bigint | null> {
-  if (!(await tableExists(conn, DEVICE_CURSORS_TABLE))) return null
+  if (!(await selectTableExists(conn, DEVICE_CURSORS_TABLE))) return null
 
   await evictStaleDeviceCursors(conn, retentionMs)
 
-  const cursors = await deviceCursorRows(conn)
+  const cursors = await selectDeviceCursors(conn)
   if (cursors.length === 0) return null
 
-  const nextForeignStmt = await conn.prepare(nextForeignChangeSeqSql(changesTable))
-  const maxSeq = await maxChangeSeq(conn, changesTable)
+  const nextForeignStmt = await conn.prepare(selectMinForeignChangeSeqSql(changesTable))
+  const maxSeq = await selectMaxChangeSeq(conn, changesTable)
 
   let min: bigint | null = null
   for (const cursor of cursors) {

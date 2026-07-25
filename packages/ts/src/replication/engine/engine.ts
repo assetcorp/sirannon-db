@@ -5,7 +5,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
-import { maxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
+import { selectMaxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
@@ -285,7 +285,7 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   async loadAppliedSeqs(): Promise<void> {
-    for (const [nodeId, seq] of await maxAppliedSourceSeqByNode(this.writerConn)) {
+    for (const [nodeId, seq] of await selectMaxAppliedSourceSeqByNode(this.writerConn)) {
       this.appliedSeqByPeer.set(nodeId, seq)
     }
   }

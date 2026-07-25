@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
-import { recordDdlChange } from '../../core/system-catalog/index.js'
+import { insertDdlChange } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { Params, QueryOptions } from '../../core/types.js'
 import { ReplicationError } from '../errors.js'
@@ -44,7 +44,7 @@ export class LocalExecutor {
       const r = await stmt.run(...bindValues)
 
       if (isDdl) {
-        await recordDdlChange(tx, CHANGES_TABLE, {
+        await insertDdlChange(tx, CHANGES_TABLE, {
           ddlStatement: sql,
           nodeId: engine.nodeId,
           txId,
@@ -125,7 +125,7 @@ export class LocalExecutor {
           if (droppedTable !== null) {
             droppedTables.push(droppedTable)
           }
-          await recordDdlChange(tx, CHANGES_TABLE, {
+          await insertDdlChange(tx, CHANGES_TABLE, {
             ddlStatement: sql,
             nodeId: engine.nodeId,
             txId,
@@ -185,7 +185,7 @@ export class LocalExecutor {
         if (droppedTable !== null) {
           hooks.droppedTables.push(droppedTable)
         }
-        await recordDdlChange(tx, CHANGES_TABLE, {
+        await insertDdlChange(tx, CHANGES_TABLE, {
           ddlStatement: sql,
           nodeId: engine.nodeId,
           txId,

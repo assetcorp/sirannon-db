@@ -20,13 +20,13 @@ CREATE TABLE IF NOT EXISTS "${APPLIED_CHANGES_TABLE}" (
 )`)
 }
 
-export function prepareAppliedChangesInsert(conn: SQLiteConnection): Promise<PreparedStatement> {
+export function prepareInsertAppliedChange(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(
     `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
   )
 }
 
-export async function maxAppliedSourceSeq(conn: SQLiteConnection, sourceNodeId: string): Promise<bigint> {
+export async function selectMaxAppliedSourceSeq(conn: SQLiteConnection, sourceNodeId: string): Promise<bigint> {
   const stmt = await conn.prepare(
     `SELECT MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ?`,
   )
@@ -34,7 +34,7 @@ export async function maxAppliedSourceSeq(conn: SQLiteConnection, sourceNodeId: 
   return toSeq(row?.max_seq)
 }
 
-export async function maxAppliedSourceSeqByNode(conn: SQLiteConnection): Promise<Map<string, bigint>> {
+export async function selectMaxAppliedSourceSeqByNode(conn: SQLiteConnection): Promise<Map<string, bigint>> {
   const stmt = await conn.prepare(
     `SELECT source_node_id, MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} GROUP BY source_node_id`,
   )
@@ -47,7 +47,7 @@ export async function maxAppliedSourceSeqByNode(conn: SQLiteConnection): Promise
   return byNode
 }
 
-export async function appliedSourceSeqsInRange(
+export async function selectAppliedSourceSeqsInRange(
   conn: SQLiteConnection,
   sourceNodeId: string,
   fromSeq: bigint,

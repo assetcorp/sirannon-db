@@ -131,6 +131,9 @@ export async function executeGroup(conn: SQLiteConnection, units: readonly Group
       outcomes[i] = { ok: true, values: await runUnit(conn, units[i]) }
     }
   } catch {
+    // Only a pre-commit failure is safe to retry. A COMMIT that reports an
+    // error may still have reached the disk, so replaying the group would
+    // apply every write twice.
     await rollbackQuietly(conn)
     return executeGroupIsolated(conn, units)
   }

@@ -37,7 +37,7 @@ export async function deleteDeviceCursorsUpdatedBefore(conn: SQLiteConnection, c
   return result.changes
 }
 
-export async function deviceCursorRows(conn: SQLiteConnection): Promise<DeviceCursorRow[]> {
+export async function selectDeviceCursors(conn: SQLiteConnection): Promise<DeviceCursorRow[]> {
   const stmt = await conn.prepare(`SELECT device_id, acked_seq FROM "${DEVICE_CURSORS_TABLE}"`)
   const rows = (await stmt.all()) as Array<{ device_id: string; acked_seq: number | bigint | string }>
   return rows.map(row => ({ deviceId: row.device_id, ackedSeq: BigInt(row.acked_seq) }))

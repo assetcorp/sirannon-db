@@ -1,12 +1,12 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError } from '../errors.js'
 import {
-  appliedMigrationEntriesNewestFirst,
-  appliedMigrationRows,
   ensureMigrationsTable,
-  prepareMigrationChecksumUpdate,
-  prepareMigrationDelete,
-  prepareMigrationInsert,
+  prepareDeleteMigration,
+  prepareInsertMigration,
+  prepareUpdateMigrationChecksum,
+  selectAppliedMigrations,
+  selectAppliedMigrationsNewestFirst,
 } from '../system-catalog/index.js'
 import { Transaction } from '../transaction.js'
 import { planPendingMigrations, resolveEffectiveBaseline, SQLITE_USER_VERSION_MAX } from './baseline.js'
@@ -67,7 +67,7 @@ export class MigrationRunner {
 
       const backfills = reconcileMigrationChecksums(validated, applied)
       if (backfills.length > 0) {
-        const updateStmt = await prepareMigrationChecksumUpdate(txConn)
+        const updateStmt = await prepareUpdateMigrationChecksum(txConn)
         for (const backfill of backfills) {
           await updateStmt.run(backfill.checksum, backfill.version)
         }
@@ -81,7 +81,7 @@ export class MigrationRunner {
       }
 
       const appliedEntries: AppliedMigrationEntry[] = []
-      const insertStmt = await prepareMigrationInsert(txConn)
+      const insertStmt = await prepareInsertMigration(txConn)
 
       for (const migration of pending) {
         try {
@@ -133,7 +133,7 @@ export class MigrationRunner {
     return MigrationRunner.retryOnConcurrentConflict(() =>
       conn.transaction(async txConn => {
         await ensureMigrationsTable(txConn)
-        const appliedRows = await appliedMigrationEntriesNewestFirst(txConn)
+        const appliedRows = await selectAppliedMigrationsNewestFirst(txConn)
 
         if (appliedRows.length === 0) {
           return { rolledBack: [] }
@@ -159,7 +159,7 @@ export class MigrationRunner {
         }
 
         const rolledBackEntries: AppliedMigrationEntry[] = []
-        const deleteStmt = await prepareMigrationDelete(txConn)
+        const deleteStmt = await prepareDeleteMigration(txConn)
 
         for (const entry of rollbackSet) {
           const migration = downByVersion.get(entry.version)
@@ -272,7 +272,7 @@ export class MigrationRunner {
   }
 
   private static async getAppliedRows(conn: SQLiteConnection): Promise<Map<number, AppliedRow>> {
-    const rows = await appliedMigrationRows(conn)
+    const rows = await selectAppliedMigrations(conn)
     return new Map(rows.map(r => [r.version, { name: r.name, checksum: r.checksum }]))
   }
 }

@@ -2,10 +2,10 @@ import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { CHANGES_TABLE } from '../internal-tables.js'
 import {
-  appliedSourceSeqsInRange,
-  maxChangeSeq,
-  prepareAppliedChangesInsert,
-  stampChangesAfterSeqSql,
+  prepareInsertAppliedChange,
+  selectAppliedSourceSeqsInRange,
+  selectMaxChangeSeq,
+  updateChangeStampsAfterSeqSql,
 } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
 import { BatchValidationError } from './errors.js'
@@ -65,7 +65,7 @@ export class BatchApplier {
     const needsPartialDedup = batch.fromSeq <= lastApplied
     let appliedSeqSet: Set<string> | null = null
     if (needsPartialDedup) {
-      appliedSeqSet = await appliedSourceSeqsInRange(this.conn, batch.sourceNodeId, batch.fromSeq, batch.toSeq)
+      appliedSeqSet = await selectAppliedSourceSeqsInRange(this.conn, batch.sourceNodeId, batch.fromSeq, batch.toSeq)
     }
 
     let applied = 0
@@ -97,7 +97,7 @@ export class BatchApplier {
       droppedTables.push(...result.droppedTables)
     }
 
-    const recordStmt = await prepareAppliedChangesInsert(this.conn)
+    const recordStmt = await prepareInsertAppliedChange(this.conn)
     const nowSec = Date.now() / 1000
     for (let seq = batch.fromSeq; seq <= batch.toSeq; seq += 1n) {
       if (appliedSeqSet?.has(seq.toString())) continue
@@ -114,7 +114,7 @@ export class BatchApplier {
     const droppedTables: string[] = []
 
     const result = await this.conn.transaction(async tx => {
-      const seqBefore = await this.maxChangeSeq(tx)
+      const seqBefore = await this.selectMaxChangeSeq(tx)
       if (this.beforeApply) {
         await this.beforeApply(tx)
       }
@@ -216,8 +216,8 @@ export class BatchApplier {
     }
   }
 
-  private async maxChangeSeq(tx: SQLiteConnection): Promise<string> {
-    return (await maxChangeSeq(tx, this.changesTable)).toString()
+  private async selectMaxChangeSeq(tx: SQLiteConnection): Promise<string> {
+    return (await selectMaxChangeSeq(tx, this.changesTable)).toString()
   }
 
   private async stampAppliedEcho(
@@ -233,7 +233,7 @@ export class BatchApplier {
         maxHlc = change.hlc
       }
     }
-    const stmt = await tx.prepare(stampChangesAfterSeqSql(this.changesTable))
+    const stmt = await tx.prepare(updateChangeStampsAfterSeqSql(this.changesTable))
     await stmt.run(sourceNodeId, txId, maxHlc, seqBefore)
   }
 }

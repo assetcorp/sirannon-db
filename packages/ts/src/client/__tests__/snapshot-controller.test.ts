@@ -169,6 +169,33 @@ describe('SyncController.downloadSnapshot', () => {
     expect(await deviceDb.deviceSync().snapshotLoadPending()).toBe(true)
   })
 
+  it('copies the existing server rows onto a device that has never pulled', async () => {
+    const controller = makeController({ autoResync: true, snapshotRetryDelayMs: 50 })
+    await controller.start()
+
+    await until(async () => {
+      const status = await controller.status()
+      return !status.resyncRequired && status.state === 'running'
+    })
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (13, 'after the initial copy')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 13')).length === 1)
+  })
+
+  it('leaves the initial copy to the application when auto-resync is off', async () => {
+    const controller = makeController({ autoResync: false })
+    await controller.start()
+
+    const status = await controller.status()
+    expect(status.state).toBe('running')
+    expect(status.resyncRequired).toBe(false)
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(0)
+
+    await controller.downloadSnapshot()
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+  })
+
   it('automatically resyncs an interrupted snapshot load', async () => {
     const port = deviceDb.deviceSync()
     await port.beginSnapshotLoad(['notes'])

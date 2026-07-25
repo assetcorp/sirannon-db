@@ -57,9 +57,7 @@ export class SubscriptionManager {
         }
         try {
           sub.callback(event)
-        } catch {
-          /* subscriber errors must not break other subscribers */
-        }
+        } catch {}
       }
     }
   }
@@ -118,9 +116,6 @@ export function startPolling(
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
-  // Poll and cleanup read and write the shared writer connection, so they run
-  // under the same serialisation as ordinary writes; otherwise a tick reads
-  // rows a still-open transaction has not committed.
   const exclusive = runExclusive ?? (<T>(operation: () => Promise<T>) => operation())
 
   const tick = async () => {
@@ -173,12 +168,6 @@ export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, u
   return true
 }
 
-/**
- * Row values carry BigInt beyond the safe-integer range and Buffer for BLOB
- * columns, while filters can hold either representation; comparing across the
- * bigint/number boundary and by bytes keeps a filter matching the same column
- * value regardless of which form each side arrived in.
- */
 function filterValueMatches(rowValue: unknown, filterValue: unknown): boolean {
   if (rowValue === filterValue) return true
   if (typeof rowValue === 'bigint' && typeof filterValue === 'number') {

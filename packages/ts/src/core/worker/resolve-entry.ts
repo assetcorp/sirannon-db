@@ -23,17 +23,6 @@ function findPackageRoot(startDir: string): string {
   }
 }
 
-/**
- * Resolve the writer-worker script to match the build the caller is running,
- * decided by where this module itself loaded from rather than by which files
- * happen to exist. Code running from `src` (a source checkout under a
- * TypeScript loader) spawns the worker through a bootstrap that registers the
- * same loader, because a worker thread does not otherwise apply that loader's
- * extension resolution to the entry's imports. Code running from the built
- * `dist` spawns the built `.mjs` directly, even when a `src` tree sits beside
- * it. The mismatched artifact serves only as a fallback when the matching one
- * is absent.
- */
 export function resolveWorkerScript(): ResolvedWorkerScript {
   const selfPath = fileURLToPath(import.meta.url)
   const root = findPackageRoot(dirname(selfPath))

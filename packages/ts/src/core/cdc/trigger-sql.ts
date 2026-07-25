@@ -2,20 +2,6 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { CDC_TRIGGER_PREFIX } from '../internal-tables.js'
 import { SAFE_INT_BOUND_TEXT } from './encoding.js'
 
-/**
- * Helpers that compile the CDC trigger SQL for a watched table and
- * install/drop those triggers on a supplied connection.
- *
- * The trigger SQL bakes the watched table's column list into a static
- * `json_object(...)` expression for `new_data`/`old_data`. SQLite recompiles
- * triggers when their target schema changes, but the column list inside the
- * trigger body is fixed at create time — re-installation is the only way to
- * pick up a new column after `ALTER TABLE ... ADD COLUMN`.
- *
- * These functions accept a bare connection and perform no transaction
- * management of their own so that callers inside an active `BEGIN`/`COMMIT`
- * can re-install triggers in place without nesting another transaction.
- */
 export async function dropCdcTriggers(conn: SQLiteConnection, table: string): Promise<void> {
   await conn.exec(`DROP TRIGGER IF EXISTS "${CDC_TRIGGER_PREFIX}${table}_insert"`)
   await conn.exec(`DROP TRIGGER IF EXISTS "${CDC_TRIGGER_PREFIX}${table}_update"`)

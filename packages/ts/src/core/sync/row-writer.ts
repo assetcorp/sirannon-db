@@ -1,5 +1,11 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import { COLUMN_VERSIONS_TABLE } from '../internal-tables.js'
+import {
+  maxColumnVersionHlcForRow,
+  maxRowChangeHlc,
+  prepareColumnVersionRowDelete,
+  prepareColumnVersionUpsert,
+} from '../system-catalog/index.js'
+import { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
 import { findRowByPk } from './row-lookup.js'
 import type { ReplicationChange } from './types.js'
@@ -27,17 +33,12 @@ export class RowWriter {
   }
 
   async getLocalHlcForRow(tx: SQLiteConnection, table: string, rowId: string): Promise<string | null> {
-    const stmt = await tx.prepare(
-      `SELECT MAX(hlc) as max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`,
-    )
-    const row = (await stmt.get(table, rowId)) as { max_hlc: string | null } | undefined
-    if (row?.max_hlc) return row.max_hlc
+    const versioned = await maxColumnVersionHlcForRow(tx, table, rowId)
+    const logged = await maxRowChangeHlc(tx, this.changesTable, table, rowId)
 
-    const logStmt = await tx.prepare(
-      `SELECT MAX(hlc) as max_hlc FROM "${this.changesTable}" WHERE table_name = ? AND row_id = ? AND hlc != ''`,
-    )
-    const logRow = (await logStmt.get(table, rowId)) as { max_hlc: string | null } | undefined
-    return logRow?.max_hlc ?? null
+    if (versioned === null) return logged
+    if (logged === null) return versioned
+    return HLC.compare(logged, versioned) > 0 ? logged : versioned
   }
 
   async insertRow(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
@@ -154,19 +155,14 @@ export class RowWriter {
     data: Record<string, unknown> | null,
   ): Promise<void> {
     if (change.operation === 'delete') {
-      const delStmt = await tx.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE table_name = ? AND row_id = ?`)
+      const delStmt = await prepareColumnVersionRowDelete(tx)
       await delStmt.run(change.table, change.rowId)
       return
     }
 
     if (!data) return
 
-    const upsertStmt = await tx.prepare(
-      `INSERT INTO ${COLUMN_VERSIONS_TABLE} (table_name, row_id, column_name, hlc, node_id)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(table_name, row_id, column_name)
-       DO UPDATE SET hlc = excluded.hlc, node_id = excluded.node_id`,
-    )
+    const upsertStmt = await prepareColumnVersionUpsert(tx)
 
     for (const col of Object.keys(data)) {
       if (!validateIdentifier(col)) continue

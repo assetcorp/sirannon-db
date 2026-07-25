@@ -1,5 +1,6 @@
 import { decodeTaggedValues } from '../cdc/encoding.js'
 import type { SQLiteConnection } from '../driver/types.js'
+import { selectOutboundChangesSql } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
 import { HLC } from './hlc.js'
 import type { ChangeRow } from './internal-types.js'
@@ -16,14 +17,7 @@ export class BatchReader {
   ) {}
 
   async readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null> {
-    const ddlFilter = this.excludeDdl ? "AND operation != 'DDL'" : ''
-    const stmt = await this.conn.prepare(
-      `SELECT seq, table_name, operation, row_id, changed_at, old_data, new_data, node_id, tx_id, hlc
-       FROM "${this.changesTable}"
-       WHERE seq > ? AND node_id = ? ${ddlFilter}
-       ORDER BY seq ASC
-       LIMIT ?`,
-    )
+    const stmt = await this.conn.prepare(selectOutboundChangesSql(this.changesTable, this.excludeDdl))
     const rows = (await stmt.all(afterSeq.toString(), this.localNodeId, batchSize)) as ChangeRow[]
 
     if (rows.length === 0) {

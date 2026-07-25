@@ -1,6 +1,6 @@
 import type { DatabaseCdcController } from './database-cdc.js'
 import type { SQLiteConnection } from './driver/types.js'
-import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from './internal-tables.js'
+import { CHANGES_TABLE } from './internal-tables.js'
 import { mirrorSchemaVersion } from './migrations/schema-version.js'
 import { BatchApplier } from './sync/batch-applier.js'
 import { BatchReader } from './sync/batch-reader.js'
@@ -15,15 +15,19 @@ import {
   loadSnapshotPage,
   snapshotLoadPending,
 } from './sync/snapshot-apply.js'
+import { recordLocalColumnVersions } from './sync/stamp-ops.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './sync/types.js'
 import { SEQ_STRING_RE } from './sync/validators.js'
 import {
   type AppliedMigrationRow,
+  countOutboundChanges,
   ensureBatchApplyTables,
   ensureChangesTable,
   ensureMetaTable,
   getMetaValue,
   highestMigrationVersion,
+  maxAppliedSourceSeq,
+  maxChangeSeq,
   replaceMigrationHistory,
   setMetaValue,
 } from './system-catalog/index.js'
@@ -34,6 +38,7 @@ const PUSHED_SEQ_META_KEY = 'device_sync_pushed_seq'
 const PULL_SEQ_META_KEY = 'device_sync_pull_seq'
 const PULL_EPOCH_META_KEY = 'device_sync_pull_epoch'
 const RESYNC_REQUIRED_META_KEY = 'device_sync_resync_required'
+const COLUMN_VERSIONS_SEQ_META_KEY = 'device_sync_column_versions_seq'
 
 export interface DeviceSyncPullState {
   seq: bigint
@@ -209,11 +214,7 @@ export class DatabaseSyncController {
       const writer = this.acquireWriter()
       await this.ensureSyncTables(writer)
       const stamper = await this.cdc.ensureStamper()
-      const stmt = await writer.prepare(
-        `SELECT COUNT(*) AS pending FROM ${CHANGES_TABLE} WHERE seq > ? AND node_id = ? AND operation != 'DDL'`,
-      )
-      const row = (await stmt.get(afterSeq.toString(), stamper.nodeId)) as { pending: number | bigint }
-      return Number(row.pending)
+      return countOutboundChanges(writer, CHANGES_TABLE, afterSeq, stamper.nodeId)
     })
   }
 
@@ -306,15 +307,21 @@ export class DatabaseSyncController {
       this.pkResolver,
       fromNodeId => this.lastAppliedSeq(fromNodeId),
       this.cdc.changeTracker ?? undefined,
+      CHANGES_TABLE,
+      tx => this.catchUpLocalColumnVersions(tx, stamper.nodeId),
     )
   }
 
-  private async lastAppliedSeq(fromNodeId: string): Promise<bigint> {
-    const stmt = await this.acquireWriter().prepare(
-      `SELECT MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ?`,
-    )
-    const row = (await stmt.get(fromNodeId)) as { max_seq: number | bigint | null } | undefined
-    if (!row || row.max_seq === null || row.max_seq === undefined) return 0n
-    return BigInt(row.max_seq)
+  private async catchUpLocalColumnVersions(tx: SQLiteConnection, localNodeId: string): Promise<void> {
+    const recorded = await getMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY)
+    const afterSeq = recorded !== null && SEQ_STRING_RE.test(recorded) ? BigInt(recorded) : 0n
+    const latestSeq = await maxChangeSeq(tx, CHANGES_TABLE)
+    if (latestSeq <= afterSeq) return
+    await recordLocalColumnVersions(tx, CHANGES_TABLE, localNodeId, afterSeq)
+    await setMetaValue(tx, COLUMN_VERSIONS_SEQ_META_KEY, latestSeq.toString())
+  }
+
+  private lastAppliedSeq(fromNodeId: string): Promise<bigint> {
+    return maxAppliedSourceSeq(this.acquireWriter(), fromNodeId)
   }
 }

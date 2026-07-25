@@ -1,25 +1,6 @@
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { ExtensionError } from './errors.js'
 
-/**
- * Validates a filesystem path supplied to `Database.loadExtension`, then
- * issues the `SELECT load_extension(...)` call on the writer connection.
- *
- * Validation rejects:
- * - empty paths or paths carrying embedded null bytes (the path is
- *   eventually interpolated into SQL).
- * - paths containing ASCII control characters; SQLite would interpret
- *   most of them and the operator log would otherwise carry unprintable
- *   characters.
- * - paths whose segments include the `..` directory-traversal token; the
- *   resolved path is what the driver opens, but we reject untrusted
- *   inputs before they reach the filesystem so configuration mistakes
- *   surface loudly rather than silently loading an arbitrary `.so`.
- *
- * Single quotes in the resolved path are escaped by doubling them before
- * being interpolated into the SQL. `load_extension` is a SQLite function
- * call, so we cannot use parameter binding directly.
- */
 export async function loadExtension(
   driver: SQLiteDriver,
   writer: SQLiteConnection,

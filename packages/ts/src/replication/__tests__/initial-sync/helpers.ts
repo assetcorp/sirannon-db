@@ -45,27 +45,21 @@ export class SyncTestContext {
     for (const engine of this.runningEngines) {
       try {
         await engine.stop()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.runningEngines.length = 0
 
     for (const db of this.openDbs) {
       try {
         if (!db.closed) await db.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.openDbs.length = 0
 
     for (const conn of this.openConns) {
       try {
         await conn.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.openConns.length = 0
 

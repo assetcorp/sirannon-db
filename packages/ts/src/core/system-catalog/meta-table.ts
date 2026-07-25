@@ -22,10 +22,10 @@ export async function deleteMetaValue(conn: SQLiteConnection, key: string): Prom
   await stmt.run(key)
 }
 
+export const SET_META_VALUE_SQL = `INSERT INTO "${META_TABLE}" (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+
 export async function setMetaValue(conn: SQLiteConnection, key: string, value: string): Promise<void> {
-  const stmt = await conn.prepare(
-    `INSERT INTO "${META_TABLE}" (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  )
+  const stmt = await conn.prepare(SET_META_VALUE_SQL)
   await stmt.run(key, value)
 }

@@ -29,19 +29,6 @@ interface PendingRequest {
 
 type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
 
-/**
- * Owns one writer worker thread and presents it as a {@link SQLiteConnection}.
- * A natural worker crash or non-zero exit rejects every in-flight request and
- * respawns. A per-operation deadline leaves the worker running, because a
- * thread inside a synchronous native SQLite call cannot be interrupted:
- * terminating it would leak the connection's file lock and can abort the whole
- * process. When the deadline expires the host asks the worker to cancel the
- * operation. Work the worker has not started yet is skipped and rejected as
- * retryable overload with a known outcome, a result that arrives within one
- * further deadline is delivered normally, and an operation still unresolved
- * after that grace window is rejected with an indeterminate outcome, so a
- * caller must reconcile state before retrying a non-idempotent write.
- */
 export class WriterWorker {
   private worker: Worker | null = null
   private readonly pending = new Map<number, PendingRequest>()
@@ -273,9 +260,7 @@ export class WriterWorker {
         } catch (err) {
           try {
             await conn.exec('ROLLBACK')
-          } catch {
-            /* ROLLBACK failure is secondary; preserve the original error */
-          }
+          } catch {}
           throw err
         }
       },
@@ -297,9 +282,7 @@ export class WriterWorker {
             timer.unref?.()
           }),
         ])
-      } catch {
-        /* fall through to a hard terminate */
-      }
+      } catch {}
       await worker.terminate().catch(() => {})
     }
     this.worker = null

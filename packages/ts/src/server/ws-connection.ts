@@ -15,9 +15,4 @@ export interface WSConnection {
   close(code?: number, reason?: string): void
 }
 
-/**
- * Application close code sent when a connection is torn down because its
- * outbound buffer exceeded the backpressure limit. Chosen from the private
- * 4000-4999 range and echoing HTTP 429 so clients can recognise an overload.
- */
 export const WS_CLOSE_OVERLOADED = 4290

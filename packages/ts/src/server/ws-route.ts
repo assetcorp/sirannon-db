@@ -103,9 +103,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         close(code?: number, reason?: string) {
           try {
             ws.end(code, reason)
-          } catch {
-            /* already closed */
-          }
+          } catch {}
         },
       }
       userData.conn = conn

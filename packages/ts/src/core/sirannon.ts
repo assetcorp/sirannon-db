@@ -97,9 +97,7 @@ export class Sirannon {
       if (this.hookRegistry.has('databaseClose')) {
         try {
           this.hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
-        } catch {
-          /* non-fatal */
-        }
+        } catch {}
       }
 
       this.metricsCollector?.trackConnection({
@@ -116,9 +114,7 @@ export class Sirannon {
     if (this.hookRegistry.has('databaseOpen')) {
       try {
         this.hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
-      } catch {
-        /* non-fatal */
-      }
+      } catch {}
     }
 
     this.metricsCollector?.trackConnection({

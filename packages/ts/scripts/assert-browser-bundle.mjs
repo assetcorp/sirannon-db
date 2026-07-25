@@ -5,12 +5,6 @@ import { fileURLToPath } from 'node:url'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-/**
- * Every export a browser or React Native runtime can load. A Node builtin
- * reachable from any of these is either dead weight the consumer bundles for
- * nothing, or a crash when it runs. `driver/bun` is absent on purpose: Bun
- * implements the Node builtins.
- */
 const BROWSER_ENTRIES = [
   'dist/core/index.mjs',
   'dist/client/index.mjs',

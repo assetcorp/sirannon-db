@@ -5,17 +5,11 @@ import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver,
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
-/** Abort tracking for a uWS response so late writes never touch a dead socket. */
 export interface ResponseAbort {
   readonly aborted: boolean
   onAbort(fn: () => void): void
 }
 
-/**
- * uWS frees a response once it is ended and fires `onAborted` only for a client
- * disconnect, never for our own reply, so concurrent writers cannot see that one
- * of them has already answered. Only the caller that wins {@link claim} may write.
- */
 export interface ResponseGuard extends ResponseAbort {
   claim(): boolean
 }
@@ -49,10 +43,6 @@ export function initAbortHandler(res: HttpResponse): ResponseGuard {
   }
 }
 
-/**
- * Read the request body as it streams in, enforcing `maxBytes` per chunk so
- * an oversized request is rejected with 413 before it is ever fully buffered.
- */
 export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseGuard): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (abort.aborted) {
@@ -175,7 +165,6 @@ export function errorDetails(err: SirannonError): Record<string, unknown> | unde
   return details && Object.keys(details).length > 0 ? details : undefined
 }
 
-/** Map a thrown value to the response, unless the socket already aborted. */
 export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: unknown): void {
   if (abort.aborted) return
   if (err instanceof SirannonError) {
@@ -189,7 +178,6 @@ export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: un
 
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
 
-/** Replies are guarded because the resolver is awaited and uWS frees the response once it aborts. */
 export async function resolveExecutionTarget(
   res: HttpResponse,
   abort: ResponseAbort,

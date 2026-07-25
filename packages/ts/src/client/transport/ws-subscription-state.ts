@@ -39,9 +39,7 @@ export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribe
     sub.lastSeq = baseline
     try {
       sub.onReset?.()
-    } catch {
-      /* a failing reset handler must not disrupt message processing */
-    }
+    } catch {}
   } else if (sub.lastSeq === undefined && baseline !== undefined) {
     sub.lastSeq = baseline
   }
@@ -75,9 +73,7 @@ export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessa
       sub.lastSeq = event.seq
     }
     sub.callback(event)
-  } catch {
-    /* malformed data and subscriber callback errors must not disrupt the processing loop */
-  }
+  } catch {}
 }
 
 export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WSClientMessage {

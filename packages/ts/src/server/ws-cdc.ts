@@ -18,12 +18,6 @@ export interface CDCContext {
   epoch: string
 }
 
-/**
- * Per-database CDC polling contexts shared by every WebSocket subscription on
- * the same database. Each context owns a dedicated read connection so CDC
- * polling never contends with the single writer, and the context is torn
- * down once its last subscriber leaves.
- */
 export class CdcContextRegistry {
   private readonly sirannon: Sirannon
   private readonly retentionMs: number | undefined
@@ -70,9 +64,7 @@ export class CdcContextRegistry {
     if (!ctx || ctx.manager.size > 0) return
 
     ctx.stopPolling()
-    ctx.cdcConn.close().catch(() => {
-      /* best effort */
-    })
+    ctx.cdcConn.close().catch(() => {})
     this.contexts.delete(databaseId)
   }
 
@@ -84,9 +76,7 @@ export class CdcContextRegistry {
       ctx.stopPolling()
       try {
         await ctx.cdcConn.close()
-      } catch {
-        /* best effort */
-      }
+      } catch {}
     }
     this.contexts.clear()
   }

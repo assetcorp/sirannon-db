@@ -103,7 +103,6 @@ describe('Error classes', () => {
 
 describe('Type exports are accessible', () => {
   it('core types are importable', () => {
-    // Type-level only checks; this test passes if the module compiles.
     const result: ExecuteResult = { changes: 1, lastInsertRowId: 1 }
     expect(result.changes).toBe(1)
 

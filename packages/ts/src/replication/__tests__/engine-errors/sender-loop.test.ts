@@ -26,18 +26,14 @@ describe('ReplicationEngine error events', () => {
     for (const db of openDbs) {
       try {
         if (!db.closed) await db.close()
-      } catch {
-        /* cleanup */
-      }
+      } catch {}
     }
     openDbs.length = 0
 
     if (writerConn) {
       try {
         await writerConn.close()
-      } catch {
-        /* cleanup */
-      }
+      } catch {}
     }
 
     rmSync(tempDir, { recursive: true, force: true })

@@ -111,6 +111,25 @@ describe('SyncController migration handshake', () => {
     expect((await deviceDb.appliedMigrations()).map(row => row.version)).toEqual([1, 2, 3])
   })
 
+  it('recovers a device that only reads when the server schema moves ahead', async () => {
+    await deviceDb.migrate(serverMigrations)
+    await deviceDb.watch('notes')
+    const controller = makeController()
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    serverMigrations.push({ version: 3, name: 'add_pinned', up: 'ALTER TABLE notes ADD COLUMN pinned INTEGER' })
+    await serverDb.migrate(serverMigrations)
+    await serverDb.execute("INSERT INTO notes (id, body, pinned) VALUES (9, 'after the migration', 1)")
+
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 9')).length === 1)
+    const [row] = await deviceDb.query<{ body: string; pinned: number }>('SELECT body, pinned FROM notes WHERE id = 9')
+    expect(row.body).toBe('after the migration')
+    expect(row.pinned).toBe(1)
+    expect((await controller.status()).schemaVersion).toBe(3)
+    expect((await deviceDb.appliedMigrations()).map(migration => migration.version)).toEqual([1, 2, 3])
+  })
+
   it('self-heals a divergent migration history through a snapshot resync', async () => {
     await deviceDb.migrate([
       { version: 1, name: 'create_notes', up: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, other TEXT)' },

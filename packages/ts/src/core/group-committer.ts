@@ -8,16 +8,10 @@ export const DEFAULT_MAX_GROUP_SIZE = 1000
 
 const DML_PREFIX_RE = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i
 
-/**
- * Only plain DML is folded into a shared transaction; DDL, PRAGMA, and anything
- * else runs alone exactly as before, so transaction-hostile statements and CDC
- * trigger reinstatement keep their existing one-statement-at-a-time behaviour.
- */
 function isGroupable(sql: string): boolean {
   return DML_PREFIX_RE.test(sql)
 }
 
-/** A caller that groups a transaction this rejects loses the CDC trigger reinstatement DDL needs. */
 export function canGroupTransaction(statements: readonly GroupStatement[]): boolean {
   for (const statement of statements) {
     if (!isGroupable(statement.sql)) return false
@@ -37,15 +31,6 @@ interface GroupCommitterHooks {
   stampStatements: (options?: { persistClock?: boolean }) => readonly GroupStatement[] | null
 }
 
-/**
- * Coalesces the writes waiting on the writer into one transaction so a single
- * commit fsync covers the whole group. A unit is one lone write or one whole
- * transaction, and the group treats both the same way. Work that arrives while a
- * group is committing forms the next group, so the accumulation window is the
- * commit's own duration and no artificial delay is needed. Each unit still
- * resolves with its own results or rejects with its own error, and only after
- * the group's commit, so durability is unchanged.
- */
 export class GroupCommitter {
   private readonly pending: Job[] = []
   private running = false
@@ -211,12 +196,6 @@ export class GroupCommitter {
   }
 }
 
-/**
- * Every error a group produces is raised by this package and carries a code the
- * server maps to a status, so the code has to survive the worker's structured
- * clone as a {@link SirannonError} rather than as a bare `Error` the server can
- * only report as a 500.
- */
 function toError(error: GroupRunError): Error {
   const err = error.code ? new SirannonError(error.message, error.code) : new Error(error.message)
   if (error.name) err.name = error.name

@@ -27,7 +27,6 @@ _gcp_termination_time() {
 }
 
 prov_create() {
-  # Must never be empty: expanding an empty array under 'set -u' aborts on macOS's bash 3.2.
   local -a flags=(
     --project "$PROJECT" --zone "$ZONE"
     --machine-type "$MACHINE_TYPE"
@@ -89,9 +88,6 @@ prov_status() {
     || log "$VM_NAME not found"
 }
 
-# Keepalives detect a dropped connection within a minute; without them an idle stream (long seed
-# or soak phases produce no output) is silently killed by the network and tail hangs forever.
-# IAP_FLAG must stay unquoted: when empty it has to expand to no argument at all.
 # shellcheck disable=SC2086
 prov_ssh() {
   _run gcloud compute ssh "$VM_NAME" --project "$PROJECT" --zone "$ZONE" $IAP_FLAG --command "$1" \

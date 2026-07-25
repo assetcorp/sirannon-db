@@ -107,7 +107,6 @@ cmd_sync() {
       -- . ":(exclude)${RESULTS_REL}"
     printf '.git\0'
   } >"$filelist"
-  # Without this, macOS tar embeds '._*' sidecars that dirty the working tree the run records.
   COPYFILE_DISABLE=1 tar czf "$tarball" -C "$REPO_ROOT" --null -T "$filelist"
   rm -f "$filelist"
   log "upload and unpack to ~/sirannon"
@@ -152,9 +151,6 @@ cmd_logs() {
   fi
   log "stream ~/bench.log until the run finishes (Ctrl-C detaches, run keeps going)"
 
-  # The stream must survive dropped SSH connections: keepalives make a dead peer detectable, and
-  # this loop re-attaches and resumes from the last line already shown instead of hanging or
-  # re-dumping the whole log. A local mirror of the streamed lines is what makes resume possible.
   local mirror detached=0 misses=0 shown next st
   mirror="$(mktemp "${TMPDIR:-/tmp}/sirannon-bench-log.XXXXXX")"
   trap 'detached=1' INT
@@ -164,7 +160,6 @@ cmd_logs() {
     if [ "$shown" -gt 0 ]; then
       log "stream reconnecting (resuming from line $next)"
     fi
-    # Single-quoted so $(cat bench.pid) expands on the VM, not on the control host.
     # shellcheck disable=SC2016
     prov_ssh 'tail -n +'"$next"' --follow=name --pid=$(cat bench.pid 2>/dev/null || echo 1) bench.log' \
       < /dev/null | tee -a "$mirror" || true

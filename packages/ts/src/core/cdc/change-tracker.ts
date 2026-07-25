@@ -2,8 +2,11 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError, ForbiddenSqlError } from '../errors.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
 import {
+  deleteChangesBeforeSql,
+  deleteChangesBeforeUpToSeqSql,
   ensureChangesTable,
   maxChangeSeq,
+  minChangeSeqSql,
   tableColumnNames,
   tableExists,
   tablePkColumns,
@@ -255,7 +258,7 @@ export class ChangeTracker {
       }
     }
 
-    const stmt = await this.stmtCache.get(conn, 'min_seq', `SELECT MIN(seq) AS seq FROM "${this.changesTable}"`)
+    const stmt = await this.stmtCache.get(conn, 'min_seq', minChangeSeqSql(this.changesTable))
     const row = (await stmt.get()) as { seq?: unknown } | undefined
     const seq = row?.seq
     if (seq === undefined || seq === null) {
@@ -293,13 +296,13 @@ export class ChangeTracker {
       const stmt = await this.stmtCache.get(
         conn,
         'cleanup_coordinated',
-        `DELETE FROM "${this.changesTable}" WHERE changed_at < ? AND seq <= ?`,
+        deleteChangesBeforeUpToSeqSql(this.changesTable),
       )
       const result = await stmt.run(cutoff, seqBound.toString())
       return result.changes
     }
 
-    const stmt = await this.stmtCache.get(conn, 'cleanup', `DELETE FROM "${this.changesTable}" WHERE changed_at < ?`)
+    const stmt = await this.stmtCache.get(conn, 'cleanup', deleteChangesBeforeSql(this.changesTable))
     const result = await stmt.run(cutoff)
     return result.changes
   }

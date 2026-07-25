@@ -72,7 +72,34 @@ async function until(predicate: () => boolean | Promise<boolean>, timeout = 5000
   }
 }
 
+async function startSettled(controller: SyncController): Promise<void> {
+  await controller.start()
+  await until(async () => {
+    const status = await controller.status()
+    return status.state === 'running' && !status.resyncRequired
+  })
+}
+
 describe('SyncController push', () => {
+  it('reports a local write as outstanding until the outbox drains', async () => {
+    const controller = makeController({ autoResync: false, pushIntervalMs: 5_000 })
+    await controller.start()
+
+    const atStart = await controller.status()
+    expect(atStart.pendingPushCount).toBe(0)
+    expect(atStart.pushCaughtUp).toBe(true)
+
+    await deviceDb.execute("INSERT INTO notes (id, body) VALUES (60, 'just typed')")
+
+    const afterWrite = await controller.status()
+    expect(afterWrite.pendingPushCount).toBe(1)
+    expect(afterWrite.pushCaughtUp).toBe(false)
+
+    controller.triggerPush()
+    await until(async () => (await controller.status()).pushCaughtUp)
+    expect((await controller.status()).pendingPushCount).toBe(0)
+  })
+
   it('drains local writes to the server and advances the durable push cursor', async () => {
     await deviceDb.execute("INSERT INTO notes (id, body) VALUES (1, 'offline one')")
     await deviceDb.execute("INSERT INTO notes (id, body) VALUES (2, 'offline two')")
@@ -99,8 +126,7 @@ describe('SyncController push', () => {
 
   it('pauses pushing and resumes where it left off', async () => {
     const controller = makeController()
-    await controller.start()
-    await until(async () => (await controller.status()).pushCaughtUp)
+    await startSettled(controller)
 
     controller.pause()
     expect((await controller.status()).state).toBe('paused')
@@ -168,8 +194,7 @@ describe('SyncController pull', () => {
 
   it('writes pulled changes into the local database and commits the cursor with them', async () => {
     const controller = makeController()
-    await controller.start()
-    await until(async () => (await controller.status()).pushCaughtUp)
+    await startSettled(controller)
 
     await serverDb.execute("INSERT INTO notes (id, body) VALUES (21, 'from server')")
 
@@ -183,8 +208,7 @@ describe('SyncController pull', () => {
 
   it('applies a server transaction as one local transaction', async () => {
     const controller = makeController()
-    await controller.start()
-    await until(async () => (await controller.status()).pushCaughtUp)
+    await startSettled(controller)
 
     await serverDb.transaction(async tx => {
       await tx.execute("INSERT INTO notes (id, body) VALUES (31, 'first')")
@@ -223,8 +247,7 @@ describe('SyncController pull', () => {
     await deviceDb.watch('tags')
 
     const controller = makeController({ tables: ['notes', 'tags'] })
-    await controller.start()
-    await until(async () => (await controller.status()).pushCaughtUp)
+    await startSettled(controller)
 
     await serverDb.transaction(async tx => {
       await tx.execute("INSERT INTO notes (id, body) VALUES (51, 'note')")

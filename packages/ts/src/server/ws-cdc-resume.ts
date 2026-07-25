@@ -16,33 +16,12 @@ function approxEventBytes(event: ChangeEvent): number {
   return bytes
 }
 
-/**
- * A subscriber's requested `sinceSeq` can be replayed only when the history
- * below it is still retained. Events before the retained window were pruned,
- * so the gap cannot be filled and the client must re-read.
- */
 export function needsResync(sinceSeq: bigint, minSeq: bigint | null, boundary: bigint): boolean {
   if (sinceSeq >= boundary) return false
   if (minSeq === null) return true
   return minSeq > sinceSeq + 1n
 }
 
-/**
- * Streams a resuming subscription in strict seq order across the seam between
- * replayed history and the live feed.
- *
- * The live subscription is registered first, so every event past the shared
- * poll cursor (`boundary`) arrives here and is held in a bounded buffer. While
- * buffering, retained history in `(sinceSeq, boundary]` is replayed directly.
- * `goLive` then flushes the buffer in order and switches to direct delivery,
- * so the client sees one ascending stream with no gap or reordering.
- *
- * Delivery honours backpressure: `deliver` reports the send outcome, and a
- * dropped frame stops the stream and hands off to `onOverload`, which closes
- * the connection so the client reconnects and resumes again. If the buffer
- * fills before replay completes, the same fail-loud path runs rather than
- * growing memory without bound.
- */
 export class PrimedSubscription {
   private mode: 'priming' | 'live' | 'stopped' = 'priming'
   private buffer: ChangeEvent[] = []

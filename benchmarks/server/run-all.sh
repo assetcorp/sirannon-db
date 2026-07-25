@@ -71,7 +71,6 @@ fi
 CPUSET_PY='
 import sys
 
-
 def expand(spec):
     cpus = set()
     for part in spec.split(","):
@@ -84,7 +83,6 @@ def expand(spec):
         else:
             cpus.add(int(part))
     return cpus
-
 
 if sys.argv[1] == "count":
     print(len(expand(sys.argv[2])))
@@ -119,7 +117,6 @@ BENCH_PG_PASSWORD="${BENCH_PG_PASSWORD:-$(od -An -N16 -tx1 /dev/urandom | tr -d 
 export BENCH_PG_PASSWORD
 
 SSD_MODE="${BENCH_LOCAL_SSD_MODE:-auto}"
-# Must stay outside any home: the postgres user traverses every component, and mode 700 blocks it.
 if [ -z "${BENCH_DATA_ROOT:-}" ]; then
   if findmnt -no TARGET /mnt/nvme >/dev/null 2>&1; then
     BENCH_DATA_ROOT="/mnt/nvme/bench"
@@ -164,7 +161,6 @@ now_ms() {
   printf '%s\n' $(( us / 1000 ))
 }
 
-# Reusing a unit name while the old one is still deactivating fails with "unit already exists".
 unit_stop() {
   local unit="$1" waited=0 state
   sudo systemctl stop "$unit" >/dev/null 2>&1 || true
@@ -187,8 +183,6 @@ unit_stop() {
   sudo systemctl reset-failed "$unit" >/dev/null 2>&1 || true
 }
 
-# Login sessions (including anyone SSH-ing in to diagnose a run) live under user.slice, so pinning
-# that slice to the driver's cores means a diagnostic shell can never steal engine CPU mid-pass.
 confine_login_sessions() {
   if sudo systemctl set-property --runtime user.slice AllowedCPUs="$DRIVER_CPUSET"; then
     echo "login sessions confined to driver cores ${DRIVER_CPUSET}; SSH diagnosis is safe during passes"
@@ -209,7 +203,6 @@ cleanup_units() {
   release_login_sessions
 }
 trap cleanup_units EXIT
-# A hard-killed prior run never reached its EXIT trap, so its units may still hold ports and cores.
 cleanup_units
 confine_login_sessions
 
@@ -221,7 +214,6 @@ run_with_deadline() {
   timeout -k 30 "$secs" "$@"
   rc=$?
   elapsed=$(( ($(now_ms) - began) / 1000 ))
-  # 137 is timeout's SIGKILL or an OOM kill; only the elapsed check tells a crash from a deadline.
   if [ "$rc" -eq 124 ] || { [ "$rc" -eq 137 ] && [ "$elapsed" -ge "$secs" ]; }; then
     echo "pass exceeded its ${secs}s deadline; killed it and stopping the driver unit" >&2
     unit_stop bench-driver.service
@@ -286,7 +278,6 @@ check_data_device() {
 verify_engine_cgroup() {
   local unit="$1" cg="/sys/fs/cgroup/system.slice/$1"
   local page expect_mem actual_mem actual_cpus
-  # The kernel rounds memory.max down to a page multiple, so the expectation is rounded to match.
   page="$(getconf PAGE_SIZE)"
   expect_mem="$(numfmt --from=iec "$ENGINE_MEMORY")"
   expect_mem=$(( expect_mem / page * page ))
@@ -322,8 +313,6 @@ cooldown() {
   sleep "$COOLDOWN_SECONDS"
 }
 
-# OOMScoreAdjust and the two PG_OOM_ADJUST variables are one mechanism: they exempt the postmaster
-# while each backend resets to a normal score, so memory pressure kills a recoverable backend.
 start_postgres() {
   sudo systemd-run --quiet --collect --unit=bench-postgres \
     -p AllowedCPUs="$ENGINE_CPUSET" -p MemoryMax="$ENGINE_MEMORY" -p MemorySwapMax=0 \

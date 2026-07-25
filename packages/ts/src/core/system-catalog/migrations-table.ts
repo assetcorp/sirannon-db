@@ -11,10 +11,17 @@ const CREATE_MIGRATIONS_TABLE = `
   )
 `
 
+type PreparedStatement = Awaited<ReturnType<SQLiteConnection['prepare']>>
+
 export interface AppliedMigrationRow {
   version: number
   name: string
   checksum: string | null
+}
+
+export interface MigrationEntryRow {
+  version: number
+  name: string
 }
 
 export async function ensureMigrationsTable(conn: SQLiteConnection): Promise<void> {
@@ -39,6 +46,23 @@ export async function replaceMigrationHistory(
       await insert.run(row.version, row.name, row.checksum)
     }
   })
+}
+
+export async function appliedMigrationEntriesNewestFirst(conn: SQLiteConnection): Promise<MigrationEntryRow[]> {
+  const stmt = await conn.prepare(`SELECT version, name FROM ${MIGRATIONS_TABLE} ORDER BY version DESC`)
+  return (await stmt.all()) as MigrationEntryRow[]
+}
+
+export function prepareMigrationInsert(conn: SQLiteConnection): Promise<PreparedStatement> {
+  return conn.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (version, name, checksum) VALUES (?, ?, ?)`)
+}
+
+export function prepareMigrationChecksumUpdate(conn: SQLiteConnection): Promise<PreparedStatement> {
+  return conn.prepare(`UPDATE ${MIGRATIONS_TABLE} SET checksum = ? WHERE version = ?`)
+}
+
+export function prepareMigrationDelete(conn: SQLiteConnection): Promise<PreparedStatement> {
+  return conn.prepare(`DELETE FROM ${MIGRATIONS_TABLE} WHERE version = ?`)
 }
 
 export function highestMigrationVersion(rows: readonly { version: number }[]): number {

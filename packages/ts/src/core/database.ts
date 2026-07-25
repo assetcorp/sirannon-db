@@ -352,9 +352,7 @@ export class Database {
     for (const fn of this.closeListeners) {
       try {
         await fn()
-      } catch {
-        /* listener errors are secondary to pool close */
-      }
+      } catch {}
     }
 
     if (poolError) {

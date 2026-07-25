@@ -19,9 +19,7 @@ describe('ConvergenceOracle', () => {
     for (const conn of connections) {
       try {
         await conn.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     connections.length = 0
     rmSync(tempDir, { recursive: true, force: true })

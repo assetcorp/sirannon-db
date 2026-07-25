@@ -9,7 +9,7 @@ import { downloadDatabaseSnapshot } from './snapshot-loader.js'
 import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
 import { PullStream } from './sync-pull-stream.js'
-import { pushSyncBatch } from './sync-push.js'
+import { PushLoop } from './sync-push-loop.js'
 import { RemoteError } from './types.js'
 
 export type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
@@ -23,22 +23,16 @@ const DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS = 300_000
 
 export class SyncController {
   private readonly baseUrl: string
-  private readonly batchSize: number
   private readonly pushIntervalMs: number
   private readonly maxPushRetryDelayMs: number
   private readonly pull: PullStream
+  private readonly push: PushLoop
 
   private port: DeviceSyncPort | null = null
   private deviceId: string | null = null
   private capabilities: string[] | null = null
   private schemaVersion: number | null = null
   private state: SyncState = 'stopped'
-  private pushCursor = 0n
-  private pushTimer: ReturnType<typeof setInterval> | null = null
-  private pushing = false
-  private consecutivePushFailures = 0
-  private nextPushAttemptAt = 0
-  private pushCaughtUp = false
   private resyncRequired = false
   private resyncTimer: ReturnType<typeof setTimeout> | null = null
   private consecutiveResyncFailures = 0
@@ -51,9 +45,29 @@ export class SyncController {
     private readonly options: SyncControllerOptions,
   ) {
     this.baseUrl = toBaseUrl(options.url)
-    this.batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE
     this.pushIntervalMs = options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS
     this.maxPushRetryDelayMs = options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS
+    this.push = new PushLoop(
+      {
+        baseUrl: this.baseUrl,
+        databaseId: options.databaseId,
+        headers: options.headers,
+        requestTimeout: options.requestTimeout,
+        batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
+        intervalMs: this.pushIntervalMs,
+        maxRetryDelayMs: this.maxPushRetryDelayMs,
+      },
+      {
+        isRunning: () => this.state === 'running',
+        port: () => this.port,
+        schemaVersion: () => this.schemaVersion ?? 0,
+        reconcileSchema: () => this.reconcileSchema(),
+        recordError: err => this.recordError(err),
+        onDrained: () => {
+          this.lastError = null
+        },
+      },
+    )
     this.pull = new PullStream(
       {
         wsBaseUrl: toWsUrl(this.baseUrl),
@@ -85,8 +99,8 @@ export class SyncController {
       await this.verifyCapabilities()
       this.port ??= this.db.deviceSync()
       this.deviceId = (await this.port.identity()).nodeId
-      this.pushCursor = await this.port.getPushCursor()
-      this.port.protectUnpushedChanges(this.pushCursor)
+      this.push.cursor = await this.port.getPushCursor()
+      this.port.protectUnpushedChanges(this.push.cursor)
       const pullState = await this.port.getPullState()
       this.pull.pullSeq = pullState?.seq ?? null
       this.pull.pullEpoch = pullState?.epoch
@@ -101,8 +115,11 @@ export class SyncController {
           this.schemaVersion = await this.localSchemaVersion()
         }
       }
+      if (!this.resyncRequired && pullState === null && this.options.autoResync !== false) {
+        this.resyncRequired = true
+      }
       if (!this.resyncRequired) {
-        await this.pull.open(this.deviceId, this.schemaVersion ?? 0)
+        await this.openPull()
       }
       this.state = 'running'
     } catch (err) {
@@ -110,11 +127,8 @@ export class SyncController {
       this.state = 'stopped'
       throw err
     }
-    this.pushTimer = setInterval(() => {
-      void this.drainOutbox()
-    }, this.pushIntervalMs)
-    unrefTimer(this.pushTimer)
-    void this.drainOutbox()
+    this.push.start()
+    void this.push.drain()
     if (this.resyncRequired) {
       this.scheduleAutoResync()
     }
@@ -141,23 +155,23 @@ export class SyncController {
   }
 
   async status(): Promise<SyncStatus> {
-    const pendingPushCount = this.port ? await this.port.countOutboxPending(this.pushCursor) : 0
+    const pendingPushCount = this.port ? await this.port.countOutboxPending(this.push.cursor) : 0
     return {
       state: this.state,
       deviceId: this.deviceId,
       serverCapabilities: this.capabilities,
       schemaVersion: this.schemaVersion,
       pendingPushCount,
-      lastPushedSeq: this.pushCursor,
+      lastPushedSeq: this.push.cursor,
       lastPulledSeq: this.pull.pullSeq,
-      pushCaughtUp: this.pushCaughtUp,
+      pushCaughtUp: pendingPushCount === 0,
       resyncRequired: this.resyncRequired,
       lastError: this.lastError,
     }
   }
 
   triggerPush(): void {
-    void this.drainOutbox()
+    void this.push.drain()
   }
 
   private async verifyCapabilities(): Promise<void> {
@@ -250,7 +264,7 @@ export class SyncController {
     this.teardownStream()
     this.state = 'snapshotting'
     try {
-      await this.drainBeforeSnapshot(port)
+      await this.push.drainFully(port)
       await downloadDatabaseSnapshot(port, {
         url: this.baseUrl,
         databaseId: this.options.databaseId,
@@ -280,76 +294,6 @@ export class SyncController {
     await this.start()
   }
 
-  private async drainBeforeSnapshot(port: DeviceSyncPort): Promise<void> {
-    let retriedAfterMigration = false
-    for (;;) {
-      try {
-        if (!(await this.pushNextBatch(port))) return
-      } catch (err) {
-        if (!(err instanceof RemoteError) || err.code !== 'MIGRATION_REQUIRED') throw err
-        if (retriedAfterMigration) return
-        retriedAfterMigration = true
-        const status = await this.reconcileSchema().catch(() => 'resync-required' as const)
-        if (status === 'ahead') throw err
-        if (status === 'resync-required') return
-      }
-    }
-  }
-
-  private async pushNextBatch(port: DeviceSyncPort): Promise<boolean> {
-    const batch = await port.readOutboxBatch(this.pushCursor, this.batchSize)
-    if (batch === null) {
-      this.pushCaughtUp = true
-      return false
-    }
-    this.pushCaughtUp = false
-    await pushSyncBatch(
-      this.baseUrl,
-      this.options.databaseId,
-      batch,
-      this.options.headers,
-      this.options.requestTimeout,
-      this.schemaVersion ?? 0,
-    )
-    this.pushCursor = batch.toSeq
-    await port.setPushCursor(batch.toSeq)
-    port.protectUnpushedChanges(batch.toSeq)
-    return true
-  }
-
-  private async drainOutbox(): Promise<void> {
-    if (this.pushing || this.state !== 'running' || this.port === null) return
-    if (Date.now() < this.nextPushAttemptAt) return
-    this.pushing = true
-    try {
-      while (this.state === 'running') {
-        const pushed = await this.pushNextBatch(this.port)
-        if (!pushed) break
-        this.consecutivePushFailures = 0
-        this.nextPushAttemptAt = 0
-        this.lastError = null
-      }
-    } catch (err) {
-      this.recordError(err)
-      this.consecutivePushFailures += 1
-      const delay = Math.min(this.pushIntervalMs * 2 ** this.consecutivePushFailures, this.maxPushRetryDelayMs)
-      this.nextPushAttemptAt = Date.now() + delay
-      if (err instanceof RemoteError && err.code === 'MIGRATION_REQUIRED' && this.state === 'running') {
-        try {
-          const status = await this.reconcileSchema()
-          if (status === 'migrated' || status === 'in-sync') {
-            this.consecutivePushFailures = 0
-            this.nextPushAttemptAt = 0
-          }
-        } catch (reconcileErr) {
-          this.recordError(reconcileErr)
-        }
-      }
-    } finally {
-      this.pushing = false
-    }
-  }
-
   private recordError(err: unknown): void {
     const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
     this.lastError = { code, message: err instanceof Error ? err.message : String(err) }
@@ -372,17 +316,44 @@ export class SyncController {
   private async reopenPull(): Promise<void> {
     if (this.state !== 'running' || this.deviceId === null || this.resyncRequired) return
     try {
-      await this.pull.open(this.deviceId, this.schemaVersion ?? 0)
+      await this.openPull()
     } catch (err) {
       this.handleApplyFailure(err)
     }
   }
 
-  private teardownStream(): void {
-    if (this.pushTimer !== null) {
-      clearInterval(this.pushTimer)
-      this.pushTimer = null
+  /**
+   * Opens the pull subscription, reconciling migrations when the server refuses
+   * it because this device is behind. A device that only reads never pushes, so
+   * the subscribe refusal is the sole point at which it can learn that the
+   * server has migrated; without this it would retry the same refused
+   * subscription forever and silently receive nothing.
+   */
+  private async openPull(): Promise<void> {
+    const deviceId = this.deviceId
+    if (deviceId === null) return
+
+    let refusal: RemoteError
+    try {
+      await this.pull.open(deviceId, this.schemaVersion ?? 0)
+      return
+    } catch (err) {
+      if (!(err instanceof RemoteError) || err.code !== 'MIGRATION_REQUIRED') throw err
+      this.recordError(err)
+      refusal = err
     }
+
+    const status = await this.reconcileSchema()
+    if (this.resyncRequired) return
+    if (status === 'ahead') throw refusal
+
+    this.pull.teardown()
+    await this.pull.open(deviceId, this.schemaVersion ?? 0)
+    this.lastError = null
+  }
+
+  private teardownStream(): void {
+    this.push.stop()
     if (this.resyncTimer !== null) {
       clearTimeout(this.resyncTimer)
       this.resyncTimer = null

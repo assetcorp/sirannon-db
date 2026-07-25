@@ -2,10 +2,10 @@ import { EventEmitter } from 'node:events'
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from '../../core/internal-tables.js'
+import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
-import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
+import { maxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
@@ -285,13 +285,8 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   async loadAppliedSeqs(): Promise<void> {
-    const stmt = await this.writerConn.prepare(
-      `SELECT source_node_id, MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} GROUP BY source_node_id`,
-    )
-    const rows = (await stmt.all()) as Array<{ source_node_id: string; max_seq: number | string | null }>
-    for (const row of rows) {
-      if (row.max_seq === null) continue
-      this.appliedSeqByPeer.set(row.source_node_id, BigInt(row.max_seq))
+    for (const [nodeId, seq] of await maxAppliedSourceSeqByNode(this.writerConn)) {
+      this.appliedSeqByPeer.set(nodeId, seq)
     }
   }
 

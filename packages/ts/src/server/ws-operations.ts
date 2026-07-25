@@ -12,10 +12,6 @@ import {
 } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
-/**
- * Reply surface handed to each data-operation message handler, so the
- * handlers stay independent of the connection bookkeeping in WSHandler.
- */
 export interface WSOperationContext {
   target: ServerExecutionTarget
   sendResult(id: string, data: WSResultMessage['data']): void

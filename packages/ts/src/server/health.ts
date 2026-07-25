@@ -38,7 +38,6 @@ interface ReadinessResponse {
   }
 }
 
-/** Returns a handler that responds with a static 200 OK JSON payload for liveness probes. */
 export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void {
   const payload = JSON.stringify({ status: 'ok' } satisfies LivenessResponse)
 
@@ -49,7 +48,6 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
   }
 }
 
-/** Returns a handler that reports database and replication status for readiness probes. */
 export function handleReadiness(
   sirannon: Sirannon,
   getReplicationStatus?: () => ReplicationStatusInfo | null,

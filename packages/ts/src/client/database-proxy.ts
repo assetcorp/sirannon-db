@@ -118,9 +118,6 @@ export class RemoteDatabase {
       total.changes += summary.changes
     }
 
-    // A one-batch lookahead marks only the final batch as the checkpoint, so
-    // the fsyncing WAL checkpoint runs once at the end rather than once per
-    // batch, while every batch still restores the configured durability.
     let batch: Params[] = []
     let previous: Params[] | null = null
     const rotate = async (): Promise<void> => {

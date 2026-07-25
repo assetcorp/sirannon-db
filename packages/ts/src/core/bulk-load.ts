@@ -102,14 +102,6 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
   return result
 }
 
-/**
- * Flush the WAL into the main database file and fsync it at the restored
- * durability. `wal_checkpoint(TRUNCATE)` reports `busy` rather than throwing
- * when a reader holds the WAL; the load has already committed, so a busy
- * result is not fatal. Each retry waits a short, growing delay to give a
- * transient reader time to release the WAL; a persistent reader defers the
- * final flush to a later checkpoint rather than failing a committed load.
- */
 async function checkpoint(writer: SQLiteConnection): Promise<void> {
   for (let attempt = 0; attempt < CHECKPOINT_ATTEMPTS; attempt++) {
     if (attempt > 0) {

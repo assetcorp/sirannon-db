@@ -4,11 +4,6 @@ import { BackupManager } from '../core/backup/backup.js'
 import { BackupScheduler } from '../core/backup/scheduler.js'
 import type { BackupEngine, WriterContext } from '../core/driver/types.js'
 
-/**
- * The capabilities a Node-like runtime can back but a browser cannot. Only
- * drivers for those runtimes import this, which is what keeps `node:` modules
- * out of a bundle built for one that lacks them.
- */
 export function nodeWriterContext(): WriterContext {
   const held = new AsyncLocalStorage<true>()
   return {

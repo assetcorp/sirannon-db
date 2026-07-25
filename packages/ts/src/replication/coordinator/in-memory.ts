@@ -1,6 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import { NoSafePrimaryError } from '../errors.js'
-import { compatibilityAllowsPromotion } from './compatibility.js'
+import {
+  assertNonEmpty,
+  assertNonNegativeSeq,
+  assertNonNegativeTerm,
+  assertPositiveTtl,
+  assertPrimaryInGroup,
+  buildReplicationGroupState,
+  cloneCompatibility,
+  cloneMetadata,
+  cloneReplicationGroupState,
+  isEligiblePromotionSession,
+  MIN_AUTOMATIC_FAILOVER_VOTERS,
+  markDisplacedPrimaryForRepair,
+  nextAdmittedInSyncState,
+  nextInSyncSetState,
+  nextMaintenanceState,
+} from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
@@ -8,7 +24,6 @@ import type {
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
-  CoordinatorCompatibilityMetadata,
   CoordinatorLease,
   CoordinatorNodeSession,
   PromoteEligibleReplicaInput,
@@ -19,8 +34,6 @@ import type {
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
 } from './types.js'
-
-const MIN_AUTOMATIC_FAILOVER_VOTERS = 3
 
 export interface InMemoryClusterCoordinatorOptions {
   now?: () => number
@@ -153,35 +166,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   }
 
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
-    assertNonEmpty(input.clusterId, 'clusterId')
-    assertNonEmpty(input.groupId, 'groupId')
-    const votingDataBearingNodeIds = normaliseNodeIds(input.votingDataBearingNodeIds, 'votingDataBearingNodeIds')
-    const inSyncNodeIds = normaliseNodeIds(input.inSyncNodeIds ?? [], 'inSyncNodeIds')
-    const drainingNodeIds = normaliseNodeIds(input.drainingNodeIds ?? [], 'drainingNodeIds')
-    const repairingNodeIds = normaliseNodeIds(input.repairingNodeIds ?? [], 'repairingNodeIds')
-    const faultedNodeIds = normaliseNodeIds(input.faultedNodeIds ?? [], 'faultedNodeIds')
-    assertNonNegativeTerm(input.primaryTerm ?? 0n)
-    assertNonNegativeSeq(input.durabilityPointSeq ?? 0n, 'durabilityPointSeq')
-    assertPrimaryInGroup(input.currentPrimary ?? null, votingDataBearingNodeIds)
-    assertSubset(inSyncNodeIds, votingDataBearingNodeIds, 'inSyncNodeIds')
-    assertSubset(drainingNodeIds, votingDataBearingNodeIds, 'drainingNodeIds')
-    assertSubset(repairingNodeIds, votingDataBearingNodeIds, 'repairingNodeIds')
-    assertSubset(faultedNodeIds, votingDataBearingNodeIds, 'faultedNodeIds')
-
-    const state: ReplicationGroupState = {
-      clusterId: input.clusterId,
-      groupId: input.groupId,
-      votingDataBearingNodeIds,
-      currentPrimary: input.currentPrimary ? { ...input.currentPrimary } : null,
-      primaryTerm: input.primaryTerm ?? 0n,
-      durabilityPointSeq: input.durabilityPointSeq ?? 0n,
-      inSyncNodeIds,
-      drainingNodeIds,
-      repairingNodeIds,
-      faultedNodeIds,
-      compatibility: cloneCompatibility(input.compatibility),
-      updatedAtMs: this.now(),
-    }
+    const state = buildReplicationGroupState(input, this.now())
     this.replicationGroups.set(replicationGroupKey(input.clusterId, input.groupId), state)
     this.notifyReplicationGroupWatchers(state)
     return cloneReplicationGroupState(state)
@@ -246,22 +231,9 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     if (input.durabilityPointSeq !== undefined) {
       assertNonNegativeSeq(input.durabilityPointSeq, 'durabilityPointSeq')
     }
-    const key = replicationGroupKey(input.clusterId, input.groupId)
-    const state = this.replicationGroups.get(key)
-    if (!state) {
-      return null
-    }
-
-    const inSyncNodeIds = normaliseNodeIds(input.inSyncNodeIds, 'inSyncNodeIds')
-    assertSubset(inSyncNodeIds, state.votingDataBearingNodeIds, 'inSyncNodeIds')
-    assertNoInSyncAdditions(state.inSyncNodeIds, inSyncNodeIds)
-    state.inSyncNodeIds = inSyncNodeIds
-    if (input.durabilityPointSeq !== undefined && input.durabilityPointSeq > state.durabilityPointSeq) {
-      state.durabilityPointSeq = input.durabilityPointSeq
-    }
-    state.updatedAtMs = this.now()
-    this.notifyReplicationGroupWatchers(state)
-    return cloneReplicationGroupState(state)
+    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
+      nextInSyncSetState(state, input, this.now()),
+    )
   }
 
   async admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
@@ -271,54 +243,19 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.sourceNodeId, 'sourceNodeId')
     assertNonNegativeSeq(input.appliedSeq, 'appliedSeq')
 
-    const key = replicationGroupKey(input.clusterId, input.groupId)
-    const state = this.replicationGroups.get(key)
-    if (!state) {
-      return null
-    }
-    if (!state.votingDataBearingNodeIds.includes(input.nodeId)) {
-      throw new RangeError(`Node '${input.nodeId}' is not configured for the replication group`)
-    }
-    if (
-      state.currentPrimary?.nodeId !== input.sourceNodeId ||
-      state.drainingNodeIds.includes(input.nodeId) ||
-      state.faultedNodeIds.includes(input.nodeId) ||
-      input.appliedSeq < state.durabilityPointSeq
-    ) {
-      return cloneReplicationGroupState(state)
-    }
-
-    if (!state.inSyncNodeIds.includes(input.nodeId)) {
-      state.inSyncNodeIds = [...state.inSyncNodeIds, input.nodeId]
-    }
-    state.repairingNodeIds = removeNodeId(state.repairingNodeIds, input.nodeId)
-    state.updatedAtMs = this.now()
-    this.notifyReplicationGroupWatchers(state)
-    return cloneReplicationGroupState(state)
+    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
+      nextAdmittedInSyncState(state, input, this.now()),
+    )
   }
 
   async updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.groupId, 'groupId')
     assertNonEmpty(input.nodeId, 'nodeId')
-    const key = replicationGroupKey(input.clusterId, input.groupId)
-    const state = this.replicationGroups.get(key)
-    if (!state) {
-      return null
-    }
-    if (!state.votingDataBearingNodeIds.includes(input.nodeId)) {
-      throw new RangeError(`Node '${input.nodeId}' is not configured for the replication group`)
-    }
 
-    state.drainingNodeIds = setMembership(state.drainingNodeIds, input.nodeId, input.draining)
-    state.repairingNodeIds = setMembership(state.repairingNodeIds, input.nodeId, input.repairing)
-    state.faultedNodeIds = setMembership(state.faultedNodeIds, input.nodeId, input.faulted)
-    if (input.draining === true || input.repairing === true || input.faulted === true) {
-      state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, input.nodeId)
-    }
-    state.updatedAtMs = this.now()
-    this.notifyReplicationGroupWatchers(state)
-    return cloneReplicationGroupState(state)
+    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
+      nextMaintenanceState(state, input, this.now()),
+    )
   }
 
   async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
@@ -340,7 +277,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
         continue
       }
       const session = this.nodeSessions.get(nodeSessionKey(input.clusterId, nodeId))
-      if (!this.isEligiblePromotionSession(state, nodeId, session)) {
+      if (!this.isPromotable(state, nodeId, session)) {
         continue
       }
 
@@ -351,6 +288,25 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     }
 
     throw new NoSafePrimaryError(`No safe primary is available for replication group '${input.groupId}'`)
+  }
+
+  private applyGroupTransition(
+    clusterId: string,
+    groupId: string,
+    transition: (state: ReplicationGroupState) => ReplicationGroupState,
+  ): ReplicationGroupState | null {
+    const key = replicationGroupKey(clusterId, groupId)
+    const state = this.replicationGroups.get(key)
+    if (!state) {
+      return null
+    }
+    const next = transition(state)
+    if (next === state) {
+      return cloneReplicationGroupState(state)
+    }
+    this.replicationGroups.set(key, next)
+    this.notifyReplicationGroupWatchers(next)
+    return cloneReplicationGroupState(next)
   }
 
   private findLease(leaseId: string): CoordinatorLease | null {
@@ -385,7 +341,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     }
   }
 
-  private isEligiblePromotionSession(
+  private isPromotable(
     state: ReplicationGroupState,
     nodeId: string,
     session: CoordinatorNodeSession | undefined,
@@ -393,15 +349,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     if (!session || !this.isLeaseLive(session.lease)) {
       return false
     }
-    return (
-      session.dataBearing &&
-      session.voting &&
-      state.inSyncNodeIds.includes(nodeId) &&
-      compatibilityAllowsPromotion(state.compatibility, session.compatibility) &&
-      !state.drainingNodeIds.includes(nodeId) &&
-      !state.repairingNodeIds.includes(nodeId) &&
-      !state.faultedNodeIds.includes(nodeId)
-    )
+    return isEligiblePromotionSession(state, nodeId, session)
   }
 }
 
@@ -415,30 +363,6 @@ function cloneNodeSession(session: CoordinatorNodeSession): CoordinatorNodeSessi
   }
 }
 
-function cloneReplicationGroupState(state: ReplicationGroupState): ReplicationGroupState {
-  return {
-    ...state,
-    votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
-    currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
-    durabilityPointSeq: state.durabilityPointSeq,
-    inSyncNodeIds: [...state.inSyncNodeIds],
-    drainingNodeIds: [...state.drainingNodeIds],
-    repairingNodeIds: [...state.repairingNodeIds],
-    faultedNodeIds: [...state.faultedNodeIds],
-    compatibility: cloneCompatibility(state.compatibility),
-  }
-}
-
-function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {
-  const displacedPrimaryId = state.currentPrimary?.nodeId
-  state.primaryTerm += 1n
-  state.currentPrimary = { ...nextPrimary }
-  if (displacedPrimaryId && displacedPrimaryId !== nextPrimary.nodeId) {
-    state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, displacedPrimaryId)
-    state.repairingNodeIds = setMembership(state.repairingNodeIds, displacedPrimaryId, true)
-  }
-}
-
 function cloneLease(lease: CoordinatorLease): CoordinatorLease {
   return {
     ...lease,
@@ -446,10 +370,11 @@ function cloneLease(lease: CoordinatorLease): CoordinatorLease {
   }
 }
 
-function cloneCompatibility(
-  compatibility: CoordinatorCompatibilityMetadata | undefined,
-): CoordinatorCompatibilityMetadata | undefined {
-  return compatibility ? { ...compatibility } : undefined
+function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {
+  const displacedPrimaryId = state.currentPrimary?.nodeId
+  state.primaryTerm += 1n
+  state.currentPrimary = { ...nextPrimary }
+  markDisplacedPrimaryForRepair(state, displacedPrimaryId, nextPrimary.nodeId)
 }
 
 function nodeSessionKey(clusterId: string, nodeId: string): string {
@@ -458,85 +383,4 @@ function nodeSessionKey(clusterId: string, nodeId: string): string {
 
 function replicationGroupKey(clusterId: string, groupId: string): string {
   return `${clusterId}\0${groupId}`
-}
-
-function normaliseNodeIds(nodeIds: string[], name: string): string[] {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const nodeId of nodeIds) {
-    assertNonEmpty(nodeId, `${name} entry`)
-    if (seen.has(nodeId)) {
-      throw new RangeError(`${name} contains duplicate node id '${nodeId}'`)
-    }
-    seen.add(nodeId)
-    result.push(nodeId)
-  }
-  return result
-}
-
-function setMembership(values: string[], nodeId: string, enabled: boolean | undefined): string[] {
-  if (enabled === undefined) return values
-  const next = values.filter(value => value !== nodeId)
-  if (enabled) {
-    next.push(nodeId)
-  }
-  return next
-}
-
-function removeNodeId(values: string[], nodeId: string): string[] {
-  return values.filter(value => value !== nodeId)
-}
-
-function assertSubset(values: string[], allowed: string[], name: string): void {
-  const allowedSet = new Set(allowed)
-  for (const value of values) {
-    if (!allowedSet.has(value)) {
-      throw new RangeError(`${name} contains node id '${value}' that is not configured for the replication group`)
-    }
-  }
-}
-
-function assertPrimaryInGroup(primary: { nodeId: string } | null, votingDataBearingNodeIds: string[]): void {
-  if (!primary) return
-  assertNonEmpty(primary.nodeId, 'primary.nodeId')
-  if (!votingDataBearingNodeIds.includes(primary.nodeId)) {
-    throw new RangeError(`Primary node '${primary.nodeId}' is not configured for the replication group`)
-  }
-}
-
-function assertNonNegativeTerm(term: bigint): void {
-  if (term < 0n) {
-    throw new RangeError('primaryTerm must not be negative')
-  }
-}
-
-function assertNonNegativeSeq(seq: bigint, name: string): void {
-  if (seq < 0n) {
-    throw new RangeError(`${name} must not be negative`)
-  }
-}
-
-function assertNoInSyncAdditions(previous: string[], next: string[]): void {
-  const previousSet = new Set(previous)
-  for (const nodeId of next) {
-    if (!previousSet.has(nodeId)) {
-      throw new RangeError(`Node '${nodeId}' cannot be added to the in-sync set without catch-up proof`)
-    }
-  }
-}
-
-function cloneMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  return metadata ? { ...metadata } : undefined
-}
-
-function assertPositiveTtl(ttlMs: number): void {
-  if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
-    throw new RangeError('ttlMs must be a positive safe integer')
-  }
-}
-
-function assertNonEmpty(value: string, name: string): void {
-  if (value.length === 0) {
-    throw new TypeError(`${name} must not be empty`)
-  }
 }

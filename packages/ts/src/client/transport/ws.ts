@@ -141,9 +141,6 @@ export class WebSocketTransport implements Transport {
     await this.ensureConnected()
     const id = this.nextId()
 
-    // Store the subscription before sending so the callback is
-    // available if a change event arrives before the 'subscribed'
-    // confirmation (unlikely but safe).
     this.activeSubscriptions.set(id, {
       table,
       filter,
@@ -293,7 +290,6 @@ export class WebSocketTransport implements Transport {
       }
 
       case 'unsubscribed': {
-        // Cleanup already handled in unsubscribe().
         break
       }
     }
@@ -320,8 +316,6 @@ export class WebSocketTransport implements Transport {
         await this.ensureConnected()
         await this.resubscribeAll()
       } catch {
-        // Connection attempt failed. Schedule another retry as long
-        // as the transport is still open and has active subscriptions.
         if (!this.closed && this.activeSubscriptions.size > 0) {
           this.scheduleReconnect()
         }
@@ -336,8 +330,6 @@ export class WebSocketTransport implements Transport {
       try {
         await this.request<void>(buildResubscribeMessage(id, sub))
       } catch {
-        // If a particular subscription can't be restored, remove it
-        // so we don't keep retrying a broken subscription.
         this.activeSubscriptions.delete(id)
       }
     }

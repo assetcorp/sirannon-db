@@ -1,7 +1,12 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import { APPLIED_CHANGES_TABLE, CHANGES_TABLE } from '../internal-tables.js'
-import { maxChangeSeq, prepareAppliedChangesInsert } from '../system-catalog/index.js'
+import { CHANGES_TABLE } from '../internal-tables.js'
+import {
+  appliedSourceSeqsInRange,
+  maxChangeSeq,
+  prepareAppliedChangesInsert,
+  stampChangesAfterSeqSql,
+} from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
 import { BatchValidationError } from './errors.js'
 import type { HLC } from './hlc.js'
@@ -30,6 +35,7 @@ export class BatchApplier {
     private readonly getLastAppliedSeq: (fromNodeId: string) => Promise<bigint>,
     private readonly tracker?: ChangeTracker,
     private readonly changesTable: string = CHANGES_TABLE,
+    private readonly beforeApply?: (tx: SQLiteConnection) => Promise<void>,
   ) {
     this.rows = new RowWriter(pkResolver, changesTable)
   }
@@ -59,18 +65,7 @@ export class BatchApplier {
     const needsPartialDedup = batch.fromSeq <= lastApplied
     let appliedSeqSet: Set<string> | null = null
     if (needsPartialDedup) {
-      appliedSeqSet = new Set<string>()
-      const checkStmt = await this.conn.prepare(
-        `SELECT source_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ? AND source_seq >= ? AND source_seq <= ?`,
-      )
-      const applied = (await checkStmt.all(
-        batch.sourceNodeId,
-        batch.fromSeq.toString(),
-        batch.toSeq.toString(),
-      )) as Array<{ source_seq: number }>
-      for (const row of applied) {
-        appliedSeqSet.add(String(row.source_seq))
-      }
+      appliedSeqSet = await appliedSourceSeqsInRange(this.conn, batch.sourceNodeId, batch.fromSeq, batch.toSeq)
     }
 
     let applied = 0
@@ -120,6 +115,9 @@ export class BatchApplier {
 
     const result = await this.conn.transaction(async tx => {
       const seqBefore = await this.maxChangeSeq(tx)
+      if (this.beforeApply) {
+        await this.beforeApply(tx)
+      }
       let applied = 0
       let skipped = 0
       let conflicts = 0
@@ -235,9 +233,7 @@ export class BatchApplier {
         maxHlc = change.hlc
       }
     }
-    const stmt = await tx.prepare(
-      `UPDATE "${this.changesTable}" SET node_id = ?, tx_id = ?, hlc = ? WHERE seq > ? AND node_id = ''`,
-    )
+    const stmt = await tx.prepare(stampChangesAfterSeqSql(this.changesTable))
     await stmt.run(sourceNodeId, txId, maxHlc, seqBefore)
   }
 }

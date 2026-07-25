@@ -1,13 +1,19 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import {
-  APPLIED_CHANGES_TABLE,
-  COLUMN_VERSIONS_TABLE,
-  PEER_STATE_TABLE,
-  SYNC_STATE_TABLE,
-} from '../../core/internal-tables.js'
 import { HLC } from '../../core/sync/hlc.js'
 import { isWellFormedHlc } from '../../core/sync/hlc-store.js'
-import { maxChangeHlc, maxChangeSeq } from '../../core/system-catalog/index.js'
+import {
+  completedSyncTableNames,
+  maxAppliedSourceSeq,
+  maxChangeHlc,
+  maxChangeSeq,
+  maxColumnVersionHlc,
+  minPeerAckedSeq,
+  peerAckedSeq,
+  syncMetaRow,
+  upsertPeerAckedSeq,
+  upsertSyncMeta,
+  upsertSyncTableStatus,
+} from '../../core/system-catalog/index.js'
 import type { SyncPhase } from '../types.js'
 
 export class StateOps {
@@ -15,81 +21,25 @@ export class StateOps {
 
   constructor(private readonly conn: SQLiteConnection) {}
 
-  /**
-   * Returns the highest valid HLC observed in this database, or `null` when
-   * no replication evidence exists yet.
-   *
-   * Reads two durable sources and takes the lexicographic maximum:
-   * - `MAX(hlc) FROM <changes table>` covers HLCs stamped onto local writes.
-   * - `MAX(hlc) FROM _sirannon_column_versions` covers HLCs applied from
-   *   remote batches and persisted alongside per-column versions.
-   *
-   * Combining both is necessary: a primary that has never received remote
-   * batches has no rows in `_sirannon_column_versions` for inbound HLCs, and
-   * a replica that has never written locally has no rows in the changes
-   * table. Either source can independently hold the highest value depending
-   * on traffic patterns.
-   *
-   * The changes table is subject to retention pruning by `ChangeTracker`,
-   * which means its `MAX(hlc)` can lag behind the highest HLC ever emitted.
-   * Cross-checking against `_sirannon_column_versions` (which is upserted
-   * per `(table, row, column)` and not subject to time-based retention)
-   * keeps the recovered value above any HLC currently still observable by
-   * any peer's conflict-resolution decisions.
-   *
-   * Filters out the empty-string sentinel that the CDC triggers write before
-   * the local-stamp pass fills in a real HLC, and rejects any decoded
-   * timestamp whose components are not finite, non-negative integers. The
-   * SQL filter narrows the result set; the JavaScript-level guard catches a
-   * future producer that writes a malformed HLC.
-   */
   async recoverMaxObservedHlc(changesTable: string): Promise<string | null> {
     let best: string | null = null
 
     best = mergeCandidate(best, await maxChangeHlc(this.conn, changesTable))
-
-    const versionsStmt = await this.conn.prepare(
-      `SELECT MAX(hlc) AS max_hlc FROM ${COLUMN_VERSIONS_TABLE} WHERE hlc != ''`,
-    )
-    const versionsRow = (await versionsStmt.get()) as { max_hlc: string | null } | undefined
-    best = mergeCandidate(best, versionsRow?.max_hlc ?? null)
+    best = mergeCandidate(best, await maxColumnVersionHlc(this.conn))
 
     return best
   }
 
-  async getLastAppliedSeq(fromNodeId: string): Promise<bigint> {
-    const stmt = await this.conn.prepare(
-      `SELECT MAX(source_seq) as max_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ?`,
-    )
-    const row = (await stmt.get(fromNodeId)) as { max_seq: number | null } | undefined
-    if (!row || row.max_seq === null) {
-      return 0n
-    }
-    return BigInt(row.max_seq)
+  getLastAppliedSeq(fromNodeId: string): Promise<bigint> {
+    return maxAppliedSourceSeq(this.conn, fromNodeId)
   }
 
-  async setLastAppliedSeq(fromNodeId: string, seq: bigint): Promise<void> {
-    const stmt = await this.conn.prepare(
-      `INSERT INTO ${PEER_STATE_TABLE} (peer_node_id, last_acked_seq, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(peer_node_id)
-       DO UPDATE SET
-         last_acked_seq = max(${PEER_STATE_TABLE}.last_acked_seq, excluded.last_acked_seq),
-         updated_at = CASE
-           WHEN excluded.last_acked_seq >= ${PEER_STATE_TABLE}.last_acked_seq THEN excluded.updated_at
-           ELSE ${PEER_STATE_TABLE}.updated_at
-         END`,
-    )
-    await stmt.run(fromNodeId, seq.toString(), Date.now() / 1000)
+  setLastAppliedSeq(fromNodeId: string, seq: bigint): Promise<void> {
+    return upsertPeerAckedSeq(this.conn, fromNodeId, seq, Date.now() / 1000)
   }
 
-  async getPeerAckedSeq(peerNodeId: string): Promise<bigint> {
-    const stmt = await this.conn.prepare(`SELECT last_acked_seq FROM ${PEER_STATE_TABLE} WHERE peer_node_id = ?`)
-    const row = (await stmt.get(peerNodeId)) as { last_acked_seq: number | string | null } | undefined
-    if (!row || row.last_acked_seq === null) {
-      return 0n
-    }
-    return BigInt(row.last_acked_seq)
+  getPeerAckedSeq(peerNodeId: string): Promise<bigint> {
+    return peerAckedSeq(this.conn, peerNodeId)
   }
 
   async getLocalSeq(changesTable: string): Promise<bigint> {
@@ -97,19 +47,7 @@ export class StateOps {
   }
 
   async getMinAckedSeq(): Promise<bigint | null> {
-    const stmt = await this.conn.prepare(
-      `SELECT MIN(last_acked_seq) as min_seq, COUNT(*) as cnt FROM ${PEER_STATE_TABLE}`,
-    )
-    const row = (await stmt.get()) as { min_seq: number | null; cnt: number } | undefined
-
-    const hasPeers = row !== undefined && row.cnt > 0
-    let result: bigint | null = null
-
-    if (hasPeers && row.min_seq !== null) {
-      result = BigInt(row.min_seq)
-    } else if (hasPeers) {
-      result = 0n
-    }
+    let result = await minPeerAckedSeq(this.conn)
 
     for (const syncSeq of this.activeSyncSnapshotSeqs) {
       if (result === null || syncSeq < result) {
@@ -128,37 +66,24 @@ export class StateOps {
     this.activeSyncSnapshotSeqs.delete(seq)
   }
 
-  async setSyncTableStatus(table: string, status: string, rowCount?: number, pkHash?: string): Promise<void> {
-    const stmt = await this.conn.prepare(
-      `INSERT INTO ${SYNC_STATE_TABLE} (table_name, status, row_count, pk_hash, completed_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(table_name) DO UPDATE SET
-         status = excluded.status,
-         row_count = COALESCE(excluded.row_count, row_count),
-         pk_hash = COALESCE(excluded.pk_hash, pk_hash),
-         completed_at = excluded.completed_at`,
-    )
-    await stmt.run(table, status, rowCount ?? 0, pkHash ?? '', status === 'completed' ? Date.now() / 1000 : null)
+  setSyncTableStatus(table: string, status: string, rowCount?: number, pkHash?: string): Promise<void> {
+    return upsertSyncTableStatus(this.conn, {
+      tableName: table,
+      status,
+      rowCount: rowCount ?? 0,
+      pkHash: pkHash ?? '',
+      completedAt: status === 'completed' ? Date.now() / 1000 : null,
+    })
   }
 
-  async setSyncMeta(phase: SyncPhase, snapshotSeq?: bigint, sourcePeerId?: string, requestId?: string): Promise<void> {
-    const stmt = await this.conn.prepare(
-      `INSERT INTO ${SYNC_STATE_TABLE} (table_name, status, snapshot_seq, source_peer_id, started_at, request_id)
-       VALUES ('__sync_meta__', ?, ?, ?, ?, ?)
-       ON CONFLICT(table_name) DO UPDATE SET
-         status = excluded.status,
-         snapshot_seq = COALESCE(excluded.snapshot_seq, snapshot_seq),
-         source_peer_id = COALESCE(excluded.source_peer_id, source_peer_id),
-         started_at = COALESCE(excluded.started_at, started_at),
-         request_id = COALESCE(excluded.request_id, request_id)`,
-    )
-    await stmt.run(
-      phase,
-      snapshotSeq !== undefined ? snapshotSeq.toString() : null,
-      sourcePeerId ?? null,
-      phase === 'syncing' ? Date.now() / 1000 : null,
-      requestId ?? null,
-    )
+  setSyncMeta(phase: SyncPhase, snapshotSeq?: bigint, sourcePeerId?: string, requestId?: string): Promise<void> {
+    return upsertSyncMeta(this.conn, {
+      status: phase,
+      snapshotSeq,
+      sourcePeerId,
+      startedAt: phase === 'syncing' ? Date.now() / 1000 : null,
+      requestId,
+    })
   }
 
   async getSyncState(): Promise<{
@@ -167,34 +92,23 @@ export class StateOps {
     snapshotSeq: bigint | null
     sourcePeerId: string | null
   }> {
-    const metaStmt = await this.conn.prepare(
-      `SELECT status, snapshot_seq, source_peer_id FROM ${SYNC_STATE_TABLE} WHERE table_name = '__sync_meta__'`,
-    )
-    const meta = (await metaStmt.get()) as
-      | { status: string; snapshot_seq: number | null; source_peer_id: string | null }
-      | undefined
+    const meta = await syncMetaRow(this.conn)
 
     if (!meta) {
       return { phase: 'ready', completedTables: [], snapshotSeq: null, sourcePeerId: null }
     }
 
-    const completedStmt = await this.conn.prepare(
-      `SELECT table_name FROM ${SYNC_STATE_TABLE} WHERE table_name != '__sync_meta__' AND status = 'completed'`,
-    )
-    const completedRows = (await completedStmt.all()) as Array<{ table_name: string }>
-
     return {
       phase: meta.status as SyncPhase,
-      completedTables: completedRows.map(r => r.table_name),
-      snapshotSeq: meta.snapshot_seq !== null ? BigInt(meta.snapshot_seq) : null,
-      sourcePeerId: meta.source_peer_id,
+      completedTables: await completedSyncTableNames(this.conn),
+      snapshotSeq: meta.snapshotSeq,
+      sourcePeerId: meta.sourcePeerId,
     }
   }
 
   async isSyncCompleted(): Promise<boolean> {
-    const stmt = await this.conn.prepare(`SELECT status FROM ${SYNC_STATE_TABLE} WHERE table_name = '__sync_meta__'`)
-    const row = (await stmt.get()) as { status: string } | undefined
-    return row?.status === 'ready'
+    const meta = await syncMetaRow(this.conn)
+    return meta?.status === 'ready'
   }
 }
 

@@ -199,19 +199,13 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
 export async function stopNode(node: ManagedNode): Promise<void> {
   try {
     await node.engine.stop()
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
   try {
     if (!node.db.closed) {
       await node.db.close()
     }
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
   try {
     await node.conn.close()
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
 }

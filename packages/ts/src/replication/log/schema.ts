@@ -1,9 +1,10 @@
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import { INTERNAL_TABLE_PREFIX, SYNC_STATE_TABLE } from '../../core/internal-tables.js'
+import { INTERNAL_TABLE_PREFIX } from '../../core/internal-tables.js'
 import { dumpSchema, tablesInFkOrder } from '../../core/sync/schema-dump.js'
 import { IDENTIFIER_RE } from '../../core/sync/validators.js'
 import {
+  deleteSyncTableStates,
   ensureChangesTable,
   ensureMetaTable,
   ensureReplicationStateTables,
@@ -48,7 +49,7 @@ export class SchemaOps {
         for (const table of reversed) {
           await tx.exec(`DELETE FROM "${table}"`)
         }
-        await tx.exec(`DELETE FROM ${SYNC_STATE_TABLE} WHERE table_name != '__sync_meta__'`)
+        await deleteSyncTableStates(tx)
       })
     } finally {
       await setForeignKeysEnabled(conn, true)

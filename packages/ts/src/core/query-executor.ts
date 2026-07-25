@@ -45,12 +45,6 @@ export function bindParams(params?: Params): unknown[] {
   return [params]
 }
 
-/**
- * A driver reports a failed statement as a plain Error, so only those become a
- * QueryError. Anything this package already raised carries a code the server
- * maps to a status, and rewrapping it would report a crashed writer or a
- * rejected table as an ordinary SQL error.
- */
 function asQueryError(err: unknown, sql: string): Error {
   if (err instanceof SirannonError) return err
   return new QueryError(err instanceof Error ? err.message : String(err), sql)
@@ -70,14 +64,6 @@ export async function query<T = Record<string, unknown>>(
   }
 }
 
-/**
- * Reads rows already encoded for the wire in a single walk. Pulls raw BigInt
- * rows from the driver ({@link SQLiteStatement.allRaw}) and lets
- * {@link encodeWireRowsInPlace} narrow safe-range integers and tag the rest
- * without cloning a row, so the server never narrows on the driver and then
- * re-scans to tag. The rows are freshly materialised for this response alone,
- * so in-place mutation is safe here.
- */
 export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
   assertSqlAllowed(sql)
   try {
@@ -131,25 +117,12 @@ export interface GroupStatement {
   trusted?: boolean
 }
 
-/** The unit, not the statement, is the boundary a savepoint wraps and a failure is confined to. */
 export interface GroupUnit {
   statements: readonly GroupStatement[]
 }
 
 export type GroupOutcome = { ok: true; values: ExecuteResult[] } | { ok: false; error: unknown }
 
-/**
- * Runs independent units in one transaction so a single commit fsync covers the
- * whole group. A unit that fails is retried with a savepoint per unit, so one
- * failing unit fails only itself and leaves its neighbours committed. Units run
- * to completion in turn, so a unit only ever observes an earlier unit that
- * succeeded. Settles after the commit, so an acknowledged unit is as durable as
- * one committed alone.
- *
- * Only a failure before the commit is retried. A commit that reports an error
- * may still have reached the disk, and re-running the units would apply every
- * one of them twice.
- */
 export async function executeGroup(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
   const outcomes: GroupOutcome[] = new Array(units.length)
   try {
@@ -193,18 +166,9 @@ async function execControl(conn: SQLiteConnection, sql: string): Promise<Error |
 async function rollbackQuietly(conn: SQLiteConnection): Promise<void> {
   try {
     await conn.exec('ROLLBACK')
-  } catch {
-    /* already rolled back */
-  }
+  } catch {}
 }
 
-/**
- * `ON CONFLICT ROLLBACK`, a `RAISE(ROLLBACK)` trigger, `SQLITE_FULL` and I/O
- * errors roll back the whole transaction, emptying the savepoint stack and
- * leaving the connection in autocommit, where a later SAVEPOINT/RELEASE pair
- * would commit a transaction of its own. `contained` is false once that is
- * possible.
- */
 interface UnitAttempt {
   outcome: GroupOutcome
   contained: boolean
@@ -246,7 +210,6 @@ async function unwind(conn: SQLiteConnection, savepoint: string): Promise<boolea
   return (await execControl(conn, `RELEASE ${savepoint}`)) === null
 }
 
-/** `failed` keeps its own error; the rest were rolled back undurably and are re-run. */
 async function rerunSurvivorsAlone(
   conn: SQLiteConnection,
   units: readonly GroupUnit[],
@@ -317,10 +280,6 @@ export async function executeBatch(
   return results
 }
 
-/**
- * Sums changes instead of returning one result per row, so a million-row load
- * never materialises a million-element array.
- */
 export async function executeBatchSummary(
   conn: SQLiteConnection,
   sql: string,

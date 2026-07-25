@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
+import { recordDdlChange } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { Params, QueryOptions } from '../../core/types.js'
 import { ReplicationError } from '../errors.js'
@@ -43,12 +44,12 @@ export class LocalExecutor {
       const r = await stmt.run(...bindValues)
 
       if (isDdl) {
-        const ddlStmt = await tx.prepare(
-          `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
-           VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
-        )
-        const hlcVal = engine.hlc.now()
-        await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), engine.nodeId, txId, hlcVal)
+        await recordDdlChange(tx, CHANGES_TABLE, {
+          ddlStatement: sql,
+          nodeId: engine.nodeId,
+          txId,
+          hlc: engine.hlc.now(),
+        })
       } else {
         await engine.log.stampChanges(tx, seqBefore, txId)
         await engine.log.updateColumnVersions(tx, seqBefore)
@@ -124,12 +125,12 @@ export class LocalExecutor {
           if (droppedTable !== null) {
             droppedTables.push(droppedTable)
           }
-          const ddlStmt = await tx.prepare(
-            `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
-             VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
-          )
-          const hlcVal = engine.hlc.now()
-          await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), engine.nodeId, txId, hlcVal)
+          await recordDdlChange(tx, CHANGES_TABLE, {
+            ddlStatement: sql,
+            nodeId: engine.nodeId,
+            txId,
+            hlc: engine.hlc.now(),
+          })
           if (engine.tracker) {
             await engine.tracker.refreshAllTriggersUsingConnection(tx)
           }
@@ -184,12 +185,12 @@ export class LocalExecutor {
         if (droppedTable !== null) {
           hooks.droppedTables.push(droppedTable)
         }
-        const ddlStmt = await tx.prepare(
-          `INSERT INTO "${CHANGES_TABLE}" (table_name, operation, row_id, new_data, node_id, tx_id, hlc)
-           VALUES ('__ddl__', 'DDL', '', ?, ?, ?, ?)`,
-        )
-        const hlcVal = engine.hlc.now()
-        await ddlStmt.run(JSON.stringify({ ddlStatement: sql }), engine.nodeId, txId, hlcVal)
+        await recordDdlChange(tx, CHANGES_TABLE, {
+          ddlStatement: sql,
+          nodeId: engine.nodeId,
+          txId,
+          hlc: engine.hlc.now(),
+        })
         if (engine.tracker) {
           await engine.tracker.refreshAllTriggersUsingConnection(tx)
         }

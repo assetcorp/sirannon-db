@@ -35,12 +35,6 @@ import { registerWebSocketRoute } from './ws-route.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-/**
- * uWebSockets.js reads maxPayloadLength and maxBackpressure into unsigned
- * 32-bit fields (ToInt32 in the addon, unsigned int in the C++ core), so any
- * larger value is silently applied modulo 2^32. Reject those at construction
- * instead of running with a limit the caller never configured.
- */
 const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 
 function resolveMaxBodyBytes(value: number | undefined): number {

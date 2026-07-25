@@ -1,8 +1,15 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
-import { CHANGES_TABLE, META_TABLE } from '../internal-tables.js'
+import { CHANGES_TABLE } from '../internal-tables.js'
 import { randomHex } from '../random-hex.js'
-import { ensureMetaTable, getMetaValue, initMetaValue, maxChangeHlc } from '../system-catalog/index.js'
+import {
+  ensureMetaTable,
+  getMetaValue,
+  initMetaValue,
+  maxChangeHlc,
+  SET_META_VALUE_SQL,
+  stampUnstampedChangesSql,
+} from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 import { HLC_CLOCK_META_KEY, isWellFormedHlc, loadPersistedHlc } from './hlc-store.js'
 
@@ -48,15 +55,14 @@ export class SyncStamper {
     const txId = randomHex(16)
     const statements: StampStatement[] = [
       {
-        sql: `UPDATE "${this.changesTable}" SET node_id = ?, tx_id = ?, hlc = ? WHERE node_id = ''`,
+        sql: stampUnstampedChangesSql(this.changesTable),
         params: [this.nodeId, txId, hlcValue],
         trusted: true,
       },
     ]
     if (options?.persistClock !== false) {
       statements.push({
-        sql: `INSERT INTO "${META_TABLE}" (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        sql: SET_META_VALUE_SQL,
         params: [HLC_CLOCK_META_KEY, hlcValue],
         trusted: true,
       })

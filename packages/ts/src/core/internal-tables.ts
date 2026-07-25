@@ -38,18 +38,6 @@ export function isReservedIdentifier(name: string): boolean {
   return reservedKind(name) !== null
 }
 
-/**
- * Reports why a statement is refused, or null when it is allowed. Sirannon's
- * own bookkeeping runs on raw connections that never reach this check, so the
- * reserved namespace is closed to the query API without blocking the engine
- * from maintaining its own tables.
- *
- * The `_sirannon_` tables are Sirannon's private ledger (deleted rows, prior
- * values, replication state), so any reference is refused. The `sqlite_`
- * catalogue is readable, matching every SQL engine, but statements that would
- * modify it are refused; SQLite already treats the catalogue as read-only
- * unless `PRAGMA writable_schema` is set, which is refused here too.
- */
 export function reservedSqlError(sql: string): string | null {
   const lower = sql.toLowerCase()
   if (

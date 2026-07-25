@@ -97,17 +97,13 @@ export class SimulatedNetwork {
       case 'batch':
         try {
           await target.deliverBatch(event.payload as ReplicationBatch, event.from)
-        } catch {
-          /* swallow errors; matches InMemoryTransport fire-and-forget semantics */
-        }
+        } catch {}
         break
 
       case 'ack':
         try {
           target.deliverAck(event.payload as ReplicationAck, event.from)
-        } catch {
-          /* swallow */
-        }
+        } catch {}
         break
 
       case 'forward_request':
@@ -126,33 +122,25 @@ export class SimulatedNetwork {
       case 'sync_request':
         try {
           await target.deliverSyncRequest(event.payload as SyncRequest, event.from)
-        } catch {
-          /* swallow */
-        }
+        } catch {}
         break
 
       case 'sync_batch':
         try {
           await target.deliverSyncBatch(event.payload as SyncBatch, event.from)
-        } catch {
-          /* swallow */
-        }
+        } catch {}
         break
 
       case 'sync_complete':
         try {
           await target.deliverSyncComplete(event.payload as SyncComplete, event.from)
-        } catch {
-          /* swallow */
-        }
+        } catch {}
         break
 
       case 'sync_ack':
         try {
           target.deliverSyncAck(event.payload as SyncAck, event.from)
-        } catch {
-          /* swallow */
-        }
+        } catch {}
         break
     }
   }

@@ -10,9 +10,16 @@ import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
 import { PullStream } from './sync-pull-stream.js'
 import { PushLoop } from './sync-push-loop.js'
+import { ResyncScheduler } from './sync-resync-scheduler.js'
 import { RemoteError } from './types.js'
 
-export type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
+export type {
+  SnapshotOptions,
+  SnapshotOutcome,
+  SyncControllerOptions,
+  SyncState,
+  SyncStatus,
+} from './sync-controller-types.js'
 
 const DEFAULT_BATCH_SIZE = 100
 const DEFAULT_PUSH_INTERVAL_MS = 1_000
@@ -27,15 +34,13 @@ export class SyncController {
   private readonly maxPushRetryDelayMs: number
   private readonly pull: PullStream
   private readonly push: PushLoop
+  private readonly resync: ResyncScheduler
 
   private port: DeviceSyncPort | null = null
   private deviceId: string | null = null
   private capabilities: string[] | null = null
   private schemaVersion: number | null = null
   private state: SyncState = 'stopped'
-  private resyncRequired = false
-  private resyncTimer: ReturnType<typeof setTimeout> | null = null
-  private consecutiveResyncFailures = 0
   private pullRetryTimer: ReturnType<typeof setTimeout> | null = null
   private consecutivePullFailures = 0
   private lastError: { code: string; message: string } | null = null
@@ -90,6 +95,26 @@ export class SyncController {
         recordError: err => this.recordError(err),
       },
     )
+    this.resync = new ResyncScheduler(
+      {
+        autoResync: options.autoResync,
+        retryDelayMs: options.snapshotRetryDelayMs ?? DEFAULT_SNAPSHOT_RETRY_DELAY_MS,
+        maxRetryDelayMs: options.maxSnapshotRetryDelayMs ?? DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS,
+        onResyncRequired: options.onResyncRequired,
+        onSnapshotComplete: options.onSnapshotComplete,
+      },
+      {
+        isRunning: () => this.state === 'running',
+        isSnapshotting: () => this.state === 'snapshotting',
+        port: () => this.port,
+        recordError: err => this.recordError(err),
+        download: () =>
+          this.downloadSnapshot({
+            pageSize: options.snapshotPageSize,
+            onProgress: options.onSnapshotProgress,
+          }),
+      },
+    )
   }
 
   async start(): Promise<void> {
@@ -105,9 +130,9 @@ export class SyncController {
       this.pull.pullSeq = pullState?.seq ?? null
       this.pull.pullEpoch = pullState?.epoch
       if ((await this.port.snapshotLoadPending()) || (await this.port.getResyncRequired())) {
-        this.resyncRequired = true
+        this.resync.markRequired()
       }
-      if (!this.resyncRequired) {
+      if (!this.resync.required) {
         try {
           await this.reconcileSchema()
         } catch (err) {
@@ -115,7 +140,7 @@ export class SyncController {
           this.schemaVersion = await this.localSchemaVersion()
         }
       }
-      if (!this.resyncRequired) {
+      if (!this.resync.required) {
         await this.openPull()
       }
       this.state = 'running'
@@ -126,8 +151,8 @@ export class SyncController {
     }
     this.push.start()
     void this.push.drain()
-    if (this.resyncRequired) {
-      this.scheduleAutoResync()
+    if (this.resync.required) {
+      this.resync.schedule()
     }
   }
 
@@ -162,7 +187,7 @@ export class SyncController {
       lastPushedSeq: this.push.cursor,
       lastPulledSeq: this.pull.pullSeq,
       pushCaughtUp: pendingPushCount === 0,
-      resyncRequired: this.resyncRequired,
+      resyncRequired: this.resync.required,
       lastError: this.lastError,
     }
   }
@@ -209,41 +234,8 @@ export class SyncController {
   }
 
   private markResyncRequired(): void {
-    this.resyncRequired = true
-    void this.port?.setResyncRequired(true).catch(err => this.recordError(err))
-    try {
-      this.options.onResyncRequired?.()
-    } catch {}
-    this.scheduleAutoResync()
-  }
-
-  private scheduleAutoResync(): void {
-    if (this.options.autoResync === false) return
-    if (this.resyncTimer !== null || this.state === 'snapshotting') return
-    const baseDelay = this.options.snapshotRetryDelayMs ?? DEFAULT_SNAPSHOT_RETRY_DELAY_MS
-    const maxDelay = this.options.maxSnapshotRetryDelayMs ?? DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS
-    const delay =
-      this.consecutiveResyncFailures === 0
-        ? 0
-        : Math.min(baseDelay * 2 ** (this.consecutiveResyncFailures - 1), maxDelay)
-    this.resyncTimer = setTimeout(() => {
-      this.resyncTimer = null
-      void this.attemptAutoResync()
-    }, delay)
-    unrefTimer(this.resyncTimer)
-  }
-
-  private async attemptAutoResync(): Promise<void> {
-    if (this.state !== 'running') return
-    if (!this.resyncRequired) return
-    try {
-      await this.downloadSnapshot({
-        pageSize: this.options.snapshotPageSize,
-        onProgress: this.options.onSnapshotProgress,
-      })
-    } catch {
-      this.scheduleAutoResync()
-    }
+    this.resync.markRequired()
+    this.resync.schedule()
   }
 
   async downloadSnapshot(options?: SnapshotOptions): Promise<void> {
@@ -272,28 +264,46 @@ export class SyncController {
       })
       this.schemaVersion = await this.localSchemaVersion()
       await port.setResyncRequired(false)
-      this.resyncRequired = false
-      this.consecutiveResyncFailures = 0
+      this.resync.recordSuccess()
       this.lastError = null
     } catch (err) {
-      this.recordError(err)
-      this.resyncRequired = true
-      this.consecutiveResyncFailures += 1
+      const failure = describeError(err)
+      this.lastError = failure
+      this.resync.recordFailure()
+      const databaseUsable = await this.snapshotGateOpen(port)
       this.state = 'stopped'
       try {
         await this.start()
       } catch {
         this.state = 'paused'
       }
+      this.resync.complete({ ok: false, error: failure, databaseUsable, retrying: this.resync.retryScheduled })
       throw err
     }
     this.state = 'stopped'
-    await this.start()
+    try {
+      await this.start()
+    } finally {
+      this.resync.complete({ ok: true, error: null, databaseUsable: true, retrying: false })
+    }
+  }
+
+  /**
+   * Answers whether the local database serves reads and writes again. A failure
+   * before the wipe begins leaves it intact, while one after it leaves every
+   * statement refused with `SNAPSHOT_IN_PROGRESS` until a later copy succeeds,
+   * so the application learns which of the two it is rather than assuming.
+   */
+  private async snapshotGateOpen(port: DeviceSyncPort): Promise<boolean> {
+    try {
+      return !(await port.snapshotLoadPending())
+    } catch {
+      return false
+    }
   }
 
   private recordError(err: unknown): void {
-    const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
-    this.lastError = { code, message: err instanceof Error ? err.message : String(err) }
+    this.lastError = describeError(err)
   }
 
   private handleApplyFailure(err: unknown): void {
@@ -311,7 +321,7 @@ export class SyncController {
   }
 
   private async reopenPull(): Promise<void> {
-    if (this.state !== 'running' || this.deviceId === null || this.resyncRequired) return
+    if (this.state !== 'running' || this.deviceId === null || this.resync.required) return
     try {
       await this.openPull()
     } catch (err) {
@@ -341,7 +351,7 @@ export class SyncController {
     }
 
     const status = await this.reconcileSchema()
-    if (this.resyncRequired) return
+    if (this.resync.required) return
     if (status === 'ahead') throw refusal
 
     this.pull.teardown()
@@ -351,14 +361,16 @@ export class SyncController {
 
   private teardownStream(): void {
     this.push.stop()
-    if (this.resyncTimer !== null) {
-      clearTimeout(this.resyncTimer)
-      this.resyncTimer = null
-    }
+    this.resync.cancel()
     if (this.pullRetryTimer !== null) {
       clearTimeout(this.pullRetryTimer)
       this.pullRetryTimer = null
     }
     this.pull.teardown()
   }
+}
+
+function describeError(err: unknown): { code: string; message: string } {
+  const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
+  return { code, message: err instanceof Error ? err.message : String(err) }
 }

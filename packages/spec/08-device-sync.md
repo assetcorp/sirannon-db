@@ -306,10 +306,17 @@ SyncControllerOptions {
   maxPushRetryDelayMs? (30000), requestTimeout? (30000),
   autoResync? (true), snapshotRetryDelayMs? (5000), maxSnapshotRetryDelayMs? (300000),
   snapshotPageSize?, resolver?,
-  onChange?, onResyncRequired?, onSnapshotProgress?
+  onChange?, onResyncRequired?, onSnapshotProgress?, onSnapshotComplete?
 }
 
 SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapshotting'
+
+SnapshotOutcome {
+  ok:             boolean
+  error:          { code, message } or null
+  databaseUsable: boolean
+  retrying:       boolean
+}
 
 SyncStatus {
   state:              SyncState
@@ -346,3 +353,11 @@ SyncStatus {
   **stop** tears down and persists.
 
 `onChange` reports each pulled change after the controller commits it.
+
+The controller calls `onResyncRequired` when a resync becomes required: the server
+signals one, the migration handshake returns `resync-required`, or a start finds one
+the device still owes. It calls `onSnapshotComplete` once a snapshot load ends and
+the state has settled, for an automatic resync and for the application's own
+`downloadSnapshot()`. A failure after the wipe begins leaves the local database
+refusing reads and writes, so the outcome reports `databaseUsable` from the device's
+own load marker and `retrying` from whether another attempt is scheduled.

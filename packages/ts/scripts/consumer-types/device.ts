@@ -36,6 +36,13 @@ export const openDevice = async (fileName: string): Promise<Device> => {
     onSnapshotProgress: progress => {
       console.log(`snapshot ${progress.loadedRows}/${progress.totalRows} rows`)
     },
+    onSnapshotComplete: outcome => {
+      if (outcome.ok) {
+        console.log('the local copy is ready')
+        return
+      }
+      console.log(`the copy failed with ${outcome.error.code}, retrying: ${outcome.retrying}`)
+    },
   })
   return { db, sync }
 }

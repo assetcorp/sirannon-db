@@ -21,7 +21,12 @@ export interface SyncControllerOptions {
   onChange?: (event: ChangeEvent) => void
   onResyncRequired?: () => void
   onSnapshotProgress?: (progress: SnapshotProgress) => void
+  onSnapshotComplete?: (outcome: SnapshotOutcome) => void
 }
+
+export type SnapshotOutcome =
+  | { ok: true; error: null; databaseUsable: true; retrying: false }
+  | { ok: false; error: { code: string; message: string }; databaseUsable: boolean; retrying: boolean }
 
 export type SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapshotting'
 

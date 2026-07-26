@@ -8,7 +8,7 @@ import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import type { SnapshotProgress } from '../snapshot-loader.js'
-import { SyncController, type SyncControllerOptions } from '../sync-controller.js'
+import { type SnapshotOutcome, SyncController, type SyncControllerOptions } from '../sync-controller.js'
 
 const driver = betterSqlite3()
 
@@ -16,6 +16,7 @@ let tempDir: string
 let sirannon: Sirannon
 let deviceSirannon: Sirannon
 let server: SirannonServer
+let serverPort: number
 let baseUrl: string
 let serverDb: Database
 let deviceDb: Database
@@ -45,7 +46,8 @@ beforeEach(async () => {
 
   server = createServer(sirannon, { port: 0 })
   await server.listen()
-  baseUrl = `http://127.0.0.1:${server.listeningPort}`
+  serverPort = server.listeningPort ?? 0
+  baseUrl = `http://127.0.0.1:${serverPort}`
 })
 
 afterEach(async () => {
@@ -70,6 +72,25 @@ function makeController(overrides?: Partial<SyncControllerOptions>): SyncControl
   })
   controllers.push(controller)
   return controller
+}
+
+interface OutcomeRecorder {
+  all: SnapshotOutcome[]
+  record: (outcome: SnapshotOutcome) => void
+  next: () => Promise<SnapshotOutcome>
+}
+
+function outcomeRecorder(): OutcomeRecorder {
+  const all: SnapshotOutcome[] = []
+  const waiting: ((outcome: SnapshotOutcome) => void)[] = []
+  return {
+    all,
+    record: outcome => {
+      all.push(outcome)
+      for (const resolve of waiting.splice(0)) resolve(outcome)
+    },
+    next: () => new Promise<SnapshotOutcome>(resolve => waiting.push(resolve)),
+  }
 }
 
 async function until(predicate: () => boolean | Promise<boolean>, timeout = 5000): Promise<void> {
@@ -223,5 +244,152 @@ describe('SyncController.downloadSnapshot', () => {
     })
     expect(await deviceDb.deviceSync().snapshotLoadPending()).toBe(false)
     expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+  })
+})
+
+describe('SyncController snapshot completion', () => {
+  it('reports a successful outcome for a snapshot the application requested', async () => {
+    const outcomes: SnapshotOutcome[] = []
+    const controller = makeController({ onSnapshotComplete: outcome => outcomes.push(outcome) })
+    await controller.start()
+
+    await controller.downloadSnapshot()
+
+    expect(outcomes).toEqual([{ ok: true, error: null, databaseUsable: true, retrying: false }])
+    expect((await controller.status()).state).toBe('running')
+  })
+
+  it('reports the end of a resync the controller started on its own', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+
+    const recorder = outcomeRecorder()
+    const controller = makeController({
+      autoResync: true,
+      snapshotRetryDelayMs: 50,
+      onSnapshotComplete: recorder.record,
+    })
+    const loaded = recorder.next()
+    await controller.start()
+
+    expect(await loaded).toEqual({ ok: true, error: null, databaseUsable: true, retrying: false })
+    const status = await controller.status()
+    expect(status.state).toBe('running')
+    expect(status.resyncRequired).toBe(false)
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+  })
+
+  it('announces a resync the device still owed from an earlier session', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+
+    let announced = 0
+    const controller = makeController({ onResyncRequired: () => (announced += 1) })
+    await controller.start()
+
+    expect(announced).toBe(1)
+    expect((await controller.status()).resyncRequired).toBe(true)
+  })
+
+  it('reports a failure before the wipe as leaving the database usable', async () => {
+    const outcomes: SnapshotOutcome[] = []
+    const controller = makeController({ onSnapshotComplete: outcome => outcomes.push(outcome) })
+    await controller.start()
+
+    await server.close()
+    await expect(controller.downloadSnapshot()).rejects.toThrow()
+
+    expect(outcomes).toEqual([
+      {
+        ok: false,
+        error: { code: 'CONNECTION_ERROR', message: expect.any(String) },
+        databaseUsable: true,
+        retrying: false,
+      },
+    ])
+    expect((await controller.status()).resyncRequired).toBe(true)
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(0)
+
+    server = createServer(sirannon, { port: serverPort })
+    await server.listen()
+  })
+
+  it('reports a failure over a wiped database as blocking, with another attempt scheduled', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+    await server.close()
+
+    const recorder = outcomeRecorder()
+    const controller = makeController({
+      autoResync: true,
+      snapshotRetryDelayMs: 60_000,
+      onSnapshotComplete: recorder.record,
+    })
+    const attempt = recorder.next()
+    await controller.start()
+
+    const failure = await attempt
+    expect(failure.ok).toBe(false)
+    expect(failure.databaseUsable).toBe(false)
+    expect(failure.retrying).toBe(true)
+    expect(failure.error?.code).toBe('CONNECTION_ERROR')
+    await expect(deviceDb.query('SELECT id FROM notes')).rejects.toThrow(/sync snapshot/)
+
+    server = createServer(sirannon, { port: serverPort })
+    await server.listen()
+  })
+
+  it('reports the database as usable again once a scheduled retry succeeds', async () => {
+    const port = deviceDb.deviceSync()
+    await port.beginSnapshotLoad(['notes'])
+    await port.abortSnapshotLoad()
+    await server.close()
+
+    const recorder = outcomeRecorder()
+    let editorEnabled = true
+    const controller = makeController({
+      autoResync: true,
+      snapshotRetryDelayMs: 100,
+      onResyncRequired: () => {
+        editorEnabled = false
+      },
+      onSnapshotComplete: outcome => {
+        editorEnabled = outcome.databaseUsable
+        recorder.record(outcome)
+      },
+    })
+    const attempt = recorder.next()
+    await controller.start()
+
+    expect((await attempt).ok).toBe(false)
+    expect(editorEnabled).toBe(false)
+
+    const retry = recorder.next()
+    server = createServer(sirannon, { port: serverPort })
+    await server.listen()
+
+    const loaded = await retry
+    expect(loaded).toEqual({ ok: true, error: null, databaseUsable: true, retrying: false })
+    expect(editorEnabled).toBe(true)
+    expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(12)
+    expect(recorder.all).toHaveLength(2)
+  })
+
+  it('keeps syncing when the completion callback throws', async () => {
+    const controller = makeController({
+      onSnapshotComplete: () => {
+        throw new Error('the application refused the outcome')
+      },
+    })
+    await controller.start()
+
+    await controller.downloadSnapshot()
+    expect((await controller.status()).state).toBe('running')
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (700, 'after the outcome threw')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 700')).length === 1)
   })
 })

@@ -17,6 +17,7 @@ export {
 export { RemoteSubscriptionBuilderImpl } from './subscription.js'
 export {
   type SnapshotOptions,
+  type SnapshotOutcome,
   SyncController,
   type SyncControllerOptions,
   type SyncState,

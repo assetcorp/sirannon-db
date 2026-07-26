@@ -71,6 +71,7 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `onChange` | `(event: ChangeEvent) => void` | - | Called for each pulled change after it commits locally |
 | `onResyncRequired` | `() => void` | - | Called before a snapshot replaces local data |
 | `onSnapshotProgress` | `(progress: SnapshotProgress) => void` | - | Table and row progress during a snapshot |
+| `onSnapshotComplete` | `(outcome: SnapshotOutcome) => void` | - | Called once a snapshot load ends, carrying whether the local database is usable again |
 
 ## `ReplicationOptions`
 

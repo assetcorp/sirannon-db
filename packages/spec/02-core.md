@@ -85,7 +85,6 @@ Database {
 
   query<T>(sql, params?, options?): async -> List<T>
   queryOne<T>(sql, params?, options?): async -> T or null
-  queryWithPosition<T>(sql, params?, options?): async -> PositionedRows<T>
   execute(sql, params?, options?): async -> ExecuteResult
   executeBatch(sql, paramsBatch, options?): async -> List<ExecuteResult>
   executeTransaction(statements, options?): async -> List<ExecuteResult>
@@ -123,15 +122,12 @@ DatabaseOptions {
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
 }
 
-ExecuteResult     { changes: number, lastInsertRowId: number or bigint }
-PositionedRows<T> { rows: List<T>, position: string }
-Params            = Map<string, any> or List<any>
+ExecuteResult { changes: number, lastInsertRowId: number or bigint }
+Params        = Map<string, any> or List<any>
 ```
 
 - **query / queryOne** run a read on a reader connection and fire query hooks.
   `queryOne` returns the first row or null.
-- **queryWithPosition** returns the rows with the change-log position they were
-  consistent with; see [Read Positions](#read-positions).
 - **execute** runs one write on the writer connection. A read-only database fails
   with `READ_ONLY`. Writes are coalesced by [group commit](#group-commit).
 - **executeBatch** runs `sql` once per parameter set in one writer transaction,
@@ -353,10 +349,11 @@ foreign and forces a resync rather than replaying unrelated rows.
 ### Read Positions
 
 A read position names the change-log point a read's rows already include. A
-caller reads, then subscribes from that position, so it misses no change and
-receives none twice.
+reader that subscribes from that position misses no change and receives none
+twice. No public API exposes a read position; the capability stays internal
+until a live query uses it.
 
-`queryWithPosition` runs the read and reads the change log's highest `seq` in one
+A positioned read runs the read and reads the change log's highest `seq` in one
 transaction, so the rows and the position come from one snapshot. Capturing the
 position separately is wrong: a write that commits between the two makes them
 disagree, and re-applying a change is unsafe for a table with no declared primary
@@ -366,8 +363,8 @@ The read takes a connection of its own and closes it afterwards, whether the rea
 succeeds or fails. One pooled reader serves several concurrent reads, so a
 transaction opened on it would capture their statements and end their reads on
 commit. A driver that opens one connection per file runs the read on the writer
-under the writer lock instead. A read-only database has no writer to mint the
-epoch, so the read fails with `READ_ONLY`. `query` and `queryOne` keep their
+under the writer lock instead. Minting the epoch is a write, so a read-only
+database serves no positioned read. `query` and `queryOne` keep their
 single-statement path and open no transaction.
 
 The position is an opaque token holding the file's epoch and the sequence:
@@ -377,12 +374,10 @@ position = hex(utf8("1:" + epoch + ":" + seq))
 ```
 
 A sequence means nothing in another file's sequence space, so the token carries
-the epoch with it. A caller passes the token back rather than reading it, so the
-encoding stays free to change; a client that resumes a subscription decodes it
-and sends the two parts as `sinceSeq` and `epoch` (see
-[05-server.md](05-server.md#subscription-resumption)). A token that fails to
-decode, carries another version, or holds a malformed epoch or sequence is
-refused rather than interpreted.
+the epoch with it. The code holding a token passes it back rather than reading
+it, so the encoding stays free to change. A token that fails to decode, carries
+another version, or holds a malformed epoch or sequence is refused rather than
+interpreted.
 
 ### Polling and Cleanup
 

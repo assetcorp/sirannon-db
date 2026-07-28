@@ -1,10 +1,6 @@
 # Sirannon Error Specification
 
-Error codes that cross the wire (server responses, transport messages) are
-normative: all implementations must use the same code strings. Internal error
-handling follows language idioms (exception classes, sentinel errors, enums,
-variants) but should map to these code strings when an error crosses a module
-boundary or reaches the wire.
+Error codes that cross the wire (server responses, transport messages) are normative: all implementations must use the same code strings. Internal error handling follows language idioms (exception classes, sentinel errors, enums, variants) but should map to these code strings when an error crosses a module boundary or reaches the wire.
 
 ---
 
@@ -16,16 +12,9 @@ A server HTTP response and a WebSocket error message use:
 { "error": { "code": "ERROR_CODE", "message": "Human-readable description", "details": {} } }
 ```
 
-`code` is a stable machine-readable string. `message` is informational and may
-vary across implementations; client code must not match against it. `details` is
-optional and carries machine-readable context.
+`code` is a stable machine-readable string. `message` is informational and may vary across implementations; client code must not match against it. `details` is optional and carries machine-readable context.
 
-An implementation provides a base error type carrying a `code` string. When an
-error carries extra context, it should attach it as properties: `sql` on
-`QUERY_ERROR`, `table` and `rowId` on `CONFLICT_ERROR`, `version` on a migration
-error, `limit` and `retryAfterMs` on `WRITE_OVERLOADED`, `requestId` on
-`SYNC_ERROR`, and `serverVersion` in `details` on `MIGRATION_REQUIRED` and
-`SCHEMA_AHEAD`.
+An implementation provides a base error type carrying a `code` string. When an error carries extra context, it should attach it as properties: `sql` on `QUERY_ERROR`, `table` and `rowId` on `CONFLICT_ERROR`, `version` on a migration error, `limit` and `retryAfterMs` on `WRITE_OVERLOADED`, `requestId` on `SYNC_ERROR`, and `serverVersion` in `details` on `MIGRATION_REQUIRED` and `SCHEMA_AHEAD`.
 
 ---
 
@@ -73,8 +62,7 @@ error, `limit` and `retryAfterMs` on `WRITE_OVERLOADED`, `requestId` on
 | `WRITER_WORKER_POST_FAILED` | The host could not hand the operation to the writer. |
 | `WRITER_WORKER_NO_PORT` | The writer entry point started outside a worker thread. |
 
-A runtime whose writer isolation differs may raise further internal codes for its
-own mechanism; the outcome codes above are the normative surface.
+A runtime whose writer isolation differs may raise further internal codes for its own mechanism; the outcome codes above are the normative surface.
 
 ### Migrations
 
@@ -124,11 +112,16 @@ own mechanism; the outcome codes above are the normative surface.
 | `EMPTY_BODY` | The request body is empty. |
 | `PAYLOAD_TOO_LARGE` | The request body or message exceeds the maximum size. |
 | `INTERNAL_ERROR` | An unexpected error occurred during request handling. |
-| `HOOK_ERROR` | The `onRequest` hook or `authorizeClusterStatus` threw. |
+| `HOOK_ERROR` | The `authenticate` hook or `authorizeClusterStatus` threw. |
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused. |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |
+| `UNKNOWN_QUERY` | No operation of that name is registered for the database. |
+| `MISSING_ARGUMENT` | A declared argument was absent from the request. |
+| `ARGUMENT_NOT_ALLOWED` | The caller supplied an argument the operation does not declare, or one the server fills from identity. |
+| `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none. |
+| `SQL_NOT_ACCEPTED` | The server does not accept SQL statements over the wire. |
 | `SYNC_UNSUPPORTED` | The execution target provides no change application, or the server predates device sync. |
 | `INVALID_MESSAGE` | A WebSocket message is missing required fields or has wrong types. |
 | `UNKNOWN_TYPE` | A WebSocket message has an unrecognised type. |
@@ -167,9 +160,6 @@ own mechanism; the outcome codes above are the normative surface.
 
 ## Conventions
 
-- Codes use `UPPER_SNAKE_CASE` and are stable across versions; removing or
-  renaming one is a breaking change. New codes may be added in a minor version.
+- Codes use `UPPER_SNAKE_CASE` and are stable across versions; removing or renaming one is a breaking change. New codes may be added in a minor version.
 - `message` is not stable and must not be parsed.
-- Mapping a code to an HTTP status uses the table in
-  [05-server.md](05-server.md#http-status-codes); a code not listed defaults to
-  500.
+- Mapping a code to an HTTP status uses the table in [05-server.md](05-server.md#http-status-codes); a code not listed defaults to 500.

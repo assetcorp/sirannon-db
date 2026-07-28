@@ -1,11 +1,6 @@
 # Sirannon Replication Transport Specification
 
-The transport layer carries replication messages between Sirannon nodes. Every
-implementation must support the transport interface; the gRPC wire protocol is
-the normative network format for cross-implementation interoperability. This
-document covers node-to-node replication transport only. The HTTP and WebSocket
-transports in the client SDK connect applications to a server and are separate
-(see [06-client.md](06-client.md)); WebSocket is not a replication transport.
+The transport layer carries replication messages between Sirannon nodes. Every implementation must support the transport interface; the gRPC wire protocol is the normative network format for cross-implementation interoperability. This document covers node-to-node replication transport only. The HTTP and WebSocket transports in the client SDK connect applications to a server and are separate (see [06-client.md](06-client.md)); WebSocket is not a replication transport.
 
 ---
 
@@ -47,11 +42,7 @@ NodeInfo { id, groupId?, role: 'primary' | 'replica', primaryTerm?: number,
            lastAckedSeq: number, metadata? }
 ```
 
-The engine supplies `localRole` from the configured topology, and in coordinator
-mode also `groupId`, `primaryTerm`, and `protocolVersion`. Peers are addressed by
-node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as
-does a send to a peer that is not connected. `forward` is a request-response call
-bounded by a deadline (default 30,000 ms).
+The engine supplies `localRole` from the configured topology, and in coordinator mode also `groupId`, `primaryTerm`, and `protocolVersion`. Peers are addressed by node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as does a send to a peer that is not connected. `forward` is a request-response call bounded by a deadline (default 30,000 ms).
 
 ---
 
@@ -212,79 +203,41 @@ message ForwardResponse {
 
 ### Value Encoding on the Wire
 
-A `ColumnValue` carries the native SQLite value with no tagged envelope: null,
-string, 64-bit integer, double, byte array, or boolean. Any integer decodes back
-as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty
-string or 0 and decodes back to absent. A `Statement` carries either
-`named_params` or `positional_params`; when both are populated, the receiver uses
-`named_params`.
+A `ColumnValue` carries the native SQLite value with no tagged envelope: null, string, 64-bit integer, double, byte array, or boolean. Any integer decodes back as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty string or 0 and decodes back to absent. A `Statement` carries either `named_params` or `positional_params`; when both are populated, the receiver uses `named_params`.
 
 ### Term Fields
 
-`group_id` and `primary_term` are required when coordinator mode is enabled and
-may be empty in static mode. The transport carries these fields; the replication
-engine enforces term fencing and rejects a stale term with `STALE_PRIMARY` (see
-[03-replication.md](03-replication.md#term-fencing)).
+`group_id` and `primary_term` are required when coordinator mode is enabled and may be empty in static mode. The transport carries these fields; the replication engine enforces term fencing and rejects a stale term with `STALE_PRIMARY` (see [03-replication.md](03-replication.md#term-fencing)).
 
 ---
 
 ## Connection Model
 
-In static mode the primary runs the gRPC server and replicas connect as clients:
-a replica opens the `Replicate` bidirectional stream (the primary writes batches,
-the replica writes acks), calls `Forward` as a unary RPC, and opens the `Sync`
-bidirectional stream for first sync. A node starts its gRPC server when its local
-role is `primary` or a `groupId` is configured. In coordinator mode every
-data-bearing node may expose the server, and replicas replicate from the current
-recorded primary; when the primary changes, replicas close stale streams and
-connect to the new primary for the new term. The transport itself does not
-reconnect on stream loss.
+In static mode the primary runs the gRPC server and replicas connect as clients: a replica opens the `Replicate` bidirectional stream (the primary writes batches, the replica writes acks), calls `Forward` as a unary RPC, and opens the `Sync` bidirectional stream for first sync. A node starts its gRPC server when its local role is `primary` or a `groupId` is configured. In coordinator mode every data-bearing node may expose the server, and replicas replicate from the current recorded primary; when the primary changes, replicas close stale streams and connect to the new primary for the new term. The transport itself does not reconnect on stream loss.
 
 ### Peer Identity
 
-The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying
-the sender's `node_id` and `role`, and in coordinator mode also `group_id`,
-`primary_term`, and `protocol_version`. A node must not send or accept any other
-message before the `Hello`. The server replies with its own `Hello` on the first
-client `Hello`. If the first message is not a `Hello`, the receiver terminates the
-stream. When mutual TLS is enabled, the authenticated peer identity must match the
-node identity through the certificate common name.
+The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id` and `role`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
 
 ### Stream Invariant
 
-At most one active `Replicate` stream per peer. When a new stream opens for a peer
-that already has one, the server ends the old stream before accepting messages on
-the new one.
+At most one active `Replicate` stream per peer. When a new stream opens for a peer that already has one, the server ends the old stream before accepting messages on the new one.
 
 ---
 
 ## Authentication
 
-Implementations must support mutual TLS. The gRPC server presents a certificate
-and, when a CA certificate is configured, verifies client certificates; a client
-presents its own certificate. An insecure mode with no TLS may be provided for
-local development; it is non-normative and requires explicit opt-in. TLS is on by
-default.
+Implementations must support mutual TLS. The gRPC server sends a certificate and, when a CA certificate is configured, verifies client certificates; a client sends its own certificate. An insecure mode with no TLS may be provided for local development; it is non-normative and requires explicit opt-in. TLS is on by default.
 
-Production coordinator access must use TLS, authenticated Sirannon identities, a
-dedicated coordinator key prefix per cluster, and credentials limited to that
-prefix. Insecure coordinator access is allowed only for development and test.
+Production coordinator access must use TLS, authenticated Sirannon identities, a dedicated coordinator key prefix per cluster, and credentials limited to that prefix. Insecure coordinator access is allowed only for development and test.
 
 ---
 
 ## Health, Shutdown, and Local Transports
 
-The gRPC server must serve the `grpc.health.v1.Health` service, reporting the
-`sirannon.replication.v1.Replication` service, and set it to not-serving on
-disconnect. On shutdown the server stops accepting new streams and lets in-flight
-`Forward` RPCs finish before closing; `Replicate` and `Sync` streams may be
-terminated immediately.
+The gRPC server must serve the `grpc.health.v1.Health` service, reporting the `sirannon.replication.v1.Replication` service, and set it to not-serving on disconnect. On shutdown the server stops accepting new streams and lets in-flight `Forward` RPCs finish before closing; `Replicate` and `Sync` streams may be terminated immediately.
 
-For tests and single-process multi-node runs, an implementation may provide an
-in-memory transport (direct calls, asynchronous delivery) and a simulated
-transport (configurable delay, reordering, dropping, and seeded randomness for
-reproducibility). Both are non-normative and their behaviour is
-implementation-defined.
+For tests and single-process multi-node runs, an implementation may provide an in-memory transport (direct calls, asynchronous delivery) and a simulated transport (configurable delay, reordering, dropping, and seeded randomness for reproducibility). Both are non-normative and their behaviour is implementation-defined.
 
 ---
 

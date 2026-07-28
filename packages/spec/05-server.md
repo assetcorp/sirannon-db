@@ -22,6 +22,7 @@ ServerOptions {
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
   getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
+  authorizeClusterStatus?:        ClusterStatusAuthorizer
 }
 
 CorsOptions { origin?: string or List<string>, methods?: List<string>, headers?: List<string> }
@@ -127,7 +128,24 @@ parameter set.
 ### GET /db/{id}/cluster
 
 Returns routing metadata; required in coordinator mode, optional in static mode.
-With no `getClusterStatus` configured it fails with `404 NOT_FOUND`.
+The metadata names the address of every node in the group, so the endpoint answers
+only a request that `authorizeClusterStatus` accepts.
+
+```text
+ClusterStatusAuthorizer = (ctx: RequestContext) -> boolean or async boolean
+```
+
+The `onRequest` hook runs first, as it does for every `/db/{id}` request. The
+endpoint then fails with `404 NOT_FOUND` when `getClusterStatus` is not
+configured, when `authorizeClusterStatus` is not configured, or when
+`authorizeClusterStatus` returns false. The three responses are identical, so a
+caller cannot tell a refusal from a server that runs no cluster. An
+authorisation hook that throws fails with `500 HOOK_ERROR`. An accepted request
+for an unknown database fails with `404 DATABASE_NOT_FOUND`.
+
+Grant this permission to an operator or to another node. An application
+credential must not hold it, because a client that reads the node map connects to
+those internal addresses directly and routes itself between them.
 
 ```text
 ClusterStatusInfo {
@@ -213,8 +231,10 @@ reply; for a subscription the `id` is the subscription identifier. `sinceSeq`,
 integer range survive JSON. Change-event `row` and `oldRow` follow the value
 encoding; `hlc` and `origin` carry the change's timestamp and origin node when
 stamped. A stamped change also carries `rowId` and `txId`, and `txEnd` is true on
-the last change of a transaction. The `deviceId`, `schemaVersion`, and `ack`
-fields drive device sync (see [08-device-sync.md](08-device-sync.md)).
+the last change of a transaction (see
+[Transaction Boundaries](#transaction-boundaries)). The `deviceId`,
+`schemaVersion`, and `ack` fields drive device sync (see
+[08-device-sync.md](08-device-sync.md)).
 
 A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE`
 when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for
@@ -223,6 +243,27 @@ of 1 to 500 table names in place of it; `tables` requires a `deviceId`. A
 duplicate `id`
 fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an
 in-memory database with `CDC_UNSUPPORTED`.
+
+### Transaction Boundaries
+
+Every subscription marks the last change of each transaction with `txEnd`, so a
+consumer applies a whole transaction at once and never shows a state the database
+never held. Subscribing turns on write stamping for the database, because a change
+carries no `tx_id` until the server stamps it (see
+[08-device-sync.md](08-device-sync.md)).
+
+The server knows the last change of a transaction only once the change after it
+arrives, so it holds one change per subscription and releases it when a change of
+another transaction arrives or the poll reaches a transaction boundary. The server
+holds one change and no more, whatever the size of the transaction. A poll that
+ends part-way through a transaction is not a boundary, so the server keeps holding
+that change until the rest of the transaction arrives. A change carrying no `txId`
+is its own transaction, and the server delivers it marked.
+
+The filter runs before the marker, so `txEnd` marks the last change that survives
+the filter rather than the last change of the transaction, and a transaction whose
+changes all fail the filter delivers nothing. Replayed history carries the same
+marker.
 
 ### Subscription Resumption
 

@@ -13,6 +13,12 @@ transport (see [04-transport.md](04-transport.md)).
 ```text
 SirannonClient {
   constructor(url: string, options?: ClientOptions)
+
+  database(id: string): RemoteDatabase
+  close(): void
+}
+
+TopologyAwareClient {
   constructor(options: TopologyAwareClientOptions)
 
   database(id: string): RemoteDatabase
@@ -38,13 +44,18 @@ TopologyAwareClientOptions extends ClientOptions {
 }
 ```
 
-Topology mode is chosen when the argument is an object carrying `primary`, a
-non-empty `replicas`, a non-empty `endpoints`, or `discovery: 'coordinator'`;
-otherwise the client connects to the single `url`. `headers` applies to HTTP
-requests and to coordinator discovery requests. A browser WebSocket handshake
-cannot attach an `Authorization` header, so a browser client passes a short-lived
-credential through `webSocketProtocols` when the server validates the selected
-subprotocol.
+`SirannonClient` connects to the single `url` and never routes between nodes;
+passing it `endpoints`, `primary`, `replicas`, `readPreference`, `discovery`, or
+`readConcern` fails with `INVALID_ARGUMENT`. `TopologyAwareClient` routes between
+the nodes of a replication group. An implementation that splits its package into
+entry points must place `TopologyAwareClient` behind an entry point of its own
+and prove that the browser-facing entry point does not reach it, so no browser
+bundle carries routing code or an internal node address.
+
+`headers` applies to HTTP requests and to coordinator discovery requests. A
+browser WebSocket handshake cannot attach an `Authorization` header, so a browser
+client passes a short-lived credential through `webSocketProtocols` when the
+server validates the selected subprotocol.
 
 `database(id)` returns a cached `RemoteDatabase` for the URL-encoded id. `close`
 closes every connection, cancels active subscriptions, and rejects pending
@@ -158,7 +169,10 @@ The configured endpoints are a starter list. Before the first operation for a
 database, the client fetches routing metadata with `GET /db/{id}/cluster` (timeout
 2,000 ms) from a reachable starter, and caches `currentPrimary`, `primaryTerm`,
 and the readable endpoints. A malformed response fails with `INVALID_RESPONSE`;
-when no endpoint yields routing, the client fails with `ROUTING_ERROR`.
+when no endpoint yields routing, the client fails with `ROUTING_ERROR`. That
+endpoint serves topology only to a credential the server authorises for it (see
+[05-server.md](05-server.md#get-dbidcluster)), so a client configured with an
+application credential alone discovers nothing and fails with `ROUTING_ERROR`.
 
 Writes go to `currentPrimary`, or fail with `NO_SAFE_PRIMARY` when none is known.
 The effective read concern is the per-query value, then the client-level value,

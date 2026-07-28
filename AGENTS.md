@@ -13,6 +13,7 @@ Read the file you're editing and follow what it already does. The rules below co
 - Put every statement against a `_sirannon_*` table in `core/system-catalog/`, one module per table, exported as a function that owns both the SQL and the shape it returns. Copy `meta-table.ts`. Keep SQL out of the call site, whether it creates, reads, or writes.
 - Name each of those functions after the verb of the statement it runs: `select`, `insert`, `update`, `delete`, or `upsert`, and `selectMax`, `selectMin`, or `selectCount` for an aggregate. Use `ensure` for the idempotent `CREATE`, `prepare<Verb>` when you return a prepared statement for a loop, and a `Sql` suffix when you return the statement text. A `PRAGMA` helper and a function wrapping several statements take a descriptive name instead.
 - Take internal table names from the constants in `core/internal-tables.ts`. Add columns with `ensureColumn`. Keep `CREATE TRIGGER` in `core/cdc/trigger-sql.ts`.
+- Never propose refusing, narrowing, or deferring a capability because implementing it properly is harder. Read how established databases solve it and what this repository already does, then propose that, and when ease of implementation is your real reason, say so plainly instead of presenting it as a recommendation.
 - Let a `SirannonError` propagate unchanged, because its code is what the server maps to an HTTP status.
 - Run `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm check:bundle`, and `pnpm test` before you report a change done.
 

@@ -7,7 +7,7 @@ import {
   type Params,
   type QueryOptions,
   type RequestContext,
-  type RequestDenial,
+  RequestDeniedError,
   type ServerExecutionTarget,
   Sirannon,
   type Transaction,
@@ -245,24 +245,22 @@ function hasWebSocketAuthProtocol(value: string | undefined): boolean {
   return value.split(',').some(protocol => protocol.trim() === WEBSOCKET_AUTH_PROTOCOL)
 }
 
-function validateWebSocketUpgrade(ctx: RequestContext): RequestDenial | undefined {
+function validateWebSocketUpgrade(ctx: RequestContext): void {
   if (!isAllowedOrigin(getHeader(ctx.headers, 'origin'))) {
-    return {
-      status: 403,
-      code: 'FORBIDDEN_ORIGIN',
-      message: 'The demo data server rejects WebSocket upgrades from untrusted origins.',
-    }
+    throw new RequestDeniedError(
+      403,
+      'FORBIDDEN_ORIGIN',
+      'The demo data server rejects WebSocket upgrades from untrusted origins.',
+    )
   }
 
   if (!hasWebSocketAuthProtocol(getHeader(ctx.headers, 'sec-websocket-protocol'))) {
-    return {
-      status: 401,
-      code: 'UNAUTHORIZED',
-      message: 'The demo data server requires the configured WebSocket auth protocol.',
-    }
+    throw new RequestDeniedError(
+      401,
+      'UNAUTHORIZED',
+      'The demo data server requires the configured WebSocket auth protocol.',
+    )
   }
-
-  return undefined
 }
 
 const tempDir = mkdtempSync(join(tmpdir(), 'sirannon-inventory-'))
@@ -319,22 +317,19 @@ const server = createServer(sirannon, {
     methods: ['GET', 'POST', 'OPTIONS'],
     headers: ['Content-Type', 'Authorization'],
   },
-  onRequest: ctx => {
+  acceptSql: true,
+  authenticate: ctx => {
     const websocketUpgrade = ctx.method.toUpperCase() === 'GET' && ctx.path === '/db/main'
     if (websocketUpgrade) {
-      return validateWebSocketUpgrade(ctx)
-    }
-
-    const authorization = getHeader(ctx.headers, 'authorization')
-    if (isAuthorizedHeader(authorization)) {
+      validateWebSocketUpgrade(ctx)
       return undefined
     }
 
-    return {
-      status: 401,
-      code: 'UNAUTHORIZED',
-      message: 'The demo data server requires the configured bearer token.',
+    if (isAuthorizedHeader(getHeader(ctx.headers, 'authorization'))) {
+      return undefined
     }
+
+    throw new RequestDeniedError(401, 'UNAUTHORIZED', 'The demo data server requires the configured bearer token.')
   },
   resolveExecutionTarget: databaseId => {
     return databaseId === 'main' ? guardedDb : null

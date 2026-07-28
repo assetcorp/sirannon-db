@@ -301,7 +301,7 @@ An insert has no row before the change and a delete none after, so only an updat
 ```text
 LiveQuery<T> {
   getState(): LiveQueryState<T>
-  subscribe(listener: () -> void): DisposeFn
+  subscribe(listener: (update: LiveUpdate<T>) -> void): DisposeFn
   close(): async -> void
 }
 
@@ -309,11 +309,22 @@ LiveQueryState<T> = { status: 'pending' }
   | { status: 'ready', rows: List<T>, revalidating: boolean }
   | { status: 'error', error: Error }
 
+LiveUpdate<T> = { kind: 'rows' }
+  | { kind: 'ops', ops: List<ResultOp<T>> }
+  | { kind: 'revalidating' }
+  | { kind: 'error' }
+
+ResultOp<T> = { op: 'insert', index, row: T }
+  | { op: 'update', index, row: T }
+  | { op: 'delete', index }
+
 LiveQueryOptions {
   rereadJitterMs?:        number  (default: 25 ms, recommended)
   maxTransactionChanges?: number  (default: 10_000, recommended)
 }
 ```
+
+`ops` carries the splices that produced the new rows, in order. `rows` follows a second read that replaced them. An implementation that maintains its own copy of the result, such as a server serving a remote live query, applies the operations in order to hold the same rows; one that only renders the result reads `getState`.
 
 Opening a live query must watch the statement's table, read once, and subscribe from that read's position, so that every change reaches the result exactly once. `live` on a read-only database must fail with `READ_ONLY`, because `watch` installs triggers.
 

@@ -121,6 +121,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `MISSING_ARGUMENT` | A declared argument was absent from the request. |
 | `ARGUMENT_NOT_ALLOWED` | The caller supplied an argument the operation does not declare, or one the server fills from identity. |
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none. |
+| `REGISTRY_MISMATCH` | A subscription echoed a registry digest this server does not serve. |
 | `SQL_NOT_ACCEPTED` | The server does not accept SQL statements over the wire. |
 | `SYNC_UNSUPPORTED` | The execution target provides no change application, or the server predates device sync. |
 | `INVALID_MESSAGE` | A WebSocket message is missing required fields or has wrong types. |

@@ -224,4 +224,5 @@ export interface Subscription {
   unsubscribe(): void
 }
 
+export * from './operation-registry.js'
 export * from './server-options.js'

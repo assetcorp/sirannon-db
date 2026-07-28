@@ -17,7 +17,7 @@ const driver = betterSqlite3()
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-health-'))
   sirannon = new Sirannon({ driver })
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -131,7 +131,7 @@ describe('server lifecycle', () => {
   })
 
   it('reports -1 for listeningPort after close', async () => {
-    const tmpServer = createServer(sirannon, { port: 0 })
+    const tmpServer = createServer(sirannon, { acceptSql: true, port: 0 })
     await tmpServer.listen()
     expect(tmpServer.listeningPort).toBeGreaterThan(0)
     await tmpServer.close()
@@ -139,11 +139,11 @@ describe('server lifecycle', () => {
   })
 
   it('rejects listen when port is already in use', async () => {
-    const first = createServer(sirannon, { port: 0 })
+    const first = createServer(sirannon, { acceptSql: true, port: 0 })
     await first.listen()
     const usedPort = first.listeningPort
 
-    const second = createServer(sirannon, { port: usedPort })
+    const second = createServer(sirannon, { acceptSql: true, port: usedPort })
     await expect(second.listen()).rejects.toThrow(`Failed to listen on 127.0.0.1:${usedPort}`)
 
     await second.close()
@@ -151,7 +151,7 @@ describe('server lifecycle', () => {
   })
 
   it('adds CORS headers to health routes when CORS is enabled', async () => {
-    const corsServer = createServer(sirannon, { port: 0, cors: true })
+    const corsServer = createServer(sirannon, { acceptSql: true, port: 0, cors: true })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 

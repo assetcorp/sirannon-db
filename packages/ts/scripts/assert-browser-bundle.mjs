@@ -8,16 +8,20 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BROWSER_ENTRIES = [
   'dist/core/index.mjs',
   'dist/client/index.mjs',
+  'dist/react/index.mjs',
   'dist/driver/wa-sqlite.mjs',
   'dist/driver/expo.mjs',
 ]
 
+const TOPOLOGY_RULE = {
+  reason:
+    'The browser-facing client must not carry cluster topology routing, so an application cannot discover or connect to internal node addresses. Topology routing belongs to dist/client/topology.mjs.',
+  markers: ['_getReadEndpoint', '_getWriteEndpoint', 'parseClusterRouting', '/cluster'],
+}
+
 const FORBIDDEN_SOURCE = {
-  'dist/client/index.mjs': {
-    reason:
-      'The browser-facing client must not carry cluster topology routing, so an application cannot discover or connect to internal node addresses. Topology routing belongs to dist/client/topology.mjs.',
-    markers: ['_getReadEndpoint', '_getWriteEndpoint', 'parseClusterRouting', '/cluster'],
-  },
+  'dist/client/index.mjs': TOPOLOGY_RULE,
+  'dist/react/index.mjs': TOPOLOGY_RULE,
 }
 
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([^"']+)["']/g

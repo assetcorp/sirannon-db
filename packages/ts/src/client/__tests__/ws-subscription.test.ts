@@ -30,7 +30,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'sub.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')
 
@@ -62,7 +62,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'filter.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
 
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')
@@ -93,7 +93,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'unsub.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
 
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')
@@ -134,7 +134,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'upddel.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
 
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')
@@ -172,7 +172,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'multi.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
 
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')
@@ -213,7 +213,7 @@ describe('WebSocket subscription integration', () => {
     const db = await sirannon.open('mydb', join(tempDir, 'seq.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-    wsHandler = createWSHandler(sirannon)
+    wsHandler = createWSHandler(sirannon, { acceptSql: true })
 
     const conn = createMockConnection()
     await wsHandler.handleOpen(conn, 'mydb')

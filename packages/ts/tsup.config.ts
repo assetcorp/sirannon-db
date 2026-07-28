@@ -11,6 +11,7 @@ const peerDeps = [
   '@grpc/grpc-js',
   'grpc-health-check',
   '@bufbuild/protobuf',
+  'react',
 ]
 
 async function restoreNodePrefix() {
@@ -50,6 +51,8 @@ const sharedOptions: Options = {
 const nodeEntry = {
   'core/index': 'src/core/index.ts',
   'core/writer-worker': 'src/core/worker/entry.ts',
+  'codegen/index': 'src/codegen/index.ts',
+  'codegen/cli': 'src/codegen/cli.ts',
   'server/index': 'src/server/index.ts',
   'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
   'driver/node': 'src/drivers/node/index.ts',
@@ -60,7 +63,11 @@ const nodeEntry = {
   'transport/grpc': 'src/transport/grpc/index.ts',
 }
 
-const clientEntry = { 'client/index': 'src/client/index.ts', 'client/topology': 'src/client/topology.ts' }
+const clientEntry = {
+  'client/index': 'src/client/index.ts',
+  'client/topology': 'src/client/topology.ts',
+  'react/index': 'src/react/index.ts',
+}
 
 const waSqliteEntry = { 'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts' }
 

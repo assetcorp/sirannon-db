@@ -47,7 +47,7 @@ afterEach(async () => {
 
 describe('filtered WebSocket subscriptions', () => {
   it('reports a row updated out of the filter as a delete and one updated in as an insert', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'boundary.db'))
     await db.execute('CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT, title TEXT)')
     await db.execute("INSERT INTO tickets (id, status, title) VALUES (1, 'open', 'Broken link')")
@@ -77,7 +77,7 @@ describe('filtered WebSocket subscriptions', () => {
   })
 
   it('reports the same boundary crossings when replaying to a resuming subscriber', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'boundary-resume.db'))
     await db.execute('CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT)')
     await db.watch('tickets')

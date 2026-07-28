@@ -65,6 +65,10 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     return createEndpointTransport(this.settings, url, databaseId)
   }
 
+  protected async resolveServerUrl(databaseId: string): Promise<string> {
+    return this._getWriteEndpoint(databaseId)
+  }
+
   async _getReadEndpoint(databaseId?: string, readConcern?: ReadConcernLevel): Promise<string> {
     if (this.discovery === 'coordinator' && databaseId) {
       return this.routedReadEndpoint(databaseId, readConcern)

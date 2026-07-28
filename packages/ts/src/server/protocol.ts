@@ -17,6 +17,8 @@ export type {
   WSClientMessage,
   WSErrorMessage,
   WSExecuteMessage,
+  WSLiveMessage,
+  WSLiveOp,
   WSLoadMessage,
   WSQueryMessage,
   WSResultMessage,

@@ -1,9 +1,10 @@
+import type { OperationRegistry } from './operation-registry.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type { ClusterStatusInfo, ExecuteResult, Params, QueryOptions } from './types.js'
 
-/** Context passed to the onRequest middleware hook. */
+/** Context passed to the authenticate hook. */
 export interface RequestContext {
   headers: Record<string, string>
   method: string
@@ -12,15 +13,9 @@ export interface RequestContext {
   remoteAddress: string
 }
 
-/** Return this from an onRequest hook to deny the request with a custom response. */
-export interface RequestDenial {
-  status: number
-  code: string
-  message: string
-}
-
-/** Middleware hook for auth, rate limiting, and request validation. */
-export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
+export type AuthenticateHook<Identity = unknown> = (
+  ctx: RequestContext,
+) => Identity | undefined | Promise<Identity | undefined>
 
 export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise<boolean>
 
@@ -93,7 +88,7 @@ export type ServerExecutionTargetResolver = (
 ) => ServerExecutionTarget | null | undefined | Promise<ServerExecutionTarget | null | undefined>
 
 /** Options for the standalone HTTP + WS server. */
-export interface ServerOptions {
+export interface ServerOptions<Identity = unknown> {
   host?: string
   port?: number
   cors?: boolean | CorsOptions
@@ -125,7 +120,9 @@ export interface ServerOptions {
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
   maxUnacknowledgedChanges?: number
-  onRequest?: OnRequestHook
+  authenticate?: AuthenticateHook<Identity>
+  operations?: OperationRegistry<Identity>
+  acceptSql?: boolean
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
@@ -162,13 +159,15 @@ export interface CorsOptions {
 }
 
 /** Options for the mountable WebSocket handler. */
-export interface WSHandlerOptions {
+export interface WSHandlerOptions<Identity = unknown> {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
   /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
   maxUnacknowledgedChanges?: number
+  acceptSql?: boolean
+  operations?: OperationRegistry<Identity>
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 

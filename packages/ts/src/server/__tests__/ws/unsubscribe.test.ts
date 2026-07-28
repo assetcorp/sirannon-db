@@ -39,7 +39,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('handleMessage - unsubscribe', () => {
     it('unsubscribes and sends confirmation', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'unsub.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -72,7 +72,7 @@ describe('WSHandler', () => {
     })
 
     it('stops receiving change events after unsubscribe', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'unsubstop.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -107,7 +107,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for unknown subscription ID', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'badunsub.db'))
 
       const conn = createMockConnection()

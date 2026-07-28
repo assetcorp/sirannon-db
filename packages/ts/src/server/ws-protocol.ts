@@ -22,9 +22,12 @@ export type WSClientMessage =
 export interface WSSubscribeMessage {
   type: 'subscribe'
   id: string
-  table: string
+  table?: string
   tables?: string[]
   filter?: Record<string, unknown>
+  name?: string
+  args?: Record<string, unknown>
+  registryDigest?: string
   /**
    * Highest `seq` the client has already processed. When present, the server
    * replays every retained change with a greater seq before delivering live
@@ -58,15 +61,20 @@ export interface WSAckMessage {
 export interface WSQueryMessage {
   type: 'query'
   id: string
-  sql: string
+  sql?: string
   params?: Record<string, unknown> | unknown[]
+  name?: string
+  args?: Record<string, unknown>
 }
 
 export interface WSExecuteMessage {
   type: 'execute'
   id: string
-  sql: string
+  sql?: string
   params?: Record<string, unknown> | unknown[]
+  name?: string
+  args?: Record<string, unknown>
+  writeConcern?: WriteConcern
 }
 
 /**
@@ -102,8 +110,22 @@ export type WSServerMessage =
   | WSSubscribedMessage
   | WSUnsubscribedMessage
   | WSChangeMessage
+  | WSLiveMessage
   | WSResultMessage
   | WSErrorMessage
+
+export type WSLiveOp =
+  | { op: 'insert'; index: number; row: unknown }
+  | { op: 'update'; index: number; row: unknown }
+  | { op: 'delete'; index: number }
+
+export interface WSLiveMessage {
+  type: 'live'
+  id: string
+  ops?: WSLiveOp[]
+  rows?: unknown[]
+  revalidating?: boolean
+}
 
 export interface WSSubscribedMessage {
   type: 'subscribed'
@@ -131,6 +153,7 @@ export interface WSSubscribedMessage {
    * database forces a resync instead of a silent replay of unrelated rows.
    */
   epoch?: string
+  rows?: unknown[]
 }
 
 export interface WSUnsubscribedMessage {

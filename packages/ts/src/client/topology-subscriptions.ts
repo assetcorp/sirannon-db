@@ -1,15 +1,14 @@
 import type { ChangeEvent, ReadConcernLevel } from '../core/types.js'
 import type { TopologyRouting } from './cluster-routing.js'
 import { shouldRefreshRouting } from './cluster-routing.js'
-import type { RemoteSubscription, SubscribeOptions, Transport } from './types.js'
+import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from './types.js'
 import { RemoteError } from './types.js'
+
+type OpenSubscription = (transport: Transport) => Promise<RemoteSubscription>
 
 interface TrackedRemoteSubscription {
   id: number
-  table: string
-  filter: Record<string, unknown> | undefined
-  callback: (event: ChangeEvent) => void
-  onReset: (() => void) | undefined
+  reopen: OpenSubscription
   remote: RemoteSubscription | null
   active: boolean
 }
@@ -38,8 +37,25 @@ export class TopologySubscriptionSet {
     callback: (event: ChangeEvent) => void,
     options?: SubscribeOptions,
   ): Promise<RemoteSubscription> {
+    return this.track(
+      transport => transport.subscribe(table, filter, callback, options),
+      transport => transport.subscribe(table, filter, callback, { onReset: options?.onReset }),
+    )
+  }
+
+  async subscribeLive(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription> {
+    const open: OpenSubscription = transport => transport.liveSubscribe(name, args, handlers, registryDigest)
+    return this.track(open, open)
+  }
+
+  private async track(open: OpenSubscription, reopen: OpenSubscription): Promise<RemoteSubscription> {
     try {
-      return await this.subscribeOnCurrentEndpoint(table, filter, callback, options)
+      return await this.subscribeOnCurrentEndpoint(open, reopen)
     } catch (err) {
       if (this.routing._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
         const hadActiveSubscriptions = this.subscriptions.size > 0
@@ -50,7 +66,7 @@ export class TopologySubscriptionSet {
         if (!hadActiveSubscriptions) {
           this.closeTransport()
         }
-        return this.subscribeOnCurrentEndpoint(table, filter, callback, options)
+        return this.subscribeOnCurrentEndpoint(open, reopen)
       }
       throw err
     }
@@ -72,20 +88,15 @@ export class TopologySubscriptionSet {
   }
 
   private async subscribeOnCurrentEndpoint(
-    table: string,
-    filter: Record<string, unknown> | undefined,
-    callback: (event: ChangeEvent) => void,
-    options?: SubscribeOptions,
+    open: OpenSubscription,
+    reopen: OpenSubscription,
   ): Promise<RemoteSubscription> {
     return this.withOperation(async () => {
       const transport = await this.getTransport(this.routing._getReadConcern())
-      const remote = await transport.subscribe(table, filter, callback, options)
+      const remote = await open(transport)
       const subscription: TrackedRemoteSubscription = {
         id: ++this.nextSubscriptionId,
-        table,
-        filter,
-        callback,
-        onReset: options?.onReset,
+        reopen,
         remote,
         active: true,
       }
@@ -124,9 +135,7 @@ export class TopologySubscriptionSet {
     try {
       for (const subscription of subscriptions) {
         if (!subscription.active) continue
-        const remote = await nextTransport.subscribe(subscription.table, subscription.filter, subscription.callback, {
-          onReset: subscription.onReset,
-        })
+        const remote = await subscription.reopen(nextTransport)
         if (!subscription.active) {
           remote.unsubscribe()
           continue

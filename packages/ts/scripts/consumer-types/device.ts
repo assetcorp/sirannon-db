@@ -1,7 +1,13 @@
-import type { Database, Migration } from '@delali/sirannon-db'
+import type { Database, Migration, OperationRef } from '@delali/sirannon-db'
 import { Sirannon } from '@delali/sirannon-db'
 import type { ConflictContext, ConflictResolution, ConflictResolver } from '@delali/sirannon-db/client'
-import { FieldMergeResolver, LWWResolver, PrimaryWinsResolver, SyncController } from '@delali/sirannon-db/client'
+import {
+  FieldMergeResolver,
+  LWWResolver,
+  PrimaryWinsResolver,
+  SirannonClient,
+  SyncController,
+} from '@delali/sirannon-db/client'
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 
 const migrations: Migration[] = [
@@ -84,3 +90,22 @@ export const syncWithCustomResolver = (db: Database): SyncController =>
     tables: ['notes'],
     resolver: new KeepLocalResolver(),
   })
+
+const notes = { name: 'notes' } as OperationRef<Record<string, never>, { id: unknown; body: unknown }>
+const addNote = { name: 'addNote' } as OperationRef<{ body: string }, never>
+
+export const readNotesRemotely = async (): Promise<void> => {
+  const client = new SirannonClient('http://localhost:9876')
+  const db = client.database('notes')
+  const rows = await db.query(notes, {})
+  console.log(rows.map(row => row.id))
+
+  const written = await db.execute(addNote, { body: 'a note' })
+  console.log(written[0].changes)
+
+  const live = await db.live(notes, {})
+  const state = live.getState()
+  console.log(state.status === 'ready' ? state.rows.length : state.status)
+  await live.close()
+  client.close()
+}

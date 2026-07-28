@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
 import { BackupError } from '../../errors.js'
-import { createTestDb, useTempDir } from './shared.js'
+import { createTestDb, tempDirPerTest } from './shared.js'
 
-const temp = useTempDir()
+const temp = tempDirPerTest()
 
 describe('BackupScheduler', () => {
   it('throws BackupError with BACKUP_ERROR code for an invalid cron expression', async () => {

@@ -1,31 +1,32 @@
 import type uWS from 'uWebSockets.js'
-import type { OnRequestHook, RequestContext, RequestDenial } from '../core/types.js'
+import { SirannonError } from '../core/errors.js'
+import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import type { ResponseGuard } from './http-common.js'
-import { sendError } from './http-common.js'
+import { sendCaughtError, sendError } from './http-common.js'
 
 export function decodeRemoteAddress(res: uWS.HttpResponse): string {
   return Buffer.from(res.getRemoteAddressAsText()).toString()
 }
 
-function isRequestDenial(value: unknown): value is RequestDenial {
-  return typeof value === 'object' && value !== null && 'status' in value
-}
+export type AuthenticationResult<I> = { ok: true; identity: I | undefined } | { ok: false }
 
-export async function runOnRequest(
+export async function runAuthenticate<I>(
   res: uWS.HttpResponse,
   abort: ResponseGuard,
   ctx: RequestContext,
-  hook: OnRequestHook,
-): Promise<boolean> {
+  hook: AuthenticateHook<I>,
+): Promise<AuthenticationResult<I>> {
   try {
-    const result = await hook(ctx)
-    if (isRequestDenial(result)) {
-      if (abort.claim()) sendError(res, result.status, result.code, result.message)
-      return false
+    const identity = await hook(ctx)
+    return { ok: true, identity: identity as I | undefined }
+  } catch (err) {
+    if (abort.claim()) {
+      if (err instanceof SirannonError) {
+        sendCaughtError(res, abort, err)
+      } else {
+        sendError(res, 500, 'HOOK_ERROR', 'authenticate hook threw an error')
+      }
     }
-    return true
-  } catch {
-    if (abort.claim()) sendError(res, 500, 'HOOK_ERROR', 'onRequest hook threw an error')
-    return false
+    return { ok: false }
   }
 }

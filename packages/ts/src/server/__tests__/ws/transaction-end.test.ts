@@ -59,7 +59,7 @@ afterEach(async () => {
 
 describe('transaction boundaries on an ordinary subscription', () => {
   it('marks the last change of a transaction and no earlier one', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'txend.db'))
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)')
 
@@ -81,7 +81,7 @@ describe('transaction boundaries on an ordinary subscription', () => {
   })
 
   it('marks each single-statement write as its own transaction', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'txend-single.db'))
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)')
 
@@ -99,7 +99,7 @@ describe('transaction boundaries on an ordinary subscription', () => {
   })
 
   it('marks the last change that survives the filter, not the last of the transaction', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'txend-filter.db'))
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, region TEXT)')
 
@@ -122,7 +122,7 @@ describe('transaction boundaries on an ordinary subscription', () => {
   })
 
   it('marks replayed history for a resuming subscriber', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'txend-resume.db'))
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)')
     await db.watch('orders')

@@ -26,7 +26,7 @@ beforeEach(async () => {
   const db = await sirannon.open('appdb', join(tempDir, 'server.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -51,14 +51,15 @@ describe('GET /capabilities', () => {
   it('announces every device sync capability', async () => {
     const res = await fetch(`${baseUrl}/capabilities`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ capabilities: [...SERVER_CAPABILITIES] })
+    const body = (await res.json()) as { capabilities: string[] }
+    expect(body.capabilities).toEqual(expect.arrayContaining([...SERVER_CAPABILITIES]))
   })
 })
 
 describe('verifyDeviceSyncCapabilities', () => {
   it('accepts a server announcing every required capability', async () => {
     const capabilities = await verifyDeviceSyncCapabilities({ url: baseUrl })
-    expect(capabilities).toEqual([...SERVER_CAPABILITIES])
+    expect(capabilities).toEqual(expect.arrayContaining([...SERVER_CAPABILITIES]))
   })
 
   it('refuses a server that predates the capabilities route', async () => {
@@ -108,7 +109,7 @@ describe('SyncController capability handshake', () => {
     })
     try {
       await controller.start()
-      expect((await controller.status()).serverCapabilities).toEqual([...SERVER_CAPABILITIES])
+      expect((await controller.status()).serverCapabilities).toEqual(expect.arrayContaining([...SERVER_CAPABILITIES]))
     } finally {
       await controller.stop()
       await deviceSirannon.shutdown()

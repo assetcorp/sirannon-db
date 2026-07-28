@@ -85,6 +85,14 @@
       "types": "./dist/client/topology.d.ts",
       "import": "./dist/client/topology.mjs"
     },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.mjs"
+    },
+    "./codegen": {
+      "types": "./dist/codegen/index.d.ts",
+      "import": "./dist/codegen/index.mjs"
+    },
     "./replication": {
       "types": "./dist/replication/index.d.ts",
       "import": "./dist/replication/index.mjs"
@@ -102,6 +110,22 @@
       "import": "./dist/transport/grpc.mjs"
     }
   },
+  "typesVersions": {
+    "*": {
+      "react": [
+        "./dist/react/index.d.ts"
+      ],
+      "codegen": [
+        "./dist/codegen/index.d.ts"
+      ],
+      "client/topology": [
+        "./dist/client/topology.d.ts"
+      ]
+    }
+  },
+  "bin": {
+    "sirannon-codegen": "./dist/codegen/cli.mjs"
+  },
   "files": [
     "dist",
     "LICENSE",
@@ -114,11 +138,12 @@
     "@bufbuild/protobuf": ">=2.0.0",
     "@grpc/grpc-js": ">=1.10.0",
     "better-sqlite3": ">=12.0.0",
-    "expo-sqlite": ">=14.0.0",
     "etcd3": ">=1.1.2",
+    "expo-sqlite": ">=14.0.0",
     "grpc-health-check": ">=2.0.0",
     "uWebSockets.js": ">=20.0.0",
-    "wa-sqlite": ">=1.0.0"
+    "wa-sqlite": ">=1.0.0",
+    "react": ">=19.0.0"
   },
   "peerDependenciesMeta": {
     "@bufbuild/protobuf": {
@@ -144,6 +169,9 @@
     },
     "wa-sqlite": {
       "optional": true
+    },
+    "react": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -151,11 +179,16 @@
     "@grpc/grpc-js": "1.14.3",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.3.3",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "12.6.2",
     "etcd3": "1.1.2",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
+    "jsdom": "29.1.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
     "selfsigned": "5.5.0",
     "ts-proto": "2.11.6",
     "tsup": "8.5.1",

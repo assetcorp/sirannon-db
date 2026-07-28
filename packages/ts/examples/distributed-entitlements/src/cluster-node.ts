@@ -1,4 +1,4 @@
-import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
+import { ChangeTracker, RequestDeniedError, Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
 import { createEtcdCoordinator } from '@delali/sirannon-db/replication/coordinator/etcd'
@@ -151,15 +151,12 @@ server = createServer(sirannon, {
     methods: ['GET', 'POST', 'OPTIONS'],
     headers: ['Content-Type', 'Authorization'],
   },
-  onRequest: ({ headers }) => {
+  acceptSql: true,
+  authenticate: ({ headers }) => {
     if (isAuthorized(headers, token)) {
       return undefined
     }
-    return {
-      status: 401,
-      code: 'UNAUTHORIZED',
-      message: 'Missing valid Sirannon entitlements demo token',
-    }
+    throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing valid Sirannon entitlements demo token')
   },
   resolveExecutionTarget: id => (id === DATABASE_ID ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),

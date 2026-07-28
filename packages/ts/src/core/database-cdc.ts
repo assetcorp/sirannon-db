@@ -1,6 +1,7 @@
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
 import { ensureCdcEpoch } from './cdc/epoch.js'
+import type { PositionedRows } from './cdc/read-position.js'
 import { readAtPosition } from './cdc/read-position.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
@@ -8,7 +9,7 @@ import { query } from './query-executor.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
 import { Transaction } from './transaction.js'
-import type { Params, PositionedRows, SubscriptionBuilder } from './types.js'
+import type { Params, SubscriptionBuilder } from './types.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 

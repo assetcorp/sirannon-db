@@ -5,12 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { decodeReadPosition, encodeReadPosition } from '../../cdc/read-position.js'
 import type { Database } from '../../database.js'
+import type { DatabaseReadDeps } from '../../database-reads.js'
+import { readRowsWithPosition } from '../../database-reads.js'
 import type { OpenOptions, SQLiteConnection, SQLiteDriver } from '../../driver/types.js'
 import { Sirannon } from '../../sirannon.js'
 
 let tempDir: string
 let sirannon: Sirannon
 let db: Database
+
+function readAt<T = Record<string, unknown>>(target: Database, sql: string) {
+  return readRowsWithPosition<T>((target as unknown as { reads: DatabaseReadDeps }).reads, sql)
+}
 
 interface ConnectionLedger {
   driver: SQLiteDriver
@@ -80,11 +86,11 @@ describe('read position tokens', () => {
   })
 })
 
-describe('Database.queryWithPosition', () => {
+describe('positioned reads', () => {
   it('returns the rows and a position the same subscription cursor understands', async () => {
     await db.execute('INSERT INTO orders (id, total) VALUES (1, 100)')
 
-    const result = await db.queryWithPosition<{ id: number; total: number }>('SELECT * FROM orders ORDER BY id')
+    const result = await readAt<{ id: number; total: number }>(db, 'SELECT * FROM orders ORDER BY id')
 
     expect(result.rows).toEqual([{ id: 1, total: 100 }])
     const decoded = decodeReadPosition(result.position)
@@ -99,8 +105,8 @@ describe('Database.queryWithPosition', () => {
     await other.execute('INSERT INTO orders (id) VALUES (1)')
     await db.execute('INSERT INTO orders (id, total) VALUES (1, 100)')
 
-    const here = decodeReadPosition((await db.queryWithPosition('SELECT * FROM orders')).position)
-    const there = decodeReadPosition((await other.queryWithPosition('SELECT * FROM orders')).position)
+    const here = decodeReadPosition((await readAt(db, 'SELECT * FROM orders')).position)
+    const there = decodeReadPosition((await readAt(other, 'SELECT * FROM orders')).position)
 
     expect(here?.epoch).toBeDefined()
     expect(there?.epoch).toBeDefined()
@@ -109,10 +115,10 @@ describe('Database.queryWithPosition', () => {
 
   it('advances the position exactly as far as the rows it returned', async () => {
     await db.execute('INSERT INTO orders (id, total) VALUES (1, 100)')
-    const first = await db.queryWithPosition<{ id: number }>('SELECT * FROM orders ORDER BY id')
+    const first = await readAt<{ id: number }>(db, 'SELECT * FROM orders ORDER BY id')
 
     await db.execute('INSERT INTO orders (id, total) VALUES (2, 200)')
-    const second = await db.queryWithPosition<{ id: number }>('SELECT * FROM orders ORDER BY id')
+    const second = await readAt<{ id: number }>(db, 'SELECT * FROM orders ORDER BY id')
 
     const firstSeq = decodeReadPosition(first.position)?.seq ?? 0n
     const secondSeq = decodeReadPosition(second.position)?.seq ?? 0n
@@ -126,19 +132,14 @@ describe('Database.queryWithPosition', () => {
     const fresh = await sirannon.open('empty', join(tempDir, 'empty.db'))
     await fresh.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY)')
 
-    const result = await fresh.queryWithPosition('SELECT * FROM orders')
+    const result = await readAt(fresh, 'SELECT * FROM orders')
 
     expect(result.rows).toEqual([])
     expect(decodeReadPosition(result.position)?.seq).toBe(0n)
   })
 
-  it('refuses a read-only database, whose change log has no writable epoch', async () => {
-    const readOnly = await sirannon.open('shop-readonly', join(tempDir, 'shop.db'), { readOnly: true })
-    await expect(readOnly.queryWithPosition('SELECT * FROM orders')).rejects.toThrow('read-only')
-  })
-
   it('refuses an internal table through the same guard as query', async () => {
-    await expect(db.queryWithPosition('SELECT * FROM _sirannon_changes')).rejects.toThrow(
+    await expect(readAt(db, 'SELECT * FROM _sirannon_changes')).rejects.toThrow(
       'Access to internal tables is not permitted',
     )
   })
@@ -147,7 +148,7 @@ describe('Database.queryWithPosition', () => {
     await db.execute('INSERT INTO orders (id, total) VALUES (1, 100)')
 
     const [positioned, plain, written] = await Promise.all([
-      db.queryWithPosition<{ id: number }>('SELECT * FROM orders ORDER BY id'),
+      readAt<{ id: number }>(db, 'SELECT * FROM orders ORDER BY id'),
       db.query<{ id: number }>('SELECT * FROM orders ORDER BY id'),
       db.execute('INSERT INTO orders (id, total) VALUES (2, 200)'),
     ])
@@ -159,7 +160,7 @@ describe('Database.queryWithPosition', () => {
   })
 })
 
-describe('Database.queryWithPosition isolation', () => {
+describe('positioned read isolation', () => {
   it('leaves a write that commits mid-read out of both the rows and the position', async () => {
     let afterNextRead: (() => Promise<void>) | null = null
     const inner = betterSqlite3()
@@ -201,8 +202,8 @@ describe('Database.queryWithPosition isolation', () => {
     afterNextRead = async () => {
       await scoped.execute('INSERT INTO orders (id, total) VALUES (2, 200)')
     }
-    const snapshot = await scoped.queryWithPosition<{ id: number }>('SELECT * FROM orders ORDER BY id')
-    const later = await scoped.queryWithPosition<{ id: number }>('SELECT * FROM orders ORDER BY id')
+    const snapshot = await readAt<{ id: number }>(scoped, 'SELECT * FROM orders ORDER BY id')
+    const later = await readAt<{ id: number }>(scoped, 'SELECT * FROM orders ORDER BY id')
 
     expect(snapshot.rows.map(row => row.id)).toEqual([1])
     expect(later.rows.map(row => row.id)).toEqual([1, 2])
@@ -215,7 +216,7 @@ describe('Database.queryWithPosition isolation', () => {
   })
 })
 
-describe('Database.queryWithPosition connection handling', () => {
+describe('positioned read connection handling', () => {
   it('closes its connection whether the read succeeds or fails', async () => {
     const ledger = countingDriver(betterSqlite3())
     const isolated = new Sirannon({ driver: ledger.driver })
@@ -226,8 +227,8 @@ describe('Database.queryWithPosition connection handling', () => {
     const openedBefore = ledger.opened
     const closedBefore = ledger.closed
 
-    await scoped.queryWithPosition('SELECT * FROM orders')
-    await expect(scoped.queryWithPosition('SELECT * FROM nope')).rejects.toThrow()
+    await readAt(scoped, 'SELECT * FROM orders')
+    await expect(readAt(scoped, 'SELECT * FROM nope')).rejects.toThrow()
 
     expect(ledger.opened - openedBefore).toBe(2)
     expect(ledger.closed - closedBefore).toBe(2)

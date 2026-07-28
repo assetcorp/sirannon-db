@@ -1,9 +1,10 @@
+import type { PositionedRows } from './cdc/read-position.js'
 import type { ConnectionPool } from './connection-pool.js'
 import type { DatabaseCdcController } from './database-cdc.js'
 import type { DatabaseObserver } from './database-observability.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { query, queryForWire, queryOne } from './query-executor.js'
-import type { Params, PositionedRows, QueryOptions } from './types.js'
+import type { Params, QueryOptions } from './types.js'
 import type { WriterLock } from './writer-lock.js'
 
 export interface DatabaseReadDeps {

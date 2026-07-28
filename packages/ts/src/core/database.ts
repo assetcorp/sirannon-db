@@ -6,7 +6,7 @@ import type { DatabaseCdcController } from './database-cdc.js'
 import { createDatabaseRuntime, type DatabaseInternals, type DatabaseRuntime } from './database-create.js'
 import type { DatabaseObserver } from './database-observability.js'
 import type { DatabaseReadDeps } from './database-reads.js'
-import { readOneRow, readRows, readRowsWithPosition, readWireRows } from './database-reads.js'
+import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DatabaseSyncController, DeviceSyncPort } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
@@ -32,7 +32,6 @@ import type {
   DatabaseOptions,
   ExecuteResult,
   Params,
-  PositionedRows,
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
@@ -120,18 +119,6 @@ export class Database {
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
     return readWireRows(this.reads, sql, params, options)
-  }
-
-  async queryWithPosition<T = Record<string, unknown>>(
-    sql: string,
-    params?: Params,
-    options?: QueryOptions,
-  ): Promise<PositionedRows<T>> {
-    this.ensureOpen()
-    if (this.readOnly) {
-      throw new ReadOnlyError(this.id)
-    }
-    return readRowsWithPosition<T>(this.reads, sql, params, options)
   }
 
   async queryOne<T = Record<string, unknown>>(

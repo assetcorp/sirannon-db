@@ -3,6 +3,7 @@ import uWS from 'uWebSockets.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
+  ClusterStatusAuthorizer,
   ClusterStatusInfo,
   OnRequestHook,
   ReplicationStatusInfo,
@@ -14,7 +15,7 @@ import { handleCapabilities } from './capabilities.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
-import type { DbRouteHandler } from './http-handler.js'
+import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import {
   handleBatch,
   handleChanges,
@@ -87,6 +88,7 @@ export class SirannonServer {
   private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
   private readonly getReplicationStatus: (() => ReplicationStatusInfo | null) | undefined
   private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
+  private readonly authorizeClusterStatus: ClusterStatusAuthorizer | undefined
   private readonly sirannon: Sirannon
   private readonly wsHandler: WSHandler
   private readonly maxBodyBytes: number
@@ -101,6 +103,7 @@ export class SirannonServer {
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
+    this.authorizeClusterStatus = options?.authorizeClusterStatus
     this.maxBodyBytes = resolveMaxBodyBytes(options?.maxBodyBytes)
     this.maxWsBackpressureBytes = resolveWsBackpressure(options?.maxWebSocketBackpressureBytes, this.maxBodyBytes)
     this.wsHandler = new WSHandler(sirannon, {
@@ -163,7 +166,10 @@ export class SirannonServer {
     this.app.get('/capabilities', this.withCors(handleCapabilities()))
     this.app.get('/health', this.withCors(handleLiveness()))
     this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
-    this.app.get('/db/:id/cluster', this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus)))
+    this.app.get(
+      '/db/:id/cluster',
+      this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus, this.authorizeClusterStatus)),
+    )
 
     this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
     this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
@@ -271,9 +277,7 @@ export class SirannonServer {
     }
   }
 
-  private wrapDbGetRoute(
-    handler: (res: uWS.HttpResponse, dbId: string) => void,
-  ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
+  private wrapDbGetRoute(handler: DbGetRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
     const onRequestHook = this.onRequestHook
     const corsHeaders = this.cors
 
@@ -284,11 +288,6 @@ export class SirannonServer {
 
       if (corsHeaders) {
         writeCorsOrigin(res, corsHeaders, req.getHeader('origin'))
-      }
-
-      if (!onRequestHook) {
-        handler(res, dbId)
-        return
       }
 
       const headers: Record<string, string> = {}
@@ -305,12 +304,18 @@ export class SirannonServer {
       }
 
       const abort = initAbortHandler(res)
-      runOnRequest(res, abort, ctx, onRequestHook)
-        .then(allowed => {
-          if (!allowed || !abort.claim()) return
-          handler(res, dbId)
-        })
-        .catch(() => {})
+      const run = async (): Promise<void> => {
+        if (onRequestHook && !(await runOnRequest(res, abort, ctx, onRequestHook))) return
+        if (!abort.claim()) return
+        try {
+          await handler(res, dbId, ctx, abort)
+        } catch {
+          if (!abort.aborted) {
+            sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+          }
+        }
+      }
+      run().catch(() => {})
     }
   }
 }

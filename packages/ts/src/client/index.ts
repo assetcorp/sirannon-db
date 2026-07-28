@@ -6,7 +6,7 @@ export type {
   ConflictResolution,
   ConflictResolver,
 } from '../core/sync/types.js'
-export { SirannonClient, type TopologyAwareClientOptions } from './client.js'
+export { SirannonClient } from './client.js'
 export { type LoadAllOptions, RemoteDatabase } from './database-proxy.js'
 export {
   downloadDatabaseSnapshot,

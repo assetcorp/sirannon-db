@@ -5,6 +5,8 @@ import type { DatabaseBackupController } from './database-backup.js'
 import type { DatabaseCdcController } from './database-cdc.js'
 import { createDatabaseRuntime, type DatabaseInternals, type DatabaseRuntime } from './database-create.js'
 import type { DatabaseObserver } from './database-observability.js'
+import type { DatabaseReadDeps } from './database-reads.js'
+import { readOneRow, readRows, readRowsWithPosition, readWireRows } from './database-reads.js'
 import type { DatabaseSyncController, DeviceSyncPort } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
@@ -17,7 +19,7 @@ export type { DatabaseInternals } from './database-create.js'
 
 import { migrateWithTriggerRefresh, readAppliedMigrations, rollbackWithTriggerRefresh } from './database-migrations.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
+import { executeBatch, executeBatchSummary } from './query-executor.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
@@ -30,6 +32,7 @@ import type {
   DatabaseOptions,
   ExecuteResult,
   Params,
+  PositionedRows,
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
@@ -57,6 +60,7 @@ export class Database {
   private readonly observer: DatabaseObserver
 
   private readonly backups: DatabaseBackupController
+  private readonly reads: DatabaseReadDeps
 
   private constructor(
     id: string,
@@ -77,6 +81,7 @@ export class Database {
     this.cdc = runtime.cdc
     this.sync = runtime.sync
     this.groupCommitter = runtime.groupCommitter
+    this.reads = { pool: runtime.pool, writerLock: runtime.writerLock, observer: runtime.observer, cdc: runtime.cdc }
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
@@ -109,22 +114,24 @@ export class Database {
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => query<T>(conn, sql, params)),
-    )
+    return readRows<T>(this.reads, sql, params, options)
   }
 
-  /**
-   * Returns query rows already encoded for the wire (safe-range integers as
-   * plain numbers, larger integers and BLOBs as tagged envelopes) in a single
-   * pass. The server response path uses this so a read walks its values once
-   * rather than narrowing on the driver and re-scanning to tag.
-   */
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => queryForWire(conn, sql, params)),
-    )
+    return readWireRows(this.reads, sql, params, options)
+  }
+
+  async queryWithPosition<T = Record<string, unknown>>(
+    sql: string,
+    params?: Params,
+    options?: QueryOptions,
+  ): Promise<PositionedRows<T>> {
+    this.ensureOpen()
+    if (this.readOnly) {
+      throw new ReadOnlyError(this.id)
+    }
+    return readRowsWithPosition<T>(this.reads, sql, params, options)
   }
 
   async queryOne<T = Record<string, unknown>>(
@@ -133,20 +140,7 @@ export class Database {
     options?: QueryOptions,
   ): Promise<T | undefined> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => queryOne<T>(conn, sql, params)),
-    )
-  }
-
-  /**
-   * On a single-connection driver the reader is the writer, so serialise the
-   * read through the writer lock to avoid a bulk load's uncommitted rows.
-   */
-  private runRead<T>(sql: string, op: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
-    if (this.pool.readerCount === 0) {
-      return this.writerLock.run(() => this.observer.track(sql, () => op(this.pool.acquireWriter())))
-    }
-    return this.observer.track(sql, () => op(this.pool.acquireReader()))
+    return readOneRow<T>(this.reads, sql, params, options)
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
@@ -274,6 +268,14 @@ export class Database {
   async runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void> {
     if (this._closed) return
     await this.writerLock.run(() => op(this.pool.acquireWriter()))
+  }
+
+  async ensureChangeStamping(): Promise<void> {
+    this.ensureOpen()
+    if (this.readOnly) {
+      throw new ReadOnlyError(this.id)
+    }
+    await this.cdc.ensureStamping()
   }
 
   async unwatch(table: string): Promise<void> {

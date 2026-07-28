@@ -1,11 +1,14 @@
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
+import { ensureCdcEpoch } from './cdc/epoch.js'
+import { readAtPosition } from './cdc/read-position.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
+import { query } from './query-executor.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
 import { Transaction } from './transaction.js'
-import type { SubscriptionBuilder } from './types.js'
+import type { Params, PositionedRows, SubscriptionBuilder } from './types.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -14,13 +17,43 @@ export class DatabaseCdcController {
   private subscriptions: SubscriptionManager | null = null
   private stopPolling: (() => void) | null = null
   private stamper: SyncStamper | null = null
+  private epochRequest: Promise<string> | null = null
 
   constructor(
     private readonly runExclusive: RunExclusive,
     private readonly acquireWriter: () => SQLiteConnection,
     private readonly pollInterval: number,
     private readonly retention: number,
+    private readonly openSnapshotConnection: (() => Promise<SQLiteConnection>) | null,
   ) {}
+
+  ensureEpoch(): Promise<string> {
+    this.epochRequest ??= this.runExclusive(() => ensureCdcEpoch(this.acquireWriter())).catch((err: unknown) => {
+      this.epochRequest = null
+      throw err
+    })
+    return this.epochRequest
+  }
+
+  async queryAtPosition<T = Record<string, unknown>>(sql: string, params?: Params): Promise<PositionedRows<T>> {
+    const epoch = await this.ensureEpoch()
+    const open = this.openSnapshotConnection
+
+    if (open === null) {
+      const captured = await this.runExclusive(() =>
+        readAtPosition(this.acquireWriter(), epoch, conn => query<T>(conn, sql, params)),
+      )
+      return { rows: captured.value, position: captured.position }
+    }
+
+    const conn = await open()
+    try {
+      const captured = await readAtPosition(conn, epoch, snapshotConn => query<T>(snapshotConn, sql, params))
+      return { rows: captured.value, position: captured.position }
+    } finally {
+      await conn.close().catch(() => {})
+    }
+  }
 
   get changeTracker(): ChangeTracker | null {
     return this.tracker
@@ -38,6 +71,11 @@ export class DatabaseCdcController {
   async ensureStamper(): Promise<SyncStamper> {
     this.stamper ??= await SyncStamper.init(this.acquireWriter())
     return this.stamper
+  }
+
+  async ensureStamping(): Promise<void> {
+    if (this.stamper) return
+    await this.runExclusive(() => this.ensureStamper())
   }
 
   stampStatements(options?: { persistClock?: boolean }): readonly StampStatement[] | null {

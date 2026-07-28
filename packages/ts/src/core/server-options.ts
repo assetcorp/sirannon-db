@@ -22,6 +22,8 @@ export interface RequestDenial {
 /** Middleware hook for auth, rate limiting, and request validation. */
 export type OnRequestHook = (ctx: RequestContext) => undefined | RequestDenial | Promise<undefined | RequestDenial>
 
+export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise<boolean>
+
 /**
  * Durability level in force while a bulk load runs. SQLite sanctions 'off' for
  * a from-scratch load that the operator can re-run after a power loss; 'off'
@@ -127,6 +129,7 @@ export interface ServerOptions {
   resolveExecutionTarget?: ServerExecutionTargetResolver
   getReplicationStatus?: () => ReplicationStatusInfo | null
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
+  authorizeClusterStatus?: ClusterStatusAuthorizer
 }
 
 export interface ReplicationStatusInfo {

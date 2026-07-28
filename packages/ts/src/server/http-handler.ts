@@ -1,7 +1,12 @@
 import type { HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
-import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
+import type {
+  ClusterStatusAuthorizer,
+  ClusterStatusInfo,
+  RequestContext,
+  ServerExecutionTargetResolver,
+} from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
 import {
   parseBody,
@@ -328,12 +333,41 @@ export function handleChanges(sirannon: Sirannon, resolveTarget?: ServerExecutio
   }
 }
 
-export function handleClusterStatus(getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null) {
-  return (res: HttpResponse, dbId: string): void => {
-    if (!getClusterStatus) {
-      sendError(res, 404, 'NOT_FOUND', 'Cluster status is not configured')
+export type DbGetRouteHandler = (
+  res: HttpResponse,
+  dbId: string,
+  ctx: RequestContext,
+  abort: ResponseAbort,
+) => Promise<void>
+
+function sendClusterUnavailable(res: HttpResponse, dbId: string): void {
+  sendError(res, 404, 'NOT_FOUND', `Cluster status is not available for database '${dbId}'`)
+}
+
+export function handleClusterStatus(
+  getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null,
+  authorizeClusterStatus?: ClusterStatusAuthorizer,
+): DbGetRouteHandler {
+  return async (res, dbId, ctx, abort) => {
+    if (!getClusterStatus || !authorizeClusterStatus) {
+      sendClusterUnavailable(res, dbId)
       return
     }
+
+    let allowed: boolean
+    try {
+      allowed = await authorizeClusterStatus(ctx)
+    } catch {
+      if (abort.aborted) return
+      sendError(res, 500, 'HOOK_ERROR', 'authorizeClusterStatus threw an error')
+      return
+    }
+    if (abort.aborted) return
+    if (!allowed) {
+      sendClusterUnavailable(res, dbId)
+      return
+    }
+
     const status = getClusterStatus(dbId)
     if (!status) {
       sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${dbId}' not found`)

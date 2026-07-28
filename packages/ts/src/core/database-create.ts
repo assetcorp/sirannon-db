@@ -68,11 +68,13 @@ export async function createDatabaseRuntime(
     () => pool.acquireWriter(),
     driver.createBackupEngine?.(),
   )
+  const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
   const cdc = new DatabaseCdcController(
     op => writerLock.run(op),
     () => pool.acquireWriter(),
     options?.cdcPollInterval ?? 50,
     options?.cdcRetention ?? 3_600_000,
+    canOpenSnapshotConnection ? () => driver.open(path, { readonly: true, walMode: false }) : null,
   )
   const sync = new DatabaseSyncController(
     op => writeGate.run(() => writerLock.run(op)),

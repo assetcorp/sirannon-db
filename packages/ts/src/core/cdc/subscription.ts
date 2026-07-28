@@ -52,11 +52,10 @@ export class SubscriptionManager {
       for (const id of ids) {
         const sub = this.subscriptions.get(id)
         if (!sub) continue
-        if (sub.filter && !changeMatchesFilter(event, sub.filter)) {
-          continue
-        }
+        const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)
+        if (delivered === null) continue
         try {
-          sub.callback(event)
+          sub.callback(delivered)
         } catch {}
       }
     }
@@ -71,7 +70,9 @@ export class SubscriptionManager {
 
   endBatch(atTxBoundary: boolean): void {
     for (const listener of this.batchEndListeners) {
-      listener(atTxBoundary)
+      try {
+        listener(atTxBoundary)
+      } catch {}
     }
   }
 
@@ -158,10 +159,27 @@ export function startPolling(
   return stop
 }
 
-export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
-  const target = event.type === 'delete' ? (event.oldRow ?? {}) : event.row
+export function filteredChange(event: ChangeEvent, filter: Record<string, unknown>): ChangeEvent | null {
+  const matchedBefore = event.type !== 'insert' && event.oldRow !== undefined && rowMatchesFilter(event.oldRow, filter)
+  const matchedAfter = event.type !== 'delete' && rowMatchesFilter(event.row, filter)
+
+  if (!matchedBefore && !matchedAfter) return null
+  if (matchedBefore && matchedAfter) return event
+
+  if (matchedAfter) {
+    if (event.type === 'insert') return event
+    const entering: ChangeEvent = { ...event, type: 'insert' }
+    entering.oldRow = undefined
+    return entering
+  }
+
+  if (event.type === 'delete') return event
+  return { ...event, type: 'delete', row: {} }
+}
+
+function rowMatchesFilter(row: Record<string, unknown>, filter: Record<string, unknown>): boolean {
   for (const [key, value] of Object.entries(filter)) {
-    if (!filterValueMatches((target as Record<string, unknown>)[key], value)) {
+    if (!filterValueMatches(row[key], value)) {
       return false
     }
   }

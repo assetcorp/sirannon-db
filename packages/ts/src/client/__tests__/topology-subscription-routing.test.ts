@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { SirannonClient } from '../client.js'
+import { TopologyAwareClient } from '../topology.js'
 import type { Transport } from '../types.js'
 import { createClientServerHarness } from './server-harness.js'
 
@@ -85,7 +85,7 @@ function createRecordedSubscriptionTransport(
 
 describe('TopologyAwareClientOptions', () => {
   it('keeps coordinator subscriptions on one stable read transport', async () => {
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       endpoints: [harness.baseUrl],
       discovery: 'coordinator',
       readPreference: 'replica',
@@ -142,9 +142,10 @@ describe('TopologyAwareClientOptions', () => {
         readEndpoints: [{ nodeId: 'node-b', endpoint: readableEndpoint, readConcerns: ['majority'] }],
         health: 'healthy',
       }),
+      authorizeClusterStatus: () => true,
     })
 
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       endpoints: [baseUrl],
       discovery: 'coordinator',
       readPreference: 'replica',

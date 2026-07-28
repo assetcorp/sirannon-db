@@ -405,6 +405,7 @@ ChangeEvent<T> {
   timestamp: number
   hlc?:      string
   origin?:   string
+  rowId?:    string
   txId?:     string
   txEnd?:    boolean
 }
@@ -415,9 +416,11 @@ SubscriptionBuilder {
 }
 ```
 
-`oldRow` is present for updates and deletes. When the change is stamped, `origin`
-carries its `node_id`, `hlc` its timestamp, and `txId` the transaction that made
-it. `txEnd` marks the last change of a transaction; the core subscription
+`oldRow` is present for updates and deletes. `rowId` carries the change row's
+`row_id` and is present on every change read from the log, so a subscriber
+identifies the affected row without reading a key column. When the change is
+stamped, `origin` carries its `node_id`, `hlc` its timestamp, and `txId` the
+transaction that made it. `txEnd` marks the last change of a transaction; the core subscription
 delivers each change as the poll reads it and leaves `txEnd` unset, while the
 WebSocket subscription marks it (see
 [05-server.md](05-server.md#transaction-boundaries)). An error thrown by one

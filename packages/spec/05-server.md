@@ -229,9 +229,9 @@ Every client message carries a string `id` the server echoes to correlate the
 reply; for a subscription the `id` is the subscription identifier. `sinceSeq`,
 `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe
 integer range survive JSON. Change-event `row` and `oldRow` follow the value
-encoding; `hlc` and `origin` carry the change's timestamp and origin node when
-stamped. A stamped change also carries `rowId` and `txId`, and `txEnd` is true on
-the last change of a transaction (see
+encoding, and `rowId` identifies the changed row. `hlc`, `origin`, and `txId`
+carry the change's timestamp, origin node, and transaction when it is stamped,
+and `txEnd` is true on the last change of a transaction (see
 [Transaction Boundaries](#transaction-boundaries)). The `deviceId`,
 `schemaVersion`, and `ack` fields drive device sync (see
 [08-device-sync.md](08-device-sync.md)).

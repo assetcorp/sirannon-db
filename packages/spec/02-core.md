@@ -1,8 +1,9 @@
 # Sirannon Core Specification
 
 The core layer manages named databases, connection pooling, write serialisation,
-query execution, change data capture, hooks, lifecycle, migrations, bulk loading,
-backups, and metrics. Every Sirannon implementation must follow these contracts.
+query execution, change data capture, live queries, hooks, lifecycle, migrations,
+bulk loading, backups, and metrics. Every Sirannon implementation must follow
+these contracts.
 
 ---
 
@@ -97,6 +98,7 @@ Database {
   watch(table): async -> void
   unwatch(table): async -> void
   on(table): SubscriptionBuilder
+  live<T>(sql, params?, options?): async -> LiveQuery<T>
 
   migrate(migrations): async -> MigrationResult
   rollback(migrations, version?): async -> RollbackResult
@@ -141,6 +143,8 @@ Params        = Map<string, any> or List<any>
   **unwatch** removes them and stops polling once no table is watched. **on**
   returns a subscription builder; a subscription receives events only for tables
   that are watched.
+- **live** returns a query result that change events keep current; see
+  [Live Queries](#live-queries).
 - **query options** carry `writeConcern` and `readConcern`. The core layer passes
   them to hooks and, for a replication execution target, to the replication
   engine, which enforces their meaning (see [03-replication.md](03-replication.md)).
@@ -444,6 +448,51 @@ receives the same change.
 
 ---
 
+## Live Queries
+
+`live` returns a query result that change events keep current. A change updates
+the rows the result already holds, and the read runs again only in the cases
+below.
+
+```text
+LiveQuery<T> {
+  getState(): LiveQueryState<T>
+  subscribe(listener: () -> void): DisposeFn
+  close(): async -> void
+}
+
+LiveQueryState<T> = { status: 'pending' }
+  | { status: 'ready', rows: List<T>, revalidating: boolean }
+  | { status: 'error', error: Error }
+
+LiveQueryOptions {
+  rereadJitterMs?:        number  (default: 25 ms, recommended)
+  maxTransactionChanges?: number  (default: 10_000, recommended)
+}
+```
+
+A live query watches the statement's table, reads once, and subscribes from that
+read's position, so every change reaches the result exactly once. A read-only
+database fails with `READ_ONLY`, because `watch` installs triggers.
+
+Each live query has a temporary probe table whose columns match the base table's
+declared types and collations. For each transaction the implementation writes
+the row before and after every change into that table, then runs the statement's
+own `WHERE` clause and select list over those rows. Affinity, collation, and
+`ORDER BY` therefore match a read of the base table.
+
+The read runs again when a transaction carries more changes than the result has
+rows, when a `LIMIT` window loses a row the held rows cannot replace, or when
+buffered changes exceed `maxTransactionChanges` or an implementation-defined byte
+bound. `revalidating` is true while it runs, and the previous rows stay readable.
+`rereadJitterMs` bounds a random delay before it.
+
+A live query maintains the result of a single-table statement. A join, an
+aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a window
+function, a subquery, or `LIMIT` without `ORDER BY` fails with `CDC_ERROR`.
+
+---
+
 ## System Catalogue
 
 Sirannon keeps its own tables under the `_sirannon_` prefix: `_sirannon_changes`
@@ -451,7 +500,8 @@ Sirannon keeps its own tables under the `_sirannon_` prefix: `_sirannon_changes`
 `_sirannon_migrations` (below), and the replication and device-sync tables
 defined in [03-replication.md](03-replication.md) and
 [08-device-sync.md](08-device-sync.md). The meta table holds `cdc_epoch`,
-`node_id`, `hlc_clock`, and the device-sync cursor keys.
+`node_id`, `hlc_clock`, and the device-sync cursor keys. A live query adds one
+temporary table under the same prefix and drops it when the query closes.
 
 ---
 

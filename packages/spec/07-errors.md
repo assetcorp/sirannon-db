@@ -56,6 +56,7 @@ error, `limit` and `retryAfterMs` on `WRITE_OVERLOADED`, `requestId` on
 | `SHUTDOWN` | An operation was attempted after registry shutdown. |
 | `SHUTDOWN_ERROR` | One or more databases failed to close during shutdown. |
 | `LIFECYCLE_DISPOSED` | A resolve was attempted after the lifecycle manager was disposed. |
+| `INTERNAL_SCHEMA_ERROR` | An identifier, column type, or default for an internal table failed validation, or a schema version fell outside `PRAGMA user_version`. |
 
 ### Writer Worker
 
@@ -70,6 +71,7 @@ error, `limit` and `retryAfterMs` on `WRITE_OVERLOADED`, `requestId` on
 | `WRITER_WORKER_UNAVAILABLE` | A write was sent while no writer was available. |
 | `WRITER_WORKER_CLOSED` | A write was sent after the writer was closed. |
 | `WRITER_WORKER_POST_FAILED` | The host could not hand the operation to the writer. |
+| `WRITER_WORKER_NO_PORT` | The writer entry point started outside a worker thread. |
 
 A runtime whose writer isolation differs may raise further internal codes for its
 own mechanism; the outcome codes above are the normative surface.

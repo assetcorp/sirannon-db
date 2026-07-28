@@ -1,9 +1,6 @@
 # Sirannon Specification
 
-This document defines the language-agnostic specification for Sirannon. Sirannon
-turns SQLite databases into a networked, distributed data layer with real-time
-subscriptions, multi-node replication, offline-first device sync, and schema
-management. Every implementation must follow the contracts defined here. Where a behaviour is left to the runtime, this specification says so. The TypeScript package is the reference implementation, but no contract here depends on it; the wire formats, value encodings, and behaviours are the source of truth.
+This document defines the language-agnostic specification for Sirannon. Sirannon turns SQLite databases into a networked, distributed data layer with real-time subscriptions, multi-node replication, offline-first device sync, and schema management. Every implementation must follow the contracts defined here. Where a behaviour is left to the runtime, this specification says so. The TypeScript package is the reference implementation, but no contract here depends on it; the wire formats, value encodings, and behaviours are the source of truth.
 
 ---
 
@@ -30,27 +27,15 @@ Sirannon is organised into layers, each depending only on the layers below it.
 +-----------------------------------------------+
 ```
 
-**Driver layer.** A pluggable interface wraps any SQLite engine (native binding,
-WebAssembly, or runtime built-in) behind a uniform asynchronous API.
+**Driver layer.** A pluggable interface wraps any SQLite engine (native binding, WebAssembly, or runtime built-in) behind a uniform asynchronous API.
 
-**Connection and execution layer.** A connection pool holds one writer and several
-readers, group commit coalesces writes, trigger-based CDC records row changes, and
-a migration runner versions the schema.
+**Connection and execution layer.** A connection pool holds one writer and several readers, group commit coalesces writes, trigger-based CDC records row changes, and a migration runner versions the schema.
 
-**Orchestration layer.** The registry manages many named databases with lifecycle
-hooks, metrics, idle eviction, and auto-open.
+**Orchestration layer.** The registry manages many named databases with lifecycle hooks, metrics, idle eviction, and auto-open.
 
-**Replication and transport layer.** Changes distribute across server nodes using
-Hybrid Logical Clocks for causal ordering, over a primary-replica topology where
-one primary per group accepts writes. In coordinator mode, Sirannon runs automatic
-primary failover through coordinator-backed leases, primary terms, in-sync
-tracking, and fail-closed promotion. The production replication transport is gRPC.
+**Replication and transport layer.** Changes distribute across server nodes using Hybrid Logical Clocks for causal ordering, over a primary-replica topology where one primary per group accepts writes. In coordinator mode, Sirannon runs automatic primary failover through coordinator-backed leases, primary terms, in-sync tracking, and fail-closed promotion. The production replication transport is gRPC.
 
-**Application layer.** An HTTP and WebSocket server exposes databases over the
-network, a client SDK provides a remote database proxy with subscriptions and
-topology-aware read routing, and device sync keeps an end-user device's local
-database in step with a server. The HTTP and WebSocket transports are not used for
-node-to-node replication.
+**Application layer.** An HTTP and WebSocket server exposes databases over the network, a client SDK provides a remote database proxy with subscriptions and topology-aware read routing, and device sync keeps an end-user device's local database in step with a server. The HTTP and WebSocket transports are not used for node-to-node replication.
 
 ---
 
@@ -73,20 +58,15 @@ Test vector files are in the [test-vectors/](test-vectors/) directory.
 
 ## Requirement Tiers
 
-- **Normative.** Every conforming implementation must follow the behaviour. A build
-  that violates a normative requirement does not conform. Normative requirements
-  use 'must'.
-- **Implementation-defined.** The specification defines the contract (inputs,
-  outputs, and invariants) and leaves the mechanism to the runtime.
-- **Recommended.** Suggested defaults the reference uses, marked 'recommended' with
-  a concrete value; other implementations may choose differently.
+- **Normative.** Every conforming implementation must follow the behaviour. A build that violates a normative requirement does not conform. Normative requirements use 'must'.
+- **Implementation-defined.** The specification defines the contract (inputs, outputs, and invariants) and leaves the mechanism to the runtime.
+- **Recommended.** Suggested defaults the reference uses, marked 'recommended' with a concrete value; other implementations may choose differently.
 
 ---
 
 ## Pseudocode Convention
 
-Type definitions use a language-neutral notation; it is illustrative, not
-prescriptive, and each implementation uses its own type system.
+Type definitions use a language-neutral notation; it is illustrative, not prescriptive, and each implementation uses its own type system.
 
 | Notation | Meaning |
 |----------|---------|

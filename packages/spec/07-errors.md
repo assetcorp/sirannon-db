@@ -122,8 +122,8 @@ own mechanism; the outcome codes above are the normative surface.
 | `EMPTY_BODY` | The request body is empty. |
 | `PAYLOAD_TOO_LARGE` | The request body or message exceeds the maximum size. |
 | `INTERNAL_ERROR` | An unexpected error occurred during request handling. |
-| `HOOK_ERROR` | The `onRequest` hook threw. |
-| `NOT_FOUND` | The route or cluster status does not exist. |
+| `HOOK_ERROR` | The `onRequest` hook or `authorizeClusterStatus` threw. |
+| `NOT_FOUND` | The route does not exist, or cluster status is absent or refused. |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |

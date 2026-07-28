@@ -85,6 +85,7 @@ Database {
 
   query<T>(sql, params?, options?): async -> List<T>
   queryOne<T>(sql, params?, options?): async -> T or null
+  queryWithPosition<T>(sql, params?, options?): async -> PositionedRows<T>
   execute(sql, params?, options?): async -> ExecuteResult
   executeBatch(sql, paramsBatch, options?): async -> List<ExecuteResult>
   executeTransaction(statements, options?): async -> List<ExecuteResult>
@@ -122,12 +123,15 @@ DatabaseOptions {
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
 }
 
-ExecuteResult   { changes: number, lastInsertRowId: number or bigint }
-Params          = Map<string, any> or List<any>
+ExecuteResult     { changes: number, lastInsertRowId: number or bigint }
+PositionedRows<T> { rows: List<T>, position: string }
+Params            = Map<string, any> or List<any>
 ```
 
 - **query / queryOne** run a read on a reader connection and fire query hooks.
   `queryOne` returns the first row or null.
+- **queryWithPosition** returns the rows with the change-log position they were
+  consistent with; see [Read Positions](#read-positions).
 - **execute** runs one write on the writer connection. A read-only database fails
   with `READ_ONLY`. Writes are coalesced by [group commit](#group-commit).
 - **executeBatch** runs `sql` once per parameter set in one writer transaction,
@@ -346,6 +350,40 @@ Each database file holds a random epoch string in `_sirannon_meta` under
 file's `seq` space so a resume cursor carried from another file is recognised as
 foreign and forces a resync rather than replaying unrelated rows.
 
+### Read Positions
+
+A read position names the change-log point a read's rows already include. A
+caller reads, then subscribes from that position, so it misses no change and
+receives none twice.
+
+`queryWithPosition` runs the read and reads the change log's highest `seq` in one
+transaction, so the rows and the position come from one snapshot. Capturing the
+position separately is wrong: a write that commits between the two makes them
+disagree, and re-applying a change is unsafe for a table with no declared primary
+key.
+
+The read takes a connection of its own and closes it afterwards, whether the read
+succeeds or fails. One pooled reader serves several concurrent reads, so a
+transaction opened on it would capture their statements and end their reads on
+commit. A driver that opens one connection per file runs the read on the writer
+under the writer lock instead. A read-only database has no writer to mint the
+epoch, so the read fails with `READ_ONLY`. `query` and `queryOne` keep their
+single-statement path and open no transaction.
+
+The position is an opaque token holding the file's epoch and the sequence:
+
+```text
+position = hex(utf8("1:" + epoch + ":" + seq))
+```
+
+A sequence means nothing in another file's sequence space, so the token carries
+the epoch with it. A caller passes the token back rather than reading it, so the
+encoding stays free to change; a client that resumes a subscription decodes it
+and sends the two parts as `sinceSeq` and `epoch` (see
+[05-server.md](05-server.md#subscription-resumption)). A token that fails to
+decode, carries another version, or holds a malformed epoch or sequence is
+refused rather than interpreted.
+
 ### Polling and Cleanup
 
 The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a
@@ -367,6 +405,8 @@ ChangeEvent<T> {
   timestamp: number
   hlc?:      string
   origin?:   string
+  txId?:     string
+  txEnd?:    boolean
 }
 
 SubscriptionBuilder {
@@ -375,11 +415,34 @@ SubscriptionBuilder {
 }
 ```
 
-`oldRow` is present for updates and deletes. `origin` carries the change's
-`node_id` and `hlc` its timestamp when stamped. A filter matches when every
-key-value pair equals the event row's value (matched against `oldRow` for a
-delete). An error thrown by one subscription callback must not stop delivery to
-others.
+`oldRow` is present for updates and deletes. When the change is stamped, `origin`
+carries its `node_id`, `hlc` its timestamp, and `txId` the transaction that made
+it. `txEnd` marks the last change of a transaction; the core subscription
+delivers each change as the poll reads it and leaves `txEnd` unset, while the
+WebSocket subscription marks it (see
+[05-server.md](05-server.md#transaction-boundaries)). An error thrown by one
+subscription callback must not stop delivery to others.
+
+A filter holds key-value pairs, and a row matches when it holds the filter's
+value under every key. The subscription evaluates the filter against the row
+before the change and against the row after it. What the subscriber receives
+follows from the two results:
+
+| Before | After | Delivered |
+|--------|-------|-----------|
+| matches | matches | the change unchanged |
+| matches | no match | a delete carrying the old row |
+| no match | matches | an insert carrying the new row |
+| no match | no match | nothing |
+
+An insert has no row before the change and a delete none after, so only an
+update crosses the boundary; the subscription delivers an insert or a delete
+unchanged, or drops it. A delete built from an update carries the old row in
+`oldRow` and an empty `row`, and an insert built from an update carries no
+`oldRow`; both keep every other field of the change. A subscription carrying no
+filter receives every change for its table. An implementation must build a new
+change rather than alter the polled one, because every subscriber on a table
+receives the same change.
 
 ---
 

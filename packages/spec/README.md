@@ -120,6 +120,7 @@ prescriptive, and each implementation uses its own type system.
 | **Primary** | The node that accepts writes in a primary-replica topology |
 | **Primary term** | A monotonically increasing fencing value for a group's current primary authority |
 | **Read concern** | A read safety guarantee specifying which durability point a read may observe |
+| **Read position** | An opaque token naming the change-log point a read's rows already include |
 | **Registry** | The top-level object that manages many named databases |
 | **Replica** | A read-only node that receives replicated changes from the primary |
 | **Replication group** | The nodes that store copies of one database and share one primary authority |

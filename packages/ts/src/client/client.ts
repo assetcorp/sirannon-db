@@ -28,4 +28,8 @@ export class SirannonClient extends DatabaseClient {
   protected createTransport(databaseId: string): Transport {
     return createEndpointTransport(this.settings, this.baseUrl, databaseId)
   }
+
+  protected resolveServerUrl(): string {
+    return this.baseUrl
+  }
 }

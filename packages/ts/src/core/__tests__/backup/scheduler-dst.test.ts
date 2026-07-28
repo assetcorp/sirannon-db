@@ -4,9 +4,9 @@ import { BackupManager } from '../../backup/backup.js'
 import { type CronParts, wallClockParts } from '../../backup/cron.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
 import type { SQLiteConnection } from '../../driver/types.js'
-import { useTempDir } from './shared.js'
+import { tempDirPerTest } from './shared.js'
 
-const temp = useTempDir()
+const temp = tempDirPerTest()
 const STUB_CONN = {} as unknown as SQLiteConnection
 
 let runCounter = 0

@@ -25,7 +25,7 @@ const driver = betterSqlite3()
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-ack-'))
   sirannon = new Sirannon({ driver })
-  handler = createWSHandler(sirannon)
+  handler = createWSHandler(sirannon, { acceptSql: true })
   db = await sirannon.open('mydb', join(tempDir, 'ack.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')

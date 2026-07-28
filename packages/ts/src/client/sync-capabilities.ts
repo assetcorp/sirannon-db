@@ -9,7 +9,13 @@ export interface CapabilityCheckOptions {
   requestTimeoutMs?: number
 }
 
-function validateCapabilities(raw: unknown): string[] {
+/** What a server announces: the capability tokens and the operation registry it serves. */
+export interface CapabilityReport {
+  capabilities: string[]
+  registryDigest: string | undefined
+}
+
+function validateCapabilities(raw: unknown): CapabilityReport {
   const record = raw as Partial<CapabilitiesResponse> | null
   if (
     record === null ||
@@ -19,11 +25,19 @@ function validateCapabilities(raw: unknown): string[] {
   ) {
     throw new RemoteError('INVALID_RESPONSE', 'Capabilities response is malformed')
   }
-  return record.capabilities
+  const digest = record.registry?.digest
+  if (digest !== undefined && typeof digest !== 'string') {
+    throw new RemoteError('INVALID_RESPONSE', 'Capabilities response carries a non-string registry digest')
+  }
+  return { capabilities: record.capabilities, registryDigest: digest }
+}
+
+export async function fetchCapabilityReport(options: CapabilityCheckOptions): Promise<CapabilityReport> {
+  return validateCapabilities(await getJson(`${options.url}/capabilities`, options.headers, options.requestTimeoutMs))
 }
 
 export async function fetchServerCapabilities(options: CapabilityCheckOptions): Promise<string[]> {
-  return validateCapabilities(await getJson(`${options.url}/capabilities`, options.headers, options.requestTimeoutMs))
+  return (await fetchCapabilityReport(options)).capabilities
 }
 
 export async function verifyDeviceSyncCapabilities(options: CapabilityCheckOptions): Promise<string[]> {

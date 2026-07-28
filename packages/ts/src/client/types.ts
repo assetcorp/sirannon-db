@@ -1,3 +1,4 @@
+import type { ResultOp } from '../core/live/types.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../core/types.js'
 import type {
   BatchResponse,
@@ -29,6 +30,15 @@ export interface SubscribeOptions {
   }) => void
 }
 
+export interface LiveHandlers<T = Record<string, unknown>> {
+  onRows(rows: T[]): void
+  onOps(ops: ResultOp<T>[]): void
+  onRevalidating(): void
+  onError(error: RemoteError): void
+}
+
+export type RegistryDigestSource = (refresh: boolean) => Promise<string | undefined>
+
 /**
  * Transport layer for communicating with a sirannon-db server.
  * Each transport instance is bound to a specific database.
@@ -39,6 +49,14 @@ export interface Transport {
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
   batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
   load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>
+  queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>
+  executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>
+  liveSubscribe(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription>
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,

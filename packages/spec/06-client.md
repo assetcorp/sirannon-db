@@ -53,7 +53,10 @@ TopologyAwareClientOptions extends ClientOptions {
 ```text
 RemoteDatabase {
   query<T>(sql, params?, options?):             async -> List<T>
+  query<Row>(operation: OperationRef, args, options?): async -> List<Row>
   execute(sql, params?):                        async -> ExecuteResponse
+  execute(operation: OperationRef, args, writeConcern?): async -> List<ExecuteResponse>
+  live<Row>(operation: OperationRef or name, args?): async -> LiveQuery<Row>
   transaction(statements: List<{sql, params?}>): async -> List<ExecuteResponse>
   batch(sql, paramsBatch, writeConcern?):       async -> List<ExecuteResponse>
   load(sql, paramsBatch, durability?, checkpoint?): async -> BulkLoadResult
@@ -61,9 +64,27 @@ RemoteDatabase {
   on(table): RemoteSubscriptionBuilder
   close(): void
 }
+
+OperationRef<Args, Row> { name: string }
 ```
 
 This is a subset of the local Database API adapted for remote use: `transaction` takes a statement list rather than a callback, and `queryOne`/`executeBatch` are absent. Each method maps to the HTTP route or WebSocket message of the same name (see [05-server.md](05-server.md)). `execute` returns `lastInsertRowId` as a JSON number or a decimal string, undecoded. `loadAll` batches an iterable of parameter sets (recommended batch size 1000), sending only the final batch with `checkpoint: true`; a non-positive `batchSize` fails with `INVALID_ARGUMENT`.
+
+A first argument that names a registered operation rather than a statement runs that operation: `query` returns its rows, and `execute` returns one result per statement of the write. An operation reference holds the name at run time, and the argument and row types of that operation at compile time, so an argument or a column the server does not serve fails to compile. An implementation without a type system passes the name as a string.
+
+### Refusing SQL Before It Is Sent
+
+A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
+
+### Live Queries
+
+`live` returns the [`LiveQuery`](02-core.md#live-queries) of the local API over a registered read. The server holds the result and sends the operations that maintain it; the client applies them in order to the rows it holds. An operation with an index outside those rows must fail the query with `INVALID_RESPONSE`.
+
+The client echoes the registry digest from `GET /capabilities` on subscribe. After `REGISTRY_MISMATCH` it re-reads the digest and subscribes once more, and fails the query if that attempt is refused. While the connection is down the query holds its rows with `revalidating` set; the transport subscribes again on reconnection, and the server sends the rows afresh. A live query requires the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP.
+
+### Generated Operation References
+
+A generator reads the operation registry the server is built from and writes the references a client calls it through. The types then come from the definitions the server runs, and continuous integration needs no server. For each database the generator emits the reads and writes by name, the argument names a caller supplies, and the columns of each read; a select list that names no column leaves the row shape open. Arguments the server fills from identity are absent.
 
 A per-query `readConcern` reaches the server over the HTTP transport. Over the WebSocket and topology transports the client-level `readConcern` selects routing and the requested guarantee.
 
@@ -75,11 +96,11 @@ The client decodes wire values back to native representations wherever a row, ch
 
 ### HTTP Transport
 
-The base URL is the server URL with trailing slashes removed; requests are `application/json`. Operations map to `POST {baseUrl}/query`, `/execute`, `/transaction`, `/batch`, and `/load`. Subscriptions are unsupported and fail with `TRANSPORT_ERROR`. A fetch failure fails with `CONNECTION_ERROR`, a non-JSON response with `INVALID_RESPONSE`, and an error response with the server's code and message.
+The base URL is the server URL with trailing slashes removed; requests are `application/json`. Statements map to `POST {baseUrl}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a registered operation maps to `POST {baseUrl}/query/{name}` or `/execute/{name}`. Subscriptions and live queries are unsupported and fail with `TRANSPORT_ERROR`. A fetch failure fails with `CONNECTION_ERROR`, a non-JSON response with `INVALID_RESPONSE`, and an error response with the server's code and message.
 
 ### WebSocket Transport
 
-The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, and subscriptions. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. Automatic reconnection runs only while the transport has active subscriptions; a failed non-subscription request does not trigger reconnection. On reconnection every active subscription is re-established.
+The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. Automatic reconnection runs only while the transport has active subscriptions or live queries; a failed request of any other kind does not trigger reconnection. On reconnection every active subscription is re-established and every live query subscribes again. A live query the server refuses is dropped with that error; one whose server is unreachable stays registered for the next attempt.
 
 ---
 

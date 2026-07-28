@@ -20,7 +20,7 @@ beforeEach(async () => {
   await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
   await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
 })
 
@@ -32,7 +32,7 @@ afterEach(async () => {
 
 describe('CORS', () => {
   it('sets CORS headers when cors: true', async () => {
-    const corsServer = createServer(sirannon, { port: 0, cors: true })
+    const corsServer = createServer(sirannon, { acceptSql: true, port: 0, cors: true })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 
@@ -56,10 +56,7 @@ describe('CORS', () => {
   })
 
   it('uses custom CORS origin', async () => {
-    const corsServer = createServer(sirannon, {
-      port: 0,
-      cors: { origin: 'https://app.example.com' },
-    })
+    const corsServer = createServer(sirannon, { acceptSql: true, port: 0, cors: { origin: 'https://app.example.com' } })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 
@@ -77,6 +74,7 @@ describe('CORS', () => {
 
   it('echoes matching origin from array configuration', async () => {
     const corsServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
       cors: { origin: ['https://app.example.com', 'https://admin.example.com'] },
     })
@@ -101,6 +99,7 @@ describe('CORS', () => {
 
   it('omits CORS header when origin is not in allowed list', async () => {
     const corsServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
       cors: { origin: ['https://app.example.com', 'https://admin.example.com'] },
     })
@@ -123,10 +122,7 @@ describe('CORS', () => {
   })
 
   it('defaults CORS origin to wildcard when omitted in config object', async () => {
-    const corsServer = createServer(sirannon, {
-      port: 0,
-      cors: {},
-    })
+    const corsServer = createServer(sirannon, { acceptSql: true, port: 0, cors: {} })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 

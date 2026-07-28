@@ -54,7 +54,7 @@ Statement { sql: string, params?: Params }
 
 A caller invokes a registered operation by name, and the request carries no SQL. The registry is server-side code, keyed by database identifier. `args` declares the argument names a caller may supply. `fromIdentity` maps an argument name to a field of the identity `authenticate` returned, and the server must supply that argument itself. A request supplying an argument named in `fromIdentity` must fail with `ARGUMENT_NOT_ALLOWED`; the server must not override the supplied value instead. An implementation must constrain `fromIdentity` values to the fields of the identity type, so that a wrong field name fails to compile.
 
-A read declares exactly one statement. A write declares one or more, and the server must run them in a single transaction. Both receive the resolved arguments.
+A read declares exactly one statement. A write declares one or more, and the server must run them in a single transaction. Both receive the resolved arguments. The `POST /db/{id}/query/{name}` and `POST /db/{id}/execute/{name}` routes serve them over HTTP, the `query` and `execute` messages carrying `name` serve them over WebSocket, and a `subscribe` message naming a read opens a live query over that read.
 
 A server configured with a registry must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
 
@@ -165,7 +165,7 @@ When no safe primary exists, `currentPrimary` is null and `health` is `unavailab
 | 401 | `IDENTITY_REQUIRED` |
 | 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
 | 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED` |
@@ -185,21 +185,27 @@ A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC subscri
 
 ```text
 { type: 'subscribe',   id, table, tables?, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion? }
+{ type: 'subscribe',   id, name, args?, registryDigest? }        -- a live query
 { type: 'unsubscribe', id }
 { type: 'ack',         id, deviceId, seq }              -- see 08-device-sync.md
 { type: 'query',       id, sql, params? }
+{ type: 'query',       id, name, args? }
 { type: 'execute',     id, sql, params? }
+{ type: 'execute',     id, name, args?, writeConcern? }
 { type: 'transaction', id, statements, writeConcern? }
 { type: 'batch',       id, sql, paramsBatch, writeConcern? }
 { type: 'load',        id, sql, paramsBatch, durability?, checkpoint? }
 ```
 
+A `query` or an `execute` message carrying `name` runs the registered read or write of that name and carries no SQL, so `acceptSql` does not govern it. `args` follows the value encoding and resolves as it does on the HTTP routes, against the identity the `authenticate` hook returned for the upgrade request. A registered write replies with one result per statement.
+
 ### Server Messages
 
 ```text
-{ type: 'subscribed',   id, seq?, epoch?, resync? }
+{ type: 'subscribed',   id, seq?, epoch?, resync?, rows? }
 { type: 'unsubscribed', id }
 { type: 'change',       id, event: { type, table, row, oldRow?, seq, timestamp, hlc?, origin?, rowId?, txId?, txEnd? } }
+{ type: 'live',         id, ops?, rows?, revalidating? }
 { type: 'result',       id, data }     -- data is a query, execute, transaction, batch, load, or ack response
 { type: 'error',        id, error: { code, message } }
 ```
@@ -215,6 +221,16 @@ Every subscription marks the last change of each transaction with `txEnd`, so a 
 The last change of a transaction is identifiable only once the following change arrives, so the server must hold one change per subscription and release it when a change of another transaction arrives or the poll reaches a transaction boundary. The held change is one change, whatever the size of the transaction. A poll ending part-way through a transaction is not a boundary, and the server must keep holding that change until the rest of the transaction arrives. A change carrying no `txId` forms its own transaction, and the server must deliver it marked.
 
 The server must apply the filter before the marker, so `txEnd` marks the last change to pass the filter rather than the last change of the transaction, and a transaction whose changes all fail the filter delivers nothing. Replayed history carries the same marker.
+
+### Live Queries
+
+A subscription naming a registered read is a live query. The server opens the live query of [02-core.md](02-core.md#live-queries) over the statement that read returns, answers `subscribed` with `rows`, and sends a `live` message for each later change to the result. The rows are part of `subscribed`. A separate read leaves a gap, because the server consumes changes between the two messages.
+
+A `live` message carries exactly one of three fields. `ops` is a list of `{ op: 'insert' | 'update' | 'delete', index, row? }`, applied in order to the rows the client holds, and one message carries one transaction. `rows` replaces the held rows after a second read. `revalidating: true` states that a second read is running and that the held rows are the last complete answer.
+
+A live subscription carries no `table`, `tables`, `filter`, `sinceSeq`, `epoch`, `deviceId`, or `schemaVersion`; a message carrying one must fail with `INVALID_MESSAGE`. The server holds the result, so a client resumes by subscribing again rather than from a cursor. `unsubscribe` closes the live query and drops its probe table. Row values follow the value encoding.
+
+`registryDigest` echoes `registry.digest` from `GET /capabilities`. A server whose digest differs must fail with `REGISTRY_MISMATCH`. A client must then re-read `/capabilities` once and subscribe again with the digest it returns.
 
 ### Subscription Resumption
 

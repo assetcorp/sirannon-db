@@ -1,19 +1,20 @@
 import type uWS from 'uWebSockets.js'
-import type { OnRequestHook, RequestContext } from '../core/types.js'
+import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import { initAbortHandler } from './http-common.js'
-import { decodeRemoteAddress, runOnRequest } from './request-hook.js'
+import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import type { WSHandler } from './ws-handler.js'
 
 export interface WSUserData {
   databaseId: string
+  identity?: unknown
   conn?: WSConnection
 }
 
 export interface WebSocketRouteOptions {
   app: uWS.TemplatedApp
   wsHandler: WSHandler
-  onRequestHook: OnRequestHook | undefined
+  authenticateHook: AuthenticateHook<unknown> | undefined
   maxBodyBytes: number
   maxBackpressureBytes: number
 }
@@ -30,7 +31,7 @@ function selectWebSocketProtocol(header: string): string {
 }
 
 export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
-  const { app, wsHandler, onRequestHook } = options
+  const { app, wsHandler, authenticateHook } = options
 
   app.ws<WSUserData>('/db/:id', {
     maxPayloadLength: options.maxBodyBytes,
@@ -55,7 +56,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       const remoteAddress = decodeRemoteAddress(res)
       const abort = initAbortHandler(res)
 
-      if (!onRequestHook) {
+      if (!authenticateHook) {
         if (abort.claim()) {
           res.upgrade<WSUserData>(
             { databaseId: dbId },
@@ -76,11 +77,11 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         remoteAddress,
       }
 
-      runOnRequest(res, abort, ctx, onRequestHook)
-        .then(allowed => {
-          if (!allowed || !abort.claim()) return
+      runAuthenticate(res, abort, ctx, authenticateHook)
+        .then(authenticated => {
+          if (!authenticated.ok || !abort.claim()) return
           res.upgrade<WSUserData>(
-            { databaseId: dbId },
+            { databaseId: dbId, identity: authenticated.identity },
             secWebSocketKey,
             selectedWebSocketProtocol,
             secWebSocketExtensions,
@@ -107,7 +108,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         },
       }
       userData.conn = conn
-      wsHandler.handleOpen(conn, userData.databaseId).catch(() => {})
+      wsHandler.handleOpen(conn, userData.databaseId, userData.identity).catch(() => {})
     },
 
     message: (ws, message) => {

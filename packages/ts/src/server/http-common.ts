@@ -5,6 +5,9 @@ import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver,
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
+export const SQL_NOT_ACCEPTED_MESSAGE =
+  'This server does not accept SQL statements over the wire; call a registered operation by name'
+
 export interface ResponseAbort {
   readonly aborted: boolean
   onAbort(fn: () => void): void
@@ -127,6 +130,9 @@ export function sendError(
 }
 
 export function httpStatusForError(err: SirannonError): number {
+  const explicit = (err as SirannonError & { status?: number }).status
+  if (typeof explicit === 'number') return explicit
+
   switch (err.code) {
     case 'DATABASE_NOT_FOUND':
       return 404

@@ -35,7 +35,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('multiple connections to the same database', () => {
     it('both connections can query independently', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'multi.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
@@ -72,7 +72,7 @@ describe('WSHandler', () => {
     })
 
     it('both connections receive change events for the same table', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'multisub.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -117,7 +117,7 @@ describe('WSHandler', () => {
     })
 
     it('closing one connection does not affect the other', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'multiclose.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -161,7 +161,7 @@ describe('WSHandler', () => {
 
   describe('connections to different databases', () => {
     it('queries from different databases are isolated', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db1 = await sirannon.open('db1', join(tempDir, 'db1.db'))
       const db2 = await sirannon.open('db2', join(tempDir, 'db2.db'))
 

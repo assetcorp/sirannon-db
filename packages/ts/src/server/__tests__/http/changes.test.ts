@@ -25,7 +25,7 @@ beforeEach(async () => {
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })

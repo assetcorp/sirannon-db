@@ -38,7 +38,7 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   serverPort = server.listeningPort ?? 0
   baseUrl = `http://127.0.0.1:${serverPort}`
@@ -69,7 +69,7 @@ function makeController(overrides?: Partial<SyncControllerOptions>): SyncControl
 
 async function restartServer(): Promise<void> {
   await server.close()
-  server = createServer(sirannon, { port: serverPort, ...serverOptions })
+  server = createServer(sirannon, { acceptSql: true, port: serverPort, ...serverOptions })
   await server.listen()
   expect(server.listeningPort).toBe(serverPort)
 }
@@ -220,7 +220,7 @@ describe('device sync under connection loss', () => {
     await deviceDb.execute("INSERT INTO notes (id, body) VALUES (800, 'offline write')")
     await writePair(900)
 
-    server = createServer(sirannon, { port: serverPort })
+    server = createServer(sirannon, { acceptSql: true, port: serverPort })
     await server.listen()
 
     await until(async () => (await serverDb.query('SELECT id FROM notes WHERE id = 800')).length === 1)

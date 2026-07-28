@@ -1,6 +1,8 @@
 import type { ClientOptions } from '../core/types.js'
 import { RemoteDatabase } from './database-proxy.js'
 import { toBaseUrl, toWsUrl } from './endpoint-urls.js'
+import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS } from './http-json.js'
+import { ServerCapabilities } from './server-capabilities.js'
 import { HttpTransport } from './transport/http.js'
 import { WebSocketTransport } from './transport/ws.js'
 import type { Transport } from './types.js'
@@ -60,11 +62,20 @@ export abstract class DatabaseClient {
       return existing
     }
 
-    const db = new RemoteDatabase(id, this.createTransport(id), () => {
+    const db = new RemoteDatabase(id, this.createTransport(id), this.createCapabilities(id), () => {
       this.databases.delete(id)
     })
     this.databases.set(id, db)
     return db
+  }
+
+  protected createCapabilities(databaseId: string): ServerCapabilities {
+    const timeout = this.settings.requestTimeout
+    return new ServerCapabilities(
+      () => this.resolveServerUrl(databaseId),
+      this.settings.headers,
+      timeout !== undefined && timeout > 0 ? timeout : DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+    )
   }
 
   close(): void {
@@ -77,4 +88,6 @@ export abstract class DatabaseClient {
   }
 
   protected abstract createTransport(databaseId: string): Transport
+
+  protected abstract resolveServerUrl(databaseId: string): string | Promise<string>
 }

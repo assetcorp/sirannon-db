@@ -33,7 +33,7 @@ export function createClientServerHarness(options: ClientServerHarnessOptions = 
   }
 
   async function listen(serverOptions?: ServerOptions): Promise<string> {
-    server = createServer(requireSirannon(), { port: 0, ...serverOptions })
+    server = createServer(requireSirannon(), { port: 0, acceptSql: true, ...serverOptions })
     await server.listen()
     baseUrl = `http://127.0.0.1:${server.listeningPort}`
     return baseUrl

@@ -38,7 +38,7 @@ afterEach(async () => {
 
 describe('WSHandler internal-table guard', () => {
   it('rejects a query against the internal change log', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     await sirannon.open('mydb', join(tempDir, 'guard.db'))
 
     const conn = createMockConnection()
@@ -53,7 +53,7 @@ describe('WSHandler internal-table guard', () => {
   })
 
   it('rejects a write to an internal table', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     await sirannon.open('mydb', join(tempDir, 'guard-write.db'))
 
     const conn = createMockConnection()
@@ -69,7 +69,7 @@ describe('WSHandler internal-table guard', () => {
   })
 
   it('rejects subscribing to an internal table', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     await sirannon.open('mydb', join(tempDir, 'guard-sub.db'))
 
     const conn = createMockConnection()
@@ -82,7 +82,7 @@ describe('WSHandler internal-table guard', () => {
   })
 
   it('still serves ordinary user queries', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'guard-ok.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.execute("INSERT INTO users (name) VALUES ('Alice')")
@@ -99,7 +99,7 @@ describe('WSHandler internal-table guard', () => {
   })
 
   it('allows reading the sqlite_ catalogue', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'guard-catalog.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY)')
 
@@ -122,7 +122,7 @@ describe('WSHandler internal-table guard', () => {
   })
 
   it('rejects PRAGMA writable_schema', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     await sirannon.open('mydb', join(tempDir, 'guard-writable.db'))
 
     const conn = createMockConnection()

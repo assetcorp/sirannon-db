@@ -3,9 +3,9 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
 import { BackupError } from '../../errors.js'
-import { useTempDir } from './shared.js'
+import { tempDirPerTest } from './shared.js'
 
-const temp = useTempDir()
+const temp = tempDirPerTest()
 
 describe('BackupManager', () => {
   const manager = new BackupManager()

@@ -61,7 +61,7 @@ afterEach(async () => {
 
 describe('WSHandler resume-from-seq', () => {
   it('replays retained changes after the cursor, then streams live in order', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'replay.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -83,7 +83,7 @@ describe('WSHandler resume-from-seq', () => {
   })
 
   it('replays only changes newer than a mid-stream cursor', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'mid.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -102,7 +102,7 @@ describe('WSHandler resume-from-seq', () => {
   })
 
   it('signals resync when the cursor precedes retained history', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'resync.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -127,7 +127,7 @@ describe('WSHandler resume-from-seq', () => {
   })
 
   it('rejects a malformed cursor', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'bad.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -142,7 +142,7 @@ describe('WSHandler resume-from-seq', () => {
   })
 
   it('returns a baseline seq in the subscribed confirmation so an idle subscriber can resume', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'baseline.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -159,7 +159,7 @@ describe('WSHandler resume-from-seq', () => {
   })
 
   it('signals resync without closing the connection when replay hits a corrupt row', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'poison.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')

@@ -3,7 +3,7 @@ import { type HeldRow, LiveResult, type RowChange } from './live-result.js'
 import type { LivePlan } from './query-plan.js'
 import { encodeRowKey, rowidKey } from './row-keys.js'
 import type { ProbeCandidate, RowProbe } from './row-probe.js'
-import type { LiveQuery, LiveQueryState } from './types.js'
+import type { LiveQuery, LiveQueryState, LiveUpdate } from './types.js'
 
 export interface PositionedRead<T> {
   rows: HeldRow<T>[]
@@ -24,7 +24,7 @@ export interface LiveQuerySource<T> {
 
 export class MaintainedLiveQuery<T> implements LiveQuery<T> {
   private state: LiveQueryState<T> = { status: 'pending' }
-  private readonly listeners = new Set<() => void>()
+  private readonly listeners = new Set<(update: LiveUpdate<T>) => void>()
   private readonly result: LiveResult<T>
   private readonly batches: ChangeEvent[][] = []
   private pending: ChangeEvent[] = []
@@ -61,7 +61,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
     return this.state
   }
 
-  subscribe(listener: () => void): () => void {
+  subscribe(listener: (update: LiveUpdate<T>) => void): () => void {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
@@ -155,13 +155,14 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
       return
     }
 
-    if (changes.length > this.result.size || !this.result.apply(changes)) {
+    const ops = changes.length > this.result.size ? null : this.result.apply(changes)
+    if (ops === null) {
       await this.reread()
       return
     }
 
     this.appliedThroughSeq = highest
-    this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false })
+    this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false }, { kind: 'ops', ops })
   }
 
   private async evaluate(events: readonly ChangeEvent[]): Promise<RowChange[]> {
@@ -213,7 +214,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
       return
     }
     if (this.state.status === 'ready' && !this.state.revalidating) {
-      this.publish({ status: 'ready', rows: this.state.rows, revalidating: true })
+      this.publish({ status: 'ready', rows: this.state.rows, revalidating: true }, { kind: 'revalidating' })
     }
     await this.refresh(true)
   }
@@ -246,7 +247,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
         }
       } while (this.readAgain && !this.closed)
 
-      this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false })
+      this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false }, { kind: 'rows' })
     } catch (err) {
       this.fail(err)
     } finally {
@@ -257,14 +258,14 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
 
   private fail(err: unknown): void {
     if (this.closed) return
-    this.publish({ status: 'error', error: err instanceof Error ? err : new Error(String(err)) })
+    this.publish({ status: 'error', error: err instanceof Error ? err : new Error(String(err)) }, { kind: 'error' })
   }
 
-  private publish(next: LiveQueryState<T>): void {
+  private publish(next: LiveQueryState<T>, update: LiveUpdate<T>): void {
     this.state = next
     for (const listener of [...this.listeners]) {
       try {
-        listener()
+        listener(update)
       } catch {}
     }
   }

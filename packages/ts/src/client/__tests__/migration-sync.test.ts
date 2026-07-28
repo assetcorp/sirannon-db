@@ -36,7 +36,7 @@ beforeEach(async () => {
   await sirannon.open('appdb', join(tempDir, 'server.db'))
   deviceSirannon = new Sirannon({ driver })
   deviceDb = await deviceSirannon.open('appdb', join(tempDir, 'device.db'))
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })

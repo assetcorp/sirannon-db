@@ -9,7 +9,7 @@ import type {
 import type { TopologyRouting } from './cluster-routing.js'
 import { shouldRefreshRouting } from './cluster-routing.js'
 import { TopologySubscriptionSet } from './topology-subscriptions.js'
-import type { RemoteSubscription, SubscribeOptions, Transport } from './types.js'
+import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from './types.js'
 import { RemoteError } from './types.js'
 
 export class TopologyAwareTransport implements Transport {
@@ -93,6 +93,29 @@ export class TopologyAwareTransport implements Transport {
       }
       throw err
     }
+  }
+
+  async queryNamed(name: string, args?: Record<string, unknown>): Promise<QueryResponse> {
+    const readConcern = this.routing._getReadConcern()
+    const transport = await this.getReadTransport(readConcern)
+    return transport.queryNamed(name, args, readConcern ? { level: readConcern } : undefined)
+  }
+
+  async executeNamed(
+    name: string,
+    args?: Record<string, unknown>,
+    writeConcern?: WriteConcern,
+  ): Promise<TransactionResponse> {
+    return this.onWriteTransport(transport => transport.executeNamed(name, args, writeConcern))
+  }
+
+  async liveSubscribe(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription> {
+    return this.subscriptionSet.subscribeLive(name, args, handlers, registryDigest)
   }
 
   async subscribe(

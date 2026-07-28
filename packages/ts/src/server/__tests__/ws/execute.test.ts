@@ -40,7 +40,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('handleMessage - execute', () => {
     it('executes a mutation and returns changes', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'exec.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -72,9 +72,7 @@ describe('WSHandler', () => {
         execute: vi.fn(async () => ({ changes: 1, lastInsertRowId: 42 })),
         transaction: vi.fn(),
       }
-      const handler = createWSHandler(sirannon, {
-        resolveExecutionTarget: () => target,
-      })
+      const handler = createWSHandler(sirannon, { acceptSql: true, resolveExecutionTarget: () => target })
       const db = await sirannon.open('mydb', join(tempDir, 'target-exec.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -102,7 +100,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for invalid execute SQL', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'badexec.db'))
 
       const conn = createMockConnection()
@@ -124,7 +122,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error when sql field is missing', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'noexecsql.db'))
 
       const conn = createMockConnection()
@@ -138,7 +136,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for non-object execute params', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'badexecparams.db'))
 
       const conn = createMockConnection()

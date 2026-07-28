@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { RequestDeniedError } from '../../../core/errors.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { ClusterStatusInfo, RequestContext, ServerOptions } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
@@ -26,7 +27,7 @@ function clusterStatus(databaseId: string): ClusterStatusInfo {
 }
 
 async function listen(options: ServerOptions): Promise<string> {
-  server = createServer(sirannon, { port: 0, ...options })
+  server = createServer(sirannon, { acceptSql: true, port: 0, ...options })
   await server.listen()
   return `http://127.0.0.1:${server.listeningPort}`
 }
@@ -132,7 +133,7 @@ describe('GET /db/:id/cluster', () => {
     expect(JSON.stringify(body)).not.toContain('10.0.0.7')
   })
 
-  it('still runs the onRequest hook before the authorizer', async () => {
+  it('still runs the authenticate hook before the authorizer', async () => {
     let authorizerCalls = 0
     const baseUrl = await listen({
       getClusterStatus: clusterStatus,
@@ -140,7 +141,9 @@ describe('GET /db/:id/cluster', () => {
         authorizerCalls++
         return true
       },
-      onRequest: () => ({ status: 401, code: 'UNAUTHORIZED', message: 'No credential' }),
+      authenticate: () => {
+        throw new RequestDeniedError(401, 'UNAUTHORIZED', 'No credential')
+      },
     })
 
     const response = await fetch(`${baseUrl}/db/orders/cluster`)

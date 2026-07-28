@@ -44,7 +44,7 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT, weight INTEGER, art BLOB)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   serverPort = server.listeningPort ?? 0
   baseUrl = `http://127.0.0.1:${serverPort}`
@@ -312,7 +312,7 @@ describe('SyncController snapshot completion', () => {
     expect((await controller.status()).resyncRequired).toBe(true)
     expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(0)
 
-    server = createServer(sirannon, { port: serverPort })
+    server = createServer(sirannon, { acceptSql: true, port: serverPort })
     await server.listen()
   })
 
@@ -338,7 +338,7 @@ describe('SyncController snapshot completion', () => {
     expect(failure.error?.code).toBe('CONNECTION_ERROR')
     await expect(deviceDb.query('SELECT id FROM notes')).rejects.toThrow(/sync snapshot/)
 
-    server = createServer(sirannon, { port: serverPort })
+    server = createServer(sirannon, { acceptSql: true, port: serverPort })
     await server.listen()
   })
 
@@ -368,7 +368,7 @@ describe('SyncController snapshot completion', () => {
     expect(editorEnabled).toBe(false)
 
     const retry = recorder.next()
-    server = createServer(sirannon, { port: serverPort })
+    server = createServer(sirannon, { acceptSql: true, port: serverPort })
     await server.listen()
 
     const loaded = await retry

@@ -8,22 +8,18 @@ import type {
   QueryResponse,
   TransactionResponse,
   WSClientMessage,
-  WSServerMessage,
 } from '../../server/protocol.js'
-import type { RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
+import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 import type { ClientWebSocket } from './ws-connect.js'
 import { openWebSocket } from './ws-connect.js'
+import { routeServerMessage } from './ws-inbound.js'
+import { LiveQueryRegistry } from './ws-live-state.js'
+import { PendingRequests } from './ws-pending.js'
 import type { ActiveSubscription } from './ws-subscription-state.js'
-import { applySubscribedMessage, buildResubscribeMessage, deliverChangeMessage } from './ws-subscription-state.js'
+import { buildResubscribeMessage } from './ws-subscription-state.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
-
-interface PendingRequest {
-  resolve: (value: unknown) => void
-  reject: (reason: Error) => void
-  timer: ReturnType<typeof setTimeout> | undefined
-}
 
 /**
  * WebSocket transport for sirannon-db. Connects to
@@ -43,8 +39,13 @@ export class WebSocketTransport implements Transport {
   private readonly requestTimeout: number
   private readonly protocols: string | string[] | undefined
 
-  private pendingRequests = new Map<string, PendingRequest>()
+  private readonly pending: PendingRequests
   private activeSubscriptions = new Map<string, ActiveSubscription>()
+  private readonly liveQueries = new LiveQueryRegistry({
+    request: message => this.request<void>(message),
+    sendUnsubscribe: id => this.sendUnsubscribe(id),
+    isClosed: () => this.closed,
+  })
   private idCounter = 0
   private closed = false
   private connectPromise: Promise<void> | null = null
@@ -64,6 +65,7 @@ export class WebSocketTransport implements Transport {
     this.reconnectInterval = options?.reconnectInterval ?? 1000
     this.requestTimeout = options?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT
     this.protocols = options?.protocols
+    this.pending = new PendingRequests(this.requestTimeout)
   }
 
   async query(sql: string, params?: Params): Promise<QueryResponse> {
@@ -132,6 +134,44 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  async queryNamed(name: string, args?: Record<string, unknown>): Promise<QueryResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    const response = await this.request<QueryResponse>({
+      type: 'query',
+      id,
+      name,
+      ...(args === undefined ? {} : { args: encodeTaggedValues(args) as Record<string, unknown> }),
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+  }
+
+  async executeNamed(
+    name: string,
+    args?: Record<string, unknown>,
+    writeConcern?: WriteConcern,
+  ): Promise<TransactionResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<TransactionResponse>({
+      type: 'execute',
+      id,
+      name,
+      ...(args === undefined ? {} : { args: encodeTaggedValues(args) as Record<string, unknown> }),
+      ...(writeConcern ? { writeConcern } : {}),
+    })
+  }
+
+  async liveSubscribe(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription> {
+    await this.ensureConnected()
+    return this.liveQueries.open(this.nextId(), name, args, handlers, registryDigest)
+  }
+
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
@@ -176,10 +216,14 @@ export class WebSocketTransport implements Transport {
     return {
       unsubscribe: () => {
         this.activeSubscriptions.delete(id)
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'unsubscribe', id }))
-        }
+        this.sendUnsubscribe(id)
       },
+    }
+  }
+
+  private sendUnsubscribe(id: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'unsubscribe', id }))
     }
   }
 
@@ -192,8 +236,9 @@ export class WebSocketTransport implements Transport {
   close(): void {
     this.closed = true
     this.cancelReconnect()
-    this.rejectAllPending(new RemoteError('TRANSPORT_ERROR', 'Transport closed'))
+    this.pending.rejectAll(new RemoteError('TRANSPORT_ERROR', 'Transport closed'))
     this.activeSubscriptions.clear()
+    this.liveQueries.clear()
 
     if (this.ws) {
       this.ws.close(1000, 'Client closed')
@@ -234,71 +279,22 @@ export class WebSocketTransport implements Transport {
         this.ws = null
         this.handleDisconnect()
       },
-      onMessage: raw => this.handleMessage(raw),
+      onMessage: raw =>
+        routeServerMessage(raw, {
+          pending: this.pending,
+          subscriptions: this.activeSubscriptions,
+          live: this.liveQueries,
+        }),
     })
   }
 
-  private handleMessage(raw: string): void {
-    let msg: WSServerMessage
-    try {
-      msg = JSON.parse(raw) as WSServerMessage
-    } catch {
-      return
-    }
-
-    switch (msg.type) {
-      case 'result': {
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.resolve(msg.data)
-        }
-        break
-      }
-
-      case 'subscribed': {
-        const sub = this.activeSubscriptions.get(msg.id)
-        if (sub) {
-          applySubscribedMessage(sub, msg)
-        }
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.resolve(undefined)
-        }
-        break
-      }
-
-      case 'error': {
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.reject(new RemoteError(msg.error.code, msg.error.message))
-        }
-        break
-      }
-
-      case 'change': {
-        const sub = this.activeSubscriptions.get(msg.id)
-        if (sub) {
-          deliverChangeMessage(sub, msg)
-        }
-        break
-      }
-
-      case 'unsubscribed': {
-        break
-      }
-    }
-  }
-
   private handleDisconnect(): void {
-    this.rejectAllPending(new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
+    this.pending.rejectAll(new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
 
-    if (this.autoReconnect && !this.closed && this.activeSubscriptions.size > 0) {
+    this.liveQueries.markDisconnected()
+
+    const restorable = this.activeSubscriptions.size + this.liveQueries.size
+    if (this.autoReconnect && !this.closed && restorable > 0) {
       this.scheduleReconnect()
     }
   }
@@ -316,7 +312,7 @@ export class WebSocketTransport implements Transport {
         await this.ensureConnected()
         await this.resubscribeAll()
       } catch {
-        if (!this.closed && this.activeSubscriptions.size > 0) {
+        if (!this.closed && this.activeSubscriptions.size + this.liveQueries.size > 0) {
           this.scheduleReconnect()
         }
       }
@@ -333,41 +329,16 @@ export class WebSocketTransport implements Transport {
         this.activeSubscriptions.delete(id)
       }
     }
+
+    await this.liveQueries.restart()
   }
 
   private request<T>(msg: WSClientMessage): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const { id } = msg
-
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        reject(new RemoteError('CONNECTION_ERROR', 'WebSocket is not connected'))
-        return
-      }
-
-      const timer =
-        this.requestTimeout > 0
-          ? setTimeout(() => {
-              this.pendingRequests.delete(id)
-              reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
-            }, this.requestTimeout)
-          : undefined
-
-      this.pendingRequests.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
-        timer,
-      })
-
-      this.ws.send(JSON.stringify(msg))
-    })
-  }
-
-  private rejectAllPending(error: Error): void {
-    for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timer)
-      pending.reject(error)
+    const socket = this.ws
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new RemoteError('CONNECTION_ERROR', 'WebSocket is not connected'))
     }
-    this.pendingRequests.clear()
+    return this.pending.start<T>(msg.id, () => socket.send(JSON.stringify(msg)))
   }
 
   private cancelReconnect(): void {

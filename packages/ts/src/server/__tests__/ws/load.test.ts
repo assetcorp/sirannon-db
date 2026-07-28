@@ -45,7 +45,7 @@ async function writerSynchronousLevel(): Promise<number> {
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-'))
   sirannon = new Sirannon({ driver })
-  handler = createWSHandler(sirannon)
+  handler = createWSHandler(sirannon, { acceptSql: true })
   db = await sirannon.open('mydb', join(tempDir, 'load.db'), { synchronous: 'full' })
   await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
   conn = createMockConnection()
@@ -149,7 +149,7 @@ describe('WSHandler handleMessage - load', () => {
   })
 
   it('rejects a message above the configured payload limit', async () => {
-    const smallHandler = createWSHandler(sirannon, { maxPayloadLength: 128 })
+    const smallHandler = createWSHandler(sirannon, { acceptSql: true, maxPayloadLength: 128 })
     const smallConn = createMockConnection()
     await smallHandler.handleOpen(smallConn, 'mydb')
 

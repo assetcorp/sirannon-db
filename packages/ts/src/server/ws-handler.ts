@@ -3,13 +3,20 @@ import type { Database } from '../core/database.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
-import type { WSServerMessage } from './protocol.js'
+import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import type { OperationSource } from './operation-lookup.js'
+import { createOperationSource } from './operation-lookup.js'
+import type { WSLiveMessage, WSServerMessage } from './protocol.js'
 import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import type { DeviceChangeStream } from './ws-device-stream.js'
 import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
+import type { WSLiveDeps } from './ws-live.js'
+import { handleLiveSubscribeMessage } from './ws-live.js'
+import type { WSNamedContext } from './ws-named.js'
+import { handleNamedExecuteMessage, handleNamedQueryMessage } from './ws-named.js'
 import type { WSOperationContext } from './ws-operations.js'
 import {
   handleBatchMessage,
@@ -25,33 +32,40 @@ export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
+const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
+
 export interface ConnectionState {
   databaseId: string
   database: Database
   executionTarget: ServerExecutionTarget
+  identity: unknown
   subscriptions: Map<string, Subscription>
   deviceStreams: Map<string, DeviceChangeStream>
   overloaded: boolean
 }
 
-export class WSHandler {
+export class WSHandler<Identity = unknown> {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
   private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdc: CdcContextRegistry
   private readonly maxUnacknowledgedChanges: number
+  private readonly acceptSql: boolean
+  private readonly operations: OperationSource
   private closed = false
 
-  constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
+  constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>) {
     this.sirannon = sirannon
+    this.acceptSql = options?.acceptSql === true
+    this.operations = createOperationSource<Identity>(options?.operations)
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
   }
 
-  async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
+  async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
     if (this.closed) {
       this.sendError(conn, '', 'HANDLER_CLOSED', 'WebSocket handler is shut down')
       conn.close(1013, 'Handler shutting down')
@@ -89,6 +103,7 @@ export class WSHandler {
       databaseId,
       database,
       executionTarget,
+      identity,
       subscriptions: new Map(),
       deviceStreams: new Map(),
       overloaded: false,
@@ -141,13 +156,21 @@ export class WSHandler {
     }
 
     const id = msg.id
+    const name = typeof msg.name === 'string' ? msg.name : null
+
+    if (!this.acceptSql && SQL_MESSAGE_TYPES.has(msg.type) && name === null) {
+      this.sendError(conn, id, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
+      return
+    }
 
     switch (msg.type) {
       case 'query':
-        handleQueryMessage(this.operationContext(conn, state), msg, id)
+        if (name !== null) handleNamedQueryMessage(this.namedContext(conn, state), msg, id, name)
+        else handleQueryMessage(this.operationContext(conn, state), msg, id)
         break
       case 'execute':
-        handleExecuteMessage(this.operationContext(conn, state), msg, id)
+        if (name !== null) handleNamedExecuteMessage(this.namedContext(conn, state), msg, id, name)
+        else handleExecuteMessage(this.operationContext(conn, state), msg, id)
         break
       case 'transaction':
         handleTransactionMessage(this.operationContext(conn, state), msg, id)
@@ -159,7 +182,8 @@ export class WSHandler {
         handleLoadMessage(this.operationContext(conn, state), msg, id)
         break
       case 'subscribe':
-        handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
+        if (name !== null) handleLiveSubscribeMessage(this.liveDeps(), conn, state, msg, id, name)
+        else handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
         break
       case 'unsubscribe':
         this.handleUnsubscribe(conn, state, id)
@@ -211,6 +235,25 @@ export class WSHandler {
       sendResult: (id, data) => this.send(conn, { type: 'result', id, data }),
       sendError: (id, code, message) => this.sendError(conn, id, code, message),
       sendCaughtError: (id, err) => this.sendSirannonError(conn, id, err),
+    }
+  }
+
+  private namedContext(conn: WSConnection, state: ConnectionState): WSNamedContext {
+    return {
+      ...this.operationContext(conn, state),
+      databaseId: state.databaseId,
+      identity: state.identity,
+      operations: this.operations,
+    }
+  }
+
+  private liveDeps(): WSLiveDeps {
+    return {
+      operations: this.operations,
+      sendSubscribedRows: (conn, id, rows) => this.send(conn, { type: 'subscribed', id, rows }),
+      sendLive: (conn, message: WSLiveMessage) => this.send(conn, message),
+      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
     }
   }
 
@@ -301,6 +344,9 @@ export class WSHandler {
   }
 }
 
-export function createWSHandler(sirannon: Sirannon, options?: WSHandlerOptions): WSHandler {
-  return new WSHandler(sirannon, options)
+export function createWSHandler<Identity = unknown>(
+  sirannon: Sirannon,
+  options?: WSHandlerOptions<Identity>,
+): WSHandler<Identity> {
+  return new WSHandler<Identity>(sirannon, options)
 }

@@ -59,7 +59,7 @@ node-to-node replication.
 | Document | Contents |
 |----------|----------|
 | [01-driver.md](01-driver.md) | Driver contract, connection, statement, value mapping, capabilities |
-| [02-core.md](02-core.md) | Registry, database, group commit, connection pool, writer worker, query execution, CDC, hooks, lifecycle, migrations, bulk load, backups, metrics |
+| [02-core.md](02-core.md) | Registry, database, group commit, connection pool, writer worker, query execution, CDC, live queries, hooks, lifecycle, migrations, bulk load, backups, metrics |
 | [03-replication.md](03-replication.md) | Replication engine, HLC, replication log, primary-replica topology, coordinator failover, conflict resolution, first sync, write forwarding |
 | [04-transport.md](04-transport.md) | Transport interface, gRPC wire protocol, authentication |
 | [05-server.md](05-server.md) | HTTP endpoints, value encoding, WebSocket protocol, health endpoints, CORS |

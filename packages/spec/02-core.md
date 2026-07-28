@@ -350,8 +350,8 @@ foreign and forces a resync rather than replaying unrelated rows.
 
 A read position names the change-log point a read's rows already include. A
 reader that subscribes from that position misses no change and receives none
-twice. No public API exposes a read position; the capability stays internal
-until a live query uses it.
+twice. A positioned read is available on the local database; no wire surface
+carries a position, so a remote reader cannot ask for one.
 
 A positioned read runs the read and reads the change log's highest `seq` in one
 transaction, so the rows and the position come from one snapshot. Capturing the

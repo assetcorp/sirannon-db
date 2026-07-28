@@ -14,9 +14,6 @@ import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
 import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
 import type { HookRegistry } from './hooks/registry.js'
-import type { LiveQueryOptions } from './live/database-live.js'
-import { createDatabaseLiveQuery } from './live/database-live.js'
-import type { LiveQuery } from './live/live-query.js'
 
 export type { DatabaseInternals } from './database-create.js'
 
@@ -276,17 +273,6 @@ export class Database {
   on(table: string): SubscriptionBuilder {
     this.ensureOpen()
     return this.cdc.on(table)
-  }
-
-  live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): LiveQuery<T> {
-    this.ensureOpen()
-    return createDatabaseLiveQuery<T>({
-      sql,
-      watched: this.cdc.changeTracker?.watchedTables ?? new Set(),
-      requested: options?.tables,
-      read: () => this.query<T>(sql, params),
-      on: table => this.on(table),
-    })
   }
 
   async migrate(migrations: Migration[]): Promise<MigrationResult> {

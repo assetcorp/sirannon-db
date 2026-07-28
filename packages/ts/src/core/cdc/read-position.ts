@@ -44,11 +44,11 @@ export async function readAtPosition<T>(
   conn: SQLiteConnection,
   epoch: string,
   read: (conn: SQLiteConnection) => Promise<T>,
-): Promise<{ value: T; position: string }> {
+): Promise<{ value: T; position: string; seq: bigint }> {
   return conn.transaction(async txConn => {
     const value = await read(txConn)
     const seq = (await selectTableExists(txConn, CHANGES_TABLE)) ? await selectMaxChangeSeq(txConn) : 0n
-    return { value, position: encodeReadPosition({ epoch, seq }) }
+    return { value, position: encodeReadPosition({ epoch, seq }), seq }
   })
 }
 

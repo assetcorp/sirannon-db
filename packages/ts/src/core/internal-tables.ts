@@ -12,6 +12,7 @@ export const SYNC_STATE_TABLE = '_sirannon_sync_state'
 export const DEVICE_CURSORS_TABLE = '_sirannon_device_cursors'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
+export const LIVE_PROBE_TABLE_PREFIX = '_sirannon_live_probe_'
 
 const SIRANNON_PREFIX = '_sirannon'
 const SQLITE_PREFIX = 'sqlite_'

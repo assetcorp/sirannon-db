@@ -14,6 +14,8 @@ import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
 import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
 import type { HookRegistry } from './hooks/registry.js'
+import { openLiveQuery } from './live/database-live.js'
+import type { LiveQuery, LiveQueryOptions } from './live/types.js'
 
 export type { DatabaseInternals } from './database-create.js'
 
@@ -275,6 +277,16 @@ export class Database {
     return this.cdc.on(table)
   }
 
+  async live<T = Record<string, unknown>>(
+    sql: string,
+    params?: Params,
+    options?: LiveQueryOptions,
+  ): Promise<LiveQuery<T>> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    return openLiveQuery<T>({ cdc: this.cdc, watch: table => this.watch(table) }, sql, params, options)
+  }
+
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
     return this.writerLock.run(() =>
@@ -331,6 +343,7 @@ export class Database {
 
     let poolError: unknown
     try {
+      await this.cdc.closeLiveConnection()
       await this.groupCommitter.drain()
       await this.writerLock.settle()
       await this.pool.close()

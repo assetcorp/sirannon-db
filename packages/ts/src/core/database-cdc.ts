@@ -15,7 +15,8 @@ type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
 export class DatabaseCdcController {
   private tracker: ChangeTracker | null = null
-  private subscriptions: SubscriptionManager | null = null
+  private subscriptionManager: SubscriptionManager | null = null
+  private liveConnRequest: Promise<SQLiteConnection> | null = null
   private stopPolling: (() => void) | null = null
   private stamper: SyncStamper | null = null
   private epochRequest: Promise<string> | null = null
@@ -37,23 +38,50 @@ export class DatabaseCdcController {
   }
 
   async queryAtPosition<T = Record<string, unknown>>(sql: string, params?: Params): Promise<PositionedRows<T>> {
+    const captured = await this.readAtPositionWith(conn => query<T>(conn, sql, params))
+    return { rows: captured.value, position: captured.position }
+  }
+
+  async readAtPositionWith<T>(
+    read: (conn: SQLiteConnection) => Promise<T>,
+  ): Promise<{ value: T; position: string; seq: bigint }> {
     const epoch = await this.ensureEpoch()
     const open = this.openSnapshotConnection
 
     if (open === null) {
-      const captured = await this.runExclusive(() =>
-        readAtPosition(this.acquireWriter(), epoch, conn => query<T>(conn, sql, params)),
-      )
-      return { rows: captured.value, position: captured.position }
+      return this.runExclusive(() => readAtPosition(this.acquireWriter(), epoch, read))
     }
 
     const conn = await open()
     try {
-      const captured = await readAtPosition(conn, epoch, snapshotConn => query<T>(snapshotConn, sql, params))
-      return { rows: captured.value, position: captured.position }
+      return await readAtPosition(conn, epoch, read)
     } finally {
       await conn.close().catch(() => {})
     }
+  }
+
+  async liveConnection(): Promise<{ conn: SQLiteConnection; run: RunExclusive }> {
+    const open = this.openSnapshotConnection
+    if (open === null) {
+      return { conn: this.acquireWriter(), run: this.runExclusive }
+    }
+
+    this.liveConnRequest ??= open().catch((err: unknown) => {
+      this.liveConnRequest = null
+      throw err
+    })
+    return { conn: await this.liveConnRequest, run: op => op() }
+  }
+
+  async closeLiveConnection(): Promise<void> {
+    const request = this.liveConnRequest
+    if (request === null) return
+    this.liveConnRequest = null
+    await request.then(conn => conn.close()).catch(() => {})
+  }
+
+  get subscriptions(): SubscriptionManager | null {
+    return this.subscriptionManager
   }
 
   get changeTracker(): ChangeTracker | null {
@@ -134,20 +162,20 @@ export class DatabaseCdcController {
 
   private ensure(): { tracker: ChangeTracker; subscriptions: SubscriptionManager } {
     const tracker = this.tracker ?? new ChangeTracker({ retention: this.retention })
-    const subscriptions = this.subscriptions ?? new SubscriptionManager()
+    const subscriptions = this.subscriptionManager ?? new SubscriptionManager()
     this.tracker = tracker
-    this.subscriptions = subscriptions
+    this.subscriptionManager = subscriptions
     return { tracker, subscriptions }
   }
 
   private ensurePolling(): void {
     if (this.stopPolling) return
-    if (!this.tracker || !this.subscriptions) return
+    if (!this.tracker || !this.subscriptionManager) return
 
     this.stopPolling = startPolling(
       this.acquireWriter(),
       this.tracker,
-      this.subscriptions,
+      this.subscriptionManager,
       this.pollInterval,
       undefined,
       this.runExclusive,

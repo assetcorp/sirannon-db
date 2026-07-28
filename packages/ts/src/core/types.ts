@@ -224,9 +224,4 @@ export interface Subscription {
   unsubscribe(): void
 }
 
-export interface PositionedRows<T = Record<string, unknown>> {
-  rows: T[]
-  position: string
-}
-
 export * from './server-options.js'

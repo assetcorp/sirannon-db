@@ -12,6 +12,11 @@ export interface ReadPosition {
   seq: bigint
 }
 
+export interface PositionedRows<T = Record<string, unknown>> {
+  rows: T[]
+  position: string
+}
+
 export function encodeReadPosition(position: ReadPosition): string {
   if (!HEX_RE.test(position.epoch)) {
     throw new CDCError(`Cannot issue a read position for epoch '${position.epoch}': an epoch is lower-case hex`)

@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../driver/types.js'
 
 export interface TableInfoRow {
   name: string
+  type: string
   pk: number
 }
 
@@ -31,6 +32,12 @@ export async function tablePkColumns(conn: SQLiteConnection, table: string): Pro
     .filter(col => col.pk > 0)
     .sort((a, b) => a.pk - b.pk)
     .map(col => col.name)
+}
+
+export async function selectTableSql(conn: SQLiteConnection, table: string): Promise<string | null> {
+  const stmt = await conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+  const row = (await stmt.get(table)) as { sql?: string | null } | undefined
+  return row?.sql ?? null
 }
 
 export async function selectCountTableRows(conn: SQLiteConnection, table: string): Promise<number> {

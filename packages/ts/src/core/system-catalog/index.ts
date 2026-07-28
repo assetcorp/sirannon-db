@@ -73,6 +73,7 @@ export {
   type SchemaObjectRow,
   selectCountTableRows,
   selectTableExists,
+  selectTableSql,
   selectUserSchemaObjects,
   selectUserTableNames,
   setForeignKeysEnabled,

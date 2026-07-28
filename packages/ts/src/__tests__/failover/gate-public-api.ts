@@ -1,5 +1,5 @@
 import { expect } from 'vitest'
-import { SirannonClient } from '../../client/index.js'
+import { TopologyAwareClient } from '../../client/topology.js'
 import { type GateEnvironment, GROUP_ID, httpPortFor, serverBaseUrlFor } from './gate-environment.js'
 import type { FailoverNodeProcess } from './node-process.js'
 
@@ -50,7 +50,7 @@ export async function executePublicClient(
   starterNodeId: string,
   sql: string,
 ): Promise<void> {
-  const client = new SirannonClient({
+  const client = new TopologyAwareClient({
     endpoints: [serverBaseUrlFor(environment, starterNodeId)],
     discovery: 'coordinator',
     transport: 'http',

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { RemoteDatabase } from '@delali/sirannon-db/client'
-import { SirannonClient } from '@delali/sirannon-db/client'
+import { TopologyAwareClient } from '@delali/sirannon-db/client/topology'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
 import { assertMajorityWriteAvailable, fetchClusterNodes } from './cluster-status'
 import type {
@@ -49,7 +49,7 @@ import { setProxyEnabled } from './toxiproxy'
 const getServerHttpDb = createServerOnlyFn((): RemoteDatabase => {
   const token = process.env.SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
   const endpoints = clusterEndpointsFromEnv(process.env.SIRANNON_CLUSTER_ENDPOINTS)
-  const client = new SirannonClient({
+  const client = new TopologyAwareClient({
     endpoints,
     discovery: 'coordinator',
     transport: 'http',

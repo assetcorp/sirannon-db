@@ -1,5 +1,5 @@
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
-import { SirannonClient } from '@delali/sirannon-db/client'
+import { TopologyAwareClient } from '@delali/sirannon-db/client/topology'
 import type { CDCEvent } from './cdc'
 import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toWebSocketAuthProtocol } from './sql'
 
@@ -8,7 +8,7 @@ const token = import.meta.env.VITE_SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOK
 const authProtocol = toWebSocketAuthProtocol(token)
 const authHeaders = { Authorization: `Bearer ${token}` }
 
-const wsClient = new SirannonClient({
+const wsClient = new TopologyAwareClient({
   endpoints,
   discovery: 'coordinator',
   transport: 'websocket',

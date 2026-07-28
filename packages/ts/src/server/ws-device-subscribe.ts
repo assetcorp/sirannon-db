@@ -66,6 +66,7 @@ async function openDeviceSubscription(
   for (const table of tables) {
     await ctx.tracker.watch(ctx.cdcConn, table)
   }
+  await state.database.ensureChangeStamping()
 
   const stream = new DeviceChangeStream({
     deviceId,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SirannonClient, type TopologyAwareClientOptions } from '../client.js'
+import { SirannonClient } from '../client.js'
+import { TopologyAwareClient, type TopologyAwareClientOptions } from '../topology.js'
 import { createClientServerHarness } from './server-harness.js'
 
 const harness = createClientServerHarness()
@@ -12,15 +13,15 @@ describe('TopologyAwareClientOptions', () => {
       readPreference: 'primary',
       transport: 'http',
     }
-    const client = new SirannonClient(opts)
-    expect(client).toBeInstanceOf(SirannonClient)
+    const client = new TopologyAwareClient(opts)
+    expect(client).toBeInstanceOf(TopologyAwareClient)
     client.close()
   })
 
   it('rejects unsafe configured endpoint URLs', () => {
     expect(
       () =>
-        new SirannonClient({
+        new TopologyAwareClient({
           primary: 'file:///tmp/test.db',
           transport: 'http',
         }),
@@ -28,7 +29,7 @@ describe('TopologyAwareClientOptions', () => {
 
     expect(
       () =>
-        new SirannonClient({
+        new TopologyAwareClient({
           primary: 'https://user:password@example.com',
           transport: 'http',
         }),
@@ -44,9 +45,10 @@ describe('TopologyAwareClientOptions', () => {
         readEndpoints: [],
         health: 'healthy',
       }),
+      authorizeClusterStatus: () => true,
     })
 
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       endpoints: [baseUrl],
       discovery: 'coordinator',
       transport: 'http',
@@ -57,7 +59,7 @@ describe('TopologyAwareClientOptions', () => {
   })
 
   it('queries via primary with readPreference primary', async () => {
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       primary: harness.baseUrl,
       replicas: [],
       readPreference: 'primary',
@@ -74,7 +76,7 @@ describe('TopologyAwareClientOptions', () => {
     const replica = createClientServerHarness({ userName: 'ReplicaUser' })
 
     it('executes writes via primary', async () => {
-      const client = new SirannonClient({
+      const client = new TopologyAwareClient({
         primary: harness.baseUrl,
         replicas: [replica.baseUrl],
         readPreference: 'replica',
@@ -101,7 +103,7 @@ describe('TopologyAwareClientOptions', () => {
     })
 
     it('routes reads to replica when readPreference is replica', async () => {
-      const client = new SirannonClient({
+      const client = new TopologyAwareClient({
         primary: harness.baseUrl,
         replicas: [replica.baseUrl],
         readPreference: 'replica',
@@ -126,9 +128,10 @@ describe('TopologyAwareClientOptions', () => {
           ],
           health: 'healthy',
         }),
+        authorizeClusterStatus: () => true,
       })
 
-      const client = new SirannonClient({
+      const client = new TopologyAwareClient({
         endpoints: [baseUrl],
         discovery: 'coordinator',
         readPreference: 'replica',
@@ -142,7 +145,7 @@ describe('TopologyAwareClientOptions', () => {
     })
 
     it('routes reads with readPreference nearest', async () => {
-      const client = new SirannonClient({
+      const client = new TopologyAwareClient({
         primary: harness.baseUrl,
         replicas: [replica.baseUrl],
         readPreference: 'nearest',
@@ -157,7 +160,7 @@ describe('TopologyAwareClientOptions', () => {
   })
 
   it('falls back to primary when all replicas are unreachable', async () => {
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       primary: harness.baseUrl,
       replicas: ['http://127.0.0.1:1'],
       readPreference: 'replica',
@@ -174,7 +177,7 @@ describe('TopologyAwareClientOptions', () => {
   })
 
   it('defaults to primary readPreference when omitted', async () => {
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       primary: harness.baseUrl,
       transport: 'http',
     })
@@ -185,7 +188,7 @@ describe('TopologyAwareClientOptions', () => {
   })
 
   it('returns cached database instances', () => {
-    const client = new SirannonClient({
+    const client = new TopologyAwareClient({
       primary: harness.baseUrl,
       transport: 'http',
     })

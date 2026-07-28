@@ -130,6 +130,7 @@ server = createServer(sirannon, {
   resolveExecutionTarget: id => (id === databaseId ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
   getClusterStatus: id => toClusterStatusInfo(config, id, engine.status()),
+  authorizeClusterStatus: () => true,
 })
 await server.listen()
 process.send?.({ type: 'ready', nodeId: config.nodeId })

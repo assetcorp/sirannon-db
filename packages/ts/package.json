@@ -81,6 +81,10 @@
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.mjs"
     },
+    "./client/topology": {
+      "types": "./dist/client/topology.d.ts",
+      "import": "./dist/client/topology.mjs"
+    },
     "./replication": {
       "types": "./dist/replication/index.d.ts",
       "import": "./dist/replication/index.mjs"

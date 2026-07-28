@@ -60,7 +60,7 @@ const nodeEntry = {
   'transport/grpc': 'src/transport/grpc/index.ts',
 }
 
-const clientEntry = { 'client/index': 'src/client/index.ts' }
+const clientEntry = { 'client/index': 'src/client/index.ts', 'client/topology': 'src/client/topology.ts' }
 
 const waSqliteEntry = { 'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts' }
 

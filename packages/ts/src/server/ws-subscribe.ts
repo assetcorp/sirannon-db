@@ -1,3 +1,4 @@
+import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { AckResponse } from './protocol.js'
@@ -171,14 +172,23 @@ async function subscribeLive(
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
+    await state.database.ensureChangeStamping()
 
-    const deliver = (event: ChangeEvent): WSSendOutcome => deps.sendChange(conn, id, event)
+    const grouper = new TransactionGrouper(event => deps.sendChange(conn, id, event) !== 'dropped')
     const boundary = ctx.tracker.cursor
     const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
-      deliver(event)
+      grouper.receive(event)
+    })
+    const removeBatchEnd = ctx.manager.addBatchEndListener(atTxBoundary => {
+      grouper.flush(atTxBoundary)
     })
 
-    state.subscriptions.set(id, sub)
+    state.subscriptions.set(id, {
+      unsubscribe: () => {
+        removeBatchEnd()
+        sub.unsubscribe()
+      },
+    })
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, false)
   } catch (err) {
     deps.cdc.maybeCleanup(state.databaseId)
@@ -200,19 +210,36 @@ async function subscribeResuming(
   let primed: PrimedSubscription
   let boundary: bigint
   let resync: boolean
+  let goLive: () => void
   try {
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
+    await state.database.ensureChangeStamping()
 
-    const deliver = (event: ChangeEvent): WSSendOutcome => deps.sendChange(conn, id, event)
+    const grouper = new TransactionGrouper(event => deps.sendChange(conn, id, event) !== 'dropped')
+    const deliver = (event: ChangeEvent): WSSendOutcome => (grouper.receive(event) ? 'sent' : 'dropped')
     boundary = ctx.tracker.cursor
-    primed = new PrimedSubscription(
-      sinceSeq,
-      event => deliver(event),
-      () => deps.handleOverload(conn),
-    )
+    const boundaryEndsTransaction = ctx.tracker.pollEndedAtTxBoundary
+    primed = new PrimedSubscription(sinceSeq, deliver, () => deps.handleOverload(conn))
     const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
-    state.subscriptions.set(id, sub)
+
+    let removeBatchEnd = (): void => {}
+    let cancelled = false
+    goLive = () => {
+      if (cancelled) return
+      grouper.flush(boundaryEndsTransaction)
+      primed.goLive()
+      removeBatchEnd = ctx.manager.addBatchEndListener(atTxBoundary => {
+        grouper.flush(atTxBoundary)
+      })
+    }
+    state.subscriptions.set(id, {
+      unsubscribe: () => {
+        cancelled = true
+        removeBatchEnd()
+        sub.unsubscribe()
+      },
+    })
 
     const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
     const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
@@ -231,5 +258,5 @@ async function subscribeResuming(
       deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, true)
     }
   }
-  primed.goLive()
+  goLive()
 }

@@ -1,6 +1,6 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import { encodeTaggedValues } from '../core/cdc/encoding.js'
-import { changeMatchesFilter } from '../core/cdc/subscription.js'
+import { filteredChange } from '../core/cdc/subscription.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { WSSendOutcome } from './ws-connection.js'
@@ -79,8 +79,9 @@ export class PrimedSubscription {
       if (events.length === 0) break
 
       for (const event of events) {
-        if (filter && !changeMatchesFilter(event, filter)) continue
-        if (!this.emit(event)) return
+        const delivered = filter === undefined ? event : filteredChange(event, filter)
+        if (delivered === null) continue
+        if (!this.emit(delivered)) return
       }
 
       const lastEvent = events[events.length - 1]

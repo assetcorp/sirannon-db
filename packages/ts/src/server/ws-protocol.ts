@@ -1,4 +1,4 @@
-import type { BulkLoadDurability, WriteConcern } from '../core/types.js'
+import type { BulkLoadDurability, ReadConcern, WriteConcern } from '../core/types.js'
 import type {
   AckResponse,
   BatchResponse,
@@ -65,6 +65,7 @@ export interface WSQueryMessage {
   params?: Record<string, unknown> | unknown[]
   name?: string
   args?: Record<string, unknown>
+  readConcern?: ReadConcern
 }
 
 export interface WSExecuteMessage {

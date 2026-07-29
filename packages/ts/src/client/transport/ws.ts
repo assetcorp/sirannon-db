@@ -1,5 +1,5 @@
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
-import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
+import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
 import type {
   AckResponse,
   BatchResponse,
@@ -32,6 +32,7 @@ const DEFAULT_REQUEST_TIMEOUT = 30_000
  * `autoReconnect` is enabled.
  */
 export class WebSocketTransport implements Transport {
+  readonly carriesReadConcern = true
   private ws: ClientWebSocket | null = null
   private readonly url: string
   private readonly autoReconnect: boolean
@@ -68,7 +69,7 @@ export class WebSocketTransport implements Transport {
     this.pending = new PendingRequests(this.requestTimeout)
   }
 
-  async query(sql: string, params?: Params): Promise<QueryResponse> {
+  async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
     const response = await this.request<QueryResponse>({
@@ -76,6 +77,7 @@ export class WebSocketTransport implements Transport {
       id,
       sql,
       params: encodeTaggedValues(params) as Params | undefined,
+      ...(readConcern ? { readConcern } : {}),
     })
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
@@ -134,7 +136,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
-  async queryNamed(name: string, args?: Record<string, unknown>): Promise<QueryResponse> {
+  async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
     const response = await this.request<QueryResponse>({
@@ -142,6 +144,7 @@ export class WebSocketTransport implements Transport {
       id,
       name,
       ...(args === undefined ? {} : { args: encodeTaggedValues(args) as Record<string, unknown> }),
+      ...(readConcern ? { readConcern } : {}),
     })
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }

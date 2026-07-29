@@ -216,6 +216,21 @@ describe.each(['websocket', 'http'] as const)('registered operations over the %s
       client.close()
     }
   })
+
+  it('carries a per-call read concern to the server', async () => {
+    await harness.restart({ acceptSql: false, operations })
+    const client = new SirannonClient(harness.baseUrl, { transport })
+    const db = client.database('testdb')
+
+    try {
+      expect(await db.query(members, {}, { readConcern: { level: 'local' } })).toEqual([{ id: 1, name: 'Alice' }])
+      await expect(db.query(members, {}, { readConcern: { level: 'nonsense' } as never })).rejects.toMatchObject({
+        code: transport === 'websocket' ? 'INVALID_MESSAGE' : 'INVALID_REQUEST',
+      })
+    } finally {
+      client.close()
+    }
+  })
 })
 
 describe('a live query against a remote database', () => {

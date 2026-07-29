@@ -10,6 +10,11 @@ export type OperationArguments = Record<string, unknown>
 export interface ReadOperation<Identity = unknown> {
   args?: readonly string[]
   fromIdentity?: Readonly<Record<string, keyof Identity & string>>
+  /**
+   * The columns every row of this read carries. Code generation emits a typed
+   * row from it, and reads the columns from the statement only when the
+   * operation takes no arguments, because arguments choose the statement.
+   */
   columns?: readonly string[]
   statement(args: OperationArguments): OperationStatement
 }

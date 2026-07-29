@@ -44,6 +44,13 @@ export type RegistryDigestSource = (refresh: boolean) => Promise<string | undefi
  * Each transport instance is bound to a specific database.
  */
 export interface Transport {
+  /**
+   * Whether a read concern passed to {@link Transport.query} or
+   * {@link Transport.queryNamed} reaches the server. Topology routing applies
+   * the client-wide setting when it chooses a node, so it leaves this unset and
+   * a caller asking for a per-read concern is refused rather than served a read
+   * at another level.
+   */
   readonly carriesReadConcern?: boolean
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>

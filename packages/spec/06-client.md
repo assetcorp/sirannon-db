@@ -84,9 +84,11 @@ The client echoes the registry digest from `GET /capabilities` on subscribe. Aft
 
 ### Generated Operation References
 
-A generator reads the operation registry the server is built from and writes the references a client calls it through. The types then come from the definitions the server runs, and continuous integration needs no server. For each database the generator emits the reads and writes by name, the argument names a caller supplies, and the columns of each read; a select list that names no column leaves the row shape open. Arguments the server fills from identity are absent.
+A generator reads the operation registry the server is built from and writes the references a client calls it through. The types then come from the definitions the server runs, and continuous integration needs no server. For each database the generator emits the reads and writes by name and the argument names a caller supplies. Arguments the server fills from identity are absent.
 
-A per-query `readConcern` reaches the server over the HTTP transport. Over the WebSocket and topology transports the client-level `readConcern` selects routing and the requested guarantee.
+The generator emits the row type of a read from its `columns`. Without them it takes the row type from the statement of a read with no arguments, and leaves the row shape open for any other read and for a select list that names no column.
+
+The HTTP and WebSocket transports send a per-query `readConcern` to the server. The topology transport applies the client-level `readConcern` to node selection, and a transport that sends none must fail a per-query `readConcern` with `INVALID_ARGUMENT`.
 
 ---
 

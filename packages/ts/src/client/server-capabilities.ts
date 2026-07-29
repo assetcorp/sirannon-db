@@ -7,6 +7,9 @@ import { RemoteError } from './types.js'
 export const SQL_REFUSED_MESSAGE =
   'This server does not accept SQL over the network. Call a registered operation by name, or start the server with acceptSql: true.'
 
+export const SQL_UNCONFIRMED_MESSAGE =
+  'GET /capabilities returned 404, so this client cannot confirm that the server accepts SQL and refuses to send it. Check that the URL reaches a sirannon-db server and that any proxy in front of it forwards /capabilities.'
+
 export interface ServerCapabilityCheck {
   assertSqlAccepted(): Promise<void>
   registryDigest(refresh?: boolean): Promise<string | undefined>
@@ -34,11 +37,23 @@ export class ServerCapabilities implements ServerCapabilityCheck {
   }
 
   async registryDigest(refresh = false): Promise<string | undefined> {
-    return (await this.read(refresh)).registryDigest
+    try {
+      return (await this.read(refresh)).registryDigest
+    } catch (err) {
+      if (isMissingEndpoint(err)) return undefined
+      throw err
+    }
   }
 
   async assertSqlAccepted(): Promise<void> {
-    const report = await this.read()
+    let report: CapabilityReport
+    try {
+      report = await this.read()
+    } catch (err) {
+      if (isMissingEndpoint(err)) throw new RemoteError('SQL_NOT_ACCEPTED', SQL_UNCONFIRMED_MESSAGE)
+      throw err
+    }
+
     if (!report.capabilities.includes(SQL_QUERY_CAPABILITY)) {
       throw new RemoteError('SQL_NOT_ACCEPTED', SQL_REFUSED_MESSAGE)
     }
@@ -46,13 +61,10 @@ export class ServerCapabilities implements ServerCapabilityCheck {
 
   private async fetch(): Promise<CapabilityReport> {
     const url = await this.resolveUrl()
-    try {
-      return await fetchCapabilityReport({ url, headers: this.headers, requestTimeoutMs: this.requestTimeoutMs })
-    } catch (err) {
-      if (err instanceof RemoteError && err.code === 'NOT_FOUND') {
-        return { capabilities: [SQL_QUERY_CAPABILITY], registryDigest: undefined }
-      }
-      throw err
-    }
+    return fetchCapabilityReport({ url, headers: this.headers, requestTimeoutMs: this.requestTimeoutMs })
   }
+}
+
+function isMissingEndpoint(err: unknown): boolean {
+  return err instanceof RemoteError && err.code === 'NOT_FOUND'
 }

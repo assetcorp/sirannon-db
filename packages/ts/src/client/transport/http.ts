@@ -18,6 +18,7 @@ import { RemoteError } from '../types.js'
  * HTTP; use {@link WebSocketTransport} for CDC subscriptions.
  */
 export class HttpTransport implements Transport {
+  readonly carriesReadConcern = true
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
   private closed = false

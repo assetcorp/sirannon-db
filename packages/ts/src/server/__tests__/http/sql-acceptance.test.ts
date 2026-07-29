@@ -122,6 +122,38 @@ describe('WebSocket SQL messages', () => {
     await handler.close()
   })
 
+  it('refuses a SQL message that carries a name it has no named path for', async () => {
+    await start()
+    const handler = createWSHandler(sirannon, { operations })
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'test')
+
+    for (const type of ['transaction', 'batch', 'load']) {
+      conn.messages.length = 0
+      handler.handleMessage(
+        conn,
+        JSON.stringify({
+          id: 'r1',
+          type,
+          name: 'allUsers',
+          sql: "INSERT INTO users (name) VALUES ('Mallory')",
+          paramsBatch: [[]],
+          statements: [{ sql: "INSERT INTO users (name) VALUES ('Mallory')" }],
+        }),
+      )
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const reply = lastMessage(conn) as { type: string; error: { code: string } }
+      expect(reply.type, type).toBe('error')
+      expect(reply.error.code, type).toBe('INVALID_MESSAGE')
+    }
+
+    const database = sirannon.get('test')
+    if (database === undefined) throw new Error('The test database is not open')
+    expect(await database.query('SELECT name FROM users')).toHaveLength(1)
+
+    await handler.close()
+  })
+
   it('serves them when SQL is accepted', async () => {
     await start()
     const handler = createWSHandler(sirannon, { acceptSql: true })

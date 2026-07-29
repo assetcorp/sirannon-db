@@ -109,19 +109,22 @@ export async function handleLiveSubscribeMessage(
     return
   }
 
-  const stop = query.subscribe(update => {
-    deliver(deps, conn, id, query, update)
-  })
+  let stop: (() => void) | null = null
+  const teardown = (): void => {
+    state.subscriptions.delete(id)
+    stop?.()
+    stop = null
+    query.close().catch(() => {})
+  }
 
-  state.subscriptions.set(id, {
-    unsubscribe: () => {
-      stop()
-      query.close().catch(() => {})
-    },
+  stop = query.subscribe(update => {
+    deliver(deps, conn, id, query, update, teardown)
   })
+  state.subscriptions.set(id, { unsubscribe: teardown })
 
   const opened = query.getState()
   if (opened.status !== 'ready') {
+    teardown()
     deps.sendError(conn, id, 'INTERNAL_ERROR', 'The live query produced no first result')
     return
   }
@@ -134,6 +137,7 @@ function deliver(
   id: string,
   query: LiveQuery<Record<string, unknown>>,
   update: LiveUpdate<Record<string, unknown>>,
+  teardown: () => void,
 ): void {
   if (update.kind === 'ops') {
     deps.sendLive(conn, { type: 'live', id, ops: update.ops.map(encodeOp) })
@@ -150,6 +154,7 @@ function deliver(
     return
   }
   if (state.status === 'error') {
+    teardown()
     deps.sendError(conn, id, 'CDC_ERROR', state.error.message)
   }
 }

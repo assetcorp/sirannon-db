@@ -10,6 +10,7 @@ export type OperationArguments = Record<string, unknown>
 export interface ReadOperation<Identity = unknown> {
   args?: readonly string[]
   fromIdentity?: Readonly<Record<string, keyof Identity & string>>
+  columns?: readonly string[]
   statement(args: OperationArguments): OperationStatement
 }
 

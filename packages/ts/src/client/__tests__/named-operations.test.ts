@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { createServer as createHttpServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { LiveQueryState } from '../../core/live/types.js'
 import type { OperationArguments, OperationRegistry } from '../../core/operation-registry.js'
 import { operationRef } from '../../core/operation-registry.js'
 import type { BulkLoadDurability, Params } from '../../core/types.js'
 import { SirannonClient } from '../client.js'
 import { RemoteDatabase } from '../database-proxy.js'
-import { type ServerCapabilityCheck, SQL_REFUSED_MESSAGE } from '../server-capabilities.js'
+import { ServerCapabilities, type ServerCapabilityCheck, SQL_REFUSED_MESSAGE } from '../server-capabilities.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 import { createClientServerHarness } from './server-harness.js'
@@ -90,6 +92,13 @@ function refusesSql(): ServerCapabilityCheck {
   }
 }
 
+function acceptsSql(): ServerCapabilityCheck {
+  return {
+    assertSqlAccepted: async () => undefined,
+    registryDigest: async () => undefined,
+  }
+}
+
 async function settle(ms = 60): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -117,6 +126,72 @@ describe('a client whose server refuses SQL', () => {
     await expect(db.load('DELETE FROM users', [[]])).rejects.toMatchObject({ code: 'SQL_NOT_ACCEPTED' })
     await expect(db.loadAll('DELETE FROM users', [[]])).rejects.toMatchObject({ code: 'SQL_NOT_ACCEPTED' })
 
+    expect(transport.sent).toEqual([])
+  })
+})
+
+describe('a read concern the transport cannot carry', () => {
+  it('refuses the read rather than serving it at another level', async () => {
+    const transport = new RecordingTransport()
+    const db = new RemoteDatabase('testdb', transport, acceptsSql())
+
+    await expect(db.query('SELECT 1', [], { readConcern: { level: 'linearizable' } })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+    })
+    await expect(db.query(members, {}, { readConcern: { level: 'linearizable' } })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+    })
+
+    expect(transport.sent).toEqual([])
+  })
+
+  it('serves the read when the transport carries it', async () => {
+    const transport = new RecordingTransport()
+    const carrying = Object.assign(transport, { carriesReadConcern: true as const })
+    const db = new RemoteDatabase('testdb', carrying, acceptsSql())
+
+    await expect(db.query('SELECT 1', [], { readConcern: { level: 'linearizable' } })).rejects.toThrow(
+      /reached the transport/,
+    )
+    expect(transport.sent).toEqual(['SELECT 1'])
+  })
+})
+
+describe('a server whose capabilities endpoint answers 404', () => {
+  let notFoundServer: Server
+  let notFoundUrl: string
+
+  beforeEach(async () => {
+    notFoundServer = createHttpServer((_req, res) => {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Not found' } }))
+    })
+    await new Promise<void>(resolve => notFoundServer.listen(0, '127.0.0.1', resolve))
+    const address = notFoundServer.address() as AddressInfo
+    notFoundUrl = `http://127.0.0.1:${address.port}`
+  })
+
+  afterEach(async () => {
+    await new Promise<void>(resolve => notFoundServer.close(() => resolve()))
+  })
+
+  it('refuses SQL rather than assuming the server accepts it', async () => {
+    const capabilities = new ServerCapabilities(() => notFoundUrl, undefined, 2000)
+
+    await expect(capabilities.assertSqlAccepted()).rejects.toMatchObject({ code: 'SQL_NOT_ACCEPTED' })
+    await expect(capabilities.assertSqlAccepted()).rejects.toThrow(/cannot confirm/i)
+  })
+
+  it('reports no registry digest so a live query still subscribes', async () => {
+    const capabilities = new ServerCapabilities(() => notFoundUrl, undefined, 2000)
+    expect(await capabilities.registryDigest()).toBeUndefined()
+  })
+
+  it('keeps the statement inside the client', async () => {
+    const transport = new RecordingTransport()
+    const db = new RemoteDatabase('testdb', transport, new ServerCapabilities(() => notFoundUrl, undefined, 2000))
+
+    await expect(db.query('SELECT 1')).rejects.toMatchObject({ code: 'SQL_NOT_ACCEPTED' })
     expect(transport.sent).toEqual([])
   })
 })

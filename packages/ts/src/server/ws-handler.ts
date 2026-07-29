@@ -34,6 +34,8 @@ const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
 const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
 
+const NAMED_MESSAGE_TYPES = new Set(['query', 'execute', 'subscribe'])
+
 export interface ConnectionState {
   databaseId: string
   database: Database
@@ -157,6 +159,11 @@ export class WSHandler<Identity = unknown> {
 
     const id = msg.id
     const name = typeof msg.name === 'string' ? msg.name : null
+
+    if (name !== null && !NAMED_MESSAGE_TYPES.has(msg.type)) {
+      this.sendError(conn, id, 'INVALID_MESSAGE', `A "${msg.type}" message names no registered operation`)
+      return
+    }
 
     if (!this.acceptSql && SQL_MESSAGE_TYPES.has(msg.type) && name === null) {
       this.sendError(conn, id, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)

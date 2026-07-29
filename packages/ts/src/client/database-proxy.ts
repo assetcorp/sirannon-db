@@ -1,6 +1,13 @@
 import type { LiveQuery } from '../core/live/types.js'
 import type { OperationArguments, OperationRef } from '../core/operation-registry.js'
-import type { BulkLoadDurability, BulkLoadResult, Params, QueryOptions, WriteConcern } from '../core/types.js'
+import type {
+  BulkLoadDurability,
+  BulkLoadResult,
+  Params,
+  QueryOptions,
+  ReadConcern,
+  WriteConcern,
+} from '../core/types.js'
 import type { ExecuteResponse } from '../server/protocol.js'
 import { RemoteLiveQuery } from './remote-live-query.js'
 import type { ServerCapabilityCheck } from './server-capabilities.js'
@@ -9,6 +16,9 @@ import type { RemoteSubscriptionBuilder, Transport } from './types.js'
 import { RemoteError } from './types.js'
 
 const DEFAULT_LOAD_BATCH_SIZE = 1000
+
+export const READ_CONCERN_UNSUPPORTED_MESSAGE =
+  'This transport does not carry a per-read concern to the server. Use the HTTP transport for a per-call readConcern, or set the client-wide readConcern that topology routing applies when choosing a node.'
 
 /** Options for {@link RemoteDatabase.loadAll}. */
 export interface LoadAllOptions {
@@ -46,6 +56,8 @@ export class RemoteDatabase {
     params?: Params,
     options?: QueryOptions,
   ): Promise<unknown[]> {
+    this.assertReadConcernReaches(options?.readConcern)
+
     if (typeof operation !== 'string') {
       const named = await this.transport.queryNamed(
         operation.name,
@@ -57,6 +69,11 @@ export class RemoteDatabase {
     await this.capabilities.assertSqlAccepted()
     const response = await this.transport.query(operation, params, options?.readConcern)
     return response.rows
+  }
+
+  private assertReadConcernReaches(readConcern: ReadConcern | undefined): void {
+    if (readConcern === undefined || this.transport.carriesReadConcern === true) return
+    throw new RemoteError('INVALID_ARGUMENT', READ_CONCERN_UNSUPPORTED_MESSAGE)
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse>

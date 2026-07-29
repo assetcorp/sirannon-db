@@ -1,8 +1,9 @@
 import type { OperationArguments } from '../core/operation-registry.js'
 import type { OperationSource } from './operation-lookup.js'
-import { decodeBoundParams, toExecuteResponse, validateWriteConcern } from './protocol.js'
+import { decodeBoundParams, toExecuteResponse, validateReadConcern, validateWriteConcern } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
 import type { WSOperationContext } from './ws-operations.js'
+import { toReadOptions } from './ws-operations.js'
 
 export interface WSNamedContext extends WSOperationContext {
   databaseId: string
@@ -34,6 +35,12 @@ export async function handleNamedQueryMessage(
     return
   }
 
+  const readConcern = validateReadConcern(msg.readConcern)
+  if (!readConcern.ok) {
+    ctx.sendError(id, 'INVALID_MESSAGE', readConcern.message)
+    return
+  }
+
   try {
     const resolved = ctx.operations.resolve('read', ctx.databaseId, name, args.value, ctx.identity)
     if (!resolved.ok) {
@@ -41,7 +48,7 @@ export async function handleNamedQueryMessage(
       return
     }
     const statement = resolved.statements[0]
-    const rows = await queryWireRows(ctx.target, statement.sql, statement.params)
+    const rows = await queryWireRows(ctx.target, statement.sql, statement.params, toReadOptions(readConcern.value))
     ctx.sendResult(id, { rows: rows as Record<string, unknown>[] })
   } catch (err) {
     ctx.sendCaughtError(id, err)

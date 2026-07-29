@@ -48,6 +48,14 @@ const UNSUPPORTED_WORDS = new Map<string, string>([
   ['distinct', 'DISTINCT'],
 ])
 
+const CLOCK_KEYWORDS = new Set(['current_date', 'current_time', 'current_timestamp'])
+
+const VOLATILE_FUNCTIONS = new Set(['random', 'randomblob', 'changes', 'last_insert_rowid', 'total_changes'])
+
+const CLOCK_FUNCTIONS = new Set(['date', 'time', 'datetime', 'julianday', 'unixepoch', 'strftime', 'timediff'])
+
+const CLOCK_MODIFIER = /\b(now|localtime)\b/i
+
 const AGGREGATE_FUNCTIONS = new Set([
   'avg',
   'count',
@@ -70,6 +78,7 @@ export function analyseStatement(sql: string): StatementShape {
 
   const body = withoutTrailingSemicolon(tokens)
   assertSupportedWords(sql, body)
+  assertDeterministic(sql, body)
 
   const clauses = findClauses(sql, body)
   const source = readSource(sql, body, clauses)
@@ -147,6 +156,60 @@ function assertSupportedWords(sql: string, body: SqlToken[]): void {
   if (body.some(token => token.kind === 'punct' && token.value === ';')) {
     throw unsupported(sql, 'a live query reads with one statement')
   }
+}
+
+function assertDeterministic(sql: string, body: SqlToken[]): void {
+  for (let i = 0; i < body.length; i++) {
+    const token = body[i]
+    if (token.kind !== 'word' || token.quoted) continue
+
+    if (CLOCK_KEYWORDS.has(token.lower)) {
+      throw volatileRead(sql, token.value)
+    }
+
+    const open = body[i + 1]
+    if (open === undefined || open.kind !== 'punct' || open.value !== '(') continue
+
+    if (VOLATILE_FUNCTIONS.has(token.lower)) {
+      throw volatileRead(sql, `${token.value}()`)
+    }
+    if (CLOCK_FUNCTIONS.has(token.lower) && readsTheClock(token.lower, callArguments(body, i + 1))) {
+      throw volatileRead(sql, `${token.value}()`)
+    }
+  }
+}
+
+function callArguments(body: SqlToken[], openIndex: number): SqlToken[][] {
+  const outer = body[openIndex].depth
+  const args: SqlToken[][] = []
+  let current: SqlToken[] = []
+
+  for (let i = openIndex + 1; i < body.length; i++) {
+    const token = body[i]
+    if (token.kind === 'punct' && token.value === ')' && token.depth === outer) break
+    if (token.kind === 'punct' && token.value === ',' && token.depth === outer + 1) {
+      args.push(current)
+      current = []
+      continue
+    }
+    current.push(token)
+  }
+
+  if (current.length > 0) args.push(current)
+  return args
+}
+
+function readsTheClock(name: string, args: SqlToken[][]): boolean {
+  if (args.length === 0) return true
+  if (name === 'strftime' && args.length === 1) return true
+  return args.some(argument => argument.some(token => token.kind === 'string' && CLOCK_MODIFIER.test(token.value)))
+}
+
+function volatileRead(sql: string, reference: string): Error {
+  return unsupported(
+    sql,
+    `${reference} returns a different value on each evaluation, and a live query only re-evaluates a row a change event touches, so its rows would go stale without any change to report`,
+  )
 }
 
 function withoutTrailingSemicolon(tokens: SqlToken[]): SqlToken[] {

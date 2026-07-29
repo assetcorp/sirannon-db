@@ -10,6 +10,7 @@ const REGISTRY_MODULE = `export const operations = {
       openOrders: {
         args: ['status'],
         fromIdentity: { tenant: 'tenantId' },
+        columns: ['id', 'reference'],
         statement: args => ({
           sql: 'SELECT id, reference FROM orders WHERE tenant_id = ? AND status = ?',
           params: [args.tenant, args.status],
@@ -65,5 +66,23 @@ describe('runCodegen', () => {
     ).rejects.toThrow(/exports no operation registry/)
 
     await expect(runCodegen(['--registry', join(workspace, 'operations.mjs')])).rejects.toThrow(/both required/)
+  })
+
+  it('refuses a named export the module does not have rather than reading another one', async () => {
+    writeFileSync(
+      join(workspace, 'two-exports.mjs'),
+      'export const operations = { shop: { reads: {} } }\nexport default { other: { reads: {} } }\n',
+    )
+
+    await expect(
+      runCodegen([
+        '--registry',
+        join(workspace, 'two-exports.mjs'),
+        '--out',
+        join(workspace, 'out.ts'),
+        '--export',
+        'operatons',
+      ]),
+    ).rejects.toThrow(/exports no operation registry named 'operatons'/)
   })
 })

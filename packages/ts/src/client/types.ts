@@ -44,6 +44,7 @@ export type RegistryDigestSource = (refresh: boolean) => Promise<string | undefi
  * Each transport instance is bound to a specific database.
  */
 export interface Transport {
+  readonly carriesReadConcern?: boolean
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>

@@ -58,7 +58,7 @@ export function resolveArguments<I>(
   const resolved: OperationArguments = {}
 
   for (const name of Object.keys(supplied ?? {})) {
-    if (name in identityFields) {
+    if (Object.hasOwn(identityFields, name)) {
       return {
         ok: false,
         refusal: {
@@ -81,7 +81,7 @@ export function resolveArguments<I>(
   }
 
   for (const name of declared) {
-    if (supplied === undefined || !(name in supplied)) {
+    if (supplied === undefined || !Object.hasOwn(supplied, name)) {
       return {
         ok: false,
         refusal: { status: 400, code: 'MISSING_ARGUMENT', message: `Argument '${name}' is required` },

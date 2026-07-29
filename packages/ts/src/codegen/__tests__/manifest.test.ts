@@ -13,10 +13,15 @@ const registry: OperationRegistry<Identity> = {
       openOrders: {
         args: ['status'],
         fromIdentity: { tenant: 'tenantId' },
+        columns: ['id', 'reference', 'amount'],
         statement: (args: OperationArguments) => ({
           sql: 'SELECT id, reference, total AS amount FROM orders WHERE tenant_id = ? AND status = ?',
           params: [args.tenant, args.status],
         }),
+      },
+      undeclaredWithArgs: {
+        args: ['status'],
+        statement: () => ({ sql: 'SELECT id, reference FROM orders WHERE status = ?' }),
       },
       everyColumn: {
         statement: () => ({ sql: 'SELECT * FROM orders' }),
@@ -56,6 +61,10 @@ describe('buildOperationManifest', () => {
     expect(buildOperationManifest(registry).databases.shop.reads.everyColumn.columns).toBeNull()
   })
 
+  it('leaves the row shape open when a read takes arguments and declares no columns', () => {
+    expect(buildOperationManifest(registry).databases.shop.reads.undeclaredWithArgs.columns).toBeNull()
+  })
+
   it('leaves the row shape open when the statement cannot run without real arguments', () => {
     const manifest = buildOperationManifest({
       shop: {
@@ -71,6 +80,41 @@ describe('buildOperationManifest', () => {
     })
 
     expect(manifest.databases.shop.reads.orderTotal.columns).toBeNull()
+  })
+
+  it('leaves the row shape open when the statement selects different columns per argument', () => {
+    const manifest = buildOperationManifest({
+      shop: {
+        reads: {
+          orders: {
+            args: ['status'],
+            statement: (args: OperationArguments) =>
+              args.status === 'open'
+                ? { sql: 'SELECT id, reference FROM orders WHERE status = :status' }
+                : { sql: 'SELECT id, reference, cancelled_at FROM orders WHERE status = :status' },
+          },
+        },
+      },
+    })
+
+    expect(manifest.databases.shop.reads.orders.columns).toBeNull()
+  })
+
+  it('takes the declared columns over the statement it never runs', () => {
+    const manifest = buildOperationManifest({
+      shop: {
+        reads: {
+          orders: {
+            columns: ['id', 'reference'],
+            statement: () => {
+              throw new Error('code generation must not run this statement')
+            },
+          },
+        },
+      },
+    })
+
+    expect(manifest.databases.shop.reads.orders.columns).toEqual(['id', 'reference'])
   })
 })
 
@@ -99,6 +143,30 @@ describe('renderOperationTypes', () => {
     )
     expect(generated).toContain('    cancelOrder: { name: "cancelOrder" } as OperationRef<{ id: unknown }, never>,')
     expect(generated).not.toContain('tenant')
+  })
+
+  it('names both operations when two of them generate one identifier', () => {
+    const colliding = buildOperationManifest({
+      shop: {
+        reads: {
+          'list-orders': { statement: () => ({ sql: 'SELECT id FROM orders' }) },
+          list_orders: { statement: () => ({ sql: 'SELECT id FROM orders' }) },
+        },
+      },
+    })
+
+    expect(() => renderOperationTypes(colliding)).toThrow(
+      /shop.reads.list-orders.*shop.reads.list_orders|both generate/,
+    )
+  })
+
+  it('names both databases when two of them generate one identifier', () => {
+    const colliding = buildOperationManifest({
+      'my-db': { reads: {} },
+      my_db: { reads: {} },
+    })
+
+    expect(() => renderOperationTypes(colliding)).toThrow(/both generate the identifier 'my_db'/)
   })
 
   it('imports from the module the caller names', () => {

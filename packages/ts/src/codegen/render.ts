@@ -13,28 +13,43 @@ export function renderOperationTypes(manifest: OperationManifest, options?: Rend
     `export const registryDigest = ${JSON.stringify(manifest.digest ?? null)}`,
   ]
 
+  const declared = new Map<string, string>()
   for (const databaseId of Object.keys(manifest.databases).sort()) {
     const database = manifest.databases[databaseId]
-    lines.push('', ...renderDatabase(databaseId, database))
+    lines.push('', ...renderDatabase(databaseId, database, declared))
   }
 
   return `${lines.join('\n')}\n`
 }
 
-function renderDatabase(databaseId: string, database: DatabaseManifest): string[] {
+function claim(declared: Map<string, string>, generated: string, source: string): string {
+  const taken = declared.get(generated)
+  if (taken !== undefined && taken !== source) {
+    throw new Error(
+      `'${source}' and '${taken}' both generate the identifier '${generated}'. Rename one of them so the generated file declares each name once.`,
+    )
+  }
+  declared.set(generated, source)
+  return generated
+}
+
+function renderDatabase(databaseId: string, database: DatabaseManifest, declared: Map<string, string>): string[] {
   const prefix = pascalCase(databaseId)
+  const rowTypes = new Map<string, string>()
   const lines: string[] = []
 
   for (const [name, shape] of Object.entries(database.reads)) {
     if (shape.columns === null) continue
-    lines.push(`export interface ${prefix}${pascalCase(name)}Row {`)
+    const rowType = claim(declared, `${prefix}${pascalCase(name)}Row`, `${databaseId}.reads.${name}`)
+    rowTypes.set(name, rowType)
+    lines.push(`export interface ${rowType} {`)
     for (const column of shape.columns) lines.push(`  ${propertyKey(column)}: unknown`)
     lines.push('}', '')
   }
 
-  lines.push(`export const ${identifier(databaseId)} = {`, '  reads: {')
+  lines.push(`export const ${claim(declared, identifier(databaseId), databaseId)} = {`, '  reads: {')
   for (const [name, shape] of Object.entries(database.reads)) {
-    const row = shape.columns === null ? 'Record<string, unknown>' : `${prefix}${pascalCase(name)}Row`
+    const row = rowTypes.get(name) ?? 'Record<string, unknown>'
     lines.push(
       `    ${propertyKey(name)}: { name: ${JSON.stringify(name)} } as OperationRef<${argsType(shape)}, ${row}>,`,
     )

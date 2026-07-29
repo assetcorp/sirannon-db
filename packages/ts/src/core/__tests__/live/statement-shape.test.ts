@@ -67,6 +67,36 @@ describe('analyseStatement', () => {
     }
   })
 
+  it('refuses a statement whose answer changes without a row changing', () => {
+    const cases = [
+      'SELECT id FROM items WHERE at > unixepoch() - 3600',
+      "SELECT id FROM items WHERE at > datetime('now', '-1 hour')",
+      'SELECT id FROM items WHERE at < CURRENT_TIMESTAMP',
+      'SELECT id FROM items ORDER BY random()',
+      "SELECT id FROM items WHERE day = strftime('%Y-%m-%d')",
+      'SELECT unixepoch() AS generated_at FROM items',
+      "SELECT id FROM items WHERE at > datetime(cutoff, 'localtime')",
+    ]
+
+    for (const sql of cases) {
+      expect(() => analyseStatement(sql), sql).toThrow(/each evaluation/i)
+    }
+  })
+
+  it('keeps a date function that reads only its arguments', () => {
+    const cases = [
+      'SELECT id, date(created_at) AS day FROM items',
+      "SELECT id FROM items WHERE day = strftime('%Y-%m-%d', created_at)",
+      'SELECT id FROM items WHERE at > julianday(cutoff)',
+      'SELECT id, randomised FROM items',
+      "SELECT id FROM items WHERE note = 'refresh now please'",
+    ]
+
+    for (const sql of cases) {
+      expect(() => analyseStatement(sql), sql).not.toThrow()
+    }
+  })
+
   it('refuses a statement that reaches for an internal table', () => {
     expect(() => analyseStatement('SELECT * FROM _sirannon_changes')).toThrow(/reserved/i)
   })

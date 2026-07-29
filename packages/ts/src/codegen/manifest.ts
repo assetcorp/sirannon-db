@@ -1,11 +1,6 @@
 import { type SqlToken, tokenizeSql } from '../core/live/sql-tokens.js'
 import { findClauses, readSelectItems } from '../core/live/statement-clauses.js'
-import type {
-  OperationArguments,
-  OperationRegistry,
-  ReadOperation,
-  WriteOperation,
-} from '../core/operation-registry.js'
+import type { OperationRegistry, ReadOperation, WriteOperation } from '../core/operation-registry.js'
 import { operationRegistryDigest } from '../server/operation-lookup.js'
 
 export const OPERATION_MANIFEST_VERSION = 1
@@ -61,11 +56,11 @@ function writeShape<I>(operation: WriteOperation<I>): OperationShape {
 }
 
 function statementColumns<I>(operation: ReadOperation<I>, args: string[], identityArgs: string[]): string[] | null {
-  const placeholders: OperationArguments = {}
-  for (const name of [...args, ...identityArgs]) placeholders[name] = null
+  if (operation.columns !== undefined) return [...operation.columns]
+  if (args.length > 0 || identityArgs.length > 0) return null
 
   try {
-    return selectColumns(operation.statement(placeholders).sql)
+    return selectColumns(operation.statement({}).sql)
   } catch {
     return null
   }

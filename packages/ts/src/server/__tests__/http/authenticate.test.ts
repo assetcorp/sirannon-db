@@ -86,6 +86,20 @@ describe('authenticate', () => {
     expect((await selectOne(url)).status).toBe(200)
   })
 
+  it('refuses the request when the hook returns a refusal instead of throwing', async () => {
+    const url = await startHookServer((() => ({
+      status: 401,
+      code: 'UNAUTHORIZED',
+      message: 'No token',
+    })) as unknown as AuthenticateHook<Account>)
+
+    const res = await selectOne(url)
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as ApiResponse
+    expect(body.error.code).toBe('HOOK_ERROR')
+    expect(body.error.message).toMatch(/refuses a request by throwing/i)
+  })
+
   it('does not run for health endpoints', async () => {
     const url = await startHookServer(() => {
       throw new RequestDeniedError(403, 'FORBIDDEN', 'Blocked')

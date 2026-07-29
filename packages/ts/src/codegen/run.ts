@@ -15,7 +15,7 @@ interface Options {
   registry: string
   out: string
   manifest: string | undefined
-  exportName: string
+  exportName: string | undefined
   packageName: string | undefined
 }
 
@@ -40,15 +40,20 @@ function parseOptions(argv: readonly string[]): Options {
     registry,
     out,
     manifest: values.get('manifest'),
-    exportName: values.get('export') ?? 'operations',
+    exportName: values.get('export'),
     packageName: values.get('package'),
   }
 }
 
-function readRegistry(module: Record<string, unknown>, exportName: string, path: string): OperationRegistry {
-  const candidate = module[exportName] ?? module.default
+function readRegistry(
+  module: Record<string, unknown>,
+  exportName: string | undefined,
+  path: string,
+): OperationRegistry {
+  const candidate = exportName === undefined ? (module.operations ?? module.default) : module[exportName]
   if (candidate === undefined || typeof candidate !== 'object') {
-    throw new Error(`Module '${path}' exports no operation registry named '${exportName}'`)
+    const named = exportName === undefined ? "'operations' or a default export" : `'${exportName}'`
+    throw new Error(`Module '${path}' exports no operation registry named ${named}`)
   }
   return candidate as OperationRegistry
 }

@@ -311,7 +311,8 @@ export class SyncController {
   private handleApplyFailure(err: unknown): void {
     this.recordError(err)
     this.pull.teardown()
-    if (this.state !== 'running' || this.pullRetryTimer !== null) return
+    const live = this.state === 'running' || this.state === 'starting'
+    if (!live || this.pullRetryTimer !== null) return
 
     const delay = Math.min(this.pushIntervalMs * 2 ** this.consecutivePullFailures, this.maxPushRetryDelayMs)
     this.consecutivePullFailures += 1
@@ -357,8 +358,8 @@ export class SyncController {
     if (status === 'ahead') throw refusal
 
     this.pull.teardown()
-    await this.pull.open(deviceId, this.schemaVersion ?? 0)
     this.lastError = null
+    await this.pull.open(deviceId, this.schemaVersion ?? 0)
   }
 
   private teardownStream(): void {

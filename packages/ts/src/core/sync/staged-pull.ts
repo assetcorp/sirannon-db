@@ -107,9 +107,11 @@ export interface StagedRecovery {
   /**
    * The failure that stopped the recovery apply, or null. The staged rows
    * are untouched by the failure and the resume watermark still covers
-   * them, so the caller can open the subscription anyway: a schema-gate
-   * refusal there is what tells a device it must migrate before this apply
-   * can succeed, and the next recovery retries it.
+   * them, so the caller opens the subscription anyway: a schema-gate refusal
+   * there is what tells a device it must migrate before this apply can
+   * succeed. The caller must then retry the recovery, because the resume
+   * watermark is past the transaction this apply left unapplied, so the
+   * server sends nothing that would prompt another attempt.
    */
   applyError: unknown | null
 }

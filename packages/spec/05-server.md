@@ -184,7 +184,7 @@ A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC subscri
 ### Client Messages
 
 ```text
-{ type: 'subscribe',   id, table, tables?, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion? }
+{ type: 'subscribe',   id, table, tables?, filter?, sinceSeq?, epoch?, deviceId?, schemaVersion?, stagedStream? }
 { type: 'subscribe',   id, name, args?, registryDigest? }        -- a live query
 { type: 'unsubscribe', id }
 { type: 'ack',         id, deviceId, seq }              -- see 08-device-sync.md
@@ -204,17 +204,18 @@ The server applies the `readConcern` of a `query` message to the read it runs, a
 ### Server Messages
 
 ```text
-{ type: 'subscribed',   id, seq?, epoch?, resync?, rows? }
+{ type: 'subscribed',   id, seq?, epoch?, resync?, rows?, maxUnacknowledgedChanges? }
 { type: 'unsubscribed', id }
 { type: 'change',       id, event: { type, table, row, oldRow?, seq, timestamp, hlc?, origin?, rowId?, txId?, txEnd? } }
+{ type: 'changes',      id, events: List<{ type, table, row, oldRow?, seq, timestamp, hlc?, origin?, rowId?, txId?, txEnd? }> }
 { type: 'live',         id, ops?, rows?, revalidating? }
 { type: 'result',       id, data }     -- data is a query, execute, transaction, batch, load, or ack response
 { type: 'error',        id, error: { code, message } }
 ```
 
-Every client message carries a string `id` the server echoes to correlate the reply; for a subscription the `id` is the subscription identifier. `sinceSeq`, `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe integer range survive JSON. Change-event `row` and `oldRow` follow the value encoding, and `rowId` identifies the changed row. `hlc`, `origin`, and `txId` carry the change's timestamp, origin node, and transaction when it is stamped, and `txEnd` is true on the last change of a transaction (see [Transaction Boundaries](#transaction-boundaries)). The `deviceId`, `schemaVersion`, and `ack` fields drive device sync (see [08-device-sync.md](08-device-sync.md)).
+Every client message carries a string `id` the server echoes to correlate the reply; for a subscription the `id` is the subscription identifier. `sinceSeq`, `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe integer range survive JSON. Change-event `row` and `oldRow` follow the value encoding, and `rowId` identifies the changed row. `hlc`, `origin`, and `txId` carry the change's timestamp, origin node, and transaction when it is stamped, and `txEnd` is true on the last change of a transaction (see [Transaction Boundaries](#transaction-boundaries)). A `changes` message carries several events in ascending `seq` order, each holding the fields of a `change` event; the server sends it only on a subscription carrying `stagedStream: true`. The `deviceId`, `schemaVersion`, `stagedStream`, and `ack` fields drive device sync, and `subscribed` carries `maxUnacknowledgedChanges` on a subscription presenting a `deviceId` (see [08-device-sync.md](08-device-sync.md)).
 
-A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` requires a `deviceId`. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`.
+A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` and `stagedStream` each require a `deviceId`, and `stagedStream` must be a boolean. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`.
 
 ### Transaction Boundaries
 
@@ -240,7 +241,7 @@ A live subscription carries no `table`, `tables`, `filter`, `sinceSeq`, `epoch`,
 
 ### Backpressure and Limits
 
-An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. The server also closes with 1013 while shutting down, and 1008 when the database is not found, closed, or the target resolves to none. The recommended idle timeout is 120 seconds with automatic ping/pong. A subscription presenting a `deviceId` is also paced by acknowledgements: the server holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
+An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. On a subscription presenting a `deviceId`, the server pauses delivery while the outbound buffer holds data and resumes from the change log once it drains, so that it delivers a transaction larger than the buffer across several sends and keeps the buffer under the bound. The server also closes with 1013 while shutting down, and 1008 when the database is not found, closed, or the target resolves to none. The recommended idle timeout is 120 seconds with automatic ping/pong. The server paces a subscription presenting a `deviceId` by acknowledgements: it holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
 
 ---
 

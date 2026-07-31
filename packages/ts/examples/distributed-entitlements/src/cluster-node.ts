@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { ChangeTracker, RequestDeniedError, Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
@@ -16,6 +17,7 @@ import {
 } from './cluster-node-env'
 import { REPLICATED_TABLES, SCHEMA, SEED_SQL } from './cluster-node-schema'
 import { type ClusterStatusContext, toClusterStatusInfo, toReplicationStatusInfo } from './cluster-node-status'
+import { type ControlPlaneOperator, operations } from './operations'
 
 const DATABASE_ID = 'entitlements'
 const CLUSTER_ID = 'sirannon-entitlements-control-plane'
@@ -124,7 +126,7 @@ const engine = new ReplicationEngine(db, conn, {
       tickIntervalMs: numberEnv('CONTROLLER_TICK_MS', DEFAULT_CONTROLLER_TICK_MS),
     },
     compatibility: {
-      packageVersion: '0.1.4',
+      packageVersion: sirannonPackageVersion(),
       specVersion: 'coordinator-mode-example',
       protocolVersion: '1',
     },
@@ -143,7 +145,7 @@ engine.on('replication-error', event => {
 
 await engine.start()
 
-server = createServer(sirannon, {
+server = createServer<ControlPlaneOperator>(sirannon, {
   host: httpHost,
   port: httpPort,
   cors: {
@@ -151,13 +153,19 @@ server = createServer(sirannon, {
     methods: ['GET', 'POST', 'OPTIONS'],
     headers: ['Content-Type', 'Authorization'],
   },
-  acceptSql: true,
+  operations,
   authenticate: ({ headers }) => {
-    if (isAuthorized(headers, token)) {
-      return undefined
+    if (isBearerAuthorized(headers, token)) {
+      return { actor: 'control-plane-operator' }
     }
+
+    if (isWebSocketAuthorized(headers, token)) {
+      return { actor: 'control-plane-browser' }
+    }
+
     throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing valid Sirannon entitlements demo token')
   },
+  authorizeClusterStatus: ({ headers }) => isBearerAuthorized(headers, token),
   resolveExecutionTarget: id => (id === DATABASE_ID ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
   getClusterStatus: id => toClusterStatusInfo(id, engine.status(), statusContext),
@@ -184,14 +192,22 @@ async function shutdown(): Promise<void> {
   await conn.close().catch(() => undefined)
 }
 
-function isAuthorized(headers: Record<string, string>, expectedToken: string): boolean {
-  const authorization = headers.authorization
-  if (authorization === `Bearer ${expectedToken}`) {
-    return true
-  }
+function isBearerAuthorized(headers: Record<string, string>, expectedToken: string): boolean {
+  return headers.authorization === `Bearer ${expectedToken}`
+}
 
+function isWebSocketAuthorized(headers: Record<string, string>, expectedToken: string): boolean {
   const protocols = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
   return protocols.includes(toWebSocketAuthProtocol(expectedToken))
+}
+
+function sirannonPackageVersion(): string {
+  const manifestUrl = new URL('../../../package.json', import.meta.url)
+  const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8')) as { version?: unknown }
+  if (typeof manifest.version !== 'string') {
+    throw new Error(`No version found in ${manifestUrl.pathname}`)
+  }
+  return manifest.version
 }
 
 function toWebSocketAuthProtocol(value: string): string {

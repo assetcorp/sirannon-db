@@ -4,15 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "server": "tsx src/server.ts",
+    "app:dev": "vite",
+    "dev": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm run app:dev\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",
+    "better-sqlite3": "12.6.2",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0",
     "wa-sqlite": "1.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "26.1.2",
+    "concurrently": "9.2.1",
+    "tsx": "4.21.0",
     "typescript": "5.9.3",
     "vite": "8.0.0"
   }

@@ -1,14 +1,8 @@
-import type { InventorySnapshot } from '../../lib/schemas'
-
-export type DemoMode = 'app-actions' | 'driver-access'
+export type WriteMode = 'app-server' | 'browser-direct'
 export type ConnectionState = 'connecting' | 'live' | 'offline'
 
-export interface LoaderData extends InventorySnapshot {
-  initialError: string | null
-}
-
 export interface ModeOptionData {
-  mode: DemoMode
+  mode: WriteMode
   title: string
   route: string
   summary: string
@@ -32,24 +26,19 @@ export const EMPTY_FORM: ProductFormState = {
   stock: '',
 }
 
-export const EMPTY_SNAPSHOT: InventorySnapshot = {
-  products: [],
-  activity: [],
-}
-
 export const RECEIVE_QUANTITY = 10
 
 export const MODE_OPTIONS: ModeOptionData[] = [
   {
-    mode: 'app-actions',
-    title: 'Application API',
-    route: 'Browser -> App server -> Sirannon',
-    summary: 'Validated domain actions on the server with live subscriptions in the browser.',
+    mode: 'app-server',
+    title: 'Write through the app server',
+    route: 'Browser -> App server -> Sirannon HTTP',
+    summary: 'A server function validates the input, then calls the registered write over HTTP.',
   },
   {
-    mode: 'driver-access',
-    title: 'Direct Data API',
-    route: 'Browser -> Sirannon HTTP',
-    summary: 'The browser uses the client driver directly against the demo allowlist.',
+    mode: 'browser-direct',
+    title: 'Write from the browser',
+    route: 'Browser -> Sirannon WebSocket',
+    summary: 'The browser calls the same registered write over the socket its live queries run on.',
   },
 ]

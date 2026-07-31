@@ -1,7 +1,7 @@
+import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toServerBaseUrl } from './cluster-config'
 import { getMajorityWriteAvailability } from './cluster-readiness'
 import type { ClusterNode } from './schemas'
 import { clusterNodeSchema } from './schemas'
-import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toServerBaseUrl } from './sql'
 
 interface ClusterStatusResponse {
   databaseId?: unknown

@@ -113,9 +113,9 @@ The [specification](packages/spec/) defines the wire formats, value encodings, a
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
-| [`node`](packages/ts/examples/node/) | Node.js >= 22 | Core features on either `better-sqlite3` or Node's built-in SQLite driver |
-| [`web-wa-sqlite`](packages/ts/examples/web-wa-sqlite/) | Browser (Vite) | CRUD, transactions, and CDC in the browser |
-| [`web-client`](packages/ts/examples/web-client/) | Browser and Node.js | Client SDK over HTTP and WebSocket |
+| [`node`](packages/ts/examples/node/) | Node.js >= 22 | Core features, live queries, and multi-tenant lifecycle on either `better-sqlite3` or Node's built-in SQLite driver |
+| [`web-wa-sqlite`](packages/ts/examples/web-wa-sqlite/) | Browser and Node.js | Offline-first device sync: a local database in the browser, snapshot load, offline writes, conflict resolution, and a local live query |
+| [`web-client`](packages/ts/examples/web-client/) | Browser and Node.js | Live queries and the React hooks over registered operations, with no SQL on the wire |
 | [`distributed-entitlements`](packages/ts/examples/distributed-entitlements/) | Node.js and browser | Three-node coordinator-backed replication with etcd, gRPC, mTLS, and Toxiproxy failure controls |
 
 ```bash

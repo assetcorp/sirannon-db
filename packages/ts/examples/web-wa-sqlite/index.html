@@ -4,34 +4,45 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
-    <title>Sirannon DB - wa-sqlite Browser Example</title>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; background: #fafafa; color: #1a1a1a; }
-      h1 { margin-bottom: 1.5rem; }
-      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-      button { padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.9rem; }
-      button:hover { background: #f0f0f0; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      #output { background: #1a1a1a; color: #e0e0e0; padding: 1rem; border-radius: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; white-space: pre-wrap; min-height: 300px; max-height: 600px; overflow-y: auto; }
-      .status { margin-bottom: 1rem; padding: 0.5rem 1rem; border-radius: 4px; font-size: 0.9rem; }
-      .status.ready { background: #d4edda; color: #155724; }
-      .status.loading { background: #fff3cd; color: #856404; }
-      .status.error { background: #f8d7da; color: #721c24; }
-    </style>
+    <title>Field service - Sirannon device sync</title>
   </head>
   <body>
-    <h1>Sirannon DB - wa-sqlite</h1>
-    <div id="status" class="status loading">Loading...</div>
-    <div class="controls">
-      <button type="button" id="btn-init" disabled>Initialize DB</button>
-      <button type="button" id="btn-insert" disabled>Insert Row</button>
-      <button type="button" id="btn-query" disabled>Query All</button>
-      <button type="button" id="btn-transaction" disabled>Run Transaction</button>
-      <button type="button" id="btn-cdc" disabled>CDC Watch</button>
-      <button type="button" id="btn-clear">Clear Log</button>
-    </div>
-    <div id="output"></div>
+    <header class="app-header">
+      <div class="app-title">
+        <h1>Field service</h1>
+        <p id="device-label">Opening the local database...</p>
+      </div>
+      <div class="app-link">
+        <span id="link-pill" class="pill pill-link-stopped">Disconnected</span>
+        <button type="button" id="link-button">Come online</button>
+      </div>
+    </header>
+
+    <main>
+      <p id="banner" class="banner" hidden></p>
+      <section id="status-strip" class="status-strip"></section>
+      <p id="sync-error" class="sync-error" hidden></p>
+      <section id="snapshot-panel" class="snapshot" hidden></section>
+
+      <section class="panel">
+        <h2>Work orders on this device</h2>
+        <div id="order-list" class="order-list">
+          <p class="empty">Opening the local work order list...</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Raise a work order</h2>
+        <form id="new-order-form" class="new-order">
+          <label for="new-order-site">Site</label>
+          <input id="new-order-site" name="site" type="text" required maxlength="80" placeholder="Northgate substation" />
+          <label for="new-order-task">Task</label>
+          <input id="new-order-task" name="task" type="text" required maxlength="120" placeholder="Replace the isolation transformer" />
+          <button type="submit">Add to this device</button>
+        </form>
+      </section>
+    </main>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

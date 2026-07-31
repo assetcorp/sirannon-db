@@ -219,9 +219,9 @@ The [specification](../spec/) defines the wire formats, value encodings, and rep
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
-| [`node`](examples/node/) | Node.js >= 22 | Schema, migrations, CRUD, transactions, CDC, pools, metrics, multi-tenant, hooks, backup, shutdown |
-| [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser (Vite) | CRUD, transactions, and CDC subscriptions in the browser |
-| [`web-client`](examples/web-client/) | Browser and Node.js | Client SDK over HTTP and WebSocket |
+| [`node`](examples/node/) | Node.js >= 22 | Schema, migrations, CRUD, transactions, CDC, live queries, pools, metrics, multi-tenant lifecycle, hooks, backup, shutdown |
+| [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser and Node.js | Offline-first device sync: a local database in the browser, snapshot load, offline writes, conflict resolution, and a local live query |
+| [`web-client`](examples/web-client/) | Browser and Node.js | Registered operations, code generation, remote live queries, and the React hooks |
 | [`distributed-entitlements`](examples/distributed-entitlements/) | Node.js and browser | Three-node coordinator-backed replication over gRPC with etcd authority, mTLS, and Toxiproxy failure controls |
 
 ```bash

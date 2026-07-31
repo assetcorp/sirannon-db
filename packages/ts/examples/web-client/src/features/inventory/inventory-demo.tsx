@@ -8,25 +8,28 @@ import { MetricsGrid } from './components/metrics-grid'
 import { ModeSwitcher } from './components/mode-switcher'
 import { PanelHeader } from './components/panel-header'
 import { ProductTable } from './components/product-table'
-import type { LoaderData } from './types'
 import { useInventoryController } from './use-inventory-controller'
 
-export function InventoryDemo({ initialData }: { initialData: LoaderData }) {
-  const controller = useInventoryController(initialData)
+export function InventoryDemo() {
+  const controller = useInventoryController()
 
   return (
     <main className="app-shell">
       <AppHeader
         connectionState={controller.connectionState}
-        refreshing={controller.refreshing}
         pendingAction={controller.pendingAction}
-        onRefresh={controller.handleRefreshClick}
         onReset={controller.handleResetClick}
       />
 
       <section className="control-band">
         <ModeSwitcher activeMode={controller.mode} onChange={controller.handleModeChange} />
-        <LiveSignal lastEvent={controller.lastEvent} pendingAction={controller.pendingAction} />
+        <LiveSignal
+          connectionState={controller.connectionState}
+          revalidating={controller.revalidating}
+          pendingAction={controller.pendingAction}
+          productCount={controller.products.length}
+          activityCount={controller.activity.length}
+        />
       </section>
 
       <MetricsGrid stats={controller.stats} />

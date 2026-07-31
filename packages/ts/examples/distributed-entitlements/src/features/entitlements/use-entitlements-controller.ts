@@ -1,3 +1,4 @@
+import type { ChangeEvent } from '@delali/sirannon-db'
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -11,7 +12,6 @@ import {
   replayDuplicateUsage,
   resetControlPlane,
 } from '../../lib/app-actions.functions'
-import type { CDCEvent } from '../../lib/cdc'
 import { getMajorityWriteAvailability } from '../../lib/cluster-readiness'
 import { subscribeControlPlane } from '../../lib/direct-client'
 import type {
@@ -106,12 +106,17 @@ export function useEntitlementsController(initialData: LoaderData) {
   }, [refreshSnapshot])
 
   const handleLiveEvent = useCallback(
-    (event: CDCEvent) => {
+    (event: ChangeEvent) => {
       setLastEvent(formatEventLabel(event))
       queueLiveRefresh()
     },
     [queueLiveRefresh],
   )
+
+  const handleSubscriptionReset = useCallback(() => {
+    setLastEvent('Reconnected past the retained history; re-reading the control plane')
+    queueLiveRefresh()
+  }, [queueLiveRefresh])
 
   useEffect(() => {
     let disposed = false
@@ -119,7 +124,7 @@ export function useEntitlementsController(initialData: LoaderData) {
 
     setConnectionState('connecting')
 
-    subscribeControlPlane(handleLiveEvent)
+    subscribeControlPlane({ onChange: handleLiveEvent, onReset: handleSubscriptionReset })
       .then(nextSubscriptions => {
         if (disposed) {
           for (const subscription of nextSubscriptions) {
@@ -144,7 +149,7 @@ export function useEntitlementsController(initialData: LoaderData) {
         subscription.unsubscribe()
       }
     }
-  }, [handleLiveEvent])
+  }, [handleLiveEvent, handleSubscriptionReset])
 
   useEffect(() => {
     const nextSelected = selectedCustomerOrFirst(state.customers, selectedCustomerId)

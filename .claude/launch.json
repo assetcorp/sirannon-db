@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "web-client",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "packages/ts/examples/web-client", "run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
       "name": "distributed-entitlements",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "packages/ts/examples/distributed-entitlements", "run", "app:dev"],

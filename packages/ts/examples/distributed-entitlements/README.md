@@ -70,7 +70,23 @@ pnpm run build
 - Isolate the current primary from etcd through Toxiproxy and observe failover.
 - Restore the coordinator and replication links and watch eligible nodes converge.
 
-The mutation path checks majority write availability before sending a transaction. The coordinator still determines whether the current primary has authority, and the replication engine uses majority write concern by default in coordinator mode.
+The mutation path checks majority write availability before sending a write. The coordinator still determines whether the current primary has authority, and the replication engine uses majority write concern by default in coordinator mode.
+
+## Registered operations
+
+Every node runs with `acceptSql` at its default, so it accepts no SQL over the network. [`src/operations.ts`](src/operations.ts) registers the four reads and four writes the dashboard uses, and each node serves them by name. `sirannon-codegen` turns that registry into the references the dashboard calls it through:
+
+```sh
+pnpm run codegen
+```
+
+That writes [`src/generated/operations.ts`](src/generated/operations.ts), which is checked in. Every write declares `fromIdentity`, so the server fills the `audit_log.actor` column from the authenticated caller rather than trusting the request, and each write validates its arguments before it produces a statement.
+
+The dashboard reads join `customers` to `entitlements`, so they stay ordinary reads rather than live queries; a live query maintains a single-table result. Reactivity here comes from CDC table subscriptions, and each one passes `onReset` so that a reconnect landing outside the retained history re-reads the control plane instead of showing rows that are quietly out of date. The [web-client example](../web-client/) shows the live-query form.
+
+## Read routing
+
+Each node advertises the endpoints a client may read from through `GET /db/entitlements/cluster`. A node in the in-sync set advertises `local` and `majority`; a lagging one advertises `local` only, and a faulted, draining, or repairing node is left out entirely. Both clients ask for `readConcern: 'majority'`, so they route away from a node that cannot serve it. `authorizeClusterStatus` limits that route to callers holding the bearer token, so a browser holding only the WebSocket subprotocol cannot read cluster topology.
 
 ## Security boundary
 
@@ -81,7 +97,7 @@ SIRANNON_CLUSTER_TOKEN=sirannon-entitlements-local-token
 VITE_SIRANNON_CLUSTER_TOKEN=sirannon-entitlements-local-token
 ```
 
-TanStack server functions validate inputs with Zod and execute fixed SQL statements with bound parameters. The browser-visible WebSocket token exists only to demonstrate authenticated local subscriptions. Replace the shared token, restrict origins, and terminate application traffic with TLS before exposing a similar service outside localhost.
+TanStack server functions validate inputs with Zod and then call a registered write by name; the statements live on the server and never cross the network. A bearer token identifies the `control-plane-operator` actor and the WebSocket subprotocol identifies `control-plane-browser`, and the audit log records whichever one made each change. The browser-visible token exists only to demonstrate authenticated local subscriptions. Replace the shared tokens, restrict origins, and terminate application traffic with TLS before exposing a similar service outside localhost.
 
 The gRPC replication links use mTLS. The example's etcd endpoint uses plain HTTP with `allowInsecure: true` because it stays inside the local Docker network. Production coordinator access requires HTTPS and an authenticated Sirannon identity, either mTLS credentials or etcd username/password authentication.
 

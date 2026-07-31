@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "server": "tsx src/data-server.ts",
+    "codegen": "tsx ../../dist/codegen/cli.mjs --registry ./src/operations.ts --out ./src/generated/operations.ts",
     "app:dev": "vite dev",
     "dev": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm run app:dev\"",
     "build": "vite build",

@@ -7,6 +7,7 @@
     "certs": "tsx src/scripts/generate-certs.ts",
     "proxy:setup": "tsx src/scripts/setup-proxies.ts",
     "node": "tsx src/cluster-node.ts",
+    "codegen": "tsx ../../dist/codegen/cli.mjs --registry ./src/operations.ts --out ./src/generated/operations.ts",
     "cluster:up": "docker compose up --build",
     "cluster:down": "docker compose down --volumes",
     "cluster:reset": "docker compose down --volumes && docker compose up --build",

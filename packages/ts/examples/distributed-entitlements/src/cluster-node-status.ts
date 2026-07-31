@@ -54,13 +54,29 @@ export function toClusterStatusInfo(
       ? { ...coordinatorState.currentPrimary }
       : (coordinatorState?.currentPrimary ?? null),
     primaryTerm: coordinatorState?.primaryTerm,
-    readEndpoints: coordinatorState?.inSyncNodeIds.map(inSyncNodeId => ({
-      nodeId: inSyncNodeId,
-      endpoint: context.httpEndpoints[inSyncNodeId] ?? '',
-      readConcerns: ['local', 'majority'],
-    })),
+    readEndpoints: coordinatorState && readEndpoints(coordinatorState, context),
     health: clusterHealth(status, context.nodeId),
   }
+}
+
+type CoordinatorState = NonNullable<ReplicationStatus['coordinator']>
+
+function readEndpoints(
+  coordinatorState: CoordinatorState,
+  context: ClusterStatusContext,
+): NonNullable<ClusterStatusInfo['readEndpoints']> {
+  const serving = coordinatorState.votingDataBearingNodeIds.filter(
+    nodeId =>
+      !coordinatorState.faultedNodeIds.includes(nodeId) &&
+      !coordinatorState.drainingNodeIds.includes(nodeId) &&
+      !coordinatorState.repairingNodeIds.includes(nodeId),
+  )
+
+  return serving.map(nodeId => ({
+    nodeId,
+    endpoint: context.httpEndpoints[nodeId] ?? '',
+    readConcerns: coordinatorState.inSyncNodeIds.includes(nodeId) ? ['local', 'majority'] : ['local'],
+  }))
 }
 
 function clusterHealth(status: ReplicationStatus, nodeId: string): ClusterStatusInfo['health'] {

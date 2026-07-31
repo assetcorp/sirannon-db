@@ -11,6 +11,17 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
 | `migrations` | `MigrationSource` | No | Migration set, or a function returning it, applied to every writable database before it registers |
+| `writerWorker` | `boolean \| WriterWorkerOptions` | No | Default writer-worker setting for every database this registry opens |
+
+## `LifecycleConfig`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `autoOpen.resolver` | `(id: string) => { path, options? } \| undefined` | - | Resolves an unknown database ID to a file path, which is how a tenant opens on first access |
+| `idleTimeout` | `number` | `0` | Milliseconds before an idle database closes; `0` disables the timer |
+| `maxOpen` | `number` | `0` | Maximum databases open at once, evicting least-recently-used; `0` means unlimited |
+
+`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` applied to every tenant it opens.
 
 ## `DatabaseOptions`
 
@@ -26,6 +37,31 @@ Every option accepted by the registry, the databases it opens, the server, the c
 
 `WriterWorkerOptions` accepts `maxPendingWrites` (in-flight writes before the server sheds load), `writeTimeoutMs` (per-operation deadline), and `maxRestarts` (respawns allowed after the worker crashes).
 
+## `QueryOptions`
+
+Passed per call to `query`, `execute`, `executeBatch`, and a registered operation.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `readConcern` | `{ level: 'local' \| 'majority' \| 'linearizable' }` | - | How current the read must be; coordinator mode enforces it and static mode ignores it |
+| `writeConcern` | `{ level, timeoutMs? }` | local commit in static mode, `'majority'` in coordinator mode | How many nodes must acknowledge the write; `timeoutMs` defaults to `5_000` |
+
+## `BulkLoadOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `durability` | `'off' \| 'normal'` | `'off'` | Durability in force while the load runs; `'off'` suits a load starting from nothing, `'normal'` keeps WAL corruption safety |
+| `checkpoint` | `boolean` | `true` | Whether the load ends with a WAL checkpoint; set it false on every batch but the last of a multi-batch import |
+
+## `LiveQueryOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `rereadJitterMs` | `number` | `25` | Upper bound on the random delay before a second read starts |
+| `maxTransactionChanges` | `number` | `10_000` | Buffered changes in one transaction before the query reads a second time instead of applying them |
+
+`UseLiveQueryOptions` in the React entry adds `enabled`, which holds a query closed while it is `false`.
+
 ## `ServerOptions`
 
 | Option | Type | Default | Description |
@@ -36,8 +72,15 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP body and WebSocket message size; a positive integer no larger than `4_294_967_295` |
 | `maxWebSocketBackpressureBytes` | `number` | larger of `16_777_216` and `maxBodyBytes` | Bytes buffered per connection before the server closes it so the client reconnects instead of losing a frame |
 | `cdcRetentionMs` | `number` | `3_600_000` | How long change events are retained, bounding change-log growth and how far back `sinceSeq` can resume |
+| `deviceCursorRetentionMs` | `number` | `2_592_000_000` | How long a device cursor is retained before eviction, 30 days by default; an evicted device resyncs from a snapshot |
 | `maxUnacknowledgedChanges` | `number` | `1_000` | How far a device may run past its acknowledged sequence before delivery pauses; a larger transaction still arrives whole |
-| `onRequest` | `OnRequestHook` | - | Middleware hook for auth, rate limiting, and request validation |
+| `authenticate` | `AuthenticateHook<Identity>` | - | Runs before every database route and WebSocket upgrade; returns the caller identity, throws `RequestDeniedError` to refuse |
+| `operations` | `OperationRegistry<Identity>` | - | Reads and writes this server serves by name, keyed by database ID |
+| `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
+| `resolveExecutionTarget` | `ServerExecutionTargetResolver` | - | Resolves the target each database runs against, which is how replication enforces authority |
+| `getReplicationStatus` | `() => ReplicationStatusInfo \| null` | - | Feeds `GET /health/ready` with replication state |
+| `getClusterStatus` | `(databaseId: string) => ClusterStatusInfo \| null` | - | Feeds `GET /db/{id}/cluster` with routing metadata |
+| `authorizeClusterStatus` | `ClusterStatusAuthorizer` | - | Your check for whether a request may read cluster status, which names every node address |
 
 ## `ClientOptions`
 
@@ -48,6 +91,27 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `webSocketProtocols` | `string \| string[]` | - | WebSocket subprotocols sent during the upgrade handshake |
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
 | `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
+| `requestTimeout` | `number` | `30_000` | Per-request timeout in ms on the WebSocket transport; raise it for very large writes, or set `0` to wait indefinitely |
+
+## `TopologyAwareClientOptions`
+
+Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, alongside every `ClientOptions` field. `SirannonClient` refuses each of these with `INVALID_ARGUMENT`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoints` | `string[]` | - | Starter list that coordinator mode queries for routing metadata |
+| `primary` | `string` | - | Primary endpoint used directly in static mode |
+| `replicas` | `string[]` | - | Replica endpoints used directly in static mode |
+| `readPreference` | `'primary' \| 'replica' \| 'nearest'` | `'primary'` | Which node serves a read |
+| `discovery` | `'static' \| 'coordinator'` | `'static'` | Whether routing comes from your configuration or from `GET /db/{id}/cluster` |
+| `readConcern` | `'local' \| 'majority' \| 'linearizable'` | `'majority'` in coordinator mode | Client-wide read concern applied to node selection |
+
+## `LoadAllOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `batchSize` | `number` | `1_000` | Rows per request; each batch must fit under the server's `maxBodyBytes` |
+| `durability` | `'off' \| 'normal'` | `'off'` | Durability in force on the server while each batch loads |
 
 ## `SyncControllerOptions`
 
@@ -73,6 +137,19 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `onSnapshotProgress` | `(progress: SnapshotProgress) => void` | - | Table and row progress during a snapshot |
 | `onSnapshotComplete` | `(outcome: SnapshotOutcome) => void` | - | Called once a snapshot load ends, carrying whether the local database is usable again |
 
+## `SnapshotDownloadOptions`
+
+Accepted by `downloadDatabaseSnapshot(db.deviceSync(), options)`, which copies a server database into a local one outside a `SyncController`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | required | Server base URL |
+| `databaseId` | `string` | required | Database to copy |
+| `headers` | `Record<string, string>` | - | Headers sent on the manifest and page requests |
+| `pageSize` | `number` | `500` | Rows per snapshot page |
+| `requestTimeoutMs` | `number` | `30_000` | Per-request timeout in ms |
+| `onProgress` | `(progress: SnapshotProgress) => void` | - | Table and row progress during the copy |
+
 ## `ReplicationOptions`
 
 | Option | Type | Default | Description |
@@ -86,7 +163,7 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
 | `batchSize` | `number` | `100` | Changes per replication batch |
 | `batchIntervalMs` | `number` | `100` | Sender loop interval in ms |
-| `maxClockDriftMs` | `number` | `60000` | Maximum tolerated HLC drift before rejecting a batch |
+| `maxClockDriftMs` | `number` | `60000` | Largest HLC gap between two nodes this node accepts before it rejects a batch |
 | `maxPendingBatches` | `number` | `10` | In-flight batches per peer before backpressure |
 | `maxBatchChanges` | `number` | `1000` | Maximum accepted changes in one inbound batch |
 | `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |
@@ -119,6 +196,22 @@ Every option accepted by the registry, the databases it opens, the server, the c
 
 `CoordinatorControllerConfig` accepts `enabled`, `holderId`, `leaseTtlMs` (default 10,000 ms), and `tickIntervalMs` (default 1,000 ms).
 
+## `EtcdClusterCoordinatorOptions`
+
+Accepted by `createEtcdCoordinator` from `@delali/sirannon-db/replication/coordinator/etcd`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `hosts` | `string \| string[]` | required | etcd endpoints; each must use `https` unless you set `allowInsecure` |
+| `keyPrefix` | `string` | required | Key namespace this cluster writes under |
+| `credentials` | etcd credentials | - | Root certificate, private key, and certificate chain for mutual TLS |
+| `auth` | etcd auth | - | Username and password authentication |
+| `grpcOptions` | `Record<string, unknown>` | - | Options passed through to the etcd gRPC channel |
+| `dialTimeoutMs` | `number` | the etcd client's own default | Connection timeout in ms |
+| `defaultCallTimeoutMs` | `number` | - | Deadline applied to each coordinator call in ms |
+| `allowInsecure` | `boolean` | `false` | Allows plain-`http` endpoints, which belongs in tests |
+| `onWatcherError` | `(error: Error) => void` | - | Called when a coordinator watcher fails |
+
 ## `TransportConfig`
 
 | Option | Type | Description |
@@ -131,3 +224,17 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `metadata` | `Record<string, unknown>` | Optional custom transport metadata |
 
 `ReplicationEngine.start()` fills in role, group, term, and protocol version. Set them yourself only when you use a `ReplicationTransport` without the engine.
+
+## `GrpcReplicationOptions`
+
+Accepted by `GrpcReplicationTransport` from `@delali/sirannon-db/transport/grpc`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `host` | `string` | `'0.0.0.0'` | Address this node listens on for replication traffic |
+| `port` | `number` | `0` | Listen port; `0` takes an ephemeral one |
+| `tlsCert` | `string` | - | Path to this node's certificate |
+| `tlsKey` | `string` | - | Path to this node's private key |
+| `tlsCaCert` | `string` | - | Path to the certificate authority that signs every peer |
+| `insecure` | `boolean` | `false` | Runs without TLS, which belongs in local development |
+| `forwardDeadlineMs` | `number` | `30_000` | Deadline in ms for a write forwarded to the primary |

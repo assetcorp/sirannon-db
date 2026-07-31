@@ -19,6 +19,21 @@ const summary = await db.loadAll('INSERT INTO events (id, payload) VALUES (?, ?)
 })
 ```
 
+## Live queries
+
+`db.live` returns a query result that change events keep current, so a view re-renders without polling and without re-reading the table:
+
+```ts
+const orders = await db.live<{ id: number; total: number }>(
+  'SELECT id, total FROM orders WHERE status = ? ORDER BY id',
+  ['pending'],
+)
+
+orders.subscribe(() => render(orders.getState()))
+```
+
+The [live queries guide](live-queries.md) covers the update kinds, the three cases that trigger a second read, and the statements a live query maintains.
+
 ## Migrations
 
 Numbered `.up.sql` and `.down.sql` files apply once each, inside a transaction, tracked in `_sirannon_migrations` with a checksum. Versions must be integers from 1 to 2,147,483,647 so they fit `PRAGMA user_version`, which mirrors the highest applied version.

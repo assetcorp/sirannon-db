@@ -39,7 +39,7 @@ A CDC trigger writes a change with `node_id`, `tx_id`, and `hlc` empty; such a r
 
 `applyChanges` returns `ApplyResult { applied, skipped, conflicts }`.
 
-A device applies pulled changes from the live stream under the same rules, one `txId` group per transaction, with no checksum and no batch envelope. It writes `device_sync_pull_seq` inside the group's transaction and records nothing in `_sirannon_applied_changes`.
+A device applies pulled changes from the live stream under the same rules, one `txId` group per transaction, with no checksum and no batch envelope, reading the group from the staging table of [Staged Pull](#staged-pull). It writes `device_sync_pull_seq` inside the group's transaction and records nothing in `_sirannon_applied_changes`.
 
 ---
 
@@ -83,24 +83,56 @@ An acknowledgement upserts the cursor and moves `acked_seq` forward only (`max(c
 A device pulls other writes over the WebSocket subscription ([05-server.md](05-server.md#websocket-protocol-normative)), presenting its identity:
 
 ```text
-{ type: 'subscribe', id, tables, sinceSeq?, epoch?, deviceId, schemaVersion? }
+{ type: 'subscribe', id, tables, sinceSeq?, epoch?, deviceId, schemaVersion?, stagedStream? }
 ```
 
-A device subscribes once for its whole table set, so its changes arrive in one ascending stream and a transaction spanning tables stays contiguous. It resumes from `device_sync_pull_seq`, the highest sequence it has applied, on both a first subscribe and a reconnect.
+A device subscribes once for its whole table set, so its changes arrive in one ascending stream and a transaction spanning tables stays contiguous. It resumes from the higher of `device_sync_pull_seq` and the highest sequence in `_sirannon_staged_changes`, on both a first subscribe and a reconnect.
 
 `deviceId` is a 32-hex device id. The server does not deliver a change whose `origin` equals the subscribing `deviceId`, so a device never receives its own writes back. The server must also withhold an unstamped change, which carries no origin and no timestamp; a device obtains those rows by applying the migration that wrote them. Resumption and the `resync` signal follow the WebSocket rules, and a `sinceSeq` sent with an epoch other than the current one forces a resync.
 
-Each change carries `rowId`, `txId`, and `txEnd`. A device buffers a transaction until the change marked `txEnd` arrives, applies the group with its resolver, and advances `device_sync_pull_seq` in the same transaction.
+Each change carries `rowId`, `txId`, and `txEnd`. A device stages each change on arrival (see [Staged Pull](#staged-pull)). Once it has staged the change marked `txEnd`, it applies the group with its resolver and advances `device_sync_pull_seq` in the same transaction.
 
-The device acknowledges what it has applied so the server can advance the device cursor and prune:
+The device acknowledges what it holds durably so that the server advances the device cursor and prunes:
 
 ```text
 { type: 'ack', id, deviceId, seq }  ->  result { acked: true, seq }
 ```
 
-`seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has applied and committed, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
+`seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
 
-The server holds delivery to a device once the highest sequence sent runs more than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's acknowledged cursor, and resumes on the next acknowledgement. The window is measured per transaction, so a transaction larger than the window is still delivered whole. Held changes remain in the change log and are delivered in order. The server reports the window on `subscribed`, and a device acknowledges immediately once it holds more than half of it.
+The server holds delivery to a device once the highest sequence sent runs more than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's acknowledged cursor, and resumes on the next acknowledgement. The window is measured per transaction, so a transaction larger than the window is still delivered whole. On a subscription carrying `stagedStream`, the server measures the window per change and may pause delivery within a transaction. Held changes remain in the change log, and the server delivers them in order. The server reports the window on `subscribed` as `maxUnacknowledgedChanges`, and a device acknowledges immediately once it holds more than half of it.
+
+---
+
+## Staged Pull
+
+A device stages every pulled change before applying it. The staging table is `_sirannon_staged_changes`:
+
+```sql
+CREATE TABLE _sirannon_staged_changes (
+  seq        INTEGER PRIMARY KEY,
+  table_name TEXT NOT NULL,
+  operation  TEXT NOT NULL,
+  row_id     TEXT NOT NULL,
+  changed_at REAL NOT NULL,
+  old_data   TEXT,
+  new_data   TEXT,
+  node_id    TEXT NOT NULL DEFAULT '',
+  tx_id      TEXT NOT NULL DEFAULT '',
+  hlc        TEXT NOT NULL DEFAULT '',
+  tx_end     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx__sirannon_staged_changes_tx_end ON _sirannon_staged_changes (tx_end, seq);
+```
+
+`seq`, `table_name`, `operation`, `row_id`, and `changed_at` carry the change's sequence, table, operation, row id, and timestamp. `old_data` and `new_data` hold the row images as JSON under the [tagged value encoding](02-core.md#tagged-value-encoding-normative); `new_data` is null for a delete, and `old_data` is null when the change carries no previous image. `node_id`, `tx_id`, and `hlc` carry the change's origin, transaction, and HLC timestamp, each empty when the change carries none. `tx_end` is 1 on the change marked `txEnd` and 0 otherwise.
+
+A device stages each received batch in one transaction, which commits before any acknowledgement covering those sequences. It applies each complete staged transaction in one local transaction that also writes `device_sync_pull_seq`, then deletes the staged rows at or below that sequence.
+
+On open, a device deletes staged rows at or below `device_sync_pull_seq`, applies every complete staged transaction, and keeps an incomplete tail for the resumed subscription. A device that fails to apply during this recovery still attempts the subscription, so that a device below the server schema version reaches the migration handshake.
+
+A device that requires per-change pacing declares `stagedStream: true` on subscribe, and sends the field only to a server announcing `sync.staged-stream`. The server then packs several changes into each `changes` message (see [05-server.md](05-server.md#websocket-protocol-normative)). The number of changes per message is implementation-defined.
 
 ---
 
@@ -122,7 +154,7 @@ The manifest reports `startSeq` (the current maximum change sequence, captured b
 
 A page returns rows for one table using keyset pagination: `afterKey` is the last key of the previous page (1 to 16 values) and `nextKey` is the last key of this page (null when `done`). `limit` is 1 to 1000, defaulting to 500, and a page is further trimmed to fit an 8 MiB byte cap. `checksum` is the lowercase SHA-256 hex digest of the canonical form of `rows` (the same canonicalisation as the batch checksum); the device verifies it and fails with `SNAPSHOT_CHECKSUM_MISMATCH` on a mismatch.
 
-The device applies the snapshot as a wipe-and-replace: it sets `device_sync_snapshot_state` to `loading`, turns foreign keys off, unwatches and drops the target tables in reverse dependency order, recreates the schema, inserts each table's pages, replaces its migration history and mirrors `user_version` (see [Migration Handshake](#migration-handshake)), sets the pull cursor to `startSeq` and `epoch`, then rewatches the tables, turns foreign keys on, and clears the state. A load interrupted before completion leaves the state set, so that a restart detects the incomplete copy and resumes the resync. While a load runs, every read and write on the database fails with `SNAPSHOT_IN_PROGRESS`; the gate is seeded at open from the durable state marker.
+The device applies the snapshot as a wipe-and-replace: it sets `device_sync_snapshot_state` to `loading`, turns foreign keys off, clears `_sirannon_staged_changes`, unwatches and drops the target tables in reverse dependency order, recreates the schema, inserts each table's pages, replaces its migration history and mirrors `user_version` (see [Migration Handshake](#migration-handshake)), sets the pull cursor to `startSeq` and `epoch`, then rewatches the tables, turns foreign keys on, and clears the state. A load interrupted before completion leaves the state set, so that a restart detects the incomplete copy and resumes the resync. While a load runs, every read and write on the database fails with `SNAPSHOT_IN_PROGRESS`; the gate is seeded at open from the durable state marker.
 
 Because `startSeq` is captured before the copy and the pull cursor is set to it, the live pull replays every change after `startSeq`, reconciling writes made during the copy. This requires the change log to retain history back to `startSeq` for the copy's duration.
 
@@ -165,7 +197,7 @@ A device-sync server announces at least these capabilities, and device sync requ
 
 `sync.push`, `sync.echo-suppression`, `sync.ack`, `sync.resume`, `sync.snapshot`, `sync.migrations`, `sync.schema-gate`, `sync.stream-apply`.
 
-`sync.stream-apply` covers the `rowId`, `txId`, and `txEnd` fields and the acknowledgement-paced delivery window. A server announces further capabilities alongside these; see [05-server.md](05-server.md#registered-operations).
+`sync.stream-apply` covers the `rowId`, `txId`, and `txEnd` fields and the acknowledgement-paced delivery window. `sync.staged-stream` covers the `stagedStream` subscribe field, the `changes` message, and per-change window pacing; device sync does not require it, and a device omits `stagedStream` when a server does not announce it. A server announces further capabilities alongside these; see [05-server.md](05-server.md#registered-operations).
 
 Before syncing, a client fetches `/capabilities`. A `404` (the server predates device sync) or a missing required capability fails with `SYNC_UNSUPPORTED`, naming the gap, so the client does not sync against a server whose WebSocket ignores the device-sync fields. A connection, timeout, or malformed-response failure is indeterminate; the client records it and continues in a degraded, offline-tolerant state rather than treating the server as unsupported.
 
@@ -179,7 +211,7 @@ The controller drives a device's sync loop.
 SyncControllerOptions {
   url, databaseId, tables,
   headers?, batchSize? (100), pushIntervalMs? (1000), ackIntervalMs? (2000),
-  maxPushRetryDelayMs? (30000), requestTimeout? (30000),
+  immediateAckAfterChanges?, maxPushRetryDelayMs? (30000), requestTimeout? (30000),
   autoResync? (true), snapshotRetryDelayMs? (5000), maxSnapshotRetryDelayMs? (300000),
   snapshotPageSize?, resolver?,
   onChange?, onResyncRequired?, onSnapshotProgress?, onSnapshotComplete?
@@ -210,10 +242,10 @@ SyncStatus {
 
 - **start** verifies server capabilities first and caches them; a `SYNC_UNSUPPORTED` result aborts the start, while an indeterminate failure is recorded and the controller continues degraded. It then reconciles the migration handshake (falling back to the local version when offline), opens the live pull, and starts the push loop.
 - **push** drains the outbox after the durable `device_sync_pushed_seq` cursor in batches (default 100), advancing the cursor and the retention boundary per batch; a failure backs off exponentially to a cap (default 30,000 ms). A push refused with `MIGRATION_REQUIRED` reconciles migrations and retries.
-- **pull** runs its own WebSocket subscription with echo suppression, applies each transaction with `resolver` (defaulting to LWW), commits `device_sync_pull_seq` with the group, persists `device_sync_pull_epoch`, and acknowledges each commit. A server resync signal marks a resync required and calls `onResyncRequired`.
+- **pull** runs its own WebSocket subscription with echo suppression, stages each change, applies each complete transaction with `resolver` (defaulting to LWW), commits `device_sync_pull_seq` with the group, persists `device_sync_pull_epoch`, and acknowledges the highest staged sequence. `immediateAckAfterChanges` overrides the count of outstanding changes that forces an acknowledgement ahead of the debounce, defaulting to half the window the server reported and to 500 when it reported none. A server resync signal marks a resync required and calls `onResyncRequired`.
 - **auto-resync**, when enabled, schedules a snapshot download on a start with a pending load, on a server resync signal, and on a snapshot failure, backing off exponentially (first attempt immediate, then `snapshotRetryDelayMs` doubling to `maxSnapshotRetryDelayMs`).
 - **pause** tears down the loops and persists cursors; **resume** restarts; **stop** tears down and persists.
 
-`onChange` reports each pulled change after the controller commits it.
+`onChange` reports each pulled change after the controller commits it, including a change staged before a restart.
 
 The controller calls `onResyncRequired` when a resync becomes required: the server signals one, the migration handshake returns `resync-required`, or a start finds one the device still owes. It calls `onSnapshotComplete` once a snapshot load ends and the state has settled, for an automatic resync and for the application's own `downloadSnapshot()`. A failure after the wipe begins leaves the local database refusing reads and writes, so the outcome reports `databaseUsable` from the device's own load marker and `retrying` from whether another attempt is scheduled.

@@ -50,7 +50,7 @@ Sirannon is organised into layers, each depending only on the layers below it.
 | [05-server.md](05-server.md) | HTTP endpoints, value encoding, WebSocket protocol, health endpoints, CORS |
 | [06-client.md](06-client.md) | Client SDK, remote database proxy, subscriptions, topology-aware routing |
 | [07-errors.md](07-errors.md) | Error taxonomy and wire protocol error codes |
-| [08-device-sync.md](08-device-sync.md) | Device identity, write stamping, change application, push, device cursors, live pull, snapshot download, migration handshake, capability negotiation, sync controller |
+| [08-device-sync.md](08-device-sync.md) | Device identity, write stamping, change application, push, device cursors, live pull, staged pull, snapshot download, migration handshake, capability negotiation, sync controller |
 
 Test vector files are in the [test-vectors/](test-vectors/) directory.
 

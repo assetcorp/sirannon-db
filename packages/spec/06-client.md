@@ -116,7 +116,7 @@ RemoteSubscriptionBuilder {
 RemoteSubscription { unsubscribe(): void }
 ```
 
-Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. A subscription that fails to restore is removed and not retried. When routing metadata changes in topology mode, active subscriptions are re-established on the new endpoint; a migrated subscription restarts live from the new endpoint rather than resuming from its prior cursor.
+Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` and `changes` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. A subscription that fails to restore is removed and not retried. When routing metadata changes in topology mode, active subscriptions are re-established on the new endpoint; a migrated subscription restarts live from the new endpoint rather than resuming from its prior cursor.
 
 ---
 

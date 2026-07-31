@@ -15,7 +15,8 @@ const driver = betterSqlite3()
 const WINDOW = 20
 const DEVICE_SEED_ROWS = 200
 const SERVER_BULK_ROWS = 1_500
-const KILL_DELAYS_MS = [150, 300, 150, 500, 300]
+const STAGED_ROWS_BEFORE_FIRST_KILL = SERVER_BULK_ROWS / 4
+const LATER_KILL_DELAYS_MS = [300, 150, 500, 300]
 
 class ChaosProxy {
   private server: net.Server | null = null
@@ -122,6 +123,18 @@ async function until(predicate: () => Promise<boolean>, timeoutMs: number): Prom
   }
 }
 
+async function untilBulkPartlyStaged(timeoutMs: number): Promise<void> {
+  const start = Date.now()
+  while ((await stagedCount()) < STAGED_ROWS_BEFORE_FIRST_KILL) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error(
+        `the bulk transaction never reached ${STAGED_ROWS_BEFORE_FIRST_KILL} staged rows, so no kill could land part-way through it`,
+      )
+    }
+    await sleep(1)
+  }
+}
+
 async function tableRows(db: Database): Promise<Array<{ id: number; body: string }>> {
   const rows = await db.query<{ id: number | bigint; body: string }>('SELECT id, body FROM notes ORDER BY id')
   return rows.map(row => ({ id: Number(row.id), body: row.body }))
@@ -167,16 +180,16 @@ describe('staged pull under connection chaos', () => {
       }
     })
 
-    const rowsAtKill: number[] = []
-    for (const [round, delay] of KILL_DELAYS_MS.entries()) {
+    await untilBulkPartlyStaged(30_000)
+    proxy.killAllConnections()
+
+    for (const [round, delay] of LATER_KILL_DELAYS_MS.entries()) {
       await sleep(delay)
-      rowsAtKill.push((await tableRows(deviceDb)).length)
       proxy.killAllConnections()
-      if (round === 2) {
+      if (round === 1) {
         await deviceDb.execute("INSERT INTO notes (id, body) VALUES (20001, 'written mid-chaos')")
       }
     }
-    expect(rowsAtKill.some(count => count < DEVICE_SEED_ROWS + SERVER_BULK_ROWS)).toBe(true)
 
     await until(async () => {
       const [serverRows, deviceRows] = await Promise.all([tableRows(serverDb), tableRows(deviceDb)])

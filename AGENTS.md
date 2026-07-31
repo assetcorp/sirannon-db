@@ -15,6 +15,7 @@ Read the file you're editing and follow what it already does. The rules below co
 - Take internal table names from the constants in `core/internal-tables.ts`. Add columns with `ensureColumn`. Keep `CREATE TRIGGER` in `core/cdc/trigger-sql.ts`.
 - Never propose refusing, narrowing, or deferring a capability because implementing it properly is harder. Read how established databases solve it and what this repository already does, then propose that, and when ease of implementation is your real reason, say so plainly instead of presenting it as a recommendation.
 - Let a `SirannonError` propagate unchanged, because its code is what the server maps to an HTTP status.
+- Give every exported function and every member of `Sirannon` and `Database` a TSDoc comment, because `tsup` carries it into the published `.d.ts`, where it becomes what a caller reads on hover in their editor. Open with what the caller gets, keep the prose plain and easy to understand, and describe each parameter and the return value. Reference another symbol with `{@link Database.query}`, which resolves inside this package. Paste no URL into a comment.
 - Run `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm check:bundle`, and `pnpm test` before you report a change done.
 
 ## Gotchas

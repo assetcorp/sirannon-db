@@ -5,17 +5,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { decodeReadPosition, encodeReadPosition } from '../../cdc/read-position.js'
 import type { Database } from '../../database.js'
-import type { DatabaseReadDeps } from '../../database-reads.js'
-import { readRowsWithPosition } from '../../database-reads.js'
+import type { DatabaseCdcController } from '../../database-cdc.js'
 import type { OpenOptions, SQLiteConnection, SQLiteDriver } from '../../driver/types.js'
+import { query } from '../../query-executor.js'
 import { Sirannon } from '../../sirannon.js'
 
 let tempDir: string
 let sirannon: Sirannon
 let db: Database
 
-function readAt<T = Record<string, unknown>>(target: Database, sql: string) {
-  return readRowsWithPosition<T>((target as unknown as { reads: DatabaseReadDeps }).reads, sql)
+async function readAt<T = Record<string, unknown>>(target: Database, sql: string) {
+  const cdc = (target as unknown as { cdc: DatabaseCdcController }).cdc
+  const captured = await cdc.readAtPositionWith(conn => query<T>(conn, sql))
+  return { rows: captured.value, position: captured.position }
 }
 
 interface ConnectionLedger {

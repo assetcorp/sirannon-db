@@ -1,15 +1,13 @@
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
 import { ensureCdcEpoch } from './cdc/epoch.js'
-import type { PositionedRows } from './cdc/read-position.js'
 import { readAtPosition } from './cdc/read-position.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
-import { query } from './query-executor.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
 import { Transaction } from './transaction.js'
-import type { Params, SubscriptionBuilder } from './types.js'
+import type { SubscriptionBuilder } from './types.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -35,11 +33,6 @@ export class DatabaseCdcController {
       throw err
     })
     return this.epochRequest
-  }
-
-  async queryAtPosition<T = Record<string, unknown>>(sql: string, params?: Params): Promise<PositionedRows<T>> {
-    const captured = await this.readAtPositionWith(conn => query<T>(conn, sql, params))
-    return { rows: captured.value, position: captured.position }
   }
 
   async readAtPositionWith<T>(

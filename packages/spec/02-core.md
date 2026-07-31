@@ -238,7 +238,7 @@ Each database file holds a random epoch string in `_sirannon_meta` under `cdc_ep
 
 ### Read Positions
 
-A read position names the change-log point a read's rows already include. A reader that subscribes from that position misses no change and receives none twice. A positioned read is available on the local database; no wire surface carries a position, so a remote reader cannot ask for one.
+A read position names the change-log point a read's rows already include. A reader that subscribes from that position misses no change and receives none twice. The capability is internal: a live query opens with a positioned read, and no other surface takes or returns a position.
 
 A positioned read runs the read and reads the change log's highest `seq` in one transaction, so the rows and the position come from one snapshot. Capturing the position separately is wrong: a write that commits between the two makes them disagree, and re-applying a change is unsafe for a table with no declared primary key.
 

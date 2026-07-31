@@ -1,6 +1,7 @@
 import type { Database } from '../core/database.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
+import { STAGED_STREAM_CAPABILITY } from '../server/capabilities.js'
 import { toBaseUrl, toWsUrl } from './endpoint-urls.js'
 import { unrefTimer } from './http-json.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
@@ -122,6 +123,7 @@ export class SyncController {
     this.state = 'starting'
     try {
       await this.verifyCapabilities()
+      this.pull.stagedStream = this.capabilities?.includes(STAGED_STREAM_CAPABILITY) ?? false
       this.port ??= this.db.deviceSync()
       this.deviceId = (await this.port.identity()).nodeId
       this.push.cursor = await this.port.getPushCursor()

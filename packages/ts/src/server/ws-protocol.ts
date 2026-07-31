@@ -44,6 +44,13 @@ export interface WSSubscribeMessage {
   epoch?: string
   deviceId?: string
   schemaVersion?: number
+  /**
+   * Declares that this device stages pulled changes durably and
+   * acknowledges staged sequences. The server then packs several events
+   * into each `changes` frame and paces the delivery window continuously
+   * instead of per transaction. Meaningful only with `deviceId`.
+   */
+  stagedStream?: boolean
 }
 
 export interface WSUnsubscribeMessage {
@@ -111,6 +118,7 @@ export type WSServerMessage =
   | WSSubscribedMessage
   | WSUnsubscribedMessage
   | WSChangeMessage
+  | WSChangesMessage
   | WSLiveMessage
   | WSResultMessage
   | WSErrorMessage
@@ -162,22 +170,35 @@ export interface WSUnsubscribedMessage {
   id: string
 }
 
+export interface WSWireChangeEvent {
+  type: 'insert' | 'update' | 'delete'
+  table: string
+  row: Record<string, unknown>
+  oldRow?: Record<string, unknown>
+  seq: string
+  timestamp: number
+  hlc?: string
+  origin?: string
+  rowId?: string
+  txId?: string
+  txEnd?: boolean
+}
+
 export interface WSChangeMessage {
   type: 'change'
   id: string
-  event: {
-    type: 'insert' | 'update' | 'delete'
-    table: string
-    row: Record<string, unknown>
-    oldRow?: Record<string, unknown>
-    seq: string
-    timestamp: number
-    hlc?: string
-    origin?: string
-    rowId?: string
-    txId?: string
-    txEnd?: boolean
-  }
+  event: WSWireChangeEvent
+}
+
+/**
+ * Several change events in one frame, in ascending seq order. Sent only on
+ * a device subscription that requested `stagedStream`; the events carry the
+ * same fields as a `change` frame's event.
+ */
+export interface WSChangesMessage {
+  type: 'changes'
+  id: string
+  events: WSWireChangeEvent[]
 }
 
 export interface WSResultMessage {

@@ -83,6 +83,16 @@ export {
   tablePkColumns,
 } from './sqlite-catalog.js'
 export {
+  deleteAllStagedChanges,
+  deleteStagedChangesUpToSeq,
+  ensureStagedChangesTable,
+  type StagedChangeRow,
+  selectFirstStagedTransactionEnd,
+  selectMaxStagedSeq,
+  selectStagedChangesInRange,
+  upsertStagedChangeSql,
+} from './staged-changes-table.js'
+export {
   deleteSyncTableStates,
   ensureSyncStateTable,
   type SyncMetaRow,

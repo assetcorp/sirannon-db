@@ -2,8 +2,10 @@ import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { META_TABLE } from '../internal-tables.js'
 import {
+  deleteAllStagedChanges,
   deleteMetaValue,
   ensureMetaTable,
+  ensureStagedChangesTable,
   selectMetaValue,
   selectTableExists,
   setForeignKeysEnabled,
@@ -37,7 +39,9 @@ export async function beginSnapshotLoad(
   await ensureMetaTable(conn)
   await upsertMetaValue(conn, SNAPSHOT_STATE_META_KEY, SNAPSHOT_STATE_LOADING)
   await setForeignKeysEnabled(conn, false)
+  await ensureStagedChangesTable(conn)
   await conn.transaction(async tx => {
+    await deleteAllStagedChanges(tx)
     for (const table of tables) {
       await tracker?.unwatch(tx, table)
     }

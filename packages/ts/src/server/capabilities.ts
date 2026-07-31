@@ -12,7 +12,16 @@ export const REQUIRED_DEVICE_SYNC_CAPABILITIES = [
   'sync.stream-apply',
 ] as const
 
-export const SERVER_CAPABILITIES: readonly string[] = REQUIRED_DEVICE_SYNC_CAPABILITIES
+/**
+ * Announced by a server whose device stream packs several events per
+ * `changes` frame and paces the delivery window continuously for a
+ * subscription that requested `stagedStream`. A device requires the listed
+ * device-sync capabilities but not this one, so it still syncs with an
+ * older server over one-event frames.
+ */
+export const STAGED_STREAM_CAPABILITY = 'sync.staged-stream'
+
+export const SERVER_CAPABILITIES: readonly string[] = [...REQUIRED_DEVICE_SYNC_CAPABILITIES, STAGED_STREAM_CAPABILITY]
 
 export const NAMED_QUERY_CAPABILITY = 'query.named'
 export const SQL_QUERY_CAPABILITY = 'query.sql'

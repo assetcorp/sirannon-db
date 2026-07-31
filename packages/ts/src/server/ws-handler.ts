@@ -1,4 +1,3 @@
-import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Database } from '../core/database.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
@@ -11,6 +10,7 @@ import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
+import { wireChangeEvent } from './ws-device-frames.js'
 import type { DeviceChangeStream } from './ws-device-stream.js'
 import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
 import type { WSLiveDeps } from './ws-live.js'
@@ -203,6 +203,14 @@ export class WSHandler<Identity = unknown> {
     }
   }
 
+  handleSocketDrain(conn: WSConnection): void {
+    const state = this.connections.get(conn)
+    if (!state) return
+    for (const stream of state.deviceStreams.values()) {
+      stream.onSocketDrain()
+    }
+  }
+
   handleClose(conn: WSConnection): void {
     const state = this.connections.get(conn)
     if (!state) return
@@ -281,6 +289,8 @@ export class WSHandler<Identity = unknown> {
       sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
       sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
       sendChange: (conn, id, event) => this.sendChange(conn, id, event),
+      sendText: (conn, data) => this.sendText(conn, data),
+      closeFaulted: conn => conn.close(1011, 'Device stream failed'),
       handleOverload: conn => this.handleOverload(conn),
     }
   }
@@ -331,23 +341,15 @@ export class WSHandler<Identity = unknown> {
   }
 
   private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
-    return this.send(conn, {
-      type: 'change',
-      id: subscriptionId,
-      event: {
-        type: event.type,
-        table: event.table,
-        row: encodeTaggedValues(event.row) as Record<string, unknown>,
-        oldRow: event.oldRow === undefined ? undefined : (encodeTaggedValues(event.oldRow) as Record<string, unknown>),
-        seq: event.seq.toString(),
-        timestamp: event.timestamp,
-        ...(event.hlc !== undefined ? { hlc: event.hlc } : {}),
-        ...(event.origin !== undefined ? { origin: event.origin } : {}),
-        ...(event.rowId !== undefined ? { rowId: event.rowId } : {}),
-        ...(event.txId !== undefined ? { txId: event.txId } : {}),
-        ...(event.txEnd === true ? { txEnd: true } : {}),
-      },
-    })
+    return this.send(conn, { type: 'change', id: subscriptionId, event: wireChangeEvent(event) })
+  }
+
+  private sendText(conn: WSConnection, data: string): WSSendOutcome {
+    const outcome = conn.send(data)
+    if (outcome === 'dropped') {
+      this.handleOverload(conn)
+    }
+    return outcome
   }
 }
 

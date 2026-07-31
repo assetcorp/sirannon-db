@@ -15,6 +15,12 @@ import {
   loadSnapshotPage,
   snapshotLoadPending,
 } from './sync/snapshot-apply.js'
+import {
+  applyStagedTransactions,
+  recoverStagedPull,
+  type StagedRecovery,
+  stagePulledChanges,
+} from './sync/staged-pull.js'
 import { recordLocalColumnVersions } from './sync/stamp-ops.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './sync/types.js'
 import { SEQ_STRING_RE } from './sync/validators.js'
@@ -31,6 +37,7 @@ import {
   selectMetaValue,
   upsertMetaValue,
 } from './system-catalog/index.js'
+import type { ChangeEvent } from './types.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -52,6 +59,15 @@ export interface DeviceSyncPort {
     pullSeq: bigint,
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult>
+  stagePulledChanges(events: readonly ChangeEvent[]): Promise<bigint | null>
+  applyStagedPull(
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+    onChange?: (event: ChangeEvent) => void,
+  ): Promise<bigint | null>
+  recoverStagedPull(
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+    onChange?: (event: ChangeEvent) => void,
+  ): Promise<StagedRecovery>
   readOutboxBatch(afterSeq: bigint, limit: number): Promise<ReplicationBatch | null>
   countOutboxPending(afterSeq: bigint): Promise<number>
   getPushCursor(): Promise<bigint>
@@ -103,6 +119,9 @@ export class DatabaseSyncController {
     return {
       identity: () => this.runExclusive(async () => ({ nodeId: (await this.cdc.ensureStamper()).nodeId })),
       applyPulledTransaction: (changes, pullSeq, resolver) => this.applyPulledTransaction(changes, pullSeq, resolver),
+      stagePulledChanges: events => this.stagePulled(events),
+      applyStagedPull: (resolver, onChange) => this.applyStagedPull(resolver, onChange),
+      recoverStagedPull: (resolver, onChange) => this.recoverStagedPullState(resolver, onChange),
       readOutboxBatch: (afterSeq, limit) => this.readOutboxBatch(afterSeq, limit),
       countOutboxPending: afterSeq => this.countOutboxPending(afterSeq),
       getPushCursor: () => this.getMetaSeq(PUSHED_SEQ_META_KEY).then(seq => seq ?? 0n),
@@ -169,6 +188,52 @@ export class DatabaseSyncController {
       }
       return result
     })
+  }
+
+  private stagePulled(events: readonly ChangeEvent[]): Promise<bigint | null> {
+    return this.runExclusive(async () => {
+      await this.ensureMeta()
+      return stagePulledChanges(this.acquireWriter(), events)
+    })
+  }
+
+  private applyStagedPull(
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+    onChange?: (event: ChangeEvent) => void,
+  ): Promise<bigint | null> {
+    return this.runExclusive(async () => {
+      await this.ensureMeta()
+      const applier = await this.ensureApplier()
+      return applyStagedTransactions(this.acquireWriter(), applier, this.stagedApplyOptions(resolver, onChange))
+    })
+  }
+
+  private recoverStagedPullState(
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+    onChange?: (event: ChangeEvent) => void,
+  ): Promise<StagedRecovery> {
+    return this.runExclusive(async () => {
+      const writer = await this.ensureMeta()
+      const applier = await this.ensureApplier()
+      const recorded = await selectMetaValue(writer, PULL_SEQ_META_KEY)
+      const appliedFloor = recorded !== null && SEQ_STRING_RE.test(recorded) ? BigInt(recorded) : null
+      return recoverStagedPull(writer, applier, appliedFloor, this.stagedApplyOptions(resolver, onChange))
+    })
+  }
+
+  private stagedApplyOptions(
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+    onChange?: (event: ChangeEvent) => void,
+  ): {
+    resolver: ConflictResolver | ((table: string) => ConflictResolver)
+    withinTx: (tx: SQLiteConnection, appliedThroughSeq: bigint) => Promise<void>
+    onChange?: (event: ChangeEvent) => void
+  } {
+    return {
+      resolver: resolver ?? this.defaultResolver,
+      withinTx: (tx, appliedThroughSeq) => upsertMetaValue(tx, PULL_SEQ_META_KEY, appliedThroughSeq.toString()),
+      onChange,
+    }
   }
 
   private replaceMigrationHistory(rows: readonly AppliedMigrationRow[]): Promise<void> {

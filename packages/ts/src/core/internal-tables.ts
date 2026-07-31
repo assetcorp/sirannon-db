@@ -10,6 +10,7 @@ export const APPLIED_CHANGES_TABLE = '_sirannon_applied_changes'
 export const COLUMN_VERSIONS_TABLE = '_sirannon_column_versions'
 export const SYNC_STATE_TABLE = '_sirannon_sync_state'
 export const DEVICE_CURSORS_TABLE = '_sirannon_device_cursors'
+export const STAGED_CHANGES_TABLE = '_sirannon_staged_changes'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
 export const LIVE_PROBE_TABLE_PREFIX = '_sirannon_live_probe_'

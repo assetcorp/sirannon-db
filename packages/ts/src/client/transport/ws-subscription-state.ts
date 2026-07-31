@@ -1,6 +1,12 @@
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { ChangeEvent } from '../../core/types.js'
-import type { WSChangeMessage, WSClientMessage, WSSubscribedMessage } from '../../server/protocol.js'
+import type {
+  WSChangeMessage,
+  WSChangesMessage,
+  WSClientMessage,
+  WSSubscribedMessage,
+  WSWireChangeEvent,
+} from '../../server/protocol.js'
 
 export interface ActiveSubscription {
   table: string
@@ -21,6 +27,7 @@ export interface ActiveSubscription {
   lastSeq: bigint | undefined
   resumeSeq: (() => bigint | undefined) | undefined
   epoch: string | undefined
+  stagedStream: boolean | undefined
 }
 
 export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribedMessage): void {
@@ -54,20 +61,30 @@ export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribe
 }
 
 export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessage): void {
+  deliverWireEvent(sub, msg.event)
+}
+
+export function deliverChangesMessage(sub: ActiveSubscription, msg: WSChangesMessage): void {
+  if (!Array.isArray(msg.events)) return
+  for (const event of msg.events) {
+    deliverWireEvent(sub, event)
+  }
+}
+
+function deliverWireEvent(sub: ActiveSubscription, wire: WSWireChangeEvent): void {
   try {
     const event: ChangeEvent = {
-      type: msg.event.type,
-      table: msg.event.table,
-      row: decodeTaggedValues(msg.event.row) as Record<string, unknown>,
-      oldRow:
-        msg.event.oldRow === undefined ? undefined : (decodeTaggedValues(msg.event.oldRow) as Record<string, unknown>),
-      seq: BigInt(msg.event.seq),
-      timestamp: msg.event.timestamp,
-      ...(msg.event.hlc !== undefined ? { hlc: msg.event.hlc } : {}),
-      ...(msg.event.origin !== undefined ? { origin: msg.event.origin } : {}),
-      ...(msg.event.rowId !== undefined ? { rowId: msg.event.rowId } : {}),
-      ...(msg.event.txId !== undefined ? { txId: msg.event.txId } : {}),
-      ...(msg.event.txEnd === true ? { txEnd: true } : {}),
+      type: wire.type,
+      table: wire.table,
+      row: decodeTaggedValues(wire.row) as Record<string, unknown>,
+      oldRow: wire.oldRow === undefined ? undefined : (decodeTaggedValues(wire.oldRow) as Record<string, unknown>),
+      seq: BigInt(wire.seq),
+      timestamp: wire.timestamp,
+      ...(wire.hlc !== undefined ? { hlc: wire.hlc } : {}),
+      ...(wire.origin !== undefined ? { origin: wire.origin } : {}),
+      ...(wire.rowId !== undefined ? { rowId: wire.rowId } : {}),
+      ...(wire.txId !== undefined ? { txId: wire.txId } : {}),
+      ...(wire.txEnd === true ? { txEnd: true } : {}),
     }
     if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
       sub.lastSeq = event.seq
@@ -88,5 +105,6 @@ export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WS
     ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
     ...(sub.deviceId !== undefined ? { deviceId: sub.deviceId } : {}),
     ...(sub.schemaVersion !== undefined ? { schemaVersion: sub.schemaVersion } : {}),
+    ...(sub.stagedStream === true ? { stagedStream: true } : {}),
   }
 }

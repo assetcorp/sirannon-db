@@ -3,7 +3,7 @@ import { RemoteError } from '../types.js'
 import type { LiveQueryRegistry } from './ws-live-state.js'
 import type { PendingRequests } from './ws-pending.js'
 import type { ActiveSubscription } from './ws-subscription-state.js'
-import { applySubscribedMessage, deliverChangeMessage } from './ws-subscription-state.js'
+import { applySubscribedMessage, deliverChangeMessage, deliverChangesMessage } from './ws-subscription-state.js'
 
 export interface InboundSinks {
   pending: PendingRequests
@@ -41,6 +41,12 @@ export function routeServerMessage(raw: string, sinks: InboundSinks): void {
     case 'change': {
       const sub = sinks.subscriptions.get(msg.id)
       if (sub) deliverChangeMessage(sub, msg)
+      return
+    }
+
+    case 'changes': {
+      const sub = sinks.subscriptions.get(msg.id)
+      if (sub) deliverChangesMessage(sub, msg)
       return
     }
 

@@ -1,6 +1,4 @@
-import type { PositionedRows } from './cdc/read-position.js'
 import type { ConnectionPool } from './connection-pool.js'
-import type { DatabaseCdcController } from './database-cdc.js'
 import type { DatabaseObserver } from './database-observability.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { query, queryForWire, queryOne } from './query-executor.js'
@@ -11,7 +9,6 @@ export interface DatabaseReadDeps {
   pool: ConnectionPool
   writerLock: WriterLock
   observer: DatabaseObserver
-  cdc: DatabaseCdcController
 }
 
 export function readRows<T>(
@@ -44,17 +41,6 @@ export function readOneRow<T>(
 ): Promise<T | undefined> {
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, conn => queryOne<T>(conn, sql, params)),
-  )
-}
-
-export function readRowsWithPosition<T>(
-  deps: DatabaseReadDeps,
-  sql: string,
-  params?: Params,
-  options?: QueryOptions,
-): Promise<PositionedRows<T>> {
-  return deps.observer.withQueryHooks(sql, params, options, () =>
-    deps.observer.track(sql, () => deps.cdc.queryAtPosition<T>(sql, params)),
   )
 }
 

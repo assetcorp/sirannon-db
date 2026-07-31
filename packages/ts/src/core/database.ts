@@ -82,7 +82,7 @@ export class Database {
     this.cdc = runtime.cdc
     this.sync = runtime.sync
     this.groupCommitter = runtime.groupCommitter
-    this.reads = { pool: runtime.pool, writerLock: runtime.writerLock, observer: runtime.observer, cdc: runtime.cdc }
+    this.reads = { pool: runtime.pool, writerLock: runtime.writerLock, observer: runtime.observer }
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true

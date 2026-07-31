@@ -60,6 +60,8 @@ Passed per call to `query`, `execute`, `executeBatch`, and a registered operatio
 | `rereadJitterMs` | `number` | `25` | Upper bound on the random delay before a second read starts |
 | `maxTransactionChanges` | `number` | `10_000` | Buffered changes in one transaction before the query reads a second time instead of applying them |
 
+Both options reach a local `db.live` only. A remote subscription carries no options, so the server opens the query with these defaults.
+
 `UseLiveQueryOptions` in the React entry adds `enabled`, which holds a query closed while it is `false`.
 
 ## `ServerOptions`

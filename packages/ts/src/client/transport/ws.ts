@@ -196,6 +196,7 @@ export class WebSocketTransport implements Transport {
       lastSeq: options?.sinceSeq,
       resumeSeq: options?.getResumeSeq,
       epoch: options?.epoch,
+      stagedStream: options?.stagedStream,
     })
 
     try {
@@ -209,6 +210,7 @@ export class WebSocketTransport implements Transport {
         ...(options?.epoch !== undefined ? { epoch: options.epoch } : {}),
         ...(options?.deviceId !== undefined ? { deviceId: options.deviceId } : {}),
         ...(options?.schemaVersion !== undefined ? { schemaVersion: options.schemaVersion } : {}),
+        ...(options?.stagedStream === true ? { stagedStream: true } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {

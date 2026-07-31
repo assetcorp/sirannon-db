@@ -15,6 +15,7 @@ function activeSubscription(overrides: Partial<ActiveSubscription>): ActiveSubsc
     lastSeq: undefined,
     resumeSeq: undefined,
     epoch: undefined,
+    stagedStream: undefined,
     ...overrides,
   }
 }
@@ -49,5 +50,16 @@ describe('buildResubscribeMessage', () => {
     const sub = activeSubscription({ lastSeq: 7n })
 
     expect(buildResubscribeMessage('sub-1', sub)).toMatchObject({ sinceSeq: '7' })
+  })
+
+  it('keeps the staged-stream declaration across a reconnect', () => {
+    const sub = activeSubscription({
+      deviceId: 'a'.repeat(32),
+      stagedStream: true,
+      resumeSeq: () => 42n,
+    })
+
+    expect(buildResubscribeMessage('sub-1', sub)).toMatchObject({ stagedStream: true, sinceSeq: '42' })
+    expect(buildResubscribeMessage('sub-2', activeSubscription({}))).not.toHaveProperty('stagedStream')
   })
 })

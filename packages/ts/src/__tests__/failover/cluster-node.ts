@@ -127,6 +127,7 @@ await engine.start()
 server = createServer(sirannon, {
   host: '127.0.0.1',
   port: config.httpPort,
+  acceptSql: true,
   resolveExecutionTarget: id => (id === databaseId ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
   getClusterStatus: id => toClusterStatusInfo(config, id, engine.status()),

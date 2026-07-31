@@ -125,6 +125,13 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       }
     },
 
+    drain: ws => {
+      const userData = ws.getUserData()
+      if (userData.conn) {
+        wsHandler.handleSocketDrain(userData.conn)
+      }
+    },
+
     close: ws => {
       const userData = ws.getUserData()
       if (!userData.conn) return

@@ -1,11 +1,13 @@
 import type { DeviceSyncPort } from '../core/database-sync.js'
-import type { ConflictResolver, ReplicationChange } from '../core/sync/types.js'
+import type { ConflictResolver } from '../core/sync/types.js'
 import type { ChangeEvent } from '../core/types.js'
 import { unrefTimer } from './http-json.js'
 import { WebSocketTransport } from './transport/ws.js'
 import type { RemoteSubscription } from './types.js'
 
 export const DEFAULT_IMMEDIATE_ACK_AFTER_CHANGES = 500
+
+const STAGE_BATCH_EVENTS = 500
 
 export interface PullStreamConfig {
   wsBaseUrl: string
@@ -27,6 +29,15 @@ export interface PullStreamHooks {
   recordError(err: unknown): void
 }
 
+/**
+ * Pulls the device stream and applies it through the on-disk staging table:
+ * every received change is staged durably, a transaction is applied to the
+ * real tables only when its `txEnd` change is staged, and acknowledgements
+ * carry the staged watermark, because a staged change survives a crash and
+ * is applied on restart. The subscription resumes from the staged
+ * watermark, so a transaction cut off mid-stream is finished, not retried
+ * from its start.
+ */
 export class PullStream {
   private transport: WebSocketTransport | null = null
   private subscriptions: RemoteSubscription[] = []
@@ -34,13 +45,14 @@ export class PullStream {
   private deviceId: string | null = null
   private lastAckedSeq: bigint | null = null
   private ackBaseSeq: bigint | null = null
-  private group: ChangeEvent[] = []
-  private queue: ChangeEvent[][] = []
-  private draining = false
+  private inbox: ChangeEvent[] = []
+  private pumping = false
   private failed = false
   private serverWindow: number | null = null
+  private stagedSeq: bigint | null = null
   pullSeq: bigint | null = null
   pullEpoch: string | undefined
+  stagedStream = false
 
   constructor(
     private readonly config: PullStreamConfig,
@@ -50,10 +62,22 @@ export class PullStream {
   async open(deviceId: string, schemaVersion: number): Promise<void> {
     this.deviceId = deviceId
     this.lastAckedSeq = null
-    this.ackBaseSeq = this.pullSeq
-    this.group = []
-    this.queue = []
+    this.inbox = []
     this.failed = false
+
+    const port = this.hooks.port()
+    if (port !== null) {
+      const recovered = await port.recoverStagedPull(this.config.resolver, this.hooks.onChange)
+      this.stagedSeq = recovered.resumeSeq
+      if (recovered.appliedSeq !== null && (this.pullSeq === null || recovered.appliedSeq > this.pullSeq)) {
+        this.pullSeq = recovered.appliedSeq
+      }
+      if (recovered.applyError !== null) {
+        this.hooks.recordError(recovered.applyError)
+      }
+    }
+    this.ackBaseSeq = this.resumeWatermark()
+
     const encodedId = encodeURIComponent(this.config.databaseId)
     const transport = new WebSocketTransport(`${this.config.wsBaseUrl}/db/${encodedId}`, {
       requestTimeout: this.config.requestTimeout,
@@ -66,9 +90,10 @@ export class PullStream {
       deviceId,
       schemaVersion,
       tables: this.config.tables,
-      sinceSeq: this.pullSeq ?? undefined,
-      getResumeSeq: () => this.pullSeq ?? undefined,
+      sinceSeq: this.resumeWatermark() ?? undefined,
+      getResumeSeq: () => this.resumeWatermark() ?? undefined,
       epoch: this.pullEpoch,
+      stagedStream: this.stagedStream,
       onReset: () => this.hooks.onResyncRequired(),
       onSubscribed: info => this.handleSubscribed(info),
     })
@@ -88,8 +113,7 @@ export class PullStream {
       this.transport.close()
       this.transport = null
     }
-    this.group = []
-    this.queue = []
+    this.inbox = []
   }
 
   async persist(): Promise<void> {
@@ -102,13 +126,19 @@ export class PullStream {
     }
   }
 
+  private resumeWatermark(): bigint | null {
+    if (this.stagedSeq !== null && (this.pullSeq === null || this.stagedSeq > this.pullSeq)) {
+      return this.stagedSeq
+    }
+    return this.pullSeq
+  }
+
   private handleSubscribed(info: {
     seq: bigint | undefined
     epoch: string | undefined
     resync: boolean
     maxUnacknowledgedChanges: number | undefined
   }): void {
-    this.group = []
     if (info.maxUnacknowledgedChanges !== undefined && info.maxUnacknowledgedChanges > 0) {
       this.serverWindow = info.maxUnacknowledgedChanges
     }
@@ -119,61 +149,57 @@ export class PullStream {
     if (info.epoch !== undefined) {
       this.pullEpoch = info.epoch
     }
-    if (this.pullSeq === null && info.seq !== undefined) {
+    if (this.pullSeq === null && this.stagedSeq === null && info.seq !== undefined) {
       this.pullSeq = info.seq
     }
     if (this.ackBaseSeq === null) {
-      this.ackBaseSeq = this.pullSeq
+      this.ackBaseSeq = this.resumeWatermark()
     }
   }
 
   private handlePullEvent(event: ChangeEvent): void {
     if (this.failed) return
-    this.group.push(event)
-    if (event.txEnd !== true) return
-
-    this.queue.push(this.group)
-    this.group = []
-    void this.drain()
+    this.inbox.push(event)
+    void this.pump()
   }
 
-  private async drain(): Promise<void> {
-    if (this.draining) return
-    this.draining = true
+  private async pump(): Promise<void> {
+    if (this.pumping) return
+    this.pumping = true
     try {
-      while (this.queue.length > 0 && !this.failed) {
-        const group = this.queue.shift()
-        if (group === undefined) break
-        await this.applyGroup(group)
+      while (this.inbox.length > 0 && !this.failed) {
+        const port = this.hooks.port()
+        if (port === null) {
+          this.inbox = []
+          return
+        }
+        const batch = this.inbox.splice(0, STAGE_BATCH_EVENTS)
+        const closesTransaction = batch.some(event => event.txEnd === true)
+        try {
+          const staged = await port.stagePulledChanges(batch)
+          if (staged !== null && (this.stagedSeq === null || staged > this.stagedSeq)) {
+            this.stagedSeq = staged
+          }
+          if (closesTransaction) {
+            const appliedThrough = await port.applyStagedPull(this.config.resolver, this.hooks.onChange)
+            if (appliedThrough !== null) {
+              if (this.pullSeq === null || appliedThrough > this.pullSeq) {
+                this.pullSeq = appliedThrough
+              }
+              this.hooks.onApplySuccess()
+            }
+          }
+        } catch (err) {
+          this.failed = true
+          this.inbox = []
+          this.hooks.onApplyFailure(err)
+          return
+        }
+        this.scheduleAckFlush()
       }
     } finally {
-      this.draining = false
+      this.pumping = false
     }
-  }
-
-  private async applyGroup(group: readonly ChangeEvent[]): Promise<void> {
-    const port = this.hooks.port()
-    if (port === null || group.length === 0) return
-
-    const last = group[group.length - 1]
-    try {
-      await port.applyPulledTransaction(group.map(toReplicationChange), last.seq, this.config.resolver)
-    } catch (err) {
-      this.failed = true
-      this.queue = []
-      this.group = []
-      this.hooks.onApplyFailure(err)
-      return
-    }
-
-    if (this.pullSeq === null || last.seq > this.pullSeq) {
-      this.pullSeq = last.seq
-    }
-    this.hooks.onApplySuccess()
-    for (const event of group) {
-      this.hooks.onChange?.(event)
-    }
-    this.scheduleAckFlush()
   }
 
   private scheduleAckFlush(): void {
@@ -184,7 +210,8 @@ export class PullStream {
         : Math.max(1, Math.floor(this.serverWindow / 2)))
     const threshold = BigInt(configured)
     const base = this.lastAckedSeq ?? this.ackBaseSeq
-    const outstanding = this.pullSeq !== null && base !== null ? this.pullSeq - base : 0n
+    const watermark = this.resumeWatermark()
+    const outstanding = watermark !== null && base !== null ? watermark - base : 0n
     if (outstanding > threshold) {
       if (this.ackTimer !== null) {
         clearTimeout(this.ackTimer)
@@ -206,7 +233,7 @@ export class PullStream {
     if (!this.hooks.isRunning()) return
     const deviceId = this.deviceId
     const transport = this.transport
-    const seq = this.pullSeq
+    const seq = this.resumeWatermark()
     if (deviceId === null || transport === null || seq === null) return
     if (this.lastAckedSeq !== null && seq <= this.lastAckedSeq) return
     try {
@@ -217,19 +244,5 @@ export class PullStream {
       this.hooks.recordError(err)
       this.scheduleAckFlush()
     }
-  }
-}
-
-function toReplicationChange(event: ChangeEvent): ReplicationChange {
-  return {
-    table: event.table,
-    operation: event.type,
-    rowId: event.rowId ?? '',
-    primaryKey: {},
-    hlc: event.hlc ?? '',
-    txId: event.txId ?? '',
-    nodeId: event.origin ?? '',
-    newData: event.type === 'delete' ? null : event.row,
-    oldData: event.oldRow ?? null,
   }
 }

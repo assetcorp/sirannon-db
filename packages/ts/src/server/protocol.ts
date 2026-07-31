@@ -14,6 +14,7 @@ export type {
   WSAckMessage,
   WSBatchMessage,
   WSChangeMessage,
+  WSChangesMessage,
   WSClientMessage,
   WSErrorMessage,
   WSExecuteMessage,
@@ -28,6 +29,7 @@ export type {
   WSTransactionMessage,
   WSUnsubscribedMessage,
   WSUnsubscribeMessage,
+  WSWireChangeEvent,
 } from './ws-protocol.js'
 
 export interface QueryRequest {

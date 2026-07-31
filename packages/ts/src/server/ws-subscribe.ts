@@ -27,6 +27,8 @@ export interface WSSubscribeDeps {
   sendError(conn: WSConnection, id: string, code: string, message: string): void
   sendSirannonError(conn: WSConnection, id: string, err: unknown): void
   sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome
+  sendText(conn: WSConnection, data: string): WSSendOutcome
+  closeFaulted(conn: WSConnection): void
   handleOverload(conn: WSConnection): void
 }
 
@@ -120,8 +122,26 @@ export async function handleSubscribeMessage(
     }
   }
 
+  if (msg.stagedStream !== undefined && typeof msg.stagedStream !== 'boolean') {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" must be a boolean')
+    return
+  }
+
   if (deviceId !== undefined) {
-    await subscribeDevice(deps, conn, state, { id, tables, filter, sinceSeq, clientEpoch, deviceId })
+    await subscribeDevice(deps, conn, state, {
+      id,
+      tables,
+      filter,
+      sinceSeq,
+      clientEpoch,
+      deviceId,
+      stagedStream: msg.stagedStream === true,
+    })
+    return
+  }
+
+  if (msg.stagedStream !== undefined) {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" requires a "deviceId"')
     return
   }
 

@@ -22,6 +22,13 @@ export interface SubscribeOptions {
   getResumeSeq?: () => bigint | undefined
   sinceSeq?: bigint
   epoch?: string
+  /**
+   * Declares that this device stages pulled changes durably and
+   * acknowledges staged sequences, so the server may pack several events
+   * per frame and pace the delivery window continuously. Send only to a
+   * server that announces the `sync.staged-stream` capability.
+   */
+  stagedStream?: boolean
   onSubscribed?: (info: {
     seq: bigint | undefined
     epoch: string | undefined

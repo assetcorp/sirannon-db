@@ -13,7 +13,7 @@ export interface LiveDatabase {
     operation: string | OperationRef<never, never>,
     args?: never,
     options?: LiveQueryOptions,
-  ): Promise<LiveQuery<never>>
+  ): Promise<LiveQuery<unknown>>
 }
 
 export interface UseLiveQueryOptions extends LiveQueryOptions {

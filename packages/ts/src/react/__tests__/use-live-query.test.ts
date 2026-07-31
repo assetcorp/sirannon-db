@@ -4,6 +4,8 @@ import { act, createElement, StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import type { RemoteDatabase } from '../../client/database-proxy.js'
+import type { Database } from '../../core/database.js'
 import type { LiveQuery, LiveQueryOptions, LiveQueryState, LiveUpdate } from '../../core/live/types.js'
 import { operationRef } from '../../core/operation-registry.js'
 import type { LiveDatabase } from '../index.js'
@@ -370,5 +372,16 @@ describe('useCommand', () => {
     expect(seen[0]).toBe(seen[1])
     await seen[0]({ reference: 'A-1' })
     expect(calls).toEqual([{ name: 'cancelOrder', args: { reference: 'A-1' } }])
+  })
+})
+
+describe('LiveDatabase', () => {
+  it('is satisfied by the remote and core database types', () => {
+    type RemoteIsLiveDatabase = RemoteDatabase extends LiveDatabase ? true : false
+    type CoreIsLiveDatabase = Database extends LiveDatabase ? true : false
+
+    const satisfied: [RemoteIsLiveDatabase, CoreIsLiveDatabase] = [true, true]
+
+    expect(satisfied).toEqual([true, true])
   })
 })

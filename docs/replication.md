@@ -56,6 +56,26 @@ await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999], 
 
 Static mode returns after the local commit when you omit `writeConcern`; coordinator mode selects `'majority'`. Coordinator-mode majority counts the configured voting nodes, including the primary's own durable commit, so such a write survives automatic failover when only the failed primary is lost.
 
+## Read concern
+
+A read concern states how current a read must be. Coordinator mode enforces it and static mode ignores it.
+
+| Level | What the node must prove |
+| --- | --- |
+| `local` | Nothing. The read returns local state, which failover may later quarantine. |
+| `majority` | The node is in the in-sync set and is neither draining nor repairing. |
+| `linearizable` | The read runs on the current primary, after it proves live authority for its term. |
+
+A read concern that cannot be met fails with `READ_CONCERN_ERROR` rather than returning a weaker result.
+
+```ts
+const rows = await engine.query('SELECT id, total FROM orders WHERE id = ?', [42], {
+  readConcern: { level: 'linearizable' },
+})
+```
+
+`GET /db/{id}/cluster` lists the levels each node currently serves, which is how the [topology-aware client](client.md#topology-aware-routing) picks an endpoint for a read.
+
 ## Coordinator-backed failover
 
 Coordinator mode stores primary authority, node sessions, group state, and the in-sync set in a `ClusterCoordinator`. The package includes an etcd adapter:
@@ -115,5 +135,43 @@ Write a custom resolver as a class with a `resolve(ctx: ConflictContext): Confli
 | Custom | Build your own | Anything satisfying the `ReplicationTransport` interface |
 
 `ReplicationTransport` carries change batches, acknowledgements, write forwarding, and first sync between nodes. The client `Transport` interface is a different contract, described in the [client guide](client.md).
+
+## Common questions
+
+### Is this SQLite over a shared network file system?
+
+No. Each node opens its own local SQLite file. Sirannon moves changes between nodes through a replication transport, and applications reach the data through the HTTP and WebSocket server. No node shares one file over NFS or another network file system.
+
+### What kind of replication is it?
+
+Change-log replication. Sirannon captures each local write, stamps it with a Hybrid Logical Clock, groups the writes into checksummed `ReplicationBatch` messages, and applies them on replicas by primary key. A replicated change carries the table, the operation, the primary key, the old row, the new row, the transaction identifier, the node identifier, and the HLC. It replays no raw SQL, and the write path is no CRDT.
+
+WebSocket serves a different purpose. It carries application queries, writes, and CDC subscriptions from clients, and it never carries a `ReplicationBatch` between nodes. Production node-to-node replication uses `GrpcReplicationTransport`.
+
+### What conflict model does it use?
+
+One primary per replication group serialises normal writes before replication. During batch application, a receiver that finds the target row already present calls the configured resolver. The built-in choices are last-writer-wins by HLC, `PrimaryWins`, and `FieldMerge` with per-column HLCs.
+
+The package exposes no command that merges a divergent former primary back into the group. Coordinator mode quarantines a former primary with local-only writes and takes it out of safe service, and an operator then rebuilds or restores that node before it rejoins.
+
+### What happens under a network partition?
+
+Static primary-replica mode has no failover of its own, so writes stay unavailable until an operator or an external system promotes another node and reroutes clients. Coordinator mode uses a cluster coordinator, primary terms, node leases, and in-sync sets, and only a proven in-sync replica becomes primary. When Sirannon can't prove a safe primary, writes fail with a clear error rather than proceeding.
+
+### What does majority write concern mean?
+
+In coordinator mode, `majority` counts the configured voting data-bearing nodes in the replication group, including the primary's own durable commit. Such a write survives automatic failover when only the failed primary is lost and an eligible in-sync replica remains. Coordinator mode applies `majority` to a write that names no concern, while static mode returns after the local commit.
+
+### Does it replicate schema changes?
+
+Yes, within a safety allowlist covering `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. Sirannon rejects DDL carrying several statements, `AS SELECT`, `ATTACH`, extension loading, and other unsafe patterns.
+
+### What happens with foreign keys and unique constraints?
+
+SQLite enforces constraints on each node, and incoming replicated data still has to satisfy them. The single-primary write path keeps concurrent unique-key conflicts from arising in normal operation. First sync orders tables by foreign-key dependency, and a resync turns foreign keys off only during the controlled table-wipe phase.
+
+### Is Sirannon local-first or multi-writer today?
+
+The production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row, and they make the replication engine neither multi-writer nor a CRDT. For offline-first end-user devices, see the [device sync guide](device-sync.md).
 
 The `ReplicationOptions`, `CoordinatorModeConfig`, and `TransportConfig` tables are in the [configuration reference](configuration.md).

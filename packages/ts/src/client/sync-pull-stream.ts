@@ -65,6 +65,7 @@ export class PullStream {
     this.inbox = []
     this.failed = false
 
+    let recoveryApplyError: unknown | null = null
     const port = this.hooks.port()
     if (port !== null) {
       const recovered = await port.recoverStagedPull(this.config.resolver, this.hooks.onChange)
@@ -72,8 +73,9 @@ export class PullStream {
       if (recovered.appliedSeq !== null && (this.pullSeq === null || recovered.appliedSeq > this.pullSeq)) {
         this.pullSeq = recovered.appliedSeq
       }
-      if (recovered.applyError !== null) {
-        this.hooks.recordError(recovered.applyError)
+      recoveryApplyError = recovered.applyError
+      if (recoveryApplyError !== null) {
+        await this.adoptRecordedCursor(port)
       }
     }
     this.ackBaseSeq = this.resumeWatermark()
@@ -84,20 +86,24 @@ export class PullStream {
     })
     this.transport = transport
     const [firstTable] = this.config.tables
-    if (firstTable === undefined) return
+    if (firstTable !== undefined) {
+      const subscription = await transport.subscribe(firstTable, undefined, event => this.handlePullEvent(event), {
+        deviceId,
+        schemaVersion,
+        tables: this.config.tables,
+        sinceSeq: this.resumeWatermark() ?? undefined,
+        getResumeSeq: () => this.resumeWatermark() ?? undefined,
+        epoch: this.pullEpoch,
+        stagedStream: this.stagedStream,
+        onReset: () => this.hooks.onResyncRequired(),
+        onSubscribed: info => this.handleSubscribed(info),
+      })
+      this.subscriptions.push(subscription)
+    }
 
-    const subscription = await transport.subscribe(firstTable, undefined, event => this.handlePullEvent(event), {
-      deviceId,
-      schemaVersion,
-      tables: this.config.tables,
-      sinceSeq: this.resumeWatermark() ?? undefined,
-      getResumeSeq: () => this.resumeWatermark() ?? undefined,
-      epoch: this.pullEpoch,
-      stagedStream: this.stagedStream,
-      onReset: () => this.hooks.onResyncRequired(),
-      onSubscribed: info => this.handleSubscribed(info),
-    })
-    this.subscriptions.push(subscription)
+    if (recoveryApplyError !== null) {
+      this.hooks.onApplyFailure(recoveryApplyError)
+    }
   }
 
   teardown(): void {
@@ -121,6 +127,17 @@ export class PullStream {
     if (port === null || this.pullSeq === null) return
     try {
       await port.setPullState(this.pullSeq, this.pullEpoch)
+    } catch (err) {
+      this.hooks.recordError(err)
+    }
+  }
+
+  private async adoptRecordedCursor(port: DeviceSyncPort): Promise<void> {
+    try {
+      const recorded = await port.getPullState()
+      if (recorded !== null && (this.pullSeq === null || recorded.seq > this.pullSeq)) {
+        this.pullSeq = recorded.seq
+      }
     } catch (err) {
       this.hooks.recordError(err)
     }
@@ -192,6 +209,7 @@ export class PullStream {
         } catch (err) {
           this.failed = true
           this.inbox = []
+          await this.adoptRecordedCursor(port)
           this.hooks.onApplyFailure(err)
           return
         }

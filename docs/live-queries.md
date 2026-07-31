@@ -40,7 +40,7 @@ Sirannon reads a second time when a transaction carries more changes than the re
 
 ### What a live query maintains
 
-A live query maintains the result of a single-table statement. `live` fails with `CDC_ERROR` for a join, an aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a window function, a subquery, or `LIMIT` without `ORDER BY`. A statement calling `random()`, `changes()`, or a clock function such as `datetime('now')` fails for the same reason, because its answer would change without a change event. `live` on a read-only database fails with `READ_ONLY`, since watching a table installs triggers.
+A live query maintains the result of a single-table statement. `live` fails with `CDC_ERROR` for a join, an aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a common table expression, a `VALUES` clause, a window function, a subquery, or `LIMIT` without `ORDER BY`. A statement calling `random()`, `randomblob()`, `changes()`, `last_insert_rowid()`, `total_changes()`, or a clock function such as `datetime('now')` fails for the same reason, because its answer would change without a change event. An `ORDER BY` term bound positionally fails when the statement uses `?` parameters, because the sort term must name its column. `live` on a read-only database fails with `READ_ONLY`, since watching a table installs triggers.
 
 ## Over the network
 
@@ -57,6 +57,8 @@ const orders = await db.live(ordersByStatus, { status: 'pending' })
 The rows arrive with the subscription reply, so no separate read is needed and no change falls between the two messages. The client echoes the registry digest when it subscribes; after `REGISTRY_MISMATCH` it re-reads `/capabilities` once and subscribes again, and fails the query when that attempt is refused too.
 
 A live query needs the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP. While the connection is down the query holds its rows and reports `revalidating`; the transport subscribes again on reconnection and the server sends the rows afresh. The server holds the result, so a client resumes by subscribing again rather than from a cursor.
+
+A remote live query carries no options. The server opens the query with its own defaults, so `rereadJitterMs` and `maxTransactionChanges` apply only to a local `db.live`. A subscription against an in-memory database fails with `CDC_UNSUPPORTED`.
 
 ## In React
 
@@ -82,7 +84,7 @@ function OrderList({ db }: { db: RemoteDatabase }) {
 }
 ```
 
-`useLiveQuery` returns the same `LiveQueryState` the core API returns. Pass `enabled: false` to hold a query closed until you need it, along with `rereadJitterMs` and `maxTransactionChanges`. `useCommand` returns a stable callback that runs a registered write.
+`useLiveQuery` returns the same `LiveQueryState` the core API returns. Pass `enabled: false` to hold a query closed until you need it. `rereadJitterMs` and `maxTransactionChanges` reach the query only when the database is a local `Database`, because a remote subscription carries no options. `useCommand` returns a stable callback that runs a registered write.
 
 The hooks compare arguments by value, so an inline object argument re-renders without reopening the query.
 

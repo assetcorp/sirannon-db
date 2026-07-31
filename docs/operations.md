@@ -105,7 +105,7 @@ Over WebSocket, a `query` or an `execute` message carrying `name` and `args` run
 { "capabilities": ["query.named", "query.sql", "sync.push", "sync.ack"], "registry": { "digest": "9f2c..." } }
 ```
 
-The digest is a hash over every registered database identifier, operation kind, operation name, and argument name. It changes whenever the contract a client generates against changes, which is how a client notices a rolling deploy. A live query echoes the digest when it subscribes, and a server serving a different one refuses with `REGISTRY_MISMATCH`.
+The digest is a hash over every registered database identifier, operation kind, operation name, argument name, and identity field name. It changes when an operation is added, removed, renamed, or takes different arguments, which is how a client notices a rolling deploy. A live query echoes the digest when it subscribes, and a server serving a different one refuses with `REGISTRY_MISMATCH`. It covers no statement text and no `columns` list, so a changed row shape leaves the digest as it was; regenerate the client types when you change what a read returns.
 
 `query.sql` tells a client that this server accepts statements. The client reads `/capabilities` once, caches the answer, and fails a statement with `SQL_NOT_ACCEPTED` before it leaves the process when the token is absent. The server refuses on its own as well, because a hand-written client runs no such check.
 

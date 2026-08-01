@@ -10,7 +10,8 @@ import {
   StalePrimaryError,
   TopologyError,
 } from '../errors.js'
-import type { ReplicationStatus } from '../types.js'
+import type { ReplicationStatus, TopologyRole } from '../types.js'
+import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
 
 export function arraysEqual(left: string[], right: string[]): boolean {
@@ -33,11 +34,30 @@ export function hasCurrentPrimaryAuthorityFor(engine: ReplicationEngine, state: 
   return state.currentPrimary?.nodeId === engine.nodeId
 }
 
+export function noteCoordinatorContact(engine: ReplicationEngine): void {
+  engine.coordinatorLastContactMs = Date.now()
+}
+
+export function isCoordinatorConnected(engine: ReplicationEngine): boolean {
+  const config = engine.config.coordinator
+  if (!config) return false
+  if (engine.coordinatorLastContactMs === 0) return false
+  const sessionTtlMs = config.sessionTtlMs ?? DEFAULT_COORDINATOR_SESSION_TTL_MS
+  return Date.now() - engine.coordinatorLastContactMs < sessionTtlMs
+}
+
+export function effectiveTopologyRole(engine: ReplicationEngine): TopologyRole {
+  const state = engine.coordinatorState
+  if (!engine.isCoordinatorMode() || !state) return engine.config.topology.role
+  return state.currentPrimary?.nodeId === engine.nodeId ? 'primary' : 'replica'
+}
+
 export async function refreshCoordinatorState(engine: ReplicationEngine): Promise<ReplicationGroupState | null> {
   const config = engine.config.coordinator
   if (!config) return null
   try {
     const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
+    noteCoordinatorContact(engine)
     engine.coordinatorState = state
     engine.coordinatorAuthority = state ? hasCurrentPrimaryAuthorityFor(engine, state) : false
     return state
@@ -292,6 +312,7 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
     faultedNodeIds: [...state.faultedNodeIds],
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
     authority: engine.coordinatorAuthority,
+    connected: isCoordinatorConnected(engine),
     controllerState: engine.controllerState,
   }
 }

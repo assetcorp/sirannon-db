@@ -43,6 +43,7 @@ import {
 } from './constants.js'
 import {
   assertInboundCoordinatorMessage,
+  effectiveTopologyRole,
   getCoordinatorMessageFields,
   getCoordinatorRuntimeStatus,
   getForwardingPrimaryPeerId,
@@ -113,6 +114,7 @@ export class ReplicationEngine extends EventEmitter {
   controllerTimer: ReturnType<typeof setInterval> | null = null
   coordinatorRejoinSyncStarting = false
   coordinatorSessionRestoring = false
+  coordinatorLastContactMs = 0
   inSyncReconcileTimer: ReturnType<typeof setInterval> | null = null
   inSyncReconciling = false
   lastSentSeq = 0n
@@ -204,7 +206,7 @@ export class ReplicationEngine extends EventEmitter {
   status(): ReplicationStatus {
     return {
       nodeId: this.nodeId,
-      role: this.config.topology.role,
+      role: effectiveTopologyRole(this),
       peers: this.peerTracker.allPeerStates(),
       localSeq: this.lastSentSeq,
       replicating: this.running,

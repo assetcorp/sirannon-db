@@ -185,6 +185,7 @@ export interface CoordinatorRuntimeStatus {
   faultedNodeIds: string[]
   votingDataBearingNodeIds: string[]
   authority: boolean
+  connected: boolean
   controllerState: 'disabled' | 'standby' | 'active' | 'lost'
 }
 

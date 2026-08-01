@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ReplicationStatusInfo } from '../../core/server-options.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { handleReadiness } from '../health.js'
@@ -170,7 +171,47 @@ describe('server lifecycle', () => {
   })
 })
 
+function captureReadiness(fakeSirannon: Sirannon, getReplicationStatus?: () => ReplicationStatusInfo | null): string {
+  let payload = ''
+  const res = {
+    cork(fn: () => void) {
+      fn()
+      return this
+    },
+    writeStatus() {
+      return this
+    },
+    writeHeader() {
+      return this
+    },
+    end(body: string) {
+      payload = body
+      return this
+    },
+  }
+
+  handleReadiness(fakeSirannon, getReplicationStatus)(res as never, {} as never)
+  return payload
+}
+
+function replicaStatus(overrides: Partial<ReplicationStatusInfo> = {}): ReplicationStatusInfo {
+  return {
+    role: 'replica',
+    writeForwarding: true,
+    peers: 2,
+    localSeq: 0n,
+    coordinator: { connected: true, authority: false },
+    controller: { state: 'active' },
+    syncState: 'ready',
+    readAvailability: 'available',
+    writeAvailability: 'unavailable',
+    ...overrides,
+  }
+}
+
 describe('readiness handler unit paths', () => {
+  const emptySirannon = { databases: () => new Map() } as unknown as Sirannon
+
   it('reports degraded when a closed database is present in snapshot', () => {
     const fakeSirannon = {
       databases: () =>
@@ -180,33 +221,33 @@ describe('readiness handler unit paths', () => {
         ]),
     } as unknown as Sirannon
 
-    let payload = ''
-    const res = {
-      cork(fn: () => void) {
-        fn()
-        return this
-      },
-      writeStatus() {
-        return this
-      },
-      writeHeader() {
-        return this
-      },
-      end(body: string) {
-        payload = body
-        return this
-      },
-    }
-
-    const handler = handleReadiness(fakeSirannon)
-    handler(res as never, {} as never)
-
-    const body = JSON.parse(payload) as {
+    const body = JSON.parse(captureReadiness(fakeSirannon)) as {
       status: string
       databases: { id: string; closed: boolean; readOnly: boolean }[]
     }
     expect(body.status).toBe('degraded')
     expect(body.databases).toHaveLength(2)
     expect(body.databases.find(d => d.id === 'closed-db')?.closed).toBe(true)
+  })
+
+  it('keeps a replica holding the controller lease out of failing over', () => {
+    const body = JSON.parse(captureReadiness(emptySirannon, () => replicaStatus())) as { status: string }
+    expect(body.status).toBe('ok')
+  })
+
+  it('reports failing over when the node holds authority and cannot accept writes', () => {
+    const status = replicaStatus({
+      role: 'primary',
+      coordinator: { connected: true, authority: true },
+      controller: { state: 'standby' },
+    })
+    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as { status: string }
+    expect(body.status).toBe('failing_over')
+  })
+
+  it('reports degraded when the coordinator is unreachable', () => {
+    const status = replicaStatus({ coordinator: { connected: false, authority: false } })
+    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as { status: string }
+    expect(body.status).toBe('degraded')
   })
 })

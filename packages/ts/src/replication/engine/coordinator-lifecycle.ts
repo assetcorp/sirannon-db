@@ -1,7 +1,12 @@
 import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { CoordinatorError } from '../errors.js'
-import { hasCurrentPrimaryAuthorityFor, refreshCoordinatorState } from './coordinator-authority.js'
+import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
+import {
+  hasCurrentPrimaryAuthorityFor,
+  noteCoordinatorContact,
+  refreshCoordinatorState,
+} from './coordinator-authority.js'
 import {
   handleFormerPrimaryDemotion,
   reconcileInSyncSet,
@@ -9,7 +14,6 @@ import {
 } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 
-export const DEFAULT_COORDINATOR_SESSION_TTL_MS = 10_000
 const DEFAULT_CONTROLLER_LEASE_TTL_MS = 10_000
 const DEFAULT_CONTROLLER_TICK_INTERVAL_MS = 1_000
 const IN_SYNC_RECONCILE_INTERVAL_MS = 1_000
@@ -44,6 +48,7 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
   if (!state) {
     throw new CoordinatorError(`Replication group '${config.groupId}' is not registered`)
   }
+  noteCoordinatorContact(engine)
   engine.coordinatorState = state
   engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, state)
 
@@ -58,6 +63,7 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
     compatibility: config.compatibility,
   })
   engine.nodeSessionLeaseId = session.lease.id
+  noteCoordinatorContact(engine)
 
   engine.coordinatorWatchDisposer = await coordinator.watchReplicationGroup(config.clusterId, config.groupId, next => {
     handleCoordinatorStateUpdate(engine, next)
@@ -82,6 +88,7 @@ function startInSyncReconcileLoop(engine: ReplicationEngine): void {
 function handleCoordinatorStateUpdate(engine: ReplicationEngine, next: ReplicationGroupState): void {
   const previous = engine.coordinatorState
   const wasPrimary = previous ? hasCurrentPrimaryAuthorityFor(engine, previous) : engine.coordinatorAuthority
+  noteCoordinatorContact(engine)
   engine.coordinatorState = next
   engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, next)
 
@@ -123,6 +130,7 @@ async function keepCoordinatorSessionAlive(engine: ReplicationEngine, ttlMs: num
   if (leaseId) {
     try {
       if (await config.coordinator.renewLease(leaseId, ttlMs)) {
+        noteCoordinatorContact(engine)
         applyAuthorityFromKnownState(engine)
         return
       }
@@ -165,6 +173,7 @@ async function restoreCoordinatorSession(engine: ReplicationEngine, ttlMs: numbe
     }
     engine.nodeSessionLeaseId = session.lease.id
     engine.coordinatorState = state
+    noteCoordinatorContact(engine)
     applyAuthorityFromKnownState(engine)
   } catch (err: unknown) {
     const wrappedErr = err instanceof Error ? err : new Error(String(err))
@@ -209,6 +218,7 @@ async function controllerTick(engine: ReplicationEngine, holderId: string, ttlMs
       engine.controllerState = 'lost'
       return
     }
+    noteCoordinatorContact(engine)
     engine.controllerState = 'active'
     await runControllerPromotionCheck(engine)
     return
@@ -219,6 +229,7 @@ async function controllerTick(engine: ReplicationEngine, holderId: string, ttlMs
     holderId,
     ttlMs,
   })
+  noteCoordinatorContact(engine)
   if (acquired.acquired) {
     engine.controllerLeaseId = acquired.lease.id
     engine.controllerState = 'active'

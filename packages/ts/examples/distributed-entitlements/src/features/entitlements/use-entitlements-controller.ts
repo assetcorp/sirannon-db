@@ -31,7 +31,8 @@ import {
 import type { BillingDraft, ConnectionState, ControllerState, LoaderData, UsageDraft } from './types'
 
 const LIVE_REFRESH_DELAY_MS = 160
-const CLUSTER_READINESS_REFRESH_MS = 1_000
+const CLUSTER_STATUS_REFRESH_MS = 2_500
+const CLUSTER_RECOVERY_REFRESH_MS = 1_000
 
 export function useEntitlementsController(initialData: LoaderData) {
   const [state, setState] = useState<ControllerState>({
@@ -167,10 +168,9 @@ export function useEntitlementsController(initialData: LoaderData) {
   }, [])
 
   useEffect(() => {
-    if (writeAvailable) return
-
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    const intervalMs = writeAvailable ? CLUSTER_STATUS_REFRESH_MS : CLUSTER_RECOVERY_REFRESH_MS
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         refreshClusterStatus()
@@ -180,7 +180,7 @@ export function useEntitlementsController(initialData: LoaderData) {
               scheduleRefresh()
             }
           })
-      }, CLUSTER_READINESS_REFRESH_MS)
+      }, intervalMs)
     }
 
     scheduleRefresh()

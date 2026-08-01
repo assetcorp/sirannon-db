@@ -194,18 +194,16 @@ function captureReadiness(fakeSirannon: Sirannon, getReplicationStatus?: () => R
   return payload
 }
 
-function replicaStatus(overrides: Partial<ReplicationStatusInfo> = {}): ReplicationStatusInfo {
+function replicaStatus(health: Partial<ReplicationStatusInfo['health']> = {}): ReplicationStatusInfo {
   return {
     role: 'replica',
     writeForwarding: true,
     peers: 2,
     localSeq: 0n,
+    health: { state: 'healthy', reason: 'in-sync', canRead: true, canWrite: false, ...health },
     coordinator: { connected: true, authority: false },
     controller: { state: 'active' },
     syncState: 'ready',
-    readAvailability: 'available',
-    writeAvailability: 'unavailable',
-    ...overrides,
   }
 }
 
@@ -230,24 +228,25 @@ describe('readiness handler unit paths', () => {
     expect(body.databases.find(d => d.id === 'closed-db')?.closed).toBe(true)
   })
 
-  it('keeps a replica holding the controller lease out of failing over', () => {
+  it('reports ok for a healthy node', () => {
     const body = JSON.parse(captureReadiness(emptySirannon, () => replicaStatus())) as { status: string }
     expect(body.status).toBe('ok')
   })
 
-  it('reports failing over when the node holds authority and cannot accept writes', () => {
-    const status = replicaStatus({
-      role: 'primary',
-      coordinator: { connected: true, authority: true },
-      controller: { state: 'standby' },
-    })
+  it('reports the node health state when the node is not healthy', () => {
+    const status = replicaStatus({ state: 'failing_over', reason: 'faulted', canRead: false })
     const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as { status: string }
     expect(body.status).toBe('failing_over')
   })
 
-  it('reports degraded when the coordinator is unreachable', () => {
-    const status = replicaStatus({ coordinator: { connected: false, authority: false } })
-    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as { status: string }
+  it('derives the availability strings from the node health booleans', () => {
+    const status = replicaStatus({ state: 'degraded', reason: 'lagging', canRead: true, canWrite: false })
+    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as {
+      status: string
+      replication: { readAvailability: string; writeAvailability: string }
+    }
     expect(body.status).toBe('degraded')
+    expect(body.replication.readAvailability).toBe('available')
+    expect(body.replication.writeAvailability).toBe('unavailable')
   })
 })

@@ -1,6 +1,7 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import type { ConflictResolver, ReplicationBatch, SyncTableManifest } from '../core/sync/types.js'
+import type { NodeHealth } from '../core/types.js'
 import type {
   ClusterCoordinator,
   CoordinatorCompatibilityMetadata,
@@ -17,6 +18,7 @@ export type {
   ReplicationChange,
   SyncTableManifest,
 } from '../core/sync/types.js'
+export type { NodeHealth, NodeHealthReason, NodeHealthState } from '../core/types.js'
 
 export interface NodeInfo {
   id: string
@@ -170,6 +172,7 @@ export interface ReplicationStatus {
   peers: PeerState[]
   localSeq: bigint
   replicating: boolean
+  health: NodeHealth
   syncState?: SyncState
   coordinator?: CoordinatorRuntimeStatus
 }

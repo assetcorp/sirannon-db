@@ -59,6 +59,7 @@ import {
 } from './coordinator-membership.js'
 import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
 import { LocalExecutor } from './local-executor.js'
+import { computeNodeHealth } from './node-health.js'
 import { SenderLoop } from './sender-loop.js'
 import { startEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
@@ -210,6 +211,7 @@ export class ReplicationEngine extends EventEmitter {
       peers: this.peerTracker.allPeerStates(),
       localSeq: this.lastSentSeq,
       replicating: this.running,
+      health: computeNodeHealth(this),
       syncState: { ...this.syncState },
       coordinator: getCoordinatorRuntimeStatus(this),
     }

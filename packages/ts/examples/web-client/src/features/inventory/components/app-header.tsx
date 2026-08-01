@@ -2,6 +2,7 @@ import { Database, RotateCcw } from 'lucide-react'
 import type { ConnectionState } from '../types'
 import { IconButton } from './icon-button'
 import { StatusPill } from './status-pill'
+import { ThemeToggle } from './theme-toggle'
 
 export function AppHeader({
   connectionState,
@@ -34,6 +35,7 @@ export function AppHeader({
           onClick={onReset}
           icon={<RotateCcw size={16} />}
         />
+        <ThemeToggle />
       </div>
     </header>
   )

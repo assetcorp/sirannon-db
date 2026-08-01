@@ -5,6 +5,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ConnectionState } from '../types'
 import { StatusDot, type StatusTone } from './status'
+import { ThemeToggle } from './theme-toggle'
 
 const CONNECTION_TONE: Record<ConnectionState, StatusTone> = {
   live: 'success',
@@ -108,6 +109,7 @@ export function AppHeader({
                 {writeAvailable ? 'Reset and reseed the control plane' : writeUnavailableReason}
               </TooltipContent>
             </Tooltip>
+            <ThemeToggle />
           </div>
         </div>
       </div>

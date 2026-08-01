@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { THEME_BOOT_SCRIPT } from '../lib/theme'
 import '../styles.css'
 
 function head() {
@@ -16,6 +17,7 @@ function head() {
         title: 'Sirannon Inventory Demo',
       },
     ],
+    scripts: [{ children: THEME_BOOT_SCRIPT }],
   }
 }
 

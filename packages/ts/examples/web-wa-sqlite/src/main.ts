@@ -12,6 +12,7 @@ import {
 } from './device'
 import { renderBanner, renderLink, renderOrders, renderSnapshot, renderSyncError, renderSyncStatus } from './render'
 import type { WorkOrder } from './schema'
+import { mountThemeToggle } from './theme'
 import './styles.css'
 
 const SERVER_URL = import.meta.env.VITE_SIRANNON_URL ?? 'http://127.0.0.1:9876'
@@ -36,6 +37,8 @@ const orderList = required('order-list')
 const newOrderForm = required<HTMLFormElement>('new-order-form')
 const siteInput = required<HTMLInputElement>('new-order-site')
 const taskInput = required<HTMLInputElement>('new-order-task')
+
+mountThemeToggle(required('theme-toggle'))
 
 let device: FieldDevice | null = null
 let orders: LiveQuery<WorkOrder> | null = null

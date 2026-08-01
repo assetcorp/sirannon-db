@@ -13,7 +13,10 @@
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",
+    "@fontsource-variable/ibm-plex-sans": "5.2.8",
+    "@fontsource/ibm-plex-mono": "5.2.7",
     "better-sqlite3": "12.6.2",
+    "lucide": "1.27.0",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.58.0",
     "wa-sqlite": "1.0.0"
   },

@@ -96,6 +96,29 @@ export async function handleCoordinatorAckProgress(
   engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, admitted)
 }
 
+export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<void> {
+  if (!engine.running || engine.inSyncReconciling) return
+  const state = engine.coordinatorState
+  if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return
+
+  const caughtUpNodeIds = engine.peerTracker.ackedConfiguredNodeIds(
+    state.durabilityPointSeq,
+    engine.nodeId,
+    state.votingDataBearingNodeIds,
+  )
+  const pending = caughtUpNodeIds.filter(nodeId => nodeId !== engine.nodeId && !state.inSyncNodeIds.includes(nodeId))
+  if (pending.length === 0) return
+
+  engine.inSyncReconciling = true
+  try {
+    for (const nodeId of pending) {
+      await handleCoordinatorAckProgress(engine, nodeId, state.durabilityPointSeq)
+    }
+  } finally {
+    engine.inSyncReconciling = false
+  }
+}
+
 async function removeLocalNodeFromCoordinatorInSyncSet(
   engine: ReplicationEngine,
   state: ReplicationGroupState,

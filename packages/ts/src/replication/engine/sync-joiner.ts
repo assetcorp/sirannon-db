@@ -5,13 +5,19 @@ import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
+import { SyncRecovery } from './sync-recovery.js'
 import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
+  private readonly recovery: SyncRecovery
 
-  constructor(private readonly engine: ReplicationEngine) {}
+  constructor(private readonly engine: ReplicationEngine) {
+    this.recovery = new SyncRecovery(engine, () => {
+      this.retryInitiateSync()
+    })
+  }
 
   async initiateSync(): Promise<void> {
     const engine = this.engine
@@ -67,8 +73,10 @@ export class SyncJoiner {
           supportsStreamVerification: true,
         }),
       )
+      this.recovery.markRequestSent(requestId, sourcePeerId)
     } catch (err: unknown) {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.recovery.markRequestFailed()
       if (engine.syncState.phase === 'syncing' && engine.syncState.sourcePeerId === sourcePeerId) {
         engine.syncState.phase = 'pending'
         engine.syncState.sourcePeerId = null
@@ -94,6 +102,8 @@ export class SyncJoiner {
     const engine = this.engine
     if (engine.syncState.phase !== 'syncing') return
     if (fromPeerId !== engine.syncState.sourcePeerId) return
+
+    this.recovery.noteSourceResponded(batch.requestId)
 
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
@@ -340,6 +350,27 @@ export class SyncJoiner {
     }
   }
 
+  stopTimers(): void {
+    this.stopCatchUpCheck()
+    this.recovery.stop()
+  }
+
+  isSourceRejection(ack: SyncAck, fromPeerId: string): boolean {
+    return this.recovery.isSourceRejection(ack, fromPeerId)
+  }
+
+  handleSourceRejection(ack: SyncAck, fromPeerId: string): void {
+    this.recovery.handleSourceRejection(ack, fromPeerId)
+  }
+
+  private retryInitiateSync(): void {
+    if (!this.engine.running) return
+    this.initiateSync().catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.engine.emitError({ error: wrappedErr, operation: 'sync-retry', recoverable: true })
+    })
+  }
+
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     await delayAckIfConfigured(this.engine)
     await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
@@ -350,6 +381,7 @@ export class SyncJoiner {
     await engine.log.setSyncMeta('ready')
     await engine.markCoordinatorSyncReady()
     engine.syncState.phase = 'ready'
+    this.recovery.markSyncReady()
     this.stopCatchUpCheck()
   }
 }

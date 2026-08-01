@@ -112,6 +112,9 @@ export class ReplicationEngine extends EventEmitter {
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
   controllerTimer: ReturnType<typeof setInterval> | null = null
   coordinatorRejoinSyncStarting = false
+  coordinatorSessionRestoring = false
+  inSyncReconcileTimer: ReturnType<typeof setInterval> | null = null
+  inSyncReconciling = false
   lastSentSeq = 0n
   lastLocalSeq = 0n
   highestSourceSeqSeen = 0n
@@ -178,7 +181,7 @@ export class ReplicationEngine extends EventEmitter {
     this.running = false
     stopCoordinatorTimers(this)
 
-    this.syncJoiner.stopCatchUpCheck()
+    this.syncJoiner.stopTimers()
     this.syncServer.abortAll()
 
     if (this.syncState.phase === 'syncing') {

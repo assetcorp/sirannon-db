@@ -123,6 +123,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none. |
 | `REGISTRY_MISMATCH` | A subscription echoed a registry digest this server does not serve. |
 | `SQL_NOT_ACCEPTED` | The server does not accept SQL statements over the wire. |
+| `UNSUPPORTED_SUBPROTOCOL` | A WebSocket upgrade offered no subprotocol the server supports. |
 | `SYNC_UNSUPPORTED` | The execution target provides no change application, or the server predates device sync. |
 | `INVALID_MESSAGE` | A WebSocket message is missing required fields or has wrong types. |
 | `UNKNOWN_TYPE` | A WebSocket message has an unrecognised type. |
@@ -149,6 +150,8 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | Code | Description |
 |------|-------------|
 | `CONNECTION_ERROR` | The client failed to connect to the server. |
+| `UNAUTHORIZED` | The server refused the WebSocket upgrade as unauthenticated and closed with 4401. |
+| `FORBIDDEN` | The server refused the WebSocket upgrade as not permitted and closed with 4403. |
 | `TIMEOUT` | A request exceeded the configured timeout. |
 | `TRANSPORT_ERROR` | The operation is not supported by the current transport. |
 | `INVALID_RESPONSE` | The server returned a response that could not be parsed. |

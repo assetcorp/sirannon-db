@@ -42,7 +42,9 @@ TopologyAwareClientOptions extends ClientOptions {
 
 `SirannonClient` connects to the single `url` and never routes between nodes; passing it `endpoints`, `primary`, `replicas`, `readPreference`, `discovery`, or `readConcern` fails with `INVALID_ARGUMENT`. `TopologyAwareClient` routes between the nodes of a replication group. An implementation that splits its package into entry points must place `TopologyAwareClient` behind an entry point of its own and prove that the browser-facing entry point does not reach it, so no browser bundle carries routing code or an internal node address.
 
-`headers` applies to HTTP requests and to coordinator discovery requests. A browser WebSocket handshake cannot attach an `Authorization` header, so a browser client passes a short-lived credential through `webSocketProtocols` when the server validates the selected subprotocol.
+`headers` applies to HTTP requests, to coordinator discovery requests, and to the WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A client constructed with `headers` and the WebSocket transport in a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`.
+
+A browser client carries a short-lived credential in `webSocketProtocols`. A client that configures subprotocols must offer the `sirannon.v1` identifier ahead of them, and the server selects that identifier (see [05-server.md](05-server.md#subprotocol-negotiation)). A client that configures none must offer no subprotocol.
 
 `database(id)` returns a cached `RemoteDatabase` for the URL-encoded id. `close` closes every connection, cancels active subscriptions, and rejects pending requests.
 
@@ -103,6 +105,8 @@ The base URL is the server URL with trailing slashes removed; requests are `appl
 ### WebSocket Transport
 
 The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. Automatic reconnection runs only while the transport has active subscriptions or live queries; a failed request of any other kind does not trigger reconnection. On reconnection every active subscription is re-established and every live query subscribes again. A live query the server refuses is dropped with that error; one whose server is unreachable stays registered for the next attempt.
+
+A close code of 4401, 4403, or any code in the 4000-4099 range reports a refused connection. The transport must fail pending and later requests with `UNAUTHORIZED` for 4401 and `FORBIDDEN` for 4403, carry the close reason as the message, and must not reconnect. Every other close code fails pending requests with `CONNECTION_ERROR` and reconnects while subscriptions remain.
 
 ---
 

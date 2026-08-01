@@ -7,9 +7,12 @@ import type { ServerOptions } from '../../core/types.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
+import { ServerProxy } from './server-proxy.js'
 
 export interface ClientServerHarness {
   readonly baseUrl: string
+  stop(): Promise<void>
+  start(options?: ServerOptions): Promise<string>
   restart(options?: ServerOptions): Promise<string>
 }
 
@@ -23,6 +26,7 @@ export function createClientServerHarness(options: ClientServerHarnessOptions = 
   let tempDir = ''
   let sirannon: Sirannon | null = null
   let server: SirannonServer | null = null
+  let proxy: ServerProxy | null = null
   let baseUrl = ''
 
   function requireSirannon(): Sirannon {
@@ -32,10 +36,22 @@ export function createClientServerHarness(options: ClientServerHarnessOptions = 
     return sirannon
   }
 
-  async function listen(serverOptions?: ServerOptions): Promise<string> {
-    server = createServer(requireSirannon(), { port: 0, acceptSql: true, ...serverOptions })
-    await server.listen()
-    baseUrl = `http://127.0.0.1:${server.listeningPort}`
+  async function listen(serverOptions?: ServerOptions): Promise<SirannonServer> {
+    const started = createServer(requireSirannon(), { acceptSql: true, ...serverOptions, port: 0 })
+    await started.listen()
+    server = started
+    return started
+  }
+
+  async function stopServer(): Promise<void> {
+    proxy?.killAllConnections()
+    await server?.close()
+    server = null
+  }
+
+  async function startServer(serverOptions?: ServerOptions): Promise<string> {
+    const started = await listen(serverOptions)
+    proxy?.pointAt(started.listeningPort)
     return baseUrl
   }
 
@@ -45,10 +61,15 @@ export function createClientServerHarness(options: ClientServerHarnessOptions = 
     const db = await sirannon.open('testdb', join(tempDir, 'test.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.execute('INSERT INTO users (name) VALUES (?)', [userName])
-    await listen()
+    const started = await listen()
+    proxy = new ServerProxy(started.listeningPort)
+    await proxy.listen()
+    baseUrl = `http://127.0.0.1:${proxy.port}`
   })
 
   afterEach(async () => {
+    await proxy?.close()
+    proxy = null
     await server?.close()
     server = null
     await sirannon?.shutdown()
@@ -60,9 +81,11 @@ export function createClientServerHarness(options: ClientServerHarnessOptions = 
     get baseUrl() {
       return baseUrl
     },
+    stop: stopServer,
+    start: startServer,
     async restart(options?: ServerOptions) {
-      await server?.close()
-      return listen(options)
+      await stopServer()
+      return startServer(options)
     },
   }
 }

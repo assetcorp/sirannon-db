@@ -1,7 +1,29 @@
 import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
+import type { NodeInfo, SyncPhase } from '../types.js'
 import type { ReplicationEngine } from './engine.js'
 import { delayAckIfConfigured } from './test-hooks.js'
+
+function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
+  if (engine.isCoordinatorMode()) {
+    return engine.coordinatorState?.currentPrimary?.nodeId === peer.id
+  }
+  return engine.config.topology.shouldAcceptFrom(peer.id, peer.role)
+}
+
+function servesItsData(phase: SyncPhase): boolean {
+  return phase === 'ready' || phase === 'catching-up'
+}
+
+async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, appliedSeq: bigint): Promise<void> {
+  if (appliedSeq === 0n || !replicatesFrom(engine, peer)) return
+  if (!servesItsData(engine.syncState.phase)) return
+  if (!servesItsData((await engine.log.getSyncState()).phase)) return
+  await engine.config.transport.sendAck(
+    peer.id,
+    engine.decorateAck({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
+  )
+}
 
 function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
   engine.log
@@ -148,6 +170,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.peerTracker.onAckReceived(peer.id, ackedSeq)
         await engine.log.setLastAppliedSeq(peer.id, ackedSeq)
         await engine.handleCoordinatorAckProgress(peer.id, ackedSeq)
+        await reportAppliedPosition(engine, peer, ackedSeq)
       })
       .catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))

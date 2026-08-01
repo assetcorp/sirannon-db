@@ -383,7 +383,7 @@ NodeHealth {
 
 The first matching condition sets `state` and `reason`: a `syncing` or `catching-up` sync phase, `syncing`; no group state, `unavailable`/`no-group-state`; the repairing set holding the node, `repairing`; current primary authority without `canWrite`, `failing_over`; `canRead` false, `unavailable`; a last successful coordinator call older than the node's session lease, `degraded`/`coordinator-unreachable`; the in-sync set excluding the node, `degraded`/`lagging`; no match, `healthy`/`in-sync`. `NodeHealth` covers only the reporting node, so the state of another node in the group never changes it. A `syncing`, `failing_over`, or `unavailable` reason names the excluding condition: `sync-pending`, `draining`, or `faulted`.
 
-Outside coordinator mode the state is `syncing` during a `syncing` or `catching-up` sync phase and `healthy` otherwise, `canRead` is true when the sync phase is `ready`, and `canWrite` is true on the primary.
+Outside coordinator mode the state is `syncing` during a `syncing` or `catching-up` sync phase, `unavailable`/`sync-pending` during a `pending` one, and `healthy`/`in-sync` during a `ready` one; `canRead` is true when the sync phase is `ready`, and `canWrite` also requires the primary role.
 
 ### Conformance Invariants
 

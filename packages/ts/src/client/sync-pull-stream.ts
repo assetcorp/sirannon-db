@@ -13,6 +13,7 @@ export interface PullStreamConfig {
   wsBaseUrl: string
   databaseId: string
   tables: readonly string[]
+  headers?: Record<string, string>
   ackIntervalMs: number
   requestTimeout?: number
   immediateAckAfterChanges?: number
@@ -82,6 +83,7 @@ export class PullStream {
 
     const encodedId = encodeURIComponent(this.config.databaseId)
     const transport = new WebSocketTransport(`${this.config.wsBaseUrl}/db/${encodedId}`, {
+      headers: this.config.headers,
       requestTimeout: this.config.requestTimeout,
     })
     this.transport = transport

@@ -19,8 +19,7 @@ export function runtimeSupportsHandshakeHeaders(runtime: HandshakeRuntime = curr
 }
 
 function carriesSubprotocolCredential(protocols: string | string[] | undefined): boolean {
-  if (protocols === undefined) return false
-  return typeof protocols === 'string' ? protocols.length > 0 : protocols.length > 0
+  return protocols !== undefined && protocols.length > 0
 }
 
 export function assertHandshakeHeadersSupported(

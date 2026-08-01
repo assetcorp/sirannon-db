@@ -240,6 +240,8 @@ SyncStatus {
 }
 ```
 
+`headers` applies to the controller's HTTP requests and to the pull subscription's WebSocket upgrade in a runtime whose WebSocket carries a handshake header.
+
 - **start** verifies server capabilities first and caches them; a `SYNC_UNSUPPORTED` result aborts the start, while an indeterminate failure is recorded and the controller continues degraded. It then reconciles the migration handshake (falling back to the local version when offline), opens the live pull, and starts the push loop.
 - **push** drains the outbox after the durable `device_sync_pushed_seq` cursor in batches (default 100), advancing the cursor and the retention boundary per batch; a failure backs off exponentially to a cap (default 30,000 ms). A push refused with `MIGRATION_REQUIRED` reconciles migrations and retries.
 - **pull** runs its own WebSocket subscription with echo suppression, stages each change, applies each complete transaction with `resolver` (defaulting to LWW), commits `device_sync_pull_seq` with the group, persists `device_sync_pull_epoch`, and acknowledges the highest staged sequence. `immediateAckAfterChanges` overrides the count of outstanding changes that forces an acknowledgement ahead of the debounce, defaulting to half the window the server reported and to 500 when it reported none. A server resync signal marks a resync required and calls `onResyncRequired`.

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../core/database.js'
+import { RequestDeniedError } from '../../core/errors.js'
 import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../../core/internal-tables.js'
 import { Sirannon } from '../../core/sirannon.js'
 import type { ChangeEvent } from '../../core/types.js'
@@ -292,5 +293,35 @@ describe('SyncController pull', () => {
     const rows = (await deviceDb.query('SELECT body FROM notes WHERE id = 41')) as { body: string }[]
     expect(rows[0].body).toBe('device version')
     expect((await deviceDb.deviceSync().getPullState())?.seq ?? null).toBe(cursorBefore)
+  })
+})
+
+describe('SyncController credentials', () => {
+  it('carries the configured headers on the pull upgrade', async () => {
+    const upgradeAuthorization: (string | undefined)[] = []
+
+    await server.close()
+    server = createServer<unknown>(sirannon, {
+      acceptSql: true,
+      port: 0,
+      authenticate: ({ headers }) => {
+        if (headers['sec-websocket-key'] === undefined) return undefined
+        upgradeAuthorization.push(headers.authorization)
+        if (headers.authorization !== 'Bearer device-token') {
+          throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing device token')
+        }
+        return undefined
+      },
+    })
+    await server.listen()
+    baseUrl = `http://127.0.0.1:${server.listeningPort}`
+
+    const controller = makeController({ headers: { Authorization: 'Bearer device-token' } })
+    await startSettled(controller)
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (90, 'written on the server')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 90')).length === 1)
+
+    expect(upgradeAuthorization).toContain('Bearer device-token')
   })
 })

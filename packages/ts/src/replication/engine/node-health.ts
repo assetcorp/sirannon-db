@@ -19,11 +19,10 @@ function excludingReason(state: ReplicationGroupState, nodeId: string): NodeHeal
 }
 
 function staticHealth(engine: ReplicationEngine, phase: SyncPhase): NodeHealth {
-  if (phase === 'syncing' || phase === 'catching-up') {
-    return { state: 'syncing', reason: 'sync-pending', canRead: false, canWrite: false }
+  if (phase !== 'ready') {
+    return { state: 'unavailable', reason: 'sync-pending', canRead: false, canWrite: false }
   }
-  const canRead = phase === 'ready'
-  return { state: 'healthy', reason: 'in-sync', canRead, canWrite: canRead && engine.config.topology.canWrite() }
+  return { state: 'healthy', reason: 'in-sync', canRead: true, canWrite: engine.config.topology.canWrite() }
 }
 
 /**

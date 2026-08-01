@@ -147,7 +147,7 @@ ClusterStatusInfo {
 }
 ```
 
-When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
+`health` is `NodeHealth.state`, defined in [03-replication.md](03-replication.md). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
 
 ### Error Responses
 
@@ -266,7 +266,7 @@ An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The
 }
 ```
 
-`localSeq` and `primaryTerm` are stringified. The readiness `status` is `ok`, or `degraded` when a database is closed or a replica is lagging, `syncing` while a node copies or catches up, `failing_over` while the controller is active and writes are unavailable, and `unavailable` when both read and write are unavailable.
+`localSeq` and `primaryTerm` are stringified. `readAvailability` and `writeAvailability` are `available` when `NodeHealth` holds `canRead` and `canWrite` true. The readiness `status` is `NodeHealth.state`, with `healthy` reported as `ok`; a closed database reports `degraded` in place of `ok`.
 
 ---
 

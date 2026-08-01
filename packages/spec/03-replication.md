@@ -366,6 +366,23 @@ One active controller per cluster holds the controller lease and makes failover 
 
 When Sirannon cannot prove a safe primary, it fails closed; there is no force-promotion or unsafe-recovery API. An operator restores a backup, rebuilds a node, or repairs the deployment, then rejoins through the normal sync path. Nodes register package, spec, and protocol compatibility metadata; the controller rejects an incompatible major protocol change and allows mixed minor or patch levels only while metadata formats, wire formats, and safety semantics stay compatible. New durable metadata or new safety semantics require an explicit cluster compatibility gate before activation.
 
+### Node Health
+
+```text
+NodeHealth {
+  state:    'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
+  reason:   'in-sync' | 'lagging' | 'coordinator-unreachable' | 'group-degraded' | 'draining' | 'repairing' | 'faulted' | 'sync-pending' | 'no-group-state'
+  canRead:  boolean
+  canWrite: boolean
+}
+```
+
+`canRead` is true when the sync phase is `ready` and the group's draining, repairing, and faulted sets exclude the node; `canWrite` also requires current primary authority.
+
+The first matching condition sets `state` and `reason`: a `syncing` or `catching-up` sync phase, `syncing`; no group state, `unavailable`/`no-group-state`; the repairing set holding the node, `repairing`; current primary authority without `canWrite`, `failing_over`; `canRead` false, `unavailable`; a last successful coordinator call older than the node's session lease, `degraded`/`coordinator-unreachable`; the in-sync set excluding the node, `degraded`/`lagging`; the in-sync set excluding another voting data-bearing node or a non-empty draining or faulted set, `degraded`/`group-degraded`; no match, `healthy`/`in-sync`. A `syncing`, `failing_over`, or `unavailable` reason names the excluding condition: `sync-pending`, `draining`, or `faulted`.
+
+Outside coordinator mode the state is `syncing` during a `syncing` or `catching-up` sync phase and `healthy` otherwise, `canRead` is true when the sync phase is `ready`, and `canWrite` is true on the primary.
+
 ### Conformance Invariants
 
 Coordinator mode conforms only when its test suite proves, with a real coordinator and real multi-node groups: at most one writable primary per group and term; no loss of a `majority`-acknowledged write when only the failed primary is lost; stale primaries reject writes, batches, forwarded transactions, and sync messages; minority partitions fail closed for writes; only in-sync replicas are promoted; clients reroute writes to the new primary or receive a clear error; returning former primaries rejoin through sync when safe and are quarantined when they hold local-only writes; and health state reports write availability, read availability, coordinator status, current primary, primary term, and repair state accurately.

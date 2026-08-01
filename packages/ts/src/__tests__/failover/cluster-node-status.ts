@@ -8,6 +8,7 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
     writeForwarding: true,
     peers: status.peers.length,
     localSeq: BigInt(status.localSeq),
+    health: status.health,
     replicationGroupId: status.coordinator?.groupId,
     primaryTerm: status.coordinator?.primaryTerm,
     currentPrimary: status.coordinator?.currentPrimary?.nodeId,
@@ -29,8 +30,6 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
       nodeId => !status.coordinator?.inSyncNodeIds.includes(nodeId),
     ),
     syncState: status.syncState?.phase,
-    readAvailability: readAvailability(status),
-    writeAvailability: writeAvailability(status),
   }
 }
 
@@ -55,40 +54,6 @@ export function toClusterStatusInfo(
       endpoint: config.httpEndpoints[nodeId] ?? '',
       readConcerns: ['local', 'majority'],
     })),
-    health: clusterHealth(config, status),
+    health: status.health.state,
   }
-}
-
-function clusterHealth(config: FailoverNodeConfig, status: ReplicationStatus): ClusterStatusInfo['health'] {
-  if (status.syncState?.phase === 'syncing' || status.syncState?.phase === 'catching-up') return 'syncing'
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(config.nodeId)) return 'repairing'
-  if (coordinator.authority && writeAvailability(status) === 'unavailable') return 'failing_over'
-  if (readAvailability(status) === 'unavailable') return 'unavailable'
-  if (!coordinator.connected) return 'degraded'
-  if (coordinator.faultedNodeIds.length > 0 || coordinator.drainingNodeIds.length > 0) return 'degraded'
-  if (!coordinator.inSyncNodeIds.includes(status.nodeId)) return 'degraded'
-  return 'healthy'
-}
-
-function readAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
-}
-
-function writeAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinator = status.coordinator
-  if (!coordinator) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (!coordinator.authority) return 'unavailable'
-  if (coordinator.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinator.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
 }

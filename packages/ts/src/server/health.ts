@@ -88,8 +88,8 @@ export function handleReadiness(
           inSyncReplicas: replStatus.inSyncReplicas,
           laggingReplicas: replStatus.laggingReplicas,
           syncState: replStatus.syncState,
-          readAvailability: replStatus.readAvailability,
-          writeAvailability: replStatus.writeAvailability,
+          readAvailability: replStatus.health.canRead ? 'available' : 'unavailable',
+          writeAvailability: replStatus.health.canWrite ? 'available' : 'unavailable',
         }
         body.status = readinessStatusForReplication(replStatus, body.status)
       }
@@ -106,12 +106,6 @@ function readinessStatusForReplication(
   replication: ReplicationStatusInfo,
   current: ReadinessResponse['status'],
 ): ReadinessResponse['status'] {
-  if (replication.syncState === 'syncing' || replication.syncState === 'catching-up') return 'syncing'
-  if (replication.coordinator?.authority === true && replication.writeAvailability === 'unavailable')
-    return 'failing_over'
-  if (replication.readAvailability === 'unavailable' && replication.writeAvailability === 'unavailable')
-    return 'unavailable'
-  if (replication.coordinator?.connected === false) return 'degraded'
-  if ((replication.laggingReplicas?.length ?? 0) > 0) return 'degraded'
+  if (replication.health.state !== 'healthy') return replication.health.state
   return current
 }

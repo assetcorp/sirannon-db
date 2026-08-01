@@ -2,7 +2,7 @@ import type { OperationRegistry } from './operation-registry.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
-import type { ClusterStatusInfo, ExecuteResult, Params, QueryOptions } from './types.js'
+import type { ClusterStatusInfo, ExecuteResult, NodeHealth, Params, QueryOptions } from './types.js'
 
 /** Context passed to the authenticate hook. */
 export interface RequestContext {
@@ -134,6 +134,7 @@ export interface ReplicationStatusInfo {
   writeForwarding: boolean
   peers: number
   localSeq: bigint
+  health: NodeHealth
   replicationGroupId?: string
   primaryTerm?: bigint
   currentPrimary?: string
@@ -147,8 +148,6 @@ export interface ReplicationStatusInfo {
   inSyncReplicas?: string[]
   laggingReplicas?: string[]
   syncState?: string
-  readAvailability?: 'available' | 'unavailable'
-  writeAvailability?: 'available' | 'unavailable'
 }
 
 /** CORS configuration. */

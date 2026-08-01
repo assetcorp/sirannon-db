@@ -371,7 +371,7 @@ When Sirannon cannot prove a safe primary, it fails closed; there is no force-pr
 ```text
 NodeHealth {
   state:    'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
-  reason:   'in-sync' | 'lagging' | 'coordinator-unreachable' | 'group-degraded' | 'draining' | 'repairing' | 'faulted' | 'sync-pending' | 'no-group-state'
+  reason:   'in-sync' | 'lagging' | 'coordinator-unreachable' | 'draining' | 'repairing' | 'faulted' | 'sync-pending' | 'no-group-state'
   canRead:  boolean
   canWrite: boolean
 }
@@ -379,7 +379,7 @@ NodeHealth {
 
 `canRead` is true when the sync phase is `ready` and the group's draining, repairing, and faulted sets exclude the node; `canWrite` also requires current primary authority.
 
-The first matching condition sets `state` and `reason`: a `syncing` or `catching-up` sync phase, `syncing`; no group state, `unavailable`/`no-group-state`; the repairing set holding the node, `repairing`; current primary authority without `canWrite`, `failing_over`; `canRead` false, `unavailable`; a last successful coordinator call older than the node's session lease, `degraded`/`coordinator-unreachable`; the in-sync set excluding the node, `degraded`/`lagging`; the in-sync set excluding another voting data-bearing node or a non-empty draining or faulted set, `degraded`/`group-degraded`; no match, `healthy`/`in-sync`. A `syncing`, `failing_over`, or `unavailable` reason names the excluding condition: `sync-pending`, `draining`, or `faulted`.
+The first matching condition sets `state` and `reason`: a `syncing` or `catching-up` sync phase, `syncing`; no group state, `unavailable`/`no-group-state`; the repairing set holding the node, `repairing`; current primary authority without `canWrite`, `failing_over`; `canRead` false, `unavailable`; a last successful coordinator call older than the node's session lease, `degraded`/`coordinator-unreachable`; the in-sync set excluding the node, `degraded`/`lagging`; no match, `healthy`/`in-sync`. `NodeHealth` covers only the reporting node, so the state of another node in the group never changes it. A `syncing`, `failing_over`, or `unavailable` reason names the excluding condition: `sync-pending`, `draining`, or `faulted`.
 
 Outside coordinator mode the state is `syncing` during a `syncing` or `catching-up` sync phase and `healthy` otherwise, `canRead` is true when the sync phase is `ready`, and `canWrite` is true on the primary.
 

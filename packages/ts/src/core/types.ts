@@ -24,6 +24,33 @@ export interface ClusterReadEndpointInfo {
   readConcerns: ReadConcernLevel[]
 }
 
+/** The single word describing what a node can do right now. */
+export type NodeHealthState = 'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
+
+/** The condition that produced a {@link NodeHealthState}. */
+export type NodeHealthReason =
+  | 'in-sync'
+  | 'lagging'
+  | 'coordinator-unreachable'
+  | 'draining'
+  | 'repairing'
+  | 'faulted'
+  | 'sync-pending'
+  | 'no-group-state'
+
+/**
+ * The health of one node, covering only the node that reports it.
+ *
+ * `canRead` and `canWrite` are what that node will accept at this moment;
+ * `state` and `reason` name the condition behind them.
+ */
+export interface NodeHealth {
+  state: NodeHealthState
+  reason: NodeHealthReason
+  canRead: boolean
+  canWrite: boolean
+}
+
 export interface ClusterStatusInfo {
   databaseId: string
   replicationGroupId?: string
@@ -31,7 +58,7 @@ export interface ClusterStatusInfo {
   currentPrimary?: { nodeId: string; endpoint?: string } | null
   primaryTerm?: bigint
   readEndpoints?: ClusterReadEndpointInfo[]
-  health: 'healthy' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
+  health: NodeHealthState
 }
 
 /** Result returned by mutation statements (INSERT, UPDATE, DELETE). */

@@ -13,6 +13,7 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
     writeForwarding: true,
     peers: status.peers.length,
     localSeq: BigInt(status.localSeq),
+    health: status.health,
     replicationGroupId: status.coordinator?.groupId,
     primaryTerm: status.coordinator?.primaryTerm,
     currentPrimary: status.coordinator?.currentPrimary?.nodeId,
@@ -34,8 +35,6 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
       votingNodeId => !status.coordinator?.inSyncNodeIds.includes(votingNodeId),
     ),
     syncState: status.syncState?.phase,
-    readAvailability: readAvailability(status),
-    writeAvailability: writeAvailability(status),
   }
 }
 
@@ -55,7 +54,7 @@ export function toClusterStatusInfo(
       : (coordinatorState?.currentPrimary ?? null),
     primaryTerm: coordinatorState?.primaryTerm,
     readEndpoints: coordinatorState && readEndpoints(coordinatorState, context),
-    health: clusterHealth(status, context.nodeId),
+    health: status.health.state,
   }
 }
 
@@ -77,38 +76,4 @@ function readEndpoints(
     endpoint: context.httpEndpoints[nodeId] ?? '',
     readConcerns: coordinatorState.inSyncNodeIds.includes(nodeId) ? ['local', 'majority'] : ['local'],
   }))
-}
-
-function clusterHealth(status: ReplicationStatus, nodeId: string): ClusterStatusInfo['health'] {
-  if (status.syncState?.phase === 'syncing' || status.syncState?.phase === 'catching-up') return 'syncing'
-  const coordinatorState = status.coordinator
-  if (!coordinatorState) return 'unavailable'
-  if (coordinatorState.repairingNodeIds.includes(nodeId)) return 'repairing'
-  if (coordinatorState.authority && writeAvailability(status) === 'unavailable') return 'failing_over'
-  if (readAvailability(status) === 'unavailable') return 'unavailable'
-  if (!coordinatorState.connected) return 'degraded'
-  if (coordinatorState.faultedNodeIds.length > 0 || coordinatorState.drainingNodeIds.length > 0) return 'degraded'
-  if (!coordinatorState.inSyncNodeIds.includes(nodeId)) return 'degraded'
-  return 'healthy'
-}
-
-function readAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinatorState = status.coordinator
-  if (!coordinatorState) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (coordinatorState.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinatorState.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinatorState.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
-}
-
-function writeAvailability(status: ReplicationStatus): 'available' | 'unavailable' {
-  const coordinatorState = status.coordinator
-  if (!coordinatorState) return 'unavailable'
-  if (status.syncState?.phase !== 'ready') return 'unavailable'
-  if (!coordinatorState.authority) return 'unavailable'
-  if (coordinatorState.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinatorState.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
-  if (coordinatorState.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return 'available'
 }

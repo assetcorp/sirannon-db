@@ -243,9 +243,10 @@ describe('readiness handler unit paths', () => {
     const status = replicaStatus({ state: 'degraded', reason: 'lagging', canRead: true, canWrite: false })
     const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as {
       status: string
-      replication: { readAvailability: string; writeAvailability: string }
+      replication: { healthReason: string; readAvailability: string; writeAvailability: string }
     }
     expect(body.status).toBe('degraded')
+    expect(body.replication.healthReason).toBe('lagging')
     expect(body.replication.readAvailability).toBe('available')
     expect(body.replication.writeAvailability).toBe('unavailable')
   })

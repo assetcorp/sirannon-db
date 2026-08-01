@@ -55,6 +55,7 @@ export function toClusterStatusInfo(
     primaryTerm: coordinatorState?.primaryTerm,
     readEndpoints: coordinatorState && readEndpoints(coordinatorState, context),
     health: status.health.state,
+    healthReason: status.health.reason,
   }
 }
 

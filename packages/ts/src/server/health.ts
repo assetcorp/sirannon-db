@@ -1,6 +1,6 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ReplicationStatusInfo } from '../core/types.js'
+import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
 
 interface LivenessResponse {
   status: 'ok'
@@ -33,6 +33,7 @@ interface ReadinessResponse {
     inSyncReplicas?: string[]
     laggingReplicas?: string[]
     syncState?: string
+    healthReason: NodeHealthReason
     readAvailability?: 'available' | 'unavailable'
     writeAvailability?: 'available' | 'unavailable'
   }
@@ -88,6 +89,7 @@ export function handleReadiness(
           inSyncReplicas: replStatus.inSyncReplicas,
           laggingReplicas: replStatus.laggingReplicas,
           syncState: replStatus.syncState,
+          healthReason: replStatus.health.reason,
           readAvailability: replStatus.health.canRead ? 'available' : 'unavailable',
           writeAvailability: replStatus.health.canWrite ? 'available' : 'unavailable',
         }

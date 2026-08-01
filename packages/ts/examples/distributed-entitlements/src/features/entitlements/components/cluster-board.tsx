@@ -4,7 +4,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { cn } from '@/lib/utils'
 import { getMajorityWriteAvailability } from '../../../lib/cluster-readiness'
 import type { ClusterNode } from '../../../lib/schemas'
-import { clusterHealthLabel } from '../entitlements-utils'
+import { clusterHealthLabel, clusterHealthReasonLabel } from '../entitlements-utils'
 import { StatusDot, type StatusTone, TONE_BADGE } from './status'
 
 const FALLBACK_NODES: ClusterNode[] = [
@@ -106,6 +106,7 @@ function FlowArrow() {
 function NodeTile({ node, primaryNode }: { node: ClusterNode; primaryNode: string }) {
   const health = clusterHealthLabel(node)
   const tone = HEALTH_TONE[health] ?? 'neutral'
+  const reason = clusterHealthReasonLabel(node)
   const isPrimary = node.reachable && node.role !== undefined ? node.role === 'primary' : primaryNode === node.nodeId
 
   return (
@@ -128,6 +129,9 @@ function NodeTile({ node, primaryNode }: { node: ClusterNode; primaryNode: strin
       <div className="mt-2 flex items-center gap-2 text-xs">
         <StatusDot tone={tone} pulse={TRANSITIONAL_HEALTH.has(health)} />
         <span className="capitalize">{health.replace(/_/g, ' ')}</span>
+        {reason === null ? null : (
+          <span className="text-muted-foreground truncate font-mono text-[11px]">{reason}</span>
+        )}
       </div>
       <p className="text-muted-foreground mt-1 truncate font-mono text-[11px]">{node.endpoint}</p>
     </div>

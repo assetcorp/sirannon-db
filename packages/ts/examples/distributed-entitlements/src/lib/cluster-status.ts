@@ -10,6 +10,7 @@ interface ClusterStatusResponse {
   primaryTerm?: unknown
   readEndpoints?: unknown
   health?: unknown
+  healthReason?: unknown
 }
 
 export async function fetchClusterNodes(): Promise<ClusterNode[]> {
@@ -56,6 +57,7 @@ async function fetchClusterNode(endpoint: string, token: string): Promise<Cluste
       reachable: true,
       role: typeof data.role === 'string' ? data.role : undefined,
       health: parseHealth(data.health),
+      healthReason: parseHealthReason(data.healthReason),
       currentPrimary: parseCurrentPrimary(data.currentPrimary),
       primaryTerm: data.primaryTerm === undefined || data.primaryTerm === null ? null : String(data.primaryTerm),
       readEndpoints: Array.isArray(data.readEndpoints) ? data.readEndpoints.length : 0,
@@ -87,6 +89,21 @@ function parseCurrentPrimary(value: unknown): string | null {
   }
   const nodeId = (value as Record<string, unknown>).nodeId
   return typeof nodeId === 'string' ? nodeId : null
+}
+
+const HEALTH_REASONS: ReadonlyArray<NonNullable<ClusterNode['healthReason']>> = [
+  'in-sync',
+  'lagging',
+  'coordinator-unreachable',
+  'draining',
+  'repairing',
+  'faulted',
+  'sync-pending',
+  'no-group-state',
+]
+
+function parseHealthReason(value: unknown): ClusterNode['healthReason'] {
+  return HEALTH_REASONS.find(reason => reason === value)
 }
 
 function parseHealth(value: unknown): ClusterNode['health'] {

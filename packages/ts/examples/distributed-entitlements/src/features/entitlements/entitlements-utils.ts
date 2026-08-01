@@ -76,6 +76,13 @@ export function clusterHealthLabel(node: ClusterNode): string {
   return node.health ?? 'unknown'
 }
 
+export function clusterHealthReasonLabel(node: ClusterNode): string | null {
+  if (!node.reachable || node.healthReason === undefined || node.healthReason === 'in-sync') {
+    return null
+  }
+  return node.healthReason.replace(/-/g, ' ')
+}
+
 export function nextBillingVersion(customer: CustomerEntitlement | null): number {
   return customer ? customer.version + 1 : 1
 }

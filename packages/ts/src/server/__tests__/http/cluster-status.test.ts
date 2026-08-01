@@ -22,7 +22,8 @@ function clusterStatus(databaseId: string): ClusterStatusInfo {
     currentPrimary: { nodeId: 'node-a', endpoint: 'http://10.0.0.7:9876' },
     primaryTerm: 42n,
     readEndpoints: [{ nodeId: 'node-b', endpoint: 'http://10.0.0.8:9876', readConcerns: ['local'] }],
-    health: 'healthy',
+    health: 'degraded',
+    healthReason: 'lagging',
   }
 }
 
@@ -55,6 +56,8 @@ describe('GET /db/:id/cluster', () => {
 
     expect(response.status).toBe(200)
     expect(body.currentPrimary).toEqual({ nodeId: 'node-a', endpoint: 'http://10.0.0.7:9876' })
+    expect(body.health).toBe('degraded')
+    expect(body.healthReason).toBe('lagging')
   })
 
   it('hides topology from a server that configured no authorizer', async () => {

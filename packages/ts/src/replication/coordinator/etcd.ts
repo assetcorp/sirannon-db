@@ -58,6 +58,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private readonly namespace: Namespace
   private readonly onWatcherError: ((error: Error) => void) | undefined
   private readonly leases = new Map<string, LocalLeaseEntry>()
+  private readonly grantedNodeSessionLeaseIds = new Map<string, string>()
   private readonly watchers = new Set<Watcher>()
   private readonly groups: EtcdGroupStore
 
@@ -125,28 +126,45 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     try {
       await entry.lease.keepaliveOnce()
-      const renewedAtMs = Date.now()
-      const leaseValue: SerializedLease = {
-        id: leaseId,
-        kind: entry.kind,
-        clusterId: entry.clusterId,
-        holderId: entry.holderId,
-        ttlMs,
-        grantedAtMs: renewedAtMs,
-        expiresAtMs: renewedAtMs + ttlMs,
-        metadata: cloneMetadata(entry.metadata),
-      }
-      const value =
-        entry.kind === 'node-session' && entry.nodeSession
-          ? JSON.stringify({ ...entry.nodeSession, lease: leaseValue })
-          : serializeLease(leaseValue)
-      await this.namespace.put(entry.key).value(value).ignoreLease()
-      entry.ttlMs = ttlMs
-      return true
     } catch {
       this.leases.delete(leaseId)
       return false
     }
+
+    const renewedAtMs = Date.now()
+    const leaseValue: SerializedLease = {
+      id: leaseId,
+      kind: entry.kind,
+      clusterId: entry.clusterId,
+      holderId: entry.holderId,
+      ttlMs,
+      grantedAtMs: renewedAtMs,
+      expiresAtMs: renewedAtMs + ttlMs,
+      metadata: cloneMetadata(entry.metadata),
+    }
+    const value =
+      entry.kind === 'node-session' && entry.nodeSession
+        ? JSON.stringify({ ...entry.nodeSession, lease: leaseValue })
+        : serializeLease(leaseValue)
+
+    let refreshed: boolean
+    try {
+      const result = await this.namespace
+        .if(entry.key, 'Lease', '==', leaseId)
+        .then(this.namespace.put(entry.key).value(value).ignoreLease())
+        .commit()
+      refreshed = result.succeeded === true
+    } catch {
+      return true
+    }
+
+    if (!refreshed) {
+      this.leases.delete(leaseId)
+      return false
+    }
+
+    entry.ttlMs = ttlMs
+    return true
   }
 
   async releaseLease(leaseId: string): Promise<boolean> {
@@ -180,7 +198,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     const existingRawSession = await this.namespace.get(key).string()
     if (existingRawSession) {
       const existingSession = parseNodeSession(existingRawSession)
-      if (existingSession.lease.expiresAtMs > Date.now()) {
+      const supersedesOwnSession = this.grantedNodeSessionLeaseIds.get(key) === existingSession.lease.id
+      if (existingSession.lease.expiresAtMs > Date.now() && !supersedesOwnSession) {
         throw new CoordinatorError(`Node session '${input.nodeId}' is already registered`)
       }
     }
@@ -219,6 +238,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
     }
 
+    await this.discardSupersededLeases(key, leaseId)
+    this.grantedNodeSessionLeaseIds.set(key, leaseId)
     this.trackLease(lease, {
       leaseId,
       key,
@@ -310,8 +331,20 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       leaseRevokes.push(revokeLeaseQuietly(entry.lease))
     }
     this.leases.clear()
+    this.grantedNodeSessionLeaseIds.clear()
     await Promise.allSettled(leaseRevokes)
     this.client.close()
+  }
+
+  private async discardSupersededLeases(key: string, keepLeaseId: string): Promise<void> {
+    const superseded: LocalLeaseEntry[] = []
+    for (const [leaseId, entry] of this.leases) {
+      if (entry.key === key && leaseId !== keepLeaseId) {
+        this.leases.delete(leaseId)
+        superseded.push(entry)
+      }
+    }
+    await Promise.allSettled(superseded.map(entry => revokeLeaseQuietly(entry.lease)))
   }
 
   private async getLeaseFromKey(key: string): Promise<CoordinatorLease | null> {

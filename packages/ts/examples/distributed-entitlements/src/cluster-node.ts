@@ -134,12 +134,13 @@ const engine = new ReplicationEngine(db, conn, {
 })
 
 let server: SirannonServer | null = null
-const recentErrors: unknown[] = []
 
 engine.on('replication-error', event => {
-  recentErrors.push(toJsonSafe(event))
-  if (recentErrors.length > 30) {
-    recentErrors.shift()
+  const severity = event.recoverable ? 'recoverable' : 'fatal'
+  const peer = event.peerId === undefined ? '' : ` peer=${event.peerId}`
+  console.error(`[${nodeId}] replication ${severity} in ${event.operation}${peer}: ${event.error.message}`)
+  if (event.error.stack !== undefined) {
+    console.error(event.error.stack)
   }
 })
 
@@ -212,12 +213,4 @@ function sirannonPackageVersion(): string {
 
 function toWebSocketAuthProtocol(value: string): string {
   return `sirannon.entitlements.auth.${Buffer.from(value, 'utf8').toString('base64url')}`
-}
-
-function toJsonSafe(value: unknown): unknown {
-  return JSON.parse(
-    JSON.stringify(value, (_key, nestedValue) =>
-      typeof nestedValue === 'bigint' ? nestedValue.toString() : nestedValue,
-    ),
-  )
 }

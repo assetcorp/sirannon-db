@@ -202,6 +202,10 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onSyncAckReceived((ack, fromPeerId) => {
     if (!engine.running) return
+    if (engine.syncJoiner.isSourceRejection(ack, fromPeerId)) {
+      engine.syncJoiner.handleSourceRejection(ack, fromPeerId)
+      return
+    }
     if (!engine.isCoordinatorMode()) {
       if (ack.joinerNodeId !== fromPeerId) {
         engine.emitError({

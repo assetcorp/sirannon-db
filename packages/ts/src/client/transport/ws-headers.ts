@@ -1,0 +1,28 @@
+import { RemoteError } from '../types.js'
+
+export interface HandshakeRuntime {
+  process?: { versions?: { node?: string } }
+  Deno?: unknown
+  window?: unknown
+}
+
+const HEADERS_UNSUPPORTED_MESSAGE =
+  "This runtime builds a WebSocket from the global constructor, which carries no handshake header, so 'headers' never reaches the server on the WebSocket transport. Pass the credential through 'webSocketProtocols', which a browser handshake does carry, or create the client with { transport: 'http' }."
+
+function currentRuntime(): HandshakeRuntime {
+  return globalThis as unknown as HandshakeRuntime
+}
+
+export function runtimeSupportsHandshakeHeaders(runtime: HandshakeRuntime = currentRuntime()): boolean {
+  if (runtime.Deno !== undefined || runtime.window !== undefined) return false
+  return typeof runtime.process?.versions?.node === 'string'
+}
+
+export function assertHandshakeHeadersSupported(
+  headers: Record<string, string> | undefined,
+  runtime: HandshakeRuntime = currentRuntime(),
+): void {
+  if (headers === undefined || Object.keys(headers).length === 0) return
+  if (runtimeSupportsHandshakeHeaders(runtime)) return
+  throw new RemoteError('INVALID_ARGUMENT', HEADERS_UNSUPPORTED_MESSAGE)
+}

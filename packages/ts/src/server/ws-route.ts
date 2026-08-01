@@ -1,15 +1,20 @@
 import type uWS from 'uWebSockets.js'
 import type { AuthenticateHook, RequestContext } from '../core/types.js'
-import { initAbortHandler } from './http-common.js'
-import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
+import { SIRANNON_WS_SUBPROTOCOL, selectSubprotocol } from '../core/ws-handshake.js'
+import { initAbortHandler, sendError } from './http-common.js'
+import type { UpgradeRefusal } from './request-hook.js'
+import { authenticateUpgrade, decodeRemoteAddress } from './request-hook.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import type { WSHandler } from './ws-handler.js'
 
 export interface WSUserData {
   databaseId: string
   identity?: unknown
+  refusal?: UpgradeRefusal
   conn?: WSConnection
 }
+
+const UNSUPPORTED_SUBPROTOCOL_MESSAGE = `The upgrade offered no subprotocol this server supports. Offer '${SIRANNON_WS_SUBPROTOCOL}' alongside any credential-bearing value, or offer none at all.`
 
 export interface WebSocketRouteOptions {
   app: uWS.TemplatedApp
@@ -23,11 +28,6 @@ function toSendOutcome(result: number): WSSendOutcome {
   if (result === 2) return 'dropped'
   if (result === 0) return 'buffered'
   return 'sent'
-}
-
-function selectWebSocketProtocol(header: string): string {
-  const [firstProtocol] = header.split(',')
-  return firstProtocol?.trim() ?? ''
 }
 
 export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
@@ -45,7 +45,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       const method = req.getMethod()
       const secWebSocketKey = req.getHeader('sec-websocket-key')
       const secWebSocketProtocol = req.getHeader('sec-websocket-protocol')
-      const selectedWebSocketProtocol = selectWebSocketProtocol(secWebSocketProtocol)
+      const negotiated = selectSubprotocol(secWebSocketProtocol)
       const secWebSocketExtensions = req.getHeader('sec-websocket-extensions')
 
       const headers: Record<string, string> = {}
@@ -55,6 +55,15 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
 
       const remoteAddress = decodeRemoteAddress(res)
       const abort = initAbortHandler(res)
+
+      if (!negotiated.ok) {
+        if (abort.claim()) {
+          sendError(res, 400, 'UNSUPPORTED_SUBPROTOCOL', UNSUPPORTED_SUBPROTOCOL_MESSAGE)
+        }
+        return
+      }
+
+      const selectedWebSocketProtocol = negotiated.protocol
 
       if (!authenticateHook) {
         if (abort.claim()) {
@@ -77,22 +86,30 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         remoteAddress,
       }
 
-      runAuthenticate(res, abort, ctx, authenticateHook)
+      authenticateUpgrade(res, abort, ctx, authenticateHook)
         .then(authenticated => {
-          if (!authenticated.ok || !abort.claim()) return
-          res.upgrade<WSUserData>(
-            { databaseId: dbId, identity: authenticated.identity },
-            secWebSocketKey,
-            selectedWebSocketProtocol,
-            secWebSocketExtensions,
-            context,
-          )
+          if (!authenticated.ok && !authenticated.refusal) return
+          if (!abort.claim()) return
+
+          const userData: WSUserData = authenticated.ok
+            ? { databaseId: dbId, identity: authenticated.identity }
+            : { databaseId: dbId, refusal: authenticated.refusal }
+
+          res.upgrade<WSUserData>(userData, secWebSocketKey, selectedWebSocketProtocol, secWebSocketExtensions, context)
         })
         .catch(() => {})
     },
 
     open: ws => {
       const userData = ws.getUserData()
+      const refusal = userData.refusal
+      if (refusal) {
+        try {
+          ws.end(refusal.code, refusal.reason)
+        } catch {}
+        return
+      }
+
       const conn: WSConnection = {
         send(data: string): WSSendOutcome {
           try {

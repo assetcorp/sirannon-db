@@ -5,6 +5,7 @@ import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS } from './http-json.js'
 import { ServerCapabilities } from './server-capabilities.js'
 import { HttpTransport } from './transport/http.js'
 import { WebSocketTransport } from './transport/ws.js'
+import { assertHandshakeHeadersSupported } from './transport/ws-headers.js'
 import type { Transport } from './types.js'
 
 export interface TransportSettings {
@@ -17,8 +18,13 @@ export interface TransportSettings {
 }
 
 export function resolveTransportSettings(options?: ClientOptions): TransportSettings {
+  const transport = options?.transport ?? 'websocket'
+  if (transport === 'websocket') {
+    assertHandshakeHeadersSupported(options?.headers)
+  }
+
   return {
-    transport: options?.transport ?? 'websocket',
+    transport,
     headers: options?.headers,
     webSocketProtocols: options?.webSocketProtocols,
     autoReconnect: options?.autoReconnect ?? true,
@@ -39,6 +45,7 @@ export function createEndpointTransport(settings: TransportSettings, baseUrl: st
     autoReconnect: settings.autoReconnect,
     reconnectInterval: settings.reconnectInterval,
     protocols: settings.webSocketProtocols,
+    headers: settings.headers,
     requestTimeout: settings.requestTimeout,
   })
 }

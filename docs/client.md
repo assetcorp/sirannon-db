@@ -92,6 +92,10 @@ The HTTP and WebSocket transports send a per-call `readConcern` to the server. T
 
 The client `Transport` interface carries application queries, writes, and CDC subscriptions over HTTP or WebSocket. It's a separate contract from the `ReplicationTransport` that moves change batches between nodes: `WebSocketTransport` conforms to the first and never the second.
 
-Browsers can't attach an `Authorization` header to `new WebSocket(...)`, so pass a short-lived value through `webSocketProtocols` and check it in the server's `authenticate` hook.
+A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so your `authenticate` hook reads `headers.authorization` on either transport. A browser attaches no header to `new WebSocket(...)`, so carry a short-lived ticket in `webSocketProtocols` there and check it in the same hook. A browser client built with `headers` and the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server.
+
+The client offers the plain `sirannon.v1` identifier ahead of the protocols you configure, and the server selects that identifier, so a ticket never comes back in the handshake response.
+
+A server that refuses the upgrade closes with 4401 for an unauthenticated caller and 4403 for a caller it doesn't permit. The client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed, because the same credential fails every later attempt. For every other close code it raises `CONNECTION_ERROR` and reconnects while subscriptions remain.
 
 The `ClientOptions` and `TopologyAwareClientOptions` tables are in the [configuration reference](configuration.md).

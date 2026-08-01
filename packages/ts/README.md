@@ -180,14 +180,32 @@ const server = createServer<Identity>(sirannon, {
   cors: { origin: ['https://app.example.com'] },
   operations,
   authenticate: ({ headers }) => {
-    const identity = verifyBearerToken(headers.authorization)
+    const offered = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+    const ticket = offered.find(value => value.startsWith('sirannon.ticket.'))
+    const identity = verifyBearerToken(headers.authorization) ?? verifyTicket(ticket)
     if (!identity) throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Invalid or missing token')
     return identity
   },
 })
 ```
 
-Browsers can't attach an `Authorization` header to `new WebSocket(...)`, so authenticate the upgrade with a same-site cookie or a short-lived value in `Sec-WebSocket-Protocol`, check the `Origin` header in the same hook, and pass that value through the client with `webSocketProtocols`.
+A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so the hook reads `headers.authorization` on both transports:
+
+```ts
+const client = new SirannonClient('https://api.example.com', {
+  headers: { Authorization: `Bearer ${token}` },
+})
+```
+
+A browser attaches no header to `new WebSocket(...)`, so a browser client carries a short-lived ticket in `webSocketProtocols` instead. A browser client built with `headers` and the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server:
+
+```ts
+const client = new SirannonClient('https://api.example.com', {
+  webSocketProtocols: [`sirannon.ticket.${ticket}`],
+})
+```
+
+The client offers the plain `sirannon.v1` identifier ahead of your values and the server selects that identifier, so the ticket never comes back in the handshake response. Check the `Origin` header in the same hook. When the hook refuses an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 
 - Bind to `127.0.0.1` or a private interface unless a proxy enforces TLS and access control.
 - Use HTTPS and WSS for non-local traffic, because the built-in server binds plain HTTP.

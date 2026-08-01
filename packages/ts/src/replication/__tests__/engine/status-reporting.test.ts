@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
 import { InMemoryClusterCoordinator } from '../../coordinator/in-memory.js'
 import type { SetReplicationGroupStateInput } from '../../coordinator/types.js'
 import { ReplicationEngine } from '../../engine.js'
@@ -198,5 +199,25 @@ describe('node health', () => {
     await engine.start()
 
     expect(engine.status().health).toEqual({ state: 'healthy', reason: 'in-sync', canRead: true, canWrite: true })
+  })
+
+  it('reports a replica awaiting its first sync as unavailable outside coordinator mode', async () => {
+    const { db, conn } = await createDbAndConn(harness, TABLE_SQL)
+    engine = new ReplicationEngine(db, conn, {
+      nodeId: NODE_B,
+      topology: new PrimaryReplicaTopology('replica'),
+      transport: harness.transport,
+      initialSync: true,
+      changeTracker: new ChangeTracker(),
+    })
+    await engine.start()
+
+    expect(engine.status().syncState?.phase).toBe('pending')
+    expect(engine.status().health).toEqual({
+      state: 'unavailable',
+      reason: 'sync-pending',
+      canRead: false,
+      canWrite: false,
+    })
   })
 })

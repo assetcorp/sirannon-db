@@ -79,6 +79,7 @@ export class SyncController {
         wsBaseUrl: toWsUrl(this.baseUrl),
         databaseId: options.databaseId,
         tables: options.tables,
+        headers: options.headers,
         ackIntervalMs: options.ackIntervalMs ?? DEFAULT_ACK_INTERVAL_MS,
         requestTimeout: options.requestTimeout,
         immediateAckAfterChanges: options.immediateAckAfterChanges,

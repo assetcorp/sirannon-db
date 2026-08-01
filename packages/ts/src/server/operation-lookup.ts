@@ -26,12 +26,17 @@ function unknownOperation(name: string, databaseId: string): OperationRefusal {
   }
 }
 
+function ownEntry<T>(group: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  if (group === undefined || !Object.hasOwn(group, key)) return undefined
+  return group[key]
+}
+
 export function findRead<I>(
   registry: OperationRegistry<I> | undefined,
   databaseId: string,
   name: string,
 ): ReadOperation<I> | OperationRefusal {
-  const operation = registry?.[databaseId]?.reads?.[name]
+  const operation = ownEntry(ownEntry(registry, databaseId)?.reads, name)
   return operation ?? unknownOperation(name, databaseId)
 }
 
@@ -40,7 +45,7 @@ export function findWrite<I>(
   databaseId: string,
   name: string,
 ): WriteOperation<I> | OperationRefusal {
-  const operation = registry?.[databaseId]?.writes?.[name]
+  const operation = ownEntry(ownEntry(registry, databaseId)?.writes, name)
   return operation ?? unknownOperation(name, databaseId)
 }
 

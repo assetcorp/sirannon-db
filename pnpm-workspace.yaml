@@ -11,8 +11,6 @@ onlyBuiltDependencies:
   - protobufjs
 
 minimumReleaseAge: 5760
-minimumReleaseAgeExclude:
-  - better-sqlite3@13.0.2
 
 allowBuilds:
   better-sqlite3: true

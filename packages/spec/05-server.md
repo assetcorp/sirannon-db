@@ -39,6 +39,8 @@ RequestContext   { headers: Map<string, string>, method, path, databaseId?, remo
 
 The server must invoke `authenticate` before every `/db/{id}` request: the HTTP data routes, `GET /db/{id}/cluster`, and the WebSocket upgrade. It must not invoke the hook for `GET /health`, `GET /health/ready`, or `GET /capabilities`. The hook returns the identity for the request, or nothing for an anonymous request. To reject a request, the hook throws. An error with a `status` property must produce that status, code, and message; any other error must produce status 500 with code `HOOK_ERROR`. Sirannon defines no built-in authentication, so the hook is where an implementation authenticates a request.
 
+On the WebSocket upgrade the server must complete the handshake and close immediately with code 4401 for a refusal of status 401 and 4403 for a refusal of status 403, carrying the error code and message as the close reason. A refusal of any other status must produce the HTTP status response.
+
 ### Registered Operations
 
 ```text
@@ -162,7 +164,7 @@ ClusterStatusInfo {
 
 | Status | Codes |
 |--------|-------|
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
 | 401 | `IDENTITY_REQUIRED` |
 | 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
@@ -181,6 +183,10 @@ A request body over `maxBodyBytes` is rejected with `413 PAYLOAD_TOO_LARGE` befo
 ## WebSocket Protocol (Normative)
 
 A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC subscriptions.
+
+### Subprotocol Negotiation
+
+The server supports one subprotocol, the plain identifier `sirannon.v1`. It must select that identifier when an upgrade offers it, refuse an upgrade whose offer omits it with `400 UNSUPPORTED_SUBPROTOCOL`, and select none when an upgrade offers no subprotocol. A client that configures subprotocols must offer `sirannon.v1` ahead of them. The `authenticate` hook receives the whole offer as the `sec-websocket-protocol` header.
 
 ### Client Messages
 
@@ -242,7 +248,7 @@ A live subscription carries no `table`, `tables`, `filter`, `sinceSeq`, `epoch`,
 
 ### Backpressure and Limits
 
-An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. On a subscription presenting a `deviceId`, the server pauses delivery while the outbound buffer holds data and resumes from the change log once it drains, so that it delivers a transaction larger than the buffer across several sends and keeps the buffer under the bound. The server also closes with 1013 while shutting down, and 1008 when the database is not found, closed, or the target resolves to none. The recommended idle timeout is 120 seconds with automatic ping/pong. The server paces a subscription presenting a `deviceId` by acknowledgements: it holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
+An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. On a subscription presenting a `deviceId`, the server pauses delivery while the outbound buffer holds data and resumes from the change log once it drains, so that it delivers a transaction larger than the buffer across several sends and keeps the buffer under the bound. The server also closes with 1013 while shutting down, 1008 when the database is not found, closed, or the target resolves to none, and 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client must not reconnect after 4401, 4403, or any code in the 4000-4099 range. The recommended idle timeout is 120 seconds with automatic ping/pong. The server paces a subscription presenting a `deviceId` by acknowledgements: it holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
 
 ---
 

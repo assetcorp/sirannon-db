@@ -19,10 +19,6 @@ interface UpgradeOutcome {
   protocol: string | undefined
 }
 
-function portOf(baseUrl: string): number {
-  return Number(new URL(baseUrl).port)
-}
-
 function wsUrlFor(baseUrl: string, databaseId: string): string {
   return `${baseUrl.replace(/^http:/, 'ws:')}/db/${databaseId}`
 }
@@ -350,7 +346,6 @@ describe('a refused WebSocket upgrade', () => {
   })
 
   it('stops reconnecting once the server refuses the credential', async () => {
-    const port = portOf(harness.baseUrl)
     const client = new SirannonClient(harness.baseUrl, { autoReconnect: true, reconnectInterval: 20 })
     const db = client.database('testdb')
 
@@ -359,7 +354,6 @@ describe('a refused WebSocket upgrade', () => {
 
       let upgradeAttempts = 0
       await harness.restart({
-        port,
         authenticate: () => {
           upgradeAttempts += 1
           throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Invalid or missing token')

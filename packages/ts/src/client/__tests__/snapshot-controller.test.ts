@@ -9,6 +9,7 @@ import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import type { SnapshotProgress } from '../snapshot-loader.js'
 import { type SnapshotOutcome, SyncController, type SyncControllerOptions } from '../sync-controller.js'
+import { ServerProxy } from './server-proxy.js'
 
 const driver = betterSqlite3()
 
@@ -16,7 +17,7 @@ let tempDir: string
 let sirannon: Sirannon
 let deviceSirannon: Sirannon
 let server: SirannonServer
-let serverPort: number
+let proxy: ServerProxy
 let baseUrl: string
 let serverDb: Database
 let deviceDb: Database
@@ -46,14 +47,16 @@ beforeEach(async () => {
 
   server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
-  serverPort = server.listeningPort ?? 0
-  baseUrl = `http://127.0.0.1:${serverPort}`
+  proxy = new ServerProxy(server.listeningPort)
+  await proxy.listen()
+  baseUrl = `http://127.0.0.1:${proxy.port}`
 })
 
 afterEach(async () => {
   for (const controller of controllers) {
     await controller.stop()
   }
+  await proxy.close()
   await server.close()
   await deviceSirannon.shutdown()
   await sirannon.shutdown()
@@ -72,6 +75,17 @@ function makeController(overrides?: Partial<SyncControllerOptions>): SyncControl
   })
   controllers.push(controller)
   return controller
+}
+
+async function stopServer(): Promise<void> {
+  proxy.killAllConnections()
+  await server.close()
+}
+
+async function startServer(): Promise<void> {
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  await server.listen()
+  proxy.pointAt(server.listeningPort)
 }
 
 interface OutcomeRecorder {
@@ -298,7 +312,7 @@ describe('SyncController snapshot completion', () => {
     const controller = makeController({ onSnapshotComplete: outcome => outcomes.push(outcome) })
     await controller.start()
 
-    await server.close()
+    await stopServer()
     await expect(controller.downloadSnapshot()).rejects.toThrow()
 
     expect(outcomes).toEqual([
@@ -312,15 +326,14 @@ describe('SyncController snapshot completion', () => {
     expect((await controller.status()).resyncRequired).toBe(true)
     expect(await deviceDb.query('SELECT id FROM notes')).toHaveLength(0)
 
-    server = createServer(sirannon, { acceptSql: true, port: serverPort })
-    await server.listen()
+    await startServer()
   })
 
   it('reports a failure over a wiped database as blocking, with another attempt scheduled', async () => {
     const port = deviceDb.deviceSync()
     await port.beginSnapshotLoad(['notes'])
     await port.abortSnapshotLoad()
-    await server.close()
+    await stopServer()
 
     const recorder = outcomeRecorder()
     const controller = makeController({
@@ -338,15 +351,14 @@ describe('SyncController snapshot completion', () => {
     expect(failure.error?.code).toBe('CONNECTION_ERROR')
     await expect(deviceDb.query('SELECT id FROM notes')).rejects.toThrow(/sync snapshot/)
 
-    server = createServer(sirannon, { acceptSql: true, port: serverPort })
-    await server.listen()
+    await startServer()
   })
 
   it('reports the database as usable again once a scheduled retry succeeds', async () => {
     const port = deviceDb.deviceSync()
     await port.beginSnapshotLoad(['notes'])
     await port.abortSnapshotLoad()
-    await server.close()
+    await stopServer()
 
     const recorder = outcomeRecorder()
     let editorEnabled = true
@@ -368,8 +380,7 @@ describe('SyncController snapshot completion', () => {
     expect(editorEnabled).toBe(false)
 
     const retry = recorder.next()
-    server = createServer(sirannon, { acceptSql: true, port: serverPort })
-    await server.listen()
+    await startServer()
 
     const loaded = await retry
     expect(loaded).toEqual({ ok: true, error: null, databaseUsable: true, retrying: false })

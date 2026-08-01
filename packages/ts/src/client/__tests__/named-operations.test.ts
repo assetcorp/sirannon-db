@@ -269,7 +269,6 @@ describe('a live query against a remote database', () => {
 
   it('shows its rows as refreshing while the connection is down, then reads again', async () => {
     await harness.restart({ acceptSql: false, operations })
-    const port = Number(new URL(harness.baseUrl).port)
     const client = new SirannonClient(harness.baseUrl, { reconnectInterval: 50 })
     const db = client.database('testdb')
 
@@ -277,10 +276,11 @@ describe('a live query against a remote database', () => {
       const live = await db.live(members, {})
       expect(live.getState()).toMatchObject({ status: 'ready', revalidating: false })
 
-      await harness.restart({ port, acceptSql: false, operations })
+      await harness.stop()
       await settle(60)
       expect(live.getState()).toMatchObject({ status: 'ready', revalidating: true })
 
+      await harness.start({ acceptSql: false, operations })
       const db2 = new SirannonClient(harness.baseUrl).database('testdb')
       await db2.execute(addMember, { name: 'Dara' })
 

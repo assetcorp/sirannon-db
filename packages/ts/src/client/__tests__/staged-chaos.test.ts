@@ -1,5 +1,4 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +9,7 @@ import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import { SyncController } from '../sync-controller.js'
+import { ServerProxy } from './server-proxy.js'
 
 const driver = betterSqlite3()
 const WINDOW = 20
@@ -18,65 +18,11 @@ const SERVER_BULK_ROWS = 1_500
 const STAGED_ROWS_BEFORE_FIRST_KILL = SERVER_BULK_ROWS / 4
 const LATER_KILL_DELAYS_MS = [300, 150, 500, 300]
 
-class ChaosProxy {
-  private server: net.Server | null = null
-  private readonly sockets = new Set<net.Socket>()
-  port = 0
-
-  constructor(private readonly targetPort: number) {}
-
-  listen(): Promise<void> {
-    const server = net.createServer(clientSocket => {
-      const upstream = net.connect(this.targetPort, '127.0.0.1')
-      this.sockets.add(clientSocket)
-      this.sockets.add(upstream)
-      clientSocket.pipe(upstream)
-      upstream.pipe(clientSocket)
-      const drop = () => {
-        this.sockets.delete(clientSocket)
-        this.sockets.delete(upstream)
-        clientSocket.destroy()
-        upstream.destroy()
-      }
-      clientSocket.on('close', drop)
-      upstream.on('close', drop)
-      clientSocket.on('error', () => {})
-      upstream.on('error', () => {})
-    })
-    this.server = server
-    return new Promise(resolve => {
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address()
-        if (address !== null && typeof address === 'object') {
-          this.port = address.port
-        }
-        resolve()
-      })
-    })
-  }
-
-  killAllConnections(): number {
-    const killed = this.sockets.size
-    for (const socket of [...this.sockets]) {
-      socket.destroy()
-    }
-    this.sockets.clear()
-    return killed
-  }
-
-  close(): Promise<void> {
-    this.killAllConnections()
-    const server = this.server
-    if (server === null) return Promise.resolve()
-    return new Promise(resolve => server.close(() => resolve()))
-  }
-}
-
 let tempDir: string
 let sirannon: Sirannon
 let deviceSirannon: Sirannon
 let server: SirannonServer
-let proxy: ChaosProxy
+let proxy: ServerProxy
 let serverDb: Database
 let deviceDb: Database
 let devicePath: string
@@ -97,7 +43,7 @@ beforeEach(async () => {
 
   server = createServer(sirannon, { acceptSql: true, port: 0, maxUnacknowledgedChanges: WINDOW })
   await server.listen()
-  proxy = new ChaosProxy(server.listeningPort)
+  proxy = new ServerProxy(server.listeningPort)
   await proxy.listen()
 })
 

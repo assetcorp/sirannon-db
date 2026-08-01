@@ -86,8 +86,8 @@ const coordinator = createEtcdCoordinator({
   hosts: etcdHosts,
   keyPrefix: process.env.ETCD_KEY_PREFIX ?? '/sirannon/examples/entitlements',
   allowInsecure: true,
-  dialTimeoutMs: 1_000,
-  defaultCallTimeoutMs: 1_000,
+  dialTimeoutMs: 5_000,
+  defaultCallTimeoutMs: 3_000,
 })
 
 const engine = new ReplicationEngine(db, conn, {

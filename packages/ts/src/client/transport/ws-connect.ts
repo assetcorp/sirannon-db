@@ -1,5 +1,6 @@
 import { isRefusalCloseCode, refusalErrorCode } from '../../core/ws-handshake.js'
 import { RemoteError } from '../types.js'
+import { runtimeSupportsHandshakeHeaders } from './ws-headers.js'
 
 export type ClientWebSocket = InstanceType<typeof WebSocket>
 
@@ -30,7 +31,7 @@ interface HeaderCapableWebSocket {
 function createSocket(url: string, options: WSHandshakeOptions): ClientWebSocket {
   const { protocols, headers } = options
 
-  if (headers !== undefined && Object.keys(headers).length > 0) {
+  if (headers !== undefined && Object.keys(headers).length > 0 && runtimeSupportsHandshakeHeaders()) {
     const construct = WebSocket as unknown as HeaderCapableWebSocket
     return new construct(url, protocols === undefined ? { headers } : { headers, protocols })
   }

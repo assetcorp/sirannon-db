@@ -197,13 +197,15 @@ const client = new SirannonClient('https://api.example.com', {
 })
 ```
 
-A browser attaches no header to `new WebSocket(...)`, so a browser client carries a short-lived ticket in `webSocketProtocols` instead. A browser client built with `headers` and the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server:
+A browser attaches no header to `new WebSocket(...)`, so a browser client carries a short-lived ticket in `webSocketProtocols` instead. A browser client built with `headers` alone on the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server:
 
 ```ts
 const client = new SirannonClient('https://api.example.com', {
   webSocketProtocols: [`sirannon.ticket.${ticket}`],
 })
 ```
+
+Pass both options when a browser client needs each of them, as the [entitlements example](examples/distributed-entitlements) does: the topology client sends `headers` on its coordinator discovery request to `GET /db/{id}/cluster` and the ticket on the socket handshake.
 
 The client offers the plain `sirannon.v1` identifier ahead of your values and the server selects that identifier, so the ticket never comes back in the handshake response. Check the `Origin` header in the same hook. When the hook refuses an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 

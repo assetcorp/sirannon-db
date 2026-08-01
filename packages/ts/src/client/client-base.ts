@@ -20,7 +20,7 @@ export interface TransportSettings {
 export function resolveTransportSettings(options?: ClientOptions): TransportSettings {
   const transport = options?.transport ?? 'websocket'
   if (transport === 'websocket') {
-    assertHandshakeHeadersSupported(options?.headers)
+    assertHandshakeHeadersSupported(options?.headers, options?.webSocketProtocols)
   }
 
   return {

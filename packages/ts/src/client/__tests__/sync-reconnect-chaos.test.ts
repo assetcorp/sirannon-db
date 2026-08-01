@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../core/database.js'
-import { CHANGES_TABLE } from '../../core/internal-tables.js'
+import { CHANGES_TABLE, STAGED_CHANGES_TABLE } from '../../core/internal-tables.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
@@ -12,6 +12,8 @@ import { SyncController, type SyncControllerOptions } from '../sync-controller.j
 import { ServerProxy } from './server-proxy.js'
 
 const driver = betterSqlite3()
+const BULK_TRANSACTION_ROWS = 1500
+const STAGED_ROWS_BEFORE_RESTART = BULK_TRANSACTION_ROWS / 4
 
 let tempDir: string
 let sirannon: Sirannon
@@ -101,6 +103,29 @@ async function until(predicate: () => boolean | Promise<boolean>, timeout = 20_0
   }
 }
 
+async function stagedRowCount(): Promise<number> {
+  const inspect = await driver.open(join(tempDir, 'device.db'))
+  try {
+    const stmt = await inspect.prepare(`SELECT COUNT(*) AS n FROM ${STAGED_CHANGES_TABLE}`)
+    const row = (await stmt.get()) as { n: number | bigint } | undefined
+    return row === undefined ? 0 : Number(row.n)
+  } finally {
+    await inspect.close()
+  }
+}
+
+async function untilBulkPartlyStaged(timeoutMs: number): Promise<void> {
+  const start = Date.now()
+  while ((await stagedRowCount()) < STAGED_ROWS_BEFORE_RESTART) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error(
+        `the bulk transaction never reached ${STAGED_ROWS_BEFORE_RESTART} staged rows on the device, so the restart could not land part-way through its delivery`,
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 1))
+  }
+}
+
 async function deviceRowIds(): Promise<number[]> {
   const rows = (await deviceDb.query('SELECT id FROM notes ORDER BY id')) as { id: number }[]
   return rows.map(row => row.id)
@@ -182,20 +207,19 @@ describe('device sync under connection loss', () => {
     await controller.start()
     await until(async () => (await controller.status()).pushCaughtUp)
 
-    const rowCount = 1500
     await serverDb.transaction(async tx => {
-      for (let id = 1; id <= rowCount; id++) {
+      for (let id = 1; id <= BULK_TRANSACTION_ROWS; id++) {
         await tx.execute('INSERT INTO notes (id, body) VALUES (?, ?)', [id, 'bulk'])
       }
     })
 
-    await new Promise(resolve => setTimeout(resolve, 60))
+    await untilBulkPartlyStaged(20_000)
     await restartServer()
 
-    await until(async () => (await deviceRowIds()).length === rowCount)
+    await until(async () => (await deviceRowIds()).length === BULK_TRANSACTION_ROWS)
 
     const byRow = await transactionIdsByRow()
-    expect(byRow.size).toBe(rowCount)
+    expect(byRow.size).toBe(BULK_TRANSACTION_ROWS)
     const txIds = new Set(byRow.values())
     expect(txIds.size).toBe(1)
     expect(txIds.has('')).toBe(false)

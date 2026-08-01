@@ -182,7 +182,7 @@
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "@vitest/coverage-v8": "4.0.18",
-    "better-sqlite3": "13.0.1",
+    "better-sqlite3": "13.0.2",
     "etcd3": "1.1.2",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",

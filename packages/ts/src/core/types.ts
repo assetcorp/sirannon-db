@@ -59,6 +59,7 @@ export interface ClusterStatusInfo {
   primaryTerm?: bigint
   readEndpoints?: ClusterReadEndpointInfo[]
   health: NodeHealthState
+  healthReason: NodeHealthReason
 }
 
 /** Result returned by mutation statements (INSERT, UPDATE, DELETE). */

@@ -147,6 +147,7 @@ describe('TopologyAwareClientOptions', () => {
         primaryTerm: 1n,
         readEndpoints: [{ nodeId: 'node-b', endpoint: readableEndpoint, readConcerns: ['majority'] }],
         health: 'healthy',
+        healthReason: 'in-sync',
       }),
       authorizeClusterStatus: () => true,
     })

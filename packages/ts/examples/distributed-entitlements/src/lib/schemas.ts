@@ -56,6 +56,18 @@ export const clusterNodeSchema = z.object({
   reachable: z.boolean(),
   role: z.string().optional(),
   health: z.enum(['healthy', 'degraded', 'failing_over', 'unavailable', 'repairing', 'syncing']).optional(),
+  healthReason: z
+    .enum([
+      'in-sync',
+      'lagging',
+      'coordinator-unreachable',
+      'draining',
+      'repairing',
+      'faulted',
+      'sync-pending',
+      'no-group-state',
+    ])
+    .optional(),
   currentPrimary: z.string().nullable(),
   primaryTerm: z.string().nullable(),
   readEndpoints: z.coerce.number().int().nonnegative(),

@@ -55,5 +55,6 @@ export function toClusterStatusInfo(
       readConcerns: ['local', 'majority'],
     })),
     health: status.health.state,
+    healthReason: status.health.reason,
   }
 }

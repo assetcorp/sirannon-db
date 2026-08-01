@@ -143,11 +143,12 @@ ClusterStatusInfo {
   currentPrimary?:     { nodeId, endpoint } or null
   primaryTerm?:        string          -- string, to preserve 64-bit precision
   readEndpoints?:      List<{ nodeId, endpoint, readConcerns: List<'local'|'majority'|'linearizable'> }>
-  health:              'healthy' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
+  health:              NodeHealth.state
+  healthReason:        NodeHealth.reason
 }
 ```
 
-`health` is `NodeHealth.state`, defined in [03-replication.md](03-replication.md). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
+`health` and `healthReason` carry `NodeHealth`, defined in [03-replication.md](03-replication.md). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
 
 ### Error Responses
 
@@ -261,12 +262,13 @@ An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The
     "coordinator": { "connected": true, "authority": true },
     "controller": { "state": "standby" },
     "inSyncReplicas": ["node-b", "node-c"], "laggingReplicas": [],
-    "syncState": "ready", "readAvailability": "available", "writeAvailability": "available"
+    "syncState": "ready", "healthReason": "in-sync",
+    "readAvailability": "available", "writeAvailability": "available"
   }
 }
 ```
 
-`localSeq` and `primaryTerm` are stringified. `readAvailability` and `writeAvailability` are `available` when `NodeHealth` holds `canRead` and `canWrite` true. The readiness `status` is `NodeHealth.state`, with `healthy` reported as `ok`; a closed database reports `degraded` in place of `ok`.
+`localSeq` and `primaryTerm` are stringified. `healthReason` is `NodeHealth.reason`, and `readAvailability` and `writeAvailability` are `available` when `NodeHealth` holds `canRead` and `canWrite` true. The readiness `status` is `NodeHealth.state`, with `healthy` reported as `ok`; a closed database reports `degraded` in place of `ok`.
 
 ---
 

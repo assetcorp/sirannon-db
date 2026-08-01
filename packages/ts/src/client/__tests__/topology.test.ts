@@ -44,6 +44,7 @@ describe('TopologyAwareClientOptions', () => {
         primaryTerm: 1n,
         readEndpoints: [],
         health: 'healthy',
+        healthReason: 'in-sync',
       }),
       authorizeClusterStatus: () => true,
     })
@@ -127,6 +128,7 @@ describe('TopologyAwareClientOptions', () => {
             { nodeId: 'node-b', endpoint: replica.baseUrl, readConcerns: ['local', 'majority'] },
           ],
           health: 'healthy',
+          healthReason: 'in-sync',
         }),
         authorizeClusterStatus: () => true,
       })

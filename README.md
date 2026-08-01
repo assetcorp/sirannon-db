@@ -134,6 +134,7 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 ## Security
 
 - The server serves [registered operations](docs/operations.md) and accepts no SQL from the network until you set `acceptSql: true`. Authenticate every request either way through the `authenticate` hook, and check the `Origin` header on the WebSocket upgrade.
+- A Node client sends its `headers` on the WebSocket upgrade, so the hook reads `headers.authorization` on both transports. A browser sends no handshake header, so a browser client carries a short-lived ticket in `webSocketProtocols`; the server selects the plain `sirannon.v1` identifier and never echoes the ticket. A refused upgrade closes with 4401 or 4403; the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 - Every statement binds its parameters through the driver, so user input never reaches the SQL text.
 - Sirannon validates CDC table and column names against `/^[a-zA-Z_][a-zA-Z0-9_]*$/`, and rejects null bytes, `..` segments, and control characters in migration and backup paths.
 - HTTP bodies and WebSocket messages are capped at 1 MB, which `maxBodyBytes` raises or lowers.

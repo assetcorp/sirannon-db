@@ -89,8 +89,8 @@ Both options reach a local `db.live` only. A remote subscription carries no opti
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `transport` | `'websocket' \| 'http'` | `'websocket'` | Transport protocol |
-| `headers` | `Record<string, string>` | - | Custom HTTP headers; browser WebSocket handshakes do not use this option |
-| `webSocketProtocols` | `string \| string[]` | - | WebSocket subprotocols sent during the upgrade handshake |
+| `headers` | `Record<string, string>` | - | Custom headers for HTTP requests, and for the WebSocket upgrade under Node and Bun; a browser client that sets it with the WebSocket transport fails with `INVALID_ARGUMENT` |
+| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered during the upgrade, which is how a browser carries a credential; the client offers `sirannon.v1` ahead of them and the server selects that identifier |
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
 | `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
 | `requestTimeout` | `number` | `30_000` | Per-request timeout in ms on the WebSocket transport; raise it for very large writes, or set `0` to wait indefinitely |

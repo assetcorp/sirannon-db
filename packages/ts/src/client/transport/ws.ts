@@ -1,5 +1,6 @@
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
+import { withSirannonSubprotocol } from '../../core/ws-handshake.js'
 import type {
   AckResponse,
   BatchResponse,
@@ -38,7 +39,9 @@ export class WebSocketTransport implements Transport {
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
   private readonly requestTimeout: number
-  private readonly protocols: string | string[] | undefined
+  private readonly protocols: string[] | undefined
+  private readonly headers: Record<string, string> | undefined
+  private refusal: RemoteError | null = null
 
   private readonly pending: PendingRequests
   private activeSubscriptions = new Map<string, ActiveSubscription>()
@@ -59,13 +62,15 @@ export class WebSocketTransport implements Transport {
       reconnectInterval?: number
       requestTimeout?: number
       protocols?: string | string[]
+      headers?: Record<string, string>
     },
   ) {
     this.url = url
     this.autoReconnect = options?.autoReconnect ?? true
     this.reconnectInterval = options?.reconnectInterval ?? 1000
     this.requestTimeout = options?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT
-    this.protocols = options?.protocols
+    this.protocols = withSirannonSubprotocol(options?.protocols)
+    this.headers = options?.headers
     this.pending = new PendingRequests(this.requestTimeout)
   }
 
@@ -262,6 +267,10 @@ export class WebSocketTransport implements Transport {
       throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
     }
 
+    if (this.refusal) {
+      throw this.refusal
+    }
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return
     }
@@ -276,30 +285,37 @@ export class WebSocketTransport implements Transport {
   }
 
   private connect(): Promise<void> {
-    return openWebSocket(this.url, this.protocols, {
-      onConnected: ws => {
-        this.ws = ws
+    return openWebSocket(
+      this.url,
+      { protocols: this.protocols, headers: this.headers },
+      {
+        onConnected: ws => {
+          this.ws = ws
+        },
+        onRefused: error => {
+          this.refusal = error
+        },
+        onDisconnected: () => {
+          this.ws = null
+          this.handleDisconnect()
+        },
+        onMessage: raw =>
+          routeServerMessage(raw, {
+            pending: this.pending,
+            subscriptions: this.activeSubscriptions,
+            live: this.liveQueries,
+          }),
       },
-      onDisconnected: () => {
-        this.ws = null
-        this.handleDisconnect()
-      },
-      onMessage: raw =>
-        routeServerMessage(raw, {
-          pending: this.pending,
-          subscriptions: this.activeSubscriptions,
-          live: this.liveQueries,
-        }),
-    })
+    )
   }
 
   private handleDisconnect(): void {
-    this.pending.rejectAll(new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
+    this.pending.rejectAll(this.refusal ?? new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
 
     this.liveQueries.markDisconnected()
 
     const restorable = this.activeSubscriptions.size + this.liveQueries.size
-    if (this.autoReconnect && !this.closed && restorable > 0) {
+    if (this.autoReconnect && !this.closed && this.refusal === null && restorable > 0) {
       this.scheduleReconnect()
     }
   }
@@ -317,7 +333,7 @@ export class WebSocketTransport implements Transport {
         await this.ensureConnected()
         await this.resubscribeAll()
       } catch {
-        if (!this.closed && this.activeSubscriptions.size + this.liveQueries.size > 0) {
+        if (!this.closed && this.refusal === null && this.activeSubscriptions.size + this.liveQueries.size > 0) {
           this.scheduleReconnect()
         }
       }
@@ -339,6 +355,9 @@ export class WebSocketTransport implements Transport {
   }
 
   private request<T>(msg: WSClientMessage): Promise<T> {
+    if (this.refusal) {
+      return Promise.reject(this.refusal)
+    }
     const socket = this.ws
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new RemoteError('CONNECTION_ERROR', 'WebSocket is not connected'))

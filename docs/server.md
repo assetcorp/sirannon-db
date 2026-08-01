@@ -36,7 +36,11 @@ const server = createServer<Identity>(sirannon, {
 
 Every value the hook returns becomes the caller identity, so returning a `{ status, code, message }` object instead of throwing fails the request with `HOOK_ERROR`.
 
-Browsers can't attach an `Authorization` header to `new WebSocket(...)`. Read `method` and `path` to spot the upgrade, check the `Origin` header against an allowlist, and accept a short-lived value in `Sec-WebSocket-Protocol` that the client passes through `webSocketProtocols`.
+A Node client attaches an `Authorization` header to the upgrade, so `ctx.headers.authorization` reads the same on an HTTP route and on a WebSocket upgrade. A browser attaches no header to `new WebSocket(...)`, so accept a short-lived value in `Sec-WebSocket-Protocol` there, which the client sends through `webSocketProtocols`. Read `method` and `path` to spot the upgrade, and check the `Origin` header against an allowlist in the same hook.
+
+The server supports one subprotocol, the plain identifier `sirannon.v1`, and selects it whenever the client offers it. An upgrade that offers subprotocols without it fails with `400 UNSUPPORTED_SUBPROTOCOL`, and an upgrade that offers none at all connects. Selecting the plain identifier keeps a credential out of the handshake response and gives a browser the selected protocol it requires.
+
+No WebSocket client can read the status of a refused handshake, so when your hook throws with status 401 or 403 the server completes the handshake and closes the connection at once with code 4401 or 4403, carrying your error code and message as the close reason. A refusal with any other status keeps its HTTP status response.
 
 `GET /db/{id}/cluster` reports the address of every node in the group, so it answers only a request that `authorizeClusterStatus` accepts.
 
@@ -113,7 +117,7 @@ Every subscription marks the last change of each transaction with `txEnd`, so a 
 
 `sinceSeq` resumes a subscription from the highest sequence the client processed, and `epoch` names the sequence space that cursor came from. The server replays every retained change above that sequence, then sets `resync: true` when the cursor fell below the retained history or arrived with a foreign epoch.
 
-When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290 rather than dropping a frame, so the client reconnects and resumes from its cursor.
+When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290 rather than dropping a frame, so the client reconnects and resumes from its cursor. It closes with 1013 while shutting down, with 1008 when the database is absent or closed, and with 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client leaves a connection closed after 4401 or 4403, because the same credential fails every later attempt.
 
 ## Value encoding
 

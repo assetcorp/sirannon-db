@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ChangeEvent } from '../../core/types.js'
+import { SIRANNON_WS_SUBPROTOCOL } from '../../core/ws-handshake.js'
 import { WebSocketTransport } from '../transport/ws.js'
 import { firstFrameOfType, firstSubscribeFrame, installFakeWebSockets, until } from './helpers.js'
 
@@ -44,7 +45,9 @@ describe('WebSocketTransport', () => {
       })
 
       await expect(transport.query('SELECT 1')).rejects.toThrow('Request timed out after 1ms')
-      expect(capturedConnections).toEqual([{ url: 'ws://localhost:1234/db/test', protocols }])
+      expect(capturedConnections).toEqual([
+        { url: 'ws://localhost:1234/db/test', protocols: [SIRANNON_WS_SUBPROTOCOL, ...protocols] },
+      ])
       transport.close()
     } finally {
       vi.stubGlobal('WebSocket', originalWebSocket)

@@ -217,7 +217,8 @@ describe('RemoteDatabase via HTTP', () => {
       acceptSql: true,
       port: 0,
       authenticate: ({ headers }) => {
-        if (headers['sec-websocket-protocol'] !== protocol) {
+        const offered = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+        if (!offered.includes(protocol)) {
           throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Bad protocol')
         }
         return undefined

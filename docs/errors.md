@@ -112,6 +112,7 @@ A dash in the class column means Sirannon raises the base `SirannonError` carryi
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none |
 | `REGISTRY_MISMATCH` | A live query echoed a registry digest this server does not serve |
 | `SQL_NOT_ACCEPTED` | The server accepts no SQL over the network |
+| `UNSUPPORTED_SUBPROTOCOL` | A WebSocket upgrade offered no subprotocol the server supports |
 
 ## Replication
 
@@ -151,6 +152,8 @@ Every class above is exported from `@delali/sirannon-db/replication`, and `Failo
 | Code | When |
 | --- | --- |
 | `CONNECTION_ERROR` | The client failed to connect to the server |
+| `UNAUTHORIZED` | The server refused the WebSocket upgrade as unauthenticated and closed with 4401 |
+| `FORBIDDEN` | The server refused the WebSocket upgrade as not permitted and closed with 4403 |
 | `TIMEOUT` | A request passed the configured timeout |
 | `TRANSPORT_ERROR` | The current transport does not carry this operation, such as a live query over HTTP |
 | `INVALID_RESPONSE` | The server returned a response the client could not parse |
@@ -167,11 +170,13 @@ Every class above is exported from `@delali/sirannon-db/replication`, and `Failo
 
 A validation code such as `INVALID_WRITER_WORKER`, `INVALID_MAX_BODY_BYTES`, or `INVALID_DRIVER` reports a configuration mistake, so fix the configuration rather than retrying.
 
+`UNAUTHORIZED` and `FORBIDDEN` report a refused WebSocket upgrade. The client leaves that connection closed, so issue a fresh credential and build a new client rather than retrying the request.
+
 ## HTTP status codes
 
 | Status | Codes |
 | --- | --- |
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
 | 401 | `IDENTITY_REQUIRED` |
 | 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |

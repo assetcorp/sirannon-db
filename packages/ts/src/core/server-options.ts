@@ -174,9 +174,20 @@ export interface WSHandlerOptions<Identity = unknown> {
 export interface ClientOptions {
   /** Transport to use. Default: 'websocket'. */
   transport?: 'websocket' | 'http'
-  /** Custom headers for HTTP requests. */
+  /**
+   * Custom headers for HTTP requests, and for the WebSocket upgrade in a
+   * runtime whose WebSocket carries a handshake header, which Node and Bun do
+   * and a browser does not. Constructing a WebSocket-transport client with
+   * headers in a runtime that carries none fails with `INVALID_ARGUMENT`; carry
+   * the credential in {@link ClientOptions.webSocketProtocols} there instead.
+   */
   headers?: Record<string, string>
-  /** WebSocket subprotocols sent during the browser-compatible handshake. */
+  /**
+   * WebSocket subprotocols offered during the handshake, which is how a browser
+   * carries a short-lived credential. The client offers the `sirannon.v1`
+   * identifier alongside them and the server selects that identifier, so the
+   * credential never comes back in the handshake response.
+   */
   webSocketProtocols?: string | string[]
   /** Reconnect on WebSocket disconnect. Default: true. */
   autoReconnect?: boolean

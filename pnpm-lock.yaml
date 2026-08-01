@@ -220,6 +220,12 @@ importers:
       '@delali/sirannon-db':
         specifier: workspace:*
         version: link:../..
+      '@fontsource-variable/ibm-plex-sans':
+        specifier: 5.2.8
+        version: 5.2.8
+      '@fontsource/ibm-plex-mono':
+        specifier: 5.2.7
+        version: 5.2.7
       '@tanstack/react-router':
         specifier: 1.170.10
         version: 1.170.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -278,9 +284,18 @@ importers:
       '@delali/sirannon-db':
         specifier: workspace:*
         version: link:../..
+      '@fontsource-variable/ibm-plex-sans':
+        specifier: 5.2.8
+        version: 5.2.8
+      '@fontsource/ibm-plex-mono':
+        specifier: 5.2.7
+        version: 5.2.7
       better-sqlite3:
         specifier: 12.6.2
         version: 12.6.2
+      lucide:
+        specifier: 1.27.0
+        version: 1.27.0
       uWebSockets.js:
         specifier: github:uNetworking/uWebSockets.js#v20.58.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab
@@ -5333,6 +5348,9 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
+  lucide@1.27.0:
+    resolution: {integrity: sha512-m78hY+pL+dLrVvDEl68oYTdvjXW5Nz0ULDsUfbWfl7lzNDv1kFZGG+bAEm2eGEmUyvpZgAcyRwNhFljIErss3w==}
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -9103,14 +9121,14 @@ snapshots:
     dependencies:
       '@jest/fake-timers': 29.7.0
       '@jest/types': 29.6.3
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       jest-mock: 29.7.0
 
   '@jest/fake-timers@29.7.0':
     dependencies:
       '@jest/types': 29.6.3
       '@sinonjs/fake-timers': 10.3.0
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       jest-message-util: 29.7.0
       jest-mock: 29.7.0
       jest-util: 29.7.0
@@ -9150,7 +9168,7 @@ snapshots:
       '@jest/schemas': 29.6.3
       '@types/istanbul-lib-coverage': 2.0.6
       '@types/istanbul-reports': 3.0.4
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
@@ -10871,7 +10889,7 @@ snapshots:
 
   '@types/graceful-fs@4.1.9':
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
 
   '@types/istanbul-lib-coverage@2.0.6': {}
 
@@ -10907,7 +10925,7 @@ snapshots:
 
   '@types/set-cookie-parser@2.4.10':
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
 
   '@types/stack-utils@2.0.3': {}
 
@@ -11471,7 +11489,7 @@ snapshots:
 
   chrome-launcher@0.15.2:
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2
@@ -11480,7 +11498,7 @@ snapshots:
 
   chromium-edge-launcher@0.2.0:
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       escape-string-regexp: 4.0.0
       is-wsl: 2.2.0
       lighthouse-logger: 1.4.2
@@ -12519,7 +12537,7 @@ snapshots:
       '@jest/environment': 29.7.0
       '@jest/fake-timers': 29.7.0
       '@jest/types': 29.6.3
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       jest-mock: 29.7.0
       jest-util: 29.7.0
 
@@ -12529,7 +12547,7 @@ snapshots:
     dependencies:
       '@jest/types': 29.6.3
       '@types/graceful-fs': 4.1.9
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       anymatch: 3.1.3
       fb-watchman: 2.0.2
       graceful-fs: 4.2.11
@@ -12556,7 +12574,7 @@ snapshots:
   jest-mock@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       jest-util: 29.7.0
 
   jest-regex-util@29.6.3: {}
@@ -12564,7 +12582,7 @@ snapshots:
   jest-util@29.7.0:
     dependencies:
       '@jest/types': 29.6.3
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       chalk: 4.1.2
       ci-info: 3.9.0
       graceful-fs: 4.2.11
@@ -12581,7 +12599,7 @@ snapshots:
 
   jest-worker@29.7.0:
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 26.1.2
       jest-util: 29.7.0
       merge-stream: 2.0.0
       supports-color: 8.1.1
@@ -12770,6 +12788,8 @@ snapshots:
   lucide-react@1.17.0(react@19.2.6):
     dependencies:
       react: 19.2.6
+
+  lucide@1.27.0: {}
 
   magic-string@0.30.21:
     dependencies:

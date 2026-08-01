@@ -5,7 +5,6 @@
   --card: oklch(1 0 0);
   --muted: oklch(0.962 0.004 255);
   --muted-foreground: oklch(0.5 0.016 255);
-  --accent: oklch(0.945 0.007 255);
   --primary: oklch(0.28 0.016 255);
   --primary-foreground: oklch(0.985 0.002 255);
   --border: oklch(0.9 0.006 255);
@@ -36,7 +35,6 @@
   --card: oklch(0.185 0.014 255);
   --muted: oklch(0.24 0.015 255);
   --muted-foreground: oklch(0.71 0.012 252);
-  --accent: oklch(0.26 0.018 255);
   --primary: oklch(0.93 0.006 250);
   --primary-foreground: oklch(0.17 0.012 255);
   --border: oklch(1 0 0 / 10%);
@@ -55,17 +53,12 @@
 
 * {
   box-sizing: border-box;
-}
-
-html {
-  min-height: 100%;
-  background: var(--background);
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  min-height: 100vh;
-  margin: 0;
-  color: var(--foreground);
+  font-family: var(--font-sans);
   background: var(--background);
   background-image:
     radial-gradient(
@@ -80,20 +73,80 @@ body {
     48px 48px,
     48px 48px;
   background-attachment: fixed;
-  font-family: var(--font-sans);
-  font-size: 14px;
+  color: var(--foreground);
+  line-height: 1.5;
+  padding: 2rem 1.5rem 4rem;
 }
 
-button,
-input {
-  font: inherit;
+h1 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.75rem;
+}
+
+h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 button {
-  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
 }
 
-:focus-visible {
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button[type="submit"] {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primary-foreground);
+}
+
+button[type="submit"]:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  opacity: 0.9;
+}
+
+input {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+input::placeholder {
+  color: var(--muted-foreground);
+}
+
+input:focus-visible,
+button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }

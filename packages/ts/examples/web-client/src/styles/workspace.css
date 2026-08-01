@@ -8,19 +8,19 @@
 
 .inventory-panel,
 .activity-panel {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
   box-shadow: var(--shadow);
 }
 
 .inventory-panel {
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
 }
 
 .activity-panel {
-  padding: 12px;
+  padding: 14px;
   max-height: calc(100vh - 230px);
   overflow: auto;
 }
@@ -34,16 +34,18 @@
 
 .panel-header span {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  color: var(--blue);
+  color: var(--muted-foreground);
 }
 
 .panel-header h2 {
   margin: 0;
-  color: var(--ink);
-  font-size: 0.95rem;
+  color: var(--foreground);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .add-product-form {
@@ -56,31 +58,37 @@
 
 .add-product-form label {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
 }
 
 .add-product-form label span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .add-product-form input {
   width: 100%;
   min-width: 0;
-  height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.48rem 0.62rem;
-  color: var(--ink);
-  background: #ffffff;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.4rem 0.6rem;
+  color: var(--foreground);
+  background: var(--card);
 }
 
-.add-product-form input:focus {
-  outline: 2px solid rgb(31 95 191 / 18%);
-  border-color: var(--blue);
+.add-product-form input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.add-product-form input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+  border-color: var(--border-strong);
 }
 
 .add-product-form button {
@@ -88,18 +96,18 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
-  border: 1px solid #174ea6;
-  border-radius: 6px;
-  padding: 0.48rem 0.82rem;
-  color: #ffffff;
-  background: var(--blue);
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: 0.4rem 0.8rem;
+  color: var(--primary-foreground);
+  background: var(--primary);
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .add-product-form button:hover:not(:disabled) {
-  background: #174ea6;
+  opacity: 0.9;
 }
 
 .add-product-form button:disabled,
@@ -111,9 +119,9 @@
 .table-wrap {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
 }
 
 .product-table {
@@ -124,16 +132,17 @@
 
 .product-table th,
 .product-table td {
-  padding: 0.64rem 0.72rem;
+  padding: 0.6rem 0.7rem;
   text-align: left;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--border);
 }
 
 .product-table th {
-  color: var(--muted);
-  background: var(--surface-muted);
-  font-size: 0.72rem;
-  font-weight: 800;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -142,27 +151,28 @@
 }
 
 .product-table td {
-  color: var(--text);
-  font-size: 0.88rem;
+  color: var(--foreground);
+  font-size: 0.86rem;
 }
 
 .stock-count {
   display: inline-flex;
-  min-width: 48px;
+  min-width: 44px;
   justify-content: center;
-  border: 1px solid #a7d7d1;
-  border-radius: 999px;
-  padding: 0.22rem 0.48rem;
-  color: var(--green);
-  background: var(--green-soft);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0.15rem 0.4rem;
+  color: var(--success);
+  background: var(--success-surface);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-weight: 800;
+  font-weight: 500;
+  font-size: 0.8rem;
 }
 
 .stock-count.low {
-  border-color: #f4ce85;
-  color: var(--amber);
-  background: var(--amber-soft);
+  color: var(--warning);
+  background: var(--warning-surface);
 }
 
 .row-actions {
@@ -175,26 +185,20 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.36rem 0.52rem;
-  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.3rem 0.5rem;
+  color: var(--muted-foreground);
+  background: var(--card);
   cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.row-actions button:first-child {
-  color: var(--blue);
-}
-
-.row-actions button:last-child {
-  color: var(--green);
+  font-size: 0.78rem;
+  font-weight: 500;
 }
 
 .row-actions button:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  background: var(--surface-muted);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+  background: var(--muted);
 }
 
 .row-actions button:disabled {

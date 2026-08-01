@@ -11,30 +11,30 @@
   grid-template-columns: 10px minmax(0, 1fr);
   gap: 9px;
   align-items: start;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 9px;
-  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  background: var(--card);
 }
 
 .activity-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   margin-top: 6px;
   border-radius: 999px;
-  background: var(--blue);
+  background: var(--muted-foreground);
 }
 
 .activity-item.allocated .activity-dot {
-  background: var(--blue);
+  background: var(--muted-foreground);
 }
 
 .activity-item.received .activity-dot {
-  background: var(--green);
+  background: var(--success);
 }
 
 .activity-item.created .activity-dot {
-  background: var(--amber);
+  background: var(--warning);
 }
 
 .activity-item div {
@@ -44,12 +44,14 @@
 }
 
 .activity-item strong {
-  color: var(--ink);
-  font-size: 0.84rem;
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .activity-item span:last-child {
-  color: var(--muted);
-  font-size: 0.74rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
 }

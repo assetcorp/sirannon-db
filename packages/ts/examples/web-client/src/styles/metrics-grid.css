@@ -10,23 +10,26 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px;
-  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 14px;
+  background: var(--card);
   box-shadow: var(--shadow);
 }
 
 .metric-card span {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 700;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .metric-card strong {
-  color: var(--ink);
-  font-size: 1.22rem;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }

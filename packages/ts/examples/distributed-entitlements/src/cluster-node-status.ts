@@ -18,7 +18,7 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
     currentPrimary: status.coordinator?.currentPrimary?.nodeId,
     coordinator: status.coordinator
       ? {
-          connected: true,
+          connected: status.coordinator.connected,
           authority: status.coordinator.authority,
         }
       : undefined,
@@ -85,8 +85,10 @@ function clusterHealth(status: ReplicationStatus, nodeId: string): ClusterStatus
   if (!coordinatorState) return 'unavailable'
   if (coordinatorState.repairingNodeIds.includes(nodeId)) return 'repairing'
   if (coordinatorState.authority && writeAvailability(status) === 'unavailable') return 'failing_over'
-  if (readAvailability(status) === 'unavailable' && writeAvailability(status) === 'unavailable') return 'unavailable'
+  if (readAvailability(status) === 'unavailable') return 'unavailable'
+  if (!coordinatorState.connected) return 'degraded'
   if (coordinatorState.faultedNodeIds.length > 0 || coordinatorState.drainingNodeIds.length > 0) return 'degraded'
+  if (!coordinatorState.inSyncNodeIds.includes(nodeId)) return 'degraded'
   return 'healthy'
 }
 
@@ -97,7 +99,7 @@ function readAvailability(status: ReplicationStatus): 'available' | 'unavailable
   if (coordinatorState.drainingNodeIds.includes(status.nodeId)) return 'unavailable'
   if (coordinatorState.repairingNodeIds.includes(status.nodeId)) return 'unavailable'
   if (coordinatorState.faultedNodeIds.includes(status.nodeId)) return 'unavailable'
-  return coordinatorState.inSyncNodeIds.includes(status.nodeId) ? 'available' : 'unavailable'
+  return 'available'
 }
 
 function writeAvailability(status: ReplicationStatus): 'available' | 'unavailable' {

@@ -107,10 +107,11 @@ function readinessStatusForReplication(
   current: ReadinessResponse['status'],
 ): ReadinessResponse['status'] {
   if (replication.syncState === 'syncing' || replication.syncState === 'catching-up') return 'syncing'
-  if (replication.controller?.state === 'active' && replication.writeAvailability === 'unavailable')
+  if (replication.coordinator?.authority === true && replication.writeAvailability === 'unavailable')
     return 'failing_over'
   if (replication.readAvailability === 'unavailable' && replication.writeAvailability === 'unavailable')
     return 'unavailable'
+  if (replication.coordinator?.connected === false) return 'degraded'
   if ((replication.laggingReplicas?.length ?? 0) > 0) return 'degraded'
   return current
 }

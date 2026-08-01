@@ -106,7 +106,7 @@ function FlowArrow() {
 function NodeTile({ node, primaryNode }: { node: ClusterNode; primaryNode: string }) {
   const health = clusterHealthLabel(node)
   const tone = HEALTH_TONE[health] ?? 'neutral'
-  const isPrimary = primaryNode === node.nodeId
+  const isPrimary = node.reachable && node.role !== undefined ? node.role === 'primary' : primaryNode === node.nodeId
 
   return (
     <div

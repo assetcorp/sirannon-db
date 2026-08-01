@@ -57,7 +57,6 @@ const LOG_CREATION_SQL = `
 
 const DELETE_ACTIVITY_SQL = 'DELETE FROM activity'
 const DELETE_PRODUCTS_SQL = 'DELETE FROM products'
-const RESET_SEQUENCE_SQL = "DELETE FROM sqlite_sequence WHERE name IN ('activity', 'products')"
 
 function refuse(message: string): never {
   throw new RequestDeniedError(400, 'INVALID_ARGUMENT', message)
@@ -162,7 +161,6 @@ export const operations = {
         statements: () => [
           { sql: DELETE_ACTIVITY_SQL },
           { sql: DELETE_PRODUCTS_SQL },
-          { sql: RESET_SEQUENCE_SQL },
           ...SEED_PRODUCTS.map(product => ({
             sql: INSERT_PRODUCT_SQL,
             params: [product.name, product.price, product.stock],

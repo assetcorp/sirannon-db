@@ -49,7 +49,7 @@ const db = await sirannon.open(DATABASE_ID, join(tempDir, 'inventory.db'), {
 
 await db.execute(`
   CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     price REAL NOT NULL,
     stock INTEGER NOT NULL DEFAULT 0
@@ -58,7 +58,7 @@ await db.execute(`
 
 await db.execute(`
   CREATE TABLE IF NOT EXISTS activity (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     product_name TEXT NOT NULL,
     action TEXT NOT NULL,
     quantity INTEGER NOT NULL,

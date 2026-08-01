@@ -178,8 +178,9 @@ export interface ClientOptions {
    * Custom headers for HTTP requests, and for the WebSocket upgrade in a
    * runtime whose WebSocket carries a handshake header, which Node and Bun do
    * and a browser does not. Constructing a WebSocket-transport client with
-   * headers in a runtime that carries none fails with `INVALID_ARGUMENT`; carry
-   * the credential in {@link ClientOptions.webSocketProtocols} there instead.
+   * headers and no {@link ClientOptions.webSocketProtocols} in a runtime that
+   * carries none fails with `INVALID_ARGUMENT`. Pass both when a browser client
+   * needs each one, and the headers still reach every HTTP request.
    */
   headers?: Record<string, string>
   /**

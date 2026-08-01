@@ -42,7 +42,7 @@ TopologyAwareClientOptions extends ClientOptions {
 
 `SirannonClient` connects to the single `url` and never routes between nodes; passing it `endpoints`, `primary`, `replicas`, `readPreference`, `discovery`, or `readConcern` fails with `INVALID_ARGUMENT`. `TopologyAwareClient` routes between the nodes of a replication group. An implementation that splits its package into entry points must place `TopologyAwareClient` behind an entry point of its own and prove that the browser-facing entry point does not reach it, so no browser bundle carries routing code or an internal node address.
 
-`headers` applies to HTTP requests, to coordinator discovery requests, and to the WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A client constructed with `headers` and the WebSocket transport in a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`.
+`headers` applies to HTTP requests, to coordinator discovery requests, and to the WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A client constructed with `headers`, no `webSocketProtocols`, and the WebSocket transport in a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`. A client given both must send `headers` on its HTTP requests and the subprotocols on the upgrade.
 
 A browser client carries a short-lived credential in `webSocketProtocols`. A client that configures subprotocols must offer the `sirannon.v1` identifier ahead of them, and the server selects that identifier (see [05-server.md](05-server.md#subprotocol-negotiation)). A client that configures none must offer no subprotocol.
 

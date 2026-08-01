@@ -1,9 +1,11 @@
 import { request } from 'node:http'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RequestDeniedError } from '../../core/errors.js'
 import type { RequestContext } from '../../core/types.js'
 import { SIRANNON_WS_SUBPROTOCOL } from '../../core/ws-handshake.js'
 import { SirannonClient } from '../client.js'
+import { TopologyAwareClient } from '../topology.js'
+import { WebSocketTransport } from '../transport/ws.js'
 import { assertHandshakeHeadersSupported, runtimeSupportsHandshakeHeaders } from '../transport/ws-headers.js'
 import { RemoteError } from '../types.js'
 import { until } from './helpers.js'
@@ -122,16 +124,138 @@ describe('WebSocket handshake headers', () => {
   })
 
   it('refuses headers a runtime cannot attach and names the subprotocol option', () => {
-    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, {})).toThrow(RemoteError)
-    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, {})).toThrow(/webSocketProtocols/)
-    expect(() => assertHandshakeHeadersSupported({}, {})).not.toThrow()
-    expect(() => assertHandshakeHeadersSupported(undefined, {})).not.toThrow()
+    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, undefined, {})).toThrow(RemoteError)
+    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, undefined, {})).toThrow(
+      /webSocketProtocols/,
+    )
+    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, [], {})).toThrow(RemoteError)
+    expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, '', {})).toThrow(RemoteError)
+    expect(() => assertHandshakeHeadersSupported({}, undefined, {})).not.toThrow()
+    expect(() => assertHandshakeHeadersSupported(undefined, undefined, {})).not.toThrow()
+  })
+
+  it('accepts headers alongside a subprotocol credential in a runtime that attaches none', () => {
+    expect(() =>
+      assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, ['sirannon.ticket.abc'], {}),
+    ).not.toThrow()
+    expect(() =>
+      assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, 'sirannon.ticket.abc', {}),
+    ).not.toThrow()
+  })
+
+  it('builds the socket from the global constructor when the runtime attaches no header', async () => {
+    const captured: { url: string; second: unknown }[] = []
+
+    class CapturingWebSocket extends EventTarget {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+
+      readyState = CapturingWebSocket.CONNECTING
+
+      constructor(url: string | URL, second?: unknown) {
+        super()
+        captured.push({ url: String(url), second })
+        queueMicrotask(() => {
+          this.readyState = CapturingWebSocket.OPEN
+          this.dispatchEvent(new Event('open'))
+        })
+      }
+
+      send(): void {}
+
+      close(): void {
+        this.readyState = CapturingWebSocket.CLOSED
+        this.dispatchEvent(new Event('close'))
+      }
+    }
+
+    vi.stubGlobal('window', {})
+    vi.stubGlobal('WebSocket', CapturingWebSocket)
+
+    try {
+      const transport = new WebSocketTransport('ws://127.0.0.1:9876/db/testdb', {
+        autoReconnect: false,
+        requestTimeout: 1,
+        headers: { Authorization: 'Bearer token' },
+        protocols: ['sirannon.ticket.abc'],
+      })
+      await expect(transport.query('SELECT 1')).rejects.toThrow()
+      transport.close()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(captured[0]?.second).toEqual([SIRANNON_WS_SUBPROTOCOL, 'sirannon.ticket.abc'])
   })
 
   it('accepts headers on a WebSocket client in a runtime that attaches them', () => {
     const client = new SirannonClient(harness.baseUrl, { headers: { Authorization: 'Bearer node-token' } })
     expect(client.database('testdb').id).toBe('testdb')
     client.close()
+  })
+})
+
+describe('a browser topology client carrying a header and a ticket', () => {
+  it('sends the header on coordinator discovery and the ticket on the upgrade', async () => {
+    const token = 'Bearer entitlements-token'
+    const ticket = 'sirannon.entitlements.auth.abc'
+    const discoveryAuthorization: (string | undefined)[] = []
+    const upgradeAuthorization: (string | undefined)[] = []
+    const upgradeOffers: (string | undefined)[] = []
+
+    const baseUrl = await harness.restart({
+      authenticate: ({ headers }) => {
+        if (headers['sec-websocket-key'] === undefined) {
+          return headers.authorization === token ? { actor: 'operator' } : undefined
+        }
+
+        upgradeAuthorization.push(headers.authorization)
+        upgradeOffers.push(headers['sec-websocket-protocol'])
+        const offered = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+        if (headers.authorization === token) return { actor: 'operator' }
+        if (offered.includes(ticket)) return { actor: 'browser' }
+        throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing valid token')
+      },
+      authorizeClusterStatus: ({ headers }) => {
+        discoveryAuthorization.push(headers.authorization)
+        return headers.authorization === token
+      },
+      getClusterStatus: databaseId => ({
+        databaseId,
+        currentPrimary: { nodeId: 'node-a', endpoint: harness.baseUrl },
+        primaryTerm: 1n,
+        readEndpoints: [{ nodeId: 'node-a', endpoint: harness.baseUrl, readConcerns: ['local', 'majority'] }],
+        health: 'healthy' as const,
+        healthReason: 'in-sync' as const,
+      }),
+    })
+
+    vi.stubGlobal('window', {})
+    let client: TopologyAwareClient | undefined
+
+    try {
+      client = new TopologyAwareClient({
+        endpoints: [baseUrl],
+        discovery: 'coordinator',
+        transport: 'websocket',
+        readPreference: 'replica',
+        readConcern: 'majority',
+        headers: { Authorization: token },
+        webSocketProtocols: [ticket],
+      })
+
+      const rows = await client.database('testdb').query<{ name: string }>('SELECT name FROM users')
+      expect(rows[0].name).toBe('Alice')
+    } finally {
+      client?.close()
+      vi.unstubAllGlobals()
+    }
+
+    expect(discoveryAuthorization).toContain(token)
+    expect(upgradeOffers[0]).toBe(`${SIRANNON_WS_SUBPROTOCOL}, ${ticket}`)
+    expect(upgradeAuthorization).toEqual([undefined])
   })
 })
 

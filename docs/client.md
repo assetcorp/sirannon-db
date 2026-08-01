@@ -92,7 +92,9 @@ The HTTP and WebSocket transports send a per-call `readConcern` to the server. T
 
 The client `Transport` interface carries application queries, writes, and CDC subscriptions over HTTP or WebSocket. It's a separate contract from the `ReplicationTransport` that moves change batches between nodes: `WebSocketTransport` conforms to the first and never the second.
 
-A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so your `authenticate` hook reads `headers.authorization` on either transport. A browser attaches no header to `new WebSocket(...)`, so carry a short-lived ticket in `webSocketProtocols` there and check it in the same hook. A browser client built with `headers` and the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server.
+A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so your `authenticate` hook reads `headers.authorization` on either transport. A browser attaches no header to `new WebSocket(...)`, so carry a short-lived ticket in `webSocketProtocols` there and check it in the same hook. A browser client built with `headers` alone on the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server.
+
+Pass both options when a browser client needs each of them. The topology client sends `headers` on its coordinator discovery request to `GET /db/{id}/cluster`, and the ticket in `webSocketProtocols` on the socket handshake, so a browser reaches an endpoint that reads a bearer token and a socket that reads a subprotocol.
 
 The client offers the plain `sirannon.v1` identifier ahead of the protocols you configure, and the server selects that identifier, so a ticket never comes back in the handshake response.
 

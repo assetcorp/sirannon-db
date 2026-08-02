@@ -1,51 +1,56 @@
-import type { CDCEvent } from '../../lib/cdc'
-import { normaliseActivityRecord, normaliseProduct } from '../../lib/cdc'
+import type { LiveQueryState } from '@delali/sirannon-db/react'
+import type { ZodType } from 'zod'
 import type { ActivityRecord, Product } from '../../lib/schemas'
 import type { ConnectionState, ProductStats } from './types'
 
-export function applyProductEvent(products: Product[], event: CDCEvent): Product[] {
-  if (event.type === 'delete') {
-    const deleted = normaliseProduct(event.oldRow ?? event.row)
-    if (!deleted) {
-      return products
-    }
-
-    return products.filter(product => product.id !== deleted.id)
-  }
-
-  const nextProduct = normaliseProduct(event.row)
-  if (!nextProduct) {
-    return products
-  }
-
-  const byId = new Map(products.map(product => [product.id, product]))
-  byId.set(nextProduct.id, nextProduct)
-  return [...byId.values()].sort(compareProducts)
+export interface ParsedRows<T> {
+  rows: T[]
+  rejected: number
 }
 
-export function applyActivityEvent(records: ActivityRecord[], event: CDCEvent): ActivityRecord[] {
-  if (event.type === 'delete') {
-    const deleted = normaliseActivityRecord(event.oldRow ?? event.row)
-    if (!deleted) {
-      return records
+export function parseRows<T>(state: LiveQueryState<unknown>, schema: ZodType<T>): ParsedRows<T> {
+  if (state.status !== 'ready') {
+    return { rows: [], rejected: 0 }
+  }
+
+  const rows: T[] = []
+  let rejected = 0
+
+  for (const row of state.rows) {
+    const result = schema.safeParse(row)
+    if (result.success) {
+      rows.push(result.data)
+    } else {
+      rejected += 1
     }
-
-    return records.filter(record => record.id !== deleted.id)
   }
 
-  if (event.type !== 'insert') {
-    return records
-  }
-
-  const nextRecord = normaliseActivityRecord(event.row)
-  if (!nextRecord || records.some(record => record.id === nextRecord.id)) {
-    return records
-  }
-
-  return [nextRecord, ...records].slice(0, 20)
+  return { rows, rejected }
 }
 
-export function getProductStats(products: Product[]): ProductStats {
+export function toConnectionState(states: readonly LiveQueryState<unknown>[]): ConnectionState {
+  if (states.some(state => state.status === 'error')) {
+    return 'offline'
+  }
+
+  return states.every(state => state.status === 'ready') ? 'live' : 'connecting'
+}
+
+export function isRevalidating(states: readonly LiveQueryState<unknown>[]): boolean {
+  return states.some(state => state.status === 'ready' && state.revalidating)
+}
+
+export function firstLiveError(states: readonly LiveQueryState<unknown>[]): string | null {
+  for (const state of states) {
+    if (state.status === 'error') {
+      return state.error.message
+    }
+  }
+
+  return null
+}
+
+export function getProductStats(products: readonly Product[]): ProductStats {
   return products.reduce(
     (stats, product) => ({
       totalProducts: stats.totalProducts + 1,
@@ -77,10 +82,6 @@ export function activityLabel(record: ActivityRecord): string {
   return `Created ${record.product_name} with ${record.quantity} units`
 }
 
-export function formatEventLabel(event: CDCEvent): string {
-  return `${event.table} ${event.type} #${event.seq.toString()}`
-}
-
 export function statusLabel(state: ConnectionState): string {
   if (state === 'live') {
     return 'Live'
@@ -95,12 +96,4 @@ export function statusLabel(state: ConnectionState): string {
 
 export function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-export function createEmptyDispose(): () => void {
-  return () => undefined
-}
-
-function compareProducts(left: Product, right: Product): number {
-  return left.id - right.id
 }

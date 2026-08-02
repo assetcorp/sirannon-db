@@ -1,16 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { APPLIED_CHANGES_TABLE } from '../../core/internal-tables.js'
+import { prepareInsertAppliedChange, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
+import { SyncRecovery } from './sync-recovery.js'
+import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
+  private readonly recovery: SyncRecovery
 
-  constructor(private readonly engine: ReplicationEngine) {}
+  constructor(private readonly engine: ReplicationEngine) {
+    this.recovery = new SyncRecovery(engine, () => {
+      this.retryInitiateSync()
+    })
+  }
 
   async initiateSync(): Promise<void> {
     const engine = this.engine
@@ -55,6 +62,7 @@ export class SyncJoiner {
       const savedState = await engine.log.getSyncState()
       const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
       const requestId = randomUUID()
+      engine.syncTableDigests.clear()
       await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
       await engine.config.transport.requestSync(
         sourcePeerId,
@@ -62,10 +70,13 @@ export class SyncJoiner {
           requestId,
           joinerNodeId: engine.nodeId,
           completedTables,
+          supportsStreamVerification: true,
         }),
       )
+      this.recovery.markRequestSent(requestId, sourcePeerId)
     } catch (err: unknown) {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.recovery.markRequestFailed()
       if (engine.syncState.phase === 'syncing' && engine.syncState.sourcePeerId === sourcePeerId) {
         engine.syncState.phase = 'pending'
         engine.syncState.sourcePeerId = null
@@ -91,6 +102,8 @@ export class SyncJoiner {
     const engine = this.engine
     if (engine.syncState.phase !== 'syncing') return
     if (fromPeerId !== engine.syncState.sourcePeerId) return
+
+    this.recovery.noteSourceResponded(batch.requestId)
 
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
@@ -121,7 +134,7 @@ export class SyncJoiner {
               throw new SyncError(`Unsafe DDL in schema batch: ${ddl}`)
             }
           }
-          await engine.writerConn.exec('PRAGMA foreign_keys = OFF')
+          await setForeignKeysEnabled(engine.writerConn, false)
           for (const ddl of batch.schema) {
             let saferDdl = ddl.replace(/^\s*CREATE\s+TABLE\b/i, 'CREATE TABLE IF NOT EXISTS')
             saferDdl = saferDdl.replace(/^\s*CREATE\s+INDEX\b/i, 'CREATE INDEX IF NOT EXISTS')
@@ -149,26 +162,45 @@ export class SyncJoiner {
       }
 
       if (batch.batchIndex === 0 && !engine.syncState.completedTables.includes(batch.table)) {
+        engine.syncTableDigests.delete(batch.table)
         await engine.tracker.unwatch(engine.writerConn, batch.table)
         await engine.writerConn.exec(`DELETE FROM "${batch.table}"`)
       }
 
       if (batch.rows.length > 0) {
-        const columns = Object.keys(batch.rows[0]).filter(c => IDENTIFIER_RE.test(c))
-        if (columns.length > 0) {
-          const placeholders = columns.map(() => '?').join(', ')
-          const colNames = columns.map(c => `"${c}"`).join(', ')
-          const insertSql = `INSERT INTO "${batch.table}" (${colNames}) VALUES (${placeholders})`
-
-          await engine.writerConn.transaction(async tx => {
-            const stmt = await tx.prepare(insertSql)
-            for (const row of batch.rows) {
-              const values = columns.map(c => row[c])
-              await stmt.run(...values)
-            }
-          })
+        const columns = Object.keys(batch.rows[0])
+        if (columns.length === 0) {
+          throw new SyncError(`No columns in sync batch for ${batch.table}`)
         }
+        for (const col of columns) {
+          if (!IDENTIFIER_RE.test(col)) {
+            throw new SyncError(`Invalid column name '${col}' in sync batch for ${batch.table}`)
+          }
+        }
+        const columnSet = new Set(columns)
+        for (const row of batch.rows) {
+          const keys = Object.keys(row)
+          if (keys.length !== columns.length || keys.some(k => !columnSet.has(k))) {
+            throw new SyncError(`Row columns do not match batch columns for ${batch.table}`)
+          }
+        }
+        const placeholders = columns.map(() => '?').join(', ')
+        const colNames = columns.map(c => `"${c}"`).join(', ')
+        const insertSql = `INSERT INTO "${batch.table}" (${colNames}) VALUES (${placeholders})`
+
+        await engine.writerConn.transaction(async tx => {
+          const stmt = await tx.prepare(insertSql)
+          for (const row of batch.rows) {
+            const values = columns.map(c => row[c])
+            await stmt.run(...values)
+          }
+        })
       }
+
+      engine.syncTableDigests.set(
+        batch.table,
+        advanceStreamDigest(engine.syncTableDigests.get(batch.table), batch.checksum, batch.rows.length),
+      )
 
       if (batch.isLastBatchForTable) {
         await engine.log.setSyncTableStatus(batch.table, 'completed')
@@ -216,10 +248,13 @@ export class SyncJoiner {
         }
       }
 
-      await engine.writerConn.exec('PRAGMA foreign_keys = ON')
+      await setForeignKeysEnabled(engine.writerConn, true)
 
       for (const manifest of complete.manifests) {
-        const valid = await engine.log.verifyManifest(manifest)
+        const valid =
+          manifest.batchDigest !== undefined
+            ? matchesStreamDigest(manifest, engine.syncTableDigests.get(manifest.table))
+            : await engine.log.verifyManifest(manifest)
         if (!valid) {
           await engine.log.wipeTables(
             engine.writerConn,
@@ -229,17 +264,17 @@ export class SyncJoiner {
           engine.syncState.phase = 'pending'
           engine.syncState.completedTables = []
           engine.expectedBatchIndex.clear()
+          engine.syncTableDigests.clear()
           await engine.log.setSyncMeta('pending')
           await this.initiateSync()
           return
         }
       }
+      engine.syncTableDigests.clear()
 
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 
-      const recordStmt = await engine.writerConn.prepare(
-        `INSERT OR IGNORE INTO ${APPLIED_CHANGES_TABLE} (source_node_id, source_seq, applied_at) VALUES (?, ?, ?)`,
-      )
+      const recordStmt = await prepareInsertAppliedChange(engine.writerConn)
       await recordStmt.run(fromPeerId, complete.snapshotSeq.toString(), Date.now() / 1000)
 
       const previousApplied = engine.appliedSeqByPeer.get(fromPeerId) ?? 0n
@@ -255,7 +290,7 @@ export class SyncJoiner {
       this.startCatchUpCheck()
     } catch {
       try {
-        await engine.writerConn.exec('PRAGMA foreign_keys = ON')
+        await setForeignKeysEnabled(engine.writerConn, true)
       } catch (pragmaErr: unknown) {
         const wrappedErr = pragmaErr instanceof Error ? pragmaErr : new Error(String(pragmaErr))
         engine.emitError({ error: wrappedErr, operation: 'sync-complete-pragma-restore', recoverable: false })
@@ -315,6 +350,27 @@ export class SyncJoiner {
     }
   }
 
+  stopTimers(): void {
+    this.stopCatchUpCheck()
+    this.recovery.stop()
+  }
+
+  isSourceRejection(ack: SyncAck, fromPeerId: string): boolean {
+    return this.recovery.isSourceRejection(ack, fromPeerId)
+  }
+
+  handleSourceRejection(ack: SyncAck, fromPeerId: string): void {
+    this.recovery.handleSourceRejection(ack, fromPeerId)
+  }
+
+  private retryInitiateSync(): void {
+    if (!this.engine.running) return
+    this.initiateSync().catch((err: unknown) => {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      this.engine.emitError({ error: wrappedErr, operation: 'sync-retry', recoverable: true })
+    })
+  }
+
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     await delayAckIfConfigured(this.engine)
     await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
@@ -325,6 +381,7 @@ export class SyncJoiner {
     await engine.log.setSyncMeta('ready')
     await engine.markCoordinatorSyncReady()
     engine.syncState.phase = 'ready'
+    this.recovery.markSyncReady()
     this.stopCatchUpCheck()
   }
 }

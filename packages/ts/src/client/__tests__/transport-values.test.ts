@@ -1,64 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { HttpTransport } from '../transport/http.js'
 import { WebSocketTransport } from '../transport/ws.js'
-
-interface FakeSocket extends EventTarget {
-  readyState: number
-  readonly sent: string[]
-  deliver(message: unknown): void
-}
-
-function installFakeWebSockets(): { sockets: FakeSocket[]; restore: () => void } {
-  const originalWebSocket = globalThis.WebSocket
-  const sockets: FakeSocket[] = []
-
-  class FakeWebSocket extends EventTarget {
-    static readonly CONNECTING = 0
-    static readonly OPEN = 1
-    static readonly CLOSING = 2
-    static readonly CLOSED = 3
-
-    readyState = FakeWebSocket.CONNECTING
-    readonly sent: string[] = []
-
-    constructor(readonly url: string | URL) {
-      super()
-      sockets.push(this)
-      queueMicrotask(() => {
-        this.readyState = FakeWebSocket.OPEN
-        this.dispatchEvent(new Event('open'))
-      })
-    }
-
-    send(data: string): void {
-      this.sent.push(data)
-    }
-
-    close(): void {
-      this.readyState = FakeWebSocket.CLOSED
-      this.dispatchEvent(new Event('close'))
-    }
-
-    deliver(message: unknown): void {
-      const event = new Event('message') as Event & { data: string }
-      event.data = JSON.stringify(message)
-      this.dispatchEvent(event)
-    }
-  }
-
-  vi.stubGlobal('WebSocket', FakeWebSocket)
-  return { sockets, restore: () => vi.stubGlobal('WebSocket', originalWebSocket) }
-}
-
-async function until(predicate: () => boolean, timeout = 2000): Promise<void> {
-  const start = Date.now()
-  while (!predicate()) {
-    if (Date.now() - start >= timeout) {
-      throw new Error(`until timed out after ${timeout}ms`)
-    }
-    await new Promise(r => setTimeout(r, 5))
-  }
-}
+import { installFakeWebSockets, until } from './helpers.js'
 
 describe('WebSocketTransport value encoding', () => {
   it('encodes BigInt and Buffer params into tagged envelopes and decodes envelope rows back', async () => {

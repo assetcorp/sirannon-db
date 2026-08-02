@@ -27,7 +27,7 @@ beforeEach(async () => {
   const db = await sirannon.open('test', join(tempDir, 'test.db'), { synchronous: 'full' })
   await db.execute('CREATE TABLE readings (id INTEGER PRIMARY KEY, value REAL)')
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -149,7 +149,7 @@ describe('POST /db/:id/load', () => {
       execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
       transaction: async fn => fn(undefined as never),
     }
-    const proxyServer = createServer(sirannon, { port: 0, resolveExecutionTarget: () => target })
+    const proxyServer = createServer(sirannon, { acceptSql: true, port: 0, resolveExecutionTarget: () => target })
     await proxyServer.listen()
 
     try {

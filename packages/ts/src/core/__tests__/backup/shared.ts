@@ -9,7 +9,7 @@ interface TempDirRef {
   path: string
 }
 
-export function useTempDir(): TempDirRef {
+export function tempDirPerTest(): TempDirRef {
   const ref: TempDirRef = { path: '' }
 
   beforeEach(() => {

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Each rate list ends by repeating an earlier healthy rate; comparing the two is the recovery check.
-# The driver runs on the host, outside the container's allowance, so only the server's share varies.
 
 set -euo pipefail
 
@@ -36,7 +34,6 @@ stop_container() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 start_container() {
   local cpus="$1" memory="$2" durability="$3"
   stop_container
-  # A health probe alone would pass against any server already holding the port.
   if ! docker run -d --name "$CONTAINER" \
     --cpus="$cpus" -m "$memory" --memory-swap="$memory" \
     -p "$PORT:9876" \
@@ -62,7 +59,6 @@ start_container() {
   return 1
 }
 
-# Read back from the live cgroup, so a cell can never report a limit it did not run under.
 verify_caps() {
   local cpus="$1" memory="$2"
   local cpu_max memory_max expected_quota expected_bytes

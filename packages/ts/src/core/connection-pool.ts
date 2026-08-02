@@ -18,9 +18,7 @@ async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promi
     if (!conn) continue
     try {
       await conn.close()
-    } catch {
-      // Best-effort cleanup; the original error takes priority
-    }
+    } catch {}
   }
 }
 

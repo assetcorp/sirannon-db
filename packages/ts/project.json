@@ -20,6 +20,14 @@
       },
       "dependsOn": ["build"]
     },
+    "check:types": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check:types",
+        "cwd": "packages/ts"
+      },
+      "dependsOn": ["build"]
+    },
     "test": {
       "executor": "nx:run-commands",
       "options": {

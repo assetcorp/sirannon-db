@@ -5,9 +5,9 @@ import { BackupManager } from '../../backup/backup.js'
 import type { SQLiteConnection } from '../../driver/types.js'
 import { BackupError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
-import { createTestDb, useTempDir } from './shared.js'
+import { createTestDb, tempDirPerTest } from './shared.js'
 
-const temp = useTempDir()
+const temp = tempDirPerTest()
 
 describe('BackupManager', () => {
   const manager = new BackupManager()

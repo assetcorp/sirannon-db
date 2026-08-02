@@ -1,6 +1,6 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ReplicationStatusInfo } from '../core/types.js'
+import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
 
 interface LivenessResponse {
   status: 'ok'
@@ -33,12 +33,12 @@ interface ReadinessResponse {
     inSyncReplicas?: string[]
     laggingReplicas?: string[]
     syncState?: string
+    healthReason: NodeHealthReason
     readAvailability?: 'available' | 'unavailable'
     writeAvailability?: 'available' | 'unavailable'
   }
 }
 
-/** Returns a handler that responds with a static 200 OK JSON payload for liveness probes. */
 export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void {
   const payload = JSON.stringify({ status: 'ok' } satisfies LivenessResponse)
 
@@ -49,7 +49,6 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
   }
 }
 
-/** Returns a handler that reports database and replication status for readiness probes. */
 export function handleReadiness(
   sirannon: Sirannon,
   getReplicationStatus?: () => ReplicationStatusInfo | null,
@@ -90,8 +89,9 @@ export function handleReadiness(
           inSyncReplicas: replStatus.inSyncReplicas,
           laggingReplicas: replStatus.laggingReplicas,
           syncState: replStatus.syncState,
-          readAvailability: replStatus.readAvailability,
-          writeAvailability: replStatus.writeAvailability,
+          healthReason: replStatus.health.reason,
+          readAvailability: replStatus.health.canRead ? 'available' : 'unavailable',
+          writeAvailability: replStatus.health.canWrite ? 'available' : 'unavailable',
         }
         body.status = readinessStatusForReplication(replStatus, body.status)
       }
@@ -108,11 +108,6 @@ function readinessStatusForReplication(
   replication: ReplicationStatusInfo,
   current: ReadinessResponse['status'],
 ): ReadinessResponse['status'] {
-  if (replication.syncState === 'syncing' || replication.syncState === 'catching-up') return 'syncing'
-  if (replication.controller?.state === 'active' && replication.writeAvailability === 'unavailable')
-    return 'failing_over'
-  if (replication.readAvailability === 'unavailable' && replication.writeAvailability === 'unavailable')
-    return 'unavailable'
-  if ((replication.laggingReplicas?.length ?? 0) > 0) return 'degraded'
+  if (replication.health.state !== 'healthy') return replication.health.state
   return current
 }

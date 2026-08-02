@@ -81,9 +81,7 @@ export class LifecycleManager {
     for (const id of toClose) {
       try {
         await this.callbacks.close(id)
-      } catch {
-        // Idle cleanup errors are non-fatal.
-      }
+      } catch {}
       toRemove.push(id)
     }
 
@@ -115,9 +113,7 @@ export class LifecycleManager {
     if (oldestId) {
       try {
         await this.callbacks.close(oldestId)
-      } catch {
-        // Eviction errors are non-fatal.
-      }
+      } catch {}
       this.lastAccess.delete(oldestId)
     }
   }

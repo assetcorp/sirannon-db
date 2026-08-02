@@ -39,7 +39,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('CDC lifecycle', () => {
     it('handles subscribe -> data changes -> unsubscribe -> more changes correctly', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'lifecycle.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -79,7 +79,7 @@ describe('WSHandler', () => {
     })
 
     it('captures update and delete events', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'upddel.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
 
@@ -115,7 +115,7 @@ describe('WSHandler', () => {
     })
 
     it('resubscribing after unsubscribe works', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'resub.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -164,7 +164,7 @@ describe('WSHandler', () => {
     })
 
     it('stops CDC polling after repeated polling errors', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'poll-errors.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -212,7 +212,7 @@ describe('WSHandler', () => {
       const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
 
       try {
-        const handler = createWSHandler(sirannon)
+        const handler = createWSHandler(sirannon, { acceptSql: true })
         const db = await sirannon.open('mydb', join(tempDir, 'no-unref.db'))
         await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 

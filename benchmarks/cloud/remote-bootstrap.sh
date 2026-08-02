@@ -56,7 +56,6 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 log "local NVMe (mode: $SSD_MODE)"
 setup_local_nvme
 
-# A packaged default cluster would hold port 5432 and race the benchmark's own postgres.
 sudo mkdir -p /etc/postgresql-common/createcluster.d
 echo "create_main_cluster = false" | sudo tee /etc/postgresql-common/createcluster.d/no-main-cluster.conf >/dev/null
 

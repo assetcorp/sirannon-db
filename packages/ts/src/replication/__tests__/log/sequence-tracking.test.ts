@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SQLiteConnection } from '../../../core/driver/types.js'
-import { HLC } from '../../hlc.js'
+import { HLC } from '../../../core/sync/hlc.js'
 import { ReplicationLog } from '../../log.js'
 import { createTestDb, NODE_A, NODE_B, setupTrackerAndTable } from './helpers.js'
 

@@ -3,19 +3,24 @@ import uWS from 'uWebSockets.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
+  AuthenticateHook,
+  ClusterStatusAuthorizer,
   ClusterStatusInfo,
-  OnRequestHook,
+  OperationRegistry,
   ReplicationStatusInfo,
   RequestContext,
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
+import { handleCapabilities } from './capabilities.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
-import type { DbRouteHandler } from './http-handler.js'
+import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import {
   handleBatch,
+  handleChanges,
   handleClusterStatus,
   handleExecute,
   handleLoad,
@@ -25,18 +30,24 @@ import {
   readBody,
   sendError,
 } from './http-handler.js'
-import { decodeRemoteAddress, runOnRequest } from './request-hook.js'
+import { handleMigrationList } from './http-migrations.js'
+import type { OperationRouteHandler } from './http-operations.js'
+import { handleOperationExecute, handleOperationQuery } from './http-operations.js'
+import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
+import { operationRegistryDigest } from './operation-lookup.js'
+import { wrapOperationRoute } from './operation-route.js'
+import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
 import { WSHandler } from './ws-handler.js'
 import { registerWebSocketRoute } from './ws-route.js'
 
+const SQL_ROUTES = ['/db/:id/query', '/db/:id/execute', '/db/:id/transaction', '/db/:id/batch', '/db/:id/load'] as const
+
+function refuseSql(res: uWS.HttpResponse): void {
+  sendError(res, 403, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
+}
+
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-/**
- * uWebSockets.js reads maxPayloadLength and maxBackpressure into unsigned
- * 32-bit fields (ToInt32 in the addon, unsigned int in the C++ core), so any
- * larger value is silently applied modulo 2^32. Reject those at construction
- * instead of running with a limit the caller never configured.
- */
 const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 
 function resolveMaxBodyBytes(value: number | undefined): number {
@@ -79,36 +90,48 @@ function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number):
   return resolved
 }
 
-export class SirannonServer {
+export class SirannonServer<Identity = unknown> {
   private app: uWS.TemplatedApp
   private listenSocket: us_listen_socket | null = null
   private readonly host: string
   private readonly port: number
   private readonly cors: ResolvedCors | null
-  private readonly onRequestHook: OnRequestHook | undefined
+  private readonly authenticateHook: AuthenticateHook<Identity> | undefined
+  private readonly acceptSql: boolean
+  private readonly operations: OperationRegistry<Identity> | undefined
+  private readonly registryDigest: string | undefined
   private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
   private readonly getReplicationStatus: (() => ReplicationStatusInfo | null) | undefined
   private readonly getClusterStatus: ((databaseId: string) => ClusterStatusInfo | null) | undefined
+  private readonly authorizeClusterStatus: ClusterStatusAuthorizer | undefined
   private readonly sirannon: Sirannon
-  private readonly wsHandler: WSHandler
+  private readonly wsHandler: WSHandler<Identity>
   private readonly maxBodyBytes: number
   private readonly maxWsBackpressureBytes: number
 
-  constructor(sirannon: Sirannon, options?: ServerOptions) {
+  constructor(sirannon: Sirannon, options?: ServerOptions<Identity>) {
     this.sirannon = sirannon
     this.host = options?.host ?? '127.0.0.1'
     this.port = options?.port ?? 9876
     this.cors = resolveCors(options?.cors)
-    this.onRequestHook = options?.onRequest
+    this.authenticateHook = options?.authenticate
+    this.acceptSql = options?.acceptSql === true
+    this.operations = options?.operations
+    this.registryDigest = operationRegistryDigest(options?.operations)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
+    this.authorizeClusterStatus = options?.authorizeClusterStatus
     this.maxBodyBytes = resolveMaxBodyBytes(options?.maxBodyBytes)
     this.maxWsBackpressureBytes = resolveWsBackpressure(options?.maxWebSocketBackpressureBytes, this.maxBodyBytes)
-    this.wsHandler = new WSHandler(sirannon, {
+    this.wsHandler = new WSHandler<Identity>(sirannon, {
       resolveExecutionTarget: this.resolveExecutionTarget,
       maxPayloadLength: this.maxBodyBytes,
       cdcRetentionMs: options?.cdcRetentionMs,
+      deviceCursorRetentionMs: options?.deviceCursorRetentionMs,
+      maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,
+      acceptSql: this.acceptSql,
+      operations: options?.operations,
     })
     this.app = uWS.App()
     this.registerRoutes()
@@ -160,18 +183,45 @@ export class SirannonServer {
       })
     }
 
+    this.app.get(
+      '/capabilities',
+      this.withCors(handleCapabilities({ registryDigest: this.registryDigest, acceptSql: this.acceptSql })),
+    )
     this.app.get('/health', this.withCors(handleLiveness()))
     this.app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
-    this.app.get('/db/:id/cluster', this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus)))
-
-    this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
-    this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
-    this.app.post(
-      '/db/:id/transaction',
-      this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
+    this.app.get(
+      '/db/:id/cluster',
+      this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus, this.authorizeClusterStatus)),
     )
-    this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
-    this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
+
+    if (this.acceptSql) {
+      this.app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
+      this.app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
+      this.app.post(
+        '/db/:id/transaction',
+        this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
+      )
+      this.app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
+      this.app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
+    } else {
+      for (const route of SQL_ROUTES) {
+        this.app.post(route, this.withCors(refuseSql))
+      }
+    }
+
+    this.app.post(
+      '/db/:id/query/:name',
+      this.wrapOperationRoute(handleOperationQuery(this.sirannon, this.operations, this.resolveExecutionTarget)),
+    )
+    this.app.post(
+      '/db/:id/execute/:name',
+      this.wrapOperationRoute(handleOperationExecute(this.sirannon, this.operations, this.resolveExecutionTarget)),
+    )
+
+    this.app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
+    this.app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
+    this.app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
+    this.app.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
 
     this.registerWebSocketRoute()
 
@@ -184,7 +234,7 @@ export class SirannonServer {
     registerWebSocketRoute({
       app: this.app,
       wsHandler: this.wsHandler,
-      onRequestHook: this.onRequestHook,
+      authenticateHook: this.authenticateHook,
       maxBodyBytes: this.maxBodyBytes,
       maxBackpressureBytes: this.maxWsBackpressureBytes,
     })
@@ -203,7 +253,7 @@ export class SirannonServer {
   }
 
   private wrapDbRoute(handler: DbRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
-    const onRequestHook = this.onRequestHook
+    const authenticateHook = this.authenticateHook
     const corsHeaders = this.cors
     const maxBody = this.maxBodyBytes
 
@@ -219,7 +269,7 @@ export class SirannonServer {
       const abort = initAbortHandler(res)
       const bodyPromise = readBody(res, maxBody, abort)
 
-      if (!onRequestHook) {
+      if (!authenticateHook) {
         bodyPromise
           .then(async rawBody => {
             if (!abort.claim()) return
@@ -249,11 +299,11 @@ export class SirannonServer {
         remoteAddress,
       }
 
-      const hookPromise = runOnRequest(res, abort, ctx, onRequestHook)
+      const hookPromise = runAuthenticate(res, abort, ctx, authenticateHook)
 
       Promise.all([bodyPromise, hookPromise])
-        .then(async ([rawBody, allowed]) => {
-          if (!allowed || !abort.claim()) return
+        .then(async ([rawBody, authenticated]) => {
+          if (!authenticated.ok || !abort.claim()) return
           try {
             await handler(res, dbId, rawBody, abort)
           } catch {
@@ -266,10 +316,19 @@ export class SirannonServer {
     }
   }
 
-  private wrapDbGetRoute(
-    handler: (res: uWS.HttpResponse, dbId: string) => void,
-  ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
-    const onRequestHook = this.onRequestHook
+  private wrapOperationRoute(handler: OperationRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
+    return wrapOperationRoute<Identity>(
+      {
+        cors: this.cors,
+        maxBodyBytes: this.maxBodyBytes,
+        authenticateHook: this.authenticateHook,
+      },
+      handler,
+    )
+  }
+
+  private wrapDbGetRoute(handler: DbGetRouteHandler): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
+    const authenticateHook = this.authenticateHook
     const corsHeaders = this.cors
 
     return (res, req) => {
@@ -279,11 +338,6 @@ export class SirannonServer {
 
       if (corsHeaders) {
         writeCorsOrigin(res, corsHeaders, req.getHeader('origin'))
-      }
-
-      if (!onRequestHook) {
-        handler(res, dbId)
-        return
       }
 
       const headers: Record<string, string> = {}
@@ -300,16 +354,25 @@ export class SirannonServer {
       }
 
       const abort = initAbortHandler(res)
-      runOnRequest(res, abort, ctx, onRequestHook)
-        .then(allowed => {
-          if (!allowed || !abort.claim()) return
-          handler(res, dbId)
-        })
-        .catch(() => {})
+      const run = async (): Promise<void> => {
+        if (authenticateHook && !(await runAuthenticate(res, abort, ctx, authenticateHook)).ok) return
+        if (!abort.claim()) return
+        try {
+          await handler(res, dbId, ctx, abort)
+        } catch {
+          if (!abort.aborted) {
+            sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
+          }
+        }
+      }
+      run().catch(() => {})
     }
   }
 }
 
-export function createServer(sirannon: Sirannon, options?: ServerOptions): SirannonServer {
-  return new SirannonServer(sirannon, options)
+export function createServer<Identity = unknown>(
+  sirannon: Sirannon,
+  options?: ServerOptions<Identity>,
+): SirannonServer<Identity> {
+  return new SirannonServer<Identity>(sirannon, options)
 }

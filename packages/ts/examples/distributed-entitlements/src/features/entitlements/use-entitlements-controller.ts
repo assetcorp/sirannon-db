@@ -1,3 +1,4 @@
+import type { ChangeEvent } from '@delali/sirannon-db'
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -11,7 +12,6 @@ import {
   replayDuplicateUsage,
   resetControlPlane,
 } from '../../lib/app-actions.functions'
-import type { CDCEvent } from '../../lib/cdc'
 import { getMajorityWriteAvailability } from '../../lib/cluster-readiness'
 import { subscribeControlPlane } from '../../lib/direct-client'
 import type {
@@ -31,7 +31,8 @@ import {
 import type { BillingDraft, ConnectionState, ControllerState, LoaderData, UsageDraft } from './types'
 
 const LIVE_REFRESH_DELAY_MS = 160
-const CLUSTER_READINESS_REFRESH_MS = 1_000
+const CLUSTER_STATUS_REFRESH_MS = 2_500
+const CLUSTER_RECOVERY_REFRESH_MS = 1_000
 
 export function useEntitlementsController(initialData: LoaderData) {
   const [state, setState] = useState<ControllerState>({
@@ -106,12 +107,17 @@ export function useEntitlementsController(initialData: LoaderData) {
   }, [refreshSnapshot])
 
   const handleLiveEvent = useCallback(
-    (event: CDCEvent) => {
+    (event: ChangeEvent) => {
       setLastEvent(formatEventLabel(event))
       queueLiveRefresh()
     },
     [queueLiveRefresh],
   )
+
+  const handleSubscriptionReset = useCallback(() => {
+    setLastEvent('Reconnected past the retained history; re-reading the control plane')
+    queueLiveRefresh()
+  }, [queueLiveRefresh])
 
   useEffect(() => {
     let disposed = false
@@ -119,7 +125,7 @@ export function useEntitlementsController(initialData: LoaderData) {
 
     setConnectionState('connecting')
 
-    subscribeControlPlane(handleLiveEvent)
+    subscribeControlPlane({ onChange: handleLiveEvent, onReset: handleSubscriptionReset })
       .then(nextSubscriptions => {
         if (disposed) {
           for (const subscription of nextSubscriptions) {
@@ -144,7 +150,7 @@ export function useEntitlementsController(initialData: LoaderData) {
         subscription.unsubscribe()
       }
     }
-  }, [handleLiveEvent])
+  }, [handleLiveEvent, handleSubscriptionReset])
 
   useEffect(() => {
     const nextSelected = selectedCustomerOrFirst(state.customers, selectedCustomerId)
@@ -162,10 +168,9 @@ export function useEntitlementsController(initialData: LoaderData) {
   }, [])
 
   useEffect(() => {
-    if (writeAvailable) return
-
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    const intervalMs = writeAvailable ? CLUSTER_STATUS_REFRESH_MS : CLUSTER_RECOVERY_REFRESH_MS
     const scheduleRefresh = () => {
       timer = setTimeout(() => {
         refreshClusterStatus()
@@ -175,7 +180,7 @@ export function useEntitlementsController(initialData: LoaderData) {
               scheduleRefresh()
             }
           })
-      }, CLUSTER_READINESS_REFRESH_MS)
+      }, intervalMs)
     }
 
     scheduleRefresh()

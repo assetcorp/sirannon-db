@@ -5,7 +5,11 @@ WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml nx.json tsconfig.json .npmrc ./
+COPY packages/spec/package.json packages/spec/package.json
 COPY packages/ts/package.json packages/ts/package.json
+COPY packages/ts/examples/node/package.json packages/ts/examples/node/package.json
+COPY packages/ts/examples/web-client/package.json packages/ts/examples/web-client/package.json
+COPY packages/ts/examples/web-wa-sqlite/package.json packages/ts/examples/web-wa-sqlite/package.json
 COPY packages/ts/examples/distributed-entitlements/package.json packages/ts/examples/distributed-entitlements/package.json
 
 RUN pnpm install --frozen-lockfile

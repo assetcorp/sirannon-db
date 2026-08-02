@@ -34,7 +34,7 @@ afterEach(async () => {
 
 describe('WSHandler change value encoding', () => {
   it('delivers a change on a row with an integer above 2^53 as a tagged envelope instead of losing it', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'bigint.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER, payload BLOB)')
 
@@ -60,7 +60,7 @@ describe('WSHandler change value encoding', () => {
   })
 
   it('delivers only changes matching an envelope-encoded filter on a column beyond 2^53', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'bigfilter.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
 
@@ -90,7 +90,7 @@ describe('WSHandler change value encoding', () => {
   })
 
   it('rejects a malformed envelope inside a subscription filter', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'badfilter.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
 
@@ -113,7 +113,7 @@ describe('WSHandler change value encoding', () => {
   })
 
   it('encodes oldRow values on update changes the same way as row values', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'oldrow.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
 

@@ -3,6 +3,7 @@ import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { RequestDeniedError } from '../../core/errors.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { createServer, type SirannonServer } from '../server.js'
@@ -98,7 +99,7 @@ beforeEach(async () => {
   await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
   await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   wsUrl = `ws://127.0.0.1:${server.listeningPort}`
 })
@@ -204,10 +205,13 @@ describe('E2E WebSocket', () => {
     ws.close()
   })
 
-  it('rejects WS upgrade when onRequest denies', async () => {
+  it('rejects WS upgrade when authenticate denies', async () => {
     const hookServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
-      onRequest: () => ({ status: 403, code: 'FORBIDDEN', message: 'No WS for you' }),
+      authenticate: () => {
+        throw new RequestDeniedError(403, 'FORBIDDEN', 'No WS for you')
+      },
     })
     await hookServer.listen()
     const hookWsUrl = `ws://127.0.0.1:${hookServer.listeningPort}`
@@ -239,13 +243,15 @@ describe('E2E WebSocket', () => {
     }
   })
 
-  it('allows WS upgrade when onRequest approves', async () => {
+  it('allows WS upgrade when authenticate approves', async () => {
     const hookServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
-      onRequest: ({ headers }) => {
+      authenticate: ({ headers }) => {
         if (headers['x-token'] !== 'valid') {
-          return { status: 401, code: 'UNAUTHORIZED', message: 'Bad token' }
+          throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Bad token')
         }
+        return undefined
       },
     })
     await hookServer.listen()
@@ -264,10 +270,11 @@ describe('E2E WebSocket', () => {
     }
   })
 
-  it('handles aborted WS upgrade while async onRequest is pending', async () => {
+  it('handles aborted WS upgrade while async authenticate is pending', async () => {
     const hookServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
-      onRequest: async () => {
+      authenticate: async () => {
         await new Promise(resolve => setTimeout(resolve, 50))
         return undefined
       },
@@ -304,7 +311,7 @@ describe('E2E WebSocket', () => {
     }
   })
 
-  it('handles aborted WS upgrade without onRequest hook', async () => {
+  it('handles aborted WS upgrade without an authenticate hook', async () => {
     const socket = createConnection({
       host: '127.0.0.1',
       port: server.listeningPort,

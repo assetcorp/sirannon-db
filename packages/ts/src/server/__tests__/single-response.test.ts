@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { OnRequestHook, RequestContext } from '../../core/types.js'
+import { RequestDeniedError } from '../../core/errors.js'
+import type { AuthenticateHook, RequestContext } from '../../core/types.js'
 import { initAbortHandler, readBody } from '../http-common.js'
-import { runOnRequest } from '../request-hook.js'
+import { runAuthenticate } from '../request-hook.js'
 import { createMockResponse, wait } from './helpers.js'
 
 const ctx: RequestContext = {
@@ -12,14 +13,14 @@ const ctx: RequestContext = {
   remoteAddress: '127.0.0.1',
 }
 
-function denyAfterTick(): OnRequestHook {
+function denyAfterTick(): AuthenticateHook {
   return async () => {
     await wait(1)
-    return { status: 403, code: 'DENIED', message: 'Denied by policy' }
+    throw new RequestDeniedError(403, 'DENIED', 'Denied by policy')
   }
 }
 
-function throwAfterTick(): OnRequestHook {
+function throwAfterTick(): AuthenticateHook {
   return async () => {
     await wait(1)
     throw new Error('hook exploded')
@@ -32,11 +33,11 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 3, guard)
-    const hook = runOnRequest(mock.res, guard, ctx, denyAfterTick())
+    const hook = runAuthenticate(mock.res, guard, ctx, denyAfterTick())
     mock.data('too long', true)
 
     await expect(body).rejects.toThrow('Payload too large')
-    await expect(hook).resolves.toBe(false)
+    await expect(hook).resolves.toEqual({ ok: false })
 
     expect(mock.state.ends).toBe(1)
     expect(mock.state.status).toBe('413')
@@ -47,11 +48,11 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 3, guard)
-    const hook = runOnRequest(mock.res, guard, ctx, throwAfterTick())
+    const hook = runAuthenticate(mock.res, guard, ctx, throwAfterTick())
     mock.data('too long', true)
 
     await expect(body).rejects.toThrow('Payload too large')
-    await expect(hook).resolves.toBe(false)
+    await expect(hook).resolves.toEqual({ ok: false })
 
     expect(mock.state.ends).toBe(1)
     expect(mock.state.status).toBe('413')
@@ -62,7 +63,7 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 3, guard)
-    await expect(runOnRequest(mock.res, guard, ctx, denyAfterTick())).resolves.toBe(false)
+    await expect(runAuthenticate(mock.res, guard, ctx, denyAfterTick())).resolves.toEqual({ ok: false })
     mock.data('too long', true)
 
     await expect(body).rejects.toThrow('Payload too large')
@@ -76,7 +77,7 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 3, guard)
-    await expect(runOnRequest(mock.res, guard, ctx, throwAfterTick())).resolves.toBe(false)
+    await expect(runAuthenticate(mock.res, guard, ctx, throwAfterTick())).resolves.toEqual({ ok: false })
     mock.data('too long', true)
 
     await expect(body).rejects.toThrow('Payload too large')
@@ -90,12 +91,12 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 3, guard)
-    const hook = runOnRequest(mock.res, guard, ctx, denyAfterTick())
+    const hook = runAuthenticate(mock.res, guard, ctx, denyAfterTick())
     mock.abort()
     mock.data('too long', true)
 
     await expect(body).rejects.toThrow('Request aborted')
-    await expect(hook).resolves.toBe(false)
+    await expect(hook).resolves.toEqual({ ok: false })
 
     expect(mock.state.ends).toBe(0)
   })
@@ -105,7 +106,10 @@ describe('one request answers exactly once', () => {
     const guard = initAbortHandler(mock.res)
 
     const body = readBody(mock.res, 1024, guard)
-    await expect(runOnRequest(mock.res, guard, ctx, () => undefined)).resolves.toBe(true)
+    await expect(runAuthenticate(mock.res, guard, ctx, () => undefined)).resolves.toEqual({
+      ok: true,
+      identity: undefined,
+    })
     mock.data('{}', true)
 
     await expect(body).resolves.toEqual(Buffer.from('{}'))

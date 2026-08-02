@@ -38,7 +38,7 @@ async function countUsers(): Promise<number> {
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-'))
   sirannon = new Sirannon({ driver })
-  handler = createWSHandler(sirannon)
+  handler = createWSHandler(sirannon, { acceptSql: true })
   db = await sirannon.open('mydb', join(tempDir, 'tx.db'))
   await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
   conn = createMockConnection()
@@ -148,7 +148,7 @@ describe('WSHandler handleMessage - transaction', () => {
   })
 
   it('rejects a message above the configured payload limit', async () => {
-    const smallHandler = createWSHandler(sirannon, { maxPayloadLength: 128 })
+    const smallHandler = createWSHandler(sirannon, { acceptSql: true, maxPayloadLength: 128 })
     const smallConn = createMockConnection()
     await smallHandler.handleOpen(smallConn, 'mydb')
 

@@ -33,9 +33,7 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
       if (options?.walMode !== false) {
         try {
           await sqlite3.exec(db, 'PRAGMA journal_mode = WAL')
-        } catch {
-          // WAL may not be supported by all VFS implementations
-        }
+        } catch {}
       }
       await sqlite3.exec(db, `PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       await sqlite3.exec(db, 'PRAGMA foreign_keys = ON')
@@ -128,9 +126,7 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
           } catch (err) {
             try {
               await conn.exec('ROLLBACK')
-            } catch {
-              /* ROLLBACK failure is secondary; preserve the original error */
-            }
+            } catch {}
             throw err
           }
         },

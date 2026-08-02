@@ -9,8 +9,11 @@ export const PEER_STATE_TABLE = '_sirannon_peer_state'
 export const APPLIED_CHANGES_TABLE = '_sirannon_applied_changes'
 export const COLUMN_VERSIONS_TABLE = '_sirannon_column_versions'
 export const SYNC_STATE_TABLE = '_sirannon_sync_state'
+export const DEVICE_CURSORS_TABLE = '_sirannon_device_cursors'
+export const STAGED_CHANGES_TABLE = '_sirannon_staged_changes'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
+export const LIVE_PROBE_TABLE_PREFIX = '_sirannon_live_probe_'
 
 const SIRANNON_PREFIX = '_sirannon'
 const SQLITE_PREFIX = 'sqlite_'
@@ -37,18 +40,6 @@ export function isReservedIdentifier(name: string): boolean {
   return reservedKind(name) !== null
 }
 
-/**
- * Reports why a statement is refused, or null when it is allowed. Sirannon's
- * own bookkeeping runs on raw connections that never reach this check, so the
- * reserved namespace is closed to the query API without blocking the engine
- * from maintaining its own tables.
- *
- * The `_sirannon_` tables are Sirannon's private ledger (deleted rows, prior
- * values, replication state), so any reference is refused. The `sqlite_`
- * catalogue is readable, matching every SQL engine, but statements that would
- * modify it are refused; SQLite already treats the catalogue as read-only
- * unless `PRAGMA writable_schema` is set, which is refused here too.
- */
 export function reservedSqlError(sql: string): string | null {
   const lower = sql.toLowerCase()
   if (

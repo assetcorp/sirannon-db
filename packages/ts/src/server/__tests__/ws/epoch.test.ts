@@ -46,7 +46,7 @@ afterEach(async () => {
 
 describe('WSHandler subscription epoch', () => {
   it('reports a stable epoch string in the subscribed confirmation', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'epoch.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -63,7 +63,7 @@ describe('WSHandler subscription epoch', () => {
   })
 
   it('replays normally when the resuming client echoes the matching epoch', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'match.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')
@@ -87,7 +87,7 @@ describe('WSHandler subscription epoch', () => {
   })
 
   it('forces a resync without replay when the epoch belongs to another database', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'foreign.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.watch('users')

@@ -1,9 +1,5 @@
 import { WriteOverloadError } from '../errors.js'
 
-/**
- * Bounds writes in flight so a slow worker disk cannot let the queue grow
- * without limit while the event loop keeps accepting. Zero disables the gate.
- */
 export class WriteGate {
   private inFlight = 0
 

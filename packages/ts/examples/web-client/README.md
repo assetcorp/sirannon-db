@@ -1,72 +1,83 @@
 # Sirannon Fulfillment Operations Demo
 
-This example demonstrates Sirannon as a networked SQLite data layer with HTTP operations, WebSocket subscriptions, CDC updates, and transactions.
+An inventory console where every list on the page is a live query. The browser opens two live queries over one WebSocket and never fetches a snapshot, never polls, and never applies a change event by hand. Writes go through registered operations, so the data server accepts no SQL from the network at all.
 
 ## Run
 
-Start the Sirannon data server and application server together:
+Start the Sirannon data server and the application server together:
 
 ```bash
-cd packages/ts/examples/web-client
-pnpm run dev
+pnpm --dir packages/ts/examples/web-client run dev
 ```
 
 Or run them separately:
 
 ```bash
-pnpm run server   # Sirannon data server on port 9876
-pnpm run app:dev  # application server on port 3000
+pnpm --dir packages/ts/examples/web-client run server
+pnpm --dir packages/ts/examples/web-client run app:dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. Set `PORT` to move the application server, and the data server allows that origin automatically.
 
-## Architecture
+## What the browser runs
 
-The demo has two UI modes:
+Both panels come from `useLiveQuery`, and each returns rows plus a status:
 
-- **Application API**: the browser calls server-side domain actions. Those actions validate inputs and call the Sirannon HTTP API from the server.
-- **Direct Data API**: the browser calls the Sirannon HTTP API directly. The data server limits this mode with loopback binding, restricted CORS, bearer auth for HTTP, and a demo SQL allowlist.
+```tsx
+const productsState = useLiveQuery(liveDatabase, main.reads.products, {})
+const activityState = useLiveQuery(liveDatabase, main.reads.activity, {})
+```
 
-Both modes keep WebSocket subscriptions in the browser for live CDC events. The UI loads one first snapshot, then applies product and activity changes from the stream instead of refetching after every mutation. WebSocket upgrades are limited to configured browser origins and must include the configured demo auth subprotocol.
+The server re-reads the registered statement when a change lands and sends the row operations that follow from it, so the table updates in place. There is no refresh button on this page because there is nothing for it to do.
+
+Writes use `useCommand`, which returns a stable callback for a registered write:
+
+```tsx
+const allocateFromBrowser = useCommand(liveDatabase, main.writes.allocateProduct)
+await allocateFromBrowser({ productId: product.id })
+```
+
+The mode switcher changes where a write goes. `Write through the app server` calls a TanStack server function that validates the input with Zod and then calls the same registered write over HTTP. `Write from the browser` calls it over the socket the live queries already hold. Reads stay live either way.
+
+## What the server registers
+
+[`src/operations.ts`](src/operations.ts) holds every statement this server will run, keyed by database identifier. A caller sends a name and arguments; the server chooses the SQL. Each write also declares `fromIdentity`, so the server fills the `operator` column from the authenticated caller and a request that supplies `operator` itself fails with `ARGUMENT_NOT_ALLOWED`.
+
+The two demo credentials map to two operators, which is why the change log shows `ops-console` for writes through the app server and `warehouse-floor` for writes from the browser.
+
+`sirannon-codegen` turns that registry into the typed references the client calls it through:
+
+```bash
+pnpm --dir packages/ts/examples/web-client run codegen
+```
+
+That writes [`src/generated/operations.ts`](src/generated/operations.ts), which is checked in. Regenerate it whenever you change the registry; the generated `registryDigest` is what a live query echoes when it subscribes, and a server serving a different registry refuses with `REGISTRY_MISMATCH`.
+
+## Schema
+
+Two tables, seeded on startup:
+
+- `products` (id, name, price, stock) with five sample records
+- `activity` (id, product_name, action, quantity, operator, created_at)
+
+Live queries install their own change tracking, so the server calls no `watch` of its own.
 
 ## Environment
 
-Optional configuration:
-
 ```bash
-PORT=9876
+SIRANNON_PORT=9876
 HOST=127.0.0.1
+PORT=3000
 APP_ORIGIN=http://localhost:3000
 SIRANNON_ENDPOINT=http://localhost:9876
 SIRANNON_DEMO_TOKEN=sirannon-demo-token
 VITE_SIRANNON_ENDPOINT=http://localhost:9876
-VITE_SIRANNON_DEMO_TOKEN=sirannon-demo-token
+VITE_SIRANNON_DEMO_TOKEN=sirannon-warehouse-token
 ```
-
-## Features
-
-- Inventory ledger with Allocate and Receive actions
-- Create Item form for adding catalog records
-- Live activity feed updated through CDC
-- Reset Database action that clears rows and resets SQLite autoincrement IDs
-- Mode switcher for server-function actions versus direct driver access
-- Manual refresh for explicit snapshot resync
-
-## Server schema
-
-Two tables seeded on startup:
-
-- `products` (id, name, price, stock) with 5 sample products
-- `activity` (id, product_name, action, quantity, created_at) tracking all changes
-
-Both tables have CDC watches enabled for real-time change detection.
 
 ## Prerequisites
 
-- Node.js >= 22
-- pnpm
-
-From the monorepo root:
+Node.js >= 22 and pnpm. From the repository root:
 
 ```bash
 pnpm install
@@ -75,30 +86,21 @@ pnpm --filter @delali/sirannon-db build
 
 ## Security model
 
-This demo is intentionally lighter than a production application, but it avoids the unsafe parts people tend to copy from examples.
+This demo is lighter than a production application, and it avoids the unsafe parts people tend to copy from examples.
 
 What this example does:
 
-- Binds the Sirannon data server to `127.0.0.1` by default.
-- Restricts browser CORS to `APP_ORIGIN`.
-- Requires `Authorization: Bearer <SIRANNON_DEMO_TOKEN>` for HTTP database routes.
-- Authenticates browser WebSocket upgrades with a `Sec-WebSocket-Protocol` value derived from `SIRANNON_DEMO_TOKEN`.
-- Validates the WebSocket `Origin` header against `APP_ORIGIN`.
-- Keeps single-statement HTTP writes disabled and only allows the SQL statements this demo needs.
-- Uses server-side domain actions for the default mode, so the browser does not need to construct SQL for normal application workflows.
+- Binds the data server to `127.0.0.1` and restricts CORS to the application origin.
+- Leaves `acceptSql` at its default, so the five statement routes and their WebSocket messages answer `SQL_NOT_ACCEPTED`. Confirm it with `curl http://localhost:9876/capabilities`, which lists `query.named` and no `query.sql`.
+- Requires `Authorization: Bearer <token>` on HTTP routes and a `Sec-WebSocket-Protocol` value derived from a token on the upgrade, and returns an operator identity from `authenticate` rather than a bare pass or fail.
+- Validates the WebSocket `Origin` header during the upgrade, which CORS does not cover.
+- Checks every argument inside the registered write, so the browser path and the app-server path enforce the same bounds.
 
 What this example does not do:
 
-- It has no real user login, sessions, JWTs, roles, tenant checks, or permission checks.
-- It does not include rate limiting, abuse protection, audit logging, or WAF rules.
-- It does not terminate TLS itself. Local development uses `http://` and `ws://`.
-- The demo token is visible to browser code in Direct Data API mode. Treat that mode as a local demonstration of the client SDK, not as a production browser security boundary.
+- It has no real user login, sessions, JWTs, roles, or tenant checks.
+- It has no rate limiting, abuse protection, audit logging, or WAF rules.
+- It terminates no TLS. Local development uses `http://` and `ws://`.
+- The browser token is visible to browser code. Treat it as a local demonstration.
 
-Before adapting this pattern for a public deployment:
-
-- Put the Sirannon server behind HTTPS/WSS through a reverse proxy, load balancer, or platform edge.
-- Keep arbitrary SQL out of browser clients. Prefer server-side application actions or a narrow `resolveExecutionTarget` allowlist.
-- Use a real identity layer at the application boundary and derive short-lived WebSocket credentials from that identity.
-- Validate WebSocket `Origin` during the upgrade. CORS does not protect WebSocket handshakes.
-- Do not put long-lived secrets in `VITE_*` environment variables or other browser-visible configuration.
-- Redact authorization values and WebSocket auth protocol values from access logs.
+Before adapting this pattern for a public deployment, put the server behind HTTPS and WSS, derive short-lived WebSocket credentials from a real identity layer, keep long-lived secrets out of `VITE_*` variables, and redact authorization and WebSocket protocol values from access logs.

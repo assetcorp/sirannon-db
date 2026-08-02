@@ -1,10 +1,24 @@
-import type { BulkLoadDurability, BulkLoadResult, Params, QueryOptions, WriteConcern } from '../core/types.js'
+import type { LiveQuery } from '../core/live/types.js'
+import type { OperationArguments, OperationRef } from '../core/operation-registry.js'
+import type {
+  BulkLoadDurability,
+  BulkLoadResult,
+  Params,
+  QueryOptions,
+  ReadConcern,
+  WriteConcern,
+} from '../core/types.js'
 import type { ExecuteResponse } from '../server/protocol.js'
+import { RemoteLiveQuery } from './remote-live-query.js'
+import type { ServerCapabilityCheck } from './server-capabilities.js'
 import { RemoteSubscriptionBuilderImpl } from './subscription.js'
 import type { RemoteSubscriptionBuilder, Transport } from './types.js'
 import { RemoteError } from './types.js'
 
 const DEFAULT_LOAD_BATCH_SIZE = 1000
+
+export const READ_CONCERN_UNSUPPORTED_MESSAGE =
+  'This transport does not carry a per-read concern to the server. Use the HTTP transport for a per-call readConcern, or set the client-wide readConcern that topology routing applies when choosing a node.'
 
 /** Options for {@link RemoteDatabase.loadAll}. */
 export interface LoadAllOptions {
@@ -31,30 +45,70 @@ export class RemoteDatabase {
   constructor(
     readonly id: string,
     private readonly transport: Transport,
+    private readonly capabilities: ServerCapabilityCheck,
     private readonly onDispose?: () => void,
   ) {}
 
-  /**
-   * Execute a SELECT and return all matching rows.
-   *
-   * ```ts
-   * const users = await db.query<{ id: number; name: string }>(
-   *   'SELECT * FROM users WHERE age > ?',
-   *   [21],
-   * )
-   * ```
-   */
-  async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
-    const response = await this.transport.query(sql, params, options?.readConcern)
-    return response.rows as T[]
+  async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
+  async query<Args, Row>(operation: OperationRef<Args, Row>, args: Args, options?: QueryOptions): Promise<Row[]>
+  async query(
+    operation: string | OperationRef<unknown, unknown>,
+    params?: Params,
+    options?: QueryOptions,
+  ): Promise<unknown[]> {
+    this.assertReadConcernReaches(options?.readConcern)
+
+    if (typeof operation !== 'string') {
+      const named = await this.transport.queryNamed(
+        operation.name,
+        params as OperationArguments | undefined,
+        options?.readConcern,
+      )
+      return named.rows
+    }
+    await this.capabilities.assertSqlAccepted()
+    const response = await this.transport.query(operation, params, options?.readConcern)
+    return response.rows
   }
 
-  /**
-   * Execute a mutation (INSERT, UPDATE, DELETE) and return
-   * the number of affected rows and last insert row ID.
-   */
-  async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
-    return this.transport.execute(sql, params)
+  private assertReadConcernReaches(readConcern: ReadConcern | undefined): void {
+    if (readConcern === undefined || this.transport.carriesReadConcern === true) return
+    throw new RemoteError('INVALID_ARGUMENT', READ_CONCERN_UNSUPPORTED_MESSAGE)
+  }
+
+  async execute(sql: string, params?: Params): Promise<ExecuteResponse>
+  async execute<Args>(
+    operation: OperationRef<Args, unknown>,
+    args: Args,
+    writeConcern?: WriteConcern,
+  ): Promise<ExecuteResponse[]>
+  async execute(
+    operation: string | OperationRef<unknown, unknown>,
+    params?: Params,
+    writeConcern?: WriteConcern,
+  ): Promise<ExecuteResponse | ExecuteResponse[]> {
+    if (typeof operation !== 'string') {
+      const named = await this.transport.executeNamed(
+        operation.name,
+        params as OperationArguments | undefined,
+        writeConcern,
+      )
+      return named.results
+    }
+    await this.capabilities.assertSqlAccepted()
+    return this.transport.execute(operation, params)
+  }
+
+  async live<T = Record<string, unknown>>(name: string, args?: OperationArguments): Promise<LiveQuery<T>>
+  async live<Args, Row>(operation: OperationRef<Args, Row>, args: Args): Promise<LiveQuery<Row>>
+  async live(
+    operation: string | OperationRef<unknown, unknown>,
+    args?: OperationArguments,
+  ): Promise<LiveQuery<Record<string, unknown>>> {
+    const name = typeof operation === 'string' ? operation : operation.name
+    return RemoteLiveQuery.open(handlers =>
+      this.transport.liveSubscribe(name, args, handlers, refresh => this.capabilities.registryDigest(refresh)),
+    )
   }
 
   /**
@@ -65,6 +119,7 @@ export class RemoteDatabase {
    * unit, so the client is never in the loop between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
+    await this.capabilities.assertSqlAccepted()
     const response = await this.transport.transaction(statements)
     return response.results
   }
@@ -76,6 +131,7 @@ export class RemoteDatabase {
    * (an import, a bulk insert) that must all commit or all roll back.
    */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<ExecuteResponse[]> {
+    await this.capabilities.assertSqlAccepted()
     const response = await this.transport.batch(sql, paramsBatch, writeConcern)
     return response.results
   }
@@ -109,6 +165,7 @@ export class RemoteDatabase {
     if (!Number.isInteger(batchSize) || batchSize <= 0) {
       throw new RemoteError('INVALID_ARGUMENT', 'loadAll batchSize must be a positive integer')
     }
+    await this.capabilities.assertSqlAccepted()
     const durability = options?.durability
     const total: BulkLoadResult = { rowsLoaded: 0, changes: 0 }
 
@@ -118,9 +175,6 @@ export class RemoteDatabase {
       total.changes += summary.changes
     }
 
-    // A one-batch lookahead marks only the final batch as the checkpoint, so
-    // the fsyncing WAL checkpoint runs once at the end rather than once per
-    // batch, while every batch still restores the configured durability.
     let batch: Params[] = []
     let previous: Params[] | null = null
     const rotate = async (): Promise<void> => {
@@ -169,6 +223,7 @@ export class RemoteDatabase {
     durability?: BulkLoadDurability,
     checkpoint?: boolean,
   ): Promise<BulkLoadResult> {
+    await this.capabilities.assertSqlAccepted()
     return this.transport.load(sql, paramsBatch, durability, checkpoint)
   }
 

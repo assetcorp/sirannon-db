@@ -1,4 +1,4 @@
-import type { ServerExecutionTarget } from '../core/types.js'
+import type { QueryOptions, ReadConcern, ServerExecutionTarget } from '../core/types.js'
 import type { WSResultMessage } from './protocol.js'
 import {
   decodeBoundParams,
@@ -8,14 +8,11 @@ import {
   toBulkLoadOptions,
   toExecuteResponse,
   transactionStatementsValidationError,
+  validateReadConcern,
   validateWriteConcern,
 } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
-/**
- * Reply surface handed to each data-operation message handler, so the
- * handlers stay independent of the connection bookkeeping in WSHandler.
- */
 export interface WSOperationContext {
   target: ServerExecutionTarget
   sendResult(id: string, data: WSResultMessage['data']): void
@@ -66,12 +63,22 @@ export async function handleQueryMessage(
     return
   }
 
+  const readConcern = validateReadConcern(msg.readConcern)
+  if (!readConcern.ok) {
+    ctx.sendError(id, 'INVALID_MESSAGE', readConcern.message)
+    return
+  }
+
   try {
-    const rows = await queryWireRows(ctx.target, msg.sql, params.value)
+    const rows = await queryWireRows(ctx.target, msg.sql, params.value, toReadOptions(readConcern.value))
     ctx.sendResult(id, { rows: rows as Record<string, unknown>[] })
   } catch (err) {
     ctx.sendCaughtError(id, err)
   }
+}
+
+export function toReadOptions(readConcern: ReadConcern | undefined): QueryOptions | undefined {
+  return readConcern ? { readConcern } : undefined
 }
 
 export async function handleExecuteMessage(

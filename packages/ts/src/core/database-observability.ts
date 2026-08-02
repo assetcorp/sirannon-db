@@ -16,7 +16,6 @@ export class DatabaseObserver {
     private readonly metrics: MetricsCollector | null,
   ) {}
 
-  /** False lets a caller skip the timing calls on a path where nothing would read them. */
   get observesQueries(): boolean {
     return (
       this.metrics !== null ||
@@ -47,12 +46,6 @@ export class DatabaseObserver {
     return this.metrics.trackQuery(op, { databaseId: this.databaseId, sql })
   }
 
-  /**
-   * Reports each statement separately, since a hook filtering on SQL has no other
-   * way to see them. They share the transaction's duration because the group runs
-   * them back to back under one commit and no statement has a duration of its own,
-   * which is already what a grouped {@link Database.execute} reports.
-   */
   async withTransactionHooks(
     statements: readonly ObservedStatement[],
     op: () => Promise<ExecuteResult[]>,

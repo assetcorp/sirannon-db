@@ -36,6 +36,7 @@ describe('initial sync protocol ordering', () => {
         error: null,
       },
       decorateSyncRequest: <T>(request: T): T => request,
+      syncTableDigests: new Map(),
     } as unknown as ReplicationEngine
 
     const joiner = new SyncJoiner(engine)
@@ -76,6 +77,7 @@ describe('initial sync protocol ordering', () => {
         error: null,
       },
       decorateSyncRequest: <T>(request: T): T => request,
+      syncTableDigests: new Map(),
     } as unknown as ReplicationEngine
     const joiner = new SyncJoiner(engine)
 

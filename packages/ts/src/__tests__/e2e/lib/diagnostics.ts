@@ -27,9 +27,7 @@ export function attachDiagnostics(...nodes: ManagedNode[]): DiagnosticsHandle {
         if (preserveFlags.has(node)) continue
         try {
           rmSync(node.tempDir, { recursive: true, force: true })
-        } catch {
-          /* best-effort */
-        }
+        } catch {}
       }
     },
   }
@@ -41,9 +39,7 @@ function dumpFailureSnapshot(testName: string, nodes: ManagedNode[]): void {
 
   try {
     mkdirSync(failureDir, { recursive: true })
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
 
   const lines: string[] = [`Failure snapshot: ${testName}`, `Captured: ${new Date().toISOString()}`, '']
 
@@ -81,9 +77,7 @@ function dumpFailureSnapshot(testName: string, nodes: ManagedNode[]): void {
 
   try {
     writeFileSync(join(failureDir, 'summary.txt'), lines.join('\n'), 'utf-8')
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
 
   console.error(`\n[sirannon-e2e] preserved failure artefacts at: ${failureDir}`)
   console.error(lines.join('\n'))

@@ -58,9 +58,10 @@ Supported driver values are `better-sqlite3`, `better`, `node`, and `node-native
 - Queries with `db.query<T>()` and `db.queryOne<T>()`
 - Transactions with `db.transaction(async tx => ...)`
 - CDC subscriptions with `db.watch()` and `db.on().subscribe()`
+- Live queries with `db.live()`, where the result set maintains itself as rows change
 - Connection pool configuration with `readPoolSize`
 - Metrics via `Sirannon` with `metrics.onQueryComplete`
-- Multi-tenant databases via `createTenantResolver()`
+- Multi-tenant databases opened on first access through `sirannon.resolve()` and `createTenantResolver()`, with `maxOpen` evicting the least recently used tenant
 - Query hooks with `onBeforeQuery`, `onAfterQuery`, and `onDatabaseOpen`
 - Backup with `db.backup()`
 - Graceful shutdown with `db.close()` and `sirannon.shutdown()`

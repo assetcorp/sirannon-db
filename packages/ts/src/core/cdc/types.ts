@@ -37,5 +37,4 @@ export interface ChangeTrackerOptions {
   retention?: number
   changesTable?: string
   pollBatchSize?: number
-  replication?: boolean
 }

@@ -45,27 +45,21 @@ export class SyncTestContext {
     for (const engine of this.runningEngines) {
       try {
         await engine.stop()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.runningEngines.length = 0
 
     for (const db of this.openDbs) {
       try {
         if (!db.closed) await db.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.openDbs.length = 0
 
     for (const conn of this.openConns) {
       try {
         await conn.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.openConns.length = 0
 
@@ -82,7 +76,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     for (const sql of tableSqls) {
       await conn.exec(sql)
       const tableName = sql.match(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i)?.[1]
@@ -119,7 +113,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
 
     const db = await Database.create(`db-${nodeId.slice(0, 8)}`, dbPath, testDriver)
     this.openDbs.push(db)
@@ -156,7 +150,7 @@ export class SyncTestContext {
     await conn.exec('PRAGMA journal_mode = WAL')
     this.openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     for (const sql of tableSqls) {
       await conn.exec(sql)
       const tableName = sql.match(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i)?.[1]

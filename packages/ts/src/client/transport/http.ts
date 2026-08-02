@@ -18,6 +18,7 @@ import { RemoteError } from '../types.js'
  * HTTP; use {@link WebSocketTransport} for CDC subscriptions.
  */
 export class HttpTransport implements Transport {
+  readonly carriesReadConcern = true
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
   private closed = false
@@ -69,6 +70,32 @@ export class HttpTransport implements Transport {
       durability,
       checkpoint,
     })
+  }
+
+  async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
+    const response = await this.post<QueryResponse>(`/query/${encodeURIComponent(name)}`, {
+      args: encodeTaggedValues(args),
+      readConcern,
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+  }
+
+  async executeNamed(
+    name: string,
+    args?: Record<string, unknown>,
+    writeConcern?: WriteConcern,
+  ): Promise<TransactionResponse> {
+    return this.post<TransactionResponse>(`/execute/${encodeURIComponent(name)}`, {
+      args: encodeTaggedValues(args),
+      writeConcern,
+    })
+  }
+
+  async liveSubscribe(): Promise<RemoteSubscription> {
+    throw new RemoteError(
+      'TRANSPORT_ERROR',
+      'Live queries require WebSocket transport. Create the client with { transport: "websocket" } to use them.',
+    )
   }
 
   async subscribe(

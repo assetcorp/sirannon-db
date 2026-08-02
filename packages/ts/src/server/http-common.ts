@@ -5,17 +5,14 @@ import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver,
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
-/** Abort tracking for a uWS response so late writes never touch a dead socket. */
+export const SQL_NOT_ACCEPTED_MESSAGE =
+  'This server does not accept SQL statements over the wire; call a registered operation by name'
+
 export interface ResponseAbort {
   readonly aborted: boolean
   onAbort(fn: () => void): void
 }
 
-/**
- * uWS frees a response once it is ended and fires `onAborted` only for a client
- * disconnect, never for our own reply, so concurrent writers cannot see that one
- * of them has already answered. Only the caller that wins {@link claim} may write.
- */
 export interface ResponseGuard extends ResponseAbort {
   claim(): boolean
 }
@@ -49,10 +46,6 @@ export function initAbortHandler(res: HttpResponse): ResponseGuard {
   }
 }
 
-/**
- * Read the request body as it streams in, enforcing `maxBytes` per chunk so
- * an oversized request is rejected with 413 before it is ever fully buffered.
- */
 export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseGuard): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (abort.aborted) {
@@ -137,6 +130,9 @@ export function sendError(
 }
 
 export function httpStatusForError(err: SirannonError): number {
+  const explicit = (err as SirannonError & { status?: number }).status
+  if (typeof explicit === 'number') return explicit
+
   switch (err.code) {
     case 'DATABASE_NOT_FOUND':
       return 404
@@ -147,6 +143,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'TRANSACTION_ERROR':
     case 'INVALID_DURABILITY':
     case 'INVALID_SYNCHRONOUS':
+    case 'BATCH_VALIDATION_ERROR':
       return 400
     case 'STALE_PRIMARY':
     case 'PROTOCOL_VERSION_MISMATCH':
@@ -174,7 +171,6 @@ export function errorDetails(err: SirannonError): Record<string, unknown> | unde
   return details && Object.keys(details).length > 0 ? details : undefined
 }
 
-/** Map a thrown value to the response, unless the socket already aborted. */
 export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: unknown): void {
   if (abort.aborted) return
   if (err instanceof SirannonError) {
@@ -188,7 +184,6 @@ export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: un
 
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
 
-/** Replies are guarded because the resolver is awaited and uWS frees the response once it aborts. */
 export async function resolveExecutionTarget(
   res: HttpResponse,
   abort: ResponseAbort,

@@ -12,7 +12,7 @@ export async function createTestDb(): Promise<SQLiteConnection> {
 }
 
 export async function setupTrackerAndTable(conn: SQLiteConnection): Promise<void> {
-  const tracker = new ChangeTracker({ replication: true })
+  const tracker = new ChangeTracker()
   await conn.exec(`
 		CREATE TABLE users (
 			id INTEGER PRIMARY KEY,

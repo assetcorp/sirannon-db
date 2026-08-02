@@ -1,14 +1,22 @@
-import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { Database } from '../core/database.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
-import type { WSServerMessage } from './protocol.js'
-import { decodeBoundParams } from './protocol.js'
+import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import type { OperationSource } from './operation-lookup.js'
+import { createOperationSource } from './operation-lookup.js'
+import type { WSLiveMessage, WSServerMessage } from './protocol.js'
+import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry } from './ws-cdc.js'
-import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
+import { wireChangeEvent } from './ws-device-frames.js'
+import type { DeviceChangeStream } from './ws-device-stream.js'
+import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
+import type { WSLiveDeps } from './ws-live.js'
+import { handleLiveSubscribeMessage } from './ws-live.js'
+import type { WSNamedContext } from './ws-named.js'
+import { handleNamedExecuteMessage, handleNamedQueryMessage } from './ws-named.js'
 import type { WSOperationContext } from './ws-operations.js'
 import {
   handleBatchMessage,
@@ -17,35 +25,49 @@ import {
   handleQueryMessage,
   handleTransactionMessage,
 } from './ws-operations.js'
+import type { WSSubscribeDeps } from './ws-subscribe.js'
+import { handleSubscribeMessage } from './ws-subscribe.js'
 
 export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
-interface ConnectionState {
+const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
+
+const NAMED_MESSAGE_TYPES = new Set(['query', 'execute', 'subscribe'])
+
+export interface ConnectionState {
   databaseId: string
   database: Database
   executionTarget: ServerExecutionTarget
+  identity: unknown
   subscriptions: Map<string, Subscription>
+  deviceStreams: Map<string, DeviceChangeStream>
   overloaded: boolean
 }
 
-export class WSHandler {
+export class WSHandler<Identity = unknown> {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
   private readonly resolveExecutionTarget: WSHandlerOptions['resolveExecutionTarget']
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdc: CdcContextRegistry
+  private readonly maxUnacknowledgedChanges: number
+  private readonly acceptSql: boolean
+  private readonly operations: OperationSource
   private closed = false
 
-  constructor(sirannon: Sirannon, options?: WSHandlerOptions) {
+  constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>) {
     this.sirannon = sirannon
+    this.acceptSql = options?.acceptSql === true
+    this.operations = createOperationSource<Identity>(options?.operations)
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
+    this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
     this.resolveExecutionTarget = options?.resolveExecutionTarget
-    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs)
+    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
   }
 
-  async handleOpen(conn: WSConnection, databaseId: string): Promise<void> {
+  async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
     if (this.closed) {
       this.sendError(conn, '', 'HANDLER_CLOSED', 'WebSocket handler is shut down')
       conn.close(1013, 'Handler shutting down')
@@ -83,7 +105,9 @@ export class WSHandler {
       databaseId,
       database,
       executionTarget,
+      identity,
       subscriptions: new Map(),
+      deviceStreams: new Map(),
       overloaded: false,
     })
   }
@@ -134,13 +158,26 @@ export class WSHandler {
     }
 
     const id = msg.id
+    const name = typeof msg.name === 'string' ? msg.name : null
+
+    if (name !== null && !NAMED_MESSAGE_TYPES.has(msg.type)) {
+      this.sendError(conn, id, 'INVALID_MESSAGE', `A "${msg.type}" message names no registered operation`)
+      return
+    }
+
+    if (!this.acceptSql && SQL_MESSAGE_TYPES.has(msg.type) && name === null) {
+      this.sendError(conn, id, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
+      return
+    }
 
     switch (msg.type) {
       case 'query':
-        handleQueryMessage(this.operationContext(conn, state), msg, id)
+        if (name !== null) handleNamedQueryMessage(this.namedContext(conn, state), msg, id, name)
+        else handleQueryMessage(this.operationContext(conn, state), msg, id)
         break
       case 'execute':
-        handleExecuteMessage(this.operationContext(conn, state), msg, id)
+        if (name !== null) handleNamedExecuteMessage(this.namedContext(conn, state), msg, id, name)
+        else handleExecuteMessage(this.operationContext(conn, state), msg, id)
         break
       case 'transaction':
         handleTransactionMessage(this.operationContext(conn, state), msg, id)
@@ -152,13 +189,25 @@ export class WSHandler {
         handleLoadMessage(this.operationContext(conn, state), msg, id)
         break
       case 'subscribe':
-        this.handleSubscribe(conn, state, msg, id)
+        if (name !== null) handleLiveSubscribeMessage(this.liveDeps(), conn, state, msg, id, name)
+        else handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
         break
       case 'unsubscribe':
         this.handleUnsubscribe(conn, state, id)
         break
+      case 'ack':
+        handleAckMessage(this.subscribeDeps(), conn, state, msg, id)
+        break
       default:
         this.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${msg.type}'`)
+    }
+  }
+
+  handleSocketDrain(conn: WSConnection): void {
+    const state = this.connections.get(conn)
+    if (!state) return
+    for (const stream of state.deviceStreams.values()) {
+      stream.onSocketDrain()
     }
   }
 
@@ -204,148 +253,46 @@ export class WSHandler {
     }
   }
 
-  private async handleSubscribe(
-    conn: WSConnection,
-    state: ConnectionState,
-    msg: Record<string, unknown>,
-    id: string,
-  ): Promise<void> {
-    if (typeof msg.table !== 'string') {
-      this.sendError(conn, id, 'INVALID_MESSAGE', 'Subscribe message requires a "table" string field')
-      return
-    }
-
-    if (state.subscriptions.has(id)) {
-      this.sendError(conn, id, 'DUPLICATE_SUBSCRIPTION', `Subscription '${id}' already exists on this connection`)
-      return
-    }
-
-    if (state.database.readOnly) {
-      this.sendError(conn, id, 'READ_ONLY', 'Subscriptions are not available on read-only databases')
-      return
-    }
-
-    if (state.database.path === ':memory:') {
-      this.sendError(conn, id, 'CDC_UNSUPPORTED', 'CDC subscriptions require file-based databases')
-      return
-    }
-
-    if (
-      msg.filter !== undefined &&
-      msg.filter !== null &&
-      (typeof msg.filter !== 'object' || Array.isArray(msg.filter))
-    ) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', '"filter" must be a plain object')
-      return
-    }
-
-    const decodedFilter = decodeBoundParams(msg.filter, 'filter')
-    if (!decodedFilter.ok) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', decodedFilter.message)
-      return
-    }
-    const filter = decodedFilter.value as Record<string, unknown> | undefined
-
-    let sinceSeq: bigint | undefined
-    if (msg.sinceSeq !== undefined) {
-      if (typeof msg.sinceSeq !== 'string' || !/^\d+$/.test(msg.sinceSeq)) {
-        this.sendError(conn, id, 'INVALID_MESSAGE', '"sinceSeq" must be a non-negative integer string')
-        return
-      }
-      sinceSeq = BigInt(msg.sinceSeq)
-    }
-
-    let clientEpoch: string | undefined
-    if (msg.epoch !== undefined) {
-      if (typeof msg.epoch !== 'string') {
-        this.sendError(conn, id, 'INVALID_MESSAGE', '"epoch" must be a string')
-        return
-      }
-      clientEpoch = msg.epoch
-    }
-
-    if (sinceSeq === undefined) {
-      await this.subscribeLive(conn, state, id, msg.table, filter)
-      return
-    }
-
-    await this.subscribeResuming(conn, state, id, msg.table, filter, sinceSeq, clientEpoch)
-  }
-
-  private async subscribeLive(
-    conn: WSConnection,
-    state: ConnectionState,
-    id: string,
-    table: string,
-    filter: Record<string, unknown> | undefined,
-  ): Promise<void> {
-    try {
-      const ctx = await this.cdc.ensure(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, table)
-
-      const boundary = ctx.tracker.cursor
-      const sub = ctx.manager.subscribe(table, filter, (event: ChangeEvent) => {
-        this.sendChange(conn, id, event)
-      })
-
-      state.subscriptions.set(id, sub)
-      this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch })
-    } catch (err) {
-      this.cdc.maybeCleanup(state.databaseId)
-      this.sendSirannonError(conn, id, err)
+  private namedContext(conn: WSConnection, state: ConnectionState): WSNamedContext {
+    return {
+      ...this.operationContext(conn, state),
+      databaseId: state.databaseId,
+      identity: state.identity,
+      operations: this.operations,
     }
   }
 
-  private async subscribeResuming(
-    conn: WSConnection,
-    state: ConnectionState,
-    id: string,
-    table: string,
-    filter: Record<string, unknown> | undefined,
-    sinceSeq: bigint,
-    clientEpoch: string | undefined,
-  ): Promise<void> {
-    let ctx: Awaited<ReturnType<CdcContextRegistry['ensure']>>
-    let primed: PrimedSubscription
-    let boundary: bigint
-    let resync: boolean
-    try {
-      ctx = await this.cdc.ensure(state.databaseId, state.database)
-      await ctx.tracker.watch(ctx.cdcConn, table)
-
-      boundary = ctx.tracker.cursor
-      primed = new PrimedSubscription(
-        sinceSeq,
-        event => this.sendChange(conn, id, event),
-        () => this.handleOverload(conn),
-      )
-      const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
-      state.subscriptions.set(id, sub)
-
-      const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
-      const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
-      resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
-      this.send(conn, {
-        type: 'subscribed',
-        id,
-        seq: boundary.toString(),
-        epoch: ctx.epoch,
-        ...(resync ? { resync: true } : {}),
-      })
-    } catch (err) {
-      this.cdc.maybeCleanup(state.databaseId)
-      this.sendSirannonError(conn, id, err)
-      return
+  private liveDeps(): WSLiveDeps {
+    return {
+      operations: this.operations,
+      sendSubscribedRows: (conn, id, rows) => this.send(conn, { type: 'subscribed', id, rows }),
+      sendLive: (conn, message: WSLiveMessage) => this.send(conn, message),
+      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
     }
+  }
 
-    if (!resync) {
-      try {
-        await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
-      } catch {
-        this.send(conn, { type: 'subscribed', id, seq: boundary.toString(), epoch: ctx.epoch, resync: true })
-      }
+  private subscribeDeps(): WSSubscribeDeps {
+    return {
+      cdc: this.cdc,
+      maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
+      sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
+        this.send(conn, {
+          type: 'subscribed',
+          id,
+          seq,
+          epoch,
+          ...(resync ? { resync: true } : {}),
+          ...(maxUnacknowledgedChanges !== undefined ? { maxUnacknowledgedChanges } : {}),
+        }),
+      sendResult: (conn, id, data) => this.send(conn, { type: 'result', id, data }),
+      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
+      sendChange: (conn, id, event) => this.sendChange(conn, id, event),
+      sendText: (conn, data) => this.sendText(conn, data),
+      closeFaulted: conn => conn.close(1011, 'Device stream failed'),
+      handleOverload: conn => this.handleOverload(conn),
     }
-    primed.goLive()
   }
 
   private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
@@ -394,21 +341,21 @@ export class WSHandler {
   }
 
   private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
-    return this.send(conn, {
-      type: 'change',
-      id: subscriptionId,
-      event: {
-        type: event.type,
-        table: event.table,
-        row: encodeTaggedValues(event.row) as Record<string, unknown>,
-        oldRow: event.oldRow === undefined ? undefined : (encodeTaggedValues(event.oldRow) as Record<string, unknown>),
-        seq: event.seq.toString(),
-        timestamp: event.timestamp,
-      },
-    })
+    return this.send(conn, { type: 'change', id: subscriptionId, event: wireChangeEvent(event) })
+  }
+
+  private sendText(conn: WSConnection, data: string): WSSendOutcome {
+    const outcome = conn.send(data)
+    if (outcome === 'dropped') {
+      this.handleOverload(conn)
+    }
+    return outcome
   }
 }
 
-export function createWSHandler(sirannon: Sirannon, options?: WSHandlerOptions): WSHandler {
-  return new WSHandler(sirannon, options)
+export function createWSHandler<Identity = unknown>(
+  sirannon: Sirannon,
+  options?: WSHandlerOptions<Identity>,
+): WSHandler<Identity> {
+  return new WSHandler<Identity>(sirannon, options)
 }

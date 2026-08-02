@@ -5,9 +5,9 @@ import { BackupManager } from '../../backup/backup.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
 import { BackupError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
-import { createTestDb, useTempDir } from './shared.js'
+import { createTestDb, tempDirPerTest } from './shared.js'
 
-const temp = useTempDir()
+const temp = tempDirPerTest()
 
 describe('BackupScheduler', () => {
   it('fires a backup on cron schedule', async () => {

@@ -44,9 +44,7 @@ afterEach(async () => {
   for (const db of fixture.dbs) {
     try {
       if (!db.closed) await db.close()
-    } catch {
-      /* best-effort cleanup */
-    }
+    } catch {}
   }
   fixture.dbs.length = 0
   rmSync(fixture.tempDir, { recursive: true, force: true })

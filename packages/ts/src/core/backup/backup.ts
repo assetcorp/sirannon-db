@@ -48,9 +48,7 @@ export class BackupManager {
     } catch (err) {
       try {
         rmSync(resolved, { force: true })
-      } catch {
-        // Best-effort cleanup
-      }
+      } catch {}
       throw new BackupError(`Backup to '${destPath}' failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
@@ -84,9 +82,7 @@ export class BackupManager {
     for (const entry of entries.slice(maxFiles)) {
       try {
         rmSync(entry.path, { force: true })
-      } catch {
-        // Best-effort deletion; individual failures must not block the rest.
-      }
+      } catch {}
     }
   }
 }

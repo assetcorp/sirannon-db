@@ -5,9 +5,9 @@ const WORKFLOW_DIR = '.github/workflows'
 const MINIMUM_RELEASE_AGE_DAYS = 4
 const MINIMUM_RELEASE_AGE_MINUTES = MINIMUM_RELEASE_AGE_DAYS * 24 * 60
 const PACKAGE_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies']
-const ALLOWED_REMOTE_DEPENDENCIES = new Map([['uWebSockets.js', 'github:uNetworking/uWebSockets.js#v20.58.0']])
+const ALLOWED_REMOTE_DEPENDENCIES = new Map([['uWebSockets.js', 'github:uNetworking/uWebSockets.js#v20.69.0']])
 const ALLOWED_REMOTE_LOCKFILE_REFERENCES = [
-  'https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/ba110e817908b56c61d625b02f367b4ec9cfc8ab',
+  'https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4',
 ]
 
 const main = () => {
@@ -94,6 +94,12 @@ const checkDependencyCooldowns = () => {
 
     if (!Number.isSafeInteger(workspaceMinutes) || workspaceMinutes < MINIMUM_RELEASE_AGE_MINUTES) {
       failures.push(`pnpm-workspace.yaml: minimumReleaseAge must be at least ${MINIMUM_RELEASE_AGE_MINUTES} minutes`)
+    }
+
+    for (const entry of parseMinimumReleaseAgeExcludes(workspace)) {
+      failures.push(
+        `pnpm-workspace.yaml: minimumReleaseAgeExclude exempts '${entry}' from the ${MINIMUM_RELEASE_AGE_DAYS} day cooldown and must stay empty`,
+      )
     }
   }
 
@@ -199,6 +205,63 @@ const findWorkflowActions = content => {
   }
 
   return actions
+}
+
+const parseMinimumReleaseAgeExcludes = content => {
+  const entries = []
+  const lines = content.split(/\r?\n/)
+  let inExcludes = false
+
+  for (const rawLine of lines) {
+    const line = stripYamlComment(rawLine)
+
+    if (line.trim() === '') {
+      continue
+    }
+
+    if (indentOf(line) === 0) {
+      const [key, ...rest] = line.split(':')
+      inExcludes = key.trim() === 'minimumReleaseAgeExclude'
+
+      if (!inExcludes) {
+        continue
+      }
+
+      const inline = rest.join(':').trim()
+
+      if (inline.startsWith('[')) {
+        inExcludes = false
+
+        for (const entry of inline.replace(/^\[|\]$/g, '').split(',')) {
+          const value = unquote(entry.trim())
+
+          if (value !== '') {
+            entries.push(value)
+          }
+        }
+      }
+
+      continue
+    }
+
+    if (!inExcludes) {
+      continue
+    }
+
+    const trimmed = line.trim()
+
+    if (!trimmed.startsWith('- ')) {
+      continue
+    }
+
+    const value = unquote(trimmed.slice(2).trim())
+
+    if (value !== '') {
+      entries.push(value)
+    }
+  }
+
+  return entries
 }
 
 const parseDependabotUpdates = content => {

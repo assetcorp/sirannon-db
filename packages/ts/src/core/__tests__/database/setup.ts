@@ -22,9 +22,7 @@ afterEach(async () => {
   for (const db of state.openDbs) {
     try {
       if (!db.closed) await db.close()
-    } catch {
-      /* best-effort cleanup */
-    }
+    } catch {}
   }
   state.openDbs.length = 0
   rmSync(state.tempDir, { recursive: true, force: true })

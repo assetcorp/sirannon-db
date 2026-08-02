@@ -1,3 +1,4 @@
+import type { ResultOp } from '../core/live/types.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../core/types.js'
 import type {
   BatchResponse,
@@ -15,18 +16,62 @@ export interface SubscribeOptions {
    * from the current moment; treat any prior state as stale and re-read.
    */
   onReset?: () => void
+  deviceId?: string
+  tables?: readonly string[]
+  schemaVersion?: number
+  getResumeSeq?: () => bigint | undefined
+  sinceSeq?: bigint
+  epoch?: string
+  /**
+   * Declares that this device stages pulled changes durably and
+   * acknowledges staged sequences, so the server may pack several events
+   * per frame and pace the delivery window continuously. Send only to a
+   * server that announces the `sync.staged-stream` capability.
+   */
+  stagedStream?: boolean
+  onSubscribed?: (info: {
+    seq: bigint | undefined
+    epoch: string | undefined
+    resync: boolean
+    maxUnacknowledgedChanges: number | undefined
+  }) => void
 }
+
+export interface LiveHandlers<T = Record<string, unknown>> {
+  onRows(rows: T[]): void
+  onOps(ops: ResultOp<T>[]): void
+  onRevalidating(): void
+  onError(error: RemoteError): void
+}
+
+export type RegistryDigestSource = (refresh: boolean) => Promise<string | undefined>
 
 /**
  * Transport layer for communicating with a sirannon-db server.
  * Each transport instance is bound to a specific database.
  */
 export interface Transport {
+  /**
+   * Whether a read concern passed to {@link Transport.query} or
+   * {@link Transport.queryNamed} reaches the server. Topology routing applies
+   * the client-wide setting when it chooses a node, so it leaves this unset and
+   * a caller asking for a per-read concern is refused rather than served a read
+   * at another level.
+   */
+  readonly carriesReadConcern?: boolean
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
   batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
   load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>
+  queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>
+  executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>
+  liveSubscribe(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription>
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,

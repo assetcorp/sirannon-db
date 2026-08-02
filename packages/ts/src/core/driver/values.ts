@@ -1,11 +1,5 @@
 const SAFE_INT_BOUND = 9007199254740991n
 
-/**
- * Drivers read SQLite integers as BigInt so 64-bit values cross the JS
- * boundary without rounding; narrowing values inside the safe range back to
- * numbers keeps the package convention that only integers beyond 2^53 - 1
- * surface as BigInt.
- */
 export function narrowSafeBigInt(value: unknown): unknown {
   if (typeof value === 'bigint' && value >= -SAFE_INT_BOUND && value <= SAFE_INT_BOUND) {
     return Number(value)

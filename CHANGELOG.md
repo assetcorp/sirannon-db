@@ -1,3 +1,62 @@
+## 0.2.0 (2026-08-02)
+
+### 🚀 Features
+
+- **spec:** add queryWithPosition method and transaction boundary details to core specifications ([b35e698](https://github.com/assetcorp/sirannon-db/commit/b35e698))
+- **spec:** add rowId to ChangeEvent for improved change identification ([ad6269e](https://github.com/assetcorp/sirannon-db/commit/ad6269e))
+- **spec:** enhance core specification with live query support and update error handling details ([ab54a5a](https://github.com/assetcorp/sirannon-db/commit/ab54a5a))
+- **spec:** enhance WebSocket upgrade handling with subprotocol negotiation and error codes ([5cac654](https://github.com/assetcorp/sirannon-db/commit/5cac654))
+- **ts:** implement registry-wide migration support ([97acb23](https://github.com/assetcorp/sirannon-db/commit/97acb23))
+- **ts:** improve migration handling with support for function-based sources and bundled SQL files ([7871945](https://github.com/assetcorp/sirannon-db/commit/7871945))
+- **ts:** add stream verification support in replication protocol with batch digest handling ([3116870](https://github.com/assetcorp/sirannon-db/commit/3116870))
+- **ts:** implement coordinator authority and lifecycle management for replication engine ([706e46a](https://github.com/assetcorp/sirannon-db/commit/706e46a))
+- **ts:** improve SyncJoiner to validate column names and structure in sync batches ([4f4643f](https://github.com/assetcorp/sirannon-db/commit/4f4643f))
+- **ts:** add file-based rollback and lazy down migration support ([e314d7d](https://github.com/assetcorp/sirannon-db/commit/e314d7d))
+- **ts:** implement migration checksum verification and improve system catalog with checksum handling ([798f694](https://github.com/assetcorp/sirannon-db/commit/798f694))
+- **ts:** add baseline support and comprehensive testing ([958ddb2](https://github.com/assetcorp/sirannon-db/commit/958ddb2))
+- **ts:** make system catalog improvements ([18ff275](https://github.com/assetcorp/sirannon-db/commit/18ff275))
+- **ts:** improve migration error handling and add concurrency support ([23664c9](https://github.com/assetcorp/sirannon-db/commit/23664c9))
+- **ts:** implement hybrid logical clock (HLC) for causal event ordering and enhance replication conflict resolution ([7812668](https://github.com/assetcorp/sirannon-db/commit/7812668))
+- **ts:** introduce device cursor management and enhance sync capabilities with new database runtime and change application features ([eca4fb2](https://github.com/assetcorp/sirannon-db/commit/eca4fb2))
+- **ts:** implement new sync controller, topology-aware transport, and cluster routing management ([199c300](https://github.com/assetcorp/sirannon-db/commit/199c300))
+- **ts:** add snapshot loading with progress tracking and schema management ([ab76a0e](https://github.com/assetcorp/sirannon-db/commit/ab76a0e))
+- **ts:** refactor HTTP request handling and improve snapshot loading ([f638666](https://github.com/assetcorp/sirannon-db/commit/f638666))
+- **ts:** implement migration synchronization ([497dc15](https://github.com/assetcorp/sirannon-db/commit/497dc15))
+- **ts:** improve sync capabilities with server capability verification and HTTP request handling ([668724c](https://github.com/assetcorp/sirannon-db/commit/668724c))
+- **ts:** add support for multiple table subscriptions ([afd761e](https://github.com/assetcorp/sirannon-db/commit/afd761e))
+- **ts:** add delete precedence and resync handling ([bb29d23](https://github.com/assetcorp/sirannon-db/commit/bb29d23))
+- **ts:** add type checking for consumers and integrate into CI workflow ([cf0ae0e](https://github.com/assetcorp/sirannon-db/commit/cf0ae0e))
+- **ts:** introduce onSnapshotComplete callback and enhance snapshot handling in SyncController ([718b365](https://github.com/assetcorp/sirannon-db/commit/718b365))
+- **ts:** implement TopologyAwareClient and improve client structure for improved routing ([5772579](https://github.com/assetcorp/sirannon-db/commit/5772579))
+- **ts:** implement live query in Database class ([1b6785d](https://github.com/assetcorp/sirannon-db/commit/1b6785d))
+- **ts:** eimplement live query support and connection management ([3098cd9](https://github.com/assetcorp/sirannon-db/commit/3098cd9))
+- **ts:** add support for live queries and improve server capabilities in the client ([f9b8b1b](https://github.com/assetcorp/sirannon-db/commit/f9b8b1b))
+- **ts:** implement read concern support and improved error handling ([2e65f4f](https://github.com/assetcorp/sirannon-db/commit/2e65f4f))
+- **ts:** add read concern validation and options handling ([5f18419](https://github.com/assetcorp/sirannon-db/commit/5f18419))
+- **ts:** add read concern support and add related tests ([4670b28](https://github.com/assetcorp/sirannon-db/commit/4670b28))
+- **ts:** implement staged stream support in sync controller and related components ([7dfde8a](https://github.com/assetcorp/sirannon-db/commit/7dfde8a))
+- **ts:** revamp examples ([e47131f](https://github.com/assetcorp/sirannon-db/commit/e47131f))
+- **ts:** implement in-sync set reconciliation and enhance sync recovery mechanisms ([3c584ef](https://github.com/assetcorp/sirannon-db/commit/3c584ef))
+- **ts:** improve gRPC transport with reconnection logic and timeout adjustments ([2f8f991](https://github.com/assetcorp/sirannon-db/commit/2f8f991))
+- **ts:** enhance cluster node status reporting and coordinator connection handling ([5806f8a](https://github.com/assetcorp/sirannon-db/commit/5806f8a))
+- **ts:** define NodeHealth structure and integrate it into cluster health reporting ([f10f1ed](https://github.com/assetcorp/sirannon-db/commit/f10f1ed))
+- **ts:** implement node health reporting in replication engine and update related status handling ([4bec707](https://github.com/assetcorp/sirannon-db/commit/4bec707))
+- **ts:** extend cluster health reporting with healthReason and update related components ([10bbe99](https://github.com/assetcorp/sirannon-db/commit/10bbe99))
+- **ts:** add tests for applied position reporting in replication engine ([1f0f180](https://github.com/assetcorp/sirannon-db/commit/1f0f180))
+- **ts:** add ReplicationAck handling for node connection states in replication process ([604c941](https://github.com/assetcorp/sirannon-db/commit/604c941))
+- **ts:** improve WebSocket authentication with header support and subprotocol negotiation ([534da0d](https://github.com/assetcorp/sirannon-db/commit/534da0d))
+- **ts:** refine WebSocket transport handling with improved header and subprotocol validation ([17576b0](https://github.com/assetcorp/sirannon-db/commit/17576b0))
+- **ts:** improve sync controller and pull stream with header support for WebSocket upgrades ([0ee012d](https://github.com/assetcorp/sirannon-db/commit/0ee012d))
+
+### 🩹 Fixes
+
+- **ts:** improve error handling in sync controller and pull stream for better recovery ([5161c53](https://github.com/assetcorp/sirannon-db/commit/5161c53))
+- **ts:** update LiveDatabase interface to use 'unknown' ([c9c53fd](https://github.com/assetcorp/sirannon-db/commit/c9c53fd))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.1.8 (2026-07-20)
 
 ### 🚀 Features

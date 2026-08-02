@@ -36,7 +36,7 @@ afterEach(async () => {
 
 describe('WSHandler backpressure', () => {
   it('closes the connection with an overload code when a reply is dropped', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'reply.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
     await db.execute("INSERT INTO users (name) VALUES ('Alice')")
@@ -56,7 +56,7 @@ describe('WSHandler backpressure', () => {
   })
 
   it('closes the connection when a CDC change event is dropped rather than losing it silently', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'change.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -87,7 +87,7 @@ describe('WSHandler backpressure', () => {
       execute: async () => ({ changes: 0, lastInsertRowId: 0 }),
       transaction: async fn => fn({} as never),
     }
-    const handler = createWSHandler(sirannon, { resolveExecutionTarget: () => unserialisableTarget })
+    const handler = createWSHandler(sirannon, { acceptSql: true, resolveExecutionTarget: () => unserialisableTarget })
     await sirannon.open('mydb', join(tempDir, 'serialise.db'))
 
     const conn = createMockConnection()
@@ -103,7 +103,7 @@ describe('WSHandler backpressure', () => {
   })
 
   it('keeps serving when a frame is buffered under the backpressure limit', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'buffered.db'))
     await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 

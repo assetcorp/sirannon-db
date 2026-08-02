@@ -47,25 +47,19 @@ describe('ReplicationEngine inbound batch trigger refresh', () => {
     for (const engine of runningEngines) {
       try {
         await engine.stop()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     runningEngines.length = 0
     for (const db of openDbs) {
       try {
         if (!db.closed) await db.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     openDbs.length = 0
     for (const conn of openConns) {
       try {
         await conn.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     openConns.length = 0
     rmSync(tempDir, { recursive: true, force: true })
@@ -83,7 +77,7 @@ describe('ReplicationEngine inbound batch trigger refresh', () => {
     await conn.exec('PRAGMA journal_mode = WAL')
     openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     if (schemaSql) {
       await conn.exec(schemaSql)
     }

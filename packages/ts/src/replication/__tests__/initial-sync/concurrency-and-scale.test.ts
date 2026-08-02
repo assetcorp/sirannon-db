@@ -61,7 +61,7 @@ describe('Initial Sync', () => {
       await connB.exec('PRAGMA journal_mode = WAL')
       ctx.openConns.push(connB)
 
-      const trackerB = new ChangeTracker({ replication: true })
+      const trackerB = new ChangeTracker()
       const dbB = await Database.create('db-join-b', dbPathB, testDriver)
       ctx.openDbs.push(dbB)
 

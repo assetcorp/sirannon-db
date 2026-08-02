@@ -81,9 +81,7 @@ export async function createMtlsCerts(nodeIds: readonly string[]): Promise<MtlsC
     cleanup(): void {
       try {
         rmSync(certDir, { recursive: true, force: true })
-      } catch {
-        /* best-effort cleanup */
-      }
+      } catch {}
     },
   }
 }

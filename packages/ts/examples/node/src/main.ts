@@ -188,7 +188,31 @@ async function main() {
   subscription.unsubscribe()
   console.log()
 
-  console.log('8. Connection pool with custom readPoolSize...')
+  console.log('8. Live query: a result set that maintains itself...')
+  const liveUsers = await db.live<{ id: number; name: string }>('SELECT id, name FROM users ORDER BY id')
+  const liveUpdates: string[] = []
+  const stopWatchingUsers = liveUsers.subscribe(update => {
+    liveUpdates.push(update.kind)
+  })
+
+  const beforeInsert = liveUsers.getState()
+  console.log(`   Rows on open: ${beforeInsert.status === 'ready' ? beforeInsert.rows.length : 0}`)
+
+  await db.execute('INSERT INTO users (name, email, age) VALUES (?, ?, ?)', ['Dana Wells', 'dana@example.com', 41])
+  await setTimeout(100)
+
+  const afterInsert = liveUsers.getState()
+  if (afterInsert.status === 'ready') {
+    console.log(`   Rows after one insert: ${afterInsert.rows.length}`)
+    console.log(`   Last row: ${afterInsert.rows[afterInsert.rows.length - 1]?.name}`)
+  }
+  console.log(`   Updates delivered: ${liveUpdates.join(', ')}`)
+
+  stopWatchingUsers()
+  await liveUsers.close()
+  console.log()
+
+  console.log('9. Connection pool with custom readPoolSize...')
   const db2Path = join(tempDir, 'pool-example.db')
   const db2 = await Database.create('pool-demo', db2Path, driver, {
     readPoolSize: 8,
@@ -201,7 +225,7 @@ async function main() {
   await db2.close()
   console.log()
 
-  console.log('9. Metrics via Sirannon registry...')
+  console.log('10. Metrics via Sirannon registry...')
   const queryLog: string[] = []
   const sirannon = new Sirannon({
     driver,
@@ -224,34 +248,42 @@ async function main() {
   await sirannon.shutdown()
   console.log()
 
-  console.log('10. Multi-tenant via Sirannon lifecycle...')
+  console.log('11. Multi-tenant via Sirannon lifecycle...')
   const tenantDir = join(tempDir, 'tenants')
   mkdirSync(tenantDir, { recursive: true })
-  const resolver = createTenantResolver({ basePath: tenantDir })
 
   const tenantSirannon = new Sirannon({
     driver,
     lifecycle: {
-      autoOpen: { resolver },
+      autoOpen: { resolver: createTenantResolver({ basePath: tenantDir }) },
+      maxOpen: 2,
     },
   })
 
-  const tenantIds = ['acme-corp', 'globex-inc']
+  const tenantIds = ['acme-corp', 'globex-inc', 'initech']
   for (const tenantId of tenantIds) {
-    const sanitized = sanitizeTenantId(tenantId)
-    const path = tenantPath(tenantDir, tenantId)
-    console.log(`   Tenant '${sanitized}' -> ${path}`)
-    const tdb = await tenantSirannon.open(tenantId, path)
+    const tdb = await tenantSirannon.resolve(tenantId)
+    if (!tdb) {
+      throw new Error(`The lifecycle resolver refused tenant '${tenantId}'`)
+    }
+
+    console.log(`   Tenant '${sanitizeTenantId(tenantId)}' -> ${tenantPath(tenantDir, tenantId)}`)
     await tdb.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
     await tdb.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', ['plan', 'enterprise'])
     const setting = await tdb.queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['plan'])
     console.log(`   Tenant '${tenantId}' plan: ${setting?.value}`)
   }
-  console.log(`   Active tenants: ${tenantSirannon.databases().size}`)
+
+  console.log(`   Tenants requested: ${tenantIds.length}`)
+  console.log(`   Databases held open under maxOpen 2: ${tenantSirannon.databases().size}`)
+
+  const reopened = await tenantSirannon.resolve('acme-corp')
+  const reopenedPlan = await reopened?.queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['plan'])
+  console.log(`   Evicted tenant reopened on next access with plan: ${reopenedPlan?.value}`)
   await tenantSirannon.shutdown()
   console.log()
 
-  console.log('11. Hooks: beforeQuery and afterQuery...')
+  console.log('12. Hooks: beforeQuery and afterQuery...')
   const hookSirannon = new Sirannon({ driver })
   hookSirannon.onBeforeQuery(ctx => {
     if (ctx.sql.trim() === 'DROP TABLE test') {
@@ -279,7 +311,7 @@ async function main() {
   await hookSirannon.shutdown()
   console.log()
 
-  console.log('12. Backup...')
+  console.log('13. Backup...')
   const backupPath = join(tempDir, 'backup.db')
   await db.backup(backupPath)
   console.log(`   Backup created at: ${backupPath}`)
@@ -290,7 +322,7 @@ async function main() {
   await backupDb.close()
   console.log()
 
-  console.log('13. Graceful shutdown...')
+  console.log('14. Graceful shutdown...')
   await db.close()
   console.log('   Main database closed.')
   console.log('   Cleaning up temp directory...')

@@ -43,27 +43,21 @@ describe('Replication Integration', () => {
     for (const engine of runningEngines) {
       try {
         await engine.stop()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     runningEngines.length = 0
 
     for (const db of openDbs) {
       try {
         if (!db.closed) await db.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     openDbs.length = 0
 
     for (const conn of openConns) {
       try {
         await conn.close()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     openConns.length = 0
 
@@ -76,7 +70,7 @@ describe('Replication Integration', () => {
     await conn.exec('PRAGMA journal_mode = WAL')
     openConns.push(conn)
 
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     await conn.exec(`
 			CREATE TABLE items (
 				id INTEGER PRIMARY KEY,

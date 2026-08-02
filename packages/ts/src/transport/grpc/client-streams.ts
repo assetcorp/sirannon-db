@@ -1,5 +1,12 @@
-import type { ClientOptions } from '@grpc/grpc-js'
+import type { ClientDuplexStream, ClientOptions } from '@grpc/grpc-js'
 import type { TopologyRole } from '../../replication/types.js'
+import {
+  claimEndpoint,
+  noteEndpointReachable,
+  registerEndpointAbort,
+  releaseEndpoint,
+  scheduleEndpointRedial,
+} from './client-reconnect.js'
 import {
   fromAckPayload,
   fromBatchPayload,
@@ -13,7 +20,18 @@ import { buildChannelCreds } from './grpc-credentials.js'
 import { type ClientPeerEntry, registerPeer, removePeer } from './peer-streams.js'
 import type { GrpcReplicationTransport } from './transport.js'
 
-export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string): Promise<void> {
+function cancelQuietly(stream: Pick<ClientDuplexStream<never, never>, 'cancel'>): void {
+  try {
+    stream.cancel()
+  } catch {
+    /* The stream is already finished */
+  }
+}
+
+export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string): void {
+  if (!t.connected) return
+  if (!claimEndpoint(t, endpoint)) return
+
   const channelCreds = buildChannelCreds(t.options)
   const clientOpts: Partial<ClientOptions> = {}
   const client = new ReplicationClient(endpoint, channelCreds, clientOpts)
@@ -27,36 +45,54 @@ export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: s
     syncStream,
   }
 
-  replicateStream.write({
-    hello: {
-      nodeId: t.localNodeId,
-      role: t.localRole,
-      groupId: t.localGroupId ?? '',
-      primaryTerm: t.localPrimaryTerm ?? 0n,
-      protocolVersion: t.localProtocolVersion ?? '',
-    },
-  })
-  syncStream.write({
-    hello: {
-      nodeId: t.localNodeId,
-      role: t.localRole,
-      groupId: t.localGroupId ?? '',
-      primaryTerm: t.localPrimaryTerm ?? 0n,
-      protocolVersion: t.localProtocolVersion ?? '',
-    },
-  })
-
   let replicatePeerId: string | null = null
+  let syncPeerId: string | null = null
+  let closed = false
+
+  const teardown = (): void => {
+    if (closed) return
+    closed = true
+    releaseEndpoint(t, endpoint)
+
+    const peerId = replicatePeerId ?? syncPeerId
+    if (peerId !== null && t.clientPeerStreams.get(peerId) === entry) {
+      t.clientPeerStreams.delete(peerId)
+      removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
+    }
+    entry.replicateStream = null
+    entry.syncStream = null
+
+    cancelQuietly(replicateStream)
+    cancelQuietly(syncStream)
+    client.close()
+
+    scheduleEndpointRedial(t, endpoint, () => {
+      connectToEndpoint(t, endpoint)
+    })
+  }
+
+  registerEndpointAbort(t, endpoint, teardown)
+
+  const hello = {
+    nodeId: t.localNodeId,
+    role: t.localRole,
+    groupId: t.localGroupId ?? '',
+    primaryTerm: t.localPrimaryTerm ?? 0n,
+    protocolVersion: t.localProtocolVersion ?? '',
+  }
+  replicateStream.write({ hello })
+  syncStream.write({ hello })
 
   replicateStream.on('data', (msg: ReplicationMessage) => {
     if (replicatePeerId === null) {
       if (!msg.hello) {
-        replicateStream.cancel()
+        teardown()
         return
       }
       replicatePeerId = msg.hello.nodeId
       const peerRole = msg.hello.role as TopologyRole
       t.clientPeerStreams.set(replicatePeerId, entry)
+      noteEndpointReachable(t, endpoint)
       registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole, {
         groupId: msg.hello.groupId || undefined,
         primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
@@ -72,20 +108,13 @@ export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: s
     }
   })
 
-  replicateStream.on('end', () => {
-    detachReplicate(t, replicatePeerId)
-  })
-
-  replicateStream.on('error', () => {
-    detachReplicate(t, replicatePeerId)
-  })
-
-  let syncPeerId: string | null = null
+  replicateStream.on('end', teardown)
+  replicateStream.on('error', teardown)
 
   syncStream.on('data', (msg: SyncMessage) => {
     if (syncPeerId === null) {
       if (!msg.hello) {
-        syncStream.cancel()
+        teardown()
         return
       }
       syncPeerId = msg.hello.nodeId
@@ -103,33 +132,6 @@ export async function connectToEndpoint(t: GrpcReplicationTransport, endpoint: s
     }
   })
 
-  syncStream.on('end', () => {
-    detachSync(t, syncPeerId)
-  })
-
-  syncStream.on('error', () => {
-    detachSync(t, syncPeerId)
-  })
-}
-
-function detachReplicate(t: GrpcReplicationTransport, peerId: string | null): void {
-  if (!peerId) return
-  const e = t.clientPeerStreams.get(peerId)
-  if (!e) return
-  e.replicateStream = null
-  if (!e.syncStream) {
-    t.clientPeerStreams.delete(peerId)
-    removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-  }
-}
-
-function detachSync(t: GrpcReplicationTransport, peerId: string | null): void {
-  if (!peerId) return
-  const e = t.clientPeerStreams.get(peerId)
-  if (!e) return
-  e.syncStream = null
-  if (!e.replicateStream) {
-    t.clientPeerStreams.delete(peerId)
-    removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-  }
+  syncStream.on('end', teardown)
+  syncStream.on('error', teardown)
 }

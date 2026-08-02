@@ -40,7 +40,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('createWSHandler', () => {
     it('returns a WSHandler instance', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       expect(handler).toBeInstanceOf(WSHandler)
       await handler.close()
     })
@@ -48,7 +48,7 @@ describe('WSHandler', () => {
 
   describe('handleOpen', () => {
     it('registers a connection for a valid database', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'test.db'))
 
       const conn = createMockConnection()
@@ -60,7 +60,7 @@ describe('WSHandler', () => {
     })
 
     it('rejects connection for unknown database', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const conn = createMockConnection()
       await handler.handleOpen(conn, 'nonexistent')
 
@@ -74,7 +74,7 @@ describe('WSHandler', () => {
     })
 
     it('rejects connection for closed database', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const dbPath = join(tempDir, 'closed.db')
       await sirannon.open('mydb', dbPath)
       await sirannon.close('mydb')
@@ -87,7 +87,7 @@ describe('WSHandler', () => {
     })
 
     it('rejects connection when handler is shut down', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await handler.close()
 
       const conn = createMockConnection()
@@ -109,7 +109,7 @@ describe('WSHandler', () => {
             closed: true,
           }) as Database,
       } as unknown as Sirannon
-      const handler = createWSHandler(fakeSirannon)
+      const handler = createWSHandler(fakeSirannon, { acceptSql: true })
       const conn = createMockConnection()
 
       await handler.handleOpen(conn, 'closed-db')
@@ -125,7 +125,7 @@ describe('WSHandler', () => {
 
   describe('handleClose', () => {
     it('removes the connection from the handler', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'close.db'))
 
       const conn = createMockConnection()
@@ -138,7 +138,7 @@ describe('WSHandler', () => {
     })
 
     it('cleans up subscriptions on close', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'cleanup.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -166,7 +166,7 @@ describe('WSHandler', () => {
     })
 
     it('handles close for unregistered connection gracefully', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const conn = createMockConnection()
       expect(() => handler.handleClose(conn)).not.toThrow()
       await handler.close()
@@ -175,7 +175,7 @@ describe('WSHandler', () => {
 
   describe('handler shutdown', () => {
     it('closes all connections on shutdown', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'shutdown.db'))
 
       const conn1 = createMockConnection()
@@ -195,7 +195,7 @@ describe('WSHandler', () => {
     })
 
     it('shutdown is idempotent', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await handler.close()
       await expect(handler.close()).resolves.toBeUndefined()
     })

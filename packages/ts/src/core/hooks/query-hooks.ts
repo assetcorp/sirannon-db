@@ -39,12 +39,8 @@ export function fireAfterQueryHooks(
   const ctx = { databaseId, sql, params, durationMs }
   try {
     parentHooks?.invokeSync('afterQuery', ctx)
-  } catch {
-    /* non-fatal */
-  }
+  } catch {}
   try {
     localHooks.invokeSync('afterQuery', ctx)
-  } catch {
-    /* non-fatal */
-  }
+  } catch {}
 }

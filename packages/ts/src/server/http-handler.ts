@@ -1,6 +1,12 @@
 import type { HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ClusterStatusInfo, ServerExecutionTargetResolver } from '../core/types.js'
+import { highestMigrationVersion } from '../core/system-catalog/index.js'
+import type {
+  ClusterStatusAuthorizer,
+  ClusterStatusInfo,
+  RequestContext,
+  ServerExecutionTargetResolver,
+} from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
 import {
   parseBody,
@@ -28,6 +34,14 @@ import {
   toExecuteResponse,
   transactionStatementsValidationError,
 } from './protocol.js'
+import type { ChangesRequest } from './sync-protocol.js'
+import {
+  decodeSyncBatch,
+  schemaVersionGateRefusal,
+  schemaVersionValidationError,
+  syncBatchValidationError,
+  toChangesResponse,
+} from './sync-protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
 function decodeBatchParams(
@@ -262,12 +276,98 @@ export function handleLoad(sirannon: Sirannon, resolveTarget?: ServerExecutionTa
   }
 }
 
-export function handleClusterStatus(getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null) {
-  return (res: HttpResponse, dbId: string): void => {
-    if (!getClusterStatus) {
-      sendError(res, 404, 'NOT_FOUND', 'Cluster status is not configured')
+export function handleChanges(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
+  return async (res, dbId, rawBody, abort) => {
+    const body = parseBody<ChangesRequest>(res, rawBody)
+    if (!body) return
+
+    const batchError = syncBatchValidationError(body.batch)
+    if (batchError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', batchError)
       return
     }
+
+    const schemaVersionError = schemaVersionValidationError(body.schemaVersion)
+    if (schemaVersionError !== null) {
+      sendError(res, 400, 'INVALID_REQUEST', schemaVersionError)
+      return
+    }
+
+    const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
+    if (!target) return
+
+    const appliedMigrations = target.appliedMigrations
+    if (typeof appliedMigrations === 'function') {
+      try {
+        const serverVersion = highestMigrationVersion(await appliedMigrations.call(target))
+        const refusal = schemaVersionGateRefusal(body.schemaVersion ?? 0, serverVersion)
+        if (refusal !== null) {
+          if (abort.aborted) return
+          sendError(res, 409, refusal.code, refusal.message, { serverVersion })
+          return
+        }
+      } catch (err) {
+        sendCaughtError(res, abort, err)
+        return
+      }
+    }
+
+    const applyChanges = target.applyChanges
+    if (typeof applyChanges !== 'function') {
+      sendError(
+        res,
+        501,
+        'SYNC_UNSUPPORTED',
+        'The execution target for this database does not support applying sync changes',
+      )
+      return
+    }
+
+    try {
+      const result = await applyChanges.call(target, decodeSyncBatch(body.batch))
+      if (abort.aborted) return
+      sendJson(res, toChangesResponse(result))
+    } catch (err) {
+      sendCaughtError(res, abort, err)
+    }
+  }
+}
+
+export type DbGetRouteHandler = (
+  res: HttpResponse,
+  dbId: string,
+  ctx: RequestContext,
+  abort: ResponseAbort,
+) => Promise<void>
+
+function sendClusterUnavailable(res: HttpResponse, dbId: string): void {
+  sendError(res, 404, 'NOT_FOUND', `Cluster status is not available for database '${dbId}'`)
+}
+
+export function handleClusterStatus(
+  getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null,
+  authorizeClusterStatus?: ClusterStatusAuthorizer,
+): DbGetRouteHandler {
+  return async (res, dbId, ctx, abort) => {
+    if (!getClusterStatus || !authorizeClusterStatus) {
+      sendClusterUnavailable(res, dbId)
+      return
+    }
+
+    let allowed: boolean
+    try {
+      allowed = await authorizeClusterStatus(ctx)
+    } catch {
+      if (abort.aborted) return
+      sendError(res, 500, 'HOOK_ERROR', 'authorizeClusterStatus threw an error')
+      return
+    }
+    if (abort.aborted) return
+    if (!allowed) {
+      sendClusterUnavailable(res, dbId)
+      return
+    }
+
     const status = getClusterStatus(dbId)
     if (!status) {
       sendError(res, 404, 'DATABASE_NOT_FOUND', `Database '${dbId}' not found`)

@@ -1,3 +1,4 @@
+import { loadPersistedHlc } from '../../core/sync/hlc-store.js'
 import { SyncError } from '../errors.js'
 import type { ReplicationEngine } from './engine.js'
 import { wireTransportHandlers } from './transport-wiring.js'
@@ -11,6 +12,10 @@ import { wireTransportHandlers } from './transport-wiring.js'
  * must also start by absorbing every HLC stamped under its previous role.
  */
 export async function recoverHlcFromDurableState(engine: ReplicationEngine): Promise<void> {
+  const persisted = await loadPersistedHlc(engine.writerConn)
+  if (persisted !== null) {
+    engine.hlc.receive(persisted)
+  }
   const maxObserved = await engine.log.recoverMaxObservedHlc()
   if (maxObserved === null) return
   engine.hlc.receive(maxObserved)

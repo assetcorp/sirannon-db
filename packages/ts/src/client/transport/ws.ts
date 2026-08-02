@@ -1,33 +1,26 @@
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
-import type { BulkLoadDurability, ChangeEvent, Params, WriteConcern } from '../../core/types.js'
+import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
+import { withSirannonSubprotocol } from '../../core/ws-handshake.js'
 import type {
+  AckResponse,
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
   QueryResponse,
   TransactionResponse,
   WSClientMessage,
-  WSServerMessage,
 } from '../../server/protocol.js'
-import type { RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
+import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
+import type { ClientWebSocket } from './ws-connect.js'
+import { openWebSocket } from './ws-connect.js'
+import { routeServerMessage } from './ws-inbound.js'
+import { LiveQueryRegistry } from './ws-live-state.js'
+import { PendingRequests } from './ws-pending.js'
+import type { ActiveSubscription } from './ws-subscription-state.js'
+import { buildResubscribeMessage } from './ws-subscription-state.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
-
-interface PendingRequest {
-  resolve: (value: unknown) => void
-  reject: (reason: Error) => void
-  timer: ReturnType<typeof setTimeout> | undefined
-}
-
-interface ActiveSubscription {
-  table: string
-  filter: Record<string, unknown> | undefined
-  callback: (event: ChangeEvent) => void
-  onReset: (() => void) | undefined
-  lastSeq: bigint | undefined
-  epoch: string | undefined
-}
 
 /**
  * WebSocket transport for sirannon-db. Connects to
@@ -39,18 +32,24 @@ interface ActiveSubscription {
  * auto-reconnect (with subscription restoration) when
  * `autoReconnect` is enabled.
  */
-type ClientWebSocket = InstanceType<typeof WebSocket>
-
 export class WebSocketTransport implements Transport {
+  readonly carriesReadConcern = true
   private ws: ClientWebSocket | null = null
   private readonly url: string
   private readonly autoReconnect: boolean
   private readonly reconnectInterval: number
   private readonly requestTimeout: number
-  private readonly protocols: string | string[] | undefined
+  private readonly protocols: string[] | undefined
+  private readonly headers: Record<string, string> | undefined
+  private refusal: RemoteError | null = null
 
-  private pendingRequests = new Map<string, PendingRequest>()
+  private readonly pending: PendingRequests
   private activeSubscriptions = new Map<string, ActiveSubscription>()
+  private readonly liveQueries = new LiveQueryRegistry({
+    request: message => this.request<void>(message),
+    sendUnsubscribe: id => this.sendUnsubscribe(id),
+    isClosed: () => this.closed,
+  })
   private idCounter = 0
   private closed = false
   private connectPromise: Promise<void> | null = null
@@ -63,16 +62,19 @@ export class WebSocketTransport implements Transport {
       reconnectInterval?: number
       requestTimeout?: number
       protocols?: string | string[]
+      headers?: Record<string, string>
     },
   ) {
     this.url = url
     this.autoReconnect = options?.autoReconnect ?? true
     this.reconnectInterval = options?.reconnectInterval ?? 1000
     this.requestTimeout = options?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT
-    this.protocols = options?.protocols
+    this.protocols = withSirannonSubprotocol(options?.protocols)
+    this.headers = options?.headers
+    this.pending = new PendingRequests(this.requestTimeout)
   }
 
-  async query(sql: string, params?: Params): Promise<QueryResponse> {
+  async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
     const response = await this.request<QueryResponse>({
@@ -80,6 +82,7 @@ export class WebSocketTransport implements Transport {
       id,
       sql,
       params: encodeTaggedValues(params) as Params | undefined,
+      ...(readConcern ? { readConcern } : {}),
     })
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
@@ -138,6 +141,45 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    const response = await this.request<QueryResponse>({
+      type: 'query',
+      id,
+      name,
+      ...(args === undefined ? {} : { args: encodeTaggedValues(args) as Record<string, unknown> }),
+      ...(readConcern ? { readConcern } : {}),
+    })
+    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+  }
+
+  async executeNamed(
+    name: string,
+    args?: Record<string, unknown>,
+    writeConcern?: WriteConcern,
+  ): Promise<TransactionResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<TransactionResponse>({
+      type: 'execute',
+      id,
+      name,
+      ...(args === undefined ? {} : { args: encodeTaggedValues(args) as Record<string, unknown> }),
+      ...(writeConcern ? { writeConcern } : {}),
+    })
+  }
+
+  async liveSubscribe(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    handlers: LiveHandlers,
+    registryDigest?: RegistryDigestSource,
+  ): Promise<RemoteSubscription> {
+    await this.ensureConnected()
+    return this.liveQueries.open(this.nextId(), name, args, handlers, registryDigest)
+  }
+
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
@@ -147,16 +189,19 @@ export class WebSocketTransport implements Transport {
     await this.ensureConnected()
     const id = this.nextId()
 
-    // Store the subscription before sending so the callback is
-    // available if a change event arrives before the 'subscribed'
-    // confirmation (unlikely but safe).
     this.activeSubscriptions.set(id, {
       table,
       filter,
       callback,
       onReset: options?.onReset,
-      lastSeq: undefined,
-      epoch: undefined,
+      onSubscribed: options?.onSubscribed,
+      deviceId: options?.deviceId,
+      tables: options?.tables,
+      schemaVersion: options?.schemaVersion,
+      lastSeq: options?.sinceSeq,
+      resumeSeq: options?.getResumeSeq,
+      epoch: options?.epoch,
+      stagedStream: options?.stagedStream,
     })
 
     try {
@@ -165,6 +210,12 @@ export class WebSocketTransport implements Transport {
         id,
         table,
         ...(filter ? { filter: encodeTaggedValues(filter) as Record<string, unknown> } : {}),
+        ...(options?.tables !== undefined ? { tables: [...options.tables] } : {}),
+        ...(options?.sinceSeq !== undefined ? { sinceSeq: options.sinceSeq.toString() } : {}),
+        ...(options?.epoch !== undefined ? { epoch: options.epoch } : {}),
+        ...(options?.deviceId !== undefined ? { deviceId: options.deviceId } : {}),
+        ...(options?.schemaVersion !== undefined ? { schemaVersion: options.schemaVersion } : {}),
+        ...(options?.stagedStream === true ? { stagedStream: true } : {}),
       }
       await this.request<void>(msg)
     } catch (err) {
@@ -175,18 +226,29 @@ export class WebSocketTransport implements Transport {
     return {
       unsubscribe: () => {
         this.activeSubscriptions.delete(id)
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'unsubscribe', id }))
-        }
+        this.sendUnsubscribe(id)
       },
     }
+  }
+
+  private sendUnsubscribe(id: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'unsubscribe', id }))
+    }
+  }
+
+  async ack(deviceId: string, seq: bigint): Promise<AckResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return this.request<AckResponse>({ type: 'ack', id, deviceId, seq: seq.toString() })
   }
 
   close(): void {
     this.closed = true
     this.cancelReconnect()
-    this.rejectAllPending(new RemoteError('TRANSPORT_ERROR', 'Transport closed'))
+    this.pending.rejectAll(new RemoteError('TRANSPORT_ERROR', 'Transport closed'))
     this.activeSubscriptions.clear()
+    this.liveQueries.clear()
 
     if (this.ws) {
       this.ws.close(1000, 'Client closed')
@@ -205,6 +267,10 @@ export class WebSocketTransport implements Transport {
       throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
     }
 
+    if (this.refusal) {
+      throw this.refusal
+    }
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return
     }
@@ -219,152 +285,37 @@ export class WebSocketTransport implements Transport {
   }
 
   private connect(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      let settled = false
-      const ws = this.protocols === undefined ? new WebSocket(this.url) : new WebSocket(this.url, this.protocols)
-
-      const onOpen = () => {
-        settled = true
-        this.ws = ws
-        resolve()
-      }
-
-      const onError = () => {
-        if (!settled) {
-          settled = true
-          reject(new RemoteError('CONNECTION_ERROR', `Failed to connect to ${this.url}`))
-        }
-      }
-
-      const onClose = (event: CloseEvent) => {
-        ws.removeEventListener('open', onOpen)
-        ws.removeEventListener('error', onError)
-
-        if (!settled) {
-          settled = true
-          reject(
-            new RemoteError('CONNECTION_ERROR', `Connection closed during handshake: ${event.code} ${event.reason}`),
-          )
-          return
-        }
-
-        this.ws = null
-        this.handleDisconnect()
-      }
-
-      const onMessage = (event: MessageEvent) => {
-        this.handleMessage(String(event.data))
-      }
-
-      ws.addEventListener('open', onOpen)
-      ws.addEventListener('error', onError)
-      ws.addEventListener('close', onClose)
-      ws.addEventListener('message', onMessage)
-    })
-  }
-
-  private handleMessage(raw: string): void {
-    let msg: WSServerMessage
-    try {
-      msg = JSON.parse(raw) as WSServerMessage
-    } catch {
-      return
-    }
-
-    switch (msg.type) {
-      case 'result': {
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.resolve(msg.data)
-        }
-        break
-      }
-
-      case 'subscribed': {
-        const sub = this.activeSubscriptions.get(msg.id)
-        if (sub) {
-          if (msg.epoch !== undefined) {
-            sub.epoch = msg.epoch
-          }
-          let baseline: bigint | undefined
-          if (msg.seq !== undefined) {
-            try {
-              baseline = BigInt(msg.seq)
-            } catch {
-              baseline = undefined
-            }
-          }
-          if (msg.resync) {
-            sub.lastSeq = baseline
-            try {
-              sub.onReset?.()
-            } catch {
-              // A failing reset handler must not disrupt message processing.
-            }
-          } else if (sub.lastSeq === undefined && baseline !== undefined) {
-            sub.lastSeq = baseline
-          }
-        }
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.resolve(undefined)
-        }
-        break
-      }
-
-      case 'error': {
-        const pending = this.pendingRequests.get(msg.id)
-        if (pending) {
-          clearTimeout(pending.timer)
-          this.pendingRequests.delete(msg.id)
-          pending.reject(new RemoteError(msg.error.code, msg.error.message))
-        }
-        break
-      }
-
-      case 'change': {
-        const sub = this.activeSubscriptions.get(msg.id)
-        if (sub) {
-          try {
-            const event: ChangeEvent = {
-              type: msg.event.type,
-              table: msg.event.table,
-              row: decodeTaggedValues(msg.event.row) as Record<string, unknown>,
-              oldRow:
-                msg.event.oldRow === undefined
-                  ? undefined
-                  : (decodeTaggedValues(msg.event.oldRow) as Record<string, unknown>),
-              seq: BigInt(msg.event.seq),
-              timestamp: msg.event.timestamp,
-            }
-            if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
-              sub.lastSeq = event.seq
-            }
-            sub.callback(event)
-          } catch {
-            // Swallow errors from BigInt conversion on malformed data
-            // and subscriber callback errors to prevent one broken
-            // message from disrupting the processing loop.
-          }
-        }
-        break
-      }
-
-      case 'unsubscribed': {
-        // Cleanup already handled in unsubscribe().
-        break
-      }
-    }
+    return openWebSocket(
+      this.url,
+      { protocols: this.protocols, headers: this.headers },
+      {
+        onConnected: ws => {
+          this.ws = ws
+        },
+        onRefused: error => {
+          this.refusal = error
+        },
+        onDisconnected: () => {
+          this.ws = null
+          this.handleDisconnect()
+        },
+        onMessage: raw =>
+          routeServerMessage(raw, {
+            pending: this.pending,
+            subscriptions: this.activeSubscriptions,
+            live: this.liveQueries,
+          }),
+      },
+    )
   }
 
   private handleDisconnect(): void {
-    this.rejectAllPending(new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
+    this.pending.rejectAll(this.refusal ?? new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
 
-    if (this.autoReconnect && !this.closed && this.activeSubscriptions.size > 0) {
+    this.liveQueries.markDisconnected()
+
+    const restorable = this.activeSubscriptions.size + this.liveQueries.size
+    if (this.autoReconnect && !this.closed && this.refusal === null && restorable > 0) {
       this.scheduleReconnect()
     }
   }
@@ -382,9 +333,7 @@ export class WebSocketTransport implements Transport {
         await this.ensureConnected()
         await this.resubscribeAll()
       } catch {
-        // Connection attempt failed. Schedule another retry as long
-        // as the transport is still open and has active subscriptions.
-        if (!this.closed && this.activeSubscriptions.size > 0) {
+        if (!this.closed && this.refusal === null && this.activeSubscriptions.size + this.liveQueries.size > 0) {
           this.scheduleReconnect()
         }
       }
@@ -396,56 +345,24 @@ export class WebSocketTransport implements Transport {
     for (const [id, sub] of entries) {
       if (this.closed) break
       try {
-        const msg: WSClientMessage = {
-          type: 'subscribe',
-          id,
-          table: sub.table,
-          ...(sub.filter ? { filter: encodeTaggedValues(sub.filter) as Record<string, unknown> } : {}),
-          ...(sub.lastSeq !== undefined ? { sinceSeq: sub.lastSeq.toString() } : {}),
-          ...(sub.epoch !== undefined ? { epoch: sub.epoch } : {}),
-        }
-        await this.request<void>(msg)
+        await this.request<void>(buildResubscribeMessage(id, sub))
       } catch {
-        // If a particular subscription can't be restored, remove it
-        // so we don't keep retrying a broken subscription.
         this.activeSubscriptions.delete(id)
       }
     }
+
+    await this.liveQueries.restart()
   }
 
   private request<T>(msg: WSClientMessage): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const { id } = msg
-
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        reject(new RemoteError('CONNECTION_ERROR', 'WebSocket is not connected'))
-        return
-      }
-
-      const timer =
-        this.requestTimeout > 0
-          ? setTimeout(() => {
-              this.pendingRequests.delete(id)
-              reject(new RemoteError('TIMEOUT', `Request timed out after ${this.requestTimeout}ms`))
-            }, this.requestTimeout)
-          : undefined
-
-      this.pendingRequests.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
-        timer,
-      })
-
-      this.ws.send(JSON.stringify(msg))
-    })
-  }
-
-  private rejectAllPending(error: Error): void {
-    for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timer)
-      pending.reject(error)
+    if (this.refusal) {
+      return Promise.reject(this.refusal)
     }
-    this.pendingRequests.clear()
+    const socket = this.ws
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new RemoteError('CONNECTION_ERROR', 'WebSocket is not connected'))
+    }
+    return this.pending.start<T>(msg.id, () => socket.send(JSON.stringify(msg)))
   }
 
   private cancelReconnect(): void {

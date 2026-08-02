@@ -1,14 +1,16 @@
+import type { ChangeEvent } from '@delali/sirannon-db'
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
-import { SirannonClient } from '@delali/sirannon-db/client'
-import type { CDCEvent } from './cdc'
-import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toWebSocketAuthProtocol } from './sql'
+import { TopologyAwareClient } from '@delali/sirannon-db/client/topology'
+import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toWebSocketAuthProtocol } from './cluster-config'
+
+const REPLICATED_TABLES = ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log'] as const
 
 const endpoints = clusterEndpointsFromEnv(import.meta.env.VITE_SIRANNON_CLUSTER_ENDPOINTS)
 const token = import.meta.env.VITE_SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
 const authProtocol = toWebSocketAuthProtocol(token)
 const authHeaders = { Authorization: `Bearer ${token}` }
 
-const wsClient = new SirannonClient({
+const wsClient = new TopologyAwareClient({
   endpoints,
   discovery: 'coordinator',
   transport: 'websocket',
@@ -20,14 +22,15 @@ const wsClient = new SirannonClient({
 
 const wsDb = wsClient.database(DATABASE_ID)
 
-export async function subscribeControlPlane(callback: (event: CDCEvent) => void): Promise<RemoteSubscription[]> {
-  const results = await Promise.allSettled([
-    wsDb.on('customers').subscribe(callback),
-    wsDb.on('entitlements').subscribe(callback),
-    wsDb.on('usage_events').subscribe(callback),
-    wsDb.on('billing_events').subscribe(callback),
-    wsDb.on('audit_log').subscribe(callback),
-  ])
+export interface ControlPlaneSubscriptionHandlers {
+  onChange: (event: ChangeEvent) => void
+  onReset: () => void
+}
+
+export async function subscribeControlPlane(handlers: ControlPlaneSubscriptionHandlers): Promise<RemoteSubscription[]> {
+  const results = await Promise.allSettled(
+    REPLICATED_TABLES.map(table => wsDb.on(table).subscribe(handlers.onChange, { onReset: handlers.onReset })),
+  )
 
   const subscriptions: RemoteSubscription[] = []
   const errors: unknown[] = []

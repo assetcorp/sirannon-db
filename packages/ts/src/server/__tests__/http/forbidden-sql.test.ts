@@ -24,7 +24,7 @@ beforeEach(async () => {
   const db = await sirannon.open('test', join(tempDir, 'test.db'))
   await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })

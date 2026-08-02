@@ -46,7 +46,6 @@ function savepointFailingDriver(): SQLiteDriver {
   })
 }
 
-/** Stands in for a commit that reaches the disk and then reports a failing fsync. */
 function commitLandsThenFailsDriver(): SQLiteDriver {
   const base = betterSqlite3()
   let armed = true

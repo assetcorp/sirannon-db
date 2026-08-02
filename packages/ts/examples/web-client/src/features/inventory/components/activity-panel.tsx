@@ -3,7 +3,7 @@ import type { ActivityRecord } from '../../../lib/schemas'
 import { activityLabel, formatTimestamp } from '../inventory-utils'
 import { PanelHeader } from './panel-header'
 
-export function ActivityPanel({ records }: { records: ActivityRecord[] }) {
+export function ActivityPanel({ records }: { records: readonly ActivityRecord[] }) {
   const items = records.map(record => <ActivityItem key={record.id} record={record} />)
 
   return (
@@ -20,7 +20,9 @@ function ActivityItem({ record }: { record: ActivityRecord }) {
       <span className="activity-dot" />
       <div>
         <strong>{activityLabel(record)}</strong>
-        <span>{formatTimestamp(record.created_at)}</span>
+        <span>
+          {formatTimestamp(record.created_at)} by {record.operator}
+        </span>
       </div>
     </li>
   )

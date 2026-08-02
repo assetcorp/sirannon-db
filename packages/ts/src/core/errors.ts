@@ -102,6 +102,16 @@ export class HookDeniedError extends SirannonError {
   }
 }
 
+export class RequestDeniedError extends SirannonError {
+  readonly status: number
+
+  constructor(status: number, code: string, message: string) {
+    super(message, code)
+    this.name = 'RequestDeniedError'
+    this.status = status
+  }
+}
+
 /**
  * Thrown when the change-data-capture pipeline encounters an unrecoverable
  * error, such as a failed event dispatch or a corrupt change record.

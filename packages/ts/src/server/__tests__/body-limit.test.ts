@@ -19,7 +19,7 @@ let server: SirannonServer | null
 const driver = betterSqlite3()
 
 async function startServer(options?: Omit<ServerOptions, 'port'>): Promise<string> {
-  server = createServer(sirannon, { ...options, port: 0 })
+  server = createServer(sirannon, { acceptSql: true, ...options, port: 0 })
   await server.listen()
   return `http://127.0.0.1:${server.listeningPort}`
 }
@@ -103,16 +103,16 @@ afterEach(async () => {
 
 describe('maxBodyBytes option validation', () => {
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects %s', value => {
-    expect(() => createServer(sirannon, { port: 0, maxBodyBytes: value })).toThrow(/positive integer/)
+    expect(() => createServer(sirannon, { acceptSql: true, port: 0, maxBodyBytes: value })).toThrow(/positive integer/)
   })
 
   it('accepts a positive integer', () => {
-    const created = createServer(sirannon, { port: 0, maxBodyBytes: 4_194_304 })
+    const created = createServer(sirannon, { acceptSql: true, port: 0, maxBodyBytes: 4_194_304 })
     expect(created).toBeDefined()
   })
 
   it('accepts the unsigned 32-bit maximum', () => {
-    const created = createServer(sirannon, { port: 0, maxBodyBytes: 4_294_967_295 })
+    const created = createServer(sirannon, { acceptSql: true, port: 0, maxBodyBytes: 4_294_967_295 })
     expect(created).toBeDefined()
   })
 
@@ -121,23 +121,32 @@ describe('maxBodyBytes option validation', () => {
     5 * 2 ** 30,
     Number.MAX_SAFE_INTEGER,
   ])('rejects %s because uWebSockets.js would wrap it modulo 2^32', value => {
-    expect(() => createServer(sirannon, { port: 0, maxBodyBytes: value })).toThrow(/at most 4294967295/)
+    expect(() => createServer(sirannon, { acceptSql: true, port: 0, maxBodyBytes: value })).toThrow(
+      /at most 4294967295/,
+    )
   })
 })
 
 describe('maxWebSocketBackpressureBytes option validation', () => {
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects %s', value => {
-    expect(() => createServer(sirannon, { port: 0, maxWebSocketBackpressureBytes: value })).toThrow(/positive integer/)
+    expect(() => createServer(sirannon, { acceptSql: true, port: 0, maxWebSocketBackpressureBytes: value })).toThrow(
+      /positive integer/,
+    )
   })
 
   it('rejects a value below maxBodyBytes', () => {
     expect(() =>
-      createServer(sirannon, { port: 0, maxBodyBytes: 2_097_152, maxWebSocketBackpressureBytes: 1_048_576 }),
+      createServer(sirannon, {
+        acceptSql: true,
+        port: 0,
+        maxBodyBytes: 2_097_152,
+        maxWebSocketBackpressureBytes: 1_048_576,
+      }),
     ).toThrow(/at least maxBodyBytes/)
   })
 
   it('accepts the unsigned 32-bit maximum', () => {
-    const created = createServer(sirannon, { port: 0, maxWebSocketBackpressureBytes: 4_294_967_295 })
+    const created = createServer(sirannon, { acceptSql: true, port: 0, maxWebSocketBackpressureBytes: 4_294_967_295 })
     expect(created).toBeDefined()
   })
 
@@ -146,7 +155,7 @@ describe('maxWebSocketBackpressureBytes option validation', () => {
     5 * 2 ** 30,
     Number.MAX_SAFE_INTEGER,
   ])('rejects %s because uWebSockets.js would wrap it modulo 2^32', value => {
-    expect(() => createServer(sirannon, { port: 0, maxWebSocketBackpressureBytes: value })).toThrow(
+    expect(() => createServer(sirannon, { acceptSql: true, port: 0, maxWebSocketBackpressureBytes: value })).toThrow(
       /at most 4294967295/,
     )
   })

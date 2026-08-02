@@ -1,4 +1,4 @@
-import type { CDCEvent } from '../../lib/cdc'
+import type { ChangeEvent } from '@delali/sirannon-db'
 import type { ClusterNode, ControlPlaneSnapshot, CustomerEntitlement } from '../../lib/schemas'
 import type { ControlPlaneStats } from './types'
 
@@ -54,7 +54,7 @@ export function formatDateTime(value: string): string {
   }).format(date)
 }
 
-export function formatEventLabel(event: CDCEvent): string {
+export function formatEventLabel(event: ChangeEvent): string {
   return `${event.table.replace(/_/g, ' ')} ${event.type} synced`
 }
 
@@ -74,6 +74,13 @@ export function clusterHealthLabel(node: ClusterNode): string {
     return 'offline'
   }
   return node.health ?? 'unknown'
+}
+
+export function clusterHealthReasonLabel(node: ClusterNode): string | null {
+  if (!node.reachable || node.healthReason === undefined || node.healthReason === 'in-sync') {
+    return null
+  }
+  return node.healthReason.replace(/-/g, ' ')
 }
 
 export function nextBillingVersion(customer: CustomerEntitlement | null): number {

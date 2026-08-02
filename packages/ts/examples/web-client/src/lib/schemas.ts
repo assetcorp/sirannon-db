@@ -12,6 +12,7 @@ export const activityRecordSchema = z.object({
   product_name: z.string().min(1).max(80),
   action: z.enum(['allocated', 'received', 'created']),
   quantity: z.number().int().nonnegative(),
+  operator: z.string().min(1).max(80),
   created_at: z.string().min(1),
 })
 
@@ -22,16 +23,11 @@ export const addProductInputSchema = z.object({
 })
 
 export const productIdInputSchema = z.object({
-  id: z.number().int().positive(),
+  productId: z.number().int().positive(),
 })
 
 export const receiveInventoryInputSchema = productIdInputSchema.extend({
   quantity: z.number().int().min(1).max(1_000),
-})
-
-export const inventorySnapshotSchema = z.object({
-  products: z.array(productSchema),
-  activity: z.array(activityRecordSchema),
 })
 
 export type AddProductInput = z.infer<typeof addProductInputSchema>
@@ -39,4 +35,3 @@ export type ProductActionInput = z.infer<typeof productIdInputSchema>
 export type ReceiveInventoryInput = z.infer<typeof receiveInventoryInputSchema>
 export type Product = z.infer<typeof productSchema>
 export type ActivityRecord = z.infer<typeof activityRecordSchema>
-export type InventorySnapshot = z.infer<typeof inventorySnapshotSchema>

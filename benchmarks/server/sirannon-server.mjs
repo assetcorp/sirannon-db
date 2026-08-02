@@ -11,7 +11,6 @@ const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
 const WRITER_WORKER = !['off', 'false', '0', 'no'].includes((process.env.BENCH_WRITER_WORKER ?? '').toLowerCase())
-// uWebSockets.js holds its payload limits in unsigned 32 bits and silently wraps past this.
 const UWS_LIMIT_BYTES = 4_294_967_295
 const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 1_073_741_824)
 if (!Number.isInteger(MAX_BODY_BYTES) || MAX_BODY_BYTES <= 0 || MAX_BODY_BYTES > UWS_LIMIT_BYTES) {

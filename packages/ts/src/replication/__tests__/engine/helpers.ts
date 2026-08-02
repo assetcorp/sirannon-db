@@ -201,9 +201,7 @@ export async function teardownHarness(harness: EngineTestHarness): Promise<void>
   for (const db of harness.openDbs) {
     try {
       if (!db.closed) await db.close()
-    } catch {
-      /* best-effort */
-    }
+    } catch {}
   }
   harness.openDbs.length = 0
 
@@ -211,9 +209,7 @@ export async function teardownHarness(harness: EngineTestHarness): Promise<void>
   if (writerConn) {
     try {
       await writerConn.close()
-    } catch {
-      /* best-effort */
-    }
+    } catch {}
   }
 
   rmSync(harness.tempDir, { recursive: true, force: true })
@@ -231,7 +227,7 @@ export async function createDbAndConn(
 
   if (tableSql) {
     await conn.exec(tableSql)
-    const tracker = new ChangeTracker({ replication: true })
+    const tracker = new ChangeTracker()
     const tableName = tableSql.match(/CREATE TABLE (\w+)/)?.[1]
     if (tableName) {
       await tracker.watch(conn, tableName)

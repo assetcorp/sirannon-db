@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { HLC } from '../../core/sync/hlc.js'
 import { ReplicationError } from '../errors.js'
-import { HLC } from '../hlc.js'
 
 describe('HLC', () => {
   beforeEach(() => {

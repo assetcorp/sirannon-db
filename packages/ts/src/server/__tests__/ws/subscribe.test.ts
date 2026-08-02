@@ -40,7 +40,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('handleMessage - subscribe', () => {
     it('subscribes to a table and returns subscribed confirmation', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'sub.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -64,7 +64,7 @@ describe('WSHandler', () => {
     })
 
     it('receives change events after subscribing', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'change.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -99,7 +99,7 @@ describe('WSHandler', () => {
     })
 
     it('does not replay changes that happened before a WebSocket subscription starts', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'live-only.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
       await db.watch('users')
@@ -133,7 +133,7 @@ describe('WSHandler', () => {
     })
 
     it('receives filtered change events', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'filter.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -163,7 +163,7 @@ describe('WSHandler', () => {
     })
 
     it('rejects duplicate subscription IDs on the same connection', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'dup.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -199,7 +199,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error when subscribing on a read-only database', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const dbPath = join(tempDir, 'ro.db')
       const setup = await Database.create('setup', dbPath, driver)
       await setup.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
@@ -227,7 +227,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for nonexistent table', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'notable.db'))
 
       const conn = createMockConnection()
@@ -250,7 +250,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error when table field is missing', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'notab.db'))
 
       const conn = createMockConnection()
@@ -270,7 +270,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for invalid filter type', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'badfilt.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
 
@@ -302,7 +302,7 @@ describe('WSHandler', () => {
             closed: false,
           }) as unknown as Database,
       } as unknown as Sirannon
-      const handler = createWSHandler(fakeSirannon)
+      const handler = createWSHandler(fakeSirannon, { acceptSql: true })
 
       const conn = createMockConnection()
       await handler.handleOpen(conn, 'memorydb')

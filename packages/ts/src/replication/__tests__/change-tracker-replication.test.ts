@@ -22,7 +22,7 @@ describe('ChangeTracker with replication', () => {
 
   beforeEach(async () => {
     conn = await createTestDb()
-    tracker = new ChangeTracker({ replication: true })
+    tracker = new ChangeTracker()
   })
 
   afterEach(async () => {
@@ -96,7 +96,7 @@ describe('ChangeTracker with replication', () => {
   })
 })
 
-describe('ChangeTracker without replication (backward compat)', () => {
+describe('ChangeTracker default shape', () => {
   let conn: SQLiteConnection
   let tracker: ChangeTracker
 
@@ -109,16 +109,16 @@ describe('ChangeTracker without replication (backward compat)', () => {
     await conn.close()
   })
 
-  it('does not include replication columns when replication is disabled', async () => {
+  it('includes the sync columns in every mode', async () => {
     await tracker.watch(conn, 'users')
 
     const stmt = await conn.prepare("PRAGMA table_info('_sirannon_changes')")
     const columns = (await stmt.all()) as Array<{ name: string }>
     const colNames = columns.map(c => c.name)
 
-    expect(colNames).not.toContain('node_id')
-    expect(colNames).not.toContain('tx_id')
-    expect(colNames).not.toContain('hlc')
+    expect(colNames).toContain('node_id')
+    expect(colNames).toContain('tx_id')
+    expect(colNames).toContain('hlc')
   })
 
   it('still tracks changes normally', async () => {

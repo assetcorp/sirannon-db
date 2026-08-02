@@ -29,7 +29,7 @@ beforeEach(async () => {
   await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
   await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   const port = server.listeningPort
   baseUrl = `http://127.0.0.1:${port}`

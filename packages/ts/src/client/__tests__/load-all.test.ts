@@ -10,6 +10,7 @@ import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
 import { SirannonClient } from '../client.js'
 import { RemoteDatabase } from '../database-proxy.js'
+import type { ServerCapabilityCheck } from '../server-capabilities.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 
 interface RecordedLoad {
@@ -42,6 +43,15 @@ class RecordingTransport implements Transport {
     this.loads.push({ rowCount: paramsBatch.length, durability, checkpoint })
     return { rowsLoaded: paramsBatch.length, changes: paramsBatch.length }
   }
+  async queryNamed(): Promise<never> {
+    throw new Error('not used')
+  }
+  async executeNamed(): Promise<never> {
+    throw new Error('not used')
+  }
+  async liveSubscribe(): Promise<RemoteSubscription> {
+    throw new Error('not used')
+  }
   async subscribe(): Promise<RemoteSubscription> {
     throw new Error('not used')
   }
@@ -60,10 +70,17 @@ async function* asyncRows(n: number): AsyncGenerator<Params> {
 
 const INSERT = 'INSERT INTO t (id, name) VALUES (?, ?)'
 
+function acceptsSql(): ServerCapabilityCheck {
+  return {
+    assertSqlAccepted: async () => {},
+    registryDigest: async () => undefined,
+  }
+}
+
 describe('RemoteDatabase.loadAll batching', () => {
   it('batches a dataset and checkpoints only on the final batch', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     const summary = await db.loadAll(INSERT, rowsUpTo(2500), { batchSize: 1000 })
 
@@ -74,7 +91,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('checkpoints exactly once when the row count is a whole multiple of the batch size', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     await db.loadAll(INSERT, rowsUpTo(2000), { batchSize: 1000 })
 
@@ -85,7 +102,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('sends one checkpointing batch when the dataset is smaller than a batch', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     await db.loadAll(INSERT, rowsUpTo(10), { batchSize: 1000 })
 
@@ -94,7 +111,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('sends nothing and reports zero for an empty dataset', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     const summary = await db.loadAll(INSERT, [], { batchSize: 1000 })
 
@@ -104,7 +121,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('never sends an empty batch to the transport', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     await db.loadAll(INSERT, rowsUpTo(3000), { batchSize: 1000 })
 
@@ -113,7 +130,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('passes the requested durability to every batch', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     await db.loadAll(INSERT, rowsUpTo(2500), { batchSize: 1000, durability: 'normal' })
 
@@ -122,7 +139,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('consumes an async iterable and still checkpoints only once, at the end', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     const summary = await db.loadAll(INSERT, asyncRows(2500), { batchSize: 1000 })
 
@@ -133,7 +150,7 @@ describe('RemoteDatabase.loadAll batching', () => {
 
   it('rejects a non-positive or non-integer batch size before touching the transport', async () => {
     const transport = new RecordingTransport()
-    const db = new RemoteDatabase('t', transport)
+    const db = new RemoteDatabase('t', transport, acceptsSql())
 
     for (const bad of [0, -1, 1.5]) {
       await expect(db.loadAll(INSERT, rowsUpTo(10), { batchSize: bad })).rejects.toMatchObject({
@@ -157,7 +174,7 @@ describe('RemoteDatabase.loadAll over a real server', () => {
     const db = await sirannon.open('bench', join(tempDir, 'bench.db'), { synchronous: 'full' })
     await db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
 
-    server = createServer(sirannon, { port: 0 })
+    server = createServer(sirannon, { acceptSql: true, port: 0 })
     await server.listen()
     client = new SirannonClient(`http://127.0.0.1:${server.listeningPort}`, { transport: 'http' })
   })

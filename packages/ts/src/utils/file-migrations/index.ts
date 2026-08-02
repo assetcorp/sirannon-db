@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { MigrationError } from '../../core/errors.js'
+import { applyBaselineOption, type BaselineFileOption } from '../../core/migrations/baseline.js'
+import { parseMigrationFilename } from '../../core/migrations/filename.js'
+import { LAZY_DOWN_SQL } from '../../core/migrations/lazy-down.js'
 import type { Migration } from '../../core/migrations/types.js'
+
+export interface LoadMigrationsOptions {
+  baseline?: BaselineFileOption
+}
 
 export interface ScannedMigration {
   version: number
@@ -9,8 +16,6 @@ export interface ScannedMigration {
   upPath: string
   downPath: string | null
 }
-
-const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.(up|down)\.sql$/
 
 function hasControlCharacters(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
@@ -52,16 +57,10 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
   for (const entry of entries) {
     if (!entry.isFile()) continue
 
-    const match = MIGRATION_FILENAME_PATTERN.exec(entry.name)
-    if (!match) continue
+    const parsed = parseMigrationFilename(entry.name)
+    if (!parsed) continue
 
-    const version = parseInt(match[1], 10)
-    const name = match[2]
-    const direction = match[3] as 'up' | 'down'
-
-    if (!Number.isFinite(version) || version <= 0 || !Number.isSafeInteger(version)) {
-      throw new MigrationError(`Invalid migration version: ${match[1]}`, version, 'MIGRATION_VALIDATION_ERROR')
-    }
+    const { version, name, direction } = parsed
 
     const existing = grouped.get(version)
     if (existing && existing.name !== name) {
@@ -119,37 +118,45 @@ export function readUpMigrations(scanned: ScannedMigration[]): Migration[] {
   })
 }
 
-export function readDownMigrations(scanned: ScannedMigration[], versions: number[]): Migration[] {
-  const versionSet = new Set(versions)
-  const filtered = scanned.filter(s => versionSet.has(s.version))
-
-  return filtered.map(entry => {
-    if (!entry.downPath) {
-      throw new MigrationError(
-        `Migration version ${entry.version} (${entry.name}) has no .down.sql file`,
-        entry.version,
-        'MIGRATION_NO_DOWN',
-      )
+function readDownSql(downPath: string, version: number): string {
+  let contents: string
+  try {
+    contents = readFileSync(downPath, 'utf-8')
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'ENOENT') {
+      throw new MigrationError(`Down migration file no longer exists: ${downPath}`, version, 'MIGRATION_NO_DOWN')
     }
+    throw new MigrationError(
+      `Failed to read down migration file ${downPath}: ${err instanceof Error ? err.message : String(err)}`,
+      version,
+      'MIGRATION_ROLLBACK_ERROR',
+    )
+  }
 
-    const downSql = readFileSync(entry.downPath, 'utf-8').trim()
-    if (downSql.length === 0) {
-      throw new MigrationError(
-        `Down migration file is empty: ${entry.downPath}`,
-        entry.version,
-        'MIGRATION_VALIDATION_ERROR',
-      )
-    }
+  const downSql = contents.trim()
+  if (downSql.length === 0) {
+    throw new MigrationError(`Down migration file is empty: ${downPath}`, version, 'MIGRATION_VALIDATION_ERROR')
+  }
+  return downSql
+}
 
-    return {
-      version: entry.version,
-      name: entry.name,
-      up: '',
-      down: downSql,
-    }
+function attachLazyDown(migration: Migration, downPath: string): void {
+  Object.defineProperty(migration, LAZY_DOWN_SQL, {
+    value: () => readDownSql(downPath, migration.version),
+    enumerable: false,
+    configurable: false,
+    writable: false,
   })
 }
 
-export function loadMigrations(dirPath: string): Migration[] {
-  return readUpMigrations(scanDirectory(dirPath))
+export function loadMigrations(dirPath: string, options?: LoadMigrationsOptions): Migration[] {
+  const scanned = scanDirectory(dirPath)
+  const migrations = readUpMigrations(scanned)
+  for (let i = 0; i < migrations.length; i++) {
+    const downPath = scanned[i].downPath
+    if (downPath !== null) {
+      attachLazyDown(migrations[i], downPath)
+    }
+  }
+  return applyBaselineOption(migrations, options?.baseline)
 }

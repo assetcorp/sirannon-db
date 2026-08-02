@@ -37,9 +37,7 @@ export class DatabaseBackupController {
     for (const cancel of this.cancellers) {
       try {
         cancel()
-      } catch {
-        /* best-effort */
-      }
+      } catch {}
     }
     this.cancellers.length = 0
   }

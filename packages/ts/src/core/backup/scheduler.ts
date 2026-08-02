@@ -55,13 +55,6 @@ export const INITIAL_TICK_STATE: TickState = {
   lastFiredEpoch: Number.NEGATIVE_INFINITY,
 }
 
-/**
- * Decides whether a backup should fire at `now`, given what fired before.
- * A fire is suppressed when the clock has not advanced past the previous fire
- * (guarding a backward clock step), when the same slot already fired (guarding
- * timer jitter), or when the wall-clock time repeats during a daylight-saving
- * fall-back (so the repeated hour runs once, at its first occurrence).
- */
 export function evaluateTick(
   now: Date,
   cron: CronExpression,
@@ -161,9 +154,7 @@ export class BackupScheduler {
         if (onError) {
           try {
             onError(toError(err))
-          } catch {
-            // A throwing error handler must not escalate into an unhandled rejection.
-          }
+          } catch {}
         }
       } finally {
         running = false

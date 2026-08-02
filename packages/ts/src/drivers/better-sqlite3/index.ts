@@ -70,9 +70,7 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
       } catch (err) {
         try {
           await conn.exec('ROLLBACK')
-        } catch {
-          /* ROLLBACK failure is secondary; preserve the original error */
-        }
+        } catch {}
         throw err
       }
     },

@@ -1,0 +1,57 @@
+.activity-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  background: var(--card);
+}
+
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+}
+
+.activity-item.allocated .activity-dot {
+  background: var(--muted-foreground);
+}
+
+.activity-item.received .activity-dot {
+  background: var(--success);
+}
+
+.activity-item.created .activity-dot {
+  background: var(--warning);
+}
+
+.activity-item div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.activity-item strong {
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.activity-item span:last-child {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}

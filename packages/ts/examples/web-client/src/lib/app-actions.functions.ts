@@ -1,30 +1,9 @@
 import type { RemoteDatabase } from '@delali/sirannon-db/client'
 import { SirannonClient } from '@delali/sirannon-db/client'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
-import type { ActivityRecord, Product } from './schemas'
-import {
-  addProductInputSchema,
-  inventorySnapshotSchema,
-  productIdInputSchema,
-  receiveInventoryInputSchema,
-} from './schemas'
-import {
-  ACTIVITY_LIST_SQL,
-  ALLOCATE_PRODUCT_SQL,
-  DATABASE_ID,
-  DEFAULT_DATA_ENDPOINT,
-  DEFAULT_DEMO_TOKEN,
-  DELETE_ACTIVITY_SQL,
-  DELETE_PRODUCTS_SQL,
-  INSERT_ALLOCATE_ACTIVITY_SQL,
-  INSERT_CREATED_ACTIVITY_SQL,
-  INSERT_PRODUCT_SQL,
-  INSERT_RECEIVE_ACTIVITY_SQL,
-  PRODUCT_LIST_SQL,
-  RECEIVE_PRODUCT_SQL,
-  RESET_SEQUENCE_SQL,
-  SEED_PRODUCTS,
-} from './sql'
+import { main } from '../generated/operations'
+import { DATABASE_ID, DEFAULT_DATA_ENDPOINT, DEFAULT_DEMO_TOKEN } from './demo-config'
+import { addProductInputSchema, productIdInputSchema, receiveInventoryInputSchema } from './schemas'
 
 let cachedHttpDb: RemoteDatabase | null = null
 
@@ -46,33 +25,12 @@ const getServerHttpDb = createServerOnlyFn(() => {
   return cachedHttpDb
 })
 
-export const getInventorySnapshot = createServerFn({
-  method: 'GET',
-}).handler(async () => {
-  const db = getServerHttpDb()
-  const [products, activity] = await Promise.all([
-    db.query<Product>(PRODUCT_LIST_SQL),
-    db.query<ActivityRecord>(ACTIVITY_LIST_SQL),
-  ])
-  return inventorySnapshotSchema.parse({ products, activity })
-})
-
 export const allocateProduct = createServerFn({
   method: 'POST',
 })
   .inputValidator(data => productIdInputSchema.parse(data))
   .handler(async ({ data }) => {
-    const db = getServerHttpDb()
-    await db.transaction([
-      {
-        sql: ALLOCATE_PRODUCT_SQL,
-        params: [data.id],
-      },
-      {
-        sql: INSERT_ALLOCATE_ACTIVITY_SQL,
-        params: [data.id],
-      },
-    ])
+    await getServerHttpDb().execute(main.writes.allocateProduct, { productId: data.productId })
   })
 
 export const receiveInventory = createServerFn({
@@ -80,17 +38,10 @@ export const receiveInventory = createServerFn({
 })
   .inputValidator(data => receiveInventoryInputSchema.parse(data))
   .handler(async ({ data }) => {
-    const db = getServerHttpDb()
-    await db.transaction([
-      {
-        sql: RECEIVE_PRODUCT_SQL,
-        params: [data.quantity, data.id],
-      },
-      {
-        sql: INSERT_RECEIVE_ACTIVITY_SQL,
-        params: [data.quantity, data.id],
-      },
-    ])
+    await getServerHttpDb().execute(main.writes.receiveInventory, {
+      productId: data.productId,
+      quantity: data.quantity,
+    })
   })
 
 export const addProduct = createServerFn({
@@ -98,32 +49,15 @@ export const addProduct = createServerFn({
 })
   .inputValidator(data => addProductInputSchema.parse(data))
   .handler(async ({ data }) => {
-    const db = getServerHttpDb()
-    await db.transaction([
-      {
-        sql: INSERT_PRODUCT_SQL,
-        params: [data.name, data.price, data.stock],
-      },
-      {
-        sql: INSERT_CREATED_ACTIVITY_SQL,
-      },
-    ])
+    await getServerHttpDb().execute(main.writes.addProduct, {
+      name: data.name,
+      price: data.price,
+      stock: data.stock,
+    })
   })
 
-export const resetDatabase = createServerFn({
+export const resetInventory = createServerFn({
   method: 'POST',
 }).handler(async () => {
-  const db = getServerHttpDb()
-  await db.transaction([
-    { sql: DELETE_ACTIVITY_SQL },
-    { sql: DELETE_PRODUCTS_SQL },
-    {
-      sql: RESET_SEQUENCE_SQL,
-      params: ['activity', 'products'],
-    },
-    ...SEED_PRODUCTS.map(product => ({
-      sql: INSERT_PRODUCT_SQL,
-      params: [product.name, product.price, product.stock],
-    })),
-  ])
+  await getServerHttpDb().execute(main.writes.resetInventory, {})
 })

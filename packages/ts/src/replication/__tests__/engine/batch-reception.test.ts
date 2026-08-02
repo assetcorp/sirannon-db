@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { HLC } from '../../../core/sync/hlc.js'
 import { ReplicationEngine } from '../../engine.js'
 import { BatchValidationError } from '../../errors.js'
-import { HLC } from '../../hlc.js'
 import { canonicaliseForChecksum } from '../../log.js'
 import { PrimaryReplicaTopology } from '../../topology/primary-replica.js'
 import type { ReplicationErrorEvent } from '../../types.js'
@@ -95,8 +95,7 @@ describe('ReplicationEngine', () => {
       harness.transport.addPeer(NODE_B, 'primary')
 
       const farFutureMs = Date.now() + 100_000
-      const wallHex = farFutureMs.toString(16).padStart(12, '0')
-      const hlcVal = `${wallHex}-0000-${NODE_B}`
+      const hlcVal = HLC.encode(farFutureMs, 0, NODE_B)
 
       const changes = [
         {

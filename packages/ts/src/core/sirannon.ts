@@ -1,9 +1,10 @@
 import { Database } from './database.js'
 import type { SQLiteDriver } from './driver/types.js'
-import { DatabaseAlreadyExistsError, DatabaseNotFoundError, SirannonError } from './errors.js'
+import { DatabaseAlreadyExistsError, DatabaseNotFoundError, MigrationError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
+import type { Migration } from './migrations/types.js'
 import type {
   AfterQueryHook,
   BeforeConnectHook,
@@ -17,6 +18,8 @@ import type {
 export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private readonly opening = new Set<string>()
+  private readonly resolving = new Map<string, Promise<Database | undefined>>()
+  private migrationSet: Promise<Migration[]> | null = null
   private _shutdown = false
 
   private readonly _driver: SQLiteDriver
@@ -69,7 +72,18 @@ export class Sirannon {
       )
     }
 
-    this.opening.delete(id)
+    try {
+      await this.applyRegistryMigrations(db)
+    } catch (err) {
+      await db.close().catch(() => {})
+      if (err instanceof SirannonError) throw err
+      throw new SirannonError(
+        `Failed to migrate database '${id}' at '${path}': ${err instanceof Error ? err.message : String(err)}`,
+        'DATABASE_OPEN_FAILED',
+      )
+    } finally {
+      this.opening.delete(id)
+    }
 
     if (this._shutdown) {
       await db.close().catch(() => {})
@@ -83,9 +97,7 @@ export class Sirannon {
       if (this.hookRegistry.has('databaseClose')) {
         try {
           this.hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
-        } catch {
-          /* non-fatal */
-        }
+        } catch {}
       }
 
       this.metricsCollector?.trackConnection({
@@ -102,9 +114,7 @@ export class Sirannon {
     if (this.hookRegistry.has('databaseOpen')) {
       try {
         this.hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
-      } catch {
-        /* non-fatal */
-      }
+      } catch {}
     }
 
     this.metricsCollector?.trackConnection({
@@ -146,7 +156,56 @@ export class Sirannon {
     const db = this.get(id)
     if (db) return db
     if (this._shutdown) return undefined
-    return this.lifecycleManager?.resolve(id)
+    const manager = this.lifecycleManager
+    if (!manager) return undefined
+
+    const pending = this.resolving.get(id)
+    if (pending) return pending
+
+    const inFlight = manager.resolve(id).finally(() => {
+      this.resolving.delete(id)
+    })
+    this.resolving.set(id, inFlight)
+    return inFlight
+  }
+
+  registryMigrations(): Promise<Migration[]> {
+    return this.loadMigrationSet()
+  }
+
+  private async applyRegistryMigrations(db: Database): Promise<void> {
+    if (this.options.migrations === undefined || db.readOnly) return
+    const migrations = await this.loadMigrationSet()
+    if (migrations.length === 0) return
+    await db.migrate(migrations)
+  }
+
+  private loadMigrationSet(): Promise<Migration[]> {
+    const source = this.options.migrations
+    if (source === undefined || Array.isArray(source)) {
+      return Promise.resolve(source ?? [])
+    }
+    if (this.migrationSet) return this.migrationSet
+
+    const loading = (async () => {
+      const set = await source()
+      if (!Array.isArray(set)) {
+        throw new MigrationError(
+          'The migrations source must return an array of migrations',
+          0,
+          'MIGRATION_SOURCE_INVALID',
+        )
+      }
+      return set
+    })()
+
+    loading.catch(() => {
+      if (this.migrationSet === loading) {
+        this.migrationSet = null
+      }
+    })
+    this.migrationSet = loading
+    return loading
   }
 
   has(id: string): boolean {

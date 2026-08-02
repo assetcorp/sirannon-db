@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { THEME_BOOT_SCRIPT } from '../lib/theme'
 import '../styles.css'
 
 export const Route = createRootRoute({
@@ -9,6 +10,7 @@ export const Route = createRootRoute({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Sirannon · Entitlement Control Plane' },
     ],
+    scripts: [{ children: THEME_BOOT_SCRIPT }],
   }),
   component: RootLayout,
   notFoundComponent: NotFoundComponent,
@@ -16,7 +18,7 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>

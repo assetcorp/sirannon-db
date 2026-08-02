@@ -35,7 +35,7 @@ afterEach(async () => {
 
 describe('WSHandler query value encoding', () => {
   it('returns integers beyond 2^53 and BLOBs in query rows as tagged envelopes', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'query.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER, payload BLOB)')
     await db.execute("INSERT INTO ledgers VALUES (1, 9007199254740993, X'0001FFAB')")
@@ -55,7 +55,7 @@ describe('WSHandler query value encoding', () => {
   })
 
   it('stores envelope-encoded params exactly and rejects malformed envelopes', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'params.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER, payload BLOB)')
 
@@ -95,7 +95,7 @@ describe('WSHandler query value encoding', () => {
   })
 
   it('delivers the same decoded value through a CDC change event and a query result', async () => {
-    const handler = createWSHandler(sirannon)
+    const handler = createWSHandler(sirannon, { acceptSql: true })
     const db = await sirannon.open('mydb', join(tempDir, 'crosspath.db'))
     await db.execute('CREATE TABLE ledgers (id INTEGER PRIMARY KEY, balance INTEGER)')
 

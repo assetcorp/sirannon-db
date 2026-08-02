@@ -11,6 +11,7 @@ const peerDeps = [
   '@grpc/grpc-js',
   'grpc-health-check',
   '@bufbuild/protobuf',
+  'react',
 ]
 
 async function restoreNodePrefix() {
@@ -47,59 +48,85 @@ const sharedOptions: Options = {
   external: [...peerDeps, /^node:/, /^bun:/],
 }
 
+const nodeEntry = {
+  'core/index': 'src/core/index.ts',
+  'core/writer-worker': 'src/core/worker/entry.ts',
+  'codegen/index': 'src/codegen/index.ts',
+  'codegen/cli': 'src/codegen/cli.ts',
+  'server/index': 'src/server/index.ts',
+  'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
+  'driver/node': 'src/drivers/node/index.ts',
+  'file-migrations/index': 'src/utils/file-migrations/index.ts',
+  'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
+  'replication/index': 'src/replication/index.ts',
+  'replication/coordinator/etcd': 'src/replication/coordinator/etcd.ts',
+  'transport/grpc': 'src/transport/grpc/index.ts',
+}
+
+const clientEntry = {
+  'client/index': 'src/client/index.ts',
+  'client/topology': 'src/client/topology.ts',
+  'react/index': 'src/react/index.ts',
+}
+
+const waSqliteEntry = { 'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts' }
+
+const untypedEntry = {
+  'driver/bun': 'src/drivers/bun/index.ts',
+  'driver/expo': 'src/drivers/expo/index.ts',
+}
+
+const memoryTransportEntry = { 'transport/memory': 'src/transport/memory/index.ts' }
+
+const declarationEntry = {
+  ...nodeEntry,
+  ...clientEntry,
+  ...waSqliteEntry,
+  ...memoryTransportEntry,
+}
+
 export default defineConfig([
   {
     ...sharedOptions,
-    entry: {
-      'core/index': 'src/core/index.ts',
-      'core/writer-worker': 'src/core/worker/entry.ts',
-      'server/index': 'src/server/index.ts',
-      'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
-      'driver/node': 'src/drivers/node/index.ts',
-      'file-migrations/index': 'src/utils/file-migrations/index.ts',
-      'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
-      'replication/index': 'src/replication/index.ts',
-      'replication/coordinator/etcd': 'src/replication/coordinator/etcd.ts',
-      'transport/grpc': 'src/transport/grpc/index.ts',
-    },
+    entry: nodeEntry,
     platform: 'node',
-    dts: true,
+    dts: false,
     clean: false,
     onSuccess: restoreNodePrefix,
   },
   {
     ...sharedOptions,
-    entry: {
-      'client/index': 'src/client/index.ts',
-    },
-    platform: 'browser',
-    dts: true,
-    clean: false,
-  },
-  {
-    ...sharedOptions,
-    entry: {
-      'driver/wa-sqlite': 'src/drivers/wa-sqlite/index.ts',
-    },
-    platform: 'browser',
-    dts: true,
-    clean: false,
-  },
-  {
-    ...sharedOptions,
-    entry: {
-      'driver/bun': 'src/drivers/bun/index.ts',
-      'driver/expo': 'src/drivers/expo/index.ts',
-    },
+    entry: clientEntry,
     platform: 'browser',
     dts: false,
     clean: false,
   },
   {
     ...sharedOptions,
-    entry: { 'transport/memory': 'src/transport/memory/index.ts' },
+    entry: waSqliteEntry,
+    platform: 'browser',
+    dts: false,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: untypedEntry,
+    platform: 'browser',
+    dts: false,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: memoryTransportEntry,
     platform: 'neutral',
-    dts: true,
+    dts: false,
+    clean: false,
+  },
+  {
+    ...sharedOptions,
+    entry: declarationEntry,
+    platform: 'neutral',
+    dts: { only: true },
     clean: false,
   },
 ])

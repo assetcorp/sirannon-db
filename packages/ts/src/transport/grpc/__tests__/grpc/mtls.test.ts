@@ -95,9 +95,7 @@ describe('GrpcReplicationTransport', () => {
     afterAll(() => {
       try {
         rmSync(certDir, { recursive: true, force: true })
-      } catch {
-        /* best-effort cleanup */
-      }
+      } catch {}
     })
 
     it('connects with valid mTLS certificates', async () => {

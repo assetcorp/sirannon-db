@@ -90,9 +90,7 @@ export async function teardown(transports: GrpcReplicationTransport[]) {
   for (const t of transports) {
     try {
       await t.disconnect()
-    } catch {
-      /* already disconnected */
-    }
+    } catch {}
   }
   transports.length = 0
 }

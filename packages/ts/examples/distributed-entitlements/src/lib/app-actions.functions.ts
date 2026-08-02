@@ -1,68 +1,22 @@
-import { randomUUID } from 'node:crypto'
 import type { RemoteDatabase } from '@delali/sirannon-db/client'
-import { SirannonClient } from '@delali/sirannon-db/client'
+import { TopologyAwareClient } from '@delali/sirannon-db/client/topology'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
-import { getMajorityWriteAvailability } from './cluster-readiness'
-import type {
-  ApplyBillingEventInput,
-  AuditRecord,
-  BillingEvent,
-  ClusterNode,
-  CustomerEntitlement,
-  RecordUsageInput,
-  UsageEvent,
-} from './schemas'
+import { entitlements } from '../generated/operations'
+import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN } from './cluster-config'
+import { assertMajorityWriteAvailable, fetchClusterNodes } from './cluster-status'
+import type { ApplyBillingEventInput, RecordUsageInput } from './schemas'
 import {
   applyBillingEventInputSchema,
-  clusterNodeSchema,
   controlPlaneSnapshotSchema,
   createCustomerInputSchema,
   recordUsageInputSchema,
 } from './schemas'
-import {
-  AUDIT_LOG_SQL,
-  BILLING_EVENTS_SQL,
-  CUSTOMER_ENTITLEMENTS_SQL,
-  clusterEndpointsFromEnv,
-  DATABASE_ID,
-  DECREMENT_USAGE_QUOTA_SQL,
-  DEFAULT_CLUSTER_TOKEN,
-  DELETE_AUDIT_LOG_SQL,
-  DELETE_BILLING_EVENTS_SQL,
-  DELETE_CUSTOMERS_SQL,
-  DELETE_ENTITLEMENTS_SQL,
-  DELETE_USAGE_EVENTS_SQL,
-  FINALIZE_BILLING_EVENT_SQL,
-  INSERT_AUDIT_SQL,
-  INSERT_BILLING_AUDIT_SQL,
-  INSERT_BILLING_EVENT_SQL,
-  INSERT_CUSTOMER_SQL,
-  INSERT_ENTITLEMENT_SQL,
-  INSERT_USAGE_AUDIT_SQL,
-  INSERT_USAGE_EVENT_SQL,
-  RESET_SEQUENCE_SQL,
-  SEED_CUSTOMERS,
-  toServerBaseUrl,
-  UPDATE_CUSTOMER_FROM_BILLING_SQL,
-  UPDATE_ENTITLEMENT_FROM_BILLING_SQL,
-  USAGE_EVENTS_SQL,
-} from './sql'
-
-interface ClusterStatusResponse {
-  databaseId?: unknown
-  role?: unknown
-  currentPrimary?: unknown
-  primaryTerm?: unknown
-  readEndpoints?: unknown
-  health?: unknown
-}
-
-const TOXIPROXY_REQUEST_TIMEOUT_MS = 3_000
+import { setProxyEnabled } from './toxiproxy'
 
 const getServerHttpDb = createServerOnlyFn((): RemoteDatabase => {
   const token = process.env.SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
   const endpoints = clusterEndpointsFromEnv(process.env.SIRANNON_CLUSTER_ENDPOINTS)
-  const client = new SirannonClient({
+  const client = new TopologyAwareClient({
     endpoints,
     discovery: 'coordinator',
     transport: 'http',
@@ -81,10 +35,10 @@ export const getControlPlaneSnapshot = createServerFn({
 }).handler(async () => {
   const db = getServerHttpDb()
   const [customers, usage, billingEvents, auditLog, clusterNodes] = await Promise.all([
-    db.query<CustomerEntitlement>(CUSTOMER_ENTITLEMENTS_SQL),
-    db.query<UsageEvent>(USAGE_EVENTS_SQL),
-    db.query<BillingEvent>(BILLING_EVENTS_SQL),
-    db.query<AuditRecord>(AUDIT_LOG_SQL),
+    db.query(entitlements.reads.customerEntitlements, {}),
+    db.query(entitlements.reads.usageEvents, {}),
+    db.query(entitlements.reads.billingEvents, {}),
+    db.query(entitlements.reads.auditLog, {}),
     fetchClusterNodes(),
   ])
 
@@ -101,22 +55,13 @@ export const createCustomer = createServerFn({
   .inputValidator(data => createCustomerInputSchema.parse(data))
   .handler(async ({ data }) => {
     await assertMajorityWriteAvailable()
-    const db = getServerHttpDb()
-    const externalId = createExternalId(data.name)
-    await db.transaction([
-      {
-        sql: INSERT_CUSTOMER_SQL,
-        params: [externalId, data.name, data.plan, 'active'],
-      },
-      {
-        sql: INSERT_ENTITLEMENT_SQL,
-        params: [data.seats, data.apiQuota, data.supportTier, externalId],
-      },
-      {
-        sql: INSERT_AUDIT_SQL,
-        params: ['operator', 'customer_created', externalId, `Created ${data.name} with ${data.plan} entitlements`],
-      },
-    ])
+    await getServerHttpDb().execute(entitlements.writes.createCustomer, {
+      name: data.name,
+      plan: data.plan,
+      seats: data.seats,
+      apiQuota: data.apiQuota,
+      supportTier: data.supportTier,
+    })
   })
 
 export const recordUsage = createServerFn({
@@ -125,8 +70,7 @@ export const recordUsage = createServerFn({
   .inputValidator(data => recordUsageInputSchema.parse(data))
   .handler(async ({ data }) => {
     await assertMajorityWriteAvailable()
-    const db = getServerHttpDb()
-    await recordUsageInternal(db, data)
+    await recordUsageInternal(getServerHttpDb(), data)
   })
 
 export const applyBillingEvent = createServerFn({
@@ -135,8 +79,7 @@ export const applyBillingEvent = createServerFn({
   .inputValidator(data => applyBillingEventInputSchema.parse(data))
   .handler(async ({ data }) => {
     await assertMajorityWriteAvailable()
-    const db = getServerHttpDb()
-    await applyBillingEventInternal(db, data)
+    await applyBillingEventInternal(getServerHttpDb(), data)
   })
 
 export const replayDuplicateUsage = createServerFn({
@@ -159,32 +102,7 @@ export const resetControlPlane = createServerFn({
   method: 'POST',
 }).handler(async () => {
   await assertMajorityWriteAvailable()
-  const db = getServerHttpDb()
-  await db.transaction([
-    { sql: DELETE_BILLING_EVENTS_SQL },
-    { sql: DELETE_USAGE_EVENTS_SQL },
-    { sql: DELETE_AUDIT_LOG_SQL },
-    { sql: DELETE_ENTITLEMENTS_SQL },
-    { sql: DELETE_CUSTOMERS_SQL },
-    {
-      sql: RESET_SEQUENCE_SQL,
-      params: ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log'],
-    },
-    ...SEED_CUSTOMERS.flatMap(customer => [
-      {
-        sql: INSERT_CUSTOMER_SQL,
-        params: [customer.externalId, customer.name, customer.plan, customer.status],
-      },
-      {
-        sql: INSERT_ENTITLEMENT_SQL,
-        params: [customer.seats, customer.apiQuota, customer.supportTier, customer.externalId],
-      },
-    ]),
-    {
-      sql: INSERT_AUDIT_SQL,
-      params: ['operator', 'reset', 'control-plane', 'Reset entitlements to the seeded control-plane state'],
-    },
-  ])
+  await getServerHttpDb().execute(entitlements.writes.resetControlPlane, {})
 })
 
 export const isolateCurrentPrimary = createServerFn({
@@ -208,220 +126,28 @@ export const healClusterLinks = createServerFn({
   ])
 })
 
-async function recordUsageInternal(db: RemoteDatabase, data: RecordUsageInput) {
-  await db.transaction([
-    {
-      sql: INSERT_USAGE_EVENT_SQL,
-      params: [data.customerId, data.units, data.source, data.idempotencyKey],
-    },
-    {
-      sql: DECREMENT_USAGE_QUOTA_SQL,
-      params: [data.units, data.customerId],
-    },
-    {
-      sql: INSERT_USAGE_AUDIT_SQL,
-      params: [
-        data.source,
-        'usage_recorded',
-        String(data.customerId),
-        `Recorded ${data.units} units for ${data.customerName}`,
-      ],
-    },
-  ])
+async function recordUsageInternal(db: RemoteDatabase, data: RecordUsageInput): Promise<void> {
+  await db.execute(entitlements.writes.recordUsage, {
+    customerId: data.customerId,
+    customerName: data.customerName,
+    units: data.units,
+    source: data.source,
+    idempotencyKey: data.idempotencyKey,
+  })
 }
 
 async function applyBillingEventInternal(db: RemoteDatabase, data: ApplyBillingEventInput): Promise<void> {
-  const payload = JSON.stringify({
+  await db.execute(entitlements.writes.applyBillingEvent, {
+    providerEventId: data.providerEventId,
+    eventType: data.eventType,
+    customerExternalId: data.customerExternalId,
+    customerName: data.customerName,
+    version: data.version,
     plan: data.plan,
+    status: data.status,
     seats: data.seats,
     apiQuota: data.apiQuota,
     supportTier: data.supportTier,
     active: data.active,
   })
-
-  await db.transaction([
-    {
-      sql: INSERT_BILLING_EVENT_SQL,
-      params: [data.providerEventId, data.eventType, data.customerExternalId, data.version, payload],
-    },
-    {
-      sql: UPDATE_CUSTOMER_FROM_BILLING_SQL,
-      params: [data.plan, data.status, data.customerExternalId, data.version, data.providerEventId],
-    },
-    {
-      sql: UPDATE_ENTITLEMENT_FROM_BILLING_SQL,
-      params: [
-        data.seats,
-        data.apiQuota,
-        data.supportTier,
-        data.active ? 1 : 0,
-        data.version,
-        data.customerExternalId,
-        data.version,
-        data.providerEventId,
-      ],
-    },
-    {
-      sql: FINALIZE_BILLING_EVENT_SQL,
-      params: [data.providerEventId],
-    },
-    {
-      sql: INSERT_BILLING_AUDIT_SQL,
-      params: [
-        'billing-webhook',
-        'billing_event_applied',
-        data.customerExternalId,
-        `${data.eventType} updated ${data.customerName} to version ${data.version}`,
-        data.providerEventId,
-      ],
-    },
-  ])
-}
-
-async function fetchClusterNodes(): Promise<ClusterNode[]> {
-  const token = process.env.SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
-  const endpoints = clusterEndpointsFromEnv(process.env.SIRANNON_CLUSTER_ENDPOINTS)
-  const results = await Promise.all(endpoints.map(endpoint => fetchClusterNode(endpoint, token)))
-  return results.map(result => clusterNodeSchema.parse(result))
-}
-
-async function assertMajorityWriteAvailable(): Promise<void> {
-  const availability = getMajorityWriteAvailability(await fetchClusterNodes())
-  if (!availability.available) {
-    throw new Error(`Write blocked: ${availability.reason}`)
-  }
-}
-
-async function fetchClusterNode(endpoint: string, token: string): Promise<ClusterNode> {
-  const baseUrl = toServerBaseUrl(endpoint)
-  const nodeId = nodeIdFromEndpoint(baseUrl)
-
-  try {
-    const response = await fetch(`${baseUrl}/db/${DATABASE_ID}/cluster`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(2_000),
-    })
-    if (!response.ok) {
-      return {
-        nodeId,
-        endpoint: baseUrl,
-        reachable: false,
-        currentPrimary: null,
-        primaryTerm: null,
-        readEndpoints: 0,
-        error: `HTTP ${response.status}`,
-      }
-    }
-
-    const data = (await response.json()) as ClusterStatusResponse
-    return {
-      nodeId,
-      endpoint: baseUrl,
-      reachable: true,
-      role: typeof data.role === 'string' ? data.role : undefined,
-      health: parseHealth(data.health),
-      currentPrimary: parseCurrentPrimary(data.currentPrimary),
-      primaryTerm: data.primaryTerm === undefined || data.primaryTerm === null ? null : String(data.primaryTerm),
-      readEndpoints: Array.isArray(data.readEndpoints) ? data.readEndpoints.length : 0,
-      error: null,
-    }
-  } catch (error) {
-    return {
-      nodeId,
-      endpoint: baseUrl,
-      reachable: false,
-      currentPrimary: null,
-      primaryTerm: null,
-      readEndpoints: 0,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
-async function setProxyEnabled(proxyName: string, enabled: boolean): Promise<void> {
-  const url = process.env.TOXIPROXY_URL ?? 'http://127.0.0.1:8474'
-  let response: Response
-  try {
-    response = await fetchWithTimeout(
-      `${url}/proxies/${encodeURIComponent(proxyName)}`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ enabled }),
-      },
-      TOXIPROXY_REQUEST_TIMEOUT_MS,
-    )
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw new Error(
-        `Toxiproxy failed to update ${proxyName}: request timed out after ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms`,
-      )
-    }
-    throw error
-  }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(`Toxiproxy failed to update ${proxyName}: HTTP ${response.status} ${body}`)
-  }
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => {
-    controller.abort()
-  }, timeoutMs)
-
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
-}
-
-function createExternalId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 32)
-  const safeSlug = slug.length > 0 ? slug : 'customer'
-  return `cus_${safeSlug}_${randomUUID().slice(0, 8)}`
-}
-
-function nodeIdFromEndpoint(endpoint: string): string {
-  if (endpoint.includes('7301')) return 'node-a'
-  if (endpoint.includes('7302')) return 'node-b'
-  if (endpoint.includes('7303')) return 'node-c'
-  return endpoint
-}
-
-function parseCurrentPrimary(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return null
-  }
-  const nodeId = (value as Record<string, unknown>).nodeId
-  return typeof nodeId === 'string' ? nodeId : null
-}
-
-function parseHealth(value: unknown): ClusterNode['health'] {
-  if (
-    value === 'healthy' ||
-    value === 'degraded' ||
-    value === 'failing_over' ||
-    value === 'unavailable' ||
-    value === 'repairing' ||
-    value === 'syncing'
-  ) {
-    return value
-  }
-  return undefined
 }

@@ -1,10 +1,24 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
+import type { ConflictResolver, ReplicationBatch, SyncTableManifest } from '../core/sync/types.js'
+import type { NodeHealth } from '../core/types.js'
 import type {
   ClusterCoordinator,
   CoordinatorCompatibilityMetadata,
   ReplicationGroupState,
 } from './coordinator/types.js'
+
+export type {
+  ApplyResult,
+  ConflictContext,
+  ConflictResolution,
+  ConflictResolver,
+  HLCTimestamp,
+  ReplicationBatch,
+  ReplicationChange,
+  SyncTableManifest,
+} from '../core/sync/types.js'
+export type { NodeHealth, NodeHealthReason, NodeHealthState } from '../core/types.js'
 
 export interface NodeInfo {
   id: string
@@ -16,37 +30,6 @@ export interface NodeInfo {
   lastSeenAt: number
   lastAckedSeq: bigint
   metadata?: Record<string, unknown>
-}
-
-export interface HLCTimestamp {
-  wallMs: number
-  logical: number
-  nodeId: string
-}
-
-export interface ReplicationChange {
-  table: string
-  operation: 'insert' | 'update' | 'delete' | 'ddl'
-  rowId: string
-  primaryKey: Record<string, unknown>
-  hlc: string
-  txId: string
-  nodeId: string
-  newData: Record<string, unknown> | null
-  oldData: Record<string, unknown> | null
-  ddlStatement?: string
-}
-
-export interface ReplicationBatch {
-  sourceNodeId: string
-  batchId: string
-  fromSeq: bigint
-  toSeq: bigint
-  hlcRange: { min: string; max: string }
-  changes: ReplicationChange[]
-  checksum: string
-  groupId?: string
-  primaryTerm?: bigint
 }
 
 export interface ReplicationAck {
@@ -69,24 +52,6 @@ export interface ForwardedTransactionResult {
   requestId: string
   groupId?: string
   primaryTerm?: bigint
-}
-
-export interface ConflictContext {
-  table: string
-  rowId: string
-  localChange: ReplicationChange | null
-  remoteChange: ReplicationChange
-  localHlc: string | null
-  remoteHlc: string
-}
-
-export interface ConflictResolution {
-  action: 'accept_remote' | 'keep_local' | 'merge'
-  mergedData?: Record<string, unknown>
-}
-
-export interface ConflictResolver {
-  resolve(ctx: ConflictContext): ConflictResolution | Promise<ConflictResolution>
 }
 
 export type TopologyRole = 'primary' | 'replica'
@@ -207,6 +172,7 @@ export interface ReplicationStatus {
   peers: PeerState[]
   localSeq: bigint
   replicating: boolean
+  health: NodeHealth
   syncState?: SyncState
   coordinator?: CoordinatorRuntimeStatus
 }
@@ -222,14 +188,8 @@ export interface CoordinatorRuntimeStatus {
   faultedNodeIds: string[]
   votingDataBearingNodeIds: string[]
   authority: boolean
+  connected: boolean
   controllerState: 'disabled' | 'standby' | 'active' | 'lost'
-}
-
-export interface ApplyResult {
-  applied: number
-  skipped: number
-  conflicts: number
-  droppedTables: string[]
 }
 
 export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready'
@@ -248,6 +208,7 @@ export interface SyncRequest {
   requestId: string
   joinerNodeId: string
   completedTables: string[]
+  supportsStreamVerification?: boolean
   groupId?: string
   primaryTerm?: bigint
 }
@@ -263,12 +224,6 @@ export interface SyncBatch {
   totalTables?: number
   groupId?: string
   primaryTerm?: bigint
-}
-
-export interface SyncTableManifest {
-  table: string
-  rowCount: number
-  pkHash: string
 }
 
 export interface SyncComplete {

@@ -109,9 +109,7 @@ describe('Metrics integration', () => {
 
     try {
       await db.query('SELECT * FROM nonexistent_table')
-    } catch {
-      /* expected */
-    }
+    } catch {}
 
     expect(metrics.length).toBe(1)
     expect(metrics[0].error).toBe(true)

@@ -1,9 +1,15 @@
 import type { Transaction } from '../transaction.js'
 
+export const MIGRATION_NAME_RE = /^\w+$/
+
 export interface AppliedMigration {
   version: number
   name: string
   applied_at: number
+}
+
+export interface MigrationBaseline {
+  through: number
 }
 
 export interface Migration {
@@ -11,7 +17,10 @@ export interface Migration {
   name: string
   up: string | ((tx: Transaction) => void | Promise<void>)
   down?: string | ((tx: Transaction) => void | Promise<void>)
+  baseline?: MigrationBaseline
 }
+
+export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>)
 
 export interface AppliedMigrationEntry {
   version: number

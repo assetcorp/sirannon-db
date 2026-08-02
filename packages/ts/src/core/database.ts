@@ -1,19 +1,29 @@
 import { runBulkLoad } from './bulk-load.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
-import { ConnectionPool } from './connection-pool.js'
-import { DatabaseBackupController } from './database-backup.js'
-import { DatabaseCdcController } from './database-cdc.js'
-import { DatabaseObserver } from './database-observability.js'
+import type { ConnectionPool } from './connection-pool.js'
+import type { DatabaseBackupController } from './database-backup.js'
+import type { DatabaseCdcController } from './database-cdc.js'
+import { createDatabaseRuntime, type DatabaseInternals, type DatabaseRuntime } from './database-create.js'
+import type { DatabaseObserver } from './database-observability.js'
+import type { DatabaseReadDeps } from './database-reads.js'
+import { readOneRow, readRows, readWireRows } from './database-reads.js'
+import type { DatabaseSyncController, DeviceSyncPort } from './database-sync.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import { loadExtension as loadExtensionImpl } from './extension-loader.js'
-import { canGroupTransaction, GroupCommitter } from './group-committer.js'
-import { HookRegistry } from './hooks/registry.js'
-import type { MetricsCollector } from './metrics/collector.js'
-import { MigrationRunner } from './migrations/runner.js'
+import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
+import type { HookRegistry } from './hooks/registry.js'
+import { openLiveQuery } from './live/database-live.js'
+import type { LiveQuery, LiveQueryOptions } from './live/types.js'
+
+export type { DatabaseInternals } from './database-create.js'
+
+import { migrateWithTriggerRefresh, readAppliedMigrations, rollbackWithTriggerRefresh } from './database-migrations.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { executeBatch, executeBatchSummary, query, queryForWire, queryOne } from './query-executor.js'
+import { executeBatch, executeBatchSummary } from './query-executor.js'
+import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
+import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
@@ -27,14 +37,8 @@ import type {
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
-import { resolveWriterWorkerConfig } from './worker/config.js'
-import { WriteGate } from './worker/gate.js'
-import { WriterLock } from './writer-lock.js'
-
-export interface DatabaseInternals {
-  parentHooks?: HookRegistry
-  metrics?: MetricsCollector
-}
+import type { WriteGate } from './worker/gate.js'
+import type { WriterLock } from './writer-lock.js'
 
 export class Database {
   readonly id: string
@@ -51,51 +55,37 @@ export class Database {
   private _closed = false
 
   private readonly cdc: DatabaseCdcController
+  private readonly sync: DatabaseSyncController
 
-  private readonly hookRegistry = new HookRegistry()
+  private readonly hookRegistry: HookRegistry
   private readonly observer: DatabaseObserver
 
   private readonly backups: DatabaseBackupController
+  private readonly reads: DatabaseReadDeps
 
   private constructor(
     id: string,
     path: string,
-    pool: ConnectionPool,
     driver: SQLiteDriver,
-    writeGate: WriteGate,
+    runtime: DatabaseRuntime,
     options?: DatabaseOptions,
-    internals?: DatabaseInternals,
   ) {
     this.id = id
     this.path = path
-    this.pool = pool
     this.driver = driver
-    this.writeGate = writeGate
-    this.writerLock = new WriterLock(driver.createWriterContext?.())
-    this.backups = new DatabaseBackupController(
-      op => this.writerLock.run(op),
-      () => this.pool.acquireWriter(),
-      driver.createBackupEngine?.(),
-    )
+    this.pool = runtime.pool
+    this.writeGate = runtime.writeGate
+    this.writerLock = runtime.writerLock
+    this.hookRegistry = runtime.hookRegistry
+    this.observer = runtime.observer
+    this.backups = runtime.backups
+    this.cdc = runtime.cdc
+    this.sync = runtime.sync
+    this.groupCommitter = runtime.groupCommitter
+    this.reads = { pool: runtime.pool, writerLock: runtime.writerLock, observer: runtime.observer }
     this.readOnly = options?.readOnly ?? false
     this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
     this.walMode = options?.walMode ?? true
-    this.observer = new DatabaseObserver(
-      id,
-      this.hookRegistry,
-      internals?.parentHooks ?? null,
-      internals?.metrics ?? null,
-    )
-    this.cdc = new DatabaseCdcController(
-      op => this.writerLock.run(op),
-      () => this.pool.acquireWriter(),
-      options?.cdcPollInterval ?? 50,
-      options?.cdcRetention ?? 3_600_000,
-    )
-    this.groupCommitter = new GroupCommitter(this.writerLock, {
-      acquireWriter: () => this.pool.acquireWriter(),
-      afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql),
-    })
   }
 
   static async create(
@@ -105,48 +95,32 @@ export class Database {
     options?: DatabaseOptions,
     internals?: DatabaseInternals,
   ): Promise<Database> {
-    const writerWorker = resolveWriterWorkerConfig(options?.writerWorker)
-    const readOnly = options?.readOnly ?? false
-    if (writerWorker.enabled && !readOnly && !driver.startWriterHost) {
-      throw new SirannonError(
-        `writerWorker is enabled for database '${id}' but the driver does not carry a worker entry; use a driver that supports worker offload or disable writerWorker`,
-        'WRITER_WORKER_UNSUPPORTED',
-      )
-    }
+    const runtime = await createDatabaseRuntime(id, path, driver, options, internals)
+    return new Database(id, path, driver, runtime, options)
+  }
 
-    const pool = await ConnectionPool.create({
-      driver,
-      path,
-      readOnly: options?.readOnly,
-      readPoolSize: options?.readPoolSize ?? 4,
-      walMode: options?.walMode ?? true,
-      synchronous: options?.synchronous,
-      useWriterWorker: writerWorker.enabled && !readOnly,
-      workerHostOptions: writerWorker.host,
-    })
+  async applyChanges(
+    batch: ReplicationBatch,
+    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    return this.sync.applyChanges(batch, resolver)
+  }
 
-    const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
-    return new Database(id, path, pool, driver, writeGate, options, internals)
+  deviceSync(): DeviceSyncPort {
+    this.ensureNotClosed()
+    return this.sync.devicePort()
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => query<T>(conn, sql, params)),
-    )
+    return readRows<T>(this.reads, sql, params, options)
   }
 
-  /**
-   * Returns query rows already encoded for the wire (safe-range integers as
-   * plain numbers, larger integers and BLOBs as tagged envelopes) in a single
-   * pass. The server response path uses this so a read walks its values once
-   * rather than narrowing on the driver and re-scanning to tag.
-   */
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => queryForWire(conn, sql, params)),
-    )
+    return readWireRows(this.reads, sql, params, options)
   }
 
   async queryOne<T = Record<string, unknown>>(
@@ -155,20 +129,7 @@ export class Database {
     options?: QueryOptions,
   ): Promise<T | undefined> {
     this.ensureOpen()
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.runRead(sql, conn => queryOne<T>(conn, sql, params)),
-    )
-  }
-
-  /**
-   * On a single-connection driver the reader is the writer, so serialise the
-   * read through the writer lock to avoid a bulk load's uncommitted rows.
-   */
-  private runRead<T>(sql: string, op: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
-    if (this.pool.readerCount === 0) {
-      return this.writerLock.run(() => this.observer.track(sql, () => op(this.pool.acquireWriter())))
-    }
-    return this.observer.track(sql, () => op(this.pool.acquireReader()))
+    return readOneRow<T>(this.reads, sql, params, options)
   }
 
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
@@ -202,7 +163,13 @@ export class Database {
     sql: string,
     run: (txConn: SQLiteConnection) => Promise<T>,
   ): Promise<T> {
-    const result = await this.observer.track(sql, () => writer.transaction(run))
+    const result = await this.observer.track(sql, () =>
+      writer.transaction(async txConn => {
+        const value = await run(txConn)
+        await this.cdc.applyStamps(txConn)
+        return value
+      }),
+    )
     await applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql)
     return result
   }
@@ -292,6 +259,14 @@ export class Database {
     await this.writerLock.run(() => op(this.pool.acquireWriter()))
   }
 
+  async ensureChangeStamping(): Promise<void> {
+    this.ensureOpen()
+    if (this.readOnly) {
+      throw new ReadOnlyError(this.id)
+    }
+    await this.cdc.ensureStamping()
+  }
+
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
     await this.cdc.unwatch(table)
@@ -302,14 +277,33 @@ export class Database {
     return this.cdc.on(table)
   }
 
+  async live<T = Record<string, unknown>>(
+    sql: string,
+    params?: Params,
+    options?: LiveQueryOptions,
+  ): Promise<LiveQuery<T>> {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
+    return openLiveQuery<T>({ cdc: this.cdc, watch: table => this.watch(table) }, sql, params, options)
+  }
+
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
-    return this.writerLock.run(() => MigrationRunner.run(this.pool.acquireWriter(), migrations))
+    return this.writerLock.run(() =>
+      migrateWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations),
+    )
+  }
+
+  async appliedMigrations(): Promise<AppliedMigrationRow[]> {
+    this.ensureNotClosed()
+    return this.writerLock.run(() => readAppliedMigrations(this.pool.acquireWriter()))
   }
 
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
-    return this.writerLock.run(() => MigrationRunner.rollback(this.pool.acquireWriter(), migrations, version))
+    return this.writerLock.run(() =>
+      rollbackWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations, version),
+    )
   }
 
   async backup(destPath: string): Promise<void> {
@@ -336,7 +330,7 @@ export class Database {
   }
 
   addCloseListener(fn: () => void | Promise<void>): void {
-    this.ensureOpen()
+    this.ensureNotClosed()
     this.closeListeners.push(fn)
   }
 
@@ -349,6 +343,7 @@ export class Database {
 
     let poolError: unknown
     try {
+      await this.cdc.closeLiveConnection()
       await this.groupCommitter.drain()
       await this.writerLock.settle()
       await this.pool.close()
@@ -359,9 +354,7 @@ export class Database {
     for (const fn of this.closeListeners) {
       try {
         await fn()
-      } catch {
-        /* listener errors are secondary to pool close */
-      }
+      } catch {}
     }
 
     if (poolError) {
@@ -378,6 +371,16 @@ export class Database {
   }
 
   private ensureOpen(): void {
+    this.ensureNotClosed()
+    if (this.sync.snapshotLoadBlocked) {
+      throw new SirannonError(
+        `Database '${this.id}' is replacing its data from a sync snapshot; retry once the snapshot load completes`,
+        'SNAPSHOT_IN_PROGRESS',
+      )
+    }
+  }
+
+  private ensureNotClosed(): void {
     if (this._closed) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }

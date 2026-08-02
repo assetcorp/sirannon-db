@@ -48,9 +48,7 @@ describe('MetricsCollector', () => {
       await collector.trackQuery(
         async () => {
           const end = performance.now() + 20
-          while (performance.now() < end) {
-            /* spin */
-          }
+          while (performance.now() < end) {}
           return null
         },
         {

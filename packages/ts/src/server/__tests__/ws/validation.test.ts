@@ -25,7 +25,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('handleMessage - validation', () => {
     it('returns error for invalid JSON', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'json.db'))
 
       const conn = createMockConnection()
@@ -39,7 +39,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for non-object JSON', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'arr.db'))
 
       const conn = createMockConnection()
@@ -53,7 +53,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for missing type field', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'notype.db'))
 
       const conn = createMockConnection()
@@ -67,7 +67,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for missing id field', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'noid.db'))
 
       const conn = createMockConnection()
@@ -81,7 +81,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for unknown message type', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'unknown.db'))
 
       const conn = createMockConnection()
@@ -96,9 +96,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for oversized messages', async () => {
-      const handler = createWSHandler(sirannon, {
-        maxPayloadLength: 100,
-      })
+      const handler = createWSHandler(sirannon, { acceptSql: true, maxPayloadLength: 100 })
       await sirannon.open('mydb', join(tempDir, 'big.db'))
 
       const conn = createMockConnection()
@@ -112,7 +110,7 @@ describe('WSHandler', () => {
     })
 
     it('ignores messages from unregistered connections', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const conn = createMockConnection()
 
       handler.handleMessage(conn, JSON.stringify({ id: 'r1', type: 'query', sql: 'SELECT 1' }))

@@ -99,6 +99,7 @@ export interface SyncRequestPayload {
   completedTables: string[];
   groupId: string;
   primaryTerm: bigint;
+  supportsStreamVerification: boolean;
 }
 
 export interface SyncBatchPayload {
@@ -126,6 +127,7 @@ export interface SyncTableManifest {
   table: string;
   rowCount: number;
   pkHash: string;
+  batchDigest: string;
 }
 
 export interface SyncAckPayload {
@@ -1459,7 +1461,14 @@ export const ReplicationMessage: MessageFns<ReplicationMessage> = {
 };
 
 function createBaseSyncRequestPayload(): SyncRequestPayload {
-  return { requestId: "", joinerNodeId: "", completedTables: [], groupId: "", primaryTerm: 0n };
+  return {
+    requestId: "",
+    joinerNodeId: "",
+    completedTables: [],
+    groupId: "",
+    primaryTerm: 0n,
+    supportsStreamVerification: false,
+  };
 }
 
 export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
@@ -1481,6 +1490,9 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(40).int64(message.primaryTerm);
+    }
+    if (message.supportsStreamVerification !== false) {
+      writer.uint32(48).bool(message.supportsStreamVerification);
     }
     return writer;
   },
@@ -1532,6 +1544,14 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.supportsStreamVerification = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1568,6 +1588,11 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      supportsStreamVerification: isSet(object.supportsStreamVerification)
+        ? globalThis.Boolean(object.supportsStreamVerification)
+        : isSet(object.supports_stream_verification)
+        ? globalThis.Boolean(object.supports_stream_verification)
+        : false,
     };
   },
 
@@ -1588,6 +1613,9 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.supportsStreamVerification !== false) {
+      obj.supportsStreamVerification = message.supportsStreamVerification;
+    }
     return obj;
   },
 
@@ -1601,6 +1629,7 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     message.completedTables = object.completedTables?.map((e) => e) || [];
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.supportsStreamVerification = object.supportsStreamVerification ?? false;
     return message;
   },
 };
@@ -1996,7 +2025,7 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
 };
 
 function createBaseSyncTableManifest(): SyncTableManifest {
-  return { table: "", rowCount: 0, pkHash: "" };
+  return { table: "", rowCount: 0, pkHash: "", batchDigest: "" };
 }
 
 export const SyncTableManifest: MessageFns<SyncTableManifest> = {
@@ -2009,6 +2038,9 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
     }
     if (message.pkHash !== "") {
       writer.uint32(26).string(message.pkHash);
+    }
+    if (message.batchDigest !== "") {
+      writer.uint32(34).string(message.batchDigest);
     }
     return writer;
   },
@@ -2044,6 +2076,14 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
           message.pkHash = reader.string();
           continue;
         }
+        case 4: {
+          if (tag !== 34) {
+            break;
+          }
+
+          message.batchDigest = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2066,6 +2106,11 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
         : isSet(object.pk_hash)
         ? globalThis.String(object.pk_hash)
         : "",
+      batchDigest: isSet(object.batchDigest)
+        ? globalThis.String(object.batchDigest)
+        : isSet(object.batch_digest)
+        ? globalThis.String(object.batch_digest)
+        : "",
     };
   },
 
@@ -2080,6 +2125,9 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
     if (message.pkHash !== "") {
       obj.pkHash = message.pkHash;
     }
+    if (message.batchDigest !== "") {
+      obj.batchDigest = message.batchDigest;
+    }
     return obj;
   },
 
@@ -2091,6 +2139,7 @@ export const SyncTableManifest: MessageFns<SyncTableManifest> = {
     message.table = object.table ?? "";
     message.rowCount = object.rowCount ?? 0;
     message.pkHash = object.pkHash ?? "";
+    message.batchDigest = object.batchDigest ?? "";
     return message;
   },
 };

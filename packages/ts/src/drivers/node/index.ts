@@ -102,9 +102,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           } catch (err) {
             try {
               await conn.exec('ROLLBACK')
-            } catch {
-              /* ROLLBACK failure is secondary; preserve the original error */
-            }
+            } catch {}
             throw err
           }
         },

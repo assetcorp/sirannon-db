@@ -83,7 +83,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
   const conn = await testDriver.open(dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
 
-  const tracker = new ChangeTracker({ replication: true })
+  const tracker = new ChangeTracker()
   if (args.initialize) {
     await args.initialize(conn, tracker)
   }
@@ -143,7 +143,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
   const conn = await testDriver.open(dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
 
-  const tracker = new ChangeTracker({ replication: true })
+  const tracker = new ChangeTracker()
   const db = await Database.create(`db-${args.nodeId}`, dbPath, testDriver)
 
   const cert = args.certs.certForNode(args.nodeId)
@@ -199,19 +199,13 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
 export async function stopNode(node: ManagedNode): Promise<void> {
   try {
     await node.engine.stop()
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
   try {
     if (!node.db.closed) {
       await node.db.close()
     }
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
   try {
     await node.conn.close()
-  } catch {
-    /* best-effort */
-  }
+  } catch {}
 }

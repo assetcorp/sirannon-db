@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { RequestDeniedError } from '../../core/errors.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
@@ -26,7 +27,7 @@ beforeEach(async () => {
   await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
   await db.execute("INSERT INTO users (name, age) VALUES ('Bob', 25)")
 
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -213,11 +214,14 @@ describe('RemoteDatabase via HTTP', () => {
   it('sends WebSocket protocols during the upgrade handshake', async () => {
     const protocol = 'sirannon.auth.valid'
     const hookServer = createServer(sirannon, {
+      acceptSql: true,
       port: 0,
-      onRequest: ({ headers }) => {
-        if (headers['sec-websocket-protocol'] !== protocol) {
-          return { status: 401, code: 'UNAUTHORIZED', message: 'Bad protocol' }
+      authenticate: ({ headers }) => {
+        const offered = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+        if (!offered.includes(protocol)) {
+          throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Bad protocol')
         }
+        return undefined
       },
     })
     await hookServer.listen()

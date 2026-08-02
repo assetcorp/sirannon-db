@@ -10,7 +10,6 @@ RUN_ID_ENV = "BENCH_RUN_ID"
 RUNS_DIRNAME = "runs"
 MANIFEST_NAME = "run.json"
 
-# The leading-alphanumeric class rejects '.' and '..'; widening it reopens path traversal.
 _SEGMENT = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")
 
 

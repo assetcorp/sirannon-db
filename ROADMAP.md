@@ -1,18 +1,20 @@
 # Roadmap
 
-Sirannon is defined by a language-agnostic specification in [`packages/spec`](packages/spec). It covers the driver contract, the core layer, the replication engine, the transports, the server, the client, and the error taxonomy. The TypeScript package is the reference implementation, and every other implementation is checked against the specification.
+Sirannon is defined by a language-agnostic specification in [`packages/spec`](packages/spec). It covers the driver contract, the core layer, the replication engine, the transports, the server, the client, device sync, and the error taxonomy. The TypeScript package is the reference implementation, and every other implementation is checked against the specification.
 
 This roadmap sets out where the project is heading. It covers direction and intent, and it will change as the work proceeds. It does not commit to dates. To propose or discuss an item, open an issue.
 
 ## Available now
 
-- **Core engine.** Queries, transactions, connection pooling, change data capture, migrations, backups, hooks, metrics, and multi-tenant lifecycle management run inside your process on any supported SQLite driver.
+- **Core engine.** Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle management run inside your process on any supported SQLite driver.
 - **Server and client.** Any Sirannon instance goes over HTTP and WebSocket through the server subpath, and the client SDK mirrors the core API with reconnection and subscription restore.
-- **Primary-replica replication.** A single primary stamps changes with a Hybrid Logical Clock, groups them into checksummed batches, and replicates them to read replicas over gRPC with mutual TLS. Conflict resolvers, initial sync, and write concerns are part of this path.
+- **Registered operations.** A server runs the reads and writes you registered under a name and accepts no SQL from the network by default. Code generation turns that registry into typed client references, and a live query runs over a registered read.
+- **Primary-replica replication.** A single primary stamps changes with a Hybrid Logical Clock, groups them into checksummed batches, and replicates them to read replicas over gRPC with mutual TLS. Conflict resolvers, first sync, read concerns, and write concerns are part of this path.
 
 ## In progress
 
 - **Coordinator-backed failover toward stable.** The etcd coordinator and automatic failover are the newest parts of the project. A Docker conformance run exercises promotion and demotion under fault injection today. The work ahead widens the failure coverage, proves recovery under sustained load, and settles the operational guidance needed to mark this stable.
+- **Device sync toward stable.** An end-user device already syncs its whole local database with a server, offline-first and both ways, through push, live pull, snapshot resync, and a migration handshake. The work ahead is production exposure across mobile and browser runtimes.
 - **Type declarations for every driver.** The Bun and Expo drivers run today but have no TypeScript declarations yet. Adding them brings both to the same footing as the better-sqlite3, Node, and wa-sqlite drivers.
 
 ## Planned

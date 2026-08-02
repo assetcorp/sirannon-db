@@ -40,7 +40,7 @@ afterEach(async () => {
 describe('WSHandler', () => {
   describe('handleMessage - query', () => {
     it('executes a query and returns rows in data.rows', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'query.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
       await db.execute("INSERT INTO users (name) VALUES ('Alice')")
@@ -68,7 +68,7 @@ describe('WSHandler', () => {
     })
 
     it('supports named parameters', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'named.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
       await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
@@ -96,7 +96,7 @@ describe('WSHandler', () => {
     })
 
     it('supports positional parameters', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       const db = await sirannon.open('mydb', join(tempDir, 'pos.db'))
       await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)')
       await db.execute("INSERT INTO users (name, age) VALUES ('Alice', 30)")
@@ -124,7 +124,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for invalid SQL', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'bad.db'))
 
       const conn = createMockConnection()
@@ -148,7 +148,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error when sql field is missing', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'nosql.db'))
 
       const conn = createMockConnection()
@@ -162,7 +162,7 @@ describe('WSHandler', () => {
     })
 
     it('returns error for non-object params', async () => {
-      const handler = createWSHandler(sirannon)
+      const handler = createWSHandler(sirannon, { acceptSql: true })
       await sirannon.open('mydb', join(tempDir, 'badparams.db'))
 
       const conn = createMockConnection()
@@ -196,7 +196,7 @@ describe('WSHandler', () => {
             },
           }) as unknown as Database,
       } as unknown as Sirannon
-      const handler = createWSHandler(fakeSirannon)
+      const handler = createWSHandler(fakeSirannon, { acceptSql: true })
       const conn = createMockConnection()
 
       await handler.handleOpen(conn, 'mydb')

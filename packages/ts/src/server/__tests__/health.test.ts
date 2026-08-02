@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ReplicationStatusInfo } from '../../core/server-options.js'
 import { Sirannon } from '../../core/sirannon.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import { handleReadiness } from '../health.js'
@@ -17,7 +18,7 @@ const driver = betterSqlite3()
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-health-'))
   sirannon = new Sirannon({ driver })
-  server = createServer(sirannon, { port: 0 })
+  server = createServer(sirannon, { acceptSql: true, port: 0 })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -131,7 +132,7 @@ describe('server lifecycle', () => {
   })
 
   it('reports -1 for listeningPort after close', async () => {
-    const tmpServer = createServer(sirannon, { port: 0 })
+    const tmpServer = createServer(sirannon, { acceptSql: true, port: 0 })
     await tmpServer.listen()
     expect(tmpServer.listeningPort).toBeGreaterThan(0)
     await tmpServer.close()
@@ -139,11 +140,11 @@ describe('server lifecycle', () => {
   })
 
   it('rejects listen when port is already in use', async () => {
-    const first = createServer(sirannon, { port: 0 })
+    const first = createServer(sirannon, { acceptSql: true, port: 0 })
     await first.listen()
     const usedPort = first.listeningPort
 
-    const second = createServer(sirannon, { port: usedPort })
+    const second = createServer(sirannon, { acceptSql: true, port: usedPort })
     await expect(second.listen()).rejects.toThrow(`Failed to listen on 127.0.0.1:${usedPort}`)
 
     await second.close()
@@ -151,7 +152,7 @@ describe('server lifecycle', () => {
   })
 
   it('adds CORS headers to health routes when CORS is enabled', async () => {
-    const corsServer = createServer(sirannon, { port: 0, cors: true })
+    const corsServer = createServer(sirannon, { acceptSql: true, port: 0, cors: true })
     await corsServer.listen()
     const corsUrl = `http://127.0.0.1:${corsServer.listeningPort}`
 
@@ -170,7 +171,45 @@ describe('server lifecycle', () => {
   })
 })
 
+function captureReadiness(fakeSirannon: Sirannon, getReplicationStatus?: () => ReplicationStatusInfo | null): string {
+  let payload = ''
+  const res = {
+    cork(fn: () => void) {
+      fn()
+      return this
+    },
+    writeStatus() {
+      return this
+    },
+    writeHeader() {
+      return this
+    },
+    end(body: string) {
+      payload = body
+      return this
+    },
+  }
+
+  handleReadiness(fakeSirannon, getReplicationStatus)(res as never, {} as never)
+  return payload
+}
+
+function replicaStatus(health: Partial<ReplicationStatusInfo['health']> = {}): ReplicationStatusInfo {
+  return {
+    role: 'replica',
+    writeForwarding: true,
+    peers: 2,
+    localSeq: 0n,
+    health: { state: 'healthy', reason: 'in-sync', canRead: true, canWrite: false, ...health },
+    coordinator: { connected: true, authority: false },
+    controller: { state: 'active' },
+    syncState: 'ready',
+  }
+}
+
 describe('readiness handler unit paths', () => {
+  const emptySirannon = { databases: () => new Map() } as unknown as Sirannon
+
   it('reports degraded when a closed database is present in snapshot', () => {
     const fakeSirannon = {
       databases: () =>
@@ -180,33 +219,35 @@ describe('readiness handler unit paths', () => {
         ]),
     } as unknown as Sirannon
 
-    let payload = ''
-    const res = {
-      cork(fn: () => void) {
-        fn()
-        return this
-      },
-      writeStatus() {
-        return this
-      },
-      writeHeader() {
-        return this
-      },
-      end(body: string) {
-        payload = body
-        return this
-      },
-    }
-
-    const handler = handleReadiness(fakeSirannon)
-    handler(res as never, {} as never)
-
-    const body = JSON.parse(payload) as {
+    const body = JSON.parse(captureReadiness(fakeSirannon)) as {
       status: string
       databases: { id: string; closed: boolean; readOnly: boolean }[]
     }
     expect(body.status).toBe('degraded')
     expect(body.databases).toHaveLength(2)
     expect(body.databases.find(d => d.id === 'closed-db')?.closed).toBe(true)
+  })
+
+  it('reports ok for a healthy node', () => {
+    const body = JSON.parse(captureReadiness(emptySirannon, () => replicaStatus())) as { status: string }
+    expect(body.status).toBe('ok')
+  })
+
+  it('reports the node health state when the node is not healthy', () => {
+    const status = replicaStatus({ state: 'failing_over', reason: 'faulted', canRead: false })
+    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as { status: string }
+    expect(body.status).toBe('failing_over')
+  })
+
+  it('derives the availability strings from the node health booleans', () => {
+    const status = replicaStatus({ state: 'degraded', reason: 'lagging', canRead: true, canWrite: false })
+    const body = JSON.parse(captureReadiness(emptySirannon, () => status)) as {
+      status: string
+      replication: { healthReason: string; readAvailability: string; writeAvailability: string }
+    }
+    expect(body.status).toBe('degraded')
+    expect(body.replication.healthReason).toBe('lagging')
+    expect(body.replication.readAvailability).toBe('available')
+    expect(body.replication.writeAvailability).toBe('unavailable')
   })
 })

@@ -1,10 +1,4 @@
-import {
-  type ClientDuplexStream,
-  Metadata,
-  type Server,
-  type ServerDuplexStream,
-  type ServiceError,
-} from '@grpc/grpc-js'
+import type { ClientDuplexStream, Server, ServerDuplexStream } from '@grpc/grpc-js'
 import type { HealthImplementation } from 'grpc-health-check'
 import { TransportError } from '../../replication/errors.js'
 import type {
@@ -21,21 +15,18 @@ import type {
   TopologyRole,
   TransportConfig,
 } from '../../replication/types.js'
+import { stopEndpointDialling } from './client-reconnect.js'
 import { connectToEndpoint } from './client-streams.js'
 import {
   toAckPayload,
   toBatchPayload,
-  toForwardRequest,
   toSyncAckPayload,
   toSyncBatchPayload,
   toSyncCompletePayload,
   toSyncRequestPayload,
 } from './codec.js'
-import type {
-  ForwardResponse as ProtoForwardResponse,
-  ReplicationMessage,
-  SyncMessage,
-} from './generated/replication.js'
+import { forwardOverRpc } from './forward-rpc.js'
+import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
 import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
 import type {
   AckHandler,
@@ -108,7 +99,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
 
     if (config.endpoints && config.endpoints.length > 0) {
       for (const endpoint of config.endpoints) {
-        await connectToEndpoint(this, endpoint)
+        connectToEndpoint(this, endpoint)
       }
     }
   }
@@ -116,6 +107,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   async disconnect(): Promise<void> {
     if (!this.connected) return
     this.connected = false
+    stopEndpointDialling(this)
 
     for (const [peerId, entry] of this.clientPeerStreams) {
       entry.replicateStream?.cancel()
@@ -197,41 +189,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     if (!clientEntry) {
       throw new TransportError(`Peer '${peerId}' is not connected`)
     }
-
-    const protoReq = toForwardRequest(request)
-    const deadlineMs = this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS
-    const deadline = new Date(Date.now() + deadlineMs)
-
-    return new Promise<ForwardedTransactionResult>((resolve, reject) => {
-      clientEntry.client.forward(
-        protoReq,
-        new Metadata(),
-        { deadline },
-        (err: ServiceError | null, response: ProtoForwardResponse | undefined) => {
-          if (err) {
-            reject(new TransportError(`Forward RPC failed: ${err.message}`))
-            return
-          }
-          if (!response) {
-            reject(new TransportError('Forward RPC returned empty response'))
-            return
-          }
-          if (response.error) {
-            reject(new TransportError(`Forward RPC error: ${response.error}`))
-            return
-          }
-          resolve({
-            requestId: response.requestId,
-            results: response.results.map(r => ({
-              changes: r.changes,
-              lastInsertRowId: Number(r.lastInsertRowId),
-            })),
-            groupId: response.groupId || undefined,
-            primaryTerm: response.primaryTerm === 0n ? undefined : response.primaryTerm,
-          })
-        },
-      )
-    })
+    return forwardOverRpc(clientEntry, request, this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS)
   }
 
   async requestSync(peerId: string, request: SyncRequest): Promise<void> {

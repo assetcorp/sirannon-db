@@ -1,10 +1,5 @@
 const STATEMENT_CACHE_CAPACITY = 128
 
-/**
- * Reuses compiled statements across batch calls so a bulk load of many small
- * batches never recompiles the same SQL on every call. Bounded and LRU, so a
- * workload of unbounded distinct SQL cannot grow the cache without limit.
- */
 export function createStatementCache<S>(prepare: (sql: string) => S): (sql: string) => S {
   const cache = new Map<string, S>()
   return (sql: string): S => {

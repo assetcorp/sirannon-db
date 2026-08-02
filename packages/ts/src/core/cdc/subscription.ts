@@ -13,6 +13,7 @@ export class SubscriptionManager {
   private nextId = 1
   private readonly subscriptions = new Map<number, InternalSubscription>()
   private readonly byTable = new Map<string, Set<number>>()
+  private readonly batchEndListeners = new Set<(atTxBoundary: boolean) => void>()
 
   subscribe(
     table: string,
@@ -51,15 +52,27 @@ export class SubscriptionManager {
       for (const id of ids) {
         const sub = this.subscriptions.get(id)
         if (!sub) continue
-        if (sub.filter && !changeMatchesFilter(event, sub.filter)) {
-          continue
-        }
+        const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)
+        if (delivered === null) continue
         try {
-          sub.callback(event)
-        } catch {
-          /* subscriber errors must not break other subscribers */
-        }
+          sub.callback(delivered)
+        } catch {}
       }
+    }
+  }
+
+  addBatchEndListener(listener: (atTxBoundary: boolean) => void): () => void {
+    this.batchEndListeners.add(listener)
+    return () => {
+      this.batchEndListeners.delete(listener)
+    }
+  }
+
+  endBatch(atTxBoundary: boolean): void {
+    for (const listener of this.batchEndListeners) {
+      try {
+        listener(atTxBoundary)
+      } catch {}
     }
   }
 
@@ -104,9 +117,6 @@ export function startPolling(
   const MAX_CONSECUTIVE_ERRORS = 10
   const CLEANUP_INTERVAL_TICKS = 100
 
-  // Poll and cleanup read and write the shared writer connection, so they run
-  // under the same serialisation as ordinary writes; otherwise a tick reads
-  // rows a still-open transaction has not committed.
   const exclusive = runExclusive ?? (<T>(operation: () => Promise<T>) => operation())
 
   const tick = async () => {
@@ -119,6 +129,7 @@ export function startPolling(
       if (events.length > 0) {
         manager.dispatch(events)
       }
+      manager.endBatch(tracker.pollEndedAtTxBoundary)
       consecutiveErrors = 0
 
       tickCount++
@@ -149,22 +160,33 @@ export function startPolling(
   return stop
 }
 
-export function changeMatchesFilter(event: ChangeEvent, filter: Record<string, unknown>): boolean {
-  const target = event.type === 'delete' ? (event.oldRow ?? {}) : event.row
+export function filteredChange(event: ChangeEvent, filter: Record<string, unknown>): ChangeEvent | null {
+  const matchedBefore = event.type !== 'insert' && event.oldRow !== undefined && rowMatchesFilter(event.oldRow, filter)
+  const matchedAfter = event.type !== 'delete' && rowMatchesFilter(event.row, filter)
+
+  if (!matchedBefore && !matchedAfter) return null
+  if (matchedBefore && matchedAfter) return event
+
+  if (matchedAfter) {
+    if (event.type === 'insert') return event
+    const entering: ChangeEvent = { ...event, type: 'insert' }
+    entering.oldRow = undefined
+    return entering
+  }
+
+  if (event.type === 'delete') return event
+  return { ...event, type: 'delete', row: {} }
+}
+
+function rowMatchesFilter(row: Record<string, unknown>, filter: Record<string, unknown>): boolean {
   for (const [key, value] of Object.entries(filter)) {
-    if (!filterValueMatches((target as Record<string, unknown>)[key], value)) {
+    if (!filterValueMatches(row[key], value)) {
       return false
     }
   }
   return true
 }
 
-/**
- * Row values carry BigInt beyond the safe-integer range and Buffer for BLOB
- * columns, while filters can hold either representation; comparing across the
- * bigint/number boundary and by bytes keeps a filter matching the same column
- * value regardless of which form each side arrived in.
- */
 function filterValueMatches(rowValue: unknown, filterValue: unknown): boolean {
   if (rowValue === filterValue) return true
   if (typeof rowValue === 'bigint' && typeof filterValue === 'number') {

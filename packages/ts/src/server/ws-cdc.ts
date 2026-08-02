@@ -5,6 +5,7 @@ import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
+import { DEFAULT_DEVICE_CURSOR_RETENTION_MS, effectiveMinDeviceCursor } from './device-cursors.js'
 
 const DEFAULT_POLL_INTERVAL_MS = 50
 const CLEANUP_INTERVAL_TICKS = 100
@@ -17,22 +18,18 @@ export interface CDCContext {
   epoch: string
 }
 
-/**
- * Per-database CDC polling contexts shared by every WebSocket subscription on
- * the same database. Each context owns a dedicated read connection so CDC
- * polling never contends with the single writer, and the context is torn
- * down once its last subscriber leaves.
- */
 export class CdcContextRegistry {
   private readonly sirannon: Sirannon
   private readonly retentionMs: number | undefined
+  private readonly deviceCursorRetentionMs: number
   private readonly contexts = new Map<string, CDCContext>()
   private readonly pending = new Map<string, Promise<CDCContext>>()
   private closed = false
 
-  constructor(sirannon: Sirannon, retentionMs?: number) {
+  constructor(sirannon: Sirannon, retentionMs?: number, deviceCursorRetentionMs?: number) {
     this.sirannon = sirannon
     this.retentionMs = retentionMs
+    this.deviceCursorRetentionMs = deviceCursorRetentionMs ?? DEFAULT_DEVICE_CURSOR_RETENTION_MS
   }
 
   async ensure(databaseId: string, database: Database): Promise<CDCContext> {
@@ -67,9 +64,7 @@ export class CdcContextRegistry {
     if (!ctx || ctx.manager.size > 0) return
 
     ctx.stopPolling()
-    ctx.cdcConn.close().catch(() => {
-      /* best effort */
-    })
+    ctx.cdcConn.close().catch(() => {})
     this.contexts.delete(databaseId)
   }
 
@@ -81,9 +76,7 @@ export class CdcContextRegistry {
       ctx.stopPolling()
       try {
         await ctx.cdcConn.close()
-      } catch {
-        /* best effort */
-      }
+      } catch {}
     }
     this.contexts.clear()
   }
@@ -126,12 +119,23 @@ export class CdcContextRegistry {
         if (events.length > 0) {
           manager.dispatch(events)
         }
+        manager.endBatch(tracker.pollEndedAtTxBoundary)
         consecutiveErrors = 0
 
         tickCount++
         if (tickCount >= CLEANUP_INTERVAL_TICKS) {
           tickCount = 0
-          await database.runCdcMaintenance(writer => tracker.cleanup(writer)).catch(() => {})
+          await database
+            .runCdcMaintenance(async writer => {
+              const minCursor = await effectiveMinDeviceCursor(writer, this.deviceCursorRetentionMs)
+              if (minCursor === null) {
+                tracker.clearPruneBoundary()
+              } else {
+                tracker.setPruneBoundary(minCursor)
+              }
+              await tracker.cleanup(writer)
+            })
+            .catch(() => {})
         }
       } catch {
         consecutiveErrors++

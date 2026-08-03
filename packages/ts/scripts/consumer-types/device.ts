@@ -8,6 +8,7 @@ import {
   SirannonClient,
   SyncController,
 } from '@delali/sirannon-db/client'
+import { expoSqlite } from '@delali/sirannon-db/driver/expo'
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 
 const migrations: Migration[] = [
@@ -109,3 +110,5 @@ export const readNotesRemotely = async (): Promise<void> => {
   await live.close()
   client.close()
 }
+
+export const expoRegistry = (): Sirannon => new Sirannon({ driver: expoSqlite() })

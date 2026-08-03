@@ -82,6 +82,7 @@ const declarationEntry = {
   ...nodeEntry,
   ...clientEntry,
   ...waSqliteEntry,
+  ...untypedEntry,
   ...memoryTransportEntry,
 }
 

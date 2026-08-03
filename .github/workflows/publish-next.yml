@@ -13,8 +13,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Decide whether this push earns a prerelease
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.resolve.outputs.publish }}
+      version: ${{ steps.resolve.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the prerelease version
+        id: resolve
+        run: node .github/scripts/resolve-prerelease.js
+
   publish-next:
     name: Prerelease under the next dist-tag
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -48,9 +65,7 @@ jobs:
 
       - name: Set the prerelease version
         working-directory: packages/ts
-        run: |
-          base=$(node -p "require('./package.json').version.split('-')[0]")
-          npm pkg set "version=${base}-next.${{ github.run_number }}"
+        run: npm pkg set "version=${{ needs.plan.outputs.version }}"
 
       - name: Publish
         working-directory: packages/ts

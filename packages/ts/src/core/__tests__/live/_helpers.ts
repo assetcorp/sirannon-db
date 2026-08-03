@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import type { Database } from '../../database.js'
-import type { LiveQuery, LiveQueryState } from '../../live/types.js'
+import type { LiveQuery, LiveQueryState, LiveUpdate } from '../../live/types.js'
 import { Sirannon } from '../../sirannon.js'
 
 export interface LiveHarness {
@@ -59,18 +59,17 @@ export async function waitForRows<T>(
   throw new Error(`Live query never satisfied the expectation. Last state: ${JSON.stringify(describe(last))}`)
 }
 
-export async function waitForState<T>(
-  query: LiveQuery<T>,
-  predicate: (state: LiveQueryState<T>) => boolean,
-  timeoutMs = 4000,
-): Promise<LiveQueryState<T>> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const state = query.getState()
-    if (predicate(state)) return state
-    await new Promise(resolve => setTimeout(resolve, 2))
-  }
-  throw new Error('Live query never reached the expected state')
+export interface UpdateRecorder<T> {
+  kinds: LiveUpdate<T>['kind'][]
+  stop(): void
+}
+
+export function recordUpdates<T>(query: LiveQuery<T>): UpdateRecorder<T> {
+  const kinds: LiveUpdate<T>['kind'][] = []
+  const unsubscribe = query.subscribe(update => {
+    kinds.push(update.kind)
+  })
+  return { kinds, stop: unsubscribe }
 }
 
 function describe<T>(state: LiveQueryState<T>): unknown {

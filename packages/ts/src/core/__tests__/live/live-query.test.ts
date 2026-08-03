@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { isRevalidating, type LiveHarness, openHarness, readyRows, waitForRows, waitForState } from './_helpers.js'
+import { isRevalidating, type LiveHarness, openHarness, readyRows, recordUpdates, waitForRows } from './_helpers.js'
 
 const SCHEMA = `CREATE TABLE items (
   id INTEGER PRIMARY KEY,
@@ -166,10 +166,13 @@ describe('Database.live', () => {
       rereadJitterMs: 40,
     })
     open = live
+    const updates = recordUpdates(live)
     await harness.db.executeTransaction(bulkInserts(12, 10, 'row'))
 
-    await waitForState(live, state => state.status === 'ready' && state.revalidating)
     await waitForRows(live, rows => rows.length === 13)
+    updates.stop()
+    expect(updates.kinds).toContain('revalidating')
+    expect(updates.kinds.indexOf('revalidating')).toBeLessThan(updates.kinds.lastIndexOf('rows'))
     expect(isRevalidating(live)).toBe(false)
   })
 

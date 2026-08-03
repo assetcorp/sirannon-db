@@ -32,7 +32,7 @@ export interface BulkLoadRun {
 /**
  * Run a bulk load with relaxed writer durability, then restore the
  * operator-configured level. The caller must hold the database's writer lock
- * for the whole call, so no other write commits under the relaxed level.
+ * for the whole call so that no other write commits under the relaxed level.
  *
  * Interruption safety, by failure mode:
  * - A load statement fails: the surrounding transaction rolls back, the

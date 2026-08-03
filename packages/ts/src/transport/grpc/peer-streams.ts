@@ -38,6 +38,35 @@ export type SyncCompleteHandler = (
 ) => Promise<void>
 export type SyncAckHandler = (ack: import('../../replication/types.js').SyncAck, fromPeerId: string) => void
 
+export function replicateWriteStream(
+  serverPeerStreams: ReadonlyMap<string, PeerStreamEntry>,
+  clientPeerStreams: ReadonlyMap<string, ClientPeerEntry>,
+  peerId: string,
+):
+  | ServerDuplexStream<ReplicationMessage, ReplicationMessage>
+  | ClientDuplexStream<ReplicationMessage, ReplicationMessage>
+  | null {
+  return serverPeerStreams.get(peerId)?.replicateStream ?? clientPeerStreams.get(peerId)?.replicateStream ?? null
+}
+
+export function syncWriteStream(
+  serverPeerStreams: ReadonlyMap<string, PeerStreamEntry>,
+  clientPeerStreams: ReadonlyMap<string, ClientPeerEntry>,
+  peerId: string,
+): ServerDuplexStream<SyncMessage, SyncMessage> | ClientDuplexStream<SyncMessage, SyncMessage> | null {
+  return serverPeerStreams.get(peerId)?.syncStream ?? clientPeerStreams.get(peerId)?.syncStream ?? null
+}
+
+export function peerIdForServerStream(
+  serverPeerStreams: ReadonlyMap<string, PeerStreamEntry>,
+  entry: PeerStreamEntry,
+): string | null {
+  for (const [peerId, candidate] of serverPeerStreams) {
+    if (candidate === entry) return peerId
+  }
+  return null
+}
+
 export function registerPeer(
   connectedPeers: Map<string, NodeInfo>,
   peerConnectedHandler: PeerConnectedHandler | null,

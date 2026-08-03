@@ -16,7 +16,7 @@ const SYNCHRONOUS_PRAGMA_VALUES: Record<SynchronousLevel, string> = {
 }
 
 /**
- * Map a synchronous level to its PRAGMA argument through an allowlist, so a
+ * Map a synchronous level to its PRAGMA argument through an allowlist so that a
  * value smuggled past the type system can never reach SQL interpolation.
  *
  * @public

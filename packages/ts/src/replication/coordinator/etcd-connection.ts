@@ -12,7 +12,7 @@ export interface EtcdClusterCoordinatorOptions {
    */
   hosts: string | string[]
   /**
-   * Prefix every key this coordinator writes lives under, which keeps clusters apart in one etcd.
+   * Prefix applied to every key this coordinator writes, which keeps clusters apart in one etcd.
    */
   keyPrefix: string
   /**
@@ -40,7 +40,7 @@ export interface EtcdClusterCoordinatorOptions {
    */
   allowInsecure?: boolean
   /**
-   * Called when a group watch fails, so a caller can log it or raise an alert.
+   * Called when a group watch fails so that a caller can log it or raise an alert.
    */
   onWatcherError?: (error: Error) => void
 }

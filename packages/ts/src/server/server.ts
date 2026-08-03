@@ -1,6 +1,5 @@
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
-import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   AuthenticateHook,
@@ -34,6 +33,7 @@ import { handleMigrationList } from './http-migrations.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { handleOperationExecute, handleOperationQuery } from './http-operations.js'
 import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
+import { resolveMaxBodyBytes, resolveWsBackpressure } from './limits.js'
 import { operationRegistryDigest } from './operation-lookup.js'
 import { wrapOperationRoute } from './operation-route.js'
 import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
@@ -44,50 +44,6 @@ const SQL_ROUTES = ['/db/:id/query', '/db/:id/execute', '/db/:id/transaction', '
 
 function refuseSql(res: uWS.HttpResponse): void {
   sendError(res, 403, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
-}
-
-const DEFAULT_MAX_BODY_BYTES = 1_048_576
-const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-const UWS_MAX_LIMIT_BYTES = 4_294_967_295
-
-function resolveMaxBodyBytes(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_MAX_BODY_BYTES
-  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
-    throw new SirannonError(
-      'ServerOptions.maxBodyBytes must be a positive integer number of bytes',
-      'INVALID_MAX_BODY_BYTES',
-    )
-  }
-  if (value > UWS_MAX_LIMIT_BYTES) {
-    throw new SirannonError(
-      `ServerOptions.maxBodyBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
-      'INVALID_MAX_BODY_BYTES',
-    )
-  }
-  return value
-}
-
-function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number): number {
-  const resolved = value ?? Math.max(DEFAULT_WS_BACKPRESSURE_BYTES, maxBodyBytes)
-  if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved <= 0) {
-    throw new SirannonError(
-      'ServerOptions.maxWebSocketBackpressureBytes must be a positive integer number of bytes',
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  if (resolved > UWS_MAX_LIMIT_BYTES) {
-    throw new SirannonError(
-      `ServerOptions.maxWebSocketBackpressureBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  if (resolved < maxBodyBytes) {
-    throw new SirannonError(
-      'ServerOptions.maxWebSocketBackpressureBytes must be at least maxBodyBytes so a single frame fits',
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  return resolved
 }
 
 /**

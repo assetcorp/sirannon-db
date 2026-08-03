@@ -25,7 +25,7 @@ export interface ResyncSchedulerHooks {
  * A failed load leaves the local database refusing reads and writes, so the two
  * callbacks bracket the window in which the application cannot use it:
  * `onResyncRequired` opens it and `onSnapshotComplete` closes it only once a
- * load has succeeded. A failure reports whether another attempt is already
+ * load has succeeded. A failure reports whether another try is already
  * scheduled, because an application the scheduler has given up on has to
  * request the copy itself.
  */

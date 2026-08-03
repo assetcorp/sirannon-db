@@ -167,7 +167,7 @@ export class RemoteDatabase {
    * Execute multiple statements as a single atomic transaction.
    * Returns an array of results, one per statement.
    *
-   * The whole list travels in one request and commits or rolls back as a
+   * The whole list is sent in one request and commits or rolls back as a
    * unit, so the client is never in the loop between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
@@ -194,9 +194,9 @@ export class RemoteDatabase {
    * batch. The configured durability is restored after every batch, so an
    * import that stops partway never leaves the writer at the relaxed level.
    * Prefer this over {@link RemoteDatabase.load} for anything larger than a single request:
-   * it runs the finalize itself, so there is no checkpoint flag to forget.
+   * it finalises the load itself, so there is no checkpoint flag to forget.
    *
-   * Accepts a synchronous or asynchronous iterable of parameter sets, so rows
+   * Accepts a synchronous or asynchronous iterable of parameter sets so that rows
    * can stream from a file or the network without being held in memory at
    * once. Returns the total rows loaded and changes applied.
    *
@@ -261,7 +261,7 @@ export class RemoteDatabase {
    * Load one batch of rows through the same statement with writer durability
    * relaxed for the duration, then restored before this resolves. This is the
    * low-level primitive; prefer {@link RemoteDatabase.loadAll} for a dataset that spans more
-   * than one request, since it runs the finalize itself rather than relying on
+   * than one request, since it finalises the load itself rather than relying on
    * a `checkpoint` flag.
    *
    * Returns the total rows loaded and changes applied. When splitting a dataset

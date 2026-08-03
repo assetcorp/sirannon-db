@@ -50,7 +50,7 @@ export interface WSSubscribeMessage {
   /**
    * Highest `seq` the client has already processed. When present, the server
    * replays every retained change with a greater seq before delivering live
-   * events, so a reconnecting subscriber does not miss changes. Sent as a
+   * events so that a reconnecting subscriber does not miss changes. Sent as a
    * decimal string to preserve values beyond `Number.MAX_SAFE_INTEGER`.
    */
   sinceSeq?: string
@@ -261,7 +261,7 @@ export interface WSSubscribedMessage {
   maxUnacknowledgedChanges?: number
   /**
    * The seq the subscription is live from. A client that has not yet seen any
-   * change adopts this as its resume cursor, so a reconnect during an idle
+   * change adopts this as its resume cursor so that a reconnect during an idle
    * spell still replays what it missed instead of silently skipping it.
    */
   seq?: string
@@ -273,7 +273,7 @@ export interface WSSubscribedMessage {
   resync?: boolean
   /**
    * Identifies the sequence space this subscription streams from. The client
-   * stores it and echoes it when resuming, so a cursor carried to a different
+   * stores it and echoes it when resuming so that a cursor carried to a different
    * database forces a resync instead of a silent replay of unrelated rows.
    */
   epoch?: string

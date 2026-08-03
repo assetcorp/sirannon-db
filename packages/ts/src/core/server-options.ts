@@ -31,7 +31,7 @@ export type AuthenticateHook<Identity = unknown> = (
   ctx: RequestContext,
 ) => Identity | undefined | Promise<Identity | undefined>
 
-/** Decides whether a caller may read the addresses of every node in the group.
+/** Reports whether a caller may read the addresses of every node in the group.
  * @public
  */
 export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise<boolean>
@@ -181,7 +181,7 @@ export interface ServerOptions<Identity = unknown> {
   getReplicationStatus?: () => ReplicationStatusInfo | null
   /** Supplies what `GET /db/{id}/cluster` reports for one database. */
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
-  /** Decides whether a caller may read the addresses of every node in the group. */
+  /** Reports whether a caller may read the addresses of every node in the group. */
   authorizeClusterStatus?: ClusterStatusAuthorizer
 }
 
@@ -201,9 +201,9 @@ export interface ReplicationStatusInfo {
   health: NodeHealth
   /** Identifier of the replication group the node belongs to. */
   replicationGroupId?: string
-  /** The primary term the node believes is current. */
+  /** The primary term this node reports as current. */
   primaryTerm?: bigint
-  /** Identifier of the primary the node believes is current. */
+  /** Identifier of the primary this node reports as current. */
   currentPrimary?: string
   /** Whether the node reaches its cluster coordinator, and whether it holds write authority. */
   coordinator?: {

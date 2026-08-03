@@ -85,8 +85,7 @@ describe('stream digest verification', () => {
       maxSyncDurationMs: 1_000,
       syncAckTimeoutMs: 50,
       syncBatchSize: 100,
-      decorateSyncBatch: <T>(batch: T): T => batch,
-      decorateSyncComplete: <T>(complete: T): T => complete,
+      decorate: <T>(batch: T): T => batch,
       emitError: (event: ReplicationErrorEvent) => {
         errors.push(event)
       },
@@ -161,7 +160,7 @@ describe('stream digest verification', () => {
           },
         },
       },
-      decorateSyncAck: <T>(ack: T): T => ack,
+      decorate: <T>(ack: T): T => ack,
       emitError: vi.fn(),
     } as unknown as ReplicationEngine
     return { engine, sentAcks, joiner: new SyncJoiner(engine) }

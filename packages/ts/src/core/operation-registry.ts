@@ -76,7 +76,7 @@ export interface OperationRef<Args = OperationArguments, Row = Record<string, un
 }
 
 /**
- * Builds a typed reference to a registered operation, so a call site infers its
+ * Builds a typed reference to a registered operation so that a call site infers its
  * argument and row types from the name alone.
  *
  * @param name - Name the server registered the operation under.

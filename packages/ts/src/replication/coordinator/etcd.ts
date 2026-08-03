@@ -1,4 +1,4 @@
-import { Etcd3, type Lease, type Namespace, type Watcher } from 'etcd3'
+import { Etcd3, type Namespace, type Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import {
   parseLease,
@@ -18,6 +18,7 @@ import {
   ttlMsToSeconds,
 } from './etcd-connection.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
+import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -40,19 +41,6 @@ import type {
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 
-interface LocalLeaseEntry {
-  lease: Lease
-  leaseId: string
-  key: string
-  ttlMs: number
-  ttlSeconds: number
-  kind: 'controller' | 'node-session'
-  clusterId: string
-  holderId: string
-  metadata?: Record<string, unknown>
-  nodeSession?: Omit<SerializedNodeSession, 'lease'>
-}
-
 /**
  * @public
  *
@@ -64,7 +52,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private readonly client: Etcd3
   private readonly namespace: Namespace
   private readonly onWatcherError: ((error: Error) => void) | undefined
-  private readonly leases = new Map<string, LocalLeaseEntry>()
+  private readonly leases: EtcdLeaseRegistry
   private readonly grantedNodeSessionLeaseIds = new Map<string, string>()
   private readonly watchers = new Set<Watcher>()
   private readonly groups: EtcdGroupStore
@@ -74,6 +62,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.client = new Etcd3(toEtcdOptions(options))
     this.namespace = this.client.namespace(normaliseKeyPrefix(options.keyPrefix))
     this.onWatcherError = options.onWatcherError
+    this.leases = new EtcdLeaseRegistry(this.onWatcherError)
     this.groups = new EtcdGroupStore(this.namespace, this.watchers, this.onWatcherError)
   }
 
@@ -109,7 +98,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       return { acquired: false, lease: current }
     }
 
-    this.trackLease(lease, {
+    this.leases.track(lease, {
       leaseId,
       key,
       ttlMs: input.ttlMs,
@@ -136,7 +125,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     try {
       await entry.lease.keepaliveOnce()
     } catch {
-      this.leases.delete(leaseId)
+      this.leases.forget(leaseId)
       return false
     }
 
@@ -168,7 +157,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     }
 
     if (!refreshed) {
-      this.leases.delete(leaseId)
+      this.leases.forget(leaseId)
       return false
     }
 
@@ -184,7 +173,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       return false
     }
 
-    this.leases.delete(leaseId)
+    this.leases.forget(leaseId)
     const currentValue = await this.namespace.get(entry.key).string()
     const currentLeaseId = currentValue ? parseLeaseIdForEntry(entry.kind, currentValue) : null
     let released = false
@@ -249,9 +238,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
     }
 
-    await this.discardSupersededLeases(key, leaseId)
+    await this.leases.discardSuperseded(key, leaseId)
     this.grantedNodeSessionLeaseIds.set(key, leaseId)
-    this.trackLease(lease, {
+    this.leases.track(lease, {
       leaseId,
       key,
       ttlMs: input.ttlMs,
@@ -287,11 +276,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   async deregisterNodeSession(clusterId: string, nodeId: string): Promise<void> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
-    const key = nodeSessionKey(clusterId, nodeId)
-    for (const [leaseId, entry] of this.leases) {
-      if (entry.key === key) {
-        await this.releaseLease(leaseId)
-      }
+    for (const leaseId of this.leases.leaseIdsForKey(nodeSessionKey(clusterId, nodeId))) {
+      await this.releaseLease(leaseId)
     }
   }
 
@@ -348,39 +334,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.watchers.clear()
     await Promise.allSettled(watcherCancels)
 
-    const leaseRevokes: Promise<void>[] = []
-    for (const entry of this.leases.values()) {
-      leaseRevokes.push(revokeLeaseQuietly(entry.lease))
-    }
-    this.leases.clear()
     this.grantedNodeSessionLeaseIds.clear()
-    await Promise.allSettled(leaseRevokes)
+    await this.leases.revokeAll()
     this.client.close()
-  }
-
-  private async discardSupersededLeases(key: string, keepLeaseId: string): Promise<void> {
-    const superseded: LocalLeaseEntry[] = []
-    for (const [leaseId, entry] of this.leases) {
-      if (entry.key === key && leaseId !== keepLeaseId) {
-        this.leases.delete(leaseId)
-        superseded.push(entry)
-      }
-    }
-    await Promise.allSettled(superseded.map(entry => revokeLeaseQuietly(entry.lease)))
   }
 
   private async getLeaseFromKey(key: string): Promise<CoordinatorLease | null> {
     const value = await this.namespace.get(key).string()
     return value ? parseLease(value) : null
-  }
-
-  private trackLease(lease: Lease, entry: Omit<LocalLeaseEntry, 'lease'>): void {
-    const fullEntry: LocalLeaseEntry = { ...entry, lease }
-    this.leases.set(entry.leaseId, fullEntry)
-    lease.on('lost', err => {
-      this.leases.delete(entry.leaseId)
-      this.onWatcherError?.(err instanceof Error ? err : new CoordinatorError(String(err)))
-    })
   }
 }
 
@@ -394,12 +355,4 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
  */
 export function createEtcdCoordinator(options: EtcdClusterCoordinatorOptions): EtcdClusterCoordinator {
   return new EtcdClusterCoordinator(options)
-}
-
-async function revokeLeaseQuietly(lease: Lease): Promise<void> {
-  try {
-    await lease.revoke()
-  } catch {
-    lease.release()
-  }
 }

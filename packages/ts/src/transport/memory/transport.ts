@@ -40,10 +40,10 @@ import type { MemoryBus } from './bus.js'
  *
  * Messages between peers are delivered through a shared MemoryBus via
  * microtask scheduling (`queueMicrotask`), preserving the async delivery
- * semantics of a real network transport while avoiding actual I/O. All
+ * semantics of a real network transport with no I/O. All
  * message types (batches, acks, forwards) go through runtime
  * validation before delivery, and malformed payloads are silently dropped
- * to match the behavior of a lossy network.
+ * to match the behaviour of a lossy network.
  *
  * @public
  */

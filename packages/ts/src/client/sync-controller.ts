@@ -2,16 +2,21 @@ import type { Database } from '../core/database.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import { STAGED_STREAM_CAPABILITY } from '../server/capabilities.js'
-import { toBaseUrl, toWsUrl } from './endpoint-urls.js'
+import { toBaseUrl } from './endpoint-urls.js'
 import { unrefTimer } from './http-json.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
 import { syncDeviceMigrations } from './migration-sync.js'
 import { downloadDatabaseSnapshot } from './snapshot-loader.js'
 import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
-import { PullStream } from './sync-pull-stream.js'
-import { PushLoop } from './sync-push-loop.js'
-import { ResyncScheduler } from './sync-resync-scheduler.js'
+import {
+  createSyncCollaborators,
+  DEFAULT_MAX_PUSH_RETRY_DELAY_MS,
+  DEFAULT_PUSH_INTERVAL_MS,
+} from './sync-controller-wiring.js'
+import type { PullStream } from './sync-pull-stream.js'
+import type { PushLoop } from './sync-push-loop.js'
+import type { ResyncScheduler } from './sync-resync-scheduler.js'
 import { RemoteError } from './types.js'
 
 export type {
@@ -21,13 +26,6 @@ export type {
   SyncState,
   SyncStatus,
 } from './sync-controller-types.js'
-
-const DEFAULT_BATCH_SIZE = 100
-const DEFAULT_PUSH_INTERVAL_MS = 1_000
-const DEFAULT_ACK_INTERVAL_MS = 2_000
-const DEFAULT_MAX_PUSH_RETRY_DELAY_MS = 30_000
-const DEFAULT_SNAPSHOT_RETRY_DELAY_MS = 5_000
-const DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS = 300_000
 
 /**
  * @public
@@ -58,70 +56,26 @@ export class SyncController {
     this.baseUrl = toBaseUrl(options.url)
     this.pushIntervalMs = options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS
     this.maxPushRetryDelayMs = options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS
-    this.push = new PushLoop(
-      {
-        baseUrl: this.baseUrl,
-        databaseId: options.databaseId,
-        headers: options.headers,
-        requestTimeout: options.requestTimeout,
-        batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
-        intervalMs: this.pushIntervalMs,
-        maxRetryDelayMs: this.maxPushRetryDelayMs,
+    const collaborators = createSyncCollaborators(this.baseUrl, options, {
+      state: () => this.state,
+      port: () => this.port,
+      schemaVersion: () => this.schemaVersion ?? 0,
+      reconcileSchema: () => this.reconcileSchema(),
+      recordError: err => this.recordError(err),
+      clearError: () => {
+        this.lastError = null
       },
-      {
-        isRunning: () => this.state === 'running',
-        port: () => this.port,
-        schemaVersion: () => this.schemaVersion ?? 0,
-        reconcileSchema: () => this.reconcileSchema(),
-        recordError: err => this.recordError(err),
-        onDrained: () => {
-          this.lastError = null
-        },
+      markResyncRequired: () => this.markResyncRequired(),
+      onApplyFailure: err => this.handleApplyFailure(err),
+      onApplySuccess: () => {
+        this.consecutivePullFailures = 0
       },
-    )
-    this.pull = new PullStream(
-      {
-        wsBaseUrl: toWsUrl(this.baseUrl),
-        databaseId: options.databaseId,
-        tables: options.tables,
-        headers: options.headers,
-        ackIntervalMs: options.ackIntervalMs ?? DEFAULT_ACK_INTERVAL_MS,
-        requestTimeout: options.requestTimeout,
-        immediateAckAfterChanges: options.immediateAckAfterChanges,
-        resolver: options.resolver,
-      },
-      {
-        isRunning: () => this.state === 'running',
-        port: () => this.port,
-        onChange: options.onChange,
-        onResyncRequired: () => this.markResyncRequired(),
-        onApplyFailure: err => this.handleApplyFailure(err),
-        onApplySuccess: () => {
-          this.consecutivePullFailures = 0
-        },
-        recordError: err => this.recordError(err),
-      },
-    )
-    this.resync = new ResyncScheduler(
-      {
-        autoResync: options.autoResync,
-        retryDelayMs: options.snapshotRetryDelayMs ?? DEFAULT_SNAPSHOT_RETRY_DELAY_MS,
-        maxRetryDelayMs: options.maxSnapshotRetryDelayMs ?? DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS,
-        onResyncRequired: options.onResyncRequired,
-        onSnapshotComplete: options.onSnapshotComplete,
-      },
-      {
-        isRunning: () => this.state === 'running',
-        isSnapshotting: () => this.state === 'snapshotting',
-        port: () => this.port,
-        recordError: err => this.recordError(err),
-        download: () =>
-          this.downloadSnapshot({
-            pageSize: options.snapshotPageSize,
-            onProgress: options.onSnapshotProgress,
-          }),
-      },
-    )
+      download: () =>
+        this.downloadSnapshot({ pageSize: options.snapshotPageSize, onProgress: options.onSnapshotProgress }),
+    })
+    this.push = collaborators.push
+    this.pull = collaborators.pull
+    this.resync = collaborators.resync
   }
 
   /**

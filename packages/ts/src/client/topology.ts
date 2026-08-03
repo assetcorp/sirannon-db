@@ -11,7 +11,7 @@ import { RemoteError, type Transport } from './types.js'
 /**
  * @public
  *
- * Which nodes the client knows about, how it finds the rest, and where it sends each read.
+ * Which nodes the client holds, how it finds the rest, and where it sends each read.
  */
 export interface TopologyAwareClientOptions extends ClientOptions {
   /**

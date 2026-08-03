@@ -415,18 +415,11 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly appliedSeqByPeer: Map<string, bigint>;
     // @internal (undocumented)
-    assertInboundCoordinatorMessage(message: {
-        groupId?: string;
-        primaryTerm?: bigint;
-    }, fromPeerId: string, direction: 'batch' | 'ack' | 'forward' | 'sync-request' | 'sync-data'): Promise<void>;
-    // @internal (undocumented)
     readonly batchIntervalMs: number;
     // @internal (undocumented)
     readonly batchSize: number;
     // @internal (undocumented)
     readonly catchUpDeadlineMs: number;
-    // @internal (undocumented)
-    checkClockDrift(remoteHlc: string): number;
     // @internal (undocumented)
     readonly config: ReplicationConfig;
     // @internal (undocumented)
@@ -451,20 +444,10 @@ export class ReplicationEngine extends EventEmitter {
     coordinatorWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
     readonly database: Database;
+    // @internal
+    decorate<T extends CoordinatorStampedMessage>(message: T): T;
     // @internal (undocumented)
-    decorateAck(ack: ReplicationAck): ReplicationAck;
-    // @internal (undocumented)
-    decorateBatch(batch: ReplicationBatch): ReplicationBatch;
-    // @internal (undocumented)
-    decorateForwardResult(result: ForwardedTransactionResult): ForwardedTransactionResult;
-    // @internal (undocumented)
-    decorateSyncAck(ack: SyncAck): SyncAck;
-    // @internal (undocumented)
-    decorateSyncBatch(batch: SyncBatch): SyncBatch;
-    // @internal (undocumented)
-    decorateSyncComplete(complete: SyncComplete): SyncComplete;
-    // @internal (undocumented)
-    decorateSyncRequest(request: SyncRequest): SyncRequest;
+    readonly defaultResolver: ConflictResolver;
     // @internal (undocumented)
     emitError(event: ReplicationErrorEvent): void;
     execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>;
@@ -479,12 +462,6 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     getCurrentPrimaryPeerId(): string | null;
     getCurrentSeq(): bigint;
-    // @internal (undocumented)
-    getResolver(table?: string): ConflictResolver;
-    // @internal (undocumented)
-    handleCoordinatorAckProgress(nodeId: string, ackedSeq: bigint): Promise<void>;
-    // @internal (undocumented)
-    hasCoordinatorWriteAuthority(): boolean;
     // @internal (undocumented)
     highestSourceSeqSeen: bigint;
     // @internal (undocumented)
@@ -501,8 +478,6 @@ export class ReplicationEngine extends EventEmitter {
     lastLocalSeq: bigint;
     // @internal (undocumented)
     lastSentSeq: bigint;
-    // @internal (undocumented)
-    loadAppliedSeqs(): Promise<void>;
     // @internal (undocumented)
     readonly localExecutor: LocalExecutor;
     // @internal (undocumented)
@@ -526,32 +501,16 @@ export class ReplicationEngine extends EventEmitter {
     nodeSessionLeaseId: string | null;
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
-    // @internal (undocumented)
-    prepareCoordinatorRejoinIfNeeded(): Promise<void>;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
-    // @internal (undocumented)
-    refreshTriggersAfterDdl(): Promise<void>;
-    // @internal (undocumented)
-    requiresCoordinatorRejoinSync(state?: ReplicationGroupState | null): boolean;
-    // @internal (undocumented)
-    resolveWriteConcern(wc: {
-        level: string;
-        timeoutMs?: number;
-    } | undefined): {
-        level: string;
-        timeoutMs?: number;
-    } | undefined;
     // @internal (undocumented)
     readonly resumeFromSeq: bigint | undefined;
     // @internal (undocumented)
     running: boolean;
     // @internal (undocumented)
+    readonly senderLoop: SenderLoop;
+    // @internal (undocumented)
     readonly snapshotConnectionFactory: (() => Promise<SQLiteConnection>) | undefined;
     start(): Promise<void>;
-    // @internal (undocumented)
-    startCoordinatorMode(): Promise<void>;
-    // @internal (undocumented)
-    startSenderLoop(): void;
     status(): ReplicationStatus;
     stop(): Promise<void>;
     // @internal (undocumented)
@@ -571,11 +530,6 @@ export class ReplicationEngine extends EventEmitter {
     transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>;
     // @internal (undocumented)
     verifyPrimaryAuthority(): Promise<ReplicationGroupState>;
-    // @internal (undocumented)
-    waitForWriteConcern(seq: bigint, wc: {
-        level: string;
-        timeoutMs?: number;
-    }): Promise<void>;
     // @internal (undocumented)
     readonly writerConn: SQLiteConnection;
 }

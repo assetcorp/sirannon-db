@@ -1,4 +1,4 @@
-import type { ClientDuplexStream, Server, ServerDuplexStream } from '@grpc/grpc-js'
+import type { Server } from '@grpc/grpc-js'
 import type { HealthImplementation } from 'grpc-health-check'
 import { TransportError } from '../../replication/errors.js'
 import type {
@@ -28,18 +28,21 @@ import {
 import { forwardOverRpc } from './forward-rpc.js'
 import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
 import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
-import type {
-  AckHandler,
-  BatchHandler,
-  ClientPeerEntry,
-  ForwardHandler,
-  PeerConnectedHandler,
-  PeerDisconnectedHandler,
-  PeerStreamEntry,
-  SyncAckHandler,
-  SyncBatchHandler,
-  SyncCompleteHandler,
-  SyncRequestHandler,
+import {
+  type AckHandler,
+  type BatchHandler,
+  type ClientPeerEntry,
+  type ForwardHandler,
+  type PeerConnectedHandler,
+  type PeerDisconnectedHandler,
+  type PeerStreamEntry,
+  peerIdForServerStream,
+  replicateWriteStream,
+  type SyncAckHandler,
+  type SyncBatchHandler,
+  type SyncCompleteHandler,
+  type SyncRequestHandler,
+  syncWriteStream,
 } from './peer-streams.js'
 import { startServer } from './server-streams.js'
 import { writeWithBackpressure } from './stream-util.js'
@@ -356,16 +359,9 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     const peerAddr = call.getPeer()
     for (const [, entry] of this.serverPeerStreams) {
       if (entry.replicateStream?.getPeer() === peerAddr) {
-        const streamPeerId = this.findPeerIdForStream(entry)
+        const streamPeerId = peerIdForServerStream(this.serverPeerStreams, entry)
         if (streamPeerId) return streamPeerId
       }
-    }
-    return null
-  }
-
-  private findPeerIdForStream(entry: PeerStreamEntry): string | null {
-    for (const [peerId, ps] of this.serverPeerStreams) {
-      if (ps === entry) return peerId
     }
     return null
   }
@@ -376,30 +372,11 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
   }
 
-  private getReplicateWriteStream(
-    peerId: string,
-  ):
-    | ServerDuplexStream<ReplicationMessage, ReplicationMessage>
-    | ClientDuplexStream<ReplicationMessage, ReplicationMessage>
-    | null {
-    const serverStream = this.serverPeerStreams.get(peerId)
-    if (serverStream?.replicateStream) return serverStream.replicateStream
-
-    const clientEntry = this.clientPeerStreams.get(peerId)
-    if (clientEntry?.replicateStream) return clientEntry.replicateStream
-
-    return null
+  private getReplicateWriteStream(peerId: string) {
+    return replicateWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
   }
 
-  private getSyncWriteStream(
-    peerId: string,
-  ): ServerDuplexStream<SyncMessage, SyncMessage> | ClientDuplexStream<SyncMessage, SyncMessage> | null {
-    const serverStream = this.serverPeerStreams.get(peerId)
-    if (serverStream?.syncStream) return serverStream.syncStream
-
-    const clientEntry = this.clientPeerStreams.get(peerId)
-    if (clientEntry?.syncStream) return clientEntry.syncStream
-
-    return null
+  private getSyncWriteStream(peerId: string) {
+    return syncWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
   }
 }

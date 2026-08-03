@@ -5,7 +5,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
-import { selectMaxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
+import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
@@ -42,22 +42,16 @@ import {
   DEFAULT_SYNC_BATCH_SIZE,
 } from './constants.js'
 import {
-  assertInboundCoordinatorMessage,
   effectiveTopologyRole,
   getCoordinatorMessageFields,
   getCoordinatorRuntimeStatus,
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
-  waitForWriteConcern,
 } from './coordinator-authority.js'
-import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
-import {
-  handleCoordinatorAckProgress,
-  markCoordinatorSyncReady,
-  prepareCoordinatorRejoinIfNeeded,
-  requiresCoordinatorRejoinSync,
-} from './coordinator-membership.js'
+import { stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
+import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
+import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { computeNodeHealth } from './node-health.js'
 import { SenderLoop } from './sender-loop.js'
@@ -67,14 +61,20 @@ import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
 import { installTestHooks } from './test-hooks.js'
 
+type CoordinatorStampedMessage =
+  | ReplicationBatch
+  | ReplicationAck
+  | ForwardedTransactionResult
+  | SyncRequest
+  | SyncBatch
+  | SyncComplete
+  | SyncAck
+
 /**
  * Coordinates replication for a single database node.
  *
- * State and dependencies are exposed as readable properties so that the
- * collaborating modules in `./engine/` (LocalExecutor, SyncServer, SyncJoiner,
- * SenderLoop, transport wiring, coordinator lifecycle/authority/membership)
- * can operate against a shared, mutable engine instance without duplicating
- * constructor wiring.
+ * Its state and dependencies are readable properties so that the collaborating
+ * modules in `./engine/` share one mutable engine instance.
  *
  * @public
  */
@@ -95,7 +95,8 @@ export class ReplicationEngine extends EventEmitter {
   readonly log: ReplicationLog
   /** @internal */
   readonly peerTracker = new PeerTracker()
-  private readonly defaultResolver: ConflictResolver
+  /** @internal */
+  readonly defaultResolver: ConflictResolver
   /** @internal */
   readonly tracker: ChangeTracker | undefined
   /** @internal */
@@ -172,15 +173,7 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   readonly syncTableDigests = new Map<string, TableStreamDigest>()
   /** @internal */
-  syncState: SyncState = {
-    phase: 'ready',
-    sourcePeerId: null,
-    snapshotSeq: null,
-    completedTables: [],
-    totalTables: 0,
-    startedAt: null,
-    error: null,
-  }
+  syncState: SyncState = initialSyncState()
 
   /** @internal */
   readonly localExecutor: LocalExecutor
@@ -188,7 +181,8 @@ export class ReplicationEngine extends EventEmitter {
   readonly syncServer: SyncServer
   /** @internal */
   readonly syncJoiner: SyncJoiner
-  private readonly senderLoop: SenderLoop
+  /** @internal */
+  readonly senderLoop: SenderLoop
 
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
     super()
@@ -360,11 +354,6 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /** @internal */
-  startSenderLoop(): void {
-    this.senderLoop.start()
-  }
-
-  /** @internal */
   emitError(event: ReplicationErrorEvent): void {
     if (this.listenerCount('replication-error') > 0) {
       try {
@@ -376,78 +365,8 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /** @internal */
-  getResolver(table?: string): ConflictResolver {
-    if (table && this.config.conflictResolvers) {
-      const specific = this.config.conflictResolvers[table]
-      if (specific) return specific
-    }
-    return this.defaultResolver
-  }
-
-  /** @internal */
-  checkClockDrift(remoteHlc: string): number {
-    const decoded = HLC.decode(remoteHlc)
-    return Math.abs(Date.now() - decoded.wallMs)
-  }
-
-  /** @internal */
-  async refreshTriggersAfterDdl(): Promise<void> {
-    if (!this.tracker) return
-    const tables = Array.from(this.tracker.watchedTables)
-    for (const table of tables) {
-      try {
-        await this.tracker.watch(this.writerConn, table)
-      } catch {
-        /* Table may have been dropped by the DDL; the tracker entry will be cleaned up on next unwatch */
-      }
-    }
-  }
-
-  /** @internal */
-  waitForWriteConcern(seq: bigint, wc: { level: string; timeoutMs?: number }): Promise<void> {
-    return waitForWriteConcern(this, seq, wc)
-  }
-
-  /** @internal */
-  async loadAppliedSeqs(): Promise<void> {
-    for (const [nodeId, seq] of await selectMaxAppliedSourceSeqByNode(this.writerConn)) {
-      this.appliedSeqByPeer.set(nodeId, seq)
-    }
-  }
-
-  /** @internal */
   isCoordinatorMode(): boolean {
     return this.config.coordinator !== undefined
-  }
-
-  /** @internal */
-  startCoordinatorMode(): Promise<void> {
-    return startCoordinatorMode(this)
-  }
-
-  /** @internal */
-  prepareCoordinatorRejoinIfNeeded(): Promise<void> {
-    return prepareCoordinatorRejoinIfNeeded(this)
-  }
-
-  /** @internal */
-  hasCoordinatorWriteAuthority(): boolean {
-    return this.coordinatorAuthority
-  }
-
-  /** @internal */
-  requiresCoordinatorRejoinSync(state: ReplicationGroupState | null = this.coordinatorState): boolean {
-    return requiresCoordinatorRejoinSync(this, state)
-  }
-
-  /** @internal */
-  markCoordinatorSyncReady(): Promise<void> {
-    return markCoordinatorSyncReady(this)
-  }
-
-  /** @internal */
-  handleCoordinatorAckProgress(nodeId: string, ackedSeq: bigint): Promise<void> {
-    return handleCoordinatorAckProgress(this, nodeId, ackedSeq)
   }
 
   /** @internal */
@@ -456,62 +375,21 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /** @internal */
-  assertInboundCoordinatorMessage(
-    message: { groupId?: string; primaryTerm?: bigint },
-    fromPeerId: string,
-    direction: 'batch' | 'ack' | 'forward' | 'sync-request' | 'sync-data',
-  ): Promise<void> {
-    return assertInboundCoordinatorMessage(this, message, fromPeerId, direction)
-  }
-
-  /** @internal */
-  decorateBatch(batch: ReplicationBatch): ReplicationBatch {
-    return { ...batch, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateAck(ack: ReplicationAck): ReplicationAck {
-    return { ...ack, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateForwardResult(result: ForwardedTransactionResult): ForwardedTransactionResult {
-    return { ...result, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateSyncRequest(request: SyncRequest): SyncRequest {
-    return { ...request, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateSyncBatch(batch: SyncBatch): SyncBatch {
-    return { ...batch, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateSyncComplete(complete: SyncComplete): SyncComplete {
-    return { ...complete, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  decorateSyncAck(ack: SyncAck): SyncAck {
-    return { ...ack, ...getCoordinatorMessageFields(this) }
-  }
-
-  /** @internal */
-  resolveWriteConcern(
-    wc: { level: string; timeoutMs?: number } | undefined,
-  ): { level: string; timeoutMs?: number } | undefined {
-    if (wc) return wc
-    if (this.isCoordinatorMode()) {
-      return { level: 'majority' }
-    }
-    return undefined
+  markCoordinatorSyncReady(): Promise<void> {
+    return markCoordinatorSyncReady(this)
   }
 
   /** @internal */
   getCurrentPrimaryPeerId(): string | null {
     return getForwardingPrimaryPeerId(this)
+  }
+
+  /**
+   * Stamps an outgoing replication message with this node's group and primary term.
+   *
+   * @internal
+   */
+  decorate<T extends CoordinatorStampedMessage>(message: T): T {
+    return { ...message, ...getCoordinatorMessageFields(this) }
   }
 }

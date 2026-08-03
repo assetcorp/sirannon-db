@@ -8,7 +8,7 @@ import { DDL_PREFIX_RE } from './constants.js'
  * Per-statement hook surface exposed to a replication-aware transaction.
  *
  * `onDdl` is invoked synchronously after a DDL statement has been applied
- * inside the transaction, so the engine can record a synthetic `__ddl__`
+ * inside the transaction so that the engine can record a synthetic `__ddl__`
  * CDC row on the same transactional connection (the row must be visible
  * for `stampChanges`/`updateColumnVersions` and must roll back atomically
  * if the user callback later throws).

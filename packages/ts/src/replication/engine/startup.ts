@@ -1,7 +1,16 @@
 import { loadPersistedHlc } from '../../core/sync/hlc-store.js'
+import { selectMaxAppliedSourceSeqByNode } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
+import { startCoordinatorMode } from './coordinator-lifecycle.js'
+import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { wireTransportHandlers } from './transport-wiring.js'
+
+async function loadAppliedSeqs(engine: ReplicationEngine): Promise<void> {
+  for (const [nodeId, seq] of await selectMaxAppliedSourceSeqByNode(engine.writerConn)) {
+    engine.appliedSeqByPeer.set(nodeId, seq)
+  }
+}
 
 /**
  * Advances the engine's in-memory HLC past every timestamp persisted in this
@@ -29,9 +38,9 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   await recoverHlcFromDurableState(engine)
   engine.lastSentSeq = await engine.log.getLocalSeq()
   engine.lastLocalSeq = engine.lastSentSeq
-  await engine.loadAppliedSeqs()
-  await engine.startCoordinatorMode()
-  await engine.prepareCoordinatorRejoinIfNeeded()
+  await loadAppliedSeqs(engine)
+  await startCoordinatorMode(engine)
+  await prepareCoordinatorRejoinIfNeeded(engine)
 
   wireTransportHandlers(engine)
   const transportConfig = {
@@ -44,13 +53,11 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   }
   await engine.config.transport.connect(engine.nodeId, transportConfig)
 
-  const isPrimary = engine.isCoordinatorMode()
-    ? engine.hasCoordinatorWriteAuthority()
-    : engine.config.topology.role === 'primary'
+  const isPrimary = engine.isCoordinatorMode() ? engine.coordinatorAuthority : engine.config.topology.role === 'primary'
   const syncCompleted = await engine.log.isSyncCompleted()
-  const requiresCoordinatorRejoinSync = engine.requiresCoordinatorRejoinSync()
+  const rejoinSyncRequired = requiresCoordinatorRejoinSync(engine, engine.coordinatorState)
 
-  if (engine.initialSync && !isPrimary && (!syncCompleted || requiresCoordinatorRejoinSync)) {
+  if (engine.initialSync && !isPrimary && (!syncCompleted || rejoinSyncRequired)) {
     const savedState = await engine.log.getSyncState()
     if (savedState.phase === 'syncing') {
       if (!engine.tracker) {
@@ -88,7 +95,7 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
         startedAt: null,
         error: null,
       }
-      engine.startSenderLoop()
+      engine.senderLoop.start()
       engine.syncJoiner.startCatchUpCheck()
       return
     }
@@ -109,5 +116,5 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
     engine.syncState.phase = 'ready'
   }
 
-  engine.startSenderLoop()
+  engine.senderLoop.start()
 }

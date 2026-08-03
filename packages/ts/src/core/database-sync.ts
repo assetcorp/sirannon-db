@@ -1,4 +1,5 @@
 import type { DatabaseCdcController } from './database-cdc.js'
+import type { DeviceSyncPort, DeviceSyncPullState } from './device-sync-port.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { CHANGES_TABLE } from './internal-tables.js'
 import { mirrorSchemaVersion } from './migrations/schema-version.js'
@@ -47,44 +48,7 @@ const PULL_EPOCH_META_KEY = 'device_sync_pull_epoch'
 const RESYNC_REQUIRED_META_KEY = 'device_sync_resync_required'
 const COLUMN_VERSIONS_SEQ_META_KEY = 'device_sync_column_versions_seq'
 
-export interface DeviceSyncPullState {
-  seq: bigint
-  epoch: string | undefined
-}
-
-export interface DeviceSyncPort {
-  identity(): Promise<{ nodeId: string }>
-  applyPulledTransaction(
-    changes: readonly ReplicationChange[],
-    pullSeq: bigint,
-    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
-  ): Promise<ApplyResult>
-  stagePulledChanges(events: readonly ChangeEvent[]): Promise<bigint | null>
-  applyStagedPull(
-    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
-    onChange?: (event: ChangeEvent) => void,
-  ): Promise<bigint | null>
-  recoverStagedPull(
-    resolver?: ConflictResolver | ((table: string) => ConflictResolver),
-    onChange?: (event: ChangeEvent) => void,
-  ): Promise<StagedRecovery>
-  readOutboxBatch(afterSeq: bigint, limit: number): Promise<ReplicationBatch | null>
-  countOutboxPending(afterSeq: bigint): Promise<number>
-  getPushCursor(): Promise<bigint>
-  setPushCursor(seq: bigint): Promise<void>
-  getPullState(): Promise<DeviceSyncPullState | null>
-  getResyncRequired(): Promise<boolean>
-  setResyncRequired(required: boolean): Promise<void>
-  setPullState(seq: bigint, epoch?: string): Promise<void>
-  protectUnpushedChanges(pushedSeq: bigint): void
-  snapshotLoadPending(): Promise<boolean>
-  beginSnapshotLoad(tables: readonly string[]): Promise<void>
-  applySnapshotSchema(schema: readonly string[]): Promise<void>
-  loadSnapshotPage(table: string, rows: readonly Record<string, unknown>[]): Promise<void>
-  replaceMigrationHistory(rows: readonly AppliedMigrationRow[]): Promise<void>
-  endSnapshotLoad(tables: readonly string[]): Promise<void>
-  abortSnapshotLoad(): Promise<void>
-}
+export type { DeviceSyncPort, DeviceSyncPullState } from './device-sync-port.js'
 
 export class DatabaseSyncController {
   private pkResolver: PkResolver | null = null

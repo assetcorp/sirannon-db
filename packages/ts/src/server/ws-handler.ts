@@ -46,6 +46,11 @@ export interface ConnectionState {
   overloaded: boolean
 }
 
+/**
+ * Serves the WebSocket protocol for one server: queries, writes, change subscriptions, and live queries.
+ *
+ * @internal
+ */
 export class WSHandler<Identity = unknown> {
   private readonly sirannon: Sirannon
   private readonly maxPayloadLength: number
@@ -353,6 +358,11 @@ export class WSHandler<Identity = unknown> {
   }
 }
 
+/**
+ * Builds the WebSocket handler a server routes its upgrades and messages through.
+ *
+ * @internal
+ */
 export function createWSHandler<Identity = unknown>(
   sirannon: Sirannon,
   options?: WSHandlerOptions<Identity>,

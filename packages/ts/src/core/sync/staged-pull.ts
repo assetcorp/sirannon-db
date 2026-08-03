@@ -22,7 +22,7 @@ export interface ApplyStagedOptions {
 }
 
 /**
- * Writes pulled changes to the staging table in one transaction, so a device
+ * Writes pulled changes to the staging table in one transaction so that a device
  * holds an in-flight transaction on disk instead of in memory. Returns the
  * highest staged sequence; a commit here is what makes that sequence safe to
  * acknowledge, because the rows survive a crash and are applied on restart.
@@ -111,7 +111,7 @@ export interface StagedRecovery {
    * there is what tells a device it must migrate before this apply can
    * succeed. The caller must then retry the recovery, because the resume
    * watermark is past the transaction this apply left unapplied, so the
-   * server sends nothing that would prompt another attempt.
+   * server sends nothing that would prompt another try.
    */
   applyError: unknown | null
 }

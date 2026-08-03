@@ -1,12 +1,32 @@
+/// <reference path="./bun-sqlite.d.ts" />
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 
+/**
+ * @public
+ *
+ * Settings for the driver built on Bun's built-in SQLite.
+ */
 export interface BunSqliteOptions {
+  /**
+   * Milliseconds a statement waits for the write lock before it fails as busy. Default: 5000.
+   */
   busyTimeout?: number
 }
 
+/**
+ * @public
+ *
+ * Builds a driver that runs SQLite through `bun:sqlite`, which is built into the Bun runtime.
+ *
+ * It reads every integer as a BigInt and narrows the safe ones back, so a
+ * value beyond `Number.MAX_SAFE_INTEGER` survives the round trip.
+ *
+ * @param driverOptions - How long a statement waits for the write lock.
+ * @returns The driver, ready to pass to a `Sirannon` registry running under Bun.
+ */
 export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },

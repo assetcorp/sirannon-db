@@ -28,7 +28,7 @@ export interface PushLoopHooks {
  *
  * A failure backs off exponentially to the configured cap. A push the server
  * refuses with `MIGRATION_REQUIRED` reconciles migrations and clears the
- * backoff, so a device that fell behind the server schema recovers on its own
+ * backoff so that a device that fell behind the server schema recovers on its own
  * rather than retrying a refusal it cannot satisfy.
  */
 export class PushLoop {
@@ -58,7 +58,7 @@ export class PushLoop {
   }
 
   /**
-   * Empties the outbox before a snapshot replaces the database, so local work
+   * Empties the outbox before a snapshot replaces the database so that local work
    * reaches the server before the copy overwrites it. A schema refusal is
    * reconciled once; a device that still cannot push returns rather than
    * looping, leaving the snapshot to bring it back into line.

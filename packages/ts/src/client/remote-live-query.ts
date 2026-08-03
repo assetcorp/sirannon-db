@@ -2,6 +2,11 @@ import type { LiveQuery, LiveQueryState, LiveUpdate, ResultOp } from '../core/li
 import type { LiveHandlers, RemoteSubscription } from './types.js'
 import { RemoteError } from './types.js'
 
+/**
+ * @public
+ *
+ * A live query running against a remote server, which keeps its rows current as the tables behind it change.
+ */
 export class RemoteLiveQuery<T> implements LiveQuery<T> {
   private state: LiveQueryState<T> = { status: 'pending' }
   private rows: T[] = []
@@ -9,6 +14,7 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
   private subscription: RemoteSubscription | null = null
   private closed = false
 
+  /** @internal */
   static async open<T>(
     subscribe: (handlers: LiveHandlers) => Promise<RemoteSubscription>,
   ): Promise<RemoteLiveQuery<T>> {
@@ -28,10 +34,19 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
     return query
   }
 
+  /**
+   * Returns the rows the query holds right now.
+   */
   getState(): LiveQueryState<T> {
     return this.state
   }
 
+  /**
+   * Calls back on each update and returns a function that stops the listener.
+   *
+   * @param listener - Receives each update.
+   * @returns A function that removes the listener.
+   */
   subscribe(listener: (update: LiveUpdate<T>) => void): () => void {
     this.listeners.add(listener)
     return () => {
@@ -39,6 +54,9 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
     }
   }
 
+  /**
+   * Ends the query and releases its subscription.
+   */
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true

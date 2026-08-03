@@ -8,16 +8,21 @@ import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
 import { advanceStreamDigest } from './sync-verification.js'
 
+/**
+ * Serves first-sync requests from joining nodes by streaming schema, table pages, and a manifest.
+ *
+ * @internal
+ */
 export class SyncServer {
-  readonly activeSyncs = new Map<string, ActiveSyncSession>()
-  readonly syncAckWaiters = new Map<string, SyncAckWaiter>()
+  private readonly activeSyncs = new Map<string, ActiveSyncSession>()
+  private readonly syncAckWaiters = new Map<string, SyncAckWaiter>()
 
   constructor(private readonly engine: ReplicationEngine) {}
 
   private async rejectSyncRequest(fromPeerId: string, request: SyncRequest, error: string): Promise<void> {
     await this.engine.config.transport.sendSyncAck(
       fromPeerId,
-      this.engine.decorateSyncAck({
+      this.engine.decorate({
         requestId: request.requestId,
         joinerNodeId: request.joinerNodeId,
         table: '__schema__',
@@ -132,7 +137,7 @@ export class SyncServer {
     }
   }
 
-  abortSyncSession(requestId: string): void {
+  private abortSyncSession(requestId: string): void {
     const session = this.activeSyncs.get(requestId)
     if (!session) return
 
@@ -211,7 +216,7 @@ export class SyncServer {
   private async sendSyncBatchAndWaitForAck(peerId: string, batch: SyncBatch): Promise<SyncAck> {
     const ackPromise = this.waitForSyncAck(batch.requestId, batch.table, batch.batchIndex)
     try {
-      await this.engine.config.transport.sendSyncBatch(peerId, this.engine.decorateSyncBatch(batch))
+      await this.engine.config.transport.sendSyncBatch(peerId, this.engine.decorate(batch))
     } catch (err: unknown) {
       const key = `${batch.requestId}:${batch.table}:${batch.batchIndex}`
       const waiter = this.syncAckWaiters.get(key)
@@ -331,7 +336,7 @@ export class SyncServer {
 
     await engine.config.transport.sendSyncComplete(
       session.joinerNodeId,
-      engine.decorateSyncComplete({
+      engine.decorate({
         requestId: session.requestId,
         snapshotSeq: session.snapshotSeq,
         manifests,

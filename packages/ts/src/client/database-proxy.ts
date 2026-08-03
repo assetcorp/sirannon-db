@@ -20,7 +20,9 @@ const DEFAULT_LOAD_BATCH_SIZE = 1000
 export const READ_CONCERN_UNSUPPORTED_MESSAGE =
   'This transport does not carry a per-read concern to the server. Use the HTTP transport for a per-call readConcern, or set the client-wide readConcern that topology routing applies when choosing a node.'
 
-/** Options for {@link RemoteDatabase.loadAll}. */
+/** Options for {@link RemoteDatabase.loadAll}.
+ * @public
+ */
 export interface LoadAllOptions {
   /**
    * Rows per batch sent to the server. Each batch is one request, so it must
@@ -38,18 +40,39 @@ function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is Asy
 
 /**
  * Proxy for a remote sirannon-db database. Mirrors the core
- * {@link Database} query interface with async methods that send
+ * `Database` query interface with async methods that send
  * requests to the server via the configured transport.
+ *
+ * @public
  */
 export class RemoteDatabase {
   constructor(
+    /**
+     * Identifier of the database on the server.
+     */
     readonly id: string,
     private readonly transport: Transport,
     private readonly capabilities: ServerCapabilityCheck,
     private readonly onDispose?: () => void,
   ) {}
 
+  /**
+   * Sends a read to the server and returns its rows.
+   *
+   * @param sql - The statement to run. The server refuses it unless it accepts SQL.
+   * @param params - Values bound to the statement, named or positional.
+   * @param options - Read concern for this statement.
+   * @returns The rows the server returned.
+   */
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
+  /**
+   * Runs a registered read by name and returns its rows.
+   *
+   * @param operation - Reference to the registered read, which carries its argument and row types.
+   * @param args - Arguments the read takes.
+   * @param options - Read concern for this statement.
+   * @returns The rows the server returned.
+   */
   async query<Args, Row>(operation: OperationRef<Args, Row>, args: Args, options?: QueryOptions): Promise<Row[]>
   async query(
     operation: string | OperationRef<unknown, unknown>,
@@ -76,7 +99,22 @@ export class RemoteDatabase {
     throw new RemoteError('INVALID_ARGUMENT', READ_CONCERN_UNSUPPORTED_MESSAGE)
   }
 
+  /**
+   * Sends one write to the server.
+   *
+   * @param sql - The statement to run. The server refuses it unless it accepts SQL.
+   * @param params - Values bound to the statement, named or positional.
+   * @returns How many rows changed, and the last inserted row id.
+   */
   async execute(sql: string, params?: Params): Promise<ExecuteResponse>
+  /**
+   * Runs a registered write by name.
+   *
+   * @param operation - Reference to the registered write, which carries its argument type.
+   * @param args - Arguments the write takes.
+   * @param writeConcern - Acknowledgements the write waits for.
+   * @returns One result per statement the operation ran.
+   */
   async execute<Args>(
     operation: OperationRef<Args, unknown>,
     args: Args,
@@ -99,7 +137,21 @@ export class RemoteDatabase {
     return this.transport.execute(operation, params)
   }
 
+  /**
+   * Opens a live query on a registered read, which keeps its rows current as the tables behind it change.
+   *
+   * @param name - Name of the registered read.
+   * @param args - Arguments the read takes.
+   * @returns The live query, already subscribed.
+   */
   async live<T = Record<string, unknown>>(name: string, args?: OperationArguments): Promise<LiveQuery<T>>
+  /**
+   * Opens a live query on a registered read, which keeps its rows current as the tables behind it change.
+   *
+   * @param operation - Reference to the registered read, which carries its argument and row types.
+   * @param args - Arguments the read takes.
+   * @returns The live query, already subscribed.
+   */
   async live<Args, Row>(operation: OperationRef<Args, Row>, args: Args): Promise<LiveQuery<Row>>
   async live(
     operation: string | OperationRef<unknown, unknown>,
@@ -115,7 +167,7 @@ export class RemoteDatabase {
    * Execute multiple statements as a single atomic transaction.
    * Returns an array of results, one per statement.
    *
-   * The whole list travels in one request and commits or rolls back as a
+   * The whole list is sent in one request and commits or rolls back as a
    * unit, so the client is never in the loop between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
@@ -141,10 +193,10 @@ export class RemoteDatabase {
    * for you and paying the one fsyncing WAL checkpoint once, after the final
    * batch. The configured durability is restored after every batch, so an
    * import that stops partway never leaves the writer at the relaxed level.
-   * Prefer this over {@link load} for anything larger than a single request:
-   * it runs the finalize itself, so there is no checkpoint flag to forget.
+   * Prefer this over {@link RemoteDatabase.load} for anything larger than a single request:
+   * it finalises the load itself, so there is no checkpoint flag to forget.
    *
-   * Accepts a synchronous or asynchronous iterable of parameter sets, so rows
+   * Accepts a synchronous or asynchronous iterable of parameter sets so that rows
    * can stream from a file or the network without being held in memory at
    * once. Returns the total rows loaded and changes applied.
    *
@@ -208,8 +260,8 @@ export class RemoteDatabase {
   /**
    * Load one batch of rows through the same statement with writer durability
    * relaxed for the duration, then restored before this resolves. This is the
-   * low-level primitive; prefer {@link loadAll} for a dataset that spans more
-   * than one request, since it runs the finalize itself rather than relying on
+   * low-level primitive; prefer {@link RemoteDatabase.loadAll} for a dataset that spans more
+   * than one request, since it finalises the load itself rather than relying on
    * a `checkpoint` flag.
    *
    * Returns the total rows loaded and changes applied. When splitting a dataset
@@ -241,6 +293,11 @@ export class RemoteDatabase {
    * // Later:
    * sub.unsubscribe()
    * ```
+   *
+   * Begins a change subscription on a watched table.
+   *
+   * @param table - Name of the watched table.
+   * @returns A builder you narrow with a filter and then subscribe to.
    */
   on(table: string): RemoteSubscriptionBuilder {
     return new RemoteSubscriptionBuilderImpl(table, this.transport)

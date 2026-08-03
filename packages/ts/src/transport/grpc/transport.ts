@@ -1,4 +1,4 @@
-import type { ClientDuplexStream, Server, ServerDuplexStream } from '@grpc/grpc-js'
+import type { Server } from '@grpc/grpc-js'
 import type { HealthImplementation } from 'grpc-health-check'
 import { TransportError } from '../../replication/errors.js'
 import type {
@@ -28,56 +28,88 @@ import {
 import { forwardOverRpc } from './forward-rpc.js'
 import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
 import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
-import type {
-  AckHandler,
-  BatchHandler,
-  ClientPeerEntry,
-  ForwardHandler,
-  PeerConnectedHandler,
-  PeerDisconnectedHandler,
-  PeerStreamEntry,
-  SyncAckHandler,
-  SyncBatchHandler,
-  SyncCompleteHandler,
-  SyncRequestHandler,
+import {
+  type AckHandler,
+  type BatchHandler,
+  type ClientPeerEntry,
+  type ForwardHandler,
+  type PeerConnectedHandler,
+  type PeerDisconnectedHandler,
+  type PeerStreamEntry,
+  peerIdForServerStream,
+  replicateWriteStream,
+  type SyncAckHandler,
+  type SyncBatchHandler,
+  type SyncCompleteHandler,
+  type SyncRequestHandler,
+  syncWriteStream,
 } from './peer-streams.js'
 import { startServer } from './server-streams.js'
 import { writeWithBackpressure } from './stream-util.js'
 
+/**
+ * @public
+ *
+ * Replicates between nodes over gRPC with mutual TLS, which is the transport production clusters use.
+ */
 export class GrpcReplicationTransport implements ReplicationTransport {
+  /** @internal */
   readonly options: GrpcReplicationOptions
+  /** @internal */
   localNodeId = ''
+  /** @internal */
   localRole: TopologyRole = 'replica'
+  /** @internal */
   localGroupId: string | undefined
+  /** @internal */
   localPrimaryTerm: bigint | undefined
+  /** @internal */
   localProtocolVersion: string | undefined
+  /** @internal */
   connected = false
+  /** @internal */
   server: Server | null = null
+  /** @internal */
   boundPort = 0
+  /** @internal */
   healthImpl: HealthImplementation | null = null
 
+  /** @internal */
   readonly connectedPeers = new Map<string, NodeInfo>()
+  /** @internal */
   readonly serverPeerStreams = new Map<string, PeerStreamEntry>()
+  /** @internal */
   readonly clientPeerStreams = new Map<string, ClientPeerEntry>()
 
+  /** @internal */
   batchHandler: BatchHandler | null = null
+  /** @internal */
   ackHandler: AckHandler | null = null
+  /** @internal */
   forwardHandler: ForwardHandler | null = null
+  /** @internal */
   peerConnectedHandler: PeerConnectedHandler | null = null
+  /** @internal */
   peerDisconnectedHandler: PeerDisconnectedHandler | null = null
+  /** @internal */
   syncRequestHandler: SyncRequestHandler | null = null
+  /** @internal */
   syncBatchHandler: SyncBatchHandler | null = null
+  /** @internal */
   syncCompleteHandler: SyncCompleteHandler | null = null
+  /** @internal */
   syncAckHandler: SyncAckHandler | null = null
 
   constructor(options: GrpcReplicationOptions = {}) {
     this.options = options
   }
 
+  /** Returns the port the gRPC server bound to, which is the resolved port when you asked for 0. */
   getPort(): number {
     return this.boundPort
   }
 
+  /** Connects to the configured peers and announces this node. */
   async connect(localNodeId: string, config: TransportConfig): Promise<void> {
     if (this.connected) {
       throw new TransportError('Transport is already connected')
@@ -104,6 +136,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
   }
 
+  /** Closes every peer connection. */
   async disconnect(): Promise<void> {
     if (!this.connected) return
     this.connected = false
@@ -150,6 +183,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
   }
 
+  /** Sends one batch of changes to one peer. */
   async send(peerId: string, batch: ReplicationBatch): Promise<void> {
     this.ensureConnected()
     const stream = this.getReplicateWriteStream(peerId)
@@ -160,6 +194,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Sends one batch of changes to every connected peer. */
   async broadcast(batch: ReplicationBatch): Promise<void> {
     this.ensureConnected()
     const msg: ReplicationMessage = { batch: toBatchPayload(batch) }
@@ -173,6 +208,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await Promise.all(promises)
   }
 
+  /** Confirms to a peer that this node applied one of its batches. */
   async sendAck(peerId: string, ack: ReplicationAck): Promise<void> {
     this.ensureConnected()
     const stream = this.getReplicateWriteStream(peerId)
@@ -183,6 +219,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Sends a write to the primary and waits for its result. */
   async forward(peerId: string, request: ForwardedTransaction): Promise<ForwardedTransactionResult> {
     this.ensureConnected()
     const clientEntry = this.clientPeerStreams.get(peerId)
@@ -192,6 +229,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return forwardOverRpc(clientEntry, request, this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS)
   }
 
+  /** Asks a peer to stream a full copy of the database. */
   async requestSync(peerId: string, request: SyncRequest): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -202,6 +240,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Sends one page of first-sync table data. */
   async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -212,6 +251,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Tells a joining node that first sync has finished, and sends the manifests to verify it. */
   async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -222,6 +262,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Confirms to the source that a joining node stored one first-sync page. */
   async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -232,47 +273,57 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
+  /** Registers the handler that applies incoming change batches. */
   onBatchReceived(handler: BatchHandler): void {
     this.batchHandler = handler
   }
 
+  /** Registers the handler that records incoming acknowledgements. */
   onAckReceived(handler: AckHandler): void {
     this.ackHandler = handler
   }
 
+  /** Registers the handler that runs a write a replica forwarded. */
   onForwardReceived(handler: ForwardHandler): void {
     this.forwardHandler = handler
   }
 
+  /** Registers the handler that serves a first-sync request. */
   onSyncRequested(handler: SyncRequestHandler): void {
     this.syncRequestHandler = handler
   }
 
+  /** Registers the handler that stores an incoming first-sync page. */
   onSyncBatchReceived(handler: SyncBatchHandler): void {
     this.syncBatchHandler = handler
   }
 
+  /** Registers the handler that finishes first sync and verifies the manifests. */
   onSyncCompleteReceived(handler: SyncCompleteHandler): void {
     this.syncCompleteHandler = handler
   }
 
+  /** Registers the handler that records first-sync page acknowledgements. */
   onSyncAckReceived(handler: SyncAckHandler): void {
     this.syncAckHandler = handler
   }
 
+  /** Registers the handler that runs when a peer connects. */
   onPeerConnected(handler: PeerConnectedHandler): void {
     this.peerConnectedHandler = handler
   }
 
+  /** Registers the handler that runs when a peer disconnects. */
   onPeerDisconnected(handler: PeerDisconnectedHandler): void {
     this.peerDisconnectedHandler = handler
   }
 
+  /** Returns every connected peer, keyed by identifier. */
   peers(): ReadonlyMap<string, NodeInfo> {
     return this.connectedPeers
   }
 
-  extractTlsCN(call: { getAuthContext(): unknown }): string | null {
+  private extractTlsCN(call: { getAuthContext(): unknown }): string | null {
     if (this.options.insecure) return null
     if (!this.options.tlsCaCert) return null
 
@@ -287,6 +338,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return certCN
   }
 
+  /** @internal */
   validateTlsIdentity(call: { getAuthContext(): unknown }, claimedNodeId: string): boolean {
     if (this.options.insecure) return true
     if (!this.options.tlsCaCert) return true
@@ -295,6 +347,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return cn === claimedNodeId
   }
 
+  /** @internal */
   resolveForwardPeerId(call: { getPeer(): string; getAuthContext(): unknown }): string | null {
     const cn = this.extractTlsCN(call)
     if (cn) {
@@ -306,16 +359,9 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     const peerAddr = call.getPeer()
     for (const [, entry] of this.serverPeerStreams) {
       if (entry.replicateStream?.getPeer() === peerAddr) {
-        const streamPeerId = this.findPeerIdForStream(entry)
+        const streamPeerId = peerIdForServerStream(this.serverPeerStreams, entry)
         if (streamPeerId) return streamPeerId
       }
-    }
-    return null
-  }
-
-  private findPeerIdForStream(entry: PeerStreamEntry): string | null {
-    for (const [peerId, ps] of this.serverPeerStreams) {
-      if (ps === entry) return peerId
     }
     return null
   }
@@ -326,30 +372,11 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
   }
 
-  private getReplicateWriteStream(
-    peerId: string,
-  ):
-    | ServerDuplexStream<ReplicationMessage, ReplicationMessage>
-    | ClientDuplexStream<ReplicationMessage, ReplicationMessage>
-    | null {
-    const serverStream = this.serverPeerStreams.get(peerId)
-    if (serverStream?.replicateStream) return serverStream.replicateStream
-
-    const clientEntry = this.clientPeerStreams.get(peerId)
-    if (clientEntry?.replicateStream) return clientEntry.replicateStream
-
-    return null
+  private getReplicateWriteStream(peerId: string) {
+    return replicateWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
   }
 
-  private getSyncWriteStream(
-    peerId: string,
-  ): ServerDuplexStream<SyncMessage, SyncMessage> | ClientDuplexStream<SyncMessage, SyncMessage> | null {
-    const serverStream = this.serverPeerStreams.get(peerId)
-    if (serverStream?.syncStream) return serverStream.syncStream
-
-    const clientEntry = this.clientPeerStreams.get(peerId)
-    if (clientEntry?.syncStream) return clientEntry.syncStream
-
-    return null
+  private getSyncWriteStream(peerId: string) {
+    return syncWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
   }
 }

@@ -10,27 +10,57 @@ import { RemoteError } from './types.js'
 
 const DEFAULT_SNAPSHOT_PAGE_ROWS = 500
 
+/**
+ * How far a snapshot download has progressed, for the table in flight and overall.
+ *
+ * @public
+ */
 export interface SnapshotProgress {
+  /** Table the download is reading right now. */
   table: string
+  /** Rows loaded from that table so far. */
   tableLoadedRows: number
+  /** Rows that table holds in total. */
   tableTotalRows: number
+  /** Rows loaded across every table so far. */
   loadedRows: number
+  /** Rows the whole snapshot holds. */
   totalRows: number
 }
 
+/**
+ * Where a snapshot comes from and how it is read.
+ *
+ * @public
+ */
 export interface SnapshotDownloadOptions {
+  /** Address of the server serving the snapshot. */
   url: string
+  /** Identifier of the database to copy. */
   databaseId: string
+  /** Headers attached to each snapshot request. */
   headers?: Record<string, string>
+  /** Rows requested per page. Default: 500. */
   pageSize?: number
+  /** Milliseconds a single page request may take. */
   requestTimeoutMs?: number
+  /** Called as each page arrives. */
   onProgress?: (progress: SnapshotProgress) => void
 }
 
+/**
+ * What one snapshot download produced.
+ *
+ * @public
+ */
 export interface SnapshotDownloadResult {
+  /** Change-log position the device resumes its subscription from. */
   startSeq: bigint
+  /** Sequence space that position belongs to. */
   epoch: string
+  /** Tables the snapshot carried. */
   tables: string[]
+  /** Rows the download wrote. */
   loadedRows: number
 }
 
@@ -90,6 +120,15 @@ function validatePage(raw: unknown): SnapshotPageResponse {
   return record as SnapshotPageResponse
 }
 
+/**
+ * @public
+ *
+ * Copies a database from a server into a local one, replacing what the local database holds.
+ *
+ * @param port - The local database the snapshot is written into.
+ * @param options - Where the snapshot comes from and how it is read.
+ * @returns The change-log position and sequence space to resume from, the tables copied, and the rows written.
+ */
 export async function downloadDatabaseSnapshot(
   port: DeviceSyncPort,
   options: SnapshotDownloadOptions,

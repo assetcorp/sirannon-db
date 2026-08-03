@@ -124,8 +124,8 @@ describe('device sync port', () => {
       await backdate.run()
     })
     const tracker = (
-      database as unknown as { cdc: { changeTracker: { cleanup(conn: unknown): Promise<number> } | null } }
-    ).cdc.changeTracker
+      database as unknown as { runtime: { cdc: { changeTracker: { cleanup(conn: unknown): Promise<number> } | null } } }
+    ).runtime.cdc.changeTracker
     expect(tracker).not.toBeNull()
     if (!tracker) return
     await database.runCdcMaintenance(writer => tracker.cleanup(writer))

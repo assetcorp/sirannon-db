@@ -9,6 +9,11 @@ import { SyncRecovery } from './sync-recovery.js'
 import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
+/**
+ * Drives a joining node through first sync and the catch-up that follows it.
+ *
+ * @internal
+ */
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
   private readonly recovery: SyncRecovery
@@ -66,7 +71,7 @@ export class SyncJoiner {
       await engine.log.setSyncMeta('syncing', undefined, sourcePeerId, requestId)
       await engine.config.transport.requestSync(
         sourcePeerId,
-        engine.decorateSyncRequest({
+        engine.decorate({
           requestId,
           joinerNodeId: engine.nodeId,
           completedTables,
@@ -286,7 +291,7 @@ export class SyncJoiner {
       engine.syncState.snapshotSeq = complete.snapshotSeq
       await engine.log.setSyncMeta('catching-up', complete.snapshotSeq)
 
-      engine.startSenderLoop()
+      engine.senderLoop.start()
       this.startCatchUpCheck()
     } catch {
       try {
@@ -343,7 +348,7 @@ export class SyncJoiner {
     }, engine.batchIntervalMs * 2)
   }
 
-  stopCatchUpCheck(): void {
+  private stopCatchUpCheck(): void {
     if (this.catchUpCheckTimer) {
       clearInterval(this.catchUpCheckTimer)
       this.catchUpCheckTimer = null
@@ -373,7 +378,7 @@ export class SyncJoiner {
 
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     await delayAckIfConfigured(this.engine)
-    await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorateSyncAck(ack))
+    await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorate(ack))
   }
 
   private async finishCatchUpAsReady(): Promise<void> {

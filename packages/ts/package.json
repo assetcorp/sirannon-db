@@ -31,6 +31,8 @@
     "build": "rm -rf dist && tsup",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
+    "check:api": "node scripts/assert-api-reports.mjs",
+    "api:update": "node scripts/assert-api-reports.mjs --update",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
@@ -56,6 +58,7 @@
       "import": "./dist/driver/node.mjs"
     },
     "./driver/bun": {
+      "types": "./dist/driver/bun.d.ts",
       "import": "./dist/driver/bun.mjs"
     },
     "./driver/wa-sqlite": {
@@ -63,6 +66,7 @@
       "import": "./dist/driver/wa-sqlite.mjs"
     },
     "./driver/expo": {
+      "types": "./dist/driver/expo.d.ts",
       "import": "./dist/driver/expo.mjs"
     },
     "./file-migrations": {
@@ -177,6 +181,7 @@
   "devDependencies": {
     "@bufbuild/protobuf": "2.11.0",
     "@grpc/grpc-js": "1.14.4",
+    "@microsoft/api-extractor": "7.58.12",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "26.1.2",
     "@types/react": "19.2.15",
@@ -184,6 +189,7 @@
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "13.0.2",
     "etcd3": "1.1.2",
+    "expo-sqlite": "55.0.10",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "jsdom": "29.1.1",

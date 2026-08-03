@@ -12,7 +12,7 @@ import {
   tablePkColumns,
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
-import { pollChanges, readSinceOneTable, readSinceTables } from './change-log-reader.js'
+import { pollChanges, readSinceTables } from './change-log-reader.js'
 import { StatementCache } from './statement-cache.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
@@ -21,6 +21,13 @@ const DEFAULT_RETENTION_MS = 3_600_000
 const DEFAULT_POLL_BATCH_SIZE = 1000
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
+/**
+ * Records every change to the tables you watch so that subscribers and replication can read them in order.
+ *
+ * Construct one, watch the tables you want captured, and pass it to a replication engine or leave it to the database that owns it.
+ *
+ * @public
+ */
 export class ChangeTracker {
   private readonly watched = new Map<string, WatchedTableInfo>()
   private lastSeq = 0n
@@ -42,6 +49,12 @@ export class ChangeTracker {
     this.assertIdentifier(this.changesTable, 'changes table name')
   }
 
+  /**
+   * Starts recording changes to a table by installing its change-capture triggers.
+   *
+   * @param conn - Writer connection the triggers are created on.
+   * @param table - Name of the table to watch.
+   */
   async watch(conn: SQLiteConnection, table: string): Promise<void> {
     this.assertIdentifier(table, 'table name')
     if (isReservedIdentifier(table)) {
@@ -77,6 +90,12 @@ export class ChangeTracker {
     this.watchedTablesCache = null
   }
 
+  /**
+   * Stops recording changes to a table and drops its triggers.
+   *
+   * @param conn - Writer connection the triggers are dropped from.
+   * @param table - Name of the table to stop watching.
+   */
   async unwatch(conn: SQLiteConnection, table: string): Promise<void> {
     if (!this.watched.has(table)) {
       return
@@ -111,6 +130,8 @@ export class ChangeTracker {
    *   `conn`. The cached column list is updated on success.
    * - Any other error (driver failure, identifier validation failure) is
    *   rethrown so the caller's transaction can roll back deterministically.
+   *
+   * @internal
    */
   async refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void> {
     const tables = Array.from(this.watched.keys())
@@ -163,6 +184,8 @@ export class ChangeTracker {
    * re-installed triggers compiled against the new schema. Those triggers
    * are dropped here so the recreated table starts with a clean slate and
    * the caller must explicitly `watch` it again.
+   *
+   * @internal
    */
   async pruneDroppedTables(conn: SQLiteConnection, tables: readonly string[]): Promise<void> {
     let mutated = false
@@ -179,6 +202,7 @@ export class ChangeTracker {
     }
   }
 
+  /** @internal */
   async poll(conn: SQLiteConnection): Promise<ChangeEvent[]> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)
@@ -200,37 +224,21 @@ export class ChangeTracker {
     return result.events
   }
 
+  /** @internal */
   get pollEndedAtTxBoundary(): boolean {
     return this.lastPollAtTxBoundary
   }
 
-  /** The highest seq already polled; live subscribers receive events beyond it. */
+  /**
+   * The highest seq already polled; live subscribers receive events beyond it.
+   *
+   * @internal
+   */
   get cursor(): bigint {
     return this.lastSeq
   }
 
-  /**
-   * Reads retained changes for one table with seq in `(afterSeq, upToSeq]`,
-   * ordered ascending and capped at `limit`. Used to replay history to a
-   * resuming subscriber without disturbing the shared poll cursor.
-   */
-  async readSince(
-    conn: SQLiteConnection,
-    table: string,
-    afterSeq: bigint,
-    upToSeq: bigint,
-    limit: number,
-  ): Promise<ChangeEvent[]> {
-    if (!this.changesTableReady) {
-      await this.detectChangesTable(conn)
-      if (!this.changesTableReady) {
-        return []
-      }
-    }
-
-    return readSinceOneTable(conn, this.stmtCache, this.changesTable, table, afterSeq, upToSeq, limit)
-  }
-
+  /** @internal */
   async readSinceTables(
     conn: SQLiteConnection,
     tables: readonly string[],
@@ -249,7 +257,11 @@ export class ChangeTracker {
     return readSinceTables(conn, this.stmtCache, this.changesTable, tables, afterSeq, upToSeq, limit)
   }
 
-  /** The lowest retained seq, or `null` when the change log is empty. */
+  /**
+   * The lowest retained seq, or `null` when the change log is empty.
+   *
+   * @internal
+   */
   async getMinSeq(conn: SQLiteConnection): Promise<bigint | null> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)
@@ -267,6 +279,7 @@ export class ChangeTracker {
     return typeof seq === 'bigint' ? seq : BigInt(String(seq))
   }
 
+  /** @internal */
   async advanceToLatest(conn: SQLiteConnection): Promise<void> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)
@@ -281,6 +294,7 @@ export class ChangeTracker {
     }
   }
 
+  /** @internal */
   async cleanup(conn: SQLiteConnection): Promise<number> {
     if (!this.changesTableReady) {
       await this.detectChangesTable(conn)
@@ -307,14 +321,17 @@ export class ChangeTracker {
     return result.changes
   }
 
+  /** @internal */
   setPruneBoundary(seq: bigint): void {
     this.pruneBoundary = seq
   }
 
+  /** @internal */
   clearPruneBoundary(): void {
     this.pruneBoundary = null
   }
 
+  /** @internal */
   get watchedTables(): ReadonlySet<string> {
     if (!this.watchedTablesCache) {
       this.watchedTablesCache = new Set(this.watched.keys())

@@ -7,11 +7,11 @@ import type { ChangeEvent } from '../../types.js'
 import { testDriver } from '../helpers/test-driver.js'
 
 interface TrackerInternals {
-  cdc: { changeTracker: { watchedTables: ReadonlySet<string> } | null }
+  runtime: { cdc: { changeTracker: { watchedTables: ReadonlySet<string> } | null } }
 }
 
 interface TrackerRefreshInternals {
-  cdc: { changeTracker: { refreshAllTriggersUsingConnection: unknown } }
+  runtime: { cdc: { changeTracker: { refreshAllTriggersUsingConnection: unknown } } }
 }
 
 const fixture: { tempDir: string; dbs: Database[] } = { tempDir: '', dbs: [] }
@@ -111,11 +111,11 @@ describe('Database CDC ALTER/DROP refresh', () => {
       const db = await createDb()
       await db.watch('foo')
       const internals = db as unknown as TrackerInternals
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
 
       await db.execute('DROP TABLE foo')
 
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(false)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(false)
     })
   })
 
@@ -124,7 +124,7 @@ describe('Database CDC ALTER/DROP refresh', () => {
       const db = await createDb()
       await db.watch('foo')
       const internals = db as unknown as TrackerInternals
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
 
       const intentional = new Error('rollback drop')
       await expect(
@@ -134,7 +134,7 @@ describe('Database CDC ALTER/DROP refresh', () => {
         }),
       ).rejects.toBe(intentional)
 
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
 
       await db.execute("INSERT INTO foo (id, name) VALUES (1, 'alice')")
       const events = await collectEvents(db, 'foo', 1)
@@ -146,13 +146,13 @@ describe('Database CDC ALTER/DROP refresh', () => {
       const db = await createDb()
       await db.watch('foo')
       const internals = db as unknown as TrackerInternals
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
 
       await db.transaction(async tx => {
         await tx.execute('DROP TABLE foo')
       })
 
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(false)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(false)
     })
   })
 
@@ -166,8 +166,8 @@ describe('Database CDC ALTER/DROP refresh', () => {
       await db.execute('DROP TABLE other')
 
       const internals = db as unknown as TrackerInternals
-      expect(internals.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
-      expect(internals.cdc.changeTracker?.watchedTables.size).toBe(1)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.has('foo')).toBe(true)
+      expect(internals.runtime.cdc.changeTracker?.watchedTables.size).toBe(1)
     })
   })
 
@@ -177,7 +177,7 @@ describe('Database CDC ALTER/DROP refresh', () => {
       await db.watch('foo')
 
       let refreshCount = 0
-      const tracker = (db as unknown as TrackerRefreshInternals).cdc.changeTracker
+      const tracker = (db as unknown as TrackerRefreshInternals).runtime.cdc.changeTracker
       const original = tracker.refreshAllTriggersUsingConnection
       tracker.refreshAllTriggersUsingConnection = async (...args: unknown[]) => {
         refreshCount++
@@ -198,7 +198,7 @@ describe('Database CDC ALTER/DROP refresh', () => {
       await expect(fresh.execute('ALTER TABLE foo ADD COLUMN bar TEXT')).resolves.toBeTruthy()
 
       const internals = fresh as unknown as TrackerInternals
-      expect(internals.cdc.changeTracker).toBeNull()
+      expect(internals.runtime.cdc.changeTracker).toBeNull()
     })
   })
 
@@ -234,7 +234,7 @@ describe('Database CDC ALTER/DROP refresh', () => {
       await db.watch('foo')
 
       let refreshCount = 0
-      const tracker = (db as unknown as TrackerRefreshInternals).cdc.changeTracker
+      const tracker = (db as unknown as TrackerRefreshInternals).runtime.cdc.changeTracker
       const original = tracker.refreshAllTriggersUsingConnection
       tracker.refreshAllTriggersUsingConnection = async (...args: unknown[]) => {
         refreshCount++

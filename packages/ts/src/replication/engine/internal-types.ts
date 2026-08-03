@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import type { SyncAck } from '../types.js'
+import type { SyncAck, SyncState } from '../types.js'
 import type { TableStreamDigest } from './sync-verification.js'
 
 export interface ActiveSyncSession {
@@ -20,4 +20,16 @@ export interface ActiveSyncSession {
 export interface SyncAckWaiter {
   resolve: (ack: SyncAck) => void
   timer: ReturnType<typeof setTimeout>
+}
+
+export function initialSyncState(): SyncState {
+  return {
+    phase: 'ready',
+    sourcePeerId: null,
+    snapshotSeq: null,
+    completedTables: [],
+    totalTables: 0,
+    startedAt: null,
+    error: null,
+  }
 }

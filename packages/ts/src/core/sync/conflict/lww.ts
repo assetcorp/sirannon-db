@@ -14,8 +14,16 @@ import type { ConflictContext, ConflictResolution, ConflictResolver } from '../t
  * resolution without coordination. This is the default resolver and the
  * fallback used by PrimaryWinsResolver and FieldMergeResolver when they
  * cannot make a more specific decision.
+ *
+ * @public
  */
 export class LWWResolver implements ConflictResolver {
+  /**
+   * Takes the incoming row when its stamp is higher, and keeps the local row otherwise.
+   *
+   * @param ctx - The local and incoming versions of one row.
+   * @returns Which version to write.
+   */
   resolve(ctx: ConflictContext): ConflictResolution {
     if (ctx.remoteChange.operation === 'delete') {
       return { action: 'accept_remote' }

@@ -6,9 +6,16 @@ import type { Params, QueryOptions } from '../../core/types.js'
 import { ReplicationError } from '../errors.js'
 import type { ForwardedTransactionResult } from '../types.js'
 import { DDL_PREFIX_RE, extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
+import { resolveWriteConcern, waitForWriteConcern } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { ReplicationTransaction, type ReplicationTransactionHooks } from './replication-transaction.js'
+import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
+/**
+ * Runs a statement on the local node and records the resulting changes in the replication log.
+ *
+ * @internal
+ */
 export class LocalExecutor {
   /**
    * Serialises every `executeTransactionLocally` call against itself.
@@ -67,12 +74,12 @@ export class LocalExecutor {
       if (droppedTable !== null && engine.tracker) {
         await engine.tracker.pruneDroppedTables(engine.writerConn, [droppedTable])
       }
-      await engine.refreshTriggersAfterDdl()
+      await refreshTriggersAfterDdl(engine)
     }
 
-    const writeConcern = engine.resolveWriteConcern(options?.writeConcern)
+    const writeConcern = resolveWriteConcern(engine, options?.writeConcern)
     if (writeConcern) {
-      await engine.waitForWriteConcern(newSeq, writeConcern)
+      await waitForWriteConcern(engine, newSeq, writeConcern)
     }
 
     return result
@@ -150,7 +157,7 @@ export class LocalExecutor {
       if (droppedTables.length > 0 && engine.tracker) {
         await engine.tracker.pruneDroppedTables(engine.writerConn, droppedTables)
       }
-      await engine.refreshTriggersAfterDdl()
+      await refreshTriggersAfterDdl(engine)
     }
 
     return { results, requestId }
@@ -214,12 +221,12 @@ export class LocalExecutor {
       if (hooks.droppedTables.length > 0 && engine.tracker) {
         await engine.tracker.pruneDroppedTables(engine.writerConn, hooks.droppedTables)
       }
-      await engine.refreshTriggersAfterDdl()
+      await refreshTriggersAfterDdl(engine)
     }
 
-    const writeConcern = engine.resolveWriteConcern(options?.writeConcern)
+    const writeConcern = resolveWriteConcern(engine, options?.writeConcern)
     if (writeConcern) {
-      await engine.waitForWriteConcern(newSeq, writeConcern)
+      await waitForWriteConcern(engine, newSeq, writeConcern)
     }
 
     return userResult

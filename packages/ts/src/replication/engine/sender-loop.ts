@@ -1,5 +1,10 @@
 import type { ReplicationEngine } from './engine.js'
 
+/**
+ * Batches locally recorded changes and pushes them to the peers the topology accepts.
+ *
+ * @internal
+ */
 export class SenderLoop {
   private senderTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -67,7 +72,7 @@ export class SenderLoop {
       const fromSeq = peerState?.lastSentSeq ?? engine.lastSentSeq
       const rawBatch = await engine.log.readBatch(fromSeq, engine.batchSize)
       if (!rawBatch) continue
-      const batch = engine.decorateBatch(rawBatch)
+      const batch = engine.decorate(rawBatch)
 
       const previousSeq = peerState?.lastSentSeq ?? 0n
       if (peerState) {

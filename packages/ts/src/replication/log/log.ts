@@ -19,6 +19,8 @@ import { StateOps } from './state.js'
  * manifests), SchemaOps (replication-table bootstrap, schema dump, wipe),
  * StateOps (sequence and sync metadata), and PkResolver (cached primary-key
  * lookups).
+ *
+ * @internal
  */
 export class ReplicationLog {
   private readonly pkResolver: PkResolver
@@ -50,7 +52,7 @@ export class ReplicationLog {
       changesTable,
     )
     this.stampOps = new StampOps(localNodeId, hlc, changesTable)
-    this.dump = new DumpOps(conn, localNodeId, hlc, this.pkResolver)
+    this.dump = new DumpOps(conn, this.pkResolver)
   }
 
   ensureReplicationTables(): Promise<void> {
@@ -106,10 +108,6 @@ export class ReplicationLog {
 
   unregisterActiveSyncSeq(seq: bigint): void {
     this.state.unregisterActiveSyncSeq(seq)
-  }
-
-  dumpTable(table: string, batchSize: number): AsyncGenerator<ReplicationBatch> {
-    return this.dump.dumpTable(table, batchSize)
   }
 
   dumpTableOnConnection(

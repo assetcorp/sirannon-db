@@ -4,6 +4,11 @@ import type { ChangesRequest, ChangesResponse } from '../server/sync-protocol.js
 import { postJson } from './http-json.js'
 import { RemoteError } from './types.js'
 
+/**
+ * Encodes a device-sync batch into the shape the changes route accepts.
+ *
+ * @internal
+ */
 export function encodeSyncBatch(batch: ReplicationBatch): ChangesRequest['batch'] {
   return {
     sourceNodeId: batch.sourceNodeId,
@@ -26,6 +31,11 @@ export function encodeSyncBatch(batch: ReplicationBatch): ChangesRequest['batch'
   }
 }
 
+/**
+ * Sends a device-sync batch to the server and returns what the server applied.
+ *
+ * @internal
+ */
 export async function pushSyncBatch(
   baseUrl: string,
   databaseId: string,

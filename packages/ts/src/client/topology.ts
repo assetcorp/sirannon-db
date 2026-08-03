@@ -8,12 +8,35 @@ import { unrefTimer } from './http-json.js'
 import { TopologyAwareTransport } from './topology-transport.js'
 import { RemoteError, type Transport } from './types.js'
 
+/**
+ * @public
+ *
+ * Which nodes the client holds, how it finds the rest, and where it sends each read.
+ */
 export interface TopologyAwareClientOptions extends ClientOptions {
+  /**
+   * Nodes the client starts from when it discovers the group through the coordinator.
+   */
   endpoints?: string[]
+  /**
+   * Address of the primary, for a group you list by hand.
+   */
   primary?: string
+  /**
+   * Addresses of the replicas, for a group you list by hand.
+   */
   replicas?: string[]
+  /**
+   * Where reads go. Default: 'primary'.
+   */
   readPreference?: 'primary' | 'replica' | 'nearest'
+  /**
+   * Whether the client uses the nodes you listed or asks the group for them. Default: 'static'.
+   */
   discovery?: 'static' | 'coordinator'
+  /**
+   * Currency every read requires, which the client uses to choose a node.
+   */
   readConcern?: ReadConcernLevel
 }
 
@@ -27,6 +50,11 @@ const CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS = 2_000
 const LATENCY_TTL_MS = 60_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 
+/**
+ * @public
+ *
+ * Connects to a replication group rather than one server: it routes each read to a node that meets its read concern, and each write to the primary.
+ */
 export class TopologyAwareClient extends DatabaseClient implements TopologyRouting {
   private readonly baseUrl: string
   private readonly primaryUrl: string | undefined
@@ -53,6 +81,12 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     this.baseUrl = this.primaryUrl ?? this.replicaUrls[0] ?? this.starterEndpoints[0] ?? ''
   }
 
+  /**
+   * Builds the routing transport a database's requests travel over.
+   *
+   * @param databaseId - Identifier of the database.
+   * @returns A transport that picks a node per request.
+   */
   protected createTransport(databaseId: string): Transport {
     const transport = new TopologyAwareTransport(databaseId, this, closing =>
       this.unregisterTopologyTransport(databaseId, closing),
@@ -61,14 +95,22 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     return transport
   }
 
+  /** @internal */
   _createTransportForEndpoint(url: string, databaseId: string): Transport {
     return createEndpointTransport(this.settings, url, databaseId)
   }
 
+  /**
+   * Returns the address writes are sent to, which is the current primary.
+   *
+   * @param databaseId - Identifier of the database.
+   * @returns Address of the node that accepts writes.
+   */
   protected async resolveServerUrl(databaseId: string): Promise<string> {
     return this._getWriteEndpoint(databaseId)
   }
 
+  /** @internal */
   async _getReadEndpoint(databaseId?: string, readConcern?: ReadConcernLevel): Promise<string> {
     if (this.discovery === 'coordinator' && databaseId) {
       return this.routedReadEndpoint(databaseId, readConcern)
@@ -122,6 +164,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     throw new RemoteError('ROUTING_ERROR', 'No usable read endpoint is available')
   }
 
+  /** @internal */
   async _getWriteEndpoint(databaseId?: string): Promise<string> {
     if (this.discovery === 'coordinator' && databaseId) {
       const routing = await this.ensureClusterRouting(databaseId)
@@ -133,18 +176,22 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     return this.primaryUrl ?? this.baseUrl
   }
 
+  /** @internal */
   _getReadConcern(): ReadConcernLevel | undefined {
     return this.readConcern
   }
 
+  /** @internal */
   _usesCoordinatorDiscovery(): boolean {
     return this.discovery === 'coordinator'
   }
 
+  /** @internal */
   _removeReplica(url: string): void {
     this.removedReplicas.add(url)
   }
 
+  /** @internal */
   async _refreshClusterRouting(databaseId: string): Promise<void> {
     const encodedId = encodeURIComponent(databaseId)
     for (const endpoint of this.clusterDiscoveryCandidates(databaseId)) {

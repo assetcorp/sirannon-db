@@ -24,6 +24,11 @@ import type {
   SyncRequestPayload,
 } from './generated/replication.js'
 
+/**
+ * Encodes one SQLite value into the gRPC column representation.
+ *
+ * @internal
+ */
 export function toColumnValue(value: unknown): ColumnValue {
   if (value === null || value === undefined) {
     return { nullValue: true }
@@ -51,6 +56,11 @@ export function toColumnValue(value: unknown): ColumnValue {
   )
 }
 
+/**
+ * Decodes one gRPC column value back into a SQLite value.
+ *
+ * @internal
+ */
 export function fromColumnValue(cv: ColumnValue): unknown {
   if (cv.nullValue !== undefined) return null
   if (cv.stringValue !== undefined) return cv.stringValue

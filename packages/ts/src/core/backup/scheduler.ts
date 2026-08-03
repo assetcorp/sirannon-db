@@ -89,6 +89,11 @@ function runDirect(op: () => Promise<void>): Promise<void> {
   return op()
 }
 
+/**
+ * @public
+ *
+ * Repeats a database backup on a cron schedule and keeps a bounded number of files.
+ */
 export class BackupScheduler {
   private readonly manager: BackupManager
 
@@ -96,6 +101,14 @@ export class BackupScheduler {
     this.manager = manager ?? new BackupManager()
   }
 
+  /**
+   * Starts repeating backups and returns a function that stops them.
+   *
+   * @param conn - Connection to the database being copied.
+   * @param options - Cron expression, destination directory, retention, time zone, and failure callback.
+   * @param runExclusive - Runs each copy with the database's writer held so that no write commits mid-copy.
+   * @returns A function that stops the schedule.
+   */
   schedule(conn: SQLiteConnection, options: BackupScheduleOptions, runExclusive: RunExclusive = runDirect): () => void {
     const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, onError, timezone } = options
 

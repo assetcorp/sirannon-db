@@ -53,6 +53,9 @@ jobs:
       - name: Assert a consumer of the published types compiles
         run: pnpm check:types
 
+      - name: Assert the published API is documented and its reports are current
+        run: pnpm check:api
+
       - name: Test
         run: pnpm test
 

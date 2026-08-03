@@ -31,8 +31,11 @@ const DEFAULT_REQUEST_TIMEOUT = 30_000
  * Connections are established lazily on first use and will
  * auto-reconnect (with subscription restoration) when
  * `autoReconnect` is enabled.
+ *
+ * @public
  */
 export class WebSocketTransport implements Transport {
+  /** @internal */
   readonly carriesReadConcern = true
   private ws: ClientWebSocket | null = null
   private readonly url: string
@@ -74,6 +77,7 @@ export class WebSocketTransport implements Transport {
     this.pending = new PendingRequests(this.requestTimeout)
   }
 
+  /** Sends a read and returns its rows. */
   async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -87,6 +91,7 @@ export class WebSocketTransport implements Transport {
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
+  /** Sends one write. */
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -98,6 +103,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  /** Sends several statements the server runs in one transaction. */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -111,6 +117,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  /** Sends one statement over many parameter sets, which the server runs in one transaction. */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -123,6 +130,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  /** Sends a bulk load, which the server runs at relaxed durability. */
   async load(
     sql: string,
     paramsBatch: Params[],
@@ -141,6 +149,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  /** Runs a registered read by name and returns its rows. */
   async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const id = this.nextId()
@@ -154,6 +163,7 @@ export class WebSocketTransport implements Transport {
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
+  /** Runs a registered write by name. */
   async executeNamed(
     name: string,
     args?: Record<string, unknown>,
@@ -170,6 +180,7 @@ export class WebSocketTransport implements Transport {
     })
   }
 
+  /** Opens a live query on a registered read and delivers its updates to the handlers. */
   async liveSubscribe(
     name: string,
     args: Record<string, unknown> | undefined,
@@ -180,6 +191,7 @@ export class WebSocketTransport implements Transport {
     return this.liveQueries.open(this.nextId(), name, args, handlers, registryDigest)
   }
 
+  /** Opens a change subscription on a watched table. */
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
@@ -237,12 +249,14 @@ export class WebSocketTransport implements Transport {
     }
   }
 
+  /** @internal */
   async ack(deviceId: string, seq: bigint): Promise<AckResponse> {
     await this.ensureConnected()
     const id = this.nextId()
     return this.request<AckResponse>({ type: 'ack', id, deviceId, seq: seq.toString() })
   }
 
+  /** Closes the transport and every subscription running on it. */
   close(): void {
     this.closed = true
     this.cancelReconnect()

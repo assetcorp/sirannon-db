@@ -12,6 +12,11 @@ const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
   onBeforeSubscribe: 'beforeSubscribe',
 }
 
+/**
+ * Holds the lifecycle hooks a database or registry has registered and invokes them in order.
+ *
+ * @internal
+ */
 export class HookRegistry {
   private hooks = new Map<HookEvent, ErasedHookFn[]>()
 

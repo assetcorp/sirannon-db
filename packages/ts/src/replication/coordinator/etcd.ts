@@ -1,4 +1,4 @@
-import { Etcd3, type Lease, type Namespace, type Watcher } from 'etcd3'
+import { Etcd3, type Namespace, type Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import {
   parseLease,
@@ -18,6 +18,7 @@ import {
   ttlMsToSeconds,
 } from './etcd-connection.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
+import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -40,24 +41,18 @@ import type {
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 
-interface LocalLeaseEntry {
-  lease: Lease
-  leaseId: string
-  key: string
-  ttlMs: number
-  ttlSeconds: number
-  kind: 'controller' | 'node-session'
-  clusterId: string
-  holderId: string
-  metadata?: Record<string, unknown>
-  nodeSession?: Omit<SerializedNodeSession, 'lease'>
-}
-
+/**
+ * @public
+ *
+ * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
+ *
+ * Build one with {@link createEtcdCoordinator}.
+ */
 export class EtcdClusterCoordinator implements ClusterCoordinator {
   private readonly client: Etcd3
   private readonly namespace: Namespace
   private readonly onWatcherError: ((error: Error) => void) | undefined
-  private readonly leases = new Map<string, LocalLeaseEntry>()
+  private readonly leases: EtcdLeaseRegistry
   private readonly grantedNodeSessionLeaseIds = new Map<string, string>()
   private readonly watchers = new Set<Watcher>()
   private readonly groups: EtcdGroupStore
@@ -67,9 +62,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.client = new Etcd3(toEtcdOptions(options))
     this.namespace = this.client.namespace(normaliseKeyPrefix(options.keyPrefix))
     this.onWatcherError = options.onWatcherError
+    this.leases = new EtcdLeaseRegistry(this.onWatcherError)
     this.groups = new EtcdGroupStore(this.namespace, this.watchers, this.onWatcherError)
   }
 
+  /** Bids for the controller lease, and reports who holds it. */
   async tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.holderId, 'holderId')
@@ -101,7 +98,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       return { acquired: false, lease: current }
     }
 
-    this.trackLease(lease, {
+    this.leases.track(lease, {
       leaseId,
       key,
       ttlMs: input.ttlMs,
@@ -116,6 +113,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return { acquired: true, lease: parsed }
   }
 
+  /** Extends a lease, and reports false once it has already lapsed. */
   async renewLease(leaseId: string, ttlMs: number): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     assertPositiveTtl(ttlMs)
@@ -127,7 +125,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     try {
       await entry.lease.keepaliveOnce()
     } catch {
-      this.leases.delete(leaseId)
+      this.leases.forget(leaseId)
       return false
     }
 
@@ -159,7 +157,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     }
 
     if (!refreshed) {
-      this.leases.delete(leaseId)
+      this.leases.forget(leaseId)
       return false
     }
 
@@ -167,6 +165,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return true
   }
 
+  /** Gives up a lease at once instead of waiting for it to lapse. */
   async releaseLease(leaseId: string): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     const entry = this.leases.get(leaseId)
@@ -174,7 +173,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       return false
     }
 
-    this.leases.delete(leaseId)
+    this.leases.forget(leaseId)
     const currentValue = await this.namespace.get(entry.key).string()
     const currentLeaseId = currentValue ? parseLeaseIdForEntry(entry.kind, currentValue) : null
     let released = false
@@ -189,6 +188,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return released
   }
 
+  /** Records one node as a live member of the cluster. */
   async registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.nodeId, 'nodeId')
@@ -238,9 +238,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
     }
 
-    await this.discardSupersededLeases(key, leaseId)
+    await this.leases.discardSuperseded(key, leaseId)
     this.grantedNodeSessionLeaseIds.set(key, leaseId)
-    this.trackLease(lease, {
+    this.leases.track(lease, {
       leaseId,
       key,
       ttlMs: input.ttlMs,
@@ -264,6 +264,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return parseNodeSession(rawSession)
   }
 
+  /** Reads one node's session, and returns null once its lease has lapsed. */
   async getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
@@ -271,25 +272,26 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return value ? parseNodeSession(value) : null
   }
 
+  /** Ends one node's membership at once. */
   async deregisterNodeSession(clusterId: string, nodeId: string): Promise<void> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
-    const key = nodeSessionKey(clusterId, nodeId)
-    for (const [leaseId, entry] of this.leases) {
-      if (entry.key === key) {
-        await this.releaseLease(leaseId)
-      }
+    for (const leaseId of this.leases.leaseIdsForKey(nodeSessionKey(clusterId, nodeId))) {
+      await this.releaseLease(leaseId)
     }
   }
 
+  /** Writes the group's state, which seeds a new group or replaces an existing one. */
   setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
     return this.groups.setReplicationGroupState(input)
   }
 
+  /** Reads the group's state, and returns null when the group is absent. */
   getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
     return this.groups.getReplicationGroupState(clusterId, groupId)
   }
 
+  /** Calls back on each change to the group's state, and returns a function that stops the watch. */
   watchReplicationGroup(
     clusterId: string,
     groupId: string,
@@ -298,26 +300,32 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return this.groups.watchReplicationGroup(clusterId, groupId, watcher)
   }
 
+  /** Promotes a node only while the group is still at the term the caller read. */
   compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult> {
     return this.groups.compareAndAdvancePrimaryTerm(input)
   }
 
+  /** Replaces the group's in-sync set, and optionally moves its durability point. */
   updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null> {
     return this.groups.updateInSyncSet(input)
   }
 
+  /** Adds one caught-up node to the in-sync set. */
   admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
     return this.groups.admitNodeToInSyncSet(input)
   }
 
+  /** Marks one node as being taken out of service, rebuilt, or quarantined. */
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
     return this.groups.updateNodeMaintenance(input)
   }
 
+  /** Promotes whichever in-sync replica is safe to write. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
     return this.groups.promoteEligibleReplica(input)
   }
 
+  /** Closes the etcd client and stops every watch. */
   async close(): Promise<void> {
     const watcherCancels: Promise<void>[] = []
     for (const watcher of this.watchers) {
@@ -326,50 +334,25 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.watchers.clear()
     await Promise.allSettled(watcherCancels)
 
-    const leaseRevokes: Promise<void>[] = []
-    for (const entry of this.leases.values()) {
-      leaseRevokes.push(revokeLeaseQuietly(entry.lease))
-    }
-    this.leases.clear()
     this.grantedNodeSessionLeaseIds.clear()
-    await Promise.allSettled(leaseRevokes)
+    await this.leases.revokeAll()
     this.client.close()
-  }
-
-  private async discardSupersededLeases(key: string, keepLeaseId: string): Promise<void> {
-    const superseded: LocalLeaseEntry[] = []
-    for (const [leaseId, entry] of this.leases) {
-      if (entry.key === key && leaseId !== keepLeaseId) {
-        this.leases.delete(leaseId)
-        superseded.push(entry)
-      }
-    }
-    await Promise.allSettled(superseded.map(entry => revokeLeaseQuietly(entry.lease)))
   }
 
   private async getLeaseFromKey(key: string): Promise<CoordinatorLease | null> {
     const value = await this.namespace.get(key).string()
     return value ? parseLease(value) : null
   }
-
-  private trackLease(lease: Lease, entry: Omit<LocalLeaseEntry, 'lease'>): void {
-    const fullEntry: LocalLeaseEntry = { ...entry, lease }
-    this.leases.set(entry.leaseId, fullEntry)
-    lease.on('lost', err => {
-      this.leases.delete(entry.leaseId)
-      this.onWatcherError?.(err instanceof Error ? err : new CoordinatorError(String(err)))
-    })
-  }
 }
 
+/**
+ * @public
+ *
+ * Builds a coordinator backed by etcd.
+ *
+ * @param options - etcd endpoints, key prefix, credentials, and timeouts.
+ * @returns The coordinator, ready to pass to a replication engine.
+ */
 export function createEtcdCoordinator(options: EtcdClusterCoordinatorOptions): EtcdClusterCoordinator {
   return new EtcdClusterCoordinator(options)
-}
-
-async function revokeLeaseQuietly(lease: Lease): Promise<void> {
-  try {
-    await lease.revoke()
-  } catch {
-    lease.release()
-  }
 }

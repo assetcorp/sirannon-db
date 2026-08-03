@@ -6,10 +6,26 @@ import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../c
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
 
+/**
+ * @public
+ *
+ * Settings for the driver built on Node's own SQLite module.
+ */
 export interface NodeSqliteOptions {
+  /**
+   * Milliseconds a statement waits for the write lock before it fails.
+   */
   busyTimeout?: number
 }
 
+/**
+ * @public
+ *
+ * Builds a driver on Node's own SQLite module, which needs no native dependency.
+ *
+ * @param driverOptions - How long a statement waits for the write lock.
+ * @returns The driver, ready to pass to a `Sirannon` registry.
+ */
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({

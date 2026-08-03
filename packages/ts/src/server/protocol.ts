@@ -32,49 +32,109 @@ export type {
   WSWireChangeEvent,
 } from './ws-protocol.js'
 
+/**
+ * Body of `POST /db/{id}/query`.
+ *
+ * @public
+ */
 export interface QueryRequest {
+  /** The statement to run. */
   sql: string
+  /** Values bound to the statement, named or positional. */
   params?: Record<string, unknown> | unknown[]
+  /** Currency this read requires. */
   readConcern?: ReadConcern
 }
 
+/**
+ * Body of `POST /db/{id}/execute`.
+ *
+ * @public
+ */
 export interface ExecuteRequest {
+  /** The statement to run. */
   sql: string
+  /** Values bound to the statement, named or positional. */
   params?: Record<string, unknown> | unknown[]
+  /** Acknowledgements this write waits for. */
   writeConcern?: WriteConcern
 }
 
+/**
+ * One statement inside a transaction or a registered write.
+ *
+ * @public
+ */
 export interface TransactionStatement {
+  /** The statement to run. */
   sql: string
+  /** Values bound to the statement, named or positional. */
   params?: Record<string, unknown> | unknown[]
 }
 
+/**
+ * Body of `POST /db/{id}/transaction`, whose statements all succeed or all fail.
+ *
+ * @public
+ */
 export interface TransactionRequest {
+  /** The statements to run, in order. */
   statements: TransactionStatement[]
+  /** Acknowledgements the transaction waits for. */
   writeConcern?: WriteConcern
 }
 
-/** The whole batch commits atomically in one server-side transaction with one fsync. */
+/** The whole batch commits atomically in one server-side transaction with one fsync.
+ * @public
+ */
 export interface BatchRequest {
+  /** The statement to run for each parameter set. */
   sql: string
+  /** One parameter set per run. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
+  /** Acknowledgements the batch waits for. */
   writeConcern?: WriteConcern
 }
 
+/**
+ * What a read route answers with.
+ *
+ * @public
+ */
 export interface QueryResponse {
+  /** The rows the statement produced, with blobs and large integers in their tagged wire form. */
   rows: Record<string, unknown>[]
 }
 
+/**
+ * What a write route answers with.
+ *
+ * @public
+ */
 export interface ExecuteResponse {
+  /** Number of rows the statement inserted, updated, or deleted. */
   changes: number
+  /** Row id SQLite assigned to the last inserted row, as a decimal string when it exceeds the safe range. */
   lastInsertRowId: number | string
 }
 
+/**
+ * What a transaction route answers with.
+ *
+ * @public
+ */
 export interface TransactionResponse {
+  /** One result per statement, in the order the transaction ran them. */
   results: ExecuteResponse[]
 }
 
+/**
+ * What a batch route answers with.
+ *
+ * @public
+ */
 export interface BatchResponse {
+  /** One result per parameter set, in order. */
   results: ExecuteResponse[]
 }
 
@@ -82,14 +142,25 @@ export interface BatchResponse {
  * Loads rows with relaxed writer durability; the configured durability is
  * restored before the response is sent, and a load interrupted by a crash is
  * recovered by re-running it.
+ *
+ * @public
  */
 export interface LoadRequest {
+  /** The statement to run for each parameter set. */
   sql: string
+  /** One parameter set per row. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
+  /** Durability in force while the load runs. Default: 'off'. */
   durability?: BulkLoadDurability
+  /** Whether this load ends with a checkpoint. Set it false on every batch but the last of a multi-batch import. */
   checkpoint?: boolean
 }
 
+/**
+ * How many rows a bulk load applied and how many rows changed.
+ *
+ * @public
+ */
 export type LoadResponse = BulkLoadResult
 
 export interface AckResponse {
@@ -97,7 +168,13 @@ export interface AckResponse {
   seq: string
 }
 
+/**
+ * The body every failed route answers with.
+ *
+ * @public
+ */
 export interface ErrorResponse {
+  /** Machine-readable code, human-readable message, and anything else the route attached. */
   error: {
     code: string
     message: string
@@ -109,6 +186,15 @@ export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
   primaryTerm?: string
 }
 
+/**
+ * Turns a write result into its wire form, encoding a row id beyond the safe
+ * integer range as a decimal string.
+ *
+ * @param result - What the write reported locally.
+ * @returns The result as it crosses the wire.
+ *
+ * @public
+ */
 export function toExecuteResponse(result: ExecuteResult): ExecuteResponse {
   return {
     changes: result.changes,

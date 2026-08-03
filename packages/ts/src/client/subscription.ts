@@ -3,9 +3,11 @@ import type { RemoteSubscription, RemoteSubscriptionBuilder, SubscribeOptions, T
 
 /**
  * Builds a remote CDC subscription with optional row-level filters.
- * Mirrors the core {@link SubscriptionBuilder} interface but returns
+ * Mirrors the core `SubscriptionBuilder` interface but returns
  * a promise from `subscribe()` since confirming the subscription
  * requires a server round-trip.
+ *
+ * @internal
  */
 export class RemoteSubscriptionBuilderImpl implements RemoteSubscriptionBuilder {
   private conditions: Record<string, unknown> = {}

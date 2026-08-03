@@ -2,93 +2,16 @@ import { createHash } from 'node:crypto'
 import type { SQLiteConnection } from '../driver/types.js'
 import { selectCountTableRows } from '../system-catalog/index.js'
 import { canonicaliseForChecksum } from './canonicalise.js'
-import { computeChecksum } from './checksum.js'
 import { ReplicationError } from './errors.js'
-import type { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
-import type { ReplicationBatch, ReplicationChange, SyncTableManifest } from './types.js'
+import type { SyncTableManifest } from './types.js'
 import { IDENTIFIER_RE } from './validators.js'
 
 export class DumpOps {
   constructor(
     private readonly conn: SQLiteConnection,
-    private readonly localNodeId: string,
-    private readonly hlc: HLC,
     private readonly pkResolver: PkResolver,
   ) {}
-
-  async *dumpTable(table: string, batchSize: number): AsyncGenerator<ReplicationBatch> {
-    if (!IDENTIFIER_RE.test(table)) {
-      throw new ReplicationError(`Invalid table name: ${table}`)
-    }
-
-    const total = await selectCountTableRows(this.conn, table)
-
-    if (total === 0) return
-
-    const pkColumns = await this.pkResolver.forTable(table)
-
-    let offset = 0
-    let batchNum = 0
-
-    const needsRowid = pkColumns.length === 1 && pkColumns[0] === 'rowid'
-
-    while (offset < total) {
-      const selectSql = needsRowid
-        ? `SELECT rowid, * FROM "${table}" LIMIT ? OFFSET ?`
-        : `SELECT * FROM "${table}" LIMIT ? OFFSET ?`
-      const selectStmt = await this.conn.prepare(selectSql)
-      const rows = (await selectStmt.all(batchSize, offset)) as Record<string, unknown>[]
-
-      if (rows.length === 0) break
-
-      const changes: ReplicationChange[] = []
-      const hlcValue = this.hlc.now()
-
-      for (const row of rows) {
-        const primaryKey: Record<string, unknown> = {}
-        for (const col of pkColumns) {
-          if (col in row) {
-            primaryKey[col] = row[col]
-          }
-        }
-
-        const rowId = pkColumns.map(col => String(row[col] ?? '')).join('-')
-
-        changes.push({
-          table,
-          operation: 'insert',
-          rowId,
-          primaryKey,
-          hlc: hlcValue,
-          txId: `dump-${table}-${batchNum}`,
-          nodeId: this.localNodeId,
-          newData: row,
-          oldData: null,
-        })
-      }
-
-      const checksum = computeChecksum(changes)
-      const dumpEpoch = BigInt(Date.now()) * 1_000_000n
-      const fromSeq = dumpEpoch + BigInt(offset)
-      const toSeq = dumpEpoch + BigInt(offset + rows.length - 1)
-
-      const dumpNodeId = `dump-${this.localNodeId}`
-
-      yield {
-        sourceNodeId: dumpNodeId,
-        batchId: `dump-${table}-${batchNum}`,
-        fromSeq,
-        toSeq,
-        hlcRange: { min: hlcValue, max: hlcValue },
-        changes,
-        checksum,
-      }
-
-      offset += rows.length
-      batchNum += 1
-    }
-  }
 
   dumpTableOnConnection(
     conn: SQLiteConnection,

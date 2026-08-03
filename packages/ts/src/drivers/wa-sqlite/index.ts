@@ -2,10 +2,26 @@ import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 
+/**
+ * @public
+ *
+ * Settings for the browser driver built on wa-sqlite.
+ */
 export interface WaSqliteOptions {
+  /**
+   * Where the browser stores the database. Default: 'IDBBatchAtomicVFS'.
+   */
   vfs?: 'IDBBatchAtomicVFS' | 'AccessHandlePoolVFS'
 }
 
+/**
+ * @public
+ *
+ * Builds a driver that runs SQLite in the browser through WebAssembly.
+ *
+ * @param driverOptions - Where the browser stores the database.
+ * @returns The driver, ready to pass to a `Sirannon` registry.
+ */
 export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: false, extensions: false },

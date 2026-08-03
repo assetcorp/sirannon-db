@@ -2,10 +2,15 @@ import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { ConnectionPool } from './connection-pool.js'
 import { DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
+import { DatabaseMigrationController } from './database-migrations.js'
 import { DatabaseObserver } from './database-observability.js'
+import type { DatabaseReadDeps } from './database-reads.js'
 import { DatabaseSyncController } from './database-sync.js'
+import { DatabaseWriteController } from './database-writes.js'
+import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteDriver } from './driver/types.js'
 import { SirannonError } from './errors.js'
+import { loadExtension } from './extension-loader.js'
 import { GroupCommitter } from './group-committer.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { MetricsCollector } from './metrics/collector.js'
@@ -30,6 +35,10 @@ export interface DatabaseRuntime {
   cdc: DatabaseCdcController
   sync: DatabaseSyncController
   groupCommitter: GroupCommitter
+  writes: DatabaseWriteController
+  reads: DatabaseReadDeps
+  migrations: DatabaseMigrationController
+  loadExtension: (extensionPath: string) => Promise<void>
 }
 
 export async function createDatabaseRuntime(
@@ -90,5 +99,64 @@ export async function createDatabaseRuntime(
     stampStatements: stampOptions => cdc.stampStatements(stampOptions),
   })
 
-  return { pool, writeGate, writerLock, hookRegistry, observer, backups, cdc, sync, groupCommitter }
+  const writes = new DatabaseWriteController({
+    pool,
+    writeGate,
+    writerLock,
+    groupCommitter,
+    cdc,
+    observer,
+    synchronous: options?.synchronous ?? DEFAULT_SYNCHRONOUS,
+    walMode: options?.walMode ?? true,
+  })
+
+  const migrations = new DatabaseMigrationController({
+    pool,
+    writerLock,
+    changeTracker: () => cdc.changeTracker,
+  })
+
+  return {
+    pool,
+    writeGate,
+    writerLock,
+    hookRegistry,
+    observer,
+    backups,
+    cdc,
+    sync,
+    groupCommitter,
+    writes,
+    reads: { pool, writerLock, observer },
+    migrations,
+    loadExtension: extensionPath => writerLock.run(() => loadExtension(driver, pool.acquireWriter(), extensionPath)),
+  }
+}
+
+export async function closeDatabaseRuntime(
+  runtime: DatabaseRuntime,
+  closeListeners: readonly (() => void | Promise<void>)[],
+): Promise<void> {
+  runtime.cdc.stop()
+  runtime.backups.cancelAll()
+
+  let poolError: unknown
+  try {
+    await runtime.cdc.closeLiveConnection()
+    await runtime.writes.drain()
+    await runtime.writerLock.settle()
+    await runtime.pool.close()
+  } catch (err) {
+    poolError = err
+  }
+
+  for (const fn of closeListeners) {
+    try {
+      await fn()
+    } catch {}
+  }
+
+  if (poolError) {
+    throw poolError
+  }
 }

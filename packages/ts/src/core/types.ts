@@ -1,33 +1,29 @@
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import type { HookConfig } from './hook-types.js'
+import type { MetricsConfig } from './metrics-types.js'
 import type { MigrationSource } from './migrations/types.js'
+import type { ReadConcernLevel } from './query-types.js'
 
-/** Query parameter types: named (object) or positional (array). */
-export type Params = Record<string, unknown> | unknown[]
-
-export type WriteConcernLevel = 'local' | 'majority' | 'all'
-export interface WriteConcern {
-  level: WriteConcernLevel
-  timeoutMs?: number
-}
-export type ReadConcernLevel = 'local' | 'majority' | 'linearizable'
-export interface ReadConcern {
-  level: ReadConcernLevel
-}
-export interface QueryOptions {
-  writeConcern?: WriteConcern
-  readConcern?: ReadConcern
-}
-
+/** One node a client can read from, and the read concerns it currently serves.
+ * @public
+ */
 export interface ClusterReadEndpointInfo {
+  /** Identifier of the node behind this endpoint. */
   nodeId: string
+  /** Address a client sends its reads to. */
   endpoint: string
+  /** Read concerns this node meets right now. */
   readConcerns: ReadConcernLevel[]
 }
 
-/** The single word describing what a node can do right now. */
+/** The single word describing what a node can do right now.
+ * @public
+ */
 export type NodeHealthState = 'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
 
-/** The condition that produced a {@link NodeHealthState}. */
+/** The condition that produced a {@link NodeHealthState}.
+ * @public
+ */
 export type NodeHealthReason =
   | 'in-sync'
   | 'lagging'
@@ -43,133 +39,47 @@ export type NodeHealthReason =
  *
  * `canRead` and `canWrite` are what that node will accept at this moment;
  * `state` and `reason` name the condition behind them.
+ *
+ * @public
  */
 export interface NodeHealth {
+  /** What the node can do right now. */
   state: NodeHealthState
+  /** The condition behind that state. */
   reason: NodeHealthReason
+  /** Whether the node serves reads at this moment. */
   canRead: boolean
+  /** Whether the node accepts writes at this moment. */
   canWrite: boolean
 }
 
+/** What one node reports about its replication group, as served by `GET /db/{id}/cluster`.
+ * @public
+ */
 export interface ClusterStatusInfo {
+  /** Identifier of the database this status describes. */
   databaseId: string
+  /** Identifier of the replication group the node belongs to. */
   replicationGroupId?: string
+  /** Whether this node accepts writes or serves reads. */
   role?: 'primary' | 'replica'
+  /** The primary this node reports as current, or null when it has none. */
   currentPrimary?: { nodeId: string; endpoint?: string } | null
+  /** The primary term this node reports as current. */
   primaryTerm?: bigint
+  /** Every node a client can read from, with the read concerns each one serves. */
   readEndpoints?: ClusterReadEndpointInfo[]
+  /** What this node can do right now. */
   health: NodeHealthState
+  /** The condition behind that health. */
   healthReason: NodeHealthReason
 }
 
-/** Result returned by mutation statements (INSERT, UPDATE, DELETE). */
-export interface ExecuteResult {
-  changes: number
-  lastInsertRowId: number | bigint
-}
-
-/** CDC operation type. */
-export type ChangeOperation = 'insert' | 'update' | 'delete'
-
-/** Event emitted when a watched table row changes. */
-export interface ChangeEvent<T = Record<string, unknown>> {
-  type: ChangeOperation
-  table: string
-  row: T
-  oldRow?: T
-  seq: bigint
-  timestamp: number
-  hlc?: string
-  origin?: string
-  rowId?: string
-  txId?: string
-  txEnd?: boolean
-}
-
-/** Context passed to query hooks. */
-export interface QueryHookContext {
-  databaseId: string
-  sql: string
-  params?: Params
-  metadata?: Record<string, unknown>
-  writeConcern?: WriteConcern
-  readConcern?: ReadConcern
-}
-
-/** Hook invoked before a query is executed. Throw to deny. */
-export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>
-
-/** Hook invoked after a query is executed. */
-export type AfterQueryHook = (ctx: QueryHookContext & { durationMs: number }) => void | Promise<void>
-
-/** Context passed to connection hooks. */
-export interface ConnectionHookContext {
-  databaseId: string
-  path: string
-}
-
-/** Hook invoked before a database connection is established. */
-export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>
-
-/** Hook invoked when a database is opened. */
-export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void | Promise<void>
-
-/** Hook invoked when a database is closed. */
-export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>
-
-/** Hook invoked before a subscription is created. Throw to deny. */
-export type BeforeSubscribeHook = (ctx: {
-  databaseId: string
-  table: string
-  filter?: Record<string, unknown>
-}) => void | Promise<void>
-
-/** Aggregated hook configuration. */
-export interface HookConfig {
-  onBeforeQuery?: BeforeQueryHook | BeforeQueryHook[]
-  onAfterQuery?: AfterQueryHook | AfterQueryHook[]
-  onBeforeConnect?: BeforeConnectHook | BeforeConnectHook[]
-  onDatabaseOpen?: DatabaseOpenHook | DatabaseOpenHook[]
-  onDatabaseClose?: DatabaseCloseHook | DatabaseCloseHook[]
-  onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[]
-}
-
-/** Metrics emitted after a query completes. */
-export interface QueryMetrics {
-  databaseId: string
-  sql: string
-  durationMs: number
-  rowsReturned?: number
-  changes?: number
-  error?: boolean
-}
-
-/** Metrics emitted when a connection opens or closes. */
-export interface ConnectionMetrics {
-  databaseId: string
-  path: string
-  readerCount: number
-  event: 'open' | 'close'
-}
-
-/** Metrics emitted when a CDC event is dispatched. */
-export interface CDCMetrics {
-  databaseId: string
-  table: string
-  operation: ChangeOperation
-  subscriberCount: number
-}
-
-/** Callbacks for metrics collection. */
-export interface MetricsConfig {
-  onQueryComplete?: (metrics: QueryMetrics) => void
-  onConnectionOpen?: (metrics: ConnectionMetrics) => void
-  onConnectionClose?: (metrics: ConnectionMetrics) => void
-  onCDCEvent?: (metrics: CDCMetrics) => void
-}
-
-/** Configuration for automatic database lifecycle management. */
+/** Configuration for automatic database lifecycle management.
+ * @public
+ */
 export interface LifecycleConfig {
+  /** Opens a database the first time someone asks for an identifier the registry has not seen. */
   autoOpen?: {
     resolver: (id: string) => { path: string; options?: DatabaseOptions } | undefined
   }
@@ -179,7 +89,9 @@ export interface LifecycleConfig {
   maxOpen?: number
 }
 
-/** Options for opening a single database. */
+/** Options for opening a single database.
+ * @public
+ */
 export interface DatabaseOptions {
   /** Open the database in read-only mode. */
   readOnly?: boolean
@@ -205,6 +117,9 @@ export interface DatabaseOptions {
   writerWorker?: boolean | WriterWorkerOptions
 }
 
+/** Limits and recovery settings for the thread that runs writes.
+ * @public
+ */
 export interface WriterWorkerOptions {
   /** Writes allowed in flight before new writes are rejected with a busy signal. Default: 1024. */
   maxPendingWrites?: number
@@ -214,17 +129,27 @@ export interface WriterWorkerOptions {
   maxRestarts?: number
 }
 
-/** Top-level options for the Sirannon database registry. */
+/** Top-level options for the Sirannon database registry.
+ * @public
+ */
 export interface SirannonOptions {
+  /** SQLite driver every database in this registry opens through. */
   driver: SQLiteDriver
+  /** Lifecycle hooks that run for every database in this registry. */
   hooks?: HookConfig
+  /** Callbacks that receive statement, connection, and change-capture metrics. */
   metrics?: MetricsConfig
+  /** Automatic opening, idle eviction, and the limit on concurrently open databases. */
   lifecycle?: LifecycleConfig
+  /** Migrations every database in this registry applies when it opens. */
   migrations?: MigrationSource
+  /** Default writer-worker setting for the databases this registry opens. */
   writerWorker?: boolean | WriterWorkerOptions
 }
 
-/** Options for scheduled backups. */
+/** Options for scheduled backups.
+ * @public
+ */
 export interface BackupScheduleOptions {
   /** Cron expression (e.g., '0 * * * *' for hourly). */
   cron: string
@@ -241,16 +166,30 @@ export interface BackupScheduleOptions {
   onError?: (error: Error) => void
 }
 
-/** Builder for creating CDC subscriptions with optional filters. */
-export interface SubscriptionBuilder {
-  filter(conditions: Record<string, unknown>): SubscriptionBuilder
-  subscribe(callback: (event: ChangeEvent) => void): Subscription
-}
-
-/** Handle for an active subscription. */
-export interface Subscription {
-  unsubscribe(): void
-}
-
+export type {
+  AfterQueryHook,
+  BeforeConnectHook,
+  BeforeQueryHook,
+  BeforeSubscribeHook,
+  ConnectionHookContext,
+  DatabaseCloseHook,
+  DatabaseOpenHook,
+  HookConfig,
+  QueryHookContext,
+} from './hook-types.js'
+export type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from './metrics-types.js'
 export * from './operation-registry.js'
+export type {
+  ChangeEvent,
+  ChangeOperation,
+  ExecuteResult,
+  Params,
+  QueryOptions,
+  ReadConcern,
+  ReadConcernLevel,
+  Subscription,
+  SubscriptionBuilder,
+  WriteConcern,
+  WriteConcernLevel,
+} from './query-types.js'
 export * from './server-options.js'

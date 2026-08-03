@@ -1,6 +1,5 @@
 import type { us_listen_socket } from 'uWebSockets.js'
 import uWS from 'uWebSockets.js'
-import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   AuthenticateHook,
@@ -34,6 +33,7 @@ import { handleMigrationList } from './http-migrations.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { handleOperationExecute, handleOperationQuery } from './http-operations.js'
 import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
+import { resolveMaxBodyBytes, resolveWsBackpressure } from './limits.js'
 import { operationRegistryDigest } from './operation-lookup.js'
 import { wrapOperationRoute } from './operation-route.js'
 import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
@@ -46,50 +46,13 @@ function refuseSql(res: uWS.HttpResponse): void {
   sendError(res, 403, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
 }
 
-const DEFAULT_MAX_BODY_BYTES = 1_048_576
-const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-const UWS_MAX_LIMIT_BYTES = 4_294_967_295
-
-function resolveMaxBodyBytes(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_MAX_BODY_BYTES
-  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
-    throw new SirannonError(
-      'ServerOptions.maxBodyBytes must be a positive integer number of bytes',
-      'INVALID_MAX_BODY_BYTES',
-    )
-  }
-  if (value > UWS_MAX_LIMIT_BYTES) {
-    throw new SirannonError(
-      `ServerOptions.maxBodyBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
-      'INVALID_MAX_BODY_BYTES',
-    )
-  }
-  return value
-}
-
-function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number): number {
-  const resolved = value ?? Math.max(DEFAULT_WS_BACKPRESSURE_BYTES, maxBodyBytes)
-  if (typeof resolved !== 'number' || !Number.isInteger(resolved) || resolved <= 0) {
-    throw new SirannonError(
-      'ServerOptions.maxWebSocketBackpressureBytes must be a positive integer number of bytes',
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  if (resolved > UWS_MAX_LIMIT_BYTES) {
-    throw new SirannonError(
-      `ServerOptions.maxWebSocketBackpressureBytes must be at most ${UWS_MAX_LIMIT_BYTES} bytes; uWebSockets.js stores the limit as an unsigned 32-bit integer and would silently wrap a larger value modulo 2^32`,
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  if (resolved < maxBodyBytes) {
-    throw new SirannonError(
-      'ServerOptions.maxWebSocketBackpressureBytes must be at least maxBodyBytes so a single frame fits',
-      'INVALID_WS_BACKPRESSURE',
-    )
-  }
-  return resolved
-}
-
+/**
+ * @public
+ *
+ * Serves a `Sirannon` database registry over HTTP and WebSocket.
+ *
+ * Build one with {@link createServer}, then call {@link SirannonServer.listen}.
+ */
 export class SirannonServer<Identity = unknown> {
   private app: uWS.TemplatedApp
   private listenSocket: us_listen_socket | null = null
@@ -137,6 +100,11 @@ export class SirannonServer<Identity = unknown> {
     this.registerRoutes()
   }
 
+  /**
+   * Binds the configured host and port and starts serving.
+   *
+   * @throws When the port is already in use.
+   */
   listen(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.app.listen(this.host, this.port, socket => {
@@ -150,6 +118,9 @@ export class SirannonServer<Identity = unknown> {
     })
   }
 
+  /**
+   * Stops serving and closes every open connection.
+   */
   async close(): Promise<void> {
     try {
       await this.wsHandler.close()
@@ -161,6 +132,9 @@ export class SirannonServer<Identity = unknown> {
     }
   }
 
+  /**
+   * Port the server bound to, which is the resolved port when you asked for 0.
+   */
   get listeningPort(): number {
     if (!this.listenSocket) return -1
     return uWS.us_socket_local_port(this.listenSocket as unknown as uWS.us_socket)
@@ -370,6 +344,15 @@ export class SirannonServer<Identity = unknown> {
   }
 }
 
+/**
+ * @public
+ *
+ * Builds a server over a database registry.
+ *
+ * @param sirannon - The registry whose databases the server exposes.
+ * @param options - Address, cross-origin rules, size limits, authentication, registered operations, and whether the server accepts SQL.
+ * @returns The server, ready to listen.
+ */
 export function createServer<Identity = unknown>(
   sirannon: Sirannon,
   options?: ServerOptions<Identity>,

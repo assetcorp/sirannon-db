@@ -5,6 +5,11 @@ import type { OperationRegistry } from '../core/operation-registry.js'
 import { buildOperationManifest } from './manifest.js'
 import { renderOperationTypes } from './render.js'
 
+/**
+ * @public
+ *
+ * Usage text the code generator prints when its arguments do not parse.
+ */
 export const CODEGEN_USAGE = `sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--package <name>]
 
 Reads the operation registry a server is built from and writes the typed
@@ -64,6 +69,14 @@ function write(path: string, contents: string): void {
   writeFileSync(target, contents)
 }
 
+/**
+ * @public
+ *
+ * Runs the code generator: it loads a registry module, builds the manifest, and writes the typed references.
+ *
+ * @param argv - Command-line arguments, without the executable and script names.
+ * @throws When an argument is missing or the registry module cannot be loaded.
+ */
 export async function runCodegen(argv: readonly string[]): Promise<void> {
   const options = parseOptions(argv)
   const modulePath = resolve(options.registry)

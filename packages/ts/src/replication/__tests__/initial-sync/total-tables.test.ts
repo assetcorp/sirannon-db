@@ -99,9 +99,7 @@ describe('initial sync totalTables', () => {
         maxSyncDurationMs: 1_000,
         syncAckTimeoutMs: 200,
         syncBatchSize: 100,
-        decorateSyncBatch: <T>(batch: T): T => batch,
-        decorateSyncComplete: <T>(complete: T): T => complete,
-        decorateSyncAck: <T>(ack: T): T => ack,
+        decorate: <T>(batch: T): T => batch,
         emitError: vi.fn(),
       } as unknown as ReplicationEngine
 
@@ -136,7 +134,7 @@ describe('initial sync totalTables', () => {
           startedAt: null,
           error: null,
         },
-        decorateSyncAck: <T>(ack: T): T => ack,
+        decorate: <T>(ack: T): T => ack,
         emitError: vi.fn(),
       } as unknown as ReplicationEngine
       return { engine, joiner: new SyncJoiner(engine) }

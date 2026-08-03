@@ -4,19 +4,36 @@ import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type { ClusterStatusInfo, ExecuteResult, NodeHealth, Params, QueryOptions } from './types.js'
 
-/** Context passed to the authenticate hook. */
+/** Context passed to the authenticate hook.
+ * @public
+ */
 export interface RequestContext {
+  /** Request headers, with every name lower-cased. */
   headers: Record<string, string>
+  /** HTTP method of the request, or the method of a WebSocket upgrade. */
   method: string
+  /** Path the request arrived on. */
   path: string
+  /** Identifier of the database the route addresses. */
   databaseId?: string
+  /** Address the request came from. */
   remoteAddress: string
 }
 
+/**
+ * Identifies the caller behind a request. Return the identity registered
+ * operations then read, and throw a {@link RequestDeniedError} to refuse the
+ * request with a status of your own.
+ *
+ * @public
+ */
 export type AuthenticateHook<Identity = unknown> = (
   ctx: RequestContext,
 ) => Identity | undefined | Promise<Identity | undefined>
 
+/** Reports whether a caller may read the addresses of every node in the group.
+ * @public
+ */
 export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise<boolean>
 
 /**
@@ -25,9 +42,14 @@ export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise
  * gives up corruption safety, so it fits only a load that starts from nothing.
  * 'normal' keeps WAL-mode corruption safety and suits loads into a database
  * that already holds data the operator cannot afford to lose.
+ *
+ * @public
  */
 export type BulkLoadDurability = 'off' | 'normal'
 
+/** Settings for one bulk load.
+ * @public
+ */
 export interface BulkLoadOptions {
   /** Durability during the load. Default: 'off'. */
   durability?: BulkLoadDurability
@@ -42,29 +64,42 @@ export interface BulkLoadOptions {
 }
 
 /** Aggregate outcome of a bulk load. Summed rather than per-row so a
- * million-row load never holds a million result objects in memory. */
+ * million-row load never holds a million result objects in memory.
+ * @public
+ */
 export interface BulkLoadResult {
+  /** Number of parameter sets the load applied. */
   rowsLoaded: number
+  /** Number of rows the load inserted, updated, or deleted. */
   changes: number
 }
 
+/**
+ * What the server runs statements against for one database. A local
+ * `Database` satisfies it, and so does a proxy that forwards to another node.
+ *
+ * @public
+ */
 export interface ServerExecutionTarget {
+  /** Runs a read and returns the rows. */
   query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
   /**
    * Optional single-pass read that returns rows already encoded for the wire
    * (safe-range integers as plain numbers, larger integers and BLOBs as tagged
-   * envelopes). When present the server uses it instead of {@link query}
+   * envelopes). When present the server uses it instead of {@link ServerExecutionTarget.query}
    * followed by a separate tag-encoding walk. A target that omits it stays
-   * correct: the server falls back to encoding {@link query} rows itself.
+   * correct: the server falls back to encoding {@link ServerExecutionTarget.query} rows itself.
    */
   queryForWire?(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>
+  /** Runs one write and returns the change count and last inserted row id. */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
+  /** Runs a function inside one transaction. */
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
   /**
    * Optional entry point for a transaction whose statements are all known
    * before it starts, which lets concurrent transactions share one commit. A
    * target that omits it stays correct: the server falls back to
-   * {@link transaction} and runs the statements one at a time.
+   * {@link ServerExecutionTarget.transaction} and runs the statements one at a time.
    */
   executeTransaction?(
     statements: readonly { sql: string; params?: Params }[],
@@ -76,21 +111,33 @@ export interface ServerExecutionTarget {
    * of silently degrading to per-statement writes.
    */
   bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>
+  /** Optional device-sync entry point that applies a batch of changes a device pushed. */
   applyChanges?(
     batch: ReplicationBatch,
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult>
+  /** Optional listing of the migrations this database has applied. */
   appliedMigrations?(): Promise<AppliedMigrationRow[]>
 }
 
+/**
+ * Finds what the server should run a database's statements against.
+ *
+ * @public
+ */
 export type ServerExecutionTargetResolver = (
   databaseId: string,
 ) => ServerExecutionTarget | null | undefined | Promise<ServerExecutionTarget | null | undefined>
 
-/** Options for the standalone HTTP + WS server. */
+/** Options for the standalone HTTP + WS server.
+ * @public
+ */
 export interface ServerOptions<Identity = unknown> {
+  /** Address the server binds to. Default: '0.0.0.0'. */
   host?: string
+  /** Port the server binds to. Default: 3000. */
   port?: number
+  /** Cross-origin rules the server answers browser requests with. */
   cors?: boolean | CorsOptions
   /**
    * Maximum HTTP request body and WebSocket message size in bytes. Applied
@@ -118,46 +165,80 @@ export interface ServerOptions<Identity = unknown> {
    * (one hour).
    */
   cdcRetentionMs?: number
+  /** How long, in milliseconds, a device's sync cursor is kept after its last contact. */
   deviceCursorRetentionMs?: number
+  /** Changes a device may leave unacknowledged before the server stops sending more. */
   maxUnacknowledgedChanges?: number
+  /** Runs before every database route and every WebSocket upgrade, and names the caller. */
   authenticate?: AuthenticateHook<Identity>
+  /** Statements callers may invoke by name. Without these, only SQL routes serve reads and writes. */
   operations?: OperationRegistry<Identity>
+  /** Opens the five statement routes and their WebSocket messages. Default: false. */
   acceptSql?: boolean
+  /** Finds what the server runs a database's statements against. */
   resolveExecutionTarget?: ServerExecutionTargetResolver
+  /** Supplies the replication figures the readiness endpoint reports. */
   getReplicationStatus?: () => ReplicationStatusInfo | null
+  /** Supplies what `GET /db/{id}/cluster` reports for one database. */
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
+  /** Reports whether a caller may read the addresses of every node in the group. */
   authorizeClusterStatus?: ClusterStatusAuthorizer
 }
 
+/** Replication figures one node reports through its readiness endpoint.
+ * @public
+ */
 export interface ReplicationStatusInfo {
+  /** Whether this node accepts writes or serves reads. */
   role: string
+  /** Whether this node forwards writes to the primary. */
   writeForwarding: boolean
+  /** Number of peers the node is connected to. */
   peers: number
+  /** Highest change-log position this node has recorded locally. */
   localSeq: bigint
+  /** What the node can do right now, and the condition behind it. */
   health: NodeHealth
+  /** Identifier of the replication group the node belongs to. */
   replicationGroupId?: string
+  /** The primary term this node reports as current. */
   primaryTerm?: bigint
+  /** Identifier of the primary this node reports as current. */
   currentPrimary?: string
+  /** Whether the node reaches its cluster coordinator, and whether it holds write authority. */
   coordinator?: {
     connected: boolean
     authority: boolean
   }
+  /** Whether this node runs the group's controller loop. */
   controller?: {
     state: 'disabled' | 'standby' | 'active' | 'lost'
   }
+  /** Identifiers of the replicas the group counts as in sync. */
   inSyncReplicas?: string[]
+  /** Identifiers of the replicas that have fallen behind. */
   laggingReplicas?: string[]
+  /** Where this node stands in first sync. */
   syncState?: string
 }
 
-/** CORS configuration. */
+/** CORS configuration.
+ * @public
+ */
 export interface CorsOptions {
+  /** Origins the server allows. */
   origin?: string | string[]
+  /** Methods the server allows. */
   methods?: string[]
+  /** Request headers the server allows. */
   headers?: string[]
 }
 
-/** Options for the mountable WebSocket handler. */
+/**
+ * Options for the mountable WebSocket handler.
+ *
+ * @internal
+ */
 export interface WSHandlerOptions<Identity = unknown> {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
@@ -170,7 +251,9 @@ export interface WSHandlerOptions<Identity = unknown> {
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 
-/** Options for the client SDK. */
+/** Options for the client SDK.
+ * @public
+ */
 export interface ClientOptions {
   /** Transport to use. Default: 'websocket'. */
   transport?: 'websocket' | 'http'

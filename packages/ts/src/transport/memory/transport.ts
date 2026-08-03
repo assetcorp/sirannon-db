@@ -40,10 +40,12 @@ import type { MemoryBus } from './bus.js'
  *
  * Messages between peers are delivered through a shared MemoryBus via
  * microtask scheduling (`queueMicrotask`), preserving the async delivery
- * semantics of a real network transport while avoiding actual I/O. All
+ * semantics of a real network transport with no I/O. All
  * message types (batches, acks, forwards) go through runtime
  * validation before delivery, and malformed payloads are silently dropped
- * to match the behavior of a lossy network.
+ * to match the behaviour of a lossy network.
+ *
+ * @public
  */
 export class InMemoryTransport implements ReplicationTransport {
   private localNodeId = ''
@@ -51,15 +53,15 @@ export class InMemoryTransport implements ReplicationTransport {
   private localGroupId: string | undefined
   private localPrimaryTerm: bigint | undefined
   private localProtocolVersion: string | undefined
-  connected = false
+  private connected = false
   private readonly bus: MemoryBus
-  readonly connectedPeers = new Map<string, NodeInfo>()
+  private readonly connectedPeers = new Map<string, NodeInfo>()
 
   private batchHandler: BatchHandler | null = null
   private ackHandler: AckHandler | null = null
   private forwardHandler: ForwardHandler | null = null
-  peerConnectedHandler: PeerConnectedHandler | null = null
-  peerDisconnectedHandler: PeerDisconnectedHandler | null = null
+  private peerConnectedHandler: PeerConnectedHandler | null = null
+  private peerDisconnectedHandler: PeerDisconnectedHandler | null = null
   private syncRequestHandler: SyncRequestHandler | null = null
   private syncBatchHandler: SyncBatchHandler | null = null
   private syncCompleteHandler: SyncCompleteHandler | null = null
@@ -69,10 +71,11 @@ export class InMemoryTransport implements ReplicationTransport {
     this.bus = bus
   }
 
-  get role(): 'primary' | 'replica' {
+  private get role(): 'primary' | 'replica' {
     return this.localRole
   }
 
+  /** Connects to the configured peers and announces this node. */
   async connect(localNodeId: string, config: TransportConfig): Promise<void> {
     if (this.connected) {
       throw new TransportError('Transport is already connected')
@@ -125,6 +128,7 @@ export class InMemoryTransport implements ReplicationTransport {
     }
   }
 
+  /** Closes every peer connection. */
   async disconnect(): Promise<void> {
     if (!this.connected) return
 
@@ -144,6 +148,7 @@ export class InMemoryTransport implements ReplicationTransport {
     this.connectedPeers.clear()
   }
 
+  /** Sends one batch of changes to one peer. */
   async send(peerId: string, batch: ReplicationBatch): Promise<void> {
     this.ensureConnected()
     if (!isValidBatch(batch)) {
@@ -159,6 +164,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Sends one batch of changes to every connected peer. */
   async broadcast(batch: ReplicationBatch): Promise<void> {
     this.ensureConnected()
     if (!isValidBatch(batch)) {
@@ -175,6 +181,7 @@ export class InMemoryTransport implements ReplicationTransport {
     }
   }
 
+  /** Confirms to a peer that this node applied one of its batches. */
   async sendAck(peerId: string, ack: ReplicationAck): Promise<void> {
     this.ensureConnected()
     if (!isValidAck(ack)) {
@@ -190,6 +197,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Sends a write to the primary and waits for its result. */
   async forward(peerId: string, request: ForwardedTransaction): Promise<ForwardedTransactionResult> {
     this.ensureConnected()
     if (!isValidForwardedTransaction(request)) {
@@ -202,6 +210,7 @@ export class InMemoryTransport implements ReplicationTransport {
     return peer._receiveForward(request, this.localNodeId)
   }
 
+  /** Asks a peer to stream a full copy of the database. */
   async requestSync(peerId: string, request: SyncRequest): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncRequest(request)) throw new TransportError('Invalid sync request structure')
@@ -213,6 +222,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Sends one page of first-sync table data. */
   async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncBatch(batch)) throw new TransportError('Invalid sync batch structure')
@@ -224,6 +234,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Tells a joining node that first sync has finished, and sends the manifests to verify it. */
   async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncComplete(complete)) throw new TransportError('Invalid sync complete structure')
@@ -235,6 +246,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Confirms to the source that a joining node stored one first-sync page. */
   async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncAck(ack)) throw new TransportError('Invalid sync ack structure')
@@ -246,78 +258,91 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
+  /** Registers the handler that applies incoming change batches. */
   onBatchReceived(handler: BatchHandler): void {
     this.batchHandler = handler
   }
 
+  /** Registers the handler that records incoming acknowledgements. */
   onAckReceived(handler: AckHandler): void {
     this.ackHandler = handler
   }
 
+  /** Registers the handler that runs a write a replica forwarded. */
   onForwardReceived(handler: ForwardHandler): void {
     this.forwardHandler = handler
   }
 
+  /** Registers the handler that serves a first-sync request. */
   onSyncRequested(handler: SyncRequestHandler): void {
     this.syncRequestHandler = handler
   }
 
+  /** Registers the handler that stores an incoming first-sync page. */
   onSyncBatchReceived(handler: SyncBatchHandler): void {
     this.syncBatchHandler = handler
   }
 
+  /** Registers the handler that finishes first sync and verifies the manifests. */
   onSyncCompleteReceived(handler: SyncCompleteHandler): void {
     this.syncCompleteHandler = handler
   }
 
+  /** Registers the handler that records first-sync page acknowledgements. */
   onSyncAckReceived(handler: SyncAckHandler): void {
     this.syncAckHandler = handler
   }
 
+  /** Registers the handler that runs when a peer connects. */
   onPeerConnected(handler: PeerConnectedHandler): void {
     this.peerConnectedHandler = handler
   }
 
+  /** Registers the handler that runs when a peer disconnects. */
   onPeerDisconnected(handler: PeerDisconnectedHandler): void {
     this.peerDisconnectedHandler = handler
   }
 
+  /** Returns every connected peer, keyed by identifier. */
   peers(): ReadonlyMap<string, NodeInfo> {
     return this.connectedPeers
   }
 
-  async _receiveBatch(batch: ReplicationBatch, fromPeerId: string): Promise<void> {
+  private async _receiveBatch(batch: ReplicationBatch, fromPeerId: string): Promise<void> {
     if (this.batchHandler) {
       await this.batchHandler(batch, fromPeerId)
     }
   }
 
-  _receiveAck(ack: ReplicationAck, fromPeerId: string): void {
+  private _receiveAck(ack: ReplicationAck, fromPeerId: string): void {
     if (this.ackHandler) {
       this.ackHandler(ack, fromPeerId)
     }
   }
 
-  async _receiveForward(request: ForwardedTransaction, fromPeerId: string): Promise<ForwardedTransactionResult> {
+  private async _receiveForward(
+    request: ForwardedTransaction,
+    fromPeerId: string,
+  ): Promise<ForwardedTransactionResult> {
     if (!this.forwardHandler) {
       throw new TransportError('No forward handler registered')
     }
     return this.forwardHandler(request, fromPeerId)
   }
 
-  async _receiveSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {
+  private async _receiveSyncRequest(request: SyncRequest, fromPeerId: string): Promise<void> {
     if (this.syncRequestHandler) await this.syncRequestHandler(request, fromPeerId)
   }
 
-  async _receiveSyncBatch(batch: SyncBatch, fromPeerId: string): Promise<void> {
+  private async _receiveSyncBatch(batch: SyncBatch, fromPeerId: string): Promise<void> {
     if (this.syncBatchHandler) await this.syncBatchHandler(batch, fromPeerId)
   }
 
-  async _receiveSyncComplete(complete: SyncComplete, fromPeerId: string): Promise<void> {
+  private async _receiveSyncComplete(complete: SyncComplete, fromPeerId: string): Promise<void> {
     if (this.syncCompleteHandler) await this.syncCompleteHandler(complete, fromPeerId)
   }
 
-  _receiveSyncAck(ack: SyncAck, fromPeerId: string): void {
+  private _receiveSyncAck(ack: SyncAck, fromPeerId: string): void {
     if (this.syncAckHandler) this.syncAckHandler(ack, fromPeerId)
   }
 

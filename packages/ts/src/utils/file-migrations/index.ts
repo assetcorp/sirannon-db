@@ -6,14 +6,39 @@ import { parseMigrationFilename } from '../../core/migrations/filename.js'
 import { LAZY_DOWN_SQL } from '../../core/migrations/lazy-down.js'
 import type { Migration } from '../../core/migrations/types.js'
 
+/**
+ * @public
+ *
+ * How a directory of migration files is turned into migrations.
+ */
 export interface LoadMigrationsOptions {
+  /**
+   * Marks the migration an existing database starts from.
+   */
   baseline?: BaselineFileOption
 }
 
+/**
+ * @public
+ *
+ * One migration found on disk, with the paths of its up and down files.
+ */
 export interface ScannedMigration {
+  /**
+   * Version number the file name starts with.
+   */
   version: number
+  /**
+   * Migration name between the version and the direction.
+   */
   name: string
+  /**
+   * Path of the file that applies the migration.
+   */
   upPath: string
+  /**
+   * Path of the file that undoes it, or null when the migration has none.
+   */
   downPath: string | null
 }
 
@@ -24,6 +49,15 @@ function hasControlCharacters(s: string): boolean {
   return false
 }
 
+/**
+ * @public
+ *
+ * Lists the migration files in a directory, in ascending version order.
+ *
+ * @param dirPath - Directory holding the migration files.
+ * @returns One entry per migration, with the paths of its up and down files.
+ * @throws When the path is unsafe or a file name does not parse.
+ */
 export function scanDirectory(dirPath: string): ScannedMigration[] {
   if (hasControlCharacters(dirPath)) {
     throw new MigrationError('Migration path contains invalid characters', 0, 'MIGRATION_VALIDATION_ERROR')
@@ -104,6 +138,14 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
   return results
 }
 
+/**
+ * @public
+ *
+ * Reads the up files of scanned migrations, leaving each down file to be read only if a rollback needs it.
+ *
+ * @param scanned - Migrations found by {@link scanDirectory}.
+ * @returns The migrations, in ascending version order.
+ */
 export function readUpMigrations(scanned: ScannedMigration[]): Migration[] {
   return scanned.map(entry => {
     const sql = readFileSync(entry.upPath, 'utf-8').trim()
@@ -149,6 +191,15 @@ function attachLazyDown(migration: Migration, downPath: string): void {
   })
 }
 
+/**
+ * @public
+ *
+ * Reads a directory of migration files and returns the migrations to apply.
+ *
+ * @param dirPath - Directory holding the migration files.
+ * @param options - The baseline to apply, when an existing database starts from one.
+ * @returns The migrations, in ascending version order.
+ */
 export function loadMigrations(dirPath: string, options?: LoadMigrationsOptions): Migration[] {
   const scanned = scanDirectory(dirPath)
   const migrations = readUpMigrations(scanned)

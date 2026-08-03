@@ -151,9 +151,11 @@ describe('Database', () => {
     it('swallows backup cancel errors during close', async () => {
       const dbPath = join(getTempDir(), 'close-cancel-error.db')
       const db = await Database.create('test', dbPath, testDriver)
-      ;(db as unknown as { backups: { cancellers: (() => void)[] } }).backups.cancellers.push(() => {
-        throw new Error('cancel failed')
-      })
+      ;(db as unknown as { runtime: { backups: { cancellers: (() => void)[] } } }).runtime.backups.cancellers.push(
+        () => {
+          throw new Error('cancel failed')
+        },
+      )
 
       await expect(db.close()).resolves.not.toThrow()
     })
@@ -161,7 +163,7 @@ describe('Database', () => {
     it('rethrows pool close errors after listener processing', async () => {
       const dbPath = join(getTempDir(), 'pool-close-error.db')
       const db = await Database.create('test', dbPath, testDriver)
-      ;(db as unknown as { pool: { close: () => Promise<void> } }).pool.close = async () => {
+      ;(db as unknown as { runtime: { pool: { close: () => Promise<void> } } }).runtime.pool.close = async () => {
         throw new Error('pool close failed')
       }
 
@@ -180,7 +182,8 @@ describe('Database', () => {
         destDir: join(getTempDir(), 'scheduled-backups'),
       })
 
-      const cancellers = (db as unknown as { backups: { cancellers: (() => void)[] } }).backups.cancellers
+      const cancellers = (db as unknown as { runtime: { backups: { cancellers: (() => void)[] } } }).runtime.backups
+        .cancellers
       expect(cancellers).toHaveLength(1)
       await db.close()
     })

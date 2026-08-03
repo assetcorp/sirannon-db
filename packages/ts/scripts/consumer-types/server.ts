@@ -1,6 +1,7 @@
 import type { Migration } from '@delali/sirannon-db'
 import { Sirannon, SirannonError } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import { bunSqlite } from '@delali/sirannon-db/driver/bun'
 import { LWWResolver } from '@delali/sirannon-db/replication'
 import { createServer } from '@delali/sirannon-db/server'
 
@@ -30,3 +31,5 @@ export const startServer = async (): Promise<void> => {
 }
 
 export const serverSideResolver = new LWWResolver()
+
+export const bunRegistry = (): Sirannon => new Sirannon({ driver: bunSqlite({ busyTimeout: 10_000 }) })

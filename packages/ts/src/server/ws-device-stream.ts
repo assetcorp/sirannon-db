@@ -10,7 +10,7 @@ const CATCHUP_READ_BATCH = 1_000
 /**
  * How the delivery window paces the stream. `perTransaction` is the
  * contract for a device that applies a transaction from memory: the window
- * is checked only before a new transaction starts, so a transaction larger
+ * is checked only before a new transaction starts so that a transaction larger
  * than the window is still delivered whole. `perEvent` is the contract for
  * a device that stages to disk and acknowledges staged changes: the window
  * may pause the stream anywhere, because acknowledgements keep arriving
@@ -37,8 +37,8 @@ export interface DeviceStreamDeps {
  *
  * In `live` mode events flow straight from the poller through a one-event
  * lookahead that resolves the `txEnd` flag, so at most one event is ever
- * held back. Whenever the stream cannot send — the delivery window is full,
- * or the socket reports backpressure — it switches to `catchup` mode:
+ * held back. Whenever the stream cannot send, because the delivery window is
+ * full or the socket reports backpressure, it switches to `catchup` mode:
  * nothing is buffered, the position of the last queued event is remembered,
  * and the gap is re-read from the change log once an acknowledgement or a
  * socket drain reopens the way. The change log is the buffer; retention
@@ -257,7 +257,7 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Rejoins the live feed. Runs synchronously right after a log read, so no
+   * Rejoins the live feed. Runs synchronously right after a log read so that no
    * poller tick can dispatch between the caught-up check and the mode flip.
    * The grouper survives the transition: the event it holds is released by
    * the boundary flush when the poller stopped at a transaction boundary,

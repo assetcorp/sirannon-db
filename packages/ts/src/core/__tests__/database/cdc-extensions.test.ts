@@ -23,7 +23,7 @@ describe('Database', () => {
       await db.watch('posts')
 
       const stopFn = vi.fn()
-      ;(db as unknown as { cdc: { stopPolling: (() => void) | null } }).cdc.stopPolling = stopFn
+      ;(db as unknown as { runtime: { cdc: { stopPolling: (() => void) | null } } }).runtime.cdc.stopPolling = stopFn
       await db.unwatch('users')
 
       expect(stopFn).not.toHaveBeenCalled()
@@ -32,10 +32,10 @@ describe('Database', () => {
 
     it('ensureCdcPolling returns when CDC objects are absent', async () => {
       const db = await createTestDb()
-      const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
+      const pool = (db as unknown as { runtime: { pool: { acquireWriter: () => unknown } } }).runtime.pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
 
-      ;(db as unknown as { cdc: { ensurePolling: () => void } }).cdc.ensurePolling()
+      ;(db as unknown as { runtime: { cdc: { ensurePolling: () => void } } }).runtime.cdc.ensurePolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
       await db.close()
@@ -43,11 +43,11 @@ describe('Database', () => {
 
     it('ensureCdcPolling returns when polling is already active', async () => {
       const db = await createTestDb()
-      const pool = (db as unknown as { pool: { acquireWriter: () => unknown } }).pool
+      const pool = (db as unknown as { runtime: { pool: { acquireWriter: () => unknown } } }).runtime.pool
       const acquireWriter = vi.spyOn(pool, 'acquireWriter')
-      ;(db as unknown as { cdc: { stopPolling: (() => void) | null } }).cdc.stopPolling = vi.fn()
+      ;(db as unknown as { runtime: { cdc: { stopPolling: (() => void) | null } } }).runtime.cdc.stopPolling = vi.fn()
 
-      ;(db as unknown as { cdc: { ensurePolling: () => void } }).cdc.ensurePolling()
+      ;(db as unknown as { runtime: { cdc: { ensurePolling: () => void } } }).runtime.cdc.ensurePolling()
 
       expect(acquireWriter).not.toHaveBeenCalled()
       await db.close()
@@ -86,8 +86,8 @@ describe('Database', () => {
     it('converts non-Error extension load failures', async () => {
       const db = await createTestDb()
       ;(
-        db as unknown as { pool: { acquireWriter: () => { exec: (sql: string) => Promise<void> } } }
-      ).pool.acquireWriter = () => ({
+        db as unknown as { runtime: { pool: { acquireWriter: () => { exec: (sql: string) => Promise<void> } } } }
+      ).runtime.pool.acquireWriter = () => ({
         exec: async () => {
           throw 'load failed'
         },

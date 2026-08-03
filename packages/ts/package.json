@@ -31,6 +31,8 @@
     "build": "rm -rf dist && tsup",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
+    "check:api": "node scripts/assert-api-reports.mjs",
+    "api:update": "node scripts/assert-api-reports.mjs --update",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
@@ -177,6 +179,7 @@
   "devDependencies": {
     "@bufbuild/protobuf": "2.11.0",
     "@grpc/grpc-js": "1.14.4",
+    "@microsoft/api-extractor": "7.58.12",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "26.1.2",
     "@types/react": "19.2.15",

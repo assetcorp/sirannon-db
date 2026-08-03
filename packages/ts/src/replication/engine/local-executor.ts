@@ -9,6 +9,11 @@ import { DDL_PREFIX_RE, extractDroppedTable, SAFE_SQL_PREFIX_RE } from './consta
 import type { ReplicationEngine } from './engine.js'
 import { ReplicationTransaction, type ReplicationTransactionHooks } from './replication-transaction.js'
 
+/**
+ * Runs a statement on the local node and records the resulting changes in the replication log.
+ *
+ * @internal
+ */
 export class LocalExecutor {
   /**
    * Serialises every `executeTransactionLocally` call against itself.

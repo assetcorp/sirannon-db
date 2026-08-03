@@ -75,55 +75,103 @@ import { installTestHooks } from './test-hooks.js'
  * SenderLoop, transport wiring, coordinator lifecycle/authority/membership)
  * can operate against a shared, mutable engine instance without duplicating
  * constructor wiring.
+ *
+ * @public
  */
 export class ReplicationEngine extends EventEmitter {
+  /** @internal */
   readonly database: Database
+  /** @internal */
   readonly writerConn: SQLiteConnection
+  /** @internal */
   readonly config: ReplicationConfig
+  /**
+   * Identifier of this node, which every change it authors carries.
+   */
   readonly nodeId: string
+  /** @internal */
   readonly hlc: HLC
+  /** @internal */
   readonly log: ReplicationLog
+  /** @internal */
   readonly peerTracker = new PeerTracker()
-  readonly defaultResolver: ConflictResolver
+  private readonly defaultResolver: ConflictResolver
+  /** @internal */
   readonly tracker: ChangeTracker | undefined
+  /** @internal */
   readonly snapshotConnectionFactory: (() => Promise<SQLiteConnection>) | undefined
 
+  /** @internal */
   readonly batchSize: number
+  /** @internal */
   readonly batchIntervalMs: number
+  /** @internal */
   readonly maxClockDriftMs: number
+  /** @internal */
   readonly maxPendingBatches: number
+  /** @internal */
   readonly maxBatchChanges: number
+  /** @internal */
   readonly ackTimeoutMs: number
 
+  /** @internal */
   readonly initialSync: boolean
+  /** @internal */
   readonly syncBatchSize: number
+  /** @internal */
   readonly maxConcurrentSyncs: number
+  /** @internal */
   readonly maxSyncDurationMs: number
+  /** @internal */
   readonly maxSyncLagBeforeReady: number
+  /** @internal */
   readonly syncAckTimeoutMs: number
+  /** @internal */
   readonly catchUpDeadlineMs: number
+  /** @internal */
   readonly resumeFromSeq: bigint | undefined
 
+  /** @internal */
   running = false
+  /** @internal */
   coordinatorState: ReplicationGroupState | null = null
+  /** @internal */
   coordinatorAuthority = false
+  /** @internal */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost' = 'disabled'
+  /** @internal */
   nodeSessionLeaseId: string | null = null
+  /** @internal */
   controllerLeaseId: string | null = null
+  /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
+  /** @internal */
   controllerTimer: ReturnType<typeof setInterval> | null = null
+  /** @internal */
   coordinatorRejoinSyncStarting = false
+  /** @internal */
   coordinatorSessionRestoring = false
+  /** @internal */
   coordinatorLastContactMs = 0
+  /** @internal */
   inSyncReconcileTimer: ReturnType<typeof setInterval> | null = null
+  /** @internal */
   inSyncReconciling = false
+  /** @internal */
   lastSentSeq = 0n
+  /** @internal */
   lastLocalSeq = 0n
+  /** @internal */
   highestSourceSeqSeen = 0n
+  /** @internal */
   readonly appliedSeqByPeer = new Map<string, bigint>()
+  /** @internal */
   readonly expectedBatchIndex = new Map<string, number>()
+  /** @internal */
   readonly syncTableDigests = new Map<string, TableStreamDigest>()
+  /** @internal */
   syncState: SyncState = {
     phase: 'ready',
     sourcePeerId: null,
@@ -134,10 +182,13 @@ export class ReplicationEngine extends EventEmitter {
     error: null,
   }
 
+  /** @internal */
   readonly localExecutor: LocalExecutor
+  /** @internal */
   readonly syncServer: SyncServer
+  /** @internal */
   readonly syncJoiner: SyncJoiner
-  readonly senderLoop: SenderLoop
+  private readonly senderLoop: SenderLoop
 
   constructor(database: Database, writerConn: SQLiteConnection, config: ReplicationConfig) {
     super()
@@ -175,10 +226,16 @@ export class ReplicationEngine extends EventEmitter {
     installTestHooks(this)
   }
 
+  /**
+   * Connects the transport, pulls a full copy when this node needs one, and starts replicating.
+   */
   start(): Promise<void> {
     return startEngine(this)
   }
 
+  /**
+   * Stops replicating, abandons any sync in flight, and disconnects the transport.
+   */
   async stop(): Promise<void> {
     if (!this.running) return
     this.running = false
@@ -204,6 +261,11 @@ export class ReplicationEngine extends EventEmitter {
     await this.config.transport.disconnect()
   }
 
+  /**
+   * Reports where this node stands.
+   *
+   * @returns The node's role, its peers, its progress, its health, and its group state.
+   */
   status(): ReplicationStatus {
     return {
       nodeId: this.nodeId,
@@ -217,30 +279,79 @@ export class ReplicationEngine extends EventEmitter {
     }
   }
 
+  /**
+   * Returns the highest change-log position this node has recorded locally.
+   *
+   * @returns That position, which a caller waits for a replica to reach.
+   */
   getCurrentSeq(): bigint {
     return this.lastLocalSeq
   }
 
+  /**
+   * Returns how far this node has applied one peer's changes.
+   *
+   * @param peerId - Identifier of the peer.
+   * @returns The highest position from that peer this node has applied.
+   */
   getAppliedSeq(peerId: string): bigint {
     return this.appliedSeqByPeer.get(peerId) ?? 0n
   }
 
+  /**
+   * Runs a read, refusing it when the node cannot meet the read concern.
+   *
+   * @param sql - The statement to run.
+   * @param params - Values bound to the statement, named or positional.
+   * @param options - Read concern for this statement.
+   * @returns The rows the statement produced.
+   */
   query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     return query<T>(this, sql, params, options)
   }
 
+  /**
+   * Runs one write, forwarding it to the primary when this node accepts no writes and forwarding is on.
+   *
+   * @param sql - The statement to run.
+   * @param params - Values bound to the statement, named or positional.
+   * @param options - Write concern for this statement.
+   * @returns How many rows changed, and the last inserted row id.
+   */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     return execute(this, sql, params, options)
   }
 
+  /**
+   * Runs one statement over many parameter sets in a single transaction.
+   *
+   * @param sql - The statement to run for each parameter set.
+   * @param paramsBatch - One parameter set per run.
+   * @param options - Write concern for the transaction.
+   * @returns One result per parameter set, in order.
+   */
   executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
     return executeBatch(this, sql, paramsBatch, options)
   }
 
+  /**
+   * Runs a function inside one transaction on this node.
+   *
+   * @param fn - Receives the transaction and runs statements on it.
+   * @param options - Write concern for the transaction.
+   * @returns Whatever the function returned.
+   */
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T> {
     return transaction<T>(this, fn, options)
   }
 
+  /**
+   * Sends a write to the primary and waits for its result.
+   *
+   * @param statements - The statements to run, in order, each with its own parameters.
+   * @param options - Write concern the primary applies.
+   * @returns What the primary reported for each statement.
+   */
   forwardStatements(
     statements: Array<{ sql: string; params?: Params }>,
     options?: QueryOptions,
@@ -248,10 +359,12 @@ export class ReplicationEngine extends EventEmitter {
     return forwardStatements(this, statements, options)
   }
 
+  /** @internal */
   startSenderLoop(): void {
     this.senderLoop.start()
   }
 
+  /** @internal */
   emitError(event: ReplicationErrorEvent): void {
     if (this.listenerCount('replication-error') > 0) {
       try {
@@ -262,6 +375,7 @@ export class ReplicationEngine extends EventEmitter {
     }
   }
 
+  /** @internal */
   getResolver(table?: string): ConflictResolver {
     if (table && this.config.conflictResolvers) {
       const specific = this.config.conflictResolvers[table]
@@ -270,11 +384,13 @@ export class ReplicationEngine extends EventEmitter {
     return this.defaultResolver
   }
 
+  /** @internal */
   checkClockDrift(remoteHlc: string): number {
     const decoded = HLC.decode(remoteHlc)
     return Math.abs(Date.now() - decoded.wallMs)
   }
 
+  /** @internal */
   async refreshTriggersAfterDdl(): Promise<void> {
     if (!this.tracker) return
     const tables = Array.from(this.tracker.watchedTables)
@@ -287,48 +403,59 @@ export class ReplicationEngine extends EventEmitter {
     }
   }
 
+  /** @internal */
   waitForWriteConcern(seq: bigint, wc: { level: string; timeoutMs?: number }): Promise<void> {
     return waitForWriteConcern(this, seq, wc)
   }
 
+  /** @internal */
   async loadAppliedSeqs(): Promise<void> {
     for (const [nodeId, seq] of await selectMaxAppliedSourceSeqByNode(this.writerConn)) {
       this.appliedSeqByPeer.set(nodeId, seq)
     }
   }
 
+  /** @internal */
   isCoordinatorMode(): boolean {
     return this.config.coordinator !== undefined
   }
 
+  /** @internal */
   startCoordinatorMode(): Promise<void> {
     return startCoordinatorMode(this)
   }
 
+  /** @internal */
   prepareCoordinatorRejoinIfNeeded(): Promise<void> {
     return prepareCoordinatorRejoinIfNeeded(this)
   }
 
+  /** @internal */
   hasCoordinatorWriteAuthority(): boolean {
     return this.coordinatorAuthority
   }
 
+  /** @internal */
   requiresCoordinatorRejoinSync(state: ReplicationGroupState | null = this.coordinatorState): boolean {
     return requiresCoordinatorRejoinSync(this, state)
   }
 
+  /** @internal */
   markCoordinatorSyncReady(): Promise<void> {
     return markCoordinatorSyncReady(this)
   }
 
+  /** @internal */
   handleCoordinatorAckProgress(nodeId: string, ackedSeq: bigint): Promise<void> {
     return handleCoordinatorAckProgress(this, nodeId, ackedSeq)
   }
 
+  /** @internal */
   verifyPrimaryAuthority(): Promise<ReplicationGroupState> {
     return verifyPrimaryAuthority(this)
   }
 
+  /** @internal */
   assertInboundCoordinatorMessage(
     message: { groupId?: string; primaryTerm?: bigint },
     fromPeerId: string,
@@ -337,34 +464,42 @@ export class ReplicationEngine extends EventEmitter {
     return assertInboundCoordinatorMessage(this, message, fromPeerId, direction)
   }
 
+  /** @internal */
   decorateBatch(batch: ReplicationBatch): ReplicationBatch {
     return { ...batch, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateAck(ack: ReplicationAck): ReplicationAck {
     return { ...ack, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateForwardResult(result: ForwardedTransactionResult): ForwardedTransactionResult {
     return { ...result, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateSyncRequest(request: SyncRequest): SyncRequest {
     return { ...request, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateSyncBatch(batch: SyncBatch): SyncBatch {
     return { ...batch, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateSyncComplete(complete: SyncComplete): SyncComplete {
     return { ...complete, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   decorateSyncAck(ack: SyncAck): SyncAck {
     return { ...ack, ...getCoordinatorMessageFields(this) }
   }
 
+  /** @internal */
   resolveWriteConcern(
     wc: { level: string; timeoutMs?: number } | undefined,
   ): { level: string; timeoutMs?: number } | undefined {
@@ -375,6 +510,7 @@ export class ReplicationEngine extends EventEmitter {
     return undefined
   }
 
+  /** @internal */
   getCurrentPrimaryPeerId(): string | null {
     return getForwardingPrimaryPeerId(this)
   }

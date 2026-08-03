@@ -25,6 +25,8 @@ interface Waiter {
  *   with a sequence number and timeout. These methods resolve once enough
  *   peers have acknowledged that sequence, or reject with a
  *   WriteConcernError on timeout.
+ *
+ * @internal
  */
 export class PeerTracker {
   private readonly peers = new Map<string, PeerState>()

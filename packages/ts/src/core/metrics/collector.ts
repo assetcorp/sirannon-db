@@ -1,5 +1,10 @@
 import type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from '../types.js'
 
+/**
+ * Times queries and reports connection and change-capture activity to the configured metrics callbacks.
+ *
+ * @internal
+ */
 export class MetricsCollector {
   private config: MetricsConfig
 

@@ -10,8 +10,19 @@
  */
 export type WSSendOutcome = 'sent' | 'buffered' | 'dropped'
 
+/**
+ * One open WebSocket, as the handler sends over it.
+ *
+ * @internal
+ */
 export interface WSConnection {
+  /**
+   * Sends one frame and reports whether it went out, was buffered, or was dropped.
+   */
   send(data: string): WSSendOutcome
+  /**
+   * Closes the connection with a code and reason.
+   */
   close(code?: number, reason?: string): void
 }
 

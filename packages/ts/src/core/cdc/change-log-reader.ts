@@ -1,9 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import {
-  selectChangesAfterSeqSql,
-  selectTableChangesInRangeSql,
-  selectTablesChangesInRangeSql,
-} from '../system-catalog/index.js'
+import { selectChangesAfterSeqSql, selectTablesChangesInRangeSql } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
 import { decodeTaggedValues } from './encoding.js'
 import type { StatementCache } from './statement-cache.js'
@@ -76,20 +72,6 @@ export async function pollChanges(
   }
 
   return { events, lastSeq, atTxBoundary: false }
-}
-
-export async function readSinceOneTable(
-  conn: SQLiteConnection,
-  cache: StatementCache,
-  changesTable: string,
-  table: string,
-  afterSeq: bigint,
-  upToSeq: bigint,
-  limit: number,
-): Promise<ChangeEvent[]> {
-  const stmt = await cache.get(conn, 'read_since', selectTableChangesInRangeSql(changesTable))
-  const rows = (await stmt.all(table, afterSeq.toString(), upToSeq.toString(), limit)) as ChangeRow[]
-  return rows.map(rowToEvent)
 }
 
 export async function readSinceTables(

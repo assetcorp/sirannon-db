@@ -21,6 +21,7 @@
     "typecheck": "nx run-many -t typecheck",
     "check:bundle": "nx run-many -t check:bundle",
     "check:types": "nx run-many -t check:types",
+    "check:api": "nx run-many -t check:api",
     "lint": "nx run-many -t lint",
     "format": "biome check --write .",
     "check": "biome check --error-on-warnings ."

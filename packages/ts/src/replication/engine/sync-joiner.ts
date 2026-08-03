@@ -9,6 +9,11 @@ import { SyncRecovery } from './sync-recovery.js'
 import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
 import { delayAckIfConfigured } from './test-hooks.js'
 
+/**
+ * Drives a joining node through first sync and the catch-up that follows it.
+ *
+ * @internal
+ */
 export class SyncJoiner {
   private catchUpCheckTimer: ReturnType<typeof setInterval> | null = null
   private readonly recovery: SyncRecovery
@@ -343,7 +348,7 @@ export class SyncJoiner {
     }, engine.batchIntervalMs * 2)
   }
 
-  stopCatchUpCheck(): void {
+  private stopCatchUpCheck(): void {
     if (this.catchUpCheckTimer) {
       clearInterval(this.catchUpCheckTimer)
       this.catchUpCheckTimer = null

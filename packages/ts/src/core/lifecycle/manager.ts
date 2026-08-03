@@ -2,6 +2,11 @@ import type { Database } from '../database.js'
 import { MaxDatabasesError, SirannonError } from '../errors.js'
 import type { DatabaseOptions, LifecycleConfig } from '../types.js'
 
+/**
+ * Operations the lifecycle manager calls back into on the owning registry.
+ *
+ * @internal
+ */
 export interface LifecycleCallbacks {
   open: (id: string, path: string, options?: DatabaseOptions) => Promise<Database>
   close: (id: string) => Promise<void>
@@ -9,6 +14,11 @@ export interface LifecycleCallbacks {
   has: (id: string) => boolean
 }
 
+/**
+ * Opens databases on demand, evicts idle ones, and enforces the configured open-database limit.
+ *
+ * @internal
+ */
 export class LifecycleManager {
   private readonly config: LifecycleConfig
   private readonly callbacks: LifecycleCallbacks

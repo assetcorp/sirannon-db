@@ -6,7 +6,15 @@ import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../c
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
 
+/**
+ * @public
+ *
+ * Settings for the better-sqlite3 driver.
+ */
 export interface BetterSqlite3Options {
+  /**
+   * Milliseconds a statement waits for the write lock before it fails.
+   */
   busyTimeout?: number
 }
 
@@ -83,6 +91,14 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
   return conn
 }
 
+/**
+ * @public
+ *
+ * Builds a driver on better-sqlite3, which is the fastest option on Node.
+ *
+ * @param driverOptions - How long a statement waits for the write lock.
+ * @returns The driver, ready to pass to a `Sirannon` registry.
+ */
 export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions }
   return defineDriver({

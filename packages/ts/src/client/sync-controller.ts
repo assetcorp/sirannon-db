@@ -29,6 +29,11 @@ const DEFAULT_MAX_PUSH_RETRY_DELAY_MS = 30_000
 const DEFAULT_SNAPSHOT_RETRY_DELAY_MS = 5_000
 const DEFAULT_MAX_SNAPSHOT_RETRY_DELAY_MS = 300_000
 
+/**
+ * @public
+ *
+ * Keeps one device's local database in step with a server: it pushes local changes, pulls the server's, and downloads a fresh snapshot when the device falls too far behind.
+ */
 export class SyncController {
   private readonly baseUrl: string
   private readonly pushIntervalMs: number
@@ -119,6 +124,9 @@ export class SyncController {
     )
   }
 
+  /**
+   * Connects to the server and starts pushing and pulling changes.
+   */
   async start(): Promise<void> {
     if (this.state === 'running' || this.state === 'starting') return
     this.state = 'starting'
@@ -159,6 +167,9 @@ export class SyncController {
     }
   }
 
+  /**
+   * Holds pushing and pulling without disconnecting.
+   */
   pause(): void {
     if (this.state !== 'running') return
     this.teardownStream()
@@ -166,12 +177,18 @@ export class SyncController {
     void this.pull.persist()
   }
 
+  /**
+   * Resumes pushing and pulling after a pause.
+   */
   async resume(): Promise<void> {
     if (this.state !== 'paused') return
     this.state = 'stopped'
     await this.start()
   }
 
+  /**
+   * Stops syncing and closes the connection to the server.
+   */
   async stop(): Promise<void> {
     if (this.state === 'stopped') return
     this.teardownStream()
@@ -179,6 +196,11 @@ export class SyncController {
     await this.pull.persist()
   }
 
+  /**
+   * Reports where this device stands against the server.
+   *
+   * @returns The device's state, cursors, pending push count, and last failure.
+   */
   async status(): Promise<SyncStatus> {
     const pendingPushCount = this.port ? await this.port.countOutboxPending(this.push.cursor) : 0
     return {
@@ -195,6 +217,9 @@ export class SyncController {
     }
   }
 
+  /**
+   * Pushes local changes now instead of waiting for the next interval.
+   */
   triggerPush(): void {
     void this.push.drain()
   }
@@ -241,6 +266,11 @@ export class SyncController {
     this.resync.schedule()
   }
 
+  /**
+   * Replaces the local database with a fresh copy from the server and resumes syncing from it.
+   *
+   * @param options - Page size and the progress callback for this download.
+   */
   async downloadSnapshot(options?: SnapshotOptions): Promise<void> {
     if (this.state === 'snapshotting') {
       throw new Error('A snapshot download is already in progress')

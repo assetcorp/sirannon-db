@@ -1,6 +1,14 @@
 import { SirannonError } from '../errors.js'
 import type { SQLiteDriver } from './types.js'
 
+/**
+ * Builds a {@link SQLiteDriver} from an implementation, copying across only the optional members Sirannon knows about.
+ *
+ * @param driver - The driver implementation.
+ * @returns The driver, ready to pass to a `Sirannon` registry.
+ *
+ * @public
+ */
 export function defineDriver(config: SQLiteDriver): SQLiteDriver {
   if (!config.capabilities || typeof config.open !== 'function') {
     throw new SirannonError('Driver must define capabilities and open()', 'INVALID_DRIVER')

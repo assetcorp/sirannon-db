@@ -1,5 +1,10 @@
 import type { ReplicationEngine } from './engine.js'
 
+/**
+ * Batches locally recorded changes and pushes them to the peers the topology accepts.
+ *
+ * @internal
+ */
 export class SenderLoop {
   private senderTimer: ReturnType<typeof setTimeout> | null = null
 

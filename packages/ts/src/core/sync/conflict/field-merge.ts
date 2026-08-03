@@ -16,6 +16,8 @@ type ColumnVersionGetter = (table: string, rowId: string) => Promise<Map<string,
  * injected `getColumnVersions` callback) determine which side's value wins
  * for each contested column. If no column version metadata exists, the
  * resolver falls back to whole-row LWW.
+ *
+ * @public
  */
 export class FieldMergeResolver implements ConflictResolver {
   private readonly getColumnVersions: ColumnVersionGetter
@@ -25,6 +27,12 @@ export class FieldMergeResolver implements ConflictResolver {
     this.getColumnVersions = getColumnVersions
   }
 
+  /**
+   * Merges columns only one side changed, and settles overlapping columns by their per-column stamps.
+   *
+   * @param ctx - The local and incoming versions of one row.
+   * @returns Which version to write, or the merged row.
+   */
   async resolve(ctx: ConflictContext): Promise<ConflictResolution> {
     const columnVersions = await this.getColumnVersions(ctx.table, ctx.rowId)
 

@@ -8,9 +8,14 @@ import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
 import { advanceStreamDigest } from './sync-verification.js'
 
+/**
+ * Serves first-sync requests from joining nodes by streaming schema, table pages, and a manifest.
+ *
+ * @internal
+ */
 export class SyncServer {
-  readonly activeSyncs = new Map<string, ActiveSyncSession>()
-  readonly syncAckWaiters = new Map<string, SyncAckWaiter>()
+  private readonly activeSyncs = new Map<string, ActiveSyncSession>()
+  private readonly syncAckWaiters = new Map<string, SyncAckWaiter>()
 
   constructor(private readonly engine: ReplicationEngine) {}
 
@@ -132,7 +137,7 @@ export class SyncServer {
     }
   }
 
-  abortSyncSession(requestId: string): void {
+  private abortSyncSession(requestId: string): void {
     const session = this.activeSyncs.get(requestId)
     if (!session) return
 

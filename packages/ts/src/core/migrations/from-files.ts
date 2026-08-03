@@ -3,7 +3,15 @@ import { applyBaselineOption, type BaselineFileOption } from './baseline.js'
 import { parseMigrationFilename } from './filename.js'
 import type { Migration } from './types.js'
 
+/**
+ * How a set of migration files is turned into migrations.
+ *
+ * @public
+ */
 export interface MigrationsFromFilesOptions {
+  /**
+   * Marks the migration an existing database starts from.
+   */
   baseline?: BaselineFileOption
 }
 
@@ -18,6 +26,15 @@ function basename(key: string): string {
   return separator === -1 ? key : key.slice(separator + 1)
 }
 
+/**
+ * Builds migrations from file contents you have already read, which suits a bundler that inlines the SQL.
+ *
+ * @param files - Migration file names mapped to their SQL.
+ * @param options - The baseline to apply, when an existing database starts from one.
+ * @returns The migrations, in ascending version order.
+ *
+ * @public
+ */
 export function migrationsFromFiles(files: Record<string, unknown>, options?: MigrationsFromFilesOptions): Migration[] {
   const grouped = new Map<number, GroupedMigrationFiles>()
 

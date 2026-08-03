@@ -26,7 +26,12 @@ interface AppliedRow extends AppliedChecksumRow {
   name: string
 }
 
-// biome-ignore lint/complexity/noStaticOnlyClass: public API exported as a class namespace
+/**
+ * Applies and rolls back migrations against one connection.
+ *
+ * @internal
+ */
+// biome-ignore lint/complexity/noStaticOnlyClass: exported as a class namespace
 export class MigrationRunner {
   static async run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult> {
     const validated = MigrationRunner.validateMigrations(migrations)

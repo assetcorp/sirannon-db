@@ -15,6 +15,13 @@ import type {
   SirannonOptions,
 } from './types.js'
 
+/**
+ * A registry of open SQLite databases, keyed by identifier.
+ *
+ * It opens each database through one driver, applies shared hooks, metrics, and migrations, and closes idle databases when you configure a lifecycle.
+ *
+ * @public
+ */
 export class Sirannon {
   private readonly dbs = new Map<string, Database>()
   private readonly opening = new Set<string>()
@@ -27,7 +34,16 @@ export class Sirannon {
   private readonly metricsCollector: MetricsCollector | null
   private readonly lifecycleManager: LifecycleManager | null
 
-  constructor(readonly options: SirannonOptions) {
+  /** The driver, hooks, metrics, lifecycle, migrations, and writer-worker default this registry was built with. */
+  readonly options: SirannonOptions
+
+  /**
+   * Builds a registry.
+   *
+   * @param options - Driver, hooks, metrics, lifecycle, migrations, and the writer-worker default.
+   */
+  constructor(options: SirannonOptions) {
+    this.options = options
     this._driver = options.driver
     this.hookRegistry = new HookRegistry(options.hooks)
     this.metricsCollector = options.metrics ? new MetricsCollector(options.metrics) : null
@@ -41,10 +57,20 @@ export class Sirannon {
       : null
   }
 
+  /** @internal */
   get driver(): SQLiteDriver {
     return this._driver
   }
 
+  /**
+   * Opens a database and registers it under an identifier.
+   *
+   * @param id - Identifier callers reach this database by.
+   * @param path - File path of the SQLite database.
+   * @param options - Pool size, journal mode, durability, and change-capture settings.
+   * @returns The open database.
+   * @throws When the identifier is already registered.
+   */
   async open(id: string, path: string, options?: DatabaseOptions): Promise<Database> {
     this.ensureRunning()
     if (this.dbs.has(id) || this.opening.has(id)) {
@@ -133,6 +159,11 @@ export class Sirannon {
     return { ...options, writerWorker: fallback }
   }
 
+  /**
+   * Closes one database and removes it from the registry.
+   *
+   * @param id - Identifier of the database to close.
+   */
   async close(id: string): Promise<void> {
     this.ensureRunning()
     const db = this.dbs.get(id)
@@ -142,6 +173,12 @@ export class Sirannon {
     await db.close()
   }
 
+  /**
+   * Returns an already-open database.
+   *
+   * @param id - Identifier of the database.
+   * @returns The database, or undefined when none is open under that identifier.
+   */
   get(id: string): Database | undefined {
     const db = this.dbs.get(id)
     if (db) {
@@ -152,6 +189,7 @@ export class Sirannon {
     return undefined
   }
 
+  /** @internal */
   async resolve(id: string): Promise<Database | undefined> {
     const db = this.get(id)
     if (db) return db
@@ -169,6 +207,7 @@ export class Sirannon {
     return inFlight
   }
 
+  /** @internal */
   registryMigrations(): Promise<Migration[]> {
     return this.loadMigrationSet()
   }
@@ -208,14 +247,28 @@ export class Sirannon {
     return loading
   }
 
+  /**
+   * Reports whether a database is open under an identifier.
+   *
+   * @param id - Identifier to check.
+   * @returns True when the registry holds an open database under it.
+   */
   has(id: string): boolean {
     return this.dbs.has(id)
   }
 
+  /**
+   * Returns every database this registry currently holds open.
+   *
+   * @returns The open databases, keyed by identifier.
+   */
   databases(): Map<string, Database> {
     return new Map(this.dbs)
   }
 
+  /**
+   * Closes every open database and stops the lifecycle timers.
+   */
   async shutdown(): Promise<void> {
     if (this._shutdown) return
     this._shutdown = true
@@ -240,22 +293,47 @@ export class Sirannon {
     }
   }
 
+  /**
+   * Registers a hook that runs before each statement on every database in this registry. Throw from it to refuse the statement.
+   *
+   * @param hook - Receives the statement, its parameters, and the concerns it carries.
+   */
   onBeforeQuery(hook: BeforeQueryHook): void {
     this.hookRegistry.register('beforeQuery', hook)
   }
 
+  /**
+   * Registers a hook that runs after each statement on every database in this registry.
+   *
+   * @param hook - Receives the statement and how long it took.
+   */
   onAfterQuery(hook: AfterQueryHook): void {
     this.hookRegistry.register('afterQuery', hook)
   }
 
+  /**
+   * Registers a hook that runs before a database connection opens.
+   *
+   * @param hook - Receives the database identifier and its file path.
+   */
   onBeforeConnect(hook: BeforeConnectHook): void {
     this.hookRegistry.register('beforeConnect', hook)
   }
 
+  /**
+   * Registers a hook that runs once a database is open.
+   *
+   * @param hook - Receives the database identifier and its file path.
+   */
   onDatabaseOpen(hook: DatabaseOpenHook): void {
     this.hookRegistry.register('databaseOpen', hook)
   }
 
+  /**
+   * Registers a hook that runs once a database is closed.
+   *
+   * @param hook - Receives the database identifier and its file path.
+   */
   onDatabaseClose(hook: DatabaseCloseHook): void {
     this.hookRegistry.register('databaseClose', hook)
   }

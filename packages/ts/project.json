@@ -28,6 +28,14 @@
       },
       "dependsOn": ["build"]
     },
+    "check:api": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check:api",
+        "cwd": "packages/ts"
+      },
+      "dependsOn": ["build"]
+    },
     "test": {
       "executor": "nx:run-commands",
       "options": {

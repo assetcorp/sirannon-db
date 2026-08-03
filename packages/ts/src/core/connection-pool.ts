@@ -2,6 +2,11 @@ import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/
 import { ConnectionPoolError, SirannonError } from './errors.js'
 import type { WorkerHostOptions } from './worker/host.js'
 
+/**
+ * Settings a connection pool opens its writer and readers with.
+ *
+ * @internal
+ */
 export interface ConnectionPoolOptions {
   driver: SQLiteDriver
   path: string
@@ -22,6 +27,11 @@ async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promi
   }
 }
 
+/**
+ * Holds one writer connection and a rotating set of reader connections for a single database file.
+ *
+ * @internal
+ */
 export class ConnectionPool {
   private readonly writer: SQLiteConnection | null
   private readonly readers: SQLiteConnection[]

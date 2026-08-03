@@ -7,6 +7,11 @@ const DEFAULT_LOAD_DURABILITY: BulkLoadDurability = 'off'
 const CHECKPOINT_ATTEMPTS = 3
 const CHECKPOINT_RETRY_DELAY_MS = 50
 
+/**
+ * Reports whether a value is one of the durability levels a bulk load accepts.
+ *
+ * @internal
+ */
 export function isBulkLoadDurability(value: unknown): value is BulkLoadDurability {
   return value === 'off' || value === 'normal'
 }
@@ -61,6 +66,8 @@ export interface BulkLoadRun {
  * batch; each intermediate load still restores the configured level, and
  * SQLite's automatic checkpoint keeps the WAL bounded during the import at the
  * relaxed level with no fsync of its own.
+ *
+ * @internal
  */
 export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
   const durability = run.durability ?? DEFAULT_LOAD_DURABILITY

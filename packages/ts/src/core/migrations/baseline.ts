@@ -48,8 +48,19 @@ export function resolveEffectiveBaseline(sorted: Migration[]): Migration | undef
   return baselines[baselines.length - 1]
 }
 
+/**
+ * Marks the migration an existing database starts from, so earlier versions are recorded without running.
+ *
+ * @public
+ */
 export interface BaselineFileOption {
+  /**
+   * Version of the migration carrying the baseline.
+   */
   version: number
+  /**
+   * Highest version this baseline covers.
+   */
   through: number
 }
 

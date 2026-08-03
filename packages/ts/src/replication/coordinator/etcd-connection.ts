@@ -1,15 +1,47 @@
 import type { IOptions } from 'etcd3'
 import { assertNonEmpty } from './group-rules.js'
 
+/**
+ * @public
+ *
+ * Where the etcd coordinator connects, under which key prefix it stores group state, and how it authenticates.
+ */
 export interface EtcdClusterCoordinatorOptions {
+  /**
+   * etcd endpoints to connect to. Production access requires https addresses.
+   */
   hosts: string | string[]
+  /**
+   * Prefix every key this coordinator writes lives under, which keeps clusters apart in one etcd.
+   */
   keyPrefix: string
+  /**
+   * TLS material, which production access requires.
+   */
   credentials?: IOptions['credentials']
+  /**
+   * Username and password, as an alternative to a client certificate.
+   */
   auth?: IOptions['auth']
+  /**
+   * Options passed straight through to the underlying gRPC channel.
+   */
   grpcOptions?: IOptions['grpcOptions']
+  /**
+   * Milliseconds to wait for a connection to etcd.
+   */
   dialTimeoutMs?: number
+  /**
+   * Milliseconds any single etcd call may take.
+   */
   defaultCallTimeoutMs?: number
+  /**
+   * Accepts plain http endpoints without credentials, which suits tests only.
+   */
   allowInsecure?: boolean
+  /**
+   * Called when a group watch fails, so a caller can log it or raise an alert.
+   */
   onWatcherError?: (error: Error) => void
 }
 

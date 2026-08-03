@@ -17,6 +17,8 @@ const MAX_LOGICAL = 0xffff
  * increasing timestamp. Call `receive(remote)` when processing a remote
  * change to merge the remote clock into the local state, ensuring the local
  * clock is never behind any observed timestamp.
+ *
+ * @public
  */
 export class HLC {
   private wallMs: number
@@ -29,7 +31,11 @@ export class HLC {
     this.logical = 0
   }
 
-  /** Generate a new HLC timestamp, advancing the clock. */
+  /**
+   * Generate a new HLC timestamp, advancing the clock.
+   *
+   * @internal
+   */
   now(): string {
     const physicalMs = Date.now()
 
@@ -46,7 +52,11 @@ export class HLC {
     return HLC.encode(this.wallMs, this.logical, this.nodeId)
   }
 
-  /** Merge a remote HLC timestamp into the local clock and return the updated value. */
+  /**
+   * Merge a remote HLC timestamp into the local clock and return the updated value.
+   *
+   * @internal
+   */
   receive(remote: string): string {
     const r = HLC.decode(remote)
     const physicalMs = Date.now()
@@ -90,6 +100,14 @@ export class HLC {
     }
   }
 
+  /**
+   * Builds the string form of a clock reading, which sorts in the same order as the reading itself.
+   *
+   * @param wallMs - Wall-clock milliseconds since the Unix epoch.
+   * @param logical - Counter that orders events sharing one millisecond.
+   * @param nodeId - Identifier of the node taking the reading.
+   * @returns The encoded stamp.
+   */
   static encode(wallMs: number, logical: number, nodeId: string): string {
     const wallHex = wallMs.toString(16).padStart(12, '0')
     const logicalHex = logical.toString(16).padStart(4, '0')

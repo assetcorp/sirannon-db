@@ -19,7 +19,6 @@ export {
   selectMinForeignChangeSeqSql,
   selectNodeChangesAfterSeqSql,
   selectOutboundChangesSql,
-  selectTableChangesInRangeSql,
   selectTablesChangesInRangeSql,
   updateChangeStampsAfterSeqSql,
   updateUnstampedChangeStampsSql,

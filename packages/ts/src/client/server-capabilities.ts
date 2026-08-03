@@ -4,17 +4,34 @@ import type { CapabilityReport } from './sync-capabilities.js'
 import { fetchCapabilityReport } from './sync-capabilities.js'
 import { RemoteError } from './types.js'
 
+/**
+ * Message a client raises when the server accepts no SQL over the network.
+ *
+ * @internal
+ */
 export const SQL_REFUSED_MESSAGE =
   'This server does not accept SQL over the network. Call a registered operation by name, or start the server with acceptSql: true.'
 
 export const SQL_UNCONFIRMED_MESSAGE =
   'GET /capabilities returned 404, so this client cannot confirm that the server accepts SQL and refuses to send it. Check that the URL reaches a sirannon-db server and that any proxy in front of it forwards /capabilities.'
 
+/**
+ * Capability questions a remote database asks before it sends a statement.
+ *
+ * @public
+ */
 export interface ServerCapabilityCheck {
+  /** Throws when the server accepts no SQL over the network, so a client refuses to send any. */
   assertSqlAccepted(): Promise<void>
+  /** Reads the digest of the server's operation registry, or undefined when the server announces none. */
   registryDigest(refresh?: boolean): Promise<string | undefined>
 }
 
+/**
+ * Reads and caches the capability report a server announces.
+ *
+ * @internal
+ */
 export class ServerCapabilities implements ServerCapabilityCheck {
   private pending: Promise<CapabilityReport> | null = null
 
@@ -24,7 +41,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     private readonly requestTimeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
   ) {}
 
-  async read(refresh = false): Promise<CapabilityReport> {
+  private async read(refresh = false): Promise<CapabilityReport> {
     if (refresh) this.pending = null
     if (this.pending === null) {
       const request = this.fetch()

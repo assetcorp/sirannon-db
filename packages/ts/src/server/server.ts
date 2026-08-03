@@ -90,6 +90,13 @@ function resolveWsBackpressure(value: number | undefined, maxBodyBytes: number):
   return resolved
 }
 
+/**
+ * @public
+ *
+ * Serves a `Sirannon` database registry over HTTP and WebSocket.
+ *
+ * Build one with {@link createServer}, then call {@link SirannonServer.listen}.
+ */
 export class SirannonServer<Identity = unknown> {
   private app: uWS.TemplatedApp
   private listenSocket: us_listen_socket | null = null
@@ -137,6 +144,11 @@ export class SirannonServer<Identity = unknown> {
     this.registerRoutes()
   }
 
+  /**
+   * Binds the configured host and port and starts serving.
+   *
+   * @throws When the port is already in use.
+   */
   listen(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.app.listen(this.host, this.port, socket => {
@@ -150,6 +162,9 @@ export class SirannonServer<Identity = unknown> {
     })
   }
 
+  /**
+   * Stops serving and closes every open connection.
+   */
   async close(): Promise<void> {
     try {
       await this.wsHandler.close()
@@ -161,6 +176,9 @@ export class SirannonServer<Identity = unknown> {
     }
   }
 
+  /**
+   * Port the server bound to, which is the resolved port when you asked for 0.
+   */
   get listeningPort(): number {
     if (!this.listenSocket) return -1
     return uWS.us_socket_local_port(this.listenSocket as unknown as uWS.us_socket)
@@ -370,6 +388,15 @@ export class SirannonServer<Identity = unknown> {
   }
 }
 
+/**
+ * @public
+ *
+ * Builds a server over a database registry.
+ *
+ * @param sirannon - The registry whose databases the server exposes.
+ * @param options - Address, cross-origin rules, size limits, authentication, registered operations, and whether the server accepts SQL.
+ * @returns The server, ready to listen.
+ */
 export function createServer<Identity = unknown>(
   sirannon: Sirannon,
   options?: ServerOptions<Identity>,

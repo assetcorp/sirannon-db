@@ -10,6 +10,8 @@ import { LWWResolver } from './lww.js'
  * the decision falls back to LWW ordering. This resolver is designed for
  * primary-replica topologies where the primary is the authoritative source of
  * truth and replica-side writes should never override it.
+ *
+ * @public
  */
 export class PrimaryWinsResolver implements ConflictResolver {
   private readonly primaryNodeId: string
@@ -19,6 +21,12 @@ export class PrimaryWinsResolver implements ConflictResolver {
     this.primaryNodeId = primaryNodeId
   }
 
+  /**
+   * Takes the version authored by the configured primary node, and falls back to last-writer-wins otherwise.
+   *
+   * @param ctx - The local and incoming versions of one row.
+   * @returns Which version to write.
+   */
   resolve(ctx: ConflictContext): ConflictResolution {
     if (ctx.remoteChange.nodeId === this.primaryNodeId) {
       return { action: 'accept_remote' }

@@ -11,12 +11,6 @@ export function selectChangesAfterSeqSql(tableName: string): string {
   return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}" WHERE seq > ? ORDER BY seq ASC LIMIT ?`
 }
 
-export function selectTableChangesInRangeSql(tableName: string): string {
-  return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}"
-          WHERE table_name = ? AND seq > ? AND seq <= ?
-          ORDER BY seq ASC LIMIT ?`
-}
-
 export function selectTablesChangesInRangeSql(tableName: string, tableCount: number): string {
   const placeholders = Array.from({ length: tableCount }, () => '?').join(', ')
   return `SELECT ${CHANGE_LOG_COLUMNS} FROM "${tableName}"

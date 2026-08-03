@@ -35,7 +35,7 @@ describe('initial sync protocol ordering', () => {
         startedAt: null,
         error: null,
       },
-      decorateSyncRequest: <T>(request: T): T => request,
+      decorate: <T>(request: T): T => request,
       syncTableDigests: new Map(),
     } as unknown as ReplicationEngine
 
@@ -76,7 +76,7 @@ describe('initial sync protocol ordering', () => {
         startedAt: null,
         error: null,
       },
-      decorateSyncRequest: <T>(request: T): T => request,
+      decorate: <T>(request: T): T => request,
       syncTableDigests: new Map(),
     } as unknown as ReplicationEngine
     const joiner = new SyncJoiner(engine)
@@ -136,8 +136,7 @@ describe('initial sync protocol ordering', () => {
       maxSyncDurationMs: 1_000,
       syncAckTimeoutMs: 20,
       syncBatchSize: 100,
-      decorateSyncBatch: <T>(batch: T): T => batch,
-      decorateSyncComplete: <T>(complete: T): T => complete,
+      decorate: <T>(batch: T): T => batch,
       emitError: (event: ReplicationErrorEvent) => {
         errors.push(event)
       },

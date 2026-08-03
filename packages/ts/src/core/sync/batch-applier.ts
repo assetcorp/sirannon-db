@@ -184,7 +184,7 @@ export class BatchApplier {
 
   /**
    * Applies one pulled transaction whose changes are read from disk in
-   * batches, so a transaction of any size is applied with bounded memory.
+   * batches so that a transaction of any size is applied with bounded memory.
    * The whole group runs in one local transaction: the batches, the echo
    * stamping, and `withinTx` commit together or not at all.
    */

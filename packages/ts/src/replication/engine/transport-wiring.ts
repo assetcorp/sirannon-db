@@ -1,8 +1,16 @@
+import { HLC } from '../../core/sync/hlc.js'
 import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { NodeInfo, SyncPhase } from '../types.js'
+import { assertInboundCoordinatorMessage, resolverFor } from './coordinator-authority.js'
+import { handleCoordinatorAckProgress } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { delayAckIfConfigured } from './test-hooks.js'
+import { refreshTriggersAfterDdl } from './trigger-refresh.js'
+
+function clockDriftMs(remoteHlc: string): number {
+  return Math.abs(Date.now() - HLC.decode(remoteHlc).wallMs)
+}
 
 function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
   if (engine.isCoordinatorMode()) {
@@ -21,14 +29,14 @@ async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, 
   if (!servesItsData((await engine.log.getSyncState()).phase)) return
   await engine.config.transport.sendAck(
     peer.id,
-    engine.decorateAck({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
+    engine.decorate({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
   )
 }
 
 function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
   engine.log
     .setLastAppliedSeq(nodeId, ackedSeq)
-    .then(() => engine.handleCoordinatorAckProgress(nodeId, ackedSeq))
+    .then(() => handleCoordinatorAckProgress(engine, nodeId, ackedSeq))
     .catch((err: unknown) => {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: nodeId, recoverable: true })
@@ -59,7 +67,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         }
       }
 
-      await engine.assertInboundCoordinatorMessage(batch, fromPeerId, 'batch')
+      await assertInboundCoordinatorMessage(engine, batch, fromPeerId, 'batch')
 
       if (batch.changes.length > engine.maxBatchChanges) {
         throw new BatchValidationError(
@@ -67,19 +75,19 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         )
       }
 
-      const drift = engine.checkClockDrift(batch.hlcRange.max)
+      const drift = clockDriftMs(batch.hlcRange.max)
       if (drift > engine.maxClockDriftMs) {
         throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${engine.maxClockDriftMs}ms`)
       }
 
-      const applyResult = await engine.log.applyBatch(batch, table => engine.getResolver(table))
+      const applyResult = await engine.log.applyBatch(batch, table => resolverFor(engine, table))
 
       const batchContainedDdl = batch.changes.some(c => c.operation === 'ddl')
       if (batchContainedDdl) {
         if (applyResult.droppedTables.length > 0 && engine.tracker) {
           await engine.tracker.pruneDroppedTables(engine.writerConn, applyResult.droppedTables)
         }
-        await engine.refreshTriggersAfterDdl()
+        await refreshTriggersAfterDdl(engine)
       }
 
       await engine.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
@@ -96,7 +104,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       await delayAckIfConfigured(engine)
       await engine.config.transport.sendAck(
         fromPeerId,
-        engine.decorateAck({
+        engine.decorate({
           batchId: batch.batchId,
           ackedSeq: batch.toSeq,
           nodeId: engine.nodeId,
@@ -128,8 +136,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       return
     }
-    engine
-      .assertInboundCoordinatorMessage(ack, fromPeerId, 'ack')
+    assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
       .then(() => {
         engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
         persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
@@ -145,14 +152,14 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') {
         throw new ReplicationError('Node is not ready to handle forwarded requests')
       }
-      await engine.assertInboundCoordinatorMessage(request, fromPeerId, 'forward')
+      await assertInboundCoordinatorMessage(engine, request, fromPeerId, 'forward')
       const knownPeers = engine.config.transport.peers()
       if (!knownPeers.has(fromPeerId)) {
         throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
       }
       try {
         const result = await engine.localExecutor.executeForwardedLocally(request.statements)
-        return engine.decorateForwardResult(result)
+        return engine.decorate(result)
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         engine.emitError({ error: wrappedErr, operation: 'forward-execution', peerId: fromPeerId, recoverable: true })
@@ -169,7 +176,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         if (!engine.running) return
         engine.peerTracker.onAckReceived(peer.id, ackedSeq)
         await engine.log.setLastAppliedSeq(peer.id, ackedSeq)
-        await engine.handleCoordinatorAckProgress(peer.id, ackedSeq)
+        await handleCoordinatorAckProgress(engine, peer.id, ackedSeq)
         await reportAppliedPosition(engine, peer, ackedSeq)
       })
       .catch((err: unknown) => {
@@ -207,19 +214,19 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onSyncRequested(async (request, fromPeerId) => {
     if (!engine.running) return
-    await engine.assertInboundCoordinatorMessage(request, fromPeerId, 'sync-request')
+    await assertInboundCoordinatorMessage(engine, request, fromPeerId, 'sync-request')
     await engine.syncServer.handleSyncRequest(request, fromPeerId)
   })
 
   engine.config.transport.onSyncBatchReceived(async (batch, fromPeerId) => {
     if (!engine.running) return
-    await engine.assertInboundCoordinatorMessage(batch, fromPeerId, 'sync-data')
+    await assertInboundCoordinatorMessage(engine, batch, fromPeerId, 'sync-data')
     await engine.syncJoiner.handleSyncBatchReceived(batch, fromPeerId)
   })
 
   engine.config.transport.onSyncCompleteReceived(async (complete, fromPeerId) => {
     if (!engine.running) return
-    await engine.assertInboundCoordinatorMessage(complete, fromPeerId, 'sync-data')
+    await assertInboundCoordinatorMessage(engine, complete, fromPeerId, 'sync-data')
     await engine.syncJoiner.handleSyncCompleteReceived(complete, fromPeerId)
   })
 
@@ -245,8 +252,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       engine.syncServer.handleSyncAckReceived(ack)
       return
     }
-    engine
-      .assertInboundCoordinatorMessage(ack, fromPeerId, 'ack')
+    assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
       .then(() => {
         engine.syncServer.handleSyncAckReceived(ack)
       })

@@ -1,12 +1,20 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
-import type { ConflictResolver, ReplicationBatch, SyncTableManifest } from '../core/sync/types.js'
+import type { ConflictResolver, ReplicationBatch } from '../core/sync/types.js'
 import type { NodeHealth } from '../core/types.js'
 import type {
   ClusterCoordinator,
   CoordinatorCompatibilityMetadata,
   ReplicationGroupState,
 } from './coordinator/types.js'
+import type {
+  ForwardedTransaction,
+  ForwardedTransactionResult,
+  NodeInfo,
+  PeerState,
+  ReplicationAck,
+} from './peer-types.js'
+import type { SyncAck, SyncBatch, SyncComplete, SyncRequest, SyncState } from './sync-types.js'
 
 export type {
   ApplyResult,
@@ -19,82 +27,15 @@ export type {
   SyncTableManifest,
 } from '../core/sync/types.js'
 export type { NodeHealth, NodeHealthReason, NodeHealthState } from '../core/types.js'
-
-/**
- * What one node knows about a peer it is connected to.
- *
- * @public
- */
-export interface NodeInfo {
-  /** Identifier of the peer. */
-  id: string
-  /** Replication group the peer belongs to. */
-  groupId?: string
-  /** Whether the peer accepts writes or serves reads. */
-  role: 'primary' | 'replica'
-  /** Primary term the peer holds. */
-  primaryTerm?: bigint
-  /** Replication protocol version the peer speaks. */
-  protocolVersion?: string
-  /** Milliseconds since the Unix epoch, taken when the peer connected. */
-  joinedAt: number
-  /** Milliseconds since the Unix epoch, taken at the last message from the peer. */
-  lastSeenAt: number
-  /** Highest change-log position the peer has acknowledged. */
-  lastAckedSeq: bigint
-  /** Anything else the transport attached about the peer. */
-  metadata?: Record<string, unknown>
-}
-
-/**
- * Confirms that a node applied one batch.
- *
- * @public
- */
-export interface ReplicationAck {
-  /** Identifier of the batch being acknowledged. */
-  batchId: string
-  /** Highest change-log position the sender has now applied. */
-  ackedSeq: bigint
-  /** Identifier of the node sending the acknowledgement. */
-  nodeId: string
-  /** Replication group the sender belongs to. */
-  groupId?: string
-  /** Primary term the sender believes is current. */
-  primaryTerm?: bigint
-}
-
-/**
- * A write a replica sends to the primary, because it accepts no writes itself.
- *
- * @public
- */
-export interface ForwardedTransaction {
-  /** The statements to run, in order, each with its own parameters. */
-  statements: Array<{ sql: string; params?: Record<string, unknown> | unknown[] }>
-  /** Identifier the result echoes, so the replica matches it to the request. */
-  requestId: string
-  /** Replication group the forwarding replica belongs to. */
-  groupId?: string
-  /** Primary term the replica believes is current. */
-  primaryTerm?: bigint
-}
-
-/**
- * What the primary reports back for a write a replica forwarded to it.
- *
- * @public
- */
-export interface ForwardedTransactionResult {
-  /** One result per statement, in the order the primary ran them. */
-  results: Array<{ changes: number; lastInsertRowId: number | string }>
-  /** Identifier the request carried. */
-  requestId: string
-  /** Replication group the primary belongs to. */
-  groupId?: string
-  /** Primary term the primary held when it ran the write. */
-  primaryTerm?: bigint
-}
+export type {
+  ForwardedTransaction,
+  ForwardedTransactionResult,
+  InFlightBatch,
+  NodeInfo,
+  PeerState,
+  ReplicationAck,
+} from './peer-types.js'
+export type { SyncAck, SyncBatch, SyncComplete, SyncPhase, SyncRequest, SyncState } from './sync-types.js'
 
 /**
  * Whether a node accepts writes or serves reads.
@@ -104,7 +45,7 @@ export interface ForwardedTransactionResult {
 export type TopologyRole = 'primary' | 'replica'
 
 /**
- * Decides which nodes a change flows between, and whether this node writes.
+ * Which nodes a change flows between, and whether this node writes.
  *
  * @public
  */
@@ -194,44 +135,6 @@ export interface ReplicationTransport {
 }
 
 /**
- * One batch a node has sent and is still waiting to see acknowledged.
- *
- * @public
- */
-export interface InFlightBatch {
-  /** Identifier of the batch. */
-  batchId: string
-  /** Change-log position of its first change. */
-  fromSeq: bigint
-  /** Change-log position of its last change. */
-  toSeq: bigint
-  /** Milliseconds since the Unix epoch, taken when the batch was sent. */
-  sentAt: number
-}
-
-/**
- * Where one peer stands from this node's point of view.
- *
- * @public
- */
-export interface PeerState {
-  /** Identifier of the peer. */
-  nodeId: string
-  /** Highest change-log position the peer has acknowledged. */
-  lastAckedSeq: bigint
-  /** Highest change-log position this node has sent it. */
-  lastSentSeq: bigint
-  /** Most recent hybrid logical clock stamp received from the peer. */
-  lastReceivedHlc: string
-  /** Whether the transport holds an open connection to the peer. */
-  connected: boolean
-  /** Batches waiting to be sent to the peer. */
-  pendingBatches: number
-  /** Batches sent to the peer and not yet acknowledged. */
-  inFlightBatches: InFlightBatch[]
-}
-
-/**
  * Whether this node runs the group's controller loop, and how it holds the lease that grants it.
  *
  * @public
@@ -280,7 +183,7 @@ export interface CoordinatorModeConfig {
 export interface ReplicationConfig {
   /** Identifier of this node. Coordinator mode requires a stable, persisted value. */
   nodeId?: string
-  /** Decides which nodes a change flows between, and whether this node writes. */
+  /** Which nodes a change flows between, and whether this node writes. */
   topology: Topology
   /** Carries batches, acknowledgements, forwarded writes, and first sync between nodes. */
   transport: ReplicationTransport
@@ -391,125 +294,6 @@ export interface CoordinatorRuntimeStatus {
   connected: boolean
   /** Whether this node runs the group's controller loop. */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost'
-}
-
-/**
- * How far a joining node has got through first sync.
- *
- * @public
- */
-export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready'
-
-/**
- * Where a joining node stands in first sync.
- *
- * @public
- */
-export interface SyncState {
-  /** How far the node has got. */
-  phase: SyncPhase
-  /** Peer streaming the copy, or null when no sync is running. */
-  sourcePeerId: string | null
-  /** Change-log position the copy was taken at. */
-  snapshotSeq: bigint | null
-  /** Tables already copied in full. */
-  completedTables: string[]
-  /** Tables the copy covers. */
-  totalTables: number
-  /** Milliseconds since the Unix epoch, taken when the sync started. */
-  startedAt: number | null
-  /** Why the sync failed, or null while it is going well. */
-  error: string | null
-}
-
-/**
- * Asks a peer to stream a full copy of the database.
- *
- * @public
- */
-export interface SyncRequest {
-  /** Identifier every message of this sync carries. */
-  requestId: string
-  /** Identifier of the node asking for the copy. */
-  joinerNodeId: string
-  /** Tables the joiner already holds in full, so a resumed sync skips them. */
-  completedTables: string[]
-  /** Whether the joiner verifies the stream with chained batch digests. */
-  supportsStreamVerification?: boolean
-  /** Replication group the joiner belongs to. */
-  groupId?: string
-  /** Primary term the joiner believes is current. */
-  primaryTerm?: bigint
-}
-
-/**
- * One page of first-sync table data.
- *
- * @public
- */
-export interface SyncBatch {
-  /** Identifier of the sync this page belongs to. */
-  requestId: string
-  /** Table these rows come from. */
-  table: string
-  /** Position of this page in the table's stream, counting from zero. */
-  batchIndex: number
-  /** The rows themselves. */
-  rows: Record<string, unknown>[]
-  /** Schema statements, sent with the first page so the joiner can build the tables. */
-  schema?: string[]
-  /** Checksum of the rows, which the joiner verifies before it writes them. */
-  checksum: string
-  /** Set on the last page of a table. */
-  isLastBatchForTable: boolean
-  /** Tables the whole copy covers. */
-  totalTables?: number
-  /** Replication group the source belongs to. */
-  groupId?: string
-  /** Primary term the source held. */
-  primaryTerm?: bigint
-}
-
-/**
- * Tells a joining node that first sync has finished, and carries what it needs to verify the copy.
- *
- * @public
- */
-export interface SyncComplete {
-  /** Identifier of the sync that finished. */
-  requestId: string
-  /** Change-log position the copy was taken at, which the joiner resumes from. */
-  snapshotSeq: bigint
-  /** One manifest per table, so the joiner can check what it received. */
-  manifests: SyncTableManifest[]
-  /** Replication group the source belongs to. */
-  groupId?: string
-  /** Primary term the source held. */
-  primaryTerm?: bigint
-}
-
-/**
- * Confirms to the source that a joining node stored one first-sync page, or says why it could not.
- *
- * @public
- */
-export interface SyncAck {
-  /** Identifier of the sync this acknowledgement belongs to. */
-  requestId: string
-  /** Identifier of the node that received the page. */
-  joinerNodeId: string
-  /** Table the page came from. */
-  table: string
-  /** Position of the page in that table's stream. */
-  batchIndex: number
-  /** Whether the joiner stored the page. */
-  success: boolean
-  /** Why the joiner could not store it. */
-  error?: string
-  /** Replication group the joiner belongs to. */
-  groupId?: string
-  /** Primary term the joiner believes is current. */
-  primaryTerm?: bigint
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   StalePrimaryError,
   TopologyError,
 } from '../errors.js'
-import type { ReplicationStatus, TopologyRole } from '../types.js'
+import type { ConflictResolver, ReplicationStatus, TopologyRole } from '../types.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
 
@@ -68,6 +68,19 @@ export async function refreshCoordinatorState(engine: ReplicationEngine): Promis
       errorDetails(engine, engine.coordinatorState),
     )
   }
+}
+
+export function resolverFor(engine: ReplicationEngine, table?: string): ConflictResolver {
+  const specific = table ? engine.config.conflictResolvers?.[table] : undefined
+  return specific ?? engine.defaultResolver
+}
+
+export function resolveWriteConcern(
+  engine: ReplicationEngine,
+  wc: { level: string; timeoutMs?: number } | undefined,
+): { level: string; timeoutMs?: number } | undefined {
+  if (wc) return wc
+  return engine.isCoordinatorMode() ? { level: 'majority' } : undefined
 }
 
 export function getCoordinatorMessageFields(engine: ReplicationEngine): { groupId?: string; primaryTerm?: bigint } {

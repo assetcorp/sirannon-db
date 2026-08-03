@@ -1,27 +1,16 @@
-import { runBulkLoad } from './bulk-load.js'
-import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
-import type { ConnectionPool } from './connection-pool.js'
-import type { DatabaseBackupController } from './database-backup.js'
-import type { DatabaseCdcController } from './database-cdc.js'
-import { createDatabaseRuntime, type DatabaseInternals, type DatabaseRuntime } from './database-create.js'
-import type { DatabaseObserver } from './database-observability.js'
-import type { DatabaseReadDeps } from './database-reads.js'
+import {
+  closeDatabaseRuntime,
+  createDatabaseRuntime,
+  type DatabaseInternals,
+  type DatabaseRuntime,
+} from './database-create.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
-import type { DatabaseSyncController, DeviceSyncPort } from './database-sync.js'
-import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
-import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import type { DeviceSyncPort } from './database-sync.js'
+import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
-import { loadExtension as loadExtensionImpl } from './extension-loader.js'
-import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
-import type { HookRegistry } from './hooks/registry.js'
 import { openLiveQuery } from './live/database-live.js'
 import type { LiveQuery, LiveQueryOptions } from './live/types.js'
-
-export type { DatabaseInternals } from './database-create.js'
-
-import { migrateWithTriggerRefresh, readAppliedMigrations, rollbackWithTriggerRefresh } from './database-migrations.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import { executeBatch, executeBatchSummary } from './query-executor.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
@@ -37,8 +26,8 @@ import type {
   QueryOptions,
   SubscriptionBuilder,
 } from './types.js'
-import type { WriteGate } from './worker/gate.js'
-import type { WriterLock } from './writer-lock.js'
+
+export type { DatabaseInternals } from './database-create.js'
 
 /**
  * One open SQLite database, with its reads, writes, transactions, migrations, change subscriptions, and live queries.
@@ -48,60 +37,22 @@ import type { WriterLock } from './writer-lock.js'
  * @public
  */
 export class Database {
-  /**
-   * Identifier this database was opened under.
-   */
+  /** Identifier this database was opened under. */
   readonly id: string
-  /**
-   * File path of the SQLite database.
-   */
+  /** File path of the SQLite database. */
   readonly path: string
-  /**
-   * Whether this database refuses writes.
-   */
+  /** Whether this database refuses writes. */
   readonly readOnly: boolean
-  private readonly pool: ConnectionPool
-  private readonly driver: SQLiteDriver
-  private readonly synchronous: SynchronousLevel
-  private readonly walMode: boolean
-  private readonly writerLock: WriterLock
-  private readonly writeGate: WriteGate
-  private readonly groupCommitter: GroupCommitter
+
+  private readonly runtime: DatabaseRuntime
   private readonly closeListeners: (() => void | Promise<void>)[] = []
   private _closed = false
 
-  private readonly cdc: DatabaseCdcController
-  private readonly sync: DatabaseSyncController
-
-  private readonly hookRegistry: HookRegistry
-  private readonly observer: DatabaseObserver
-
-  private readonly backups: DatabaseBackupController
-  private readonly reads: DatabaseReadDeps
-
-  private constructor(
-    id: string,
-    path: string,
-    driver: SQLiteDriver,
-    runtime: DatabaseRuntime,
-    options?: DatabaseOptions,
-  ) {
+  private constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions) {
     this.id = id
     this.path = path
-    this.driver = driver
-    this.pool = runtime.pool
-    this.writeGate = runtime.writeGate
-    this.writerLock = runtime.writerLock
-    this.hookRegistry = runtime.hookRegistry
-    this.observer = runtime.observer
-    this.backups = runtime.backups
-    this.cdc = runtime.cdc
-    this.sync = runtime.sync
-    this.groupCommitter = runtime.groupCommitter
-    this.reads = { pool: runtime.pool, writerLock: runtime.writerLock, observer: runtime.observer }
+    this.runtime = runtime
     this.readOnly = options?.readOnly ?? false
-    this.synchronous = options?.synchronous ?? DEFAULT_SYNCHRONOUS
-    this.walMode = options?.walMode ?? true
   }
 
   /** @internal */
@@ -113,7 +64,7 @@ export class Database {
     internals?: DatabaseInternals,
   ): Promise<Database> {
     const runtime = await createDatabaseRuntime(id, path, driver, options, internals)
-    return new Database(id, path, driver, runtime, options)
+    return new Database(id, path, runtime, options)
   }
 
   /** @internal */
@@ -121,9 +72,8 @@ export class Database {
     batch: ReplicationBatch,
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.sync.applyChanges(batch, resolver)
+    this.ensureWritable()
+    return this.runtime.sync.applyChanges(batch, resolver)
   }
 
   /**
@@ -134,7 +84,7 @@ export class Database {
    */
   deviceSync(): DeviceSyncPort {
     this.ensureNotClosed()
-    return this.sync.devicePort()
+    return this.runtime.sync.devicePort()
   }
 
   /**
@@ -147,13 +97,13 @@ export class Database {
    */
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
-    return readRows<T>(this.reads, sql, params, options)
+    return readRows<T>(this.runtime.reads, sql, params, options)
   }
 
   /** @internal */
   async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
     this.ensureOpen()
-    return readWireRows(this.reads, sql, params, options)
+    return readWireRows(this.runtime.reads, sql, params, options)
   }
 
   /**
@@ -170,7 +120,7 @@ export class Database {
     options?: QueryOptions,
   ): Promise<T | undefined> {
     this.ensureOpen()
-    return readOneRow<T>(this.reads, sql, params, options)
+    return readOneRow<T>(this.runtime.reads, sql, params, options)
   }
 
   /**
@@ -182,17 +132,8 @@ export class Database {
    * @returns How many rows changed, and the last inserted row id.
    */
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.observer.withQueryHooks(sql, params, options, () =>
-      this.writeGate.run(() =>
-        this.observer.track(sql, () =>
-          this.writerLock.isHeld()
-            ? this.groupCommitter.runUngrouped(sql, params)
-            : this.groupCommitter.submit(sql, params),
-        ),
-      ),
-    )
+    this.ensureWritable()
+    return this.runtime.writes.execute(sql, params, options)
   }
 
   /**
@@ -204,47 +145,21 @@ export class Database {
    * @returns One result per parameter set, in order.
    */
   async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.observer.withQueryHooks(sql, undefined, options, () =>
-      this.writeGate.run(() =>
-        this.writerLock.run(() =>
-          this.runInTransaction(this.pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
-        ),
-      ),
-    )
-  }
-
-  private async runInTransaction<T>(
-    writer: SQLiteConnection,
-    sql: string,
-    run: (txConn: SQLiteConnection) => Promise<T>,
-  ): Promise<T> {
-    const result = await this.observer.track(sql, () =>
-      writer.transaction(async txConn => {
-        const value = await run(txConn)
-        await this.cdc.applyStamps(txConn)
-        return value
-      }),
-    )
-    await applyDdlSideEffectsIfRelevant(this.cdc.changeTracker, writer, sql)
-    return result
+    this.ensureWritable()
+    return this.runtime.writes.executeBatch(sql, paramsBatch, options)
   }
 
   /**
-   * Load rows with relaxed writer durability. The load holds the writer lock
-   * for its whole duration, so no other write commits under the relaxed level
-   * and no two loads race on the shared `synchronous` setting; the configured
-   * level is restored before this resolves, whether the load succeeds or
-   * fails. The load runs in one transaction, so one commit and one durability
-   * barrier cover the whole batch. Rows are summed rather than returned
-   * per-row to bound memory on large loads. Like `execute` and `transaction`,
-   * this writes only to the local database; under replication the server routes
-   * loads through the engine, not through this method.
-   *
    * Imports many rows with relaxed writer durability, then restores the configured level.
    *
-   * Use this for a load you can re-run from scratch. {@link Database.executeBatch} keeps full durability.
+   * Use this for a load you can re-run from scratch, because
+   * {@link Database.executeBatch} keeps full durability. The load holds the
+   * writer lock throughout and restores the configured level before this
+   * resolves, whether it succeeds or fails. One transaction covers the whole
+   * batch, and the rows are summed rather than returned one by one to bound
+   * memory on a large load. Like {@link Database.execute}, this writes only to
+   * the local database; under replication the server routes loads through the
+   * engine instead.
    *
    * @param sql - The statement to run for each parameter set.
    * @param paramsBatch - One parameter set per row.
@@ -252,56 +167,24 @@ export class Database {
    * @returns How many rows the load applied and how many rows changed.
    */
   async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-    return this.observer.withQueryHooks(sql, undefined, undefined, () =>
-      this.writeGate.run(() =>
-        this.writerLock.run(() => {
-          const writer = this.pool.acquireWriter()
-          return runBulkLoad({
-            writer,
-            configuredSynchronous: this.synchronous,
-            walMode: this.walMode,
-            durability: options?.durability,
-            checkpoint: options?.checkpoint ?? true,
-            loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
-          })
-        }),
-      ),
-    )
+    this.ensureWritable()
+    return this.runtime.writes.bulkLoad(sql, paramsBatch, options)
   }
 
   /**
-   * Takes the statements up front rather than a callback, since a group cannot wait on an
-   * arbitrary caller-supplied callback without delaying every transaction beside it.
+   * Runs a fixed list of statements in one transaction so that several callers can share one commit.
    *
-   * Runs a fixed list of statements in one transaction, so several callers can share one commit.
+   * This takes the statements up front rather than a callback, because a group
+   * cannot wait on an arbitrary caller-supplied callback without delaying every
+   * transaction beside it.
    *
    * @param statements - The statements to run, in order, each with its own parameters.
    * @returns One result per statement, in order.
    */
   async executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
+    this.ensureWritable()
     if (statements.length === 0) return []
-
-    const owned = statements.map(statement => ({ sql: statement.sql, params: statement.params }))
-    const run = canGroupTransaction(owned)
-      ? () => this.writeGate.run(() => this.groupCommitter.submitTransaction(owned))
-      : () => this.runStatementsAlone(owned)
-
-    if (!this.observer.observesQueries) return run()
-    return this.observer.withTransactionHooks(owned, run)
-  }
-
-  private runStatementsAlone(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
-    return this.transaction(async tx => {
-      const results: ExecuteResult[] = new Array(statements.length)
-      for (let i = 0; i < statements.length; i++) {
-        results[i] = await tx.execute(statements[i].sql, statements[i].params)
-      }
-      return results
-    })
+    return this.runtime.writes.executeTransaction(statements)
   }
 
   /**
@@ -311,23 +194,28 @@ export class Database {
    * @returns Whatever the function returned.
    */
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-
-    return this.writeGate.run(() => this.writerLock.run(() => this.cdc.runTransaction(this.pool.acquireWriter(), fn)))
+    this.ensureWritable()
+    return this.runtime.writes.transaction(fn)
   }
 
   /**
-   * Starts recording changes to a table, so subscribers and replication see them.
+   * Starts recording changes to a table so that subscribers and replication see them.
    *
    * @param table - Name of the table to watch.
    */
   async watch(table: string): Promise<void> {
+    this.ensureWritable()
+    await this.runtime.cdc.watch(table)
+  }
+
+  /**
+   * Stops recording changes to a table.
+   *
+   * @param table - Name of the table to stop watching.
+   */
+  async unwatch(table: string): Promise<void> {
     this.ensureOpen()
-    if (this.readOnly) {
-      throw new ReadOnlyError(this.id)
-    }
-    await this.cdc.watch(table)
+    await this.runtime.cdc.unwatch(table)
   }
 
   /**
@@ -340,26 +228,13 @@ export class Database {
    */
   async runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void> {
     if (this._closed) return
-    await this.writerLock.run(() => op(this.pool.acquireWriter()))
+    await this.runtime.writerLock.run(() => op(this.runtime.pool.acquireWriter()))
   }
 
   /** @internal */
   async ensureChangeStamping(): Promise<void> {
-    this.ensureOpen()
-    if (this.readOnly) {
-      throw new ReadOnlyError(this.id)
-    }
-    await this.cdc.ensureStamping()
-  }
-
-  /**
-   * Stops recording changes to a table.
-   *
-   * @param table - Name of the table to stop watching.
-   */
-  async unwatch(table: string): Promise<void> {
-    this.ensureOpen()
-    await this.cdc.unwatch(table)
+    this.ensureWritable()
+    await this.runtime.cdc.ensureStamping()
   }
 
   /**
@@ -370,7 +245,7 @@ export class Database {
    */
   on(table: string): SubscriptionBuilder {
     this.ensureOpen()
-    return this.cdc.on(table)
+    return this.runtime.cdc.on(table)
   }
 
   /**
@@ -386,9 +261,9 @@ export class Database {
     params?: Params,
     options?: LiveQueryOptions,
   ): Promise<LiveQuery<T>> {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-    return openLiveQuery<T>({ cdc: this.cdc, watch: table => this.watch(table) }, sql, params, options)
+    this.ensureWritable()
+    const cdc = this.runtime.cdc
+    return openLiveQuery<T>({ cdc, watch: table => this.watch(table) }, sql, params, options)
   }
 
   /**
@@ -399,9 +274,7 @@ export class Database {
    */
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
-    return this.writerLock.run(() =>
-      migrateWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations),
-    )
+    return this.runtime.migrations.migrate(migrations)
   }
 
   /**
@@ -411,21 +284,19 @@ export class Database {
    */
   async appliedMigrations(): Promise<AppliedMigrationRow[]> {
     this.ensureNotClosed()
-    return this.writerLock.run(() => readAppliedMigrations(this.pool.acquireWriter()))
+    return this.runtime.migrations.applied()
   }
 
   /**
    * Undoes applied migrations, newest first.
    *
-   * @param migrations - The full set of migrations, so the runner finds each down statement.
+   * @param migrations - The full set of migrations so that the runner finds each down statement.
    * @param version - Lowest version to keep. Without it, only the newest migration is undone.
    * @returns Which migrations this call undid.
    */
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
-    return this.writerLock.run(() =>
-      rollbackWithTriggerRefresh(this.pool.acquireWriter(), this.cdc.changeTracker, migrations, version),
-    )
+    return this.runtime.migrations.rollback(migrations, version)
   }
 
   /**
@@ -435,7 +306,7 @@ export class Database {
    */
   async backup(destPath: string): Promise<void> {
     this.ensureOpen()
-    await this.backups.backup(destPath)
+    await this.runtime.backups.backup(destPath)
   }
 
   /**
@@ -445,7 +316,7 @@ export class Database {
    */
   scheduleBackup(options: BackupScheduleOptions): void {
     this.ensureOpen()
-    this.backups.schedule(options)
+    this.runtime.backups.schedule(options)
   }
 
   /**
@@ -455,7 +326,7 @@ export class Database {
    */
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
-    await this.writerLock.run(() => loadExtensionImpl(this.driver, this.pool.acquireWriter(), extensionPath))
+    await this.runtime.loadExtension(extensionPath)
   }
 
   /**
@@ -464,7 +335,7 @@ export class Database {
    * @param hook - Receives the statement, its parameters, and the concerns it carries.
    */
   onBeforeQuery(hook: BeforeQueryHook): void {
-    this.hookRegistry.register('beforeQuery', hook)
+    this.runtime.hookRegistry.register('beforeQuery', hook)
   }
 
   /**
@@ -473,7 +344,7 @@ export class Database {
    * @param hook - Receives the statement and how long it took.
    */
   onAfterQuery(hook: AfterQueryHook): void {
-    this.hookRegistry.register('afterQuery', hook)
+    this.runtime.hookRegistry.register('afterQuery', hook)
   }
 
   /** @internal */
@@ -488,29 +359,7 @@ export class Database {
   async close(): Promise<void> {
     if (this._closed) return
     this._closed = true
-
-    this.cdc.stop()
-    this.backups.cancelAll()
-
-    let poolError: unknown
-    try {
-      await this.cdc.closeLiveConnection()
-      await this.groupCommitter.drain()
-      await this.writerLock.settle()
-      await this.pool.close()
-    } catch (err) {
-      poolError = err
-    }
-
-    for (const fn of this.closeListeners) {
-      try {
-        await fn()
-      } catch {}
-    }
-
-    if (poolError) {
-      throw poolError
-    }
+    await closeDatabaseRuntime(this.runtime, this.closeListeners)
   }
 
   /**
@@ -524,12 +373,17 @@ export class Database {
    * Number of read connections the pool holds.
    */
   get readerCount(): number {
-    return this.pool.readerCount
+    return this.runtime.pool.readerCount
+  }
+
+  private ensureWritable(): void {
+    this.ensureOpen()
+    if (this.readOnly) throw new ReadOnlyError(this.id)
   }
 
   private ensureOpen(): void {
     this.ensureNotClosed()
-    if (this.sync.snapshotLoadBlocked) {
+    if (this.runtime.sync.snapshotLoadBlocked) {
       throw new SirannonError(
         `Database '${this.id}' is replacing its data from a sync snapshot; retry once the snapshot load completes`,
         'SNAPSHOT_IN_PROGRESS',

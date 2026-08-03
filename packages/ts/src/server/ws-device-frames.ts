@@ -6,8 +6,8 @@ import type { WSWireChangeEvent } from './ws-protocol.js'
 /**
  * Target size of one packed `changes` frame. A soft limit in the manner of
  * MySQL's row-event grouping: events are packed until the next one would
- * cross it, and a single event larger than the whole target travels alone
- * rather than being split. 64 KiB keeps a frame at 1/16 of the 1 MiB
+ * cross it, and a single event larger than the whole target is sent alone
+ * rather than split. 64 KiB keeps a frame at 1/16 of the 1 MiB
  * `maxBodyBytes` frame ceiling and 1/256 of the 16 MiB send-backpressure
  * allowance, while a full 1,000-change delivery window of ordinary rows
  * still spans several frames instead of collapsing into one burst.
@@ -36,7 +36,7 @@ export type FrameAppendOutcome = WSSendOutcome | 'queued'
 /**
  * Packs encoded change events into `changes` frames bounded by a byte
  * target. Each event is serialised once; the frame is assembled from the
- * serialised pieces, so the byte accounting is exact.
+ * serialised pieces so that the byte accounting is exact.
  */
 export class DeviceFramePacker {
   private parts: string[] = []

@@ -22,7 +22,7 @@ const DEFAULT_POLL_BATCH_SIZE = 1000
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 /**
- * Records every change to the tables you watch, so subscribers and replication can read them in order.
+ * Records every change to the tables you watch so that subscribers and replication can read them in order.
  *
  * Construct one, watch the tables you want captured, and pass it to a replication engine or leave it to the database that owns it.
  *

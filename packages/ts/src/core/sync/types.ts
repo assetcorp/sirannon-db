@@ -88,7 +88,7 @@ export interface ConflictResolution {
   mergedData?: Record<string, unknown>
 }
 
-/** Decides which version of a row wins when a receiver already holds that row.
+/** Resolves which version of a row wins when a receiver already holds that row.
  * @public
  */
 export interface ConflictResolver {

@@ -36,7 +36,7 @@ export interface SyncControllerOptions {
   snapshotPageSize?: number
   /** Changes after which the device acknowledges at once instead of waiting for the interval. */
   immediateAckAfterChanges?: number
-  /** Decides which version of a row wins when a pulled change meets a local one. */
+  /** Resolves which version of a row wins when a pulled change meets a local one. */
   resolver?: ConflictResolver | ((table: string) => ConflictResolver)
   /** Called for each change this device pulls. */
   onChange?: (event: ChangeEvent) => void
@@ -100,6 +100,6 @@ export interface SyncStatus {
   pushCaughtUp: boolean
   /** Whether the server has told this device to download a fresh snapshot. */
   resyncRequired: boolean
-  /** The most recent failure, or null when the last attempt succeeded. */
+  /** The most recent failure, or null when the last try succeeded. */
   lastError: { code: string; message: string } | null
 }

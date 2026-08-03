@@ -24,7 +24,7 @@ export interface SubscribeOptions {
   epoch?: string
   /**
    * Declares that this device stages pulled changes durably and
-   * acknowledges staged sequences, so the server may pack several events
+   * acknowledges staged sequences so that the server may pack several events
    * per frame and pace the delivery window continuously. Send only to a
    * server that announces the `sync.staged-stream` capability.
    */
@@ -54,7 +54,7 @@ export interface LiveHandlers<T = Record<string, unknown>> {
 }
 
 /**
- * Reads the digest of the server's operation registry, so a client notices when
+ * Reads the digest of the server's operation registry so that a client notices when
  * the registered operations behind a live query change.
  *
  * @public

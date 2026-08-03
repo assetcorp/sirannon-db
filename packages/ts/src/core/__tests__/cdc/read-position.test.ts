@@ -15,7 +15,7 @@ let sirannon: Sirannon
 let db: Database
 
 async function readAt<T = Record<string, unknown>>(target: Database, sql: string) {
-  const cdc = (target as unknown as { cdc: DatabaseCdcController }).cdc
+  const cdc = (target as unknown as { runtime: { cdc: DatabaseCdcController } }).runtime.cdc
   const captured = await cdc.readAtPositionWith(conn => query<T>(conn, sql))
   return { rows: captured.value, position: captured.position }
 }

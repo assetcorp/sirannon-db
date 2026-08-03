@@ -106,7 +106,7 @@ export class BackupScheduler {
    *
    * @param conn - Connection to the database being copied.
    * @param options - Cron expression, destination directory, retention, time zone, and failure callback.
-   * @param runExclusive - Runs each copy with the database's writer held, so no write commits mid-copy.
+   * @param runExclusive - Runs each copy with the database's writer held so that no write commits mid-copy.
    * @returns A function that stops the schedule.
    */
   schedule(conn: SQLiteConnection, options: BackupScheduleOptions, runExclusive: RunExclusive = runDirect): () => void {

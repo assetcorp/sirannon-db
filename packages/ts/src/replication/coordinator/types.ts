@@ -62,7 +62,7 @@ export type AcquireControllerLeaseResult =
   | { acquired: false; lease: CoordinatorLease | null }
 
 /**
- * Versions a node publishes, so the group refuses a peer it cannot work with.
+ * Versions a node publishes so that the group refuses a peer it cannot work with.
  *
  * @public
  */
@@ -308,7 +308,7 @@ export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void
 
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set
- * outside the database nodes, so failover has a source of truth no single node
+ * outside the database nodes so that failover has a source of truth no single node
  * owns. The package includes an etcd adapter; build your own to store this
  * elsewhere.
  *

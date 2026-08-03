@@ -4,7 +4,7 @@ import type { InMemoryTransport } from './transport.js'
  * Shared message bus that connects InMemoryTransport instances within the
  * same process. Each transport registers itself on `connect()` and messages
  * are delivered via direct method calls on the target transport through
- * microtask scheduling, simulating async network delivery without actual I/O.
+ * microtask scheduling, simulating async network delivery with no I/O.
  *
  * @public
  */

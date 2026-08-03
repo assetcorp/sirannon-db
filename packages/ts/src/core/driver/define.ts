@@ -2,7 +2,7 @@ import { SirannonError } from '../errors.js'
 import type { SQLiteDriver } from './types.js'
 
 /**
- * Builds a {@link SQLiteDriver} from an implementation, copying across only the optional members Sirannon knows about.
+ * Builds a {@link SQLiteDriver} from an implementation, copying across only the optional members Sirannon supports.
  *
  * @param driver - The driver implementation.
  * @returns The driver, ready to pass to a `Sirannon` registry.

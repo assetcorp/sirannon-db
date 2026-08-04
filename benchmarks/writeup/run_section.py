@@ -20,13 +20,17 @@ def _engine_versions(comparison: dict) -> tuple[str, str, str]:
 SIRANNON_DEFAULT_WRITE_TIMEOUT_MS = 30000
 
 
-def _writer_deadline_ms(comparison: dict) -> float | None:
+def _sirannon_setting(comparison: dict, key: str) -> float | None:
     for _, node in durabilities(comparison):
         settings = (node.get("sirannon_engine", {}) or {}).get("settings") or {}
-        value = settings.get("writer_worker_write_timeout_ms")
+        value = settings.get(key)
         if is_number(value):
             return float(value)
     return None
+
+
+def _writer_deadline_ms(comparison: dict) -> float | None:
+    return _sirannon_setting(comparison, "writer_worker_write_timeout_ms")
 
 
 def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
@@ -122,10 +126,18 @@ def run_block(source: Source) -> str:
         )
     deadline_ms = _writer_deadline_ms(comparison)
     in_flight = integer(config.get("max_in_flight"))
+    schema_ms = _sirannon_setting(comparison, "schema_timeout_ms")
+    schema_text = ""
+    if is_number(schema_ms) and schema_ms > 0:
+        schema_text = (
+            f" The schema reset between workloads ran under a {integer(float(schema_ms) / 60000)}-minute request "
+            f"limit, because dropping a table of this size takes minutes of random reads."
+        )
     if deadline_ms == 0:
         bullets.append(
-            "- **Writer deadline.** Sirannon ran with its writer deadline disabled, so a single write had no time "
-            "limit and a stalled writer would have been caught by the workload stall deadline instead."
+            "- **Writer deadline.** Sirannon ran with its writer deadline disabled, matching PostgreSQL's "
+            "`statement_timeout` default, so a slow write was never reported as a stalled one. The workload stall "
+            "deadline and the per-pass timeout still bound a wedged engine." + schema_text
         )
     elif deadline_ms is not None:
         raised = ""
@@ -137,6 +149,6 @@ def run_block(source: Source) -> str:
         bullets.append(
             f"- **Writer deadline.** Sirannon gave a single write {integer(deadline_ms / 1000)} seconds before "
             f"reporting the writer unresponsive{raised}. Measured operations finish in milliseconds, with at most "
-            f"{in_flight} requests in flight."
+            f"{in_flight} requests in flight." + schema_text
         )
     return "\n".join(bullets)

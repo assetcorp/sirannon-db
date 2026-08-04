@@ -36,7 +36,8 @@ engine_cpus = 2.0
 [sirannon]
 base_url = "http://127.0.0.1:9876"
 database_id = "bench"
-write_timeout_ms = 300000
+write_timeout_ms = 0
+schema_timeout_ms = 1800000
 
 [postgres]
 host = "127.0.0.1"

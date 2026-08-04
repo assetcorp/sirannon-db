@@ -10,7 +10,7 @@ A rate proven in short windows can still collapse under the engine's periodic ho
 
 Every measured request carries a finite timeout, each workload runs under a stall deadline sized to its expected duration, and each schema reset retries engine errors for a bounded budget. A stalled workload ends that engine's pass and keeps the workloads already measured, so one wedged engine cannot burn the machine or contaminate the next workload's numbers. The deadlines, the retry budget, and the timeout are all `BENCH_` variables.
 
-The Sirannon writer thread gives a single write `BENCH_WRITE_TIMEOUT_MS` (default 300000) before reporting itself unresponsive, raised from the released 30-second default because dropping a ten-million-row table between workloads measured about 113.9 s. Every run report states the value the run used.
+Dropping a ten-million-row table between workloads runs for minutes of random reads, so two limits that would cut it short are lifted for the run. `BENCH_WRITE_TIMEOUT_MS` (default 0) disables the Sirannon writer thread's own deadline, matching PostgreSQL's `statement_timeout` default, and `BENCH_SCHEMA_TIMEOUT_MS` (default 1800000) bounds the schema-reset request itself, which otherwise inherits undici's 300-second header timeout. The workload stall deadline and the per-pass timeout still cap a genuinely wedged engine. Every run report states both values, and each drop's duration appears in the run log.
 
 Alongside the head-to-head, the harness records three Sirannon characterizations PostgreSQL has no direct equivalent for: change-feed latency over Sirannon's built-in WebSocket feed, cold-start time, and the connection-scaling curve.
 

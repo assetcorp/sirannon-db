@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "pg": "8.22.0",
-    "smol-toml": "1.7.0"
+    "smol-toml": "1.7.0",
+    "undici": "8.10.0"
   },
   "devDependencies": {
     "@types/node": "26.1.0",

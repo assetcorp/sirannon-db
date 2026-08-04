@@ -11,6 +11,7 @@ export function buildDriver(engine: string, config: Config, durability: string):
       durability,
       config.requestTimeoutMs,
       config.sirannon.writeTimeoutMs,
+      config.sirannon.schemaTimeoutMs,
     )
   }
   if (engine === 'postgres') {

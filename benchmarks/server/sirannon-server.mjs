@@ -11,7 +11,7 @@ const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
 const WRITER_WORKER = !['off', 'false', '0', 'no'].includes((process.env.BENCH_WRITER_WORKER ?? '').toLowerCase())
-const WRITE_TIMEOUT_MS = Number(process.env.BENCH_WRITE_TIMEOUT_MS ?? 300_000)
+const WRITE_TIMEOUT_MS = Number(process.env.BENCH_WRITE_TIMEOUT_MS ?? 0)
 if (!Number.isInteger(WRITE_TIMEOUT_MS) || WRITE_TIMEOUT_MS < 0) {
   console.error('BENCH_WRITE_TIMEOUT_MS must be an integer of at least 0, where 0 disables the writer deadline.')
   process.exit(1)
@@ -121,7 +121,7 @@ try {
   await server.listen()
   console.log(
     `Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability, writer worker ${
-      WRITER_WORKER ? `on, write timeout ${WRITE_TIMEOUT_MS}ms` : 'off'
+      WRITER_WORKER ? `on, write timeout ${WRITE_TIMEOUT_MS === 0 ? 'disabled' : `${WRITE_TIMEOUT_MS}ms`}` : 'off'
     })`,
   )
 } catch (error) {

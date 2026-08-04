@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { Agent, request } from 'undici'
 import type { FailureClassifier, FailureKind } from '../failures.ts'
 import type { RemoteDatabase } from '../sirannon-client.ts'
 import { SirannonClient } from '../sirannon-client.ts'
@@ -97,6 +98,8 @@ export class SirannonDriver extends Driver {
   private readonly durability: string
   private readonly requestTimeoutMs: number
   private readonly writeTimeoutMs: number
+  private readonly schemaTimeoutMs: number
+  private agent: Agent | null = null
   private client: SirannonClient | null = null
   private db: RemoteDatabase | null = null
   readonly failureClassifier: FailureClassifier = { codeOf: sirannonCode, kindOf: sirannonKind }
@@ -107,6 +110,7 @@ export class SirannonDriver extends Driver {
     durability: string,
     requestTimeoutMs: number,
     writeTimeoutMs: number,
+    schemaTimeoutMs: number,
   ) {
     super()
     this.baseUrl = baseUrl
@@ -115,6 +119,7 @@ export class SirannonDriver extends Driver {
     this.durability = durability
     this.requestTimeoutMs = requestTimeoutMs
     this.writeTimeoutMs = writeTimeoutMs
+    this.schemaTimeoutMs = schemaTimeoutMs
   }
 
   async connect(): Promise<void> {
@@ -130,22 +135,30 @@ export class SirannonDriver extends Driver {
     return this.db
   }
 
+  private schemaAgent(): Agent {
+    if (this.agent === null) {
+      this.agent = new Agent({ headersTimeout: this.schemaTimeoutMs, bodyTimeout: this.schemaTimeoutMs })
+    }
+    return this.agent
+  }
+
   private async post(path: string, body: unknown): Promise<Record<string, unknown>> {
-    const response = await fetch(`${this.endpoint}${path}`, {
+    const response = await request(`${this.endpoint}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      dispatcher: this.schemaAgent(),
     })
-    if (!response.ok) {
-      const body = await response.text()
-      const error = new Error(`POST ${path} returned ${response.status}: ${body}`)
-      const code = remoteCodeFromBody(body)
+    const text = await response.body.text()
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      const error = new Error(`POST ${path} returned ${response.statusCode}: ${text}`)
+      const code = remoteCodeFromBody(text)
       if (code !== undefined) {
         Object.assign(error, { code })
       }
       throw error
     }
-    return (await response.json()) as Record<string, unknown>
+    return JSON.parse(text) as Record<string, unknown>
   }
 
   async info(): Promise<Record<string, unknown>> {
@@ -154,6 +167,7 @@ export class SirannonDriver extends Driver {
       delivery: this.delivery,
       durability_requested: this.durability,
       writer_worker_write_timeout_ms: this.writeTimeoutMs,
+      schema_timeout_ms: this.schemaTimeoutMs,
     }
     const journalRows = (await this.database().query('PRAGMA journal_mode')) as Array<Record<string, unknown>>
     const firstJournal = journalRows[0]
@@ -209,6 +223,10 @@ export class SirannonDriver extends Driver {
       this.client.close()
       this.client = null
       this.db = null
+    }
+    if (this.agent !== null) {
+      await this.agent.close()
+      this.agent = null
     }
   }
 }

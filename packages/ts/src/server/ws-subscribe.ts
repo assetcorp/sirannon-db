@@ -15,6 +15,7 @@ const MAX_SUBSCRIBED_TABLES = 500
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
   maxUnacknowledgedChanges: number
+  socketResumeBytes: number
   sendSubscribed(
     conn: WSConnection,
     id: string,

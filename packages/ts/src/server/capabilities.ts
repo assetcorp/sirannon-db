@@ -41,7 +41,7 @@ export interface CapabilitiesOptions {
 export function buildCapabilitiesResponse(options?: CapabilitiesOptions): CapabilitiesResponse {
   const capabilities = [...SERVER_CAPABILITIES]
   if (options?.registryDigest !== undefined) capabilities.push(NAMED_QUERY_CAPABILITY)
-  if (options?.acceptSql !== false) capabilities.push(SQL_QUERY_CAPABILITY)
+  if (options?.acceptSql === true) capabilities.push(SQL_QUERY_CAPABILITY)
 
   const response: CapabilitiesResponse = { capabilities }
   if (options?.registryDigest !== undefined) response.registry = { digest: options.registryDigest }

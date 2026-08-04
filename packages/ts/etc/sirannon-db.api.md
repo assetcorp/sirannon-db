@@ -982,6 +982,7 @@ export interface WSHandlerOptions<Identity = unknown> {
     cdcRetentionMs?: number;
     // (undocumented)
     deviceCursorRetentionMs?: number;
+    maxBackpressureBytes?: number;
     maxPayloadLength?: number;
     // (undocumented)
     maxUnacknowledgedChanges?: number;

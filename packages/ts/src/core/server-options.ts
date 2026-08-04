@@ -242,6 +242,8 @@ export interface CorsOptions {
 export interface WSHandlerOptions<Identity = unknown> {
   /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
   maxPayloadLength?: number
+  /** Outbound bytes a socket may hold before a device stream pauses itself. Default: 16 MB. */
+  maxBackpressureBytes?: number
   /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number

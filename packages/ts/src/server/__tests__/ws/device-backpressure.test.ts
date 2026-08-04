@@ -103,6 +103,36 @@ describe('device streams over a congested socket', () => {
     expect(client.socketClosed).toBe(false)
   }, 90_000)
 
+  it('delivers the tail of a staged stream through repeated reader stalls', async () => {
+    const rows = 2_000
+    const port = await listen({ window: 100_000, congested: true })
+    const client = await connect(port)
+    await client.subscribeDevice({ id: 's1', tables: ['notes'], deviceId: DEVICE_ID, stagedStream: true })
+
+    client.pauseReading()
+    await writeRows(rows, CONGESTION_BODY_BYTES)
+    await sleep(300)
+    client.resumeReading()
+
+    const flap = setInterval(() => {
+      client.pauseReading()
+      setTimeout(() => client.resumeReading(), 3)
+    }, 7)
+    try {
+      await client.waitForEvents('s1', rows, 30_000)
+    } finally {
+      clearInterval(flap)
+      client.resumeReading()
+    }
+
+    const events = client.eventsFor('s1')
+    expect(events.length).toBe(rows)
+    assertStrictlyIncreasing(events.map(event => event.seq))
+    expect(new Set(events.map(event => Number(event.row.id))).size).toBe(rows)
+    expect(events[events.length - 1].txEnd).toBe(true)
+    expect(client.closeCode).toBeNull()
+  }, 60_000)
+
   it('streams a per-transaction device through mid-transaction backpressure without acknowledgements and without an overload close', async () => {
     const rows = 2_500
     expect(rows * CONGESTION_BODY_BYTES).toBeGreaterThan(KERNEL_PLUS_UWS_CEILING_BYTES)

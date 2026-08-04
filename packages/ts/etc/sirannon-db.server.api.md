@@ -116,7 +116,9 @@ export type WSClientMessage = WSSubscribeMessage | WSUnsubscribeMessage | WSAckM
 
 // @internal
 export interface WSConnection {
+    bufferedAmount(): number;
     close(code?: number, reason?: string): void;
+    flush(): void;
     send(data: string): WSSendOutcome;
 }
 

@@ -56,6 +56,9 @@ export async function subscribeDevice(
         pacing: stagedStream ? 'perEvent' : 'perTransaction',
         packer: stagedStream ? new DeviceFramePacker(id, data => deps.sendText(conn, data)) : null,
         sendEvent: event => deps.sendChange(conn, id, event),
+        socketBuffered: () => conn.bufferedAmount(),
+        socketCongested: () => conn.bufferedAmount() >= deps.socketResumeBytes,
+        flushSocket: () => conn.flush(),
         onOverload: () => deps.handleOverload(conn),
         onFault: () => deps.closeFaulted(conn),
         readLog: (afterSeq, upToSeq, limit) =>

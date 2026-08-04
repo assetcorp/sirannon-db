@@ -1,3 +1,13 @@
+## 0.2.2 (2026-08-04)
+
+### 🩹 Fixes
+
+- **ts:** address subscription filters and WebSocket options bug ([63a6995](https://github.com/assetcorp/sirannon-db/commit/63a6995))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.2.1 (2026-08-04)
 
 ### 🚀 Features

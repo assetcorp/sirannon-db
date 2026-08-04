@@ -8,7 +8,7 @@
 
 Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, and Sirannon nodes replicate primary-owned changes over gRPC.
 
-**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** This page gets you running, and the [guides](#documentation) hold the reference depth. Benchmarks against Postgres 17 are in [BENCHMARKS.md](../../BENCHMARKS.md).
+**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** This page gets you running, and the [guides](#documentation) hold the reference depth. The suite that measures Sirannon against Postgres 17 is a Python project under [`benchmarks/server`](../../benchmarks/server), and the write-up generator rewrites [BENCHMARKS.md](../../BENCHMARKS.md) from the latest committed run.
 
 The core engine, server, client, and primary-replica replication are stable. Coordinator-backed failover, device sync, and the Bun and Expo drivers are experimental.
 

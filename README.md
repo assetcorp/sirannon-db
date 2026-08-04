@@ -8,7 +8,7 @@
 
 Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, Sirannon nodes replicate primary-owned changes over gRPC, and end-user devices sync a whole local database offline-first through the same server.
 
-Read the [documentation](https://sirannon.sondelali.com/docs), the [benchmarks against Postgres 17](BENCHMARKS.md), or run the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) to watch a three-node cluster serve through a primary failure on your own machine.
+Read the [documentation](https://sirannon.sondelali.com/docs), or run the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) to watch a three-node cluster serve through a primary failure on your own machine.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
@@ -142,7 +142,7 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 
 ## Benchmarks
 
-The suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and [`BENCHMARKS.md`](BENCHMARKS.md) holds the methodology and the latest results.
+The suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and the write-up generator rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from the latest committed run.
 
 ## Development
 

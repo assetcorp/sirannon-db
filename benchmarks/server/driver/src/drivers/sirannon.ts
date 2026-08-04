@@ -96,17 +96,25 @@ export class SirannonDriver extends Driver {
   private readonly endpoint: string
   private readonly durability: string
   private readonly requestTimeoutMs: number
+  private readonly writeTimeoutMs: number
   private client: SirannonClient | null = null
   private db: RemoteDatabase | null = null
   readonly failureClassifier: FailureClassifier = { codeOf: sirannonCode, kindOf: sirannonKind }
 
-  constructor(baseUrl: string, databaseId: string, durability: string, requestTimeoutMs: number) {
+  constructor(
+    baseUrl: string,
+    databaseId: string,
+    durability: string,
+    requestTimeoutMs: number,
+    writeTimeoutMs: number,
+  ) {
     super()
     this.baseUrl = baseUrl
     this.databaseId = databaseId
     this.endpoint = `${baseUrl.replace(/\/+$/, '')}/db/${encodeURIComponent(databaseId)}`
     this.durability = durability
     this.requestTimeoutMs = requestTimeoutMs
+    this.writeTimeoutMs = writeTimeoutMs
   }
 
   async connect(): Promise<void> {
@@ -145,6 +153,7 @@ export class SirannonDriver extends Driver {
       engine: 'sirannon',
       delivery: this.delivery,
       durability_requested: this.durability,
+      writer_worker_write_timeout_ms: this.writeTimeoutMs,
     }
     const journalRows = (await this.database().query('PRAGMA journal_mode')) as Array<Record<string, unknown>>
     const firstJournal = journalRows[0]

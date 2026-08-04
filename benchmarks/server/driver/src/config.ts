@@ -14,6 +14,7 @@ export interface PostgresConfig {
 export interface SirannonConfig {
   baseUrl: string
   databaseId: string
+  writeTimeoutMs: number
 }
 
 export interface Config {
@@ -149,6 +150,7 @@ export function loadConfig(path: string): Config {
     sirannon: {
       baseUrl: envStr('BENCH_SIRANNON_URL', asString(sir.base_url, 'http://127.0.0.1:9876')),
       databaseId: envStr('BENCH_SIRANNON_DB', asString(sir.database_id, 'bench')),
+      writeTimeoutMs: envInt('BENCH_WRITE_TIMEOUT_MS', asNumber(sir.write_timeout_ms, 300_000)),
     },
     dataSize: envInt('BENCH_DATA_SIZE', asNumber(run.data_size, 10_000)),
     warmupSeconds: envFloat('BENCH_WARMUP_SECONDS', asNumber(run.warmup_seconds, 3.0)),
@@ -222,6 +224,12 @@ function validate(config: Config): void {
   if (config.requestTimeoutMs <= 0) {
     throw new Error(
       `request_timeout_ms must be > 0; the benchmark never issues an unbounded request, got ${config.requestTimeoutMs}`,
+    )
+  }
+  if (!Number.isInteger(config.sirannon.writeTimeoutMs) || config.sirannon.writeTimeoutMs < 0) {
+    throw new Error(
+      `write_timeout_ms must be an integer >= 0, where 0 disables the writer deadline and a positive value is the ` +
+        `budget a single write has before the server reports it as unresponsive, got ${config.sirannon.writeTimeoutMs}`,
     )
   }
   if (config.workloadTimeoutMs < 0) {

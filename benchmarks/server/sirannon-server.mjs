@@ -11,6 +11,11 @@ const DATABASE_ID = process.env.BENCH_SIRANNON_DB ?? 'bench'
 const DURABILITY = process.env.BENCH_DURABILITY === 'full' ? 'full' : 'matched'
 const WRITER_SYNCHRONOUS = DURABILITY === 'full' ? 'full' : 'normal'
 const WRITER_WORKER = !['off', 'false', '0', 'no'].includes((process.env.BENCH_WRITER_WORKER ?? '').toLowerCase())
+const WRITE_TIMEOUT_MS = Number(process.env.BENCH_WRITE_TIMEOUT_MS ?? 300_000)
+if (!Number.isInteger(WRITE_TIMEOUT_MS) || WRITE_TIMEOUT_MS < 0) {
+  console.error('BENCH_WRITE_TIMEOUT_MS must be an integer of at least 0, where 0 disables the writer deadline.')
+  process.exit(1)
+}
 const UWS_LIMIT_BYTES = 4_294_967_295
 const MAX_BODY_BYTES = Number(process.env.BENCH_MAX_BODY_BYTES ?? 1_073_741_824)
 if (!Number.isInteger(MAX_BODY_BYTES) || MAX_BODY_BYTES <= 0 || MAX_BODY_BYTES > UWS_LIMIT_BYTES) {
@@ -106,13 +111,18 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 }
 
 try {
-  sirannon = new Sirannon({ driver: betterSqlite3(), writerWorker: WRITER_WORKER })
+  sirannon = new Sirannon({
+    driver: betterSqlite3(),
+    writerWorker: WRITER_WORKER ? { writeTimeoutMs: WRITE_TIMEOUT_MS } : false,
+  })
   await sirannon.open(DATABASE_ID, dbPath, { readPoolSize: 4, walMode: true, synchronous: WRITER_SYNCHRONOUS })
 
-  server = createServer(sirannon, { host: HOST, port: PORT, maxBodyBytes: MAX_BODY_BYTES })
+  server = createServer(sirannon, { host: HOST, port: PORT, maxBodyBytes: MAX_BODY_BYTES, acceptSql: true })
   await server.listen()
   console.log(
-    `Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability, writer worker ${WRITER_WORKER ? 'on' : 'off'})`,
+    `Sirannon benchmark server listening on ${HOST}:${PORT} (${DURABILITY} durability, writer worker ${
+      WRITER_WORKER ? `on, write timeout ${WRITE_TIMEOUT_MS}ms` : 'off'
+    })`,
   )
 } catch (error) {
   console.error('Failed to start the Sirannon benchmark server.', error)

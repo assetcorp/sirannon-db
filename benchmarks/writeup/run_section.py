@@ -17,6 +17,18 @@ def _engine_versions(comparison: dict) -> tuple[str, str, str]:
     return "n/a", "n/a", "n/a"
 
 
+SIRANNON_DEFAULT_WRITE_TIMEOUT_MS = 30000
+
+
+def _writer_deadline_ms(comparison: dict) -> float | None:
+    for _, node in durabilities(comparison):
+        settings = (node.get("sirannon_engine", {}) or {}).get("settings") or {}
+        value = settings.get("writer_worker_write_timeout_ms")
+        if is_number(value):
+            return float(value)
+    return None
+
+
 def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
     for _, node in durabilities(comparison):
         saturation = node.get("client_saturation") or {}
@@ -107,5 +119,24 @@ def run_block(source: Source) -> str:
         bullets.append(
             f"- **Soak.** After the sweep, {soak_workloads} held each engine at its operating point for one "
             f"continuous {duration} window, reported in 30-second slices."
+        )
+    deadline_ms = _writer_deadline_ms(comparison)
+    in_flight = integer(config.get("max_in_flight"))
+    if deadline_ms == 0:
+        bullets.append(
+            "- **Writer deadline.** Sirannon ran with its writer deadline disabled, so a single write had no time "
+            "limit and a stalled writer would have been caught by the workload stall deadline instead."
+        )
+    elif deadline_ms is not None:
+        raised = ""
+        if deadline_ms > SIRANNON_DEFAULT_WRITE_TIMEOUT_MS:
+            raised = (
+                f", raised from the {integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)}-second default because "
+                f"dropping a table at this row count takes one to two minutes"
+            )
+        bullets.append(
+            f"- **Writer deadline.** Sirannon gave a single write {integer(deadline_ms / 1000)} seconds before "
+            f"reporting the writer unresponsive{raised}. Measured operations finish in milliseconds, with at most "
+            f"{in_flight} requests in flight."
         )
     return "\n".join(bullets)

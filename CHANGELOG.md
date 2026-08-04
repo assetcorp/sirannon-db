@@ -1,3 +1,14 @@
+## 0.2.1 (2026-08-04)
+
+### 🚀 Features
+
+- restrict id-token write permissions to specific workflows ([a643982](https://github.com/assetcorp/sirannon-db/commit/a643982))
+- **ts:** add expo and bun SQLite drivers with API documentation ([9127b19](https://github.com/assetcorp/sirannon-db/commit/9127b19))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.2.0 (2026-08-02)
 
 ### 🚀 Features

@@ -131,8 +131,8 @@ def run_block(source: Source) -> str:
         raised = ""
         if deadline_ms > SIRANNON_DEFAULT_WRITE_TIMEOUT_MS:
             raised = (
-                f", raised from the {integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)}-second default because "
-                f"dropping a table at this row count takes one to two minutes"
+                f", raised from the {integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)}-second default so that the "
+                f"table drop between workloads completes instead of failing"
             )
         bullets.append(
             f"- **Writer deadline.** Sirannon gave a single write {integer(deadline_ms / 1000)} seconds before "

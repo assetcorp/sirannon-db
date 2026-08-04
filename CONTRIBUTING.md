@@ -36,7 +36,7 @@ pnpm test:failover   # Docker-based failover conformance
 pnpm test:soak       # long-running soak run
 ```
 
-The benchmark suite runs from `benchmarks/server`. See [`BENCHMARKS.md`](BENCHMARKS.md) for the methodology and [`benchmarks/server/README.md`](benchmarks/server/README.md) for how to run it against Postgres.
+The benchmark suite runs from `benchmarks/server`. See [`benchmarks/server/README.md`](benchmarks/server/README.md) for how to run it against Postgres. The write-up generator reads the latest committed run and rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from it.
 
 ## Repository layout
 

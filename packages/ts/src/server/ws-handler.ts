@@ -32,6 +32,8 @@ export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
 const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
+const DEFAULT_MAX_BACKPRESSURE_BYTES = 16 * 1_048_576
+
 const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
 
 const NAMED_MESSAGE_TYPES = new Set(['query', 'execute', 'subscribe'])
@@ -58,6 +60,7 @@ export class WSHandler<Identity = unknown> {
   private readonly connections = new Map<WSConnection, ConnectionState>()
   private readonly cdc: CdcContextRegistry
   private readonly maxUnacknowledgedChanges: number
+  private readonly socketResumeBytes: number
   private readonly acceptSql: boolean
   private readonly operations: OperationSource
   private closed = false
@@ -68,6 +71,7 @@ export class WSHandler<Identity = unknown> {
     this.operations = createOperationSource<Identity>(options?.operations)
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
+    this.socketResumeBytes = Math.ceil((options?.maxBackpressureBytes ?? DEFAULT_MAX_BACKPRESSURE_BYTES) / 2)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
   }
@@ -281,6 +285,7 @@ export class WSHandler<Identity = unknown> {
     return {
       cdc: this.cdc,
       maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
+      socketResumeBytes: this.socketResumeBytes,
       sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
         this.send(conn, {
           type: 'subscribed',

@@ -108,6 +108,8 @@ const subscription = db
   .subscribe(event => console.log(event.type, event.table, event.row, event.oldRow, event.seq))
 ```
 
+A filter reports membership of the set it describes. An order whose `status` changes from `pending` to `shipped` arrives as an insert, because the row enters the filter, and one that changes away from `shipped` arrives as a delete carrying the old row. Read `event.type` as the row's arrival or departure, since a real insert and a row entering the filter look the same.
+
 A live query reports the current answer, updating the rows it holds from those same events:
 
 ```ts

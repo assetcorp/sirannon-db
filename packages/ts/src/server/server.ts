@@ -90,6 +90,7 @@ export class SirannonServer<Identity = unknown> {
     this.wsHandler = new WSHandler<Identity>(sirannon, {
       resolveExecutionTarget: this.resolveExecutionTarget,
       maxPayloadLength: this.maxBodyBytes,
+      maxBackpressureBytes: this.maxWsBackpressureBytes,
       cdcRetentionMs: options?.cdcRetentionMs,
       deviceCursorRetentionMs: options?.deviceCursorRetentionMs,
       maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,

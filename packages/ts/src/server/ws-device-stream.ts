@@ -5,7 +5,8 @@ import type { DeviceFramePacker, FrameAppendOutcome } from './ws-device-frames.j
 
 export const DEFAULT_MAX_UNACKNOWLEDGED_CHANGES = 1_000
 
-const CATCHUP_READ_BATCH = 1_000
+const MAX_CATCHUP_READ_BATCH = 1_000
+const MIN_CATCHUP_READ_BATCH = 32
 
 /**
  * How the delivery window paces the stream. `perTransaction` is the
@@ -24,6 +25,9 @@ export interface DeviceStreamDeps {
   pacing: DeviceStreamPacing
   packer: DeviceFramePacker | null
   sendEvent(event: ChangeEvent): WSSendOutcome
+  socketBuffered(): number
+  socketCongested(): boolean
+  flushSocket(): void
   onOverload(): void
   onFault(err: unknown): void
   readLog(afterSeq: bigint, upToSeq: bigint, limit: number): Promise<ChangeEvent[]>
@@ -55,8 +59,11 @@ export class DeviceChangeStream {
   private lastQueuedTxId: string | undefined
   private midTransaction = false
   private draining = false
+  private wakeRequested = false
   private socketWait = false
   private halted = false
+  private lastBuffered = 0
+  private catchupBatch = MAX_CATCHUP_READ_BATCH
 
   constructor(
     private readonly deps: DeviceStreamDeps,
@@ -84,7 +91,7 @@ export class DeviceChangeStream {
 
   start(): void {
     if (this.mode === 'catchup') {
-      void this.drain()
+      this.requestDrain()
     }
   }
 
@@ -94,7 +101,12 @@ export class DeviceChangeStream {
   }
 
   onBatchEnd(atTxBoundary: boolean): void {
-    if (this.halted || this.mode !== 'live') return
+    if (this.halted) return
+    this.nudgeStalledSocket()
+    if (this.socketWait && !this.deps.socketCongested()) {
+      this.onSocketDrain()
+    }
+    if (this.mode !== 'live') return
     if (this.grouper !== null && !this.grouper.flush(atTxBoundary)) return
     this.settleFrame(this.deps.packer?.flush() ?? 'queued')
   }
@@ -105,7 +117,7 @@ export class DeviceChangeStream {
       this.ackedSeq = seq
     }
     if (this.mode === 'catchup') {
-      void this.drain()
+      this.requestDrain()
     }
   }
 
@@ -113,7 +125,7 @@ export class DeviceChangeStream {
     if (this.halted) return
     this.socketWait = false
     if (this.mode === 'catchup') {
-      void this.drain()
+      this.requestDrain()
     }
   }
 
@@ -121,6 +133,24 @@ export class DeviceChangeStream {
     this.halted = true
     this.grouper = null
     this.deps.packer?.clear()
+  }
+
+  /**
+   * Moves a socket that stopped writing on its own. uWebSockets holds the
+   * remainder of a partial write until the next write on that socket and
+   * reports no drain in the meantime, so a stream that has queued everything
+   * it has would leave the last changes sitting there. A small buffered count
+   * that has not moved since the previous poll is that state, and a control
+   * frame carries the remainder out. A socket holding enough to count as
+   * congested is draining under its own flow control and takes nothing extra,
+   * because another frame there would cross the backpressure limit.
+   */
+  private nudgeStalledSocket(): void {
+    const buffered = this.deps.socketBuffered()
+    if (buffered > 0 && buffered === this.lastBuffered && !this.deps.socketCongested()) {
+      this.deps.flushSocket()
+    }
+    this.lastBuffered = buffered
   }
 
   private ensureGrouper(): TransactionGrouper {
@@ -159,11 +189,24 @@ export class DeviceChangeStream {
     this.midTransaction = event.txEnd !== true && event.txId !== undefined
 
     if (outcome === 'buffered') {
-      this.socketWait = true
+      this.parkOnSocket()
       this.enterCatchup()
       return false
     }
     return true
+  }
+
+  /**
+   * Waits for the socket only while it holds enough to be worth waiting for.
+   * uWebSockets reports `buffered` for a send it could not finish in one go,
+   * including one that queued a few hundred bytes of a frame it otherwise
+   * sent, and it notifies a drain only when the socket becomes writable
+   * again. A stream that parked on the outcome alone would wait on a small
+   * remainder that the next send would have flushed, and the wake-up would
+   * never come.
+   */
+  private parkOnSocket(): void {
+    this.socketWait = this.deps.socketCongested()
   }
 
   /**
@@ -183,12 +226,29 @@ export class DeviceChangeStream {
       return
     }
     if (flushed === 'buffered') {
-      this.socketWait = true
+      this.parkOnSocket()
     }
     this.mode = 'catchup'
     this.grouper = null
     this.heldSeq = null
     this.catchupFrom = this.processedSeq > this.highestQueuedSeq ? this.processedSeq : this.highestQueuedSeq
+    if (!this.socketWait) {
+      this.requestDrain()
+    }
+  }
+
+  /**
+   * Starts the catch-up read, or records that one is owed when a read is
+   * already running. A read that hands back the stream mid-pass, because the
+   * socket reported backpressure it no longer holds, would otherwise leave
+   * the stream in catch-up with nothing scheduled to resume it.
+   */
+  private requestDrain(): void {
+    if (this.draining) {
+      this.wakeRequested = true
+      return
+    }
+    void this.drain()
   }
 
   /**
@@ -204,11 +264,29 @@ export class DeviceChangeStream {
     return this.deps.pacing === 'perEvent' || !this.midTransaction
   }
 
+  /**
+   * Sizes the next catch-up read from what the socket accepted this time.
+   * A read that ends at a full socket discards everything past the event
+   * that stopped it, so a device on a congested link would otherwise decode
+   * the same rows on every pause. Doubling the accepted count keeps a
+   * caught-up device reading whole batches while a paced one reads close to
+   * what it can send.
+   */
+  private resizeCatchupBatch(accepted: number): void {
+    const doubled = accepted * 2
+    if (doubled < MIN_CATCHUP_READ_BATCH) {
+      this.catchupBatch = MIN_CATCHUP_READ_BATCH
+      return
+    }
+    this.catchupBatch = doubled > MAX_CATCHUP_READ_BATCH ? MAX_CATCHUP_READ_BATCH : doubled
+  }
+
   private async drain(): Promise<void> {
     if (this.draining || this.halted) return
     this.draining = true
     try {
       while (!this.halted && this.mode === 'catchup') {
+        this.wakeRequested = false
         if (this.socketWait || this.readGateClosed()) return
 
         const upTo = this.deps.logCursor()
@@ -219,7 +297,7 @@ export class DeviceChangeStream {
 
         let events: ChangeEvent[]
         try {
-          events = await this.deps.readLog(this.catchupFrom, upTo, CATCHUP_READ_BATCH)
+          events = await this.deps.readLog(this.catchupFrom, upTo, this.catchupBatch)
         } catch (err) {
           this.halted = true
           this.deps.onFault(err)
@@ -234,8 +312,11 @@ export class DeviceChangeStream {
         }
 
         const grouper = this.ensureGrouper()
+        let offered = 0
+        let stopped = false
         for (const event of events) {
           this.catchupFrom = event.seq
+          offered += 1
           const delivered = this.deps.transform(event)
           if (delivered === null) {
             if (this.heldSeq === null && event.seq > this.processedSeq) {
@@ -243,16 +324,27 @@ export class DeviceChangeStream {
             }
             continue
           }
-          if (!grouper.receive(delivered)) return
+          if (!grouper.receive(delivered)) {
+            this.resizeCatchupBatch(offered)
+            stopped = true
+            break
+          }
           const settledBefore = event.seq - 1n
           if (settledBefore > this.processedSeq) {
             this.processedSeq = settledBefore
           }
           this.heldSeq = delivered.txId === undefined ? null : event.seq
         }
+        if (!stopped) {
+          this.resizeCatchupBatch(this.catchupBatch)
+        }
       }
     } finally {
       this.draining = false
+      if (this.wakeRequested) {
+        this.wakeRequested = false
+        void this.drain()
+      }
     }
   }
 
@@ -282,7 +374,7 @@ export class DeviceChangeStream {
       return
     }
     if (outcome === 'buffered') {
-      this.socketWait = true
+      this.parkOnSocket()
       if (this.mode === 'live') {
         this.enterCatchup()
       }

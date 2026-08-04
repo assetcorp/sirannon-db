@@ -88,7 +88,16 @@ export interface ChangeEvent<T = Record<string, unknown>> {
  * @public
  */
 export interface SubscriptionBuilder {
-  /** Narrows the subscription to rows whose columns equal the given values. */
+  /**
+   * Narrows the subscription to rows whose columns equal the given values.
+   *
+   * The filter reports membership of the matching set, so an update that moves a row
+   * into the set arrives as an insert carrying no `oldRow`, and one that moves a row
+   * out arrives as a delete carrying the old row and an empty `row`. An update that
+   * leaves the row in the set arrives unchanged, and one that never touches the set
+   * is not delivered. A synthesised event is indistinguishable from a real insert or
+   * delete, so read `type` as the row's arrival or departure from the filter.
+   */
   filter(conditions: Record<string, unknown>): SubscriptionBuilder
   /** Starts the subscription and calls back on each change. */
   subscribe(callback: (event: ChangeEvent) => void): Subscription

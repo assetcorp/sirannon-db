@@ -34,6 +34,7 @@ interface HarnessOptions {
   startMode?: 'live' | 'catchup'
   packed?: boolean
   sendOutcomes?: WSSendOutcome[]
+  congestedAbove?: number
 }
 
 function makeHarness(options: HarnessOptions) {
@@ -47,7 +48,15 @@ function makeHarness(options: HarnessOptions) {
   let faults = 0
   const outcomes = options.sendOutcomes ?? []
 
-  const nextOutcome = (): WSSendOutcome => outcomes.shift() ?? 'sent'
+  let buffered = 0
+  let flushes = 0
+  const congestedAbove = options.congestedAbove ?? 0
+
+  const nextOutcome = (): WSSendOutcome => {
+    const outcome = outcomes.shift() ?? 'sent'
+    if (outcome === 'buffered') buffered += 1
+    return outcome
+  }
 
   const sendText = (data: string): WSSendOutcome => {
     const outcome = nextOutcome()
@@ -71,6 +80,12 @@ function makeHarness(options: HarnessOptions) {
         if (outcome === 'dropped') return outcome
         sent.push(event)
         return outcome
+      },
+      socketBuffered: () => buffered,
+      socketCongested: () => buffered > congestedAbove,
+      flushSocket: () => {
+        flushes += 1
+        buffered = 0
       },
       onOverload: () => {
         overloads += 1
@@ -109,6 +124,13 @@ function makeHarness(options: HarnessOptions) {
     frames,
     reads,
     dispatch,
+    emptySocket: () => {
+      buffered = 0
+    },
+    holdSocket: (bytes: number) => {
+      buffered = bytes
+    },
+    flushCount: () => flushes,
     overloadCount: () => overloads,
     faultCount: () => faults,
     seqs: () => sent.map(event => Number(event.seq)),
@@ -330,6 +352,58 @@ describe('DeviceChangeStream', () => {
     expect(h.overloadCount()).toBe(0)
   })
 
+  it('resumes a stream whose socket emptied without a drain notification', async () => {
+    const h = makeHarness({ max: 1000, sendOutcomes: ['buffered'] })
+
+    h.dispatch([change(1, 'tx-1'), change(2, 'tx-2'), change(3, 'tx-3')], true)
+    expect(h.seqs()).toEqual([1])
+    expect(h.stream.catchingUp).toBe(true)
+
+    h.emptySocket()
+    h.stream.onBatchEnd(true)
+    await settle()
+
+    expect(h.seqs()).toEqual([1, 2, 3])
+    expect(h.stream.catchingUp).toBe(false)
+    expect(h.overloadCount()).toBe(0)
+  })
+
+  it('flushes a socket that stopped writing with a remainder still queued', () => {
+    const h = makeHarness({ max: 1000, congestedAbove: 1_000 })
+
+    h.dispatch([change(1, 'tx-1')], true)
+    h.holdSocket(400)
+
+    h.stream.onBatchEnd(true)
+    expect(h.flushCount()).toBe(0)
+
+    h.stream.onBatchEnd(true)
+    expect(h.flushCount()).toBe(1)
+  })
+
+  it('leaves a congested socket to its own flow control', () => {
+    const h = makeHarness({ max: 1000, congestedAbove: 100 })
+
+    h.dispatch([change(1, 'tx-1')], true)
+    h.holdSocket(400)
+
+    h.stream.onBatchEnd(true)
+    h.stream.onBatchEnd(true)
+
+    expect(h.flushCount()).toBe(0)
+  })
+
+  it('keeps reading when a send reports backpressure the socket no longer holds', async () => {
+    const h = makeHarness({ max: 1000, startMode: 'catchup', sendOutcomes: ['sent', 'sent', 'sent'] })
+
+    h.dispatch([change(1, 'tx-1'), change(2, 'tx-1'), change(3, 'tx-1')], true)
+    h.stream.start()
+    await settle()
+
+    expect(h.seqs()).toEqual([1, 2, 3])
+    expect(h.stream.catchingUp).toBe(false)
+  })
+
   it('re-enters catch-up when the send at the live transition hits backpressure', async () => {
     const h = makeHarness({ max: 1000, baseline: 0n, startMode: 'catchup', sendOutcomes: ['buffered'] })
 
@@ -379,6 +453,9 @@ describe('DeviceChangeStream', () => {
           sent.push(event)
           return 'sent'
         },
+        socketBuffered: () => 0,
+        socketCongested: () => false,
+        flushSocket: () => {},
         onOverload: () => {},
         onFault: () => {
           faults += 1
@@ -423,6 +500,9 @@ describe('DeviceChangeStream', () => {
           sent.push(event)
           return 'sent'
         },
+        socketBuffered: () => 0,
+        socketCongested: () => false,
+        flushSocket: () => {},
         onOverload: () => {},
         onFault: () => {},
         readLog: (afterSeq: bigint) => {
@@ -465,6 +545,9 @@ describe('DeviceChangeStream', () => {
         pacing: 'perEvent',
         packer: null,
         sendEvent: () => 'sent',
+        socketBuffered: () => 0,
+        socketCongested: () => false,
+        flushSocket: () => {},
         onOverload: () => {},
         onFault: () => {
           faulted += 1

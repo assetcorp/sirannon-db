@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { OperationRegistry } from '../../../core/operation-registry.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
+import { buildCapabilitiesResponse } from '../../capabilities.js'
 import { createServer, type SirannonServer } from '../../server.js'
 import { createWSHandler } from '../../ws-handler.js'
 import { createMockConnection, lastMessage } from '../helpers.js'
@@ -82,6 +83,11 @@ describe('SQL over the wire is off by default', () => {
     const body = (await (await fetch(`${baseUrl}/capabilities`)).json()) as ApiResponse
     expect(body.capabilities).not.toContain('query.sql')
     expect(body.capabilities).toContain('query.named')
+  })
+
+  it('omits the query.sql capability from a response built with no acceptSql option', () => {
+    expect(buildCapabilitiesResponse().capabilities).not.toContain('query.sql')
+    expect(buildCapabilitiesResponse({ acceptSql: true }).capabilities).toContain('query.sql')
   })
 
   it('answers an unknown route with NOT_FOUND rather than a SQL refusal', async () => {

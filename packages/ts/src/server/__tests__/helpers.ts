@@ -69,6 +69,7 @@ export interface MockWSConnection extends WSConnection {
   closeCode?: number
   closeReason?: string
   sendOutcome: WSSendOutcome
+  buffered: number
 }
 
 export function createMockConnection(): MockWSConnection {
@@ -83,7 +84,17 @@ export function createMockConnection(): MockWSConnection {
         return 'dropped'
       }
       conn.messages.push(data)
+      if (conn.sendOutcome === 'buffered') {
+        conn.buffered += data.length
+      }
       return conn.sendOutcome
+    },
+    buffered: 0,
+    bufferedAmount(): number {
+      return conn.buffered
+    },
+    flush(): void {
+      conn.buffered = 0
     },
     close(code?: number, reason?: string) {
       conn.closed = true

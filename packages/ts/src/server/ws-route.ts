@@ -118,6 +118,18 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
             return 'dropped'
           }
         },
+        bufferedAmount(): number {
+          try {
+            return ws.getBufferedAmount()
+          } catch {
+            return 0
+          }
+        },
+        flush(): void {
+          try {
+            ws.ping()
+          } catch {}
+        },
         close(code?: number, reason?: string) {
           try {
             ws.end(code, reason)

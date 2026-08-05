@@ -103,8 +103,7 @@ cmd_sync() {
   filelist="$(mktemp "${TMPDIR:-/tmp}/sirannon-files.XXXXXX")"
   {
     git -C "$REPO_ROOT" ls-files -z
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z \
-      -- . ":(exclude)${RESULTS_REL}"
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z -- .
     printf '.git\0'
   } >"$filelist"
   COPYFILE_DISABLE=1 tar czf "$tarball" -C "$REPO_ROOT" --null -T "$filelist"
@@ -211,12 +210,21 @@ cmd_fetch() {
     fetched=1
     mkdir -p "$dest/$dir"
     for run in $runs; do
-      if [ -e "$dest/$dir/$run" ]; then
-        log "have run $run already, skipping"
+      if [ ! -e "$dest/$dir/$run" ]; then
+        log "fetch run $run"
+        prov_scp_down "sirannon/$remote/$dir/$run" "$dest/$dir/"
         continue
       fi
-      log "fetch run $run"
-      prov_scp_down "sirannon/$remote/$dir/$run" "$dest/$dir/"
+      log "refresh run $run (a pass may have been added or replaced)"
+      local incoming="$dest/$dir/.incoming-$run"
+      rm -rf "$incoming"
+      if prov_scp_down "sirannon/$remote/$dir/$run" "$incoming"; then
+        rm -rf "${dest:?}/${dir:?}/${run:?}"
+        mv "$incoming" "$dest/$dir/$run"
+      else
+        rm -rf "$incoming"
+        log "could not refresh run $run; the copy already here is untouched"
+      fi
     done
   done
   if [ -z "$fetched" ]; then

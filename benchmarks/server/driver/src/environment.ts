@@ -15,7 +15,7 @@ function gitProvenance(): { commit: string; dirty: boolean } {
   if (commit === null) {
     return { commit: 'unknown', dirty: false }
   }
-  const status = git(['status', '--porcelain'])
+  const status = git(['status', '--porcelain', '--', ':(top,exclude)benchmarks/server/results'])
   return { commit, dirty: status !== null && status.length > 0 }
 }
 

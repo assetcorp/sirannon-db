@@ -4,7 +4,7 @@ This harness compares Sirannon against PostgreSQL on the same OLTP workloads, on
 
 ## What it measures
 
-The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve, and `BENCH_SWEEP_STOP_STEPS` can end it a set number of steps past the first unsustained rate instead of running every rate.
+The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve, and `BENCH_SWEEP_STOP_STEPS` can end it a set number of steps past the first unsustained rate instead of running every rate.
 
 A rate proven in short windows can still collapse under the engine's periodic housekeeping, so the harness can also hold the operating point for a long continuous window (`BENCH_SOAK_SECONDS`, on the workloads in `BENCH_SOAK_WORKLOADS`) and report the slowest 30-second slice, so a checkpoint or vacuum that spikes tail latency shows up instead of averaging away.
 

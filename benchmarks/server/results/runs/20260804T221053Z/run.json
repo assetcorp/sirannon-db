@@ -1,0 +1,74 @@
+{
+  "run_id": "20260804T221053Z",
+  "created_at": "2026-08-04T22:11:29.440Z",
+  "harness_version": "0.1.0",
+  "environment": {
+    "captured_at": "2026-08-05T07:58:47.387Z",
+    "harness_version": "0.1.0",
+    "resource_control": {
+      "mechanism": "cgroup-v2",
+      "driver_allowed_cpus": "0-3",
+      "driver_memory_max": "max",
+      "engine_allowed_cpus": "4-7",
+      "engine_memory_max": "2G"
+    },
+    "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+    "os": "Linux 6.17.0-1021-gcp",
+    "arch": "x64",
+    "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+    "logical_cpus": 8,
+    "total_memory_bytes": 33647984640,
+    "node_version": "v24.19.0",
+    "git_commit": "650df41c6b3a2bf01ad91946402b9373e34f87cf",
+    "git_dirty": false
+  },
+  "config": {
+    "data_size": 10000000,
+    "warmup_seconds": 3,
+    "measure_seconds": 10,
+    "runs": 5,
+    "seed": 42,
+    "slo_p99_ms": 25,
+    "max_in_flight": 256,
+    "target_rates": [
+      1000,
+      2000,
+      4000,
+      8000,
+      16000,
+      32000,
+      64000
+    ],
+    "sweep_stop_steps": 1,
+    "prepare_retry_seconds": 300,
+    "soak_seconds": 1200,
+    "soak_workloads": [
+      "ycsb-a",
+      "tpc-c-derived"
+    ],
+    "workloads": [
+      "point-select",
+      "bulk-insert",
+      "batch-update",
+      "ycsb-a",
+      "ycsb-b",
+      "ycsb-c",
+      "ycsb-f",
+      "tpc-c-derived"
+    ],
+    "scaling_workloads": [
+      "ycsb-c",
+      "ycsb-a"
+    ],
+    "delivery": {
+      "sirannon": "websocket",
+      "postgres": "socket",
+      "transport": "loopback",
+      "sirannon_client": "@delali/sirannon-db SDK over its WebSocket transport",
+      "postgres_client": "node-postgres (pg) over a pooled binary socket",
+      "driver_cpus": 4,
+      "engine_cpus": 4,
+      "note": "Each engine is driven through the client it provides. Sirannon runs over its SDK's default WebSocket transport, which multiplexes every concurrent request over one persistent socket, and PostgreSQL runs over node-postgres on its binary socket protocol. One Node load generator drives both, so the coordinated-omission instrument behaves identically for each. Both run as native processes on one host with no network between the load driver and the server. The engine under test is pinned to its own CPU cores under a hard memory ceiling (cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, so it never competes with the engine under test."
+    }
+  }
+}

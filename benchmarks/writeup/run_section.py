@@ -88,8 +88,10 @@ def run_block(source: Source) -> str:
             "- **Load-client headroom.** Run on its own against the live engines, the Sirannon SDK "
             f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
             f"{ops(postgres_ceiling.get('ceiling_ops'))}, {speedup(sirannon_ceiling.get('headroom_factor'))} and "
-            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator stays "
-            "well above both engines, so every reported number reflects the database's speed."
+            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. Each client stays above "
+            "the operating points its engine reached, so every reported operating point reflects the database's "
+            "speed. A client below 1.00x could not offer the very top rate of the sweep, and the rates above its "
+            "ceiling measure the client rather than the engine."
         )
     stop_steps = config.get("sweep_stop_steps", -1)
     if is_number(stop_steps) and stop_steps >= 0:

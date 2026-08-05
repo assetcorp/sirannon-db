@@ -48,6 +48,11 @@ setup_local_nvme() {
   fi
 }
 
+log "stop the automatic apt timers, which restart running services mid-run"
+sudo systemctl disable --now \
+  apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
+sudo systemctl mask apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true
+
 log "apt packages"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \

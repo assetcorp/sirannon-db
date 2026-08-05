@@ -21,7 +21,9 @@ async function resetSchema(driver: Driver, workload: Workload, config: Config): 
   const start = performance.now()
   for (;;) {
     try {
+      const dropStart = performance.now()
       await driver.dropTables([...workload.tables])
+      progress(`prepare ${workload.name}: dropped in ${((performance.now() - dropStart) / 1000).toFixed(1)}s`)
       await driver.executeDdl(statements)
       return
     } catch (err) {

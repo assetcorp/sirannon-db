@@ -38,8 +38,10 @@ case "${PROFILE}" in
     exit 2
     ;;
 esac
+: "${BENCH_WRITE_TIMEOUT_MS:=0}"
+: "${BENCH_SCHEMA_TIMEOUT_MS:=1800000}"
 export BENCH_DATA_SIZE BENCH_DURABILITIES BENCH_RUNS BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_TARGET_RATES
-export BENCH_SOAK_SECONDS BENCH_PASS_TIMEOUT
+export BENCH_SOAK_SECONDS BENCH_PASS_TIMEOUT BENCH_WRITE_TIMEOUT_MS BENCH_SCHEMA_TIMEOUT_MS
 export PYTHONUNBUFFERED=1
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
@@ -86,6 +88,24 @@ COLD_START_TIMEOUT="${BENCH_COLD_START_TIMEOUT:-120}"
 BENCH_RUN_ID="${BENCH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 export BENCH_RUN_ID
 DURABILITIES="${BENCH_DURABILITIES:-full matched}"
+ENGINES="${BENCH_ENGINES:-sirannon postgres}"
+
+engine_enabled() {
+  case " $ENGINES " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+for engine_name in $ENGINES; do
+  case "$engine_name" in
+    sirannon | postgres) ;;
+    *)
+      echo "unknown engine '${engine_name}' in BENCH_ENGINES (expected: sirannon, postgres)" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if [ -n "${SMOKE}" ]; then
   HOST_RESULTS_DIR="results/.smoke"
@@ -104,6 +124,7 @@ DRIVER_DIR="$(pwd)/driver"
 echo "profile: ${PROFILE}"
 echo "run id: ${BENCH_RUN_ID}"
 echo "durabilities: ${DURABILITIES}"
+echo "engines: ${ENGINES}"
 echo "data root: ${BENCH_DATA_ROOT} (local SSD mode: ${SSD_MODE})"
 echo "driver cores: ${DRIVER_CPUSET}; engine cores: ${ENGINE_CPUSET}; engine memory ceiling: ${ENGINE_MEMORY}"
 
@@ -166,37 +187,41 @@ total="${#DURABILITY_LIST[@]}"
 index=0
 for durability in "${DURABILITY_LIST[@]}"; do
   echo "================ durability: ${durability} ================"
-  sirannon_args=(--engine sirannon --durability "$durability")
-  if [ "$index" -eq 0 ]; then
-    sirannon_args+=(--features)
+  if engine_enabled sirannon; then
+    sirannon_args=(--engine sirannon --durability "$durability")
+    if [ "$index" -eq 0 ]; then
+      sirannon_args+=(--features)
+    fi
+    if start_sirannon "$durability" \
+      && wait_probe "$(now_ms)" sirannon_probe >/dev/null \
+      && verify_engine_cgroup bench-sirannon.service; then
+      drop_caches
+      BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-sirannon.service" \
+        run_driver_pass "${sirannon_args[@]}" || status=1
+      record_engine_caps_proof bench-sirannon.service sirannon "$durability"
+    else
+      echo "sirannon is not healthy under the verified caps; skipping its ${durability} pass" >&2
+      status=1
+    fi
+    unit_stop bench-sirannon.service
+    rm -rf "$SIRANNON_DATA_DIR"
+    cooldown
   fi
-  if start_sirannon "$durability" \
-    && wait_probe "$(now_ms)" sirannon_probe >/dev/null \
-    && verify_engine_cgroup bench-sirannon.service; then
-    drop_caches
-    BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-sirannon.service" \
-      run_driver_pass "${sirannon_args[@]}" || status=1
-    record_engine_caps_proof bench-sirannon.service sirannon "$durability"
-  else
-    echo "sirannon is not healthy under the verified caps; skipping its ${durability} pass" >&2
-    status=1
-  fi
-  unit_stop bench-sirannon.service
-  rm -rf "$SIRANNON_DATA_DIR"
-  cooldown
 
-  if start_postgres \
-    && wait_probe "$(now_ms)" pg_probe >/dev/null \
-    && verify_engine_cgroup bench-postgres.service; then
-    drop_caches
-    BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-postgres.service" \
-      run_driver_pass --engine postgres --durability "$durability" || status=1
-    record_engine_caps_proof bench-postgres.service postgres "$durability"
-  else
-    echo "postgres is not healthy under the verified caps; skipping its ${durability} pass" >&2
-    status=1
+  if engine_enabled postgres; then
+    if start_postgres \
+      && wait_probe "$(now_ms)" pg_probe >/dev/null \
+      && verify_engine_cgroup bench-postgres.service; then
+      drop_caches
+      BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-postgres.service" \
+        run_driver_pass --engine postgres --durability "$durability" || status=1
+      record_engine_caps_proof bench-postgres.service postgres "$durability"
+    else
+      echo "postgres is not healthy under the verified caps; skipping its ${durability} pass" >&2
+      status=1
+    fi
+    unit_stop bench-postgres.service
   fi
-  unit_stop bench-postgres.service
   index=$((index + 1))
   if [ "$index" -lt "$total" ]; then
     cooldown

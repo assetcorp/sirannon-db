@@ -1,12 +1,9 @@
-# Sirannon benchmarks
+# Sirannon and PostgreSQL on one host
 
-Sirannon is a database server, and PostgreSQL is the server most applications would otherwise use, so this page compares the two on the same standard OLTP workloads. Both engines run on one host as native processes pinned to dedicated cores under a hard memory ceiling, each driven through the client it provides, at matched durability, under an open-loop load generator that records the full tail latency.
-
-The numbers on this page come from the latest committed run under `benchmarks/server/results/runs/`. The prose is written by hand; every table and the machine description come from that run, so the words and the numbers match. When no run is committed, the page shows a placeholder instead of numbers.
+This report records one run of the Sirannon-versus-PostgreSQL benchmark, `20260804T221053Z` from 2026-08-04. Both databases answer the same workloads over the client each provides, on the same host, so the figures measure the two engines doing the same work.
 
 ## Methodology
 
-<!-- BENCH:methodology START -->
 One Node load generator drives both databases, with a thin per-database adapter for each. Sirannon runs over its SDK's default WebSocket transport, which multiplexes every concurrent request over one persistent socket; PostgreSQL runs over node-postgres on its binary socket protocol. Both engines answer on the same host over loopback. Sirannon's WebSocket path carries JSON framing on every call, heavier than PostgreSQL's binary protocol, and the numbers include that cost because it is Sirannon's client path. Before each sweep the generator measures each client's own throughput ceiling against the live engine and records it with the results, so a rate that falls short reflects the database's limit.
 
 Both engines run as native processes under Linux cgroup v2 control. The engine under test is pinned to its own CPU cores with a hard memory ceiling, sized so the dataset cannot be served from RAM alone, and the load generator runs on disjoint cores with no memory cap. Each engine writes to a data directory the harness first proves, at device level, to be on the machine's local NVMe. The engines run one after the other, each engine process starts fresh for its pass and is stopped after it, so neither engine carries a warm buffer pool between passes, and Sirannon's data directory is removed after each of its passes. Between passes the harness applies a disclosed cooldown: it syncs and waits for dirty pages to drain, trims the data filesystem, and pauses for a fixed interval. The operating system page cache is dropped before each measured series, so neither engine starts warm from the other's run.
@@ -16,11 +13,9 @@ The harness matches durability at two levels. Full durability sets PostgreSQL `s
 The load is open-loop. Requests arrive at a fixed target rate whether or not earlier requests have returned, and each request's latency counts from the time it was meant to be sent, which corrects for coordinated omission. The report uses tail-latency percentiles, and the operating point is the highest offered rate the engine sustained while holding p99 under the recorded target.
 
 The sweep's measured windows are short, so on selected workloads the harness then holds each engine at its operating point for one long continuous window that crosses both engines' checkpoint cycles, and reports the pace and tail latency of every 30-second slice of it. This shows whether the operating point survives the periodic housekeeping both engines defer, which a short window cannot contain.
-<!-- BENCH:methodology END -->
 
-## The run
+## Run and machine
 
-<!-- BENCH:setup START -->
 - **Run.** These figures come from run `20260804T221053Z`, recorded on 2026-08-04 from commit `650df41c6b3a`. The full per-run report is in [the run report](benchmarks/server/results/runs/20260804T221053Z/comparison.md).
 - **Machine.** The run executed on GCP c3-standard-8-lssd, us-central1-b, which reports Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz with 8 logical cores, 31.3 GB of memory, on Linux 6.17.0-1021-gcp (x64).
 - **Engines.** Sirannon 0.2.2 (storage engine SQLite 3.53.4); PostgreSQL 17.10. Both run as native processes on dedicated cores under a 2G memory ceiling (cgroup v2), at Full durability (fsync every commit) and Matched-relaxed (deferred fsync).
@@ -29,13 +24,9 @@ The sweep's measured windows are short, so on selected workloads the harness the
 - **Workloads.** Every workload ran at 10,000,000 rows, sweeping target rates drawn from 1,000, 2,000, 4,000, 8,000, 16,000, 32,000, and 64,000 requests per second. Each engine climbs the list until it fails to sustain a rate, runs one more rate, and stops, so the two engines can end their sweeps at different rates, with a 3 s warmup and a 10 s measurement window under seed `42`. Every rate ran 5 independent times, and each figure is the median with a 95% confidence interval. The service-level target for the operating point is a p99 under 25 ms.
 - **Soak.** After the sweep, YCSB-A (50/50 read/update) and TPC-C-derived held each engine at its operating point for one continuous 20-minute window, reported in 30-second slices.
 - **Writer deadline.** Sirannon ran with its writer deadline disabled, matching PostgreSQL's `statement_timeout` default, so a slow write was never reported as a stalled one. The workload stall deadline and the per-pass timeout still bound a wedged engine. The schema reset between workloads ran under a 30-minute request limit, because dropping a table of this size takes minutes of random reads.
-<!-- BENCH:setup END -->
 
-## Head-to-head: Sirannon versus PostgreSQL
+## Single-client and sustained-throughput comparison
 
-The table pairs the two engines on every shared workload at each engine's operating point, the highest offered request rate it sustained while holding p99 latency under the disclosed target. Each speedup includes its own confidence interval.
-
-<!-- BENCH:comparison START -->
 ### Full durability (fsync every commit)
 
 | Workload | Sirannon ops/s | Sirannon 95% CI | Sirannon CV | Sirannon p99 ms | Postgres ops/s | Postgres p99 ms | Speedup |
@@ -63,13 +54,9 @@ The table pairs the two engines on every shared workload at each engine's operat
 | TPC-C-derived | 32.0K | [32.0K, 32.0K] | 0.1% | 17.878 | 16.0K | 2.443 | 2.00x [2.00x, 2.00x] |
 
 _Each throughput figure is the median of several independent runs at the operating point, the highest offered rate the engine sustained under the p99 target, shown with a 95% bootstrap confidence interval and the run-to-run coefficient of variation. A speedup above one means Sirannon sustained more throughput than PostgreSQL. Read every speedup as approximate, because the sweep offers rates in doublings and each operating point is the last rung an engine cleared, so its true ceiling lies between that rung and the next. The sweep tables below give the rungs themselves. TPC-C-derived is a TPC-C-shaped mix of new-order and payment, not an audited TPC-C result. The YCSB subset is A, B, C, and F, and leaves out D and E._
-<!-- BENCH:comparison END -->
 
 ## Throughput versus offered load
 
-The table below shows achieved throughput and p99 latency as the offered rate climbs, so you can see where each engine's tail latency breaks down.
-
-<!-- BENCH:scaling START -->
 The tables below show achieved throughput and p99 latency as the offered rate climbs, at full durability (fsync every commit). PostgreSQL relies on row-level locking and Sirannon on a single writer, so which one holds throughput as the rate rises depends on the workload.
 
 ### YCSB-C (read-only)
@@ -95,13 +82,9 @@ The tables below show achieved throughput and p99 latency as the offered rate cl
 | 16,000 | 16.0K | 4.551 | 16.0K | 565 |
 | 32,000 | 28.8K | 1,157 | 20.6K | 7,666 |
 | 64,000 | 28.5K | 12,813 | 24.9K | 23,355 |
-<!-- BENCH:scaling END -->
 
 ## Holding the operating point
 
-An operating point found in short windows is only proven when the engine holds it through its periodic housekeeping, so this section holds each engine at that rate for one long continuous window and shows the slowest slice of it.
-
-<!-- BENCH:soak START -->
 The sweep measures in short windows, so this section holds each engine at its operating point for one long continuous window instead. The window is long enough to cross both engines' checkpoint cycles, and the worst-30-second column shows the slowest slice of it, which is where a checkpoint stall appears. An engine holds when it keeps at least 95% of the rate with under 1% errors and a p99 under the service-level target across the whole window, so an engine that keeps the pace but misses the latency target reads as a miss.
 
 ### Full durability (fsync every commit)
@@ -121,13 +104,9 @@ The sweep measures in short windows, so this section holds each engine at its op
 | YCSB-A (50/50 read/update) | PostgreSQL | 8,000 | 8.0K | 2.428 | 3.090 | 0.0% | yes |
 | TPC-C-derived | Sirannon | 32,000 | 32.0K | 18.587 | 442 | 0.0% | yes |
 | TPC-C-derived | PostgreSQL | 16,000 | 16.0K | 2.550 | 83.647 | 0.0% | yes |
-<!-- BENCH:soak END -->
 
 ## Sirannon-only characterizations
 
-These measure Sirannon on its own terms, because PostgreSQL either has no built-in equivalent or reaches the same goal a different way.
-
-<!-- BENCH:features START -->
 ### Cold start
 
 This is the time from the process start command to the first successful health probe, measured the same way for both engines.
@@ -144,8 +123,3 @@ This measures the lag from a committed write to the change reaching a subscriber
 | Samples | p50 ms | p95 ms | p99 ms | max ms |
 | ---: | ---: | ---: | ---: | ---: |
 | 200 | 50.998 | 51.157 | 51.226 | 51.770 |
-<!-- BENCH:features END -->
-
-## Reproducing this
-
-The harness is in `benchmarks/server/`, and its README explains the method, the durability matching, the coordinated-omission correction, and how to run the suite on the benchmark VM or against a hand-started server. To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud/`.

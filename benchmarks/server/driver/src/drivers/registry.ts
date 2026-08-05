@@ -5,7 +5,14 @@ import { SirannonDriver } from './sirannon.ts'
 
 export function buildDriver(engine: string, config: Config, durability: string): Driver {
   if (engine === 'sirannon') {
-    return new SirannonDriver(config.sirannon.baseUrl, config.sirannon.databaseId, durability, config.requestTimeoutMs)
+    return new SirannonDriver(
+      config.sirannon.baseUrl,
+      config.sirannon.databaseId,
+      durability,
+      config.requestTimeoutMs,
+      config.sirannon.writeTimeoutMs,
+      config.sirannon.schemaTimeoutMs,
+    )
   }
   if (engine === 'postgres') {
     return new PostgresDriver(config.postgres, durability, config.requestTimeoutMs)

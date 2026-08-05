@@ -77,6 +77,8 @@ Every default is an environment variable:
 | `BENCH_PROFILE` | `cloud` | Run profile: `cloud` (10,000,000 rows) or `smoke` (quick check) |
 | `BENCH_MACHINE_LABEL` | derived | Host label recorded in results |
 | `BENCH_DURABILITIES` | `full matched` | Durability levels to run, space separated |
+| `BENCH_ENGINES` | `sirannon postgres` | Engines to run, space separated |
+| `BENCH_RUN_ID` | timestamp | Run directory to write into; set it to an existing run id to add a pass to that run |
 | `BENCH_WORKLOADS` | per config | Workloads to run, comma separated |
 | `BENCH_TARGET_RATES` | per config | Offered request rates for the sweep, comma separated |
 | `BENCH_DATA_SIZE` | `10000` | Seed row count per workload |

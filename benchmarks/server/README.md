@@ -4,11 +4,13 @@ This harness compares Sirannon against PostgreSQL on the same OLTP workloads, on
 
 ## What it measures
 
-The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, bulk-insert, batch-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve, and `BENCH_SWEEP_STOP_STEPS` can end it a set number of steps past the first unsustained rate instead of running every rate.
+The core is a server-versus-server comparison on the standard OLTP workloads both engines run identically: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped transaction mix. For each workload the harness sweeps a set of target request rates and reports the operating point, the highest offered rate the engine sustained while holding p99 latency under the disclosed service-level target. The full sweep is kept as the throughput-versus-load curve, and `BENCH_SWEEP_STOP_STEPS` can end it a set number of steps past the first unsustained rate instead of running every rate.
 
 A rate proven in short windows can still collapse under the engine's periodic housekeeping, so the harness can also hold the operating point for a long continuous window (`BENCH_SOAK_SECONDS`, on the workloads in `BENCH_SOAK_WORKLOADS`) and report the slowest 30-second slice, so a checkpoint or vacuum that spikes tail latency shows up instead of averaging away.
 
 Every measured request carries a finite timeout, each workload runs under a stall deadline sized to its expected duration, and each schema reset retries engine errors for a bounded budget. A stalled workload ends that engine's pass and keeps the workloads already measured, so one wedged engine cannot burn the machine or contaminate the next workload's numbers. The deadlines, the retry budget, and the timeout are all `BENCH_` variables.
+
+Dropping a ten-million-row table between workloads runs for minutes of random reads, so two limits that would cut it short are lifted for the run. `BENCH_WRITE_TIMEOUT_MS` (default 0) disables the Sirannon writer thread's own deadline, matching PostgreSQL's `statement_timeout` default, and `BENCH_SCHEMA_TIMEOUT_MS` (default 1800000) bounds the schema-reset request itself, which otherwise inherits undici's 300-second header timeout. The workload stall deadline and the per-pass timeout still cap a genuinely wedged engine. Every run report states both values, and each drop's duration appears in the run log.
 
 Alongside the head-to-head, the harness records three Sirannon characterizations PostgreSQL has no direct equivalent for: change-feed latency over Sirannon's built-in WebSocket feed, cold-start time, and the connection-scaling curve.
 
@@ -29,6 +31,12 @@ The `smoke` profile checks that the harness works end to end without spending th
 ```
 
 A profile only fills in defaults. Any `BENCH_` variable you export still overrides it, so `BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
+
+`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them:
+
+```sh
+BENCH_RUN_ID=20260804T221053Z BENCH_ENGINES=postgres BENCH_DURABILITIES=matched ./run-all.sh cloud
+```
 
 To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud`. On macOS a plain fsync does not flush the drive cache, so the full-durability numbers are only valid from the Linux cloud run.
 

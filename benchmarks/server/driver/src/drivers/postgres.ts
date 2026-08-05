@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 import type { PostgresConfig } from '../config.ts'
 import type { FailureClassifier, FailureKind } from '../failures.ts'
+import { progress } from '../progress.ts'
 import type { SeedTable } from '../workloads/workload.ts'
 import { Driver, type TransactionStatement } from './driver.ts'
 
@@ -65,7 +66,7 @@ export class PostgresDriver extends Driver {
   }
 
   async connect(): Promise<void> {
-    this.pool = new Pool({
+    const pool = new Pool({
       host: this.config.host,
       port: this.config.port,
       user: this.config.user,
@@ -76,6 +77,12 @@ export class PostgresDriver extends Driver {
       query_timeout: this.requestTimeoutMs + QUERY_TIMEOUT_MARGIN_MS,
       options: `-c synchronous_commit=${this.synchronousCommit} -c statement_timeout=${this.requestTimeoutMs}`,
     })
+    pool.on('error', err => {
+      progress(
+        `postgres pool: idle connection lost (${postgresCodeOf(err)}); the pool opens a new one on the next request`,
+      )
+    })
+    this.pool = pool
     await this.read('SELECT 1', [])
   }
 

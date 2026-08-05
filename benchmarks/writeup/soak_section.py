@@ -20,7 +20,7 @@ def _soak_row(label: str, engine: str, soak: object) -> list[str] | None:
         ms(latency.get("p99")),
         ms(worst.get("p99_ms")),
         percent(soak.get("error_rate")),
-        "yes" if soak.get("held") else "no",
+        "yes" if soak.get("held") and soak.get("p99_under_slo") else "no",
     ]
 
 
@@ -47,7 +47,8 @@ def soak_block(source: Source) -> str:
         "The sweep measures in short windows, so this section holds each engine at its operating point for one "
         "long continuous window instead. The window is long enough to cross both engines' checkpoint cycles, "
         "and the worst-30-second column shows the slowest slice of it, which is where a checkpoint stall "
-        "appears. An engine holds when it keeps at least 95% of the rate with under 1% errors across the "
-        "whole window."
+        "appears. An engine holds when it keeps at least 95% of the rate with under 1% errors and a p99 under "
+        "the service-level target across the whole window, so an engine that keeps the pace but misses the "
+        "latency target reads as a miss."
     )
     return "\n\n".join([intro, *parts])

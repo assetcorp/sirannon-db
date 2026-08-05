@@ -7,8 +7,8 @@ seed = 42
 prepare_retry_seconds = 300
 workloads = [
   "point-select",
-  "bulk-insert",
-  "batch-update",
+  "single-row-insert",
+  "single-row-update",
   "ycsb-a",
   "ycsb-b",
   "ycsb-c",
@@ -36,6 +36,8 @@ engine_cpus = 2.0
 [sirannon]
 base_url = "http://127.0.0.1:9876"
 database_id = "bench"
+write_timeout_ms = 0
+schema_timeout_ms = 1800000
 
 [postgres]
 host = "127.0.0.1"

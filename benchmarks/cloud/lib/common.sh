@@ -103,8 +103,7 @@ cmd_sync() {
   filelist="$(mktemp "${TMPDIR:-/tmp}/sirannon-files.XXXXXX")"
   {
     git -C "$REPO_ROOT" ls-files -z
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z \
-      -- . ":(exclude)${RESULTS_REL}"
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard -z -- .
     printf '.git\0'
   } >"$filelist"
   COPYFILE_DISABLE=1 tar czf "$tarball" -C "$REPO_ROOT" --null -T "$filelist"
@@ -127,10 +126,10 @@ cmd_run() {
   forward="$(printf '%q ' "BENCH_MACHINE_LABEL=${MACHINE_LABEL}")"
   forward+="$(printf '%q ' "BENCH_LOCAL_SSD_MODE=${LOCAL_SSD_MODE:-auto}")"
   local v
-  for v in BENCH_PROFILE BENCH_DURABILITIES BENCH_DATA_SIZE BENCH_WORKLOADS \
+  for v in BENCH_PROFILE BENCH_DURABILITIES BENCH_ENGINES BENCH_RUN_ID BENCH_DATA_SIZE BENCH_WORKLOADS \
     BENCH_TARGET_RATES BENCH_SCALING_WORKLOADS BENCH_RUNS BENCH_SEED \
     BENCH_SWEEP_STOP_STEPS BENCH_SOAK_SECONDS BENCH_SOAK_WORKLOADS BENCH_PREPARE_RETRY_SECONDS \
-    BENCH_REQUEST_TIMEOUT_MS BENCH_WORKLOAD_TIMEOUT_MS \
+    BENCH_REQUEST_TIMEOUT_MS BENCH_WORKLOAD_TIMEOUT_MS BENCH_WRITE_TIMEOUT_MS BENCH_SCHEMA_TIMEOUT_MS \
     BENCH_WARMUP_SECONDS BENCH_MEASURE_SECONDS BENCH_SLO_P99_MS BENCH_MAX_IN_FLIGHT \
     BENCH_ENGINE_CPUS BENCH_DRIVER_CPUS BENCH_ENGINE_CPUSET BENCH_DRIVER_CPUSET \
     BENCH_ENGINE_MEMORY BENCH_DRIVER_MEMORY BENCH_PG_POOL_SIZE BENCH_CDC_SAMPLES \
@@ -211,12 +210,21 @@ cmd_fetch() {
     fetched=1
     mkdir -p "$dest/$dir"
     for run in $runs; do
-      if [ -e "$dest/$dir/$run" ]; then
-        log "have run $run already, skipping"
+      if [ ! -e "$dest/$dir/$run" ]; then
+        log "fetch run $run"
+        prov_scp_down "sirannon/$remote/$dir/$run" "$dest/$dir/"
         continue
       fi
-      log "fetch run $run"
-      prov_scp_down "sirannon/$remote/$dir/$run" "$dest/$dir/"
+      log "refresh run $run (a pass may have been added or replaced)"
+      local incoming="$dest/$dir/.incoming-$run"
+      rm -rf "$incoming"
+      if prov_scp_down "sirannon/$remote/$dir/$run" "$incoming"; then
+        rm -rf "${dest:?}/${dir:?}/${run:?}"
+        mv "$incoming" "$dest/$dir/$run"
+      else
+        rm -rf "$incoming"
+        log "could not refresh run $run; the copy already here is untouched"
+      fi
     done
   done
   if [ -z "$fetched" ]; then

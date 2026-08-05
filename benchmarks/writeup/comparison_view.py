@@ -2,8 +2,10 @@ from __future__ import annotations
 
 WORKLOAD_LABELS = {
     "point-select": "Point-select",
-    "bulk-insert": "Bulk-insert",
-    "batch-update": "Batch-update",
+    "single-row-insert": "Single-row insert",
+    "single-row-update": "Single-row update",
+    "bulk-insert": "Single-row insert",
+    "batch-update": "Single-row update",
     "ycsb-a": "YCSB-A (50/50 read/update)",
     "ycsb-b": "YCSB-B (95/5 read/update)",
     "ycsb-c": "YCSB-C (read-only)",

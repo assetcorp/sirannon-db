@@ -62,7 +62,10 @@ def throughput_block(source: Source) -> str:
         "_Each throughput figure is the median of several independent runs at the operating point, the highest "
         "offered rate the engine sustained under the p99 target, shown with a 95% bootstrap confidence interval "
         "and the run-to-run coefficient of variation. A speedup above one means Sirannon sustained more "
-        "throughput than PostgreSQL. TPC-C-derived is a TPC-C-shaped mix of new-order and payment, not an "
+        "throughput than PostgreSQL. Read every speedup as approximate, because the sweep offers rates in "
+        "doublings and each operating point is the last rung an engine cleared, so its true ceiling lies "
+        "between that rung and the next. The sweep tables below give the rungs themselves. TPC-C-derived is a "
+        "TPC-C-shaped mix of new-order and payment, not an "
         "audited TPC-C result. The YCSB subset is A, B, C, and F, and leaves out D and E._"
     )
     return "\n\n".join([*parts, note])

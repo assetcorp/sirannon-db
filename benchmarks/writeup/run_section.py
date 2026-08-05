@@ -17,6 +17,22 @@ def _engine_versions(comparison: dict) -> tuple[str, str, str]:
     return "n/a", "n/a", "n/a"
 
 
+SIRANNON_DEFAULT_WRITE_TIMEOUT_MS = 30000
+
+
+def _sirannon_setting(comparison: dict, key: str) -> float | None:
+    for _, node in durabilities(comparison):
+        settings = (node.get("sirannon_engine", {}) or {}).get("settings") or {}
+        value = settings.get(key)
+        if is_number(value):
+            return float(value)
+    return None
+
+
+def _writer_deadline_ms(comparison: dict) -> float | None:
+    return _sirannon_setting(comparison, "writer_worker_write_timeout_ms")
+
+
 def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
     for _, node in durabilities(comparison):
         saturation = node.get("client_saturation") or {}
@@ -72,8 +88,10 @@ def run_block(source: Source) -> str:
             "- **Load-client headroom.** Run on its own against the live engines, the Sirannon SDK "
             f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
             f"{ops(postgres_ceiling.get('ceiling_ops'))}, {speedup(sirannon_ceiling.get('headroom_factor'))} and "
-            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. The load generator stays "
-            "well above both engines, so every reported number reflects the database's speed."
+            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. Each client stays above "
+            "the operating points its engine reached, so every reported operating point reflects the database's "
+            "speed. A client below 1.00x could not offer the very top rate of the sweep, and the rates above its "
+            "ceiling measure the client rather than the engine."
         )
     stop_steps = config.get("sweep_stop_steps", -1)
     if is_number(stop_steps) and stop_steps >= 0:
@@ -107,5 +125,32 @@ def run_block(source: Source) -> str:
         bullets.append(
             f"- **Soak.** After the sweep, {soak_workloads} held each engine at its operating point for one "
             f"continuous {duration} window, reported in 30-second slices."
+        )
+    deadline_ms = _writer_deadline_ms(comparison)
+    in_flight = integer(config.get("max_in_flight"))
+    schema_ms = _sirannon_setting(comparison, "schema_timeout_ms")
+    schema_text = ""
+    if is_number(schema_ms) and schema_ms > 0:
+        schema_text = (
+            f" The schema reset between workloads ran under a {integer(float(schema_ms) / 60000)}-minute request "
+            f"limit, because dropping a table of this size takes minutes of random reads."
+        )
+    if deadline_ms == 0:
+        bullets.append(
+            "- **Writer deadline.** Sirannon ran with its writer deadline disabled, matching PostgreSQL's "
+            "`statement_timeout` default, so a slow write was never reported as a stalled one. The workload stall "
+            "deadline and the per-pass timeout still bound a wedged engine." + schema_text
+        )
+    elif deadline_ms is not None:
+        raised = ""
+        if deadline_ms > SIRANNON_DEFAULT_WRITE_TIMEOUT_MS:
+            raised = (
+                f", raised from the {integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)}-second default so that the "
+                f"table drop between workloads completes instead of failing"
+            )
+        bullets.append(
+            f"- **Writer deadline.** Sirannon gave a single write {integer(deadline_ms / 1000)} seconds before "
+            f"reporting the writer unresponsive{raised}. Measured operations finish in milliseconds, with at most "
+            f"{in_flight} requests in flight." + schema_text
         )
     return "\n".join(bullets)

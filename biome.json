@@ -11,7 +11,8 @@
       "!!**/dist",
       "!.claude",
       "!**/generated",
-      "!**/routeTree.gen.ts"
+      "!**/routeTree.gen.ts",
+      "!benchmarks/server/results/runs"
     ]
   },
   "formatter": {

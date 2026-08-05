@@ -1,0 +1,9 @@
+{
+  "definition": "Milliseconds from the process start command to the first successful health probe.",
+  "sirannon": {
+    "cold_start_ms": 197
+  },
+  "postgres": {
+    "cold_start_ms": 175
+  }
+}

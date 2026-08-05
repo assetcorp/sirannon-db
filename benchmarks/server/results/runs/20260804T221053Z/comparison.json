@@ -1,0 +1,4099 @@
+{
+  "run_id": "20260804T221053Z",
+  "created_at": "2026-08-04T22:11:29.440Z",
+  "environment": {
+    "captured_at": "2026-08-05T07:58:47.387Z",
+    "harness_version": "0.1.0",
+    "resource_control": {
+      "mechanism": "cgroup-v2",
+      "driver_allowed_cpus": "0-3",
+      "driver_memory_max": "max",
+      "engine_allowed_cpus": "4-7",
+      "engine_memory_max": "2G"
+    },
+    "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+    "os": "Linux 6.17.0-1021-gcp",
+    "arch": "x64",
+    "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+    "logical_cpus": 8,
+    "total_memory_bytes": 33647984640,
+    "node_version": "v24.19.0",
+    "git_commit": "650df41c6b3a2bf01ad91946402b9373e34f87cf",
+    "git_dirty": false
+  },
+  "config": {
+    "data_size": 10000000,
+    "warmup_seconds": 3,
+    "measure_seconds": 10,
+    "runs": 5,
+    "seed": 42,
+    "slo_p99_ms": 25,
+    "max_in_flight": 256,
+    "target_rates": [
+      1000,
+      2000,
+      4000,
+      8000,
+      16000,
+      32000,
+      64000
+    ],
+    "sweep_stop_steps": 1,
+    "prepare_retry_seconds": 300,
+    "soak_seconds": 1200,
+    "soak_workloads": [
+      "ycsb-a",
+      "tpc-c-derived"
+    ],
+    "workloads": [
+      "point-select",
+      "bulk-insert",
+      "batch-update",
+      "ycsb-a",
+      "ycsb-b",
+      "ycsb-c",
+      "ycsb-f",
+      "tpc-c-derived"
+    ],
+    "scaling_workloads": [
+      "ycsb-c",
+      "ycsb-a"
+    ],
+    "delivery": {
+      "sirannon": "websocket",
+      "postgres": "socket",
+      "transport": "loopback",
+      "sirannon_client": "@delali/sirannon-db SDK over its WebSocket transport",
+      "postgres_client": "node-postgres (pg) over a pooled binary socket",
+      "driver_cpus": 4,
+      "engine_cpus": 4,
+      "note": "Each engine is driven through the client it provides. Sirannon runs over its SDK's default WebSocket transport, which multiplexes every concurrent request over one persistent socket, and PostgreSQL runs over node-postgres on its binary socket protocol. One Node load generator drives both, so the coordinated-omission instrument behaves identically for each. Both run as native processes on one host with no network between the load driver and the server. The engine under test is pinned to its own CPU cores under a hard memory ceiling (cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, so it never competes with the engine under test."
+    }
+  },
+  "durabilities": {
+    "full": {
+      "workloads": [
+        {
+          "workload": "point-select",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 64000,
+            "under_slo": true,
+            "ops_median": 63996.4,
+            "ops_ci_low": 63983.5,
+            "ops_ci_high": 64004.4,
+            "ops_cv": 0.0001404336901210728,
+            "ops_samples": [
+              63984.7,
+              63997.8,
+              63996.4,
+              64004.4,
+              63983.5
+            ],
+            "p50_ms": 1.7363539999932982,
+            "p99_ms": 6.176513999991585
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 16000.5,
+            "ops_ci_low": 16000.3,
+            "ops_ci_high": 16001.4,
+            "ops_cv": 3.289263990115329e-05,
+            "ops_samples": [
+              16000.5,
+              16000.3,
+              16001.3,
+              16000.4,
+              16001.4
+            ],
+            "p50_ms": 1.4615670000202954,
+            "p99_ms": 2.378169000032358
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 3.9993900297360505,
+            "ci_low": 3.998942562124476,
+            "ci_high": 3.9998350098994058
+          }
+        },
+        {
+          "workload": "bulk-insert",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31998.7,
+            "ops_ci_low": 28845.1,
+            "ops_ci_high": 32015.8,
+            "ops_cv": 0.04501556599723829,
+            "ops_samples": [
+              28845.1,
+              32015.8,
+              32013.1,
+              31983.3,
+              31998.7
+            ],
+            "p50_ms": 8.841217999928631,
+            "p99_ms": 17.33054900006391
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 16001,
+            "ops_ci_low": 15999.9,
+            "ops_ci_high": 16002.1,
+            "ops_cv": 5.9453835691881874e-05,
+            "ops_samples": [
+              15999.9,
+              16001.5,
+              16002.1,
+              16001,
+              16000
+            ],
+            "p50_ms": 1.7237449999665841,
+            "p99_ms": 10.770158999948762
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 1.9605897168284285,
+            "ci_low": 1.8815859207039647,
+            "ci_high": 2.0005812136741454
+          }
+        },
+        {
+          "workload": "batch-update",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31992.6,
+            "ops_ci_low": 31973.2,
+            "ops_ci_high": 32001.6,
+            "ops_cv": 0.00040287630206856513,
+            "ops_samples": [
+              31977.2,
+              31992.6,
+              31973.2,
+              31999.2,
+              32001.6
+            ],
+            "p50_ms": 2.041429999982938,
+            "p99_ms": 7.928475999971852
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 16000,
+            "ops_ci_low": 15939.3,
+            "ops_ci_high": 16000.7,
+            "ops_cv": 0.001703591312101055,
+            "ops_samples": [
+              15939.3,
+              16000.2,
+              16000,
+              16000.7,
+              15999.9
+            ],
+            "p50_ms": 1.5946070000063628,
+            "p99_ms": 5.574345999862999
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 2.000795595702282,
+            "ci_low": 1.9987875136404716,
+            "ci_high": 2.0039690295422083
+          }
+        },
+        {
+          "workload": "ycsb-a",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15999.4,
+            "ops_ci_low": 15998,
+            "ops_ci_high": 16002.1,
+            "ops_cv": 0.00011262343311866913,
+            "ops_samples": [
+              15998,
+              15999.4,
+              15998.1,
+              16002.1,
+              16001
+            ],
+            "p50_ms": 1.3179219998419285,
+            "p99_ms": 4.550584000069648
+          },
+          "postgres": {
+            "target_rate": 1000,
+            "under_slo": true,
+            "ops_median": 1000.1,
+            "ops_ci_low": 1000,
+            "ops_ci_high": 1000.1,
+            "ops_cv": 5.4768969612352324e-05,
+            "ops_samples": [
+              1000.1,
+              1000.1,
+              1000.1,
+              1000,
+              1000
+            ],
+            "p50_ms": 0.8733720001764596,
+            "p99_ms": 2.183883000165224
+          },
+          "sirannon_soak": {
+            "skipped": false,
+            "target_rate": 16000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 15999.966666666667,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 2.394082000013441,
+              "p95": 8.296841000206769,
+              "p99": 14.876066999975592,
+              "p999": 28.481118000112474,
+              "max": 203.65398399997503,
+              "mean": 3.1792517210487885
+            },
+            "worst_window": {
+              "start_seconds": 900,
+              "achieved_rate": 16000,
+              "errors": 0,
+              "p50_ms": 2.5100315001327544,
+              "p99_ms": 88.21027320010609,
+              "max_ms": 203.65398399997503
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.7509260002989322,
+                "p99_ms": 7.740132790296339,
+                "max_ms": 16.11997100012377
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.270987000083551,
+                "p99_ms": 12.419713090062142,
+                "max_ms": 23.70353600010276
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3960680002346635,
+                "p99_ms": 14.736204180172646,
+                "max_ms": 37.31978700030595
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.406449500238523,
+                "p99_ms": 14.826180280083792,
+                "max_ms": 23.70871500018984
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.393916000146419,
+                "p99_ms": 14.584368450255136,
+                "max_ms": 41.120804999955
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.335760500282049,
+                "p99_ms": 14.122386930342765,
+                "max_ms": 22.349877000320703
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3735800003632903,
+                "p99_ms": 15.320919500077144,
+                "max_ms": 58.45763500034809
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3835405001882464,
+                "p99_ms": 14.58486292026472,
+                "max_ms": 24.496119000017643
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.380593500100076,
+                "p99_ms": 14.822373230182569,
+                "max_ms": 23.70011500036344
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4384755003266037,
+                "p99_ms": 15.738359969961472,
+                "max_ms": 71.76602199999616
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.37328050006181,
+                "p99_ms": 14.483009800231093,
+                "max_ms": 23.79812500020489
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.40058850008063,
+                "p99_ms": 14.835969640095723,
+                "max_ms": 24.587982000317425
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3986905000638217,
+                "p99_ms": 14.353358210246084,
+                "max_ms": 22.813440000172704
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4318205001764,
+                "p99_ms": 16.8063506403193,
+                "max_ms": 99.8842650000006
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4481620001606643,
+                "p99_ms": 14.599100390211682,
+                "max_ms": 25.18031600024551
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.507414000108838,
+                "p99_ms": 14.710417830306111,
+                "max_ms": 23.70742000034079
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.6373465002980083,
+                "p99_ms": 15.042285040137367,
+                "max_ms": 24.48316300008446
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.7421830003149807,
+                "p99_ms": 15.3703050602926,
+                "max_ms": 23.45653700036928
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3939470001496375,
+                "p99_ms": 14.487316559976907,
+                "max_ms": 24.38859000010416
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3834390002302825,
+                "p99_ms": 14.08389823017642,
+                "max_ms": 21.955612000077963
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4659029999747872,
+                "p99_ms": 57.486544890394924,
+                "max_ms": 176.40672600036487
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.38159150024876,
+                "p99_ms": 14.41757029003464,
+                "max_ms": 36.10875300038606
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4213720001280308,
+                "p99_ms": 14.549000180340373,
+                "max_ms": 22.54567900020629
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.406011000275612,
+                "p99_ms": 15.37709032006562,
+                "max_ms": 29.821800000034273
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3610280002467334,
+                "p99_ms": 14.084949110271408,
+                "max_ms": 22.208003000356257
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4309370000846684,
+                "p99_ms": 14.874495410183464,
+                "max_ms": 24.480758000165224
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3691475002560765,
+                "p99_ms": 14.727216809964741,
+                "max_ms": 25.03370500029996
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4268535000737756,
+                "p99_ms": 15.053939910237679,
+                "max_ms": 26.37413200037554
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.406619500136003,
+                "p99_ms": 14.908387450398882,
+                "max_ms": 24.29862100025639
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3756475001573563,
+                "p99_ms": 14.026857760054995,
+                "max_ms": 23.484114000108093
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.5100315001327544,
+                "p99_ms": 88.21027320010609,
+                "max_ms": 203.65398399997503
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.394493500236422,
+                "p99_ms": 15.007015520320275,
+                "max_ms": 39.657749000005424
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.367464000126347,
+                "p99_ms": 14.321847820351836,
+                "max_ms": 23.126436999998987
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4071550003718585,
+                "p99_ms": 15.013620380093345,
+                "max_ms": 23.054084999952465
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4256940002087504,
+                "p99_ms": 15.033941430174753,
+                "max_ms": 29.3197400001809
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.3928620000369847,
+                "p99_ms": 15.007565970080908,
+                "max_ms": 23.58569400012493
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4193340002093464,
+                "p99_ms": 14.75404379003216,
+                "max_ms": 24.359087000135332
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.4139620002824813,
+                "p99_ms": 14.477477620318533,
+                "max_ms": 45.08013899996877
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.413009500131011,
+                "p99_ms": 14.879620350240733,
+                "max_ms": 24.512699000071734
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 16000.033333333333,
+                "errors": 0,
+                "p50_ms": 2.4166419999673963,
+                "p99_ms": 14.54344499995932,
+                "max_ms": 23.82336200028658
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999995596452166,
+              "cap_occupancy": 0.0008893214309685214
+            },
+            "engine_cpu": {
+              "cores_used": 0.5403658488255938,
+              "cores_allowed": 4,
+              "samples": [
+                0.5403658488255938
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "postgres_soak": {
+            "skipped": false,
+            "target_rate": 1000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 999.9991666666666,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 0.9067580001428723,
+              "p95": 1.6026010001078248,
+              "p99": 1.9769400004297495,
+              "p999": 2.5327410004101694,
+              "max": 35.27862900029868,
+              "mean": 0.9076359993064405
+            },
+            "worst_window": {
+              "start_seconds": 1170,
+              "achieved_rate": 1000.0333333333333,
+              "errors": 0,
+              "p50_ms": 0.9608390000648797,
+              "p99_ms": 2.149110000114888,
+              "max_ms": 4.906158000230789
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9240740002132952,
+                "p99_ms": 1.8284344402421262,
+                "max_ms": 35.27862900029868
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9207165003754199,
+                "p99_ms": 1.8202976601803662,
+                "max_ms": 4.916964000090957
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.913585000205785,
+                "p99_ms": 1.806823240071535,
+                "max_ms": 4.143407000228763
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9395435000769794,
+                "p99_ms": 1.8771686504036178,
+                "max_ms": 23.355327000375837
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9298025001771748,
+                "p99_ms": 1.8520528901135547,
+                "max_ms": 5.639034000225365
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9052205001935363,
+                "p99_ms": 1.9065399600565371,
+                "max_ms": 4.244254000019282
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9450355002190918,
+                "p99_ms": 1.9074583100946614,
+                "max_ms": 4.7400710000656545
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9464825000613928,
+                "p99_ms": 1.929849080392159,
+                "max_ms": 5.208255000412464
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9652835002634674,
+                "p99_ms": 1.973804600103754,
+                "max_ms": 4.31193400034681
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9431910002604127,
+                "p99_ms": 1.9739618801465217,
+                "max_ms": 4.206938000395894
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9507405001204461,
+                "p99_ms": 2.038046280210836,
+                "max_ms": 4.646104000043124
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9320320002734661,
+                "p99_ms": 2.0538325802097064,
+                "max_ms": 4.291976000182331
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9496135001536459,
+                "p99_ms": 2.0656524700578256,
+                "max_ms": 6.014117000158876
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9482590002007782,
+                "p99_ms": 2.093242700085975,
+                "max_ms": 3.766768000088632
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9658700001891702,
+                "p99_ms": 2.0832791503518817,
+                "max_ms": 4.575843000318855
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9327145002316684,
+                "p99_ms": 2.0715280300378796,
+                "max_ms": 6.093068000394851
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9235800001770258,
+                "p99_ms": 2.0637154500978054,
+                "max_ms": 5.769864000380039
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9241130000445992,
+                "p99_ms": 2.0706894101900977,
+                "max_ms": 4.559364000335336
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9317925001960248,
+                "p99_ms": 2.095647590002045,
+                "max_ms": 4.43072700034827
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.917652000207454,
+                "p99_ms": 2.0719462701864533,
+                "max_ms": 10.240541000384837
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9466155001427978,
+                "p99_ms": 2.08589063020423,
+                "max_ms": 5.919068000279367
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9245625003241003,
+                "p99_ms": 2.082744030416942,
+                "max_ms": 5.1557680000551045
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9404360002372414,
+                "p99_ms": 2.1002377300150687,
+                "max_ms": 9.156063000205904
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9491010003257543,
+                "p99_ms": 2.0980043702293183,
+                "max_ms": 5.866970000322908
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.936509000370279,
+                "p99_ms": 2.0818876404315225,
+                "max_ms": 3.3166840001940727
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9170010001398623,
+                "p99_ms": 2.1199188703112277,
+                "max_ms": 13.299762000329792
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.7508100003469735,
+                "p99_ms": 1.763859780249185,
+                "max_ms": 3.813570000231266
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.5521175002213567,
+                "p99_ms": 1.5068654003506525,
+                "max_ms": 4.402994000352919
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.7351115001365542,
+                "p99_ms": 1.569182060095481,
+                "max_ms": 17.794937000144273
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8215340001042932,
+                "p99_ms": 1.7068140803230913,
+                "max_ms": 8.943219000007957
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8382450002245605,
+                "p99_ms": 1.8051493602711686,
+                "max_ms": 6.53161200042814
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8686970002017915,
+                "p99_ms": 1.942924870066344,
+                "max_ms": 16.468905000016093
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8752550003118813,
+                "p99_ms": 1.9308881801553064,
+                "max_ms": 5.283051000442356
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8847905001603067,
+                "p99_ms": 1.9411703104246396,
+                "max_ms": 5.857697000261396
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.8925790002103895,
+                "p99_ms": 1.9753327703801884,
+                "max_ms": 5.357195000164211
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9110710001550615,
+                "p99_ms": 1.9709530802117654,
+                "max_ms": 4.031538000330329
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9225325002335012,
+                "p99_ms": 2.0103730302816256,
+                "max_ms": 6.099179000128061
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9315560003742576,
+                "p99_ms": 2.0300617402046908,
+                "max_ms": 5.474618000444025
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 1000,
+                "errors": 0,
+                "p50_ms": 0.9464100003242493,
+                "p99_ms": 2.1038237600726997,
+                "max_ms": 6.273508000187576
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 1000.0333333333333,
+                "errors": 0,
+                "p50_ms": 0.9608390000648797,
+                "p99_ms": 2.149110000114888,
+                "max_ms": 4.906158000230789
+              }
+            ],
+            "generator": {
+              "offered_fraction": 1.000000810414148,
+              "cap_occupancy": 0
+            },
+            "engine_cpu": {
+              "cores_used": 0.10241268176005942,
+              "cores_allowed": 4,
+              "samples": [
+                0.10241268176005942
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "speedup": {
+            "point": 15.998760074395536,
+            "ci_low": 15.997300269973001,
+            "ci_high": 16.000379977201366
+          }
+        },
+        {
+          "workload": "ycsb-b",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31998.4,
+            "ops_ci_low": 21777.9,
+            "ops_ci_high": 32000.9,
+            "ops_cv": 0.15259691096411124,
+            "ops_samples": [
+              21777.9,
+              31998.7,
+              32000.9,
+              31998.4,
+              31997.9
+            ],
+            "p50_ms": 1.2203609999269247,
+            "p99_ms": 5.335884000174701
+          },
+          "postgres": {
+            "target_rate": 1000,
+            "under_slo": true,
+            "ops_median": 999.9,
+            "ops_ci_low": 999.8,
+            "ops_ci_high": 1000,
+            "ops_cv": 8.367604377868003e-05,
+            "ops_samples": [
+              999.9,
+              999.8,
+              999.9,
+              1000,
+              999.8
+            ],
+            "p50_ms": 0.8077239999547601,
+            "p99_ms": 7.118715999647975
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 29.958355002600317,
+            "ci_low": 25.86916429971597,
+            "ci_high": 32.00450063008821
+          }
+        },
+        {
+          "workload": "ycsb-c",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31999.9,
+            "ops_ci_low": 21650.3,
+            "ops_ci_high": 32001.6,
+            "ops_cv": 0.15463881777168226,
+            "ops_samples": [
+              21650.3,
+              31999.9,
+              32001.6,
+              31996,
+              32000.3
+            ],
+            "p50_ms": 1.29022999946028,
+            "p99_ms": 4.865466999821365
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 8000,
+            "ops_ci_low": 7998.8,
+            "ops_ci_high": 8000.1,
+            "ops_cv": 6.812485796151161e-05,
+            "ops_samples": [
+              8000,
+              7999.5,
+              7998.8,
+              8000,
+              8000.1
+            ],
+            "p50_ms": 1.1460699997842312,
+            "p99_ms": 3.6638110000640154
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 3.741352154086164,
+            "ci_low": 3.223834178756341,
+            "ci_high": 4.000320022401568
+          }
+        },
+        {
+          "workload": "ycsb-f",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15998.8,
+            "ops_ci_low": 13369.9,
+            "ops_ci_high": 16000.7,
+            "ops_cv": 0.07599133373125627,
+            "ops_samples": [
+              13369.9,
+              15998.3,
+              16000.7,
+              15998.8,
+              15998.8
+            ],
+            "p50_ms": 1.4411279996857047,
+            "p99_ms": 5.88069299980998
+          },
+          "postgres": {
+            "target_rate": 1000,
+            "under_slo": true,
+            "ops_median": 1000,
+            "ops_ci_low": 999.9,
+            "ops_ci_high": 1000.1,
+            "ops_cv": 8.366767600694673e-05,
+            "ops_samples": [
+              999.9,
+              1000.1,
+              999.9,
+              1000,
+              1000
+            ],
+            "p50_ms": 0.8445709999650717,
+            "p99_ms": 2.1955099999904633
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 15.473609472189445,
+            "ci_low": 14.42174,
+            "ci_high": 16.000420025201514
+          }
+        },
+        {
+          "workload": "tpc-c-derived",
+          "category": "oltp",
+          "sirannon": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15985.7,
+            "ops_ci_low": 15973.1,
+            "ops_ci_high": 15999.4,
+            "ops_cv": 0.0006091996529989602,
+            "ops_samples": [
+              15973.1,
+              15985.7,
+              15999.4,
+              15992,
+              15984.6
+            ],
+            "p50_ms": 4.015344000421464,
+            "p99_ms": 20.912395000457764
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 8000,
+            "ops_ci_low": 7998.6,
+            "ops_ci_high": 8000.5,
+            "ops_cv": 9.04002316634406e-05,
+            "ops_samples": [
+              7998.6,
+              8000.1,
+              8000,
+              8000,
+              8000.5
+            ],
+            "p50_ms": 1.134655000641942,
+            "p99_ms": 2.466481000185013
+          },
+          "sirannon_soak": {
+            "skipped": false,
+            "target_rate": 16000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 16000.078333333333,
+            "held": true,
+            "p99_under_slo": false,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 6.794298000633717,
+              "p95": 23.913453000597656,
+              "p99": 867.081930000335,
+              "p999": 1093.490554000251,
+              "max": 1119.0959100006148,
+              "mean": 32.8260412118012
+            },
+            "worst_window": {
+              "start_seconds": 60,
+              "achieved_rate": 16000,
+              "errors": 0,
+              "p50_ms": 827.5867965002544,
+              "p99_ms": 1107.301441860292,
+              "max_ms": 1119.0959100006148
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 4.28670550044626,
+                "p99_ms": 20.68747373979539,
+                "max_ms": 26.54810000024736
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 10.375509500037879,
+                "p99_ms": 911.4802396199387,
+                "max_ms": 941.9961100006476
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 827.5867965002544,
+                "p99_ms": 1107.301441860292,
+                "max_ms": 1119.0959100006148
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 11.845537000335753,
+                "p99_ms": 295.6487011101657,
+                "max_ms": 315.58011000044644
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.7641830001957715,
+                "p99_ms": 24.04558958067559,
+                "max_ms": 36.07541500031948
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.310355000663549,
+                "p99_ms": 22.981191989975052,
+                "max_ms": 33.86399600002915
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.999034500215203,
+                "p99_ms": 24.821261870274327,
+                "max_ms": 56.57226900011301
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.375652500428259,
+                "p99_ms": 22.365844550067568,
+                "max_ms": 28.59002699982375
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 5.695948500186205,
+                "p99_ms": 22.310824580006308,
+                "max_ms": 30.072657000273466
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.3076980002224445,
+                "p99_ms": 40.306232740310975,
+                "max_ms": 71.74336200021207
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.107475000433624,
+                "p99_ms": 22.447924270657825,
+                "max_ms": 29.29416500031948
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 5.9655015002936125,
+                "p99_ms": 22.129923160690815,
+                "max_ms": 28.300189999863505
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.738598000258207,
+                "p99_ms": 23.730483750524016,
+                "max_ms": 30.058405000716448
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.387510500382632,
+                "p99_ms": 43.225541990464556,
+                "max_ms": 97.9152429997921
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.114710500463843,
+                "p99_ms": 22.911676330082123,
+                "max_ms": 33.788064000196755
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.060940000228584,
+                "p99_ms": 22.9600626804214,
+                "max_ms": 28.839230000041425
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 5.9187885001301765,
+                "p99_ms": 22.10457758995705,
+                "max_ms": 27.05880399979651
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.116743000224233,
+                "p99_ms": 22.426019060099502,
+                "max_ms": 26.98158199992031
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 5.841005500406027,
+                "p99_ms": 22.362201169850305,
+                "max_ms": 30.775766000151634
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.289751500356942,
+                "p99_ms": 22.354000240284947,
+                "max_ms": 27.794859000481665
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.178584500215948,
+                "p99_ms": 90.8427793398127,
+                "max_ms": 140.62131999991834
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.6000335002318025,
+                "p99_ms": 22.897515490502123,
+                "max_ms": 31.841783000156283
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.865853000432253,
+                "p99_ms": 23.089205390550198,
+                "max_ms": 30.463208000175655
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 16000.033333333333,
+                "errors": 0,
+                "p50_ms": 6.845085000619292,
+                "p99_ms": 23.213371001183987,
+                "max_ms": 30.23578300140798
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.416127501055598,
+                "p99_ms": 22.579527861587703,
+                "max_ms": 27.906866000965238
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.662504501640797,
+                "p99_ms": 22.87294825064019,
+                "max_ms": 29.342724001035094
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.723458501510322,
+                "p99_ms": 22.62625024085865,
+                "max_ms": 28.500697001814842
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.309260001406074,
+                "p99_ms": 22.465925900321462,
+                "max_ms": 29.041952000930905
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.507511501200497,
+                "p99_ms": 22.90595142187551,
+                "max_ms": 30.798258000984788
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.504854501225054,
+                "p99_ms": 22.63639126034454,
+                "max_ms": 28.509678000584245
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.513312501832843,
+                "p99_ms": 184.4921915008128,
+                "max_ms": 232.12569700181484
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 5.876299001276493,
+                "p99_ms": 26.033919631354525,
+                "max_ms": 70.86048700101674
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.42766950186342,
+                "p99_ms": 23.01476660039277,
+                "max_ms": 30.636573001742363
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.2961540017277,
+                "p99_ms": 27.218866851981737,
+                "max_ms": 41.13231400027871
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.453320001251996,
+                "p99_ms": 81.50100200094285,
+                "max_ms": 114.85496800206602
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.137678501196206,
+                "p99_ms": 23.391595620587474,
+                "max_ms": 29.974269000813365
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.5332070011645555,
+                "p99_ms": 22.461316680442543,
+                "max_ms": 29.4544340018183
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.865371000953019,
+                "p99_ms": 23.441538712084295,
+                "max_ms": 28.632529001682997
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 7.04481450188905,
+                "p99_ms": 79.64948039205747,
+                "max_ms": 107.39676700159907
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 6.704015001654625,
+                "p99_ms": 51.98830655148256,
+                "max_ms": 83.81623500026762
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999996136476699,
+              "cap_occupancy": 0.13886507656362934
+            },
+            "engine_cpu": {
+              "cores_used": 0.4410345980473193,
+              "cores_allowed": 4,
+              "samples": [
+                0.4410345980473193
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "postgres_soak": {
+            "skipped": false,
+            "target_rate": 8000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 7999.993333333333,
+            "held": true,
+            "p99_under_slo": false,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 1.7623490002006292,
+              "p95": 7.058904000557959,
+              "p99": 236.7648440003395,
+              "p999": 396.7335420008749,
+              "max": 555.4086239989847,
+              "mean": 8.980375690832203
+            },
+            "worst_window": {
+              "start_seconds": 1080,
+              "achieved_rate": 8000,
+              "errors": 0,
+              "p50_ms": 1.8410009993240237,
+              "p99_ms": 439.8206902188443,
+              "max_ms": 555.4086239989847
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.5433485005050898,
+                "p99_ms": 100.25854312014891,
+                "max_ms": 276.077834000811
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.644092000555247,
+                "p99_ms": 54.46266200080572,
+                "max_ms": 239.0834570005536
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7672395003028214,
+                "p99_ms": 164.64957432034439,
+                "max_ms": 231.0322850001976
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7938365004956722,
+                "p99_ms": 238.22291792025808,
+                "max_ms": 378.75943700037897
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8517890004441142,
+                "p99_ms": 277.2649461203726,
+                "max_ms": 344.54028200078756
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.840908500365913,
+                "p99_ms": 175.83492960042335,
+                "max_ms": 311.01485799998045
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.9012585002928972,
+                "p99_ms": 328.58525141999183,
+                "max_ms": 454.9515290008858
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8549170005135238,
+                "p99_ms": 132.16573069063963,
+                "max_ms": 293.4395840000361
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.852281500119716,
+                "p99_ms": 224.3897989203503,
+                "max_ms": 325.00522100087255
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8491335003636777,
+                "p99_ms": 193.88097177050076,
+                "max_ms": 273.8673860002309
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8362220004200935,
+                "p99_ms": 340.38186845039036,
+                "max_ms": 489.601686000824
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8307440006174147,
+                "p99_ms": 207.1574242308741,
+                "max_ms": 349.4904240006581
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8533620000816882,
+                "p99_ms": 263.27135884059703,
+                "max_ms": 347.41352399997413
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8473790003918111,
+                "p99_ms": 228.79709370068298,
+                "max_ms": 362.1096420008689
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8581835003569722,
+                "p99_ms": 267.22272516019655,
+                "max_ms": 327.0385540006682
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8377170003950596,
+                "p99_ms": 181.37329548009728,
+                "max_ms": 268.9987430004403
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.850090500432998,
+                "p99_ms": 304.32090735064855,
+                "max_ms": 448.5190640008077
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.868563499301672,
+                "p99_ms": 210.120426430246,
+                "max_ms": 304.61125399917364
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.864142999984324,
+                "p99_ms": 331.38495434863506,
+                "max_ms": 467.4914279989898
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7948304992169142,
+                "p99_ms": 287.3951610398486,
+                "max_ms": 401.607269000262
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.628932999446988,
+                "p99_ms": 212.04542456025266,
+                "max_ms": 279.685419999063
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6144089996814728,
+                "p99_ms": 194.0514211196825,
+                "max_ms": 299.06682899966836
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6560789989307523,
+                "p99_ms": 345.9472832689807,
+                "max_ms": 462.5599739998579
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6471079997718334,
+                "p99_ms": 212.00632791873088,
+                "max_ms": 286.0437869988382
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6392869986593723,
+                "p99_ms": 200.6106769888663,
+                "max_ms": 338.4697040002793
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6472469996660948,
+                "p99_ms": 240.30391362022624,
+                "max_ms": 322.8718799985945
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.694458999671042,
+                "p99_ms": 306.7458565592396,
+                "max_ms": 450.55614100024104
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7236514994874597,
+                "p99_ms": 256.8689989894816,
+                "max_ms": 325.77932599931955
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6472249999642372,
+                "p99_ms": 176.49914337867912,
+                "max_ms": 308.0669269990176
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6957054995000362,
+                "p99_ms": 231.23142239891007,
+                "max_ms": 298.5154599994421
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.6886849999427795,
+                "p99_ms": 213.87937341876398,
+                "max_ms": 358.7375069987029
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7438149992376566,
+                "p99_ms": 180.63150805862634,
+                "max_ms": 281.16165299899876
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7406719997525215,
+                "p99_ms": 207.0285192696944,
+                "max_ms": 270.9400209989399
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7532039992511272,
+                "p99_ms": 202.23620722869413,
+                "max_ms": 322.058186000213
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7435829993337393,
+                "p99_ms": 203.60552992867332,
+                "max_ms": 291.0593439992517
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7639299994334579,
+                "p99_ms": 176.30425057938373,
+                "max_ms": 323.7228560000658
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.8410009993240237,
+                "p99_ms": 439.8206902188443,
+                "max_ms": 555.4086239989847
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.7641019988805056,
+                "p99_ms": 225.72420779982642,
+                "max_ms": 339.97472499869764
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.797511499375105,
+                "p99_ms": 207.90879727983858,
+                "max_ms": 327.9344049990177
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 8000.033333333334,
+                "errors": 0,
+                "p50_ms": 1.7803389988839626,
+                "p99_ms": 218.17379499971867,
+                "max_ms": 339.9605279993266
+              }
+            ],
+            "generator": {
+              "offered_fraction": 1.0000000825708317,
+              "cap_occupancy": 0.04352455176525702
+            },
+            "engine_cpu": {
+              "cores_used": 0.8223078476770611,
+              "cores_allowed": 4,
+              "samples": [
+                0.8223078476770611
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "speedup": {
+            "point": 1.9984099681993643,
+            "ci_low": 1.997445070260568,
+            "ci_high": 1.9993425180807527
+          }
+        }
+      ],
+      "scaling": [
+        {
+          "workload": "ycsb-c",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.2586050005629659,
+              "postgres_p99_ms": 2.0192050002515316
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.2786259995773435,
+              "postgres_p99_ms": 2.3438769998028874
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 3999.9,
+              "sirannon_p99_ms": 1.3478659996762872,
+              "postgres_p99_ms": 2.4385179998353124
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.1,
+              "postgres_ops": 8000,
+              "sirannon_p99_ms": 1.526580000296235,
+              "postgres_p99_ms": 3.6638110000640154
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.4,
+              "postgres_ops": 15998.9,
+              "sirannon_p99_ms": 2.890184000134468,
+              "postgres_p99_ms": 312.00083599984646
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31999.9,
+              "postgres_ops": 22797.4,
+              "sirannon_p99_ms": 4.865466999821365,
+              "postgres_p99_ms": 5290.37701300066
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 36295.8,
+              "postgres_ops": 24344,
+              "sirannon_p99_ms": 13988.418888000771,
+              "postgres_p99_ms": 21041.27968700044
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-a",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000.1,
+              "sirannon_p99_ms": 1.7029599999077618,
+              "postgres_p99_ms": 2.183883000165224
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000.1,
+              "sirannon_p99_ms": 2.061640999978408,
+              "postgres_p99_ms": 396.3315969998948
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.8,
+              "postgres_ops": 3999.8,
+              "sirannon_p99_ms": 2.784480999689549,
+              "postgres_p99_ms": 423.06729899998754
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.8,
+              "postgres_ops": 7999.9,
+              "sirannon_p99_ms": 3.517132999841124,
+              "postgres_p99_ms": 485.03560900036246
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.4,
+              "postgres_ops": 15999.4,
+              "sirannon_p99_ms": 4.550584000069648,
+              "postgres_p99_ms": 564.878410000354
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 28831.3,
+              "postgres_ops": 20590.3,
+              "sirannon_p99_ms": 1156.887488000095,
+              "postgres_p99_ms": 7665.674675999675
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 28535.3,
+              "postgres_ops": 24935.8,
+              "sirannon_p99_ms": 12813.281898000278,
+              "postgres_p99_ms": 23354.716457999777
+            }
+          ]
+        }
+      ],
+      "sirannon_engine": {
+        "name": "sirannon",
+        "delivery": "websocket",
+        "durability": "full",
+        "version": "0.2.2",
+        "settings": {
+          "engine": "sirannon",
+          "delivery": "websocket",
+          "durability_requested": "full",
+          "writer_worker_write_timeout_ms": 0,
+          "schema_timeout_ms": 1800000,
+          "journal_mode": "wal",
+          "version": "0.2.2",
+          "storage_engine": "sqlite",
+          "sqlite_version": "3.53.4"
+        }
+      },
+      "postgres_engine": {
+        "name": "postgres",
+        "delivery": "socket",
+        "durability": "full",
+        "version": "PostgreSQL 17.10 (Ubuntu 17.10-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+        "settings": {
+          "engine": "postgres",
+          "delivery": "socket",
+          "durability_requested": "full",
+          "synchronous_commit": "on",
+          "statement_timeout": "1min",
+          "request_timeout_ms": 60000,
+          "version": "PostgreSQL 17.10 (Ubuntu 17.10-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+          "pool_size": 16,
+          "max_concurrent_transactions": 16
+        }
+      },
+      "client_saturation": {
+        "sirannon": {
+          "client": "@delali/sirannon-db SDK over its WebSocket transport",
+          "ceiling_ops": 110337.5,
+          "probe_statement": "SELECT 1",
+          "probe_concurrency": 256,
+          "probe_seconds": 4,
+          "probe_errors": 0,
+          "max_offered_rate": 64000,
+          "headroom_factor": 1.7240234375,
+          "client_bound_any": false,
+          "indeterminate_any": true,
+          "interpretation": "This ceiling is measured on the probe statement above, whose response is a few bytes. A workload returning real rows costs the client more per operation, so its true ceiling is lower than this figure by an amount the probe cannot measure. Read it as an upper bound on the client only: a workload reaching this rate is at the client's limit, while a workload falling below it proves nothing on its own. Whether the server saturated is decided per rate from the generator's in-flight occupancy, not from this number, and headroom_factor is therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the generator was waiting on replies rather than failing to send them; separating a server too busy to answer from a client too slow to read the answers needs the same offered load split across several generator processes, which this harness does not run, so a server_saturated verdict rests on occupancy rather than on that stronger test."
+        },
+        "postgres": {
+          "client": "node-postgres (pg) over a pooled binary socket",
+          "ceiling_ops": 41279.75,
+          "probe_statement": "SELECT 1",
+          "probe_concurrency": 256,
+          "probe_seconds": 4,
+          "probe_errors": 0,
+          "max_offered_rate": 64000,
+          "headroom_factor": 0.64499609375,
+          "client_bound_any": false,
+          "indeterminate_any": false,
+          "interpretation": "This ceiling is measured on the probe statement above, whose response is a few bytes. A workload returning real rows costs the client more per operation, so its true ceiling is lower than this figure by an amount the probe cannot measure. Read it as an upper bound on the client only: a workload reaching this rate is at the client's limit, while a workload falling below it proves nothing on its own. Whether the server saturated is decided per rate from the generator's in-flight occupancy, not from this number, and headroom_factor is therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the generator was waiting on replies rather than failing to send them; separating a server too busy to answer from a client too slow to read the answers needs the same offered load split across several generator processes, which this harness does not run, so a server_saturated verdict rests on occupancy rather than on that stronger test."
+        }
+      }
+    },
+    "matched": {
+      "workloads": [
+        {
+          "workload": "point-select",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 64000,
+            "under_slo": true,
+            "ops_median": 64004,
+            "ops_ci_low": 63998.8,
+            "ops_ci_high": 64017.1,
+            "ops_cv": 0.00011435763160339036,
+            "ops_samples": [
+              64004,
+              63998.8,
+              63999.9,
+              64017.1,
+              64006.7
+            ],
+            "p50_ms": 1.7357399999746121,
+            "p99_ms": 6.208455999963917
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 16000.5,
+            "ops_ci_low": 15998.8,
+            "ops_ci_high": 16001.4,
+            "ops_cv": 6.846403598748656e-05,
+            "ops_samples": [
+              16000.5,
+              15998.8,
+              15999.6,
+              16001.2,
+              16001.4
+            ],
+            "p50_ms": 1.2785039999871515,
+            "p99_ms": 2.2655339999473654
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 4.000256245195403,
+            "ci_low": 3.9998687550857404,
+            "ci_high": 4.000689962914493
+          }
+        },
+        {
+          "workload": "bulk-insert",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15999.3,
+            "ops_ci_low": 15978.6,
+            "ops_ci_high": 16015.4,
+            "ops_cv": 0.0008341865796207442,
+            "ops_samples": [
+              15999.3,
+              15992.3,
+              15999.8,
+              16015.4,
+              15978.6
+            ],
+            "p50_ms": 1.3131820000708103,
+            "p99_ms": 18.458071999950334
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15999.5,
+            "ops_ci_low": 15999.4,
+            "ops_ci_high": 16000.3,
+            "ops_cv": 2.5617761181311445e-05,
+            "ops_samples": [
+              16000.3,
+              15999.4,
+              15999.5,
+              15999.5,
+              16000.1
+            ],
+            "p50_ms": 1.5102440000046045,
+            "p99_ms": 2.3805080000311136
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 0.9998324974874622,
+            "ci_low": 0.9991862449140306,
+            "ci_high": 1.000492509850197
+          }
+        },
+        {
+          "workload": "batch-update",
+          "category": "micro",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 32003.4,
+            "ops_ci_low": 31961,
+            "ops_ci_high": 32030.9,
+            "ops_cv": 0.0008751706891109441,
+            "ops_samples": [
+              31961,
+              32003.4,
+              32027.8,
+              32002,
+              32030.9
+            ],
+            "p50_ms": 1.426653000060469,
+            "p99_ms": 12.613340999931097
+          },
+          "postgres": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31999.4,
+            "ops_ci_low": 31998.8,
+            "ops_ci_high": 32001.2,
+            "ops_cv": 3.282010373332986e-05,
+            "ops_samples": [
+              32001.2,
+              31999.4,
+              31999.1,
+              32000.7,
+              31998.8
+            ],
+            "p50_ms": 1.7694029998965561,
+            "p99_ms": 6.916650000028312
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 1.0001618758093789,
+            "ci_low": 0.999459377365224,
+            "ci_high": 1.0007656479694391
+          }
+        },
+        {
+          "workload": "ycsb-a",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15999.4,
+            "ops_ci_low": 15998.6,
+            "ops_ci_high": 16001.6,
+            "ops_cv": 7.468890017621701e-05,
+            "ops_samples": [
+              15998.6,
+              15999.4,
+              15998.8,
+              15999.4,
+              16001.6
+            ],
+            "p50_ms": 1.2062980001792312,
+            "p99_ms": 7.71812600037083
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 7999.7,
+            "ops_ci_low": 6766.5,
+            "ops_ci_high": 8000.7,
+            "ops_cv": 0.07114631685616045,
+            "ops_samples": [
+              6766.5,
+              7999.2,
+              8000.7,
+              7999.7,
+              8000.2
+            ],
+            "p50_ms": 1.0644680000841618,
+            "p99_ms": 2.6749180001206696
+          },
+          "sirannon_soak": {
+            "skipped": false,
+            "target_rate": 16000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 15999.993333333334,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 1.8697989997453988,
+              "p95": 11.191458999644965,
+              "p99": 19.262964999768883,
+              "p999": 51.685680999886245,
+              "max": 253.237059999723,
+              "mean": 3.0315137767234974
+            },
+            "worst_window": {
+              "start_seconds": 900,
+              "achieved_rate": 16000,
+              "errors": 0,
+              "p50_ms": 1.8752724998630583,
+              "p99_ms": 139.66739601986484,
+              "max_ms": 253.237059999723
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5629354997072369,
+                "p99_ms": 11.52277372963262,
+                "max_ms": 24.969495999626815
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.7660024997312576,
+                "p99_ms": 15.648487999974758,
+                "max_ms": 25.915417999960482
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8223059996962547,
+                "p99_ms": 18.55671726995148,
+                "max_ms": 35.65986499981955
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8369894998613745,
+                "p99_ms": 18.05596215972678,
+                "max_ms": 28.63122299965471
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8530129997525364,
+                "p99_ms": 19.25319328983315,
+                "max_ms": 41.60691099986434
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8466889997944236,
+                "p99_ms": 18.795731809656136,
+                "max_ms": 37.47237199964002
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8838134999386966,
+                "p99_ms": 19.44483483996242,
+                "max_ms": 57.26454799994826
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.822999999858439,
+                "p99_ms": 18.15303395963741,
+                "max_ms": 27.457806000020355
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8535624998621643,
+                "p99_ms": 19.086136549972004,
+                "max_ms": 30.29805799992755
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8340639998205006,
+                "p99_ms": 20.349489109604633,
+                "max_ms": 74.12726099975407
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8358174997847527,
+                "p99_ms": 18.10478094003165,
+                "max_ms": 29.14690199960023
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.9477419999893755,
+                "p99_ms": 18.689055069917817,
+                "max_ms": 34.83484799973667
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.074785999953747,
+                "p99_ms": 18.985697079822422,
+                "max_ms": 29.70313199982047
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.1899859998375177,
+                "p99_ms": 21.794600449586298,
+                "max_ms": 95.95361299999058
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.28944049985148,
+                "p99_ms": 19.73364013996907,
+                "max_ms": 29.213754999917
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 2.155872499803081,
+                "p99_ms": 19.80353290962522,
+                "max_ms": 30.9811060000211
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8534819998312742,
+                "p99_ms": 18.933385779843668,
+                "max_ms": 36.32758399983868
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8588939995970577,
+                "p99_ms": 18.9520815699501,
+                "max_ms": 35.33155899960548
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.838503499981016,
+                "p99_ms": 18.719641870032067,
+                "max_ms": 28.67547499993816
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8637329996563494,
+                "p99_ms": 42.01491567978652,
+                "max_ms": 146.39530800003558
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8876834998372942,
+                "p99_ms": 35.78385684983353,
+                "max_ms": 139.65382499992847
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8418844998814166,
+                "p99_ms": 18.84855520976242,
+                "max_ms": 37.6259349999018
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8827994999010116,
+                "p99_ms": 19.380634120041506,
+                "max_ms": 34.50581799959764
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.851946999784559,
+                "p99_ms": 18.883370379847484,
+                "max_ms": 33.548957999795675
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8524309997446835,
+                "p99_ms": 18.778111679614522,
+                "max_ms": 36.51055399980396
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8623249996453524,
+                "p99_ms": 19.29529587996659,
+                "max_ms": 32.22775399964303
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8474829997867346,
+                "p99_ms": 18.32244394003879,
+                "max_ms": 29.97020599991083
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8714504998642951,
+                "p99_ms": 19.76325819966383,
+                "max_ms": 42.53283499972895
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8458304998930544,
+                "p99_ms": 18.880526869911705,
+                "max_ms": 32.0177619997412
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8488014999311417,
+                "p99_ms": 18.622980559715074,
+                "max_ms": 31.74211400002241
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8752724998630583,
+                "p99_ms": 139.66739601986484,
+                "max_ms": 253.237059999723
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8366909998003393,
+                "p99_ms": 18.468221099898223,
+                "max_ms": 31.888591999653727
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8463244999293238,
+                "p99_ms": 18.768769649951718,
+                "max_ms": 29.100679999683052
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.844562999671325,
+                "p99_ms": 19.058970549651427,
+                "max_ms": 35.67724999971688
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8456229998264462,
+                "p99_ms": 19.015421029781,
+                "max_ms": 38.45205399999395
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8459249997977167,
+                "p99_ms": 18.717682649991477,
+                "max_ms": 31.337731000036
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8041694997809827,
+                "p99_ms": 18.206331129912297,
+                "max_ms": 36.07718099979684
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8794019997585565,
+                "p99_ms": 18.79345733981114,
+                "max_ms": 36.27350299991667
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.8373734997585416,
+                "p99_ms": 18.62283365997021,
+                "max_ms": 31.4911459996365
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 16000.033333333333,
+                "errors": 0,
+                "p50_ms": 1.8564269999042153,
+                "p99_ms": 19.02125500002876,
+                "max_ms": 38.45651299972087
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999997158017625,
+              "cap_occupancy": 0.0017824112998150328
+            },
+            "engine_cpu": {
+              "cores_used": 0.5497926931825946,
+              "cores_allowed": 4,
+              "samples": [
+                0.5497926931825946
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "postgres_soak": {
+            "skipped": false,
+            "target_rate": 8000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 7999.991666666667,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 1.1252810000441968,
+              "p95": 1.9990590000525117,
+              "p99": 2.4282019999809563,
+              "p999": 8.764347000047565,
+              "max": 97.06075599975884,
+              "mean": 1.186286957072215
+            },
+            "worst_window": {
+              "start_seconds": 810,
+              "achieved_rate": 8000,
+              "errors": 0,
+              "p50_ms": 1.2199165001511574,
+              "p99_ms": 3.0895083900541076,
+              "max_ms": 97.06075599975884
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 0.9572899998165667,
+                "p99_ms": 1.9248299701418736,
+                "max_ms": 3.9831519997678697
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 0.9619994999375194,
+                "p99_ms": 1.9387383901141588,
+                "max_ms": 6.584648000076413
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 0.9668649998493493,
+                "p99_ms": 1.9639922400889922,
+                "max_ms": 9.244287999812514
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 0.9876494999043643,
+                "p99_ms": 2.0514237901708117,
+                "max_ms": 27.38116700015962
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0081364999059588,
+                "p99_ms": 2.2471080598654227,
+                "max_ms": 37.89403400011361
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.012443499872461,
+                "p99_ms": 2.3114453698741286,
+                "max_ms": 42.60652599995956
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.013501500012353,
+                "p99_ms": 2.2014904201123877,
+                "max_ms": 47.01838199980557
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0198970001656562,
+                "p99_ms": 2.234105299795049,
+                "max_ms": 36.96457500010729
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0240044998936355,
+                "p99_ms": 2.259278039867058,
+                "max_ms": 34.966372000053525
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.036543499911204,
+                "p99_ms": 2.2555793000804294,
+                "max_ms": 42.38146700011566
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0372595000080764,
+                "p99_ms": 2.2894690899085313,
+                "max_ms": 34.785052000079304
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0534055000171065,
+                "p99_ms": 2.4257508501596763,
+                "max_ms": 39.89260199991986
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.059665999840945,
+                "p99_ms": 2.399315190208153,
+                "max_ms": 42.39001900004223
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0642089999746531,
+                "p99_ms": 2.3468476400664082,
+                "max_ms": 32.31778099993244
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.0764214999508113,
+                "p99_ms": 2.3464220800809574,
+                "max_ms": 39.992734000086784
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.099617499858141,
+                "p99_ms": 2.4173961901199075,
+                "max_ms": 40.12516999989748
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1096934999804944,
+                "p99_ms": 2.4305311297578776,
+                "max_ms": 36.56100700004026
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1225445000454783,
+                "p99_ms": 2.4368610599916467,
+                "max_ms": 25.346653999760747
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1362425000406802,
+                "p99_ms": 2.557259599892425,
+                "max_ms": 73.97091000014916
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.156110999872908,
+                "p99_ms": 2.4274889801302937,
+                "max_ms": 34.966153000015765
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1519009999465197,
+                "p99_ms": 2.342703999951482,
+                "max_ms": 28.181214000098407
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1696579998824745,
+                "p99_ms": 2.481311199907219,
+                "max_ms": 32.50982700008899
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1742620000150055,
+                "p99_ms": 2.416561020016674,
+                "max_ms": 34.930025999899954
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1871609999798238,
+                "p99_ms": 2.3816163200698814,
+                "max_ms": 34.12627700017765
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.1909290000330657,
+                "p99_ms": 2.593202029778623,
+                "max_ms": 32.69700099993497
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2033549998886883,
+                "p99_ms": 2.3880478798970626,
+                "max_ms": 40.179967999923974
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2104059997946024,
+                "p99_ms": 2.482440509903249,
+                "max_ms": 23.505952999927104
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2199165001511574,
+                "p99_ms": 3.0895083900541076,
+                "max_ms": 97.06075599975884
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2162879998795688,
+                "p99_ms": 2.5022157898684974,
+                "max_ms": 37.77006099978462
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2239130001980811,
+                "p99_ms": 2.5101702998997655,
+                "max_ms": 34.30456499988213
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.227889999980107,
+                "p99_ms": 2.427622379981914,
+                "max_ms": 29.459726999979466
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2310844999738038,
+                "p99_ms": 2.6806520797545117,
+                "max_ms": 28.759279999881983
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2420230000279844,
+                "p99_ms": 2.667992539987902,
+                "max_ms": 31.741531000006944
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2358955000527203,
+                "p99_ms": 2.6820446100179254,
+                "max_ms": 29.74301500013098
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2405050001107156,
+                "p99_ms": 2.8295393900387014,
+                "max_ms": 36.59362899977714
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2393420001026243,
+                "p99_ms": 2.705647930111737,
+                "max_ms": 37.55341599974781
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2405689998995513,
+                "p99_ms": 2.8200004300568264,
+                "max_ms": 23.839312999974936
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2390654999762774,
+                "p99_ms": 2.6992778300214586,
+                "max_ms": 30.11871899990365
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 8000,
+                "errors": 0,
+                "p50_ms": 1.2360264998860657,
+                "p99_ms": 2.8993821398308537,
+                "max_ms": 29.040670999791473
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 8000.033333333334,
+                "errors": 0,
+                "p50_ms": 1.0615570000372827,
+                "p99_ms": 2.3481279998086393,
+                "max_ms": 26.19132599979639
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999994893786474,
+              "cap_occupancy": 9.412650602409639e-05
+            },
+            "engine_cpu": {
+              "cores_used": 0.6672415309127199,
+              "cores_allowed": 4,
+              "samples": [
+                0.6672415309127199
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "speedup": {
+            "point": 2.0635913151371166,
+            "ci_low": 1.9998350103118554,
+            "ci_high": 2.203857310901683
+          }
+        },
+        {
+          "workload": "ycsb-b",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31999.2,
+            "ops_ci_low": 22049.7,
+            "ops_ci_high": 32011.8,
+            "ops_cv": 0.14828584363340583,
+            "ops_samples": [
+              22049.7,
+              31999.2,
+              32011.8,
+              32002.9,
+              31987.7
+            ],
+            "p50_ms": 1.3187870001420379,
+            "p99_ms": 5.28282400034368
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 7999.6,
+            "ops_ci_low": 7999.2,
+            "ops_ci_high": 8000.1,
+            "ops_cv": 4.593022918866413e-05,
+            "ops_samples": [
+              8000.1,
+              7999.8,
+              7999.2,
+              7999.6,
+              7999.3
+            ],
+            "p50_ms": 1.1193300001323223,
+            "p99_ms": 6.053863000124693
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 3.751470073503675,
+            "ci_low": 3.2538207491743485,
+            "ci_high": 4.000935051427828
+          }
+        },
+        {
+          "workload": "ycsb-c",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31999.7,
+            "ops_ci_low": 21618.4,
+            "ops_ci_high": 32003.7,
+            "ops_cv": 0.15516043489031456,
+            "ops_samples": [
+              21618.4,
+              31999.7,
+              31996.4,
+              32002.4,
+              32003.7
+            ],
+            "p50_ms": 1.2848260002210736,
+            "p99_ms": 4.947947000153363
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 7999.9,
+            "ops_ci_low": 7999.8,
+            "ops_ci_high": 8000.2,
+            "ops_cv": 1.8957283396539862e-05,
+            "ops_samples": [
+              7999.8,
+              8000,
+              7999.9,
+              7999.9,
+              8000.2
+            ],
+            "p50_ms": 1.0572359999641776,
+            "p99_ms": 20.058919000439346
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 3.740533702668514,
+            "ci_low": 3.2213891604187035,
+            "ci_high": 4.000319999200003
+          }
+        },
+        {
+          "workload": "ycsb-f",
+          "category": "ycsb",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 31990.8,
+            "ops_ci_low": 20050.8,
+            "ops_ci_high": 32013.4,
+            "ops_cv": 0.18045015695511699,
+            "ops_samples": [
+              20050.8,
+              31986.6,
+              32013.4,
+              31990.8,
+              32000
+            ],
+            "p50_ms": 1.6061589997261763,
+            "p99_ms": 14.718937000259757
+          },
+          "postgres": {
+            "target_rate": 8000,
+            "under_slo": true,
+            "ops_median": 8000.2,
+            "ops_ci_low": 7997.6,
+            "ops_ci_high": 8000.8,
+            "ops_cv": 0.00016312706521888145,
+            "ops_samples": [
+              7997.6,
+              8000.8,
+              8000.7,
+              7999.9,
+              8000.2
+            ],
+            "p50_ms": 1.1424400005489588,
+            "p99_ms": 2.3264599991962314
+          },
+          "sirannon_soak": null,
+          "postgres_soak": null,
+          "speedup": {
+            "point": 3.7011140222804455,
+            "ci_low": 3.10359551797759,
+            "ci_high": 4.000725070694393
+          }
+        },
+        {
+          "workload": "tpc-c-derived",
+          "category": "oltp",
+          "sirannon": {
+            "target_rate": 32000,
+            "under_slo": true,
+            "ops_median": 32000.3,
+            "ops_ci_low": 31955.2,
+            "ops_ci_high": 32005.1,
+            "ops_cv": 0.0006490489488291076,
+            "ops_samples": [
+              31955.2,
+              32005.1,
+              32000.3,
+              31999.6,
+              32000.5
+            ],
+            "p50_ms": 1.9202410001307726,
+            "p99_ms": 17.877965999767184
+          },
+          "postgres": {
+            "target_rate": 16000,
+            "under_slo": true,
+            "ops_median": 15999.2,
+            "ops_ci_low": 15998.6,
+            "ops_ci_high": 16000.6,
+            "ops_cv": 5.146470905953022e-05,
+            "ops_samples": [
+              15998.9,
+              15998.6,
+              15999.2,
+              16000,
+              16000.6
+            ],
+            "p50_ms": 1.5707419998943806,
+            "p99_ms": 2.4433679999783635
+          },
+          "sirannon_soak": {
+            "skipped": false,
+            "target_rate": 32000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 31999.798333333332,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 1.9660729998722672,
+              "p95": 16.024120999500155,
+              "p99": 18.58734400011599,
+              "p999": 225.61658500041813,
+              "max": 551.0165810007602,
+              "mean": 5.84056962455772
+            },
+            "worst_window": {
+              "start_seconds": 1020,
+              "achieved_rate": 32000,
+              "errors": 0,
+              "p50_ms": 2.0964634995907545,
+              "p99_ms": 441.75161359915506,
+              "max_ms": 551.0165810007602
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.0487009999342263,
+                "p99_ms": 18.26595883997157,
+                "max_ms": 22.816924000158906
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.298012000042945,
+                "p99_ms": 18.482285100379958,
+                "max_ms": 23.031271000392735
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.0419699996709824,
+                "p99_ms": 18.628409210117532,
+                "max_ms": 31.096884000115097
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.972008999902755,
+                "p99_ms": 18.492548390068112,
+                "max_ms": 55.13597100041807
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.080826499965042,
+                "p99_ms": 168.40939633963632,
+                "max_ms": 260.95572399999946
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9496645000763237,
+                "p99_ms": 18.072260860502723,
+                "max_ms": 21.995372000150383
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9768170001916587,
+                "p99_ms": 19.04259515021928,
+                "max_ms": 93.51271800044924
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.911676499992609,
+                "p99_ms": 17.784278120463718,
+                "max_ms": 22.122871999628842
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9515860001556575,
+                "p99_ms": 18.10066164999269,
+                "max_ms": 22.904459999874234
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.941964500118047,
+                "p99_ms": 18.051923520015556,
+                "max_ms": 22.044242000207305
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.921836500056088,
+                "p99_ms": 21.139764879932688,
+                "max_ms": 133.92038000002503
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.983916999772191,
+                "p99_ms": 18.137337590316314,
+                "max_ms": 22.163487000390887
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9282235000282526,
+                "p99_ms": 17.824441290339458,
+                "max_ms": 23.15716200042516
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9168664999306202,
+                "p99_ms": 18.198444370198995,
+                "max_ms": 29.78121899999678
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.999169500079006,
+                "p99_ms": 18.41817266973667,
+                "max_ms": 28.624216999858618
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9661354999989271,
+                "p99_ms": 116.56760209983219,
+                "max_ms": 227.71554900053889
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9306390001438558,
+                "p99_ms": 17.879820110378787,
+                "max_ms": 22.30168400052935
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9646720001474023,
+                "p99_ms": 18.370091289849956,
+                "max_ms": 30.422447999939322
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.908454000018537,
+                "p99_ms": 17.922151020448656,
+                "max_ms": 29.492785000242293
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9529544999822974,
+                "p99_ms": 17.785363439889625,
+                "max_ms": 22.88071999978274
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9498425000347197,
+                "p99_ms": 18.23473388039507,
+                "max_ms": 23.292182999663055
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9058240000158548,
+                "p99_ms": 17.79717208970338,
+                "max_ms": 22.647796999663115
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9474444999359548,
+                "p99_ms": 18.20550037992187,
+                "max_ms": 23.413743999786675
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.022186500020325,
+                "p99_ms": 206.03679540030657,
+                "max_ms": 290.4362920001149
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9160494999960065,
+                "p99_ms": 17.755089349867777,
+                "max_ms": 21.920692999847233
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.0076125003397465,
+                "p99_ms": 18.212028390020134,
+                "max_ms": 21.82209200039506
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9795655002817512,
+                "p99_ms": 18.07706848986447,
+                "max_ms": 33.21472499985248
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9444330004043877,
+                "p99_ms": 18.431376820141452,
+                "max_ms": 53.256485000252724
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9552234997972846,
+                "p99_ms": 18.114747969694434,
+                "max_ms": 31.61208099965006
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.969942499883473,
+                "p99_ms": 18.346458020126448,
+                "max_ms": 22.24385599978268
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.941243499983102,
+                "p99_ms": 18.034028030876073,
+                "max_ms": 22.330316999927163
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9745540004223585,
+                "p99_ms": 18.27275250978768,
+                "max_ms": 21.452206000685692
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9379869997501373,
+                "p99_ms": 17.903748119808736,
+                "max_ms": 22.20481799915433
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.964627499692142,
+                "p99_ms": 18.030905760861934,
+                "max_ms": 27.444147000089288
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 2.0964634995907545,
+                "p99_ms": 441.75161359915506,
+                "max_ms": 551.0165810007602
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9499280005693436,
+                "p99_ms": 18.069842519573868,
+                "max_ms": 23.833879999816418
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9795440007001162,
+                "p99_ms": 18.386493419278416,
+                "max_ms": 47.35464599914849
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9436365002766252,
+                "p99_ms": 18.088130150977523,
+                "max_ms": 23.857093999162316
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 32000,
+                "errors": 0,
+                "p50_ms": 1.9215639997273684,
+                "p99_ms": 18.073352359756825,
+                "max_ms": 23.410598000511527
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 32000.033333333333,
+                "errors": 0,
+                "p50_ms": 1.940277999266982,
+                "p99_ms": 17.74612499959767,
+                "max_ms": 21.219945000484586
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999966076365968,
+              "cap_occupancy": 0.28811207974377856
+            },
+            "engine_cpu": {
+              "cores_used": 0.6548209817681035,
+              "cores_allowed": 4,
+              "samples": [
+                0.6548209817681035
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "postgres_soak": {
+            "skipped": false,
+            "target_rate": 16000,
+            "seconds": 1200,
+            "window_seconds": 30,
+            "achieved_rate": 15999.9925,
+            "held": true,
+            "p99_under_slo": true,
+            "error_rate": 0,
+            "latency_ms": {
+              "p50": 1.3989840000867844,
+              "p95": 2.1771690007299185,
+              "p99": 2.5495579997077584,
+              "p999": 34.844589999876916,
+              "max": 226.79040200076997,
+              "mean": 1.5014217246883472
+            },
+            "worst_window": {
+              "start_seconds": 900,
+              "achieved_rate": 16000,
+              "errors": 0,
+              "p50_ms": 1.5341170001775026,
+              "p99_ms": 83.64669165138167,
+              "max_ms": 226.79040200076997
+            },
+            "windows": [
+              {
+                "start_seconds": 0,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2618459998629987,
+                "p99_ms": 2.627489359388129,
+                "max_ms": 45.297933999449015
+              },
+              {
+                "start_seconds": 30,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2893734998069704,
+                "p99_ms": 3.026126429168508,
+                "max_ms": 33.48499299958348
+              },
+              {
+                "start_seconds": 60,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.288948499597609,
+                "p99_ms": 3.4362010794132956,
+                "max_ms": 53.81412799935788
+              },
+              {
+                "start_seconds": 90,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2573224995285273,
+                "p99_ms": 2.2707894492801284,
+                "max_ms": 126.2316429996863
+              },
+              {
+                "start_seconds": 120,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2621804997324944,
+                "p99_ms": 2.3642246298957623,
+                "max_ms": 25.992207000032067
+              },
+              {
+                "start_seconds": 150,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2732619997113943,
+                "p99_ms": 2.294739029565826,
+                "max_ms": 17.064613999798894
+              },
+              {
+                "start_seconds": 180,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.277314499951899,
+                "p99_ms": 2.3906499392539273,
+                "max_ms": 38.50300899986178
+              },
+              {
+                "start_seconds": 210,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3068254995159805,
+                "p99_ms": 2.3868620095215736,
+                "max_ms": 24.097143999300897
+              },
+              {
+                "start_seconds": 240,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3034494994208217,
+                "p99_ms": 2.3505543696507814,
+                "max_ms": 22.00088399928063
+              },
+              {
+                "start_seconds": 270,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3061844995245337,
+                "p99_ms": 2.7828179193567504,
+                "max_ms": 67.21333999931812
+              },
+              {
+                "start_seconds": 300,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3219879996031523,
+                "p99_ms": 2.4034483296144757,
+                "max_ms": 18.85234999936074
+              },
+              {
+                "start_seconds": 330,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3239304996095598,
+                "p99_ms": 2.361631639488042,
+                "max_ms": 17.97645999956876
+              },
+              {
+                "start_seconds": 360,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3394394996576011,
+                "p99_ms": 3.1205747495684806,
+                "max_ms": 95.72058899980038
+              },
+              {
+                "start_seconds": 390,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3662494998425245,
+                "p99_ms": 3.4983137194347007,
+                "max_ms": 95.90192499943078
+              },
+              {
+                "start_seconds": 420,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3616684996522963,
+                "p99_ms": 2.425039919875563,
+                "max_ms": 24.835372999310493
+              },
+              {
+                "start_seconds": 450,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3551004994660616,
+                "p99_ms": 2.3985131295304747,
+                "max_ms": 51.68899999931455
+              },
+              {
+                "start_seconds": 480,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3736374997533858,
+                "p99_ms": 2.4376846895366913,
+                "max_ms": 13.169841999188066
+              },
+              {
+                "start_seconds": 510,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3694839994423091,
+                "p99_ms": 2.579974639173599,
+                "max_ms": 38.111594999209046
+              },
+              {
+                "start_seconds": 540,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3868364999070764,
+                "p99_ms": 2.3730410192906857,
+                "max_ms": 6.242305999621749
+              },
+              {
+                "start_seconds": 570,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.396340999752283,
+                "p99_ms": 2.38636017965153,
+                "max_ms": 22.053716999478638
+              },
+              {
+                "start_seconds": 600,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.444403499364853,
+                "p99_ms": 15.107495190073067,
+                "max_ms": 155.13717199955136
+              },
+              {
+                "start_seconds": 630,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.4465069994330406,
+                "p99_ms": 2.494337239945308,
+                "max_ms": 15.036611999385059
+              },
+              {
+                "start_seconds": 660,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.450371999759227,
+                "p99_ms": 2.4290812494605785,
+                "max_ms": 10.998520999215543
+              },
+              {
+                "start_seconds": 690,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.4637979995459318,
+                "p99_ms": 3.0505196297727566,
+                "max_ms": 69.89558499958366
+              },
+              {
+                "start_seconds": 720,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.463222499936819,
+                "p99_ms": 2.660566179342568,
+                "max_ms": 38.89248699974269
+              },
+              {
+                "start_seconds": 750,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.4784054993651807,
+                "p99_ms": 2.4254991196561604,
+                "max_ms": 15.923134999349713
+              },
+              {
+                "start_seconds": 780,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.4813839998096228,
+                "p99_ms": 2.485051019564271,
+                "max_ms": 17.601391999982297
+              },
+              {
+                "start_seconds": 810,
+                "achieved_rate": 16000.033333333333,
+                "errors": 0,
+                "p50_ms": 1.4784629996865988,
+                "p99_ms": 2.4596979999914765,
+                "max_ms": 9.19988299999386
+              },
+              {
+                "start_seconds": 840,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.4918910004198551,
+                "p99_ms": 2.442615390531719,
+                "max_ms": 20.02125900052488
+              },
+              {
+                "start_seconds": 870,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5128160007297993,
+                "p99_ms": 2.451009219735861,
+                "max_ms": 10.208262000232935
+              },
+              {
+                "start_seconds": 900,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5341170001775026,
+                "p99_ms": 83.64669165138167,
+                "max_ms": 226.79040200076997
+              },
+              {
+                "start_seconds": 930,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.522087000310421,
+                "p99_ms": 2.488064140379429,
+                "max_ms": 28.39515900053084
+              },
+              {
+                "start_seconds": 960,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5233375001698732,
+                "p99_ms": 2.4648951906710863,
+                "max_ms": 8.17114500142634
+              },
+              {
+                "start_seconds": 990,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.508576000109315,
+                "p99_ms": 2.8190189007297164,
+                "max_ms": 28.167589999735355
+              },
+              {
+                "start_seconds": 1020,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.523406500928104,
+                "p99_ms": 2.8902161403745414,
+                "max_ms": 48.2084590010345
+              },
+              {
+                "start_seconds": 1050,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.533686000853777,
+                "p99_ms": 2.471999080516399,
+                "max_ms": 10.622897000983357
+              },
+              {
+                "start_seconds": 1080,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5361680006608367,
+                "p99_ms": 2.5049902602843943,
+                "max_ms": 14.806709000840783
+              },
+              {
+                "start_seconds": 1110,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.5356299998238683,
+                "p99_ms": 2.515353209804744,
+                "max_ms": 13.558829000219703
+              },
+              {
+                "start_seconds": 1140,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.3546705013141036,
+                "p99_ms": 2.3712980702146886,
+                "max_ms": 11.979995001107454
+              },
+              {
+                "start_seconds": 1170,
+                "achieved_rate": 16000,
+                "errors": 0,
+                "p50_ms": 1.2275395011529326,
+                "p99_ms": 2.185953130330892,
+                "max_ms": 15.871779000386596
+              }
+            ],
+            "generator": {
+              "offered_fraction": 0.9999990872308812,
+              "cap_occupancy": 0.0010124702586861512
+            },
+            "engine_cpu": {
+              "cores_used": 0.9886771551847688,
+              "cores_allowed": 4,
+              "samples": [
+                0.9886771551847688
+              ],
+              "note": "cores_used is the engine cgroup's cpu.stat usage divided by wall time over the measured span, so it is the average number of cores the engine kept busy, not a peak."
+            },
+            "failures": {
+              "total": 0,
+              "by_kind": {},
+              "categories": [],
+              "distinct_codes_capped": false,
+              "note": "A shed failure is the server refusing work to protect itself, not a defect: a rate whose failures are all shed measured a server holding its limit. total counts every failure across all passes at this rate, while the error_rate beside it is one pass\u2019s median, so the two are not comparable."
+            }
+          },
+          "speedup": {
+            "point": 1.999576235697955,
+            "ci_low": 1.9984036841519714,
+            "ci_high": 2.0002650099378725
+          }
+        }
+      ],
+      "scaling": [
+        {
+          "workload": "ycsb-c",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.264758000150323,
+              "postgres_p99_ms": 1.3006370002403855
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000.1,
+              "sirannon_p99_ms": 1.268180999904871,
+              "postgres_p99_ms": 1.6069310000166297
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000,
+              "postgres_ops": 4000,
+              "sirannon_p99_ms": 1.3304279996082187,
+              "postgres_p99_ms": 1.9040660001337528
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.2,
+              "postgres_ops": 7999.9,
+              "sirannon_p99_ms": 1.4973179996013641,
+              "postgres_p99_ms": 20.058919000439346
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.6,
+              "postgres_ops": 16000.2,
+              "sirannon_p99_ms": 2.8995389994233847,
+              "postgres_p99_ms": 290.7282289993018
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31999.7,
+              "postgres_ops": 23070.3,
+              "sirannon_p99_ms": 4.947947000153363,
+              "postgres_p99_ms": 5082.992867000401
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 36663.6,
+              "postgres_ops": 24377,
+              "sirannon_p99_ms": 13522.832212000154,
+              "postgres_p99_ms": 20996.06038000062
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-a",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.3301880001090467,
+              "postgres_p99_ms": 2.0492149996571243
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000.1,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.4248800000641495,
+              "postgres_p99_ms": 2.3208770002238452
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000.1,
+              "postgres_ops": 3999.8,
+              "sirannon_p99_ms": 1.6643509999848902,
+              "postgres_p99_ms": 2.442772999871522
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.6,
+              "postgres_ops": 7999.7,
+              "sirannon_p99_ms": 3.4357250002212822,
+              "postgres_p99_ms": 2.6749180001206696
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.4,
+              "postgres_ops": 16000,
+              "sirannon_p99_ms": 7.71812600037083,
+              "postgres_p99_ms": 198.50199700007215
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 28560.7,
+              "postgres_ops": 25362.1,
+              "sirannon_p99_ms": 1296.4744650004432,
+              "postgres_p99_ms": 3287.9839390004054
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 29054.9,
+              "postgres_ops": 27327.7,
+              "sirannon_p99_ms": 13216.339354999829,
+              "postgres_p99_ms": 17538.530349000357
+            }
+          ]
+        }
+      ],
+      "sirannon_engine": {
+        "name": "sirannon",
+        "delivery": "websocket",
+        "durability": "matched",
+        "version": "0.2.2",
+        "settings": {
+          "engine": "sirannon",
+          "delivery": "websocket",
+          "durability_requested": "matched",
+          "writer_worker_write_timeout_ms": 0,
+          "schema_timeout_ms": 1800000,
+          "journal_mode": "wal",
+          "version": "0.2.2",
+          "storage_engine": "sqlite",
+          "sqlite_version": "3.53.4"
+        }
+      },
+      "postgres_engine": {
+        "name": "postgres",
+        "delivery": "socket",
+        "durability": "matched",
+        "version": "PostgreSQL 17.10 (Ubuntu 17.10-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+        "settings": {
+          "engine": "postgres",
+          "delivery": "socket",
+          "durability_requested": "matched",
+          "synchronous_commit": "off",
+          "statement_timeout": "1min",
+          "request_timeout_ms": 60000,
+          "version": "PostgreSQL 17.10 (Ubuntu 17.10-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+          "pool_size": 16,
+          "max_concurrent_transactions": 16
+        }
+      },
+      "client_saturation": {
+        "sirannon": {
+          "client": "@delali/sirannon-db SDK over its WebSocket transport",
+          "ceiling_ops": 110214,
+          "probe_statement": "SELECT 1",
+          "probe_concurrency": 256,
+          "probe_seconds": 4,
+          "probe_errors": 0,
+          "max_offered_rate": 64000,
+          "headroom_factor": 1.72209375,
+          "client_bound_any": false,
+          "indeterminate_any": true,
+          "interpretation": "This ceiling is measured on the probe statement above, whose response is a few bytes. A workload returning real rows costs the client more per operation, so its true ceiling is lower than this figure by an amount the probe cannot measure. Read it as an upper bound on the client only: a workload reaching this rate is at the client's limit, while a workload falling below it proves nothing on its own. Whether the server saturated is decided per rate from the generator's in-flight occupancy, not from this number, and headroom_factor is therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the generator was waiting on replies rather than failing to send them; separating a server too busy to answer from a client too slow to read the answers needs the same offered load split across several generator processes, which this harness does not run, so a server_saturated verdict rests on occupancy rather than on that stronger test."
+        },
+        "postgres": {
+          "client": "node-postgres (pg) over a pooled binary socket",
+          "ceiling_ops": 39043.75,
+          "probe_statement": "SELECT 1",
+          "probe_concurrency": 256,
+          "probe_seconds": 4,
+          "probe_errors": 0,
+          "max_offered_rate": 64000,
+          "headroom_factor": 0.61005859375,
+          "client_bound_any": false,
+          "indeterminate_any": false,
+          "interpretation": "This ceiling is measured on the probe statement above, whose response is a few bytes. A workload returning real rows costs the client more per operation, so its true ceiling is lower than this figure by an amount the probe cannot measure. Read it as an upper bound on the client only: a workload reaching this rate is at the client's limit, while a workload falling below it proves nothing on its own. Whether the server saturated is decided per rate from the generator's in-flight occupancy, not from this number, and headroom_factor is therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the generator was waiting on replies rather than failing to send them; separating a server too busy to answer from a client too slow to read the answers needs the same offered load split across several generator processes, which this harness does not run, so a server_saturated verdict rests on occupancy rather than on that stronger test."
+        }
+      }
+    }
+  },
+  "features": [
+    {
+      "feature": "cdc-latency",
+      "description": "Lag from a committed write to the change arriving at a subscriber over Sirannon's built-in WebSocket change feed. The server polls the change log on a fixed interval, so the floor is that interval.",
+      "samples": 200,
+      "server_poll_interval_ms": 50,
+      "latency_ms": {
+        "p50": 50.99811950046569,
+        "p95": 51.15687319990248,
+        "p99": 51.22551816891879,
+        "max": 51.77035200037062,
+        "mean": 50.83013041502796
+      }
+    }
+  ],
+  "cold_start": {
+    "definition": "Milliseconds from the process start command to the first successful health probe.",
+    "sirannon": {
+      "cold_start_ms": 197
+    },
+    "postgres": {
+      "cold_start_ms": 175
+    }
+  }
+}

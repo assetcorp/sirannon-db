@@ -62,7 +62,7 @@ export function microWorkloads(): Workload[] {
       ],
     },
     {
-      name: 'bulk-insert',
+      name: 'single-row-insert',
       category: 'micro',
       tables: ['users'],
       sqliteSchema: MICRO_SCHEMA,
@@ -70,7 +70,7 @@ export function microWorkloads(): Workload[] {
       seed: emptySeed,
       operations: [
         {
-          name: 'bulk-insert',
+          name: 'single-row-insert',
           weight: 1.0,
           kind: 'write',
           sqliteSql: 'INSERT OR REPLACE INTO users (id, name, email, age, bio) VALUES (?, ?, ?, ?, ?)',
@@ -82,7 +82,7 @@ export function microWorkloads(): Workload[] {
       ],
     },
     {
-      name: 'batch-update',
+      name: 'single-row-update',
       category: 'micro',
       tables: ['users'],
       sqliteSchema: MICRO_SCHEMA,
@@ -90,7 +90,7 @@ export function microWorkloads(): Workload[] {
       seed: userSeed,
       operations: [
         {
-          name: 'batch-update',
+          name: 'single-row-update',
           weight: 1.0,
           kind: 'write',
           sqliteSql: 'UPDATE users SET age = ? WHERE id = ?',

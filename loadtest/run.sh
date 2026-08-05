@@ -11,7 +11,7 @@ RESULTS_DIR="${LOADTEST_RESULTS_DIR:-$REPO_ROOT/loadtest/results}"
 
 CELLS="${LOADTEST_CELLS:-1:1g 1:4g 2:1g 2:4g}"
 DURABILITIES="${LOADTEST_DURABILITIES:-matched full}"
-WORKLOADS="${LOADTEST_WORKLOADS:-ycsb-c batch-update tpc-c-new-order ycsb-b}"
+WORKLOADS="${LOADTEST_WORKLOADS:-ycsb-c single-row-update tpc-c-new-order ycsb-b}"
 DATA_SIZE="${LOADTEST_DATA_SIZE:-1500000}"
 RUNS="${LOADTEST_RUNS:-3}"
 WARMUP="${LOADTEST_WARMUP_SECONDS:-2}"
@@ -22,7 +22,7 @@ START_TIMEOUT="${LOADTEST_START_TIMEOUT:-90}"
 rates_for() {
   case "$1" in
     tpc-c-new-order) echo "${LOADTEST_RATES_TXN:-500,2000,8000,20000,50000,100000,2000}" ;;
-    batch-update) echo "${LOADTEST_RATES_WRITE:-1000,5000,20000,50000,100000,200000,5000}" ;;
+    single-row-update) echo "${LOADTEST_RATES_WRITE:-1000,5000,20000,50000,100000,200000,5000}" ;;
     *) echo "${LOADTEST_RATES_READ:-1000,5000,20000,50000,100000,200000,5000}" ;;
   esac
 }

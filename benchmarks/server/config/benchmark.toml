@@ -7,8 +7,8 @@ seed = 42
 prepare_retry_seconds = 300
 workloads = [
   "point-select",
-  "bulk-insert",
-  "batch-update",
+  "single-row-insert",
+  "single-row-update",
   "ycsb-a",
   "ycsb-b",
   "ycsb-c",

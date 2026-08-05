@@ -26,7 +26,7 @@ _No benchmark run is committed yet. Run the suite on the disclosed cloud machine
 
 ## Throughput versus offered load
 
-The curve below shows achieved throughput and p99 latency as the offered rate climbs, so you can see where each engine's tail latency breaks down.
+The table below shows achieved throughput and p99 latency as the offered rate climbs, so you can see where each engine's tail latency breaks down.
 
 <!-- BENCH:scaling START -->
 _No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit its run directory under `benchmarks/server/results/runs/` to publish numbers here._

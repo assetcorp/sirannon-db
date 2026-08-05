@@ -14,7 +14,7 @@ def scaling_block(source: Source) -> str:
     if not scaling:
         return "No scaling results were recorded."
     parts: list[str] = [
-        "The curves below show achieved throughput and p99 latency as the offered rate climbs, at "
+        "The tables below show achieved throughput and p99 latency as the offered rate climbs, at "
         f"{durability_label(name).lower()}. PostgreSQL relies on row-level locking and Sirannon on a "
         "single writer, so which one holds throughput as the rate rises depends on the workload."
     ]

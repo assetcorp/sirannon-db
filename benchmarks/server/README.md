@@ -32,6 +32,12 @@ The `smoke` profile checks that the harness works end to end without spending th
 
 A profile only fills in defaults. Any `BENCH_` variable you export still overrides it, so `BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
 
+`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them:
+
+```sh
+BENCH_RUN_ID=20260804T221053Z BENCH_ENGINES=postgres BENCH_DURABILITIES=matched ./run-all.sh cloud
+```
+
 To publish credible numbers, run it on the disclosed cloud machine through `benchmarks/cloud`. On macOS a plain fsync does not flush the drive cache, so the full-durability numbers are only valid from the Linux cloud run.
 
 You can also drive a hand-started server and a local PostgreSQL without the orchestration, on any OS. Build the SDK the generator imports, install the generator's own dependencies, then point it at the two engines through `BENCH_` variables:

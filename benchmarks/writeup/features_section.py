@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from render import integer, ms, table
+from render import LOWER_IS_BETTER, emphasize_best, integer, ms, table
 from sources import Source
 
 
@@ -10,15 +10,17 @@ def features_block(source: Source) -> str:
 
     cold_start = comparison.get("cold_start")
     if isinstance(cold_start, dict):
-        body: list[list[str]] = []
-        for engine, key in (("Sirannon", "sirannon"), ("PostgreSQL", "postgres")):
-            node = cold_start.get(key)
-            value = node.get("cold_start_ms") if isinstance(node, dict) else None
-            body.append([engine, ms(value)])
+        engines = [("Sirannon", "sirannon"), ("PostgreSQL", "postgres")]
+        values = [
+            cold_start[key].get("cold_start_ms") if isinstance(cold_start.get(key), dict) else None
+            for _, key in engines
+        ]
+        cells = emphasize_best(values, LOWER_IS_BETTER, ms)
+        body = [[engine, cell] for (engine, _), cell in zip(engines, cells, strict=True)]
         parts.append("### Cold start")
         parts.append(
             "This is the time from the process start command to the first successful health probe, measured "
-            "the same way for both engines."
+            "the same way for both engines. Bold marks the faster start."
         )
         parts.append(table(["Engine", "Cold start ms"], ["left", "right"], body))
 

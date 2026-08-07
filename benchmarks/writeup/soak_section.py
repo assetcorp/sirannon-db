@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from comparison_view import durabilities, durability_label, workload_label
-from render import integer, ms, ops, percent, table
+from render import HIGHER_IS_BETTER, emphasize_best, emphasize_sole_winner, integer, ms, ops, percent, table
 from sources import Source
+
+ACHIEVED_COLUMN = 3
+HELD_COLUMN = 7
 
 
 def _soak_row(label: str, engine: str, soak: object) -> list[str] | None:
@@ -24,6 +27,17 @@ def _soak_row(label: str, engine: str, soak: object) -> list[str] | None:
     ]
 
 
+def _emphasize_pair(rows: list[list[str]], soaks: list[object]) -> None:
+    if len(rows) != 2:
+        return
+    achieved = [soak.get("achieved_rate") if isinstance(soak, dict) else None for soak in soaks]
+    for row, cell in zip(rows, emphasize_best(achieved, HIGHER_IS_BETTER, ops), strict=True):
+        row[ACHIEVED_COLUMN] = cell
+    held = emphasize_sole_winner([row[HELD_COLUMN] for row in rows], "yes")
+    for row, cell in zip(rows, held, strict=True):
+        row[HELD_COLUMN] = cell
+
+
 def soak_block(source: Source) -> str:
     recorded = durabilities(source.comparison)
     headers = ["Workload", "Engine", "Rate held", "Achieved", "p99 ms", "Worst 30 s p99", "Errors", "Held"]
@@ -33,10 +47,15 @@ def soak_block(source: Source) -> str:
         body: list[list[str]] = []
         for row in node.get("workloads", []):
             label = workload_label(row.get("workload", "n/a"))
+            pair: list[list[str]] = []
+            soaks: list[object] = []
             for engine_name, key in (("Sirannon", "sirannon_soak"), ("PostgreSQL", "postgres_soak")):
                 rendered = _soak_row(label, engine_name, row.get(key))
                 if rendered is not None:
-                    body.append(rendered)
+                    pair.append(rendered)
+                    soaks.append(row.get(key))
+            _emphasize_pair(pair, soaks)
+            body.extend(pair)
         if not body:
             continue
         parts.append(f"### {durability_label(name)}")
@@ -49,6 +68,8 @@ def soak_block(source: Source) -> str:
         "and the worst-30-second column shows the slowest slice of it, which is where a checkpoint stall "
         "appears. An engine holds when it keeps at least 95% of the rate with under 1% errors and a p99 under "
         "the service-level target across the whole window, so an engine that keeps the pace but misses the "
-        "latency target reads as a miss."
+        "latency target reads as a miss. Bold marks the higher rate of the two engines on a workload. It also "
+        "marks the engine that held where only one of the two held. Each engine ran this window at its own "
+        "operating point, so the latency columns carry no mark."
     )
     return "\n\n".join([intro, *parts])

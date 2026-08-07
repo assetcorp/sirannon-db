@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+
+LOWER_IS_BETTER = "lower"
+HIGHER_IS_BETTER = "higher"
 
 
 def is_number(value: object) -> bool:
@@ -15,7 +18,7 @@ def decimal(value: object, places: int) -> str:
     return f"{value:.{places}f}" if is_number(value) else "n/a"
 
 
-def speedup(value: object, places: int = 2) -> str:
+def ratio(value: object, places: int = 2) -> str:
     return f"{value:.{places}f}x" if is_number(value) else "n/a"
 
 
@@ -43,6 +46,29 @@ def percent(fraction: object, places: int = 1) -> str:
 
 def gigabytes(byte_count: object, places: int = 1) -> str:
     return f"{byte_count / (1024 ** 3):.{places}f}" if is_number(byte_count) else "n/a"
+
+
+def emphasize_best(
+    values: Sequence[object],
+    direction: str,
+    formatter: Callable[[object], str],
+) -> list[str]:
+    cells = [formatter(value) for value in values]
+    comparable = [(index, float(value)) for index, value in enumerate(values) if is_number(value)]
+    if len(comparable) < 2:
+        return cells
+    scores = [score for _, score in comparable]
+    best = min(scores) if direction == LOWER_IS_BETTER else max(scores)
+    winning_cells = {cells[index] for index, score in comparable if score == best}
+    if all(cells[index] in winning_cells for index, _ in comparable):
+        return cells
+    return [f"**{cell}**" if cell in winning_cells else cell for cell in cells]
+
+
+def emphasize_sole_winner(cells: Sequence[str], winning_cell: str) -> list[str]:
+    if sum(1 for cell in cells if cell == winning_cell) != 1:
+        return list(cells)
+    return [f"**{cell}**" if cell == winning_cell else cell for cell in cells]
 
 
 def humanized_list(parts: Sequence[str]) -> str:

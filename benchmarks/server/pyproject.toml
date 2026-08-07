@@ -9,6 +9,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest"]
+charts = ["matplotlib==3.10.7"]
 
 [project.scripts]
 sirannon-bench-aggregate = "sirannon_bench.aggregate:main"

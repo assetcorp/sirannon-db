@@ -91,7 +91,12 @@
               63983.5
             ],
             "p50_ms": 1.7363539999932982,
-            "p99_ms": 6.176513999991585
+            "p95_ms": 4.616204999969341,
+            "p99_ms": 6.176513999991585,
+            "p999_ms": 7.52704699995229,
+            "max_ms": 9.282019999984186,
+            "cores_used": 0.6148469405605769,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -108,7 +113,12 @@
               16001.4
             ],
             "p50_ms": 1.4615670000202954,
-            "p99_ms": 2.378169000032358
+            "p95_ms": 2.203641999978572,
+            "p99_ms": 2.378169000032358,
+            "p999_ms": 3.2996140000177547,
+            "max_ms": 4.757591000001412,
+            "cores_used": 0.7323463812635609,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -136,7 +146,12 @@
               31998.7
             ],
             "p50_ms": 8.841217999928631,
-            "p99_ms": 17.33054900006391
+            "p95_ms": 15.231944999890402,
+            "p99_ms": 17.33054900006391,
+            "p999_ms": 20.038890000083484,
+            "max_ms": 21.935141999972984,
+            "cores_used": 0.8415485313287601,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -153,7 +168,12 @@
               16000
             ],
             "p50_ms": 1.7237449999665841,
-            "p99_ms": 10.770158999948762
+            "p95_ms": 5.008763000019826,
+            "p99_ms": 10.770158999948762,
+            "p999_ms": 20.31223299994599,
+            "max_ms": 24.312417999957688,
+            "cores_used": 1.3126110190922269,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -181,7 +201,12 @@
               32001.6
             ],
             "p50_ms": 2.041429999982938,
-            "p99_ms": 7.928475999971852
+            "p95_ms": 5.866136000026017,
+            "p99_ms": 7.928475999971852,
+            "p999_ms": 9.470464000012726,
+            "max_ms": 11.741423999890685,
+            "cores_used": 0.6836258501143719,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -198,7 +223,12 @@
               15999.9
             ],
             "p50_ms": 1.5946070000063628,
-            "p99_ms": 5.574345999862999
+            "p95_ms": 2.8076139998156577,
+            "p99_ms": 5.574345999862999,
+            "p999_ms": 10.863690999802202,
+            "max_ms": 14.877822999842465,
+            "cores_used": 1.332636198861994,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -226,7 +256,12 @@
               16001
             ],
             "p50_ms": 1.3179219998419285,
-            "p99_ms": 4.550584000069648
+            "p95_ms": 2.915254000108689,
+            "p99_ms": 4.550584000069648,
+            "p999_ms": 6.771456999704242,
+            "max_ms": 9.030996999703348,
+            "cores_used": 0.5333002082084197,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 1000,
@@ -243,7 +278,12 @@
               1000
             ],
             "p50_ms": 0.8733720001764596,
-            "p99_ms": 2.183883000165224
+            "p95_ms": 1.5273470003157854,
+            "p99_ms": 2.183883000165224,
+            "p999_ms": 2.620693000033498,
+            "max_ms": 4.335210000164807,
+            "cores_used": 0.09547644946860684,
+            "cores_allowed": 4
           },
           "sirannon_soak": {
             "skipped": false,
@@ -1003,7 +1043,12 @@
               31997.9
             ],
             "p50_ms": 1.2203609999269247,
-            "p99_ms": 5.335884000174701
+            "p95_ms": 2.6604809993878007,
+            "p99_ms": 5.335884000174701,
+            "p999_ms": 7.153977999463677,
+            "max_ms": 11.624859999865294,
+            "cores_used": 0.6882355357329509,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 1000,
@@ -1020,7 +1065,12 @@
               999.8
             ],
             "p50_ms": 0.8077239999547601,
-            "p99_ms": 7.118715999647975
+            "p95_ms": 2.0978150004521012,
+            "p99_ms": 7.118715999647975,
+            "p999_ms": 217.14563799928874,
+            "max_ms": 391.83689799997956,
+            "cores_used": 0.10221069885135489,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1048,7 +1098,12 @@
               32000.3
             ],
             "p50_ms": 1.29022999946028,
-            "p99_ms": 4.865466999821365
+            "p95_ms": 2.386388000100851,
+            "p99_ms": 4.865466999821365,
+            "p999_ms": 6.303445999510586,
+            "max_ms": 7.629561999812722,
+            "cores_used": 0.5449365534461943,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -1065,7 +1120,12 @@
               8000.1
             ],
             "p50_ms": 1.1460699997842312,
-            "p99_ms": 3.6638110000640154
+            "p95_ms": 2.0581109998747706,
+            "p99_ms": 3.6638110000640154,
+            "p999_ms": 31.91473099961877,
+            "max_ms": 279.5200649993494,
+            "cores_used": 0.5527910513351693,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1093,7 +1153,12 @@
               15998.8
             ],
             "p50_ms": 1.4411279996857047,
-            "p99_ms": 5.88069299980998
+            "p95_ms": 3.5868969997391105,
+            "p99_ms": 5.88069299980998,
+            "p999_ms": 8.497328999452293,
+            "max_ms": 11.835591999813914,
+            "cores_used": 0.7058429370523556,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 1000,
@@ -1110,7 +1175,12 @@
               1000
             ],
             "p50_ms": 0.8445709999650717,
-            "p99_ms": 2.1955099999904633
+            "p95_ms": 1.6483979998156428,
+            "p99_ms": 2.1955099999904633,
+            "p999_ms": 43.21000900026411,
+            "max_ms": 65.93298100028187,
+            "cores_used": 0.13028834711186574,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1138,7 +1208,12 @@
               15984.6
             ],
             "p50_ms": 4.015344000421464,
-            "p99_ms": 20.912395000457764
+            "p95_ms": 16.178074999712408,
+            "p99_ms": 20.912395000457764,
+            "p999_ms": 23.800827999599278,
+            "max_ms": 25.575892999768257,
+            "cores_used": 0.46317048133521593,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -1155,7 +1230,12 @@
               8000.5
             ],
             "p50_ms": 1.134655000641942,
-            "p99_ms": 2.466481000185013
+            "p95_ms": 1.9410860007628798,
+            "p99_ms": 2.466481000185013,
+            "p999_ms": 4.680608999915421,
+            "max_ms": 9.776875999756157,
+            "cores_used": 0.7246792790075917,
+            "cores_allowed": 4
           },
           "sirannon_soak": {
             "skipped": false,
@@ -1900,110 +1980,1674 @@
       ],
       "scaling": [
         {
-          "workload": "ycsb-c",
+          "workload": "point-select",
+          "category": "micro",
           "curve": [
             {
               "target_rate": 1000,
               "sirannon_ops": 1000,
               "postgres_ops": 1000,
-              "sirannon_p99_ms": 1.2586050005629659,
-              "postgres_p99_ms": 2.0192050002515316
+              "sirannon_p99_ms": 1.7684619999999995,
+              "postgres_p99_ms": 1.2446790000249166,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6559770000021672,
+                "p99_ms": 1.7684619999999995,
+                "cores_used": 0.029498369831802863,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.48459800001000986,
+                "p99_ms": 1.2446790000249166,
+                "cores_used": 0.08419718821688937,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 2000,
               "sirannon_ops": 2000,
               "postgres_ops": 2000,
-              "sirannon_p99_ms": 1.2786259995773435,
-              "postgres_p99_ms": 2.3438769998028874
+              "sirannon_p99_ms": 1.8649579999910202,
+              "postgres_p99_ms": 1.3072700000193436,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.6805739999981597,
+                "p99_ms": 1.8649579999910202,
+                "cores_used": 0.040894560633798004,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.7004799999995157,
+                "p99_ms": 1.3072700000193436,
+                "cores_used": 0.09570357206873664,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 4000,
-              "sirannon_ops": 3999.9,
-              "postgres_ops": 3999.9,
-              "sirannon_p99_ms": 1.3478659996762872,
-              "postgres_p99_ms": 2.4385179998353124
+              "sirannon_ops": 4000.1,
+              "postgres_ops": 4000.1,
+              "sirannon_p99_ms": 1.8648490000050515,
+              "postgres_p99_ms": 1.3400820000097156,
+              "sirannon": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.7245059999986552,
+                "p99_ms": 1.8648490000050515,
+                "cores_used": 0.06904565388879148,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.7391219999990426,
+                "p99_ms": 1.3400820000097156,
+                "cores_used": 0.1846692102021021,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 8000,
-              "sirannon_ops": 8000.1,
+              "sirannon_ops": 7999.8,
               "postgres_ops": 8000,
-              "sirannon_p99_ms": 1.526580000296235,
-              "postgres_p99_ms": 3.6638110000640154
+              "sirannon_p99_ms": 1.900034999998752,
+              "postgres_p99_ms": 1.6395290000364184,
+              "sirannon": {
+                "ops": 7999.8,
+                "ops_ci_low": 7999.3,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 0.7449519999790937,
+                "p99_ms": 1.900034999998752,
+                "cores_used": 0.1111712596895708,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000,
+                "ops_ci_low": 7999.8,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 0.9366809999919496,
+                "p99_ms": 1.6395290000364184,
+                "cores_used": 0.36688943680944613,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 16000,
-              "sirannon_ops": 15999.4,
-              "postgres_ops": 15998.9,
-              "sirannon_p99_ms": 2.890184000134468,
-              "postgres_p99_ms": 312.00083599984646
+              "sirannon_ops": 15999.3,
+              "postgres_ops": 16000.5,
+              "sirannon_p99_ms": 2.5399709999910556,
+              "postgres_p99_ms": 2.378169000032358,
+              "sirannon": {
+                "ops": 15999.3,
+                "ops_ci_low": 15998.3,
+                "ops_ci_high": 16000.7,
+                "p50_ms": 0.8380710000055842,
+                "p99_ms": 2.5399709999910556,
+                "cores_used": 0.18927254066187316,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000.5,
+                "ops_ci_low": 16000.3,
+                "ops_ci_high": 16001.4,
+                "p50_ms": 1.4615670000202954,
+                "p99_ms": 2.378169000032358,
+                "cores_used": 0.7323463812635609,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 32000,
-              "sirannon_ops": 31999.9,
-              "postgres_ops": 22797.4,
-              "sirannon_p99_ms": 4.865466999821365,
-              "postgres_p99_ms": 5290.37701300066
+              "sirannon_ops": 32001.2,
+              "postgres_ops": 29078.5,
+              "sirannon_p99_ms": 3.8359460000065155,
+              "postgres_p99_ms": 1306.739646000031,
+              "sirannon": {
+                "ops": 32001.2,
+                "ops_ci_low": 31999.1,
+                "ops_ci_high": 32003.6,
+                "p50_ms": 1.0724739999859594,
+                "p99_ms": 3.8359460000065155,
+                "cores_used": 0.33394743208142774,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 29078.5,
+                "ops_ci_low": 27847.5,
+                "ops_ci_high": 29993.3,
+                "p50_ms": 810.6877569999779,
+                "p99_ms": 1306.739646000031,
+                "cores_used": 1.3079247712463382,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 64000,
-              "sirannon_ops": 36295.8,
-              "postgres_ops": 24344,
-              "sirannon_p99_ms": 13988.418888000771,
-              "postgres_p99_ms": 21041.27968700044
+              "sirannon_ops": 63996.4,
+              "postgres_ops": 28380.4,
+              "sirannon_p99_ms": 6.176513999991585,
+              "postgres_p99_ms": 15700.144118000055,
+              "sirannon": {
+                "ops": 63996.4,
+                "ops_ci_low": 63983.5,
+                "ops_ci_high": 64004.4,
+                "p50_ms": 1.7363539999932982,
+                "p99_ms": 6.176513999991585,
+                "cores_used": 0.6148469405605769,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 28380.4,
+                "ops_ci_low": 28323.2,
+                "ops_ci_high": 29115.3,
+                "p50_ms": 9737.325699000037,
+                "p99_ms": 15700.144118000055,
+                "cores_used": 1.2981649192056754,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "bulk-insert",
+          "category": "micro",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 999.9,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.8179209999507293,
+              "postgres_p99_ms": 1.7709199999226257,
+              "sirannon": {
+                "ops": 999.9,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000,
+                "p50_ms": 1.3502679999219254,
+                "p99_ms": 2.8179209999507293,
+                "cores_used": 0.10217733470851102,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.9809379999060184,
+                "p99_ms": 1.7709199999226257,
+                "cores_used": 0.10185349116800387,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 1999.9,
+              "postgres_ops": 2000.1,
+              "sirannon_p99_ms": 3.674123000004329,
+              "postgres_p99_ms": 1.8932499999646097,
+              "sirannon": {
+                "ops": 1999.9,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 1.4975359999807552,
+                "p99_ms": 3.674123000004329,
+                "cores_used": 0.1565132530372142,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000.1,
+                "ops_ci_low": 2000,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 1.0738030000356957,
+                "p99_ms": 1.8932499999646097,
+                "cores_used": 0.17983867667316833,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000.2,
+              "postgres_ops": 4000.2,
+              "sirannon_p99_ms": 7.8833449999801815,
+              "postgres_p99_ms": 2.0039450000040233,
+              "sirannon": {
+                "ops": 4000.2,
+                "ops_ci_low": 3999.1,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 1.6639960000757128,
+                "p99_ms": 7.8833449999801815,
+                "cores_used": 0.19806864956686795,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.2,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 1.205184999969788,
+                "p99_ms": 2.0039450000040233,
+                "cores_used": 0.3499330632710014,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.8,
+              "postgres_ops": 7999.8,
+              "sirannon_p99_ms": 10.99206899991259,
+              "postgres_p99_ms": 2.358860999927856,
+              "sirannon": {
+                "ops": 8000.8,
+                "ops_ci_low": 7999.6,
+                "ops_ci_high": 8003.1,
+                "p50_ms": 1.8882789999479428,
+                "p99_ms": 10.99206899991259,
+                "cores_used": 0.2882907532658942,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.8,
+                "ops_ci_low": 7999,
+                "ops_ci_high": 8000.5,
+                "p50_ms": 1.3798879999667406,
+                "p99_ms": 2.358860999927856,
+                "cores_used": 0.6639751945993023,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000.3,
+              "postgres_ops": 16001,
+              "sirannon_p99_ms": 13.707158000092022,
+              "postgres_p99_ms": 10.770158999948762,
+              "sirannon": {
+                "ops": 16000.3,
+                "ops_ci_low": 15982.8,
+                "ops_ci_high": 16001.6,
+                "p50_ms": 2.182355000055395,
+                "p99_ms": 13.707158000092022,
+                "cores_used": 0.5029127951578445,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16001,
+                "ops_ci_low": 15999.9,
+                "ops_ci_high": 16002.1,
+                "p50_ms": 1.7237449999665841,
+                "p99_ms": 10.770158999948762,
+                "cores_used": 1.3126110190922269,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31998.7,
+              "postgres_ops": 25071.1,
+              "sirannon_p99_ms": 17.33054900006391,
+              "postgres_p99_ms": 3447.193953000009,
+              "sirannon": {
+                "ops": 31998.7,
+                "ops_ci_low": 28845.1,
+                "ops_ci_high": 32015.8,
+                "p50_ms": 8.841217999928631,
+                "p99_ms": 17.33054900006391,
+                "cores_used": 0.8415485313287601,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 25071.1,
+                "ops_ci_low": 24122.2,
+                "ops_ci_high": 25725.4,
+                "p50_ms": 2098.0438640000066,
+                "p99_ms": 3447.193953000009,
+                "cores_used": 2.0842174275527845,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 35878.2,
+              "postgres_ops": 25328.9,
+              "sirannon_p99_ms": 10063.466712000081,
+              "postgres_p99_ms": 20057.24342199997,
+              "sirannon": {
+                "ops": 35878.2,
+                "ops_ci_low": 35014.9,
+                "ops_ci_high": 36090.8,
+                "p50_ms": 6283.209365000017,
+                "p99_ms": 10063.466712000081,
+                "cores_used": 0.9765019224144756,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 25328.9,
+                "ops_ci_low": 24748.7,
+                "ops_ci_high": 25716.3,
+                "p50_ms": 12268.717667000135,
+                "p99_ms": 20057.24342199997,
+                "cores_used": 2.0432462279340116,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "batch-update",
+          "category": "micro",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.54101000004448,
+              "postgres_p99_ms": 214.4712189999409,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.9908610000275075,
+                "p99_ms": 2.54101000004448,
+                "cores_used": 0.08628213849773997,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 968.7,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6614940001163632,
+                "p99_ms": 214.4712189999409,
+                "cores_used": 0.13440331706533948,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 1999.9,
+              "sirannon_p99_ms": 2.862084000138566,
+              "postgres_p99_ms": 1.9576019998639822,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 1.311045000096783,
+                "p99_ms": 2.862084000138566,
+                "cores_used": 0.13839207147021737,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1999.9,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000,
+                "p50_ms": 1.0565899999346584,
+                "p99_ms": 1.9576019998639822,
+                "cores_used": 0.19259933874487078,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000,
+              "postgres_ops": 4000,
+              "sirannon_p99_ms": 3.384254999924451,
+              "postgres_p99_ms": 1.9458389999344945,
+              "sirannon": {
+                "ops": 4000,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.3,
+                "p50_ms": 1.5050230000633746,
+                "p99_ms": 3.384254999924451,
+                "cores_used": 0.17050465519852218,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000,
+                "ops_ci_low": 3999.6,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 1.108483999967575,
+                "p99_ms": 1.9458389999344945,
+                "cores_used": 0.3606274767758402,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.3,
+              "postgres_ops": 8000,
+              "sirannon_p99_ms": 4.110641000093892,
+              "postgres_p99_ms": 2.113547000102699,
+              "sirannon": {
+                "ops": 8000.3,
+                "ops_ci_low": 7999.4,
+                "ops_ci_high": 8000.9,
+                "p50_ms": 1.6498620000202209,
+                "p99_ms": 4.110641000093892,
+                "cores_used": 0.2504749834560119,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000,
+                "ops_ci_low": 7999.5,
+                "ops_ci_high": 8000.9,
+                "p50_ms": 1.1057259999215603,
+                "p99_ms": 2.113547000102699,
+                "cores_used": 0.6916365830328819,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000,
+              "postgres_ops": 16000,
+              "sirannon_p99_ms": 6.011046000057831,
+              "postgres_p99_ms": 5.574345999862999,
+              "sirannon": {
+                "ops": 16000,
+                "ops_ci_low": 15997.2,
+                "ops_ci_high": 16004.4,
+                "p50_ms": 1.794874999905005,
+                "p99_ms": 6.011046000057831,
+                "cores_used": 0.4130090850035079,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000,
+                "ops_ci_low": 15939.3,
+                "ops_ci_high": 16000.7,
+                "p50_ms": 1.5946070000063628,
+                "p99_ms": 5.574345999862999,
+                "cores_used": 1.332636198861994,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31992.6,
+              "postgres_ops": 26589.5,
+              "sirannon_p99_ms": 7.928475999971852,
+              "postgres_p99_ms": 3291.1401550001465,
+              "sirannon": {
+                "ops": 31992.6,
+                "ops_ci_low": 31973.2,
+                "ops_ci_high": 32001.6,
+                "p50_ms": 2.041429999982938,
+                "p99_ms": 7.928475999971852,
+                "cores_used": 0.6836258501143719,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 26589.5,
+                "ops_ci_low": 22690.3,
+                "ops_ci_high": 30332.7,
+                "p50_ms": 1385.755945000099,
+                "p99_ms": 3291.1401550001465,
+                "cores_used": 2.140497708970795,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 59763.2,
+              "postgres_ops": 25770.8,
+              "sirannon_p99_ms": 885.8629509999882,
+              "postgres_p99_ms": 20878.10492000007,
+              "sirannon": {
+                "ops": 59763.2,
+                "ops_ci_low": 53018.1,
+                "ops_ci_high": 60072.1,
+                "p50_ms": 540.9092769999988,
+                "p99_ms": 885.8629509999882,
+                "cores_used": 1.127754564214392,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 25770.8,
+                "ops_ci_low": 23697.9,
+                "ops_ci_high": 29771.8,
+                "p50_ms": 12256.161153000081,
+                "p99_ms": 20878.10492000007,
+                "cores_used": 2.0338927055039298,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             }
           ]
         },
         {
           "workload": "ycsb-a",
+          "category": "ycsb",
           "curve": [
             {
               "target_rate": 1000,
               "sirannon_ops": 1000,
               "postgres_ops": 1000.1,
               "sirannon_p99_ms": 1.7029599999077618,
-              "postgres_p99_ms": 2.183883000165224
+              "postgres_p99_ms": 2.183883000165224,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.8,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6652590001467615,
+                "p99_ms": 1.7029599999077618,
+                "cores_used": 0.0783527700088513,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000.1,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.8733720001764596,
+                "p99_ms": 2.183883000165224,
+                "cores_used": 0.09547644946860684,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 2000,
               "sirannon_ops": 2000,
               "postgres_ops": 2000.1,
               "sirannon_p99_ms": 2.061640999978408,
-              "postgres_p99_ms": 396.3315969998948
+              "postgres_p99_ms": 396.3315969998948,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.9195809999946505,
+                "p99_ms": 2.061640999978408,
+                "cores_used": 0.1434252759765622,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000.1,
+                "ops_ci_low": 1987,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 1.0476029999554157,
+                "p99_ms": 396.3315969998948,
+                "cores_used": 0.22107617086917564,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 4000,
               "sirannon_ops": 3999.8,
               "postgres_ops": 3999.8,
               "sirannon_p99_ms": 2.784480999689549,
-              "postgres_p99_ms": 423.06729899998754
+              "postgres_p99_ms": 423.06729899998754,
+              "sirannon": {
+                "ops": 3999.8,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.3,
+                "p50_ms": 1.100099999923259,
+                "p99_ms": 2.784480999689549,
+                "cores_used": 0.24041480313496308,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.8,
+                "ops_ci_low": 3999.5,
+                "ops_ci_high": 4195.3,
+                "p50_ms": 1.162607999984175,
+                "p99_ms": 423.06729899998754,
+                "cores_used": 0.4029249172772282,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 8000,
               "sirannon_ops": 7999.8,
               "postgres_ops": 7999.9,
               "sirannon_p99_ms": 3.517132999841124,
-              "postgres_p99_ms": 485.03560900036246
+              "postgres_p99_ms": 485.03560900036246,
+              "sirannon": {
+                "ops": 7999.8,
+                "ops_ci_low": 7996.9,
+                "ops_ci_high": 8000.6,
+                "p50_ms": 1.403230999596417,
+                "p99_ms": 3.517132999841124,
+                "cores_used": 0.3371540923347275,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.9,
+                "ops_ci_low": 7999.3,
+                "ops_ci_high": 8000.6,
+                "p50_ms": 1.1306819999590516,
+                "p99_ms": 485.03560900036246,
+                "cores_used": 0.7210342362302009,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 16000,
               "sirannon_ops": 15999.4,
               "postgres_ops": 15999.4,
               "sirannon_p99_ms": 4.550584000069648,
-              "postgres_p99_ms": 564.878410000354
+              "postgres_p99_ms": 564.878410000354,
+              "sirannon": {
+                "ops": 15999.4,
+                "ops_ci_low": 15998,
+                "ops_ci_high": 16002.1,
+                "p50_ms": 1.3179219998419285,
+                "p99_ms": 4.550584000069648,
+                "cores_used": 0.5333002082084197,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15999.4,
+                "ops_ci_low": 15208.9,
+                "ops_ci_high": 16619.2,
+                "p50_ms": 1.7770249997265637,
+                "p99_ms": 564.878410000354,
+                "cores_used": 1.5047559155184294,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 32000,
               "sirannon_ops": 28831.3,
               "postgres_ops": 20590.3,
               "sirannon_p99_ms": 1156.887488000095,
-              "postgres_p99_ms": 7665.674675999675
+              "postgres_p99_ms": 7665.674675999675,
+              "sirannon": {
+                "ops": 28831.3,
+                "ops_ci_low": 26805.9,
+                "ops_ci_high": 28863.3,
+                "p50_ms": 293.8876050002873,
+                "p99_ms": 1156.887488000095,
+                "cores_used": 0.756048038167782,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 20590.3,
+                "ops_ci_low": 18843.7,
+                "ops_ci_high": 23447.3,
+                "p50_ms": 3860.9760940000415,
+                "p99_ms": 7665.674675999675,
+                "cores_used": 1.983030496986944,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 64000,
               "sirannon_ops": 28535.3,
               "postgres_ops": 24935.8,
               "sirannon_p99_ms": 12813.281898000278,
-              "postgres_p99_ms": 23354.716457999777
+              "postgres_p99_ms": 23354.716457999777,
+              "sirannon": {
+                "ops": 28535.3,
+                "ops_ci_low": 27431.9,
+                "ops_ci_high": 28998.1,
+                "p50_ms": 6394.5528110000305,
+                "p99_ms": 12813.281898000278,
+                "cores_used": 0.7880023531592405,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 24935.8,
+                "ops_ci_low": 22419.2,
+                "ops_ci_high": 25211.6,
+                "p50_ms": 13685.861591999885,
+                "p99_ms": 23354.716457999777,
+                "cores_used": 2.1280036414856127,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-b",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 999.9,
+              "sirannon_p99_ms": 2.069908999837935,
+              "postgres_p99_ms": 7.118715999647975,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.7078280001878738,
+                "p99_ms": 2.069908999837935,
+                "cores_used": 0.04234221285810753,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 999.9,
+                "ops_ci_low": 999.8,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.8077239999547601,
+                "p99_ms": 7.118715999647975,
+                "cores_used": 0.10221069885135489,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.400692000053823,
+              "postgres_p99_ms": 266.0915590003133,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.7,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.6728130001574755,
+                "p99_ms": 1.400692000053823,
+                "cores_used": 0.07105609172461533,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.8751809997484088,
+                "p99_ms": 266.0915590003133,
+                "cores_used": 0.17086841770710282,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 3999.7,
+              "sirannon_p99_ms": 1.6523769991472363,
+              "postgres_p99_ms": 384.2170739993453,
+              "sirannon": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 0.7819529995322227,
+                "p99_ms": 1.6523769991472363,
+                "cores_used": 0.1244822991143553,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.7,
+                "ops_ci_low": 3828.7,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 0.95943000074476,
+                "p99_ms": 384.2170739993453,
+                "cores_used": 0.2895964440940746,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.5,
+              "postgres_ops": 7999.4,
+              "sirannon_p99_ms": 1.964087000116706,
+              "postgres_p99_ms": 292.6947759995237,
+              "sirannon": {
+                "ops": 8000.5,
+                "ops_ci_low": 7999.9,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 0.8906469997018576,
+                "p99_ms": 1.964087000116706,
+                "cores_used": 0.21294391898532067,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.4,
+                "ops_ci_low": 7886.8,
+                "ops_ci_high": 8000.4,
+                "p50_ms": 1.245125999674201,
+                "p99_ms": 292.6947759995237,
+                "cores_used": 0.5914779348844957,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15998.5,
+              "postgres_ops": 15998.6,
+              "sirannon_p99_ms": 3.195364000275731,
+              "postgres_p99_ms": 537.3570040008053,
+              "sirannon": {
+                "ops": 15998.5,
+                "ops_ci_low": 14780.2,
+                "ops_ci_high": 15999.5,
+                "p50_ms": 1.1227940004318953,
+                "p99_ms": 3.195364000275731,
+                "cores_used": 0.38933559198201545,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15998.6,
+                "ops_ci_low": 15645.6,
+                "ops_ci_high": 16000.2,
+                "p50_ms": 1.7309860000386834,
+                "p99_ms": 537.3570040008053,
+                "cores_used": 1.235168569428728,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31998.4,
+              "postgres_ops": 22480.3,
+              "sirannon_p99_ms": 5.335884000174701,
+              "postgres_p99_ms": 5371.317604999989,
+              "sirannon": {
+                "ops": 31998.4,
+                "ops_ci_low": 21777.9,
+                "ops_ci_high": 32000.9,
+                "p50_ms": 1.2203609999269247,
+                "p99_ms": 5.335884000174701,
+                "cores_used": 0.6882355357329509,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 22480.3,
+                "ops_ci_low": 21977.2,
+                "ops_ci_high": 23926.7,
+                "p50_ms": 3496.356798999943,
+                "p99_ms": 5371.317604999989,
+                "cores_used": 1.7321547539015059,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 35659,
+              "postgres_ops": 23945.4,
+              "sirannon_p99_ms": 15156.492413000204,
+              "postgres_p99_ms": 21667.559181000106,
+              "sirannon": {
+                "ops": 35659,
+                "ops_ci_low": 35070.2,
+                "ops_ci_high": 36080.8,
+                "p50_ms": 4001.5177269997075,
+                "p99_ms": 15156.492413000204,
+                "cores_used": 0.5937673706556945,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 23945.4,
+                "ops_ci_low": 23730.9,
+                "ops_ci_high": 24123.8,
+                "p50_ms": 13381.455653999932,
+                "p99_ms": 21667.559181000106,
+                "cores_used": 1.7486261481225591,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-c",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.2586050005629659,
+              "postgres_p99_ms": 2.0192050002515316,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.8,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.543325999751687,
+                "p99_ms": 1.2586050005629659,
+                "cores_used": 0.03920015352307747,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.7280060006305575,
+                "p99_ms": 2.0192050002515316,
+                "cores_used": 0.06632163403945686,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.2786259995773435,
+              "postgres_p99_ms": 2.3438769998028874,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.6890550004318357,
+                "p99_ms": 1.2786259995773435,
+                "cores_used": 0.057385533136216804,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.7905259998515248,
+                "p99_ms": 2.3438769998028874,
+                "cores_used": 0.15987855208945578,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 3999.9,
+              "sirannon_p99_ms": 1.3478659996762872,
+              "postgres_p99_ms": 2.4385179998353124,
+              "sirannon": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.6,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.7946939999237657,
+                "p99_ms": 1.3478659996762872,
+                "cores_used": 0.09929193425587626,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 0.868648000061512,
+                "p99_ms": 2.4385179998353124,
+                "cores_used": 0.2716369231242294,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.1,
+              "postgres_ops": 8000,
+              "sirannon_p99_ms": 1.526580000296235,
+              "postgres_p99_ms": 3.6638110000640154,
+              "sirannon": {
+                "ops": 8000.1,
+                "ops_ci_low": 7999.5,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 0.8453540001064539,
+                "p99_ms": 1.526580000296235,
+                "cores_used": 0.16562068865454013,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000,
+                "ops_ci_low": 7998.8,
+                "ops_ci_high": 8000.1,
+                "p50_ms": 1.1460699997842312,
+                "p99_ms": 3.6638110000640154,
+                "cores_used": 0.5527910513351693,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.4,
+              "postgres_ops": 15998.9,
+              "sirannon_p99_ms": 2.890184000134468,
+              "postgres_p99_ms": 312.00083599984646,
+              "sirannon": {
+                "ops": 15999.4,
+                "ops_ci_low": 14273.3,
+                "ops_ci_high": 16000.4,
+                "p50_ms": 1.0470340000465512,
+                "p99_ms": 2.890184000134468,
+                "cores_used": 0.2976416700492414,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15998.9,
+                "ops_ci_low": 15998.6,
+                "ops_ci_high": 16001.5,
+                "p50_ms": 1.6569119999185205,
+                "p99_ms": 312.00083599984646,
+                "cores_used": 1.1544747388098189,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31999.9,
+              "postgres_ops": 22797.4,
+              "sirannon_p99_ms": 4.865466999821365,
+              "postgres_p99_ms": 5290.37701300066,
+              "sirannon": {
+                "ops": 31999.9,
+                "ops_ci_low": 21650.3,
+                "ops_ci_high": 32001.6,
+                "p50_ms": 1.29022999946028,
+                "p99_ms": 4.865466999821365,
+                "cores_used": 0.5449365534461943,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 22797.4,
+                "ops_ci_low": 22354.1,
+                "ops_ci_high": 23121.9,
+                "p50_ms": 3191.0447460003197,
+                "p99_ms": 5290.37701300066,
+                "cores_used": 1.6059732864391016,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 36295.8,
+              "postgres_ops": 24344,
+              "sirannon_p99_ms": 13988.418888000771,
+              "postgres_p99_ms": 21041.27968700044,
+              "sirannon": {
+                "ops": 36295.8,
+                "ops_ci_low": 34165.7,
+                "ops_ci_high": 36687.1,
+                "p50_ms": 3930.1889490000904,
+                "p99_ms": 13988.418888000771,
+                "cores_used": 0.5883045110136084,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 24344,
+                "ops_ci_low": 22619,
+                "ops_ci_high": 24551.5,
+                "p50_ms": 13051.366359999403,
+                "p99_ms": 21041.27968700044,
+                "cores_used": 1.650677077180172,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-f",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.3241689996793866,
+              "postgres_p99_ms": 2.1955099999904633,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.9793720003217459,
+                "p99_ms": 2.3241689996793866,
+                "cores_used": 0.10354182044475572,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.8445709999650717,
+                "p99_ms": 2.1955099999904633,
+                "cores_used": 0.13028834711186574,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 1999.8,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 2.6830470003187656,
+              "postgres_p99_ms": 376.8150549996644,
+              "sirannon": {
+                "ops": 1999.8,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 1.2203409997746348,
+                "p99_ms": 2.6830470003187656,
+                "cores_used": 0.1845586650729884,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.6,
+                "ops_ci_high": 2000,
+                "p50_ms": 1.008661000058055,
+                "p99_ms": 376.8150549996644,
+                "cores_used": 0.27783094441326217,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 4000,
+              "sirannon_p99_ms": 3.4879540000110865,
+              "postgres_p99_ms": 500.2368660001084,
+              "sirannon": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.6,
+                "p50_ms": 1.4646129999309778,
+                "p99_ms": 3.4879540000110865,
+                "cores_used": 0.28312349937519465,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4081.1,
+                "p50_ms": 1.1500190002843738,
+                "p99_ms": 500.2368660001084,
+                "cores_used": 0.507429662619612,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.2,
+              "postgres_ops": 7999.8,
+              "sirannon_p99_ms": 4.137409999966621,
+              "postgres_p99_ms": 504.07739099953324,
+              "sirannon": {
+                "ops": 8000.2,
+                "ops_ci_low": 7998.6,
+                "ops_ci_high": 8000.9,
+                "p50_ms": 1.3979709995910525,
+                "p99_ms": 4.137409999966621,
+                "cores_used": 0.44723903206743876,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.8,
+                "ops_ci_low": 7743.9,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 1.5930370008572936,
+                "p99_ms": 504.07739099953324,
+                "cores_used": 0.9575545855925686,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15998.8,
+              "postgres_ops": 15259.9,
+              "sirannon_p99_ms": 5.88069299980998,
+              "postgres_p99_ms": 1075.3675779998302,
+              "sirannon": {
+                "ops": 15998.8,
+                "ops_ci_low": 13369.9,
+                "ops_ci_high": 16000.7,
+                "p50_ms": 1.4411279996857047,
+                "p99_ms": 5.88069299980998,
+                "cores_used": 0.7058429370523556,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15259.9,
+                "ops_ci_low": 13525.6,
+                "ops_ci_high": 15916.3,
+                "p50_ms": 564.4107470000163,
+                "p99_ms": 1075.3675779998302,
+                "cores_used": 1.8793510207959359,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 21490.3,
+              "postgres_ops": 15586,
+              "sirannon_p99_ms": 6456.628244999796,
+              "postgres_p99_ms": 14052.718782000244,
+              "sirannon": {
+                "ops": 21490.3,
+                "ops_ci_low": 20147.6,
+                "ops_ci_high": 32001.6,
+                "p50_ms": 1523.6431269999593,
+                "p99_ms": 6456.628244999796,
+                "cores_used": 0.7449832769420488,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15586,
+                "ops_ci_low": 14978,
+                "ops_ci_high": 16732,
+                "p50_ms": 8526.987030000426,
+                "p99_ms": 14052.718782000244,
+                "cores_used": 1.9823126191463967,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 28922.6,
+              "postgres_ops": 16344.4,
+              "sirannon_p99_ms": 18671.100860999897,
+              "postgres_p99_ms": 39273.23701300006,
+              "sirannon": {
+                "ops": 28922.6,
+                "ops_ci_low": 24557.8,
+                "ops_ci_high": 33644.8,
+                "p50_ms": 9189.406406999566,
+                "p99_ms": 18671.100860999897,
+                "cores_used": 0.8544216603501238,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16344.4,
+                "ops_ci_low": 15314.1,
+                "ops_ci_high": 16614.2,
+                "p50_ms": 23365.16752799973,
+                "p99_ms": 39273.23701300006,
+                "cores_used": 1.987154881571689,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "tpc-c-derived",
+          "category": "oltp",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.7544900001958013,
+              "postgres_p99_ms": 143.4649900002405,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.2,
+                "p50_ms": 1.1213109996169806,
+                "p99_ms": 2.7544900001958013,
+                "cores_used": 0.10481087592906099,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.990819999948144,
+                "p99_ms": 143.4649900002405,
+                "cores_used": 0.12620599490795162,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000.2,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 3.7729829996824265,
+              "postgres_p99_ms": 1.8847159994766116,
+              "sirannon": {
+                "ops": 2000.2,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.4,
+                "p50_ms": 1.5903239995241165,
+                "p99_ms": 3.7729829996824265,
+                "cores_used": 0.1494512379976302,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.9251009998843074,
+                "p99_ms": 1.8847159994766116,
+                "cores_used": 0.20257222826006704,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000,
+              "postgres_ops": 4000.2,
+              "sirannon_p99_ms": 7.013235999271274,
+              "postgres_p99_ms": 1.979454000480473,
+              "sirannon": {
+                "ops": 4000,
+                "ops_ci_low": 3999.9,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 1.6451229993253946,
+                "p99_ms": 7.013235999271274,
+                "cores_used": 0.1888917076316585,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.2,
+                "ops_ci_low": 3999.9,
+                "ops_ci_high": 4000.2,
+                "p50_ms": 1.0990779995918274,
+                "p99_ms": 1.979454000480473,
+                "cores_used": 0.38302056361165177,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.6,
+              "postgres_ops": 8000,
+              "sirannon_p99_ms": 10.323591999709606,
+              "postgres_p99_ms": 2.466481000185013,
+              "sirannon": {
+                "ops": 7999.6,
+                "ops_ci_low": 7998.7,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 1.8476280001923442,
+                "p99_ms": 10.323591999709606,
+                "cores_used": 0.2680880283876362,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000,
+                "ops_ci_low": 7998.6,
+                "ops_ci_high": 8000.5,
+                "p50_ms": 1.134655000641942,
+                "p99_ms": 2.466481000185013,
+                "cores_used": 0.7246792790075917,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15985.7,
+              "postgres_ops": 15998.8,
+              "sirannon_p99_ms": 20.912395000457764,
+              "postgres_p99_ms": 103.65262299962342,
+              "sirannon": {
+                "ops": 15985.7,
+                "ops_ci_low": 15973.1,
+                "ops_ci_high": 15999.4,
+                "p50_ms": 4.015344000421464,
+                "p99_ms": 20.912395000457764,
+                "cores_used": 0.46317048133521593,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15998.8,
+                "ops_ci_low": 15397.7,
+                "ops_ci_high": 15999.8,
+                "p50_ms": 2.4605160001665354,
+                "p99_ms": 103.65262299962342,
+                "cores_used": 1.4009019647179652,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 19318.2,
+              "postgres_ops": 18482.5,
+              "sirannon_p99_ms": 6646.730951000005,
+              "postgres_p99_ms": 8777.320817000233,
+              "sirannon": {
+                "ops": 19318.2,
+                "ops_ci_low": 18208.7,
+                "ops_ci_high": 20117.8,
+                "p50_ms": 3304.4955240003765,
+                "p99_ms": 6646.730951000005,
+                "cores_used": 0.5560793228153454,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 18482.5,
+                "ops_ci_low": 18276,
+                "ops_ci_high": 21067.3,
+                "p50_ms": 5004.415235999972,
+                "p99_ms": 8777.320817000233,
+                "cores_used": 1.7321891811546062,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 18798.2,
+              "postgres_ops": 18717.6,
+              "sirannon_p99_ms": 28254.546553999186,
+              "postgres_p99_ms": 35792.38357099984,
+              "sirannon": {
+                "ops": 18798.2,
+                "ops_ci_low": 18662.4,
+                "ops_ci_high": 19724.7,
+                "p50_ms": 16519.72068700008,
+                "p99_ms": 28254.546553999186,
+                "cores_used": 0.5408333716220589,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 18717.6,
+                "ops_ci_low": 16839.7,
+                "ops_ci_high": 19527.5,
+                "p50_ms": 21046.058215999976,
+                "p99_ms": 35792.38357099984,
+                "cores_used": 1.644444166252749,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             }
           ]
         }
@@ -2091,7 +3735,12 @@
               64006.7
             ],
             "p50_ms": 1.7357399999746121,
-            "p99_ms": 6.208455999963917
+            "p95_ms": 4.6461469999630935,
+            "p99_ms": 6.208455999963917,
+            "p999_ms": 7.609253000002354,
+            "max_ms": 9.60934999998426,
+            "cores_used": 0.6251259251224501,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -2108,7 +3757,12 @@
               16001.4
             ],
             "p50_ms": 1.2785039999871515,
-            "p99_ms": 2.2655339999473654
+            "p95_ms": 1.9997520000324585,
+            "p99_ms": 2.2655339999473654,
+            "p999_ms": 3.2258090000250377,
+            "max_ms": 4.641128999995999,
+            "cores_used": 0.7358737281992498,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -2136,7 +3790,12 @@
               15978.6
             ],
             "p50_ms": 1.3131820000708103,
-            "p99_ms": 18.458071999950334
+            "p95_ms": 15.752514999941923,
+            "p99_ms": 18.458071999950334,
+            "p999_ms": 20.34823999996297,
+            "max_ms": 21.909404000034556,
+            "cores_used": 0.48265071257047154,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -2153,7 +3812,12 @@
               16000.1
             ],
             "p50_ms": 1.5102440000046045,
-            "p99_ms": 2.3805080000311136
+            "p95_ms": 2.2190640000626445,
+            "p99_ms": 2.3805080000311136,
+            "p999_ms": 3.3484069999540225,
+            "max_ms": 4.318421999923885,
+            "cores_used": 0.8834553251789938,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -2181,7 +3845,12 @@
               32030.9
             ],
             "p50_ms": 1.426653000060469,
-            "p99_ms": 12.613340999931097
+            "p95_ms": 10.392203999916092,
+            "p99_ms": 12.613340999931097,
+            "p999_ms": 14.333354000002146,
+            "max_ms": 17.095412000082433,
+            "cores_used": 0.6411553203290308,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 32000,
@@ -2198,7 +3867,12 @@
               31998.8
             ],
             "p50_ms": 1.7694029998965561,
-            "p99_ms": 6.916650000028312
+            "p95_ms": 3.451145000057295,
+            "p99_ms": 6.916650000028312,
+            "p999_ms": 8.52924000006169,
+            "max_ms": 9.850093000102788,
+            "cores_used": 1.7642009487925752,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -2226,7 +3900,12 @@
               16001.6
             ],
             "p50_ms": 1.2062980001792312,
-            "p99_ms": 7.71812600037083
+            "p95_ms": 2.2629440003074706,
+            "p99_ms": 7.71812600037083,
+            "p999_ms": 11.729325000196695,
+            "max_ms": 15.693605000153184,
+            "cores_used": 0.5121705225377405,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -2243,7 +3922,12 @@
               8000.2
             ],
             "p50_ms": 1.0644680000841618,
-            "p99_ms": 2.6749180001206696
+            "p95_ms": 1.95588400028646,
+            "p99_ms": 2.6749180001206696,
+            "p999_ms": 3.409490999765694,
+            "max_ms": 6.160759000107646,
+            "cores_used": 0.5338404002515796,
+            "cores_allowed": 4
           },
           "sirannon_soak": {
             "skipped": false,
@@ -3003,7 +4687,12 @@
               31987.7
             ],
             "p50_ms": 1.3187870001420379,
-            "p99_ms": 5.28282400034368
+            "p95_ms": 2.7050779992714524,
+            "p99_ms": 5.28282400034368,
+            "p999_ms": 7.176837999373674,
+            "max_ms": 16.288234000094235,
+            "cores_used": 0.6796521309988875,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -3020,7 +4709,12 @@
               7999.3
             ],
             "p50_ms": 1.1193300001323223,
-            "p99_ms": 6.053863000124693
+            "p95_ms": 2.025969000533223,
+            "p99_ms": 6.053863000124693,
+            "p999_ms": 17.101623999886215,
+            "max_ms": 405.0922419996932,
+            "cores_used": 0.5638039358158269,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -3048,7 +4742,12 @@
               32003.7
             ],
             "p50_ms": 1.2848260002210736,
-            "p99_ms": 4.947947000153363
+            "p95_ms": 2.385871999897063,
+            "p99_ms": 4.947947000153363,
+            "p999_ms": 6.452517000027001,
+            "max_ms": 8.135387999936938,
+            "cores_used": 0.5342593859061078,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -3065,12 +4764,17 @@
               8000.2
             ],
             "p50_ms": 1.0572359999641776,
-            "p99_ms": 20.058919000439346
+            "p95_ms": 1.9602349996566772,
+            "p99_ms": 20.058919000439346,
+            "p999_ms": 36.17304200027138,
+            "max_ms": 349.84029999934137,
+            "cores_used": 0.5528465051192221,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
           "speedup": {
-            "point": 3.740533702668514,
+            "point": 3.7405337026685133,
             "ci_low": 3.2213891604187035,
             "ci_high": 4.000319999200003
           }
@@ -3093,7 +4797,12 @@
               32000
             ],
             "p50_ms": 1.6061589997261763,
-            "p99_ms": 14.718937000259757
+            "p95_ms": 8.766614999622107,
+            "p99_ms": 14.718937000259757,
+            "p999_ms": 18.541272000409663,
+            "max_ms": 23.996966999955475,
+            "cores_used": 1.095389706295903,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 8000,
@@ -3110,12 +4819,17 @@
               8000.2
             ],
             "p50_ms": 1.1424400005489588,
-            "p99_ms": 2.3264599991962314
+            "p95_ms": 1.952037999406457,
+            "p99_ms": 2.3264599991962314,
+            "p999_ms": 4.314206000417471,
+            "max_ms": 6.168445999734104,
+            "cores_used": 0.7704068223490712,
+            "cores_allowed": 4
           },
           "sirannon_soak": null,
           "postgres_soak": null,
           "speedup": {
-            "point": 3.7011140222804455,
+            "point": 3.701114022280446,
             "ci_low": 3.10359551797759,
             "ci_high": 4.000725070694393
           }
@@ -3138,7 +4852,12 @@
               32000.5
             ],
             "p50_ms": 1.9202410001307726,
-            "p99_ms": 17.877965999767184
+            "p95_ms": 15.604706999845803,
+            "p99_ms": 17.877965999767184,
+            "p999_ms": 19.540628000162542,
+            "max_ms": 21.154082000255585,
+            "cores_used": 0.7060476402980662,
+            "cores_allowed": 4
           },
           "postgres": {
             "target_rate": 16000,
@@ -3155,7 +4874,12 @@
               16000.6
             ],
             "p50_ms": 1.5707419998943806,
-            "p99_ms": 2.4433679999783635
+            "p95_ms": 2.216794000007212,
+            "p99_ms": 2.4433679999783635,
+            "p999_ms": 3.4846740001812577,
+            "max_ms": 4.579212999902666,
+            "cores_used": 0.9233177841501042,
+            "cores_allowed": 4
           },
           "sirannon_soak": {
             "skipped": false,
@@ -3900,110 +5624,1674 @@
       ],
       "scaling": [
         {
-          "workload": "ycsb-c",
+          "workload": "point-select",
+          "category": "micro",
           "curve": [
             {
               "target_rate": 1000,
               "sirannon_ops": 1000,
               "postgres_ops": 1000,
-              "sirannon_p99_ms": 1.264758000150323,
-              "postgres_p99_ms": 1.3006370002403855
+              "sirannon_p99_ms": 1.7283730000053765,
+              "postgres_p99_ms": 1.9721369999897433,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6645630000130041,
+                "p99_ms": 1.7283730000053765,
+                "cores_used": 0.03409176541772584,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.7462159999995492,
+                "p99_ms": 1.9721369999897433,
+                "cores_used": 0.08687181925908036,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000.1,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.907202000002144,
+              "postgres_p99_ms": 2.0498099999967963,
+              "sirannon": {
+                "ops": 2000.1,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.3,
+                "p50_ms": 0.6856109999935143,
+                "p99_ms": 1.907202000002144,
+                "cores_used": 0.04294859102983827,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.7,
+                "ops_ci_high": 2000.3,
+                "p50_ms": 0.7350750000041444,
+                "p99_ms": 2.0498099999967963,
+                "cores_used": 0.10361644301064218,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000.1,
+              "postgres_ops": 3999.9,
+              "sirannon_p99_ms": 1.8963020000082906,
+              "postgres_p99_ms": 2.1097609999997076,
+              "sirannon": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.724714000010863,
+                "p99_ms": 1.8963020000082906,
+                "cores_used": 0.06829437854021829,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.3,
+                "p50_ms": 0.7765409999992698,
+                "p99_ms": 2.1097609999997076,
+                "cores_used": 0.18485078451547737,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.6,
+              "postgres_ops": 7999.8,
+              "sirannon_p99_ms": 1.917689000023529,
+              "postgres_p99_ms": 1.609883000026457,
+              "sirannon": {
+                "ops": 7999.6,
+                "ops_ci_low": 7998.8,
+                "ops_ci_high": 8001.6,
+                "p50_ms": 0.7496619999874383,
+                "p99_ms": 1.917689000023529,
+                "cores_used": 0.11233750045495557,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.8,
+                "ops_ci_low": 7999.5,
+                "ops_ci_high": 8000.3,
+                "p50_ms": 0.8807859999942593,
+                "p99_ms": 1.609883000026457,
+                "cores_used": 0.3675631337927792,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000,
+              "postgres_ops": 16000.5,
+              "sirannon_p99_ms": 2.5667970000067726,
+              "postgres_p99_ms": 2.2655339999473654,
+              "sirannon": {
+                "ops": 16000,
+                "ops_ci_low": 15999.5,
+                "ops_ci_high": 16000.4,
+                "p50_ms": 0.843587999988813,
+                "p99_ms": 2.5667970000067726,
+                "cores_used": 0.19024672186968833,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000.5,
+                "ops_ci_low": 15998.8,
+                "ops_ci_high": 16001.4,
+                "p50_ms": 1.2785039999871515,
+                "p99_ms": 2.2655339999473654,
+                "cores_used": 0.7358737281992498,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 32000.4,
+              "postgres_ops": 29928.1,
+              "sirannon_p99_ms": 3.7807150000007823,
+              "postgres_p99_ms": 1052.3280640000012,
+              "sirannon": {
+                "ops": 32000.4,
+                "ops_ci_low": 31998.9,
+                "ops_ci_high": 32003.6,
+                "p50_ms": 1.0876520000165328,
+                "p99_ms": 3.7807150000007823,
+                "cores_used": 0.33719624261218645,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 29928.1,
+                "ops_ci_low": 29212.7,
+                "ops_ci_high": 30182,
+                "p50_ms": 631.4610159999575,
+                "p99_ms": 1052.3280640000012,
+                "cores_used": 1.3260128311410815,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 64004,
+              "postgres_ops": 28796.3,
+              "sirannon_p99_ms": 6.208455999963917,
+              "postgres_p99_ms": 15502.562276999932,
+              "sirannon": {
+                "ops": 64004,
+                "ops_ci_low": 63998.8,
+                "ops_ci_high": 64017.1,
+                "p50_ms": 1.7357399999746121,
+                "p99_ms": 6.208455999963917,
+                "cores_used": 0.6251259251224501,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 28796.3,
+                "ops_ci_low": 28478.4,
+                "ops_ci_high": 29108.1,
+                "p50_ms": 9696.40376299998,
+                "p99_ms": 15502.562276999932,
+                "cores_used": 1.3145543294676634,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "bulk-insert",
+          "category": "micro",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.4569769999943674,
+              "postgres_p99_ms": 1.2951129999710247,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.8,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.5734820000361651,
+                "p99_ms": 1.4569769999943674,
+                "cores_used": 0.07977095006830973,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6862620000028983,
+                "p99_ms": 1.2951129999710247,
+                "cores_used": 0.058072505097799605,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 2000,
               "sirannon_ops": 2000,
-              "postgres_ops": 2000.1,
-              "sirannon_p99_ms": 1.268180999904871,
-              "postgres_p99_ms": 1.6069310000166297
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 7.260852999985218,
+              "postgres_p99_ms": 1.3939239999745041,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000,
+                "p50_ms": 0.8080380000174046,
+                "p99_ms": 7.260852999985218,
+                "cores_used": 0.13766416672052142,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.7204619999974966,
+                "p99_ms": 1.3939239999745041,
+                "cores_used": 0.1168242283914002,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 4000,
               "sirannon_ops": 4000,
-              "postgres_ops": 4000,
-              "sirannon_p99_ms": 1.3304279996082187,
-              "postgres_p99_ms": 1.9040660001337528
+              "postgres_ops": 3999.9,
+              "sirannon_p99_ms": 12.300106000038795,
+              "postgres_p99_ms": 1.5544459999073297,
+              "sirannon": {
+                "ops": 4000,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.3,
+                "p50_ms": 0.932624000008218,
+                "p99_ms": 12.300106000038795,
+                "cores_used": 0.19078337739515666,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.6,
+                "ops_ci_high": 4000.2,
+                "p50_ms": 0.7510059999767691,
+                "p99_ms": 1.5544459999073297,
+                "cores_used": 0.22262935192273112,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 8000,
-              "sirannon_ops": 8000.2,
-              "postgres_ops": 7999.9,
-              "sirannon_p99_ms": 1.4973179996013641,
-              "postgres_p99_ms": 20.058919000439346
+              "sirannon_ops": 7999.6,
+              "postgres_ops": 8000.3,
+              "sirannon_p99_ms": 15.281914000050165,
+              "postgres_p99_ms": 1.659843000001274,
+              "sirannon": {
+                "ops": 7999.6,
+                "ops_ci_low": 7997.8,
+                "ops_ci_high": 8000.2,
+                "p50_ms": 0.9837970000226051,
+                "p99_ms": 15.281914000050165,
+                "cores_used": 0.29823375297523386,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000.3,
+                "ops_ci_low": 7999.5,
+                "ops_ci_high": 8000.8,
+                "p50_ms": 0.947558999992907,
+                "p99_ms": 1.659843000001274,
+                "cores_used": 0.4361103021450283,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 16000,
-              "sirannon_ops": 15999.6,
-              "postgres_ops": 16000.2,
-              "sirannon_p99_ms": 2.8995389994233847,
-              "postgres_p99_ms": 290.7282289993018
+              "sirannon_ops": 15999.3,
+              "postgres_ops": 15999.5,
+              "sirannon_p99_ms": 18.458071999950334,
+              "postgres_p99_ms": 2.3805080000311136,
+              "sirannon": {
+                "ops": 15999.3,
+                "ops_ci_low": 15978.6,
+                "ops_ci_high": 16015.4,
+                "p50_ms": 1.3131820000708103,
+                "p99_ms": 18.458071999950334,
+                "cores_used": 0.48265071257047154,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15999.5,
+                "ops_ci_low": 15999.4,
+                "ops_ci_high": 16000.3,
+                "p50_ms": 1.5102440000046045,
+                "p99_ms": 2.3805080000311136,
+                "cores_used": 0.8834553251789938,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 32000,
-              "sirannon_ops": 31999.7,
-              "postgres_ops": 23070.3,
-              "sirannon_p99_ms": 4.947947000153363,
-              "postgres_p99_ms": 5082.992867000401
+              "sirannon_ops": 32022.7,
+              "postgres_ops": 31395.4,
+              "sirannon_p99_ms": 27.643547000014223,
+              "postgres_p99_ms": 191.54342499992345,
+              "sirannon": {
+                "ops": 32022.7,
+                "ops_ci_low": 28502.3,
+                "ops_ci_high": 32100.5,
+                "p50_ms": 9.678819000022486,
+                "p99_ms": 27.643547000014223,
+                "cores_used": 0.804252993280276,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 31395.4,
+                "ops_ci_low": 30925.2,
+                "ops_ci_high": 32003.3,
+                "p50_ms": 2.6360809999750927,
+                "p99_ms": 191.54342499992345,
+                "cores_used": 1.6501711859146813,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 64000,
-              "sirannon_ops": 36663.6,
-              "postgres_ops": 24377,
-              "sirannon_p99_ms": 13522.832212000154,
-              "postgres_p99_ms": 20996.06038000062
+              "sirannon_ops": 34712,
+              "postgres_ops": 30979.5,
+              "sirannon_p99_ms": 10890.68496600003,
+              "postgres_p99_ms": 13656.5832750001,
+              "sirannon": {
+                "ops": 34712,
+                "ops_ci_low": 34050.7,
+                "ops_ci_high": 34942.6,
+                "p50_ms": 6756.735028999974,
+                "p99_ms": 10890.68496600003,
+                "cores_used": 0.872910609711846,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 30979.5,
+                "ops_ci_low": 30877.2,
+                "ops_ci_high": 31205.7,
+                "p50_ms": 8513.208295000019,
+                "p99_ms": 13656.5832750001,
+                "cores_used": 1.6608258622106424,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "batch-update",
+          "category": "micro",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.5134340000804514,
+              "postgres_p99_ms": 2.02555499994196,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.756883000023663,
+                "p99_ms": 1.5134340000804514,
+                "cores_used": 0.0758511155356101,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.709400000050664,
+                "p99_ms": 2.02555499994196,
+                "cores_used": 0.06148860173170078,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 2.1076360000297427,
+              "postgres_p99_ms": 2.259562000166625,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.8545750000048429,
+                "p99_ms": 2.1076360000297427,
+                "cores_used": 0.12732951021327932,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.7572130002081394,
+                "p99_ms": 2.259562000166625,
+                "cores_used": 0.1719270558975551,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 4000,
+              "sirannon_p99_ms": 3.981863000197336,
+              "postgres_p99_ms": 2.198221999919042,
+              "sirannon": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000,
+                "p50_ms": 0.9093830001074821,
+                "p99_ms": 3.981863000197336,
+                "cores_used": 0.16130160871919383,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.2,
+                "p50_ms": 0.784828000003472,
+                "p99_ms": 2.198221999919042,
+                "cores_used": 0.22601181962816946,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.8,
+              "postgres_ops": 8000.2,
+              "sirannon_p99_ms": 7.253667999990284,
+              "postgres_p99_ms": 2.3298639999702573,
+              "sirannon": {
+                "ops": 7999.8,
+                "ops_ci_low": 7999.6,
+                "ops_ci_high": 7999.9,
+                "p50_ms": 0.9552629999816418,
+                "p99_ms": 7.253667999990284,
+                "cores_used": 0.24745015703739834,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000.2,
+                "ops_ci_low": 8000,
+                "ops_ci_high": 8000.6,
+                "p50_ms": 0.9211190000642091,
+                "p99_ms": 2.3298639999702573,
+                "cores_used": 0.4206503066116966,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000.3,
+              "postgres_ops": 15999.9,
+              "sirannon_p99_ms": 9.77795400004834,
+              "postgres_p99_ms": 2.066924000158906,
+              "sirannon": {
+                "ops": 16000.3,
+                "ops_ci_low": 15998.7,
+                "ops_ci_high": 16001.2,
+                "p50_ms": 1.1183339999988675,
+                "p99_ms": 9.77795400004834,
+                "cores_used": 0.38768387819851213,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15999.9,
+                "ops_ci_low": 15999.8,
+                "ops_ci_high": 16000.9,
+                "p50_ms": 1.1811899999156594,
+                "p99_ms": 2.066924000158906,
+                "cores_used": 0.8647655533573968,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 32003.4,
+              "postgres_ops": 31999.4,
+              "sirannon_p99_ms": 12.613340999931097,
+              "postgres_p99_ms": 6.916650000028312,
+              "sirannon": {
+                "ops": 32003.4,
+                "ops_ci_low": 31961,
+                "ops_ci_high": 32030.9,
+                "p50_ms": 1.426653000060469,
+                "p99_ms": 12.613340999931097,
+                "cores_used": 0.6411553203290308,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 31999.4,
+                "ops_ci_low": 31998.8,
+                "ops_ci_high": 32001.2,
+                "p50_ms": 1.7694029998965561,
+                "p99_ms": 6.916650000028312,
+                "cores_used": 1.7642009487925752,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 64005.7,
+              "postgres_ops": 34658,
+              "sirannon_p99_ms": 69.3180280001834,
+              "postgres_p99_ms": 10978.77191199991,
+              "sirannon": {
+                "ops": 64005.7,
+                "ops_ci_low": 54939.7,
+                "ops_ci_high": 64240.7,
+                "p50_ms": 30.46060900017619,
+                "p99_ms": 69.3180280001834,
+                "cores_used": 1.093521921595969,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 34658,
+                "ops_ci_low": 34470.3,
+                "ops_ci_high": 35032.4,
+                "p50_ms": 6774.969137000153,
+                "p99_ms": 10978.77191199991,
+                "cores_used": 1.9448537122493237,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             }
           ]
         },
         {
           "workload": "ycsb-a",
+          "category": "ycsb",
           "curve": [
             {
               "target_rate": 1000,
               "sirannon_ops": 1000,
               "postgres_ops": 1000,
               "sirannon_p99_ms": 1.3301880001090467,
-              "postgres_p99_ms": 2.0492149996571243
+              "postgres_p99_ms": 2.0492149996571243,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.7176580000668764,
+                "p99_ms": 1.3301880001090467,
+                "cores_used": 0.07048473254766632,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.7465110002085567,
+                "p99_ms": 2.0492149996571243,
+                "cores_used": 0.07833780483702787,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 2000,
               "sirannon_ops": 2000.1,
               "postgres_ops": 2000,
               "sirannon_p99_ms": 1.4248800000641495,
-              "postgres_p99_ms": 2.3208770002238452
+              "postgres_p99_ms": 2.3208770002238452,
+              "sirannon": {
+                "ops": 2000.1,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.3,
+                "p50_ms": 0.796610000077635,
+                "p99_ms": 1.4248800000641495,
+                "cores_used": 0.1260969079010943,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.6,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.8154790000990033,
+                "p99_ms": 2.3208770002238452,
+                "cores_used": 0.17851216292378205,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 4000,
               "sirannon_ops": 4000.1,
               "postgres_ops": 3999.8,
               "sirannon_p99_ms": 1.6643509999848902,
-              "postgres_p99_ms": 2.442772999871522
+              "postgres_p99_ms": 2.442772999871522,
+              "sirannon": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.2,
+                "p50_ms": 0.9329309999011457,
+                "p99_ms": 1.6643509999848902,
+                "cores_used": 0.21296750949486956,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 3999.8,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.5,
+                "p50_ms": 0.8707369999028742,
+                "p99_ms": 2.442772999871522,
+                "cores_used": 0.3141963485951769,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 8000,
               "sirannon_ops": 7999.6,
               "postgres_ops": 7999.7,
               "sirannon_p99_ms": 3.4357250002212822,
-              "postgres_p99_ms": 2.6749180001206696
+              "postgres_p99_ms": 2.6749180001206696,
+              "sirannon": {
+                "ops": 7999.6,
+                "ops_ci_low": 7997.2,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 1.0713890003971756,
+                "p99_ms": 3.4357250002212822,
+                "cores_used": 0.33090289247616644,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.7,
+                "ops_ci_low": 6766.5,
+                "ops_ci_high": 8000.7,
+                "p50_ms": 1.0644680000841618,
+                "p99_ms": 2.6749180001206696,
+                "cores_used": 0.5338404002515796,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 16000,
               "sirannon_ops": 15999.4,
               "postgres_ops": 16000,
               "sirannon_p99_ms": 7.71812600037083,
-              "postgres_p99_ms": 198.50199700007215
+              "postgres_p99_ms": 198.50199700007215,
+              "sirannon": {
+                "ops": 15999.4,
+                "ops_ci_low": 15998.6,
+                "ops_ci_high": 16001.6,
+                "p50_ms": 1.2062980001792312,
+                "p99_ms": 7.71812600037083,
+                "cores_used": 0.5121705225377405,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000,
+                "ops_ci_low": 15804.5,
+                "ops_ci_high": 16002.5,
+                "p50_ms": 1.6266009998507798,
+                "p99_ms": 198.50199700007215,
+                "cores_used": 1.1909640798832766,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 32000,
               "sirannon_ops": 28560.7,
               "postgres_ops": 25362.1,
               "sirannon_p99_ms": 1296.4744650004432,
-              "postgres_p99_ms": 3287.9839390004054
+              "postgres_p99_ms": 3287.9839390004054,
+              "sirannon": {
+                "ops": 28560.7,
+                "ops_ci_low": 26354.1,
+                "ops_ci_high": 28747.4,
+                "p50_ms": 328.97236300027,
+                "p99_ms": 1296.4744650004432,
+                "cores_used": 0.7465476110759771,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 25362.1,
+                "ops_ci_low": 21111.2,
+                "ops_ci_high": 26339.3,
+                "p50_ms": 2061.4152239998803,
+                "p99_ms": 3287.9839390004054,
+                "cores_used": 1.899094540628167,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             },
             {
               "target_rate": 64000,
               "sirannon_ops": 29054.9,
               "postgres_ops": 27327.7,
               "sirannon_p99_ms": 13216.339354999829,
-              "postgres_p99_ms": 17538.530349000357
+              "postgres_p99_ms": 17538.530349000357,
+              "sirannon": {
+                "ops": 29054.9,
+                "ops_ci_low": 27887.8,
+                "ops_ci_high": 29286.4,
+                "p50_ms": 6599.135687000118,
+                "p99_ms": 13216.339354999829,
+                "cores_used": 0.7711191096856105,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 27327.7,
+                "ops_ci_low": 25990.6,
+                "ops_ci_high": 27481,
+                "p50_ms": 10829.502646000125,
+                "p99_ms": 17538.530349000357,
+                "cores_used": 1.9510015686052493,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-b",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.2646470004692674,
+              "postgres_p99_ms": 1.9823470003902912,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.30127999978139997,
+                "p99_ms": 1.2646470004692674,
+                "cores_used": 0.0455980809423121,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.7434449996799231,
+                "p99_ms": 1.9823470003902912,
+                "cores_used": 0.09725179328631235,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 1.3180080000311136,
+              "postgres_p99_ms": 2.186117000877857,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.6967150000855327,
+                "p99_ms": 1.3180080000311136,
+                "cores_used": 0.06931521524772226,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.7876750007271767,
+                "p99_ms": 2.186117000877857,
+                "cores_used": 0.1654593892819857,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000.1,
+              "postgres_ops": 4000.1,
+              "sirannon_p99_ms": 1.4458800004795194,
+              "postgres_p99_ms": 2.403855999931693,
+              "sirannon": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.9,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.8087480003014207,
+                "p99_ms": 1.4458800004795194,
+                "cores_used": 0.12119221925959248,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.5,
+                "p50_ms": 0.855235000140965,
+                "p99_ms": 2.403855999931693,
+                "cores_used": 0.27801116907920226,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.7,
+              "postgres_ops": 7999.6,
+              "sirannon_p99_ms": 1.7303609997034073,
+              "postgres_p99_ms": 6.053863000124693,
+              "sirannon": {
+                "ops": 7999.7,
+                "ops_ci_low": 7999.4,
+                "ops_ci_high": 8000.4,
+                "p50_ms": 0.8977239998057485,
+                "p99_ms": 1.7303609997034073,
+                "cores_used": 0.2036196882714264,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.6,
+                "ops_ci_low": 7999.2,
+                "ops_ci_high": 8000.1,
+                "p50_ms": 1.1193300001323223,
+                "p99_ms": 6.053863000124693,
+                "cores_used": 0.5638039358158269,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.2,
+              "postgres_ops": 15999.2,
+              "sirannon_p99_ms": 3.166412999853492,
+              "postgres_p99_ms": 179.41379899997264,
+              "sirannon": {
+                "ops": 15999.2,
+                "ops_ci_low": 14443.2,
+                "ops_ci_high": 16001.1,
+                "p50_ms": 1.076714999973774,
+                "p99_ms": 3.166412999853492,
+                "cores_used": 0.374802355193582,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15999.2,
+                "ops_ci_low": 15999,
+                "ops_ci_high": 16000.5,
+                "p50_ms": 1.6189430002123117,
+                "p99_ms": 179.41379899997264,
+                "cores_used": 1.1830392577978064,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31999.2,
+              "postgres_ops": 22968.7,
+              "sirannon_p99_ms": 5.28282400034368,
+              "postgres_p99_ms": 4985.418027999811,
+              "sirannon": {
+                "ops": 31999.2,
+                "ops_ci_low": 22049.7,
+                "ops_ci_high": 32011.8,
+                "p50_ms": 1.3187870001420379,
+                "p99_ms": 5.28282400034368,
+                "cores_used": 0.6796521309988875,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 22968.7,
+                "ops_ci_low": 22294.7,
+                "ops_ci_high": 24372,
+                "p50_ms": 3041.4850730001926,
+                "p99_ms": 4985.418027999811,
+                "cores_used": 1.6951930873698997,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 35779.8,
+              "postgres_ops": 24412,
+              "sirannon_p99_ms": 15114.654294000007,
+              "postgres_p99_ms": 21076.78694500029,
+              "sirannon": {
+                "ops": 35779.8,
+                "ops_ci_low": 35188.5,
+                "ops_ci_high": 35999,
+                "p50_ms": 4035.092852999456,
+                "p99_ms": 15114.654294000007,
+                "cores_used": 0.5905743801421759,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 24412,
+                "ops_ci_low": 24349.3,
+                "ops_ci_high": 24604.8,
+                "p50_ms": 13068.49488200061,
+                "p99_ms": 21076.78694500029,
+                "cores_used": 1.7170470267000488,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-c",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 1.264758000150323,
+              "postgres_p99_ms": 1.3006370002403855,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6795789999887347,
+                "p99_ms": 1.264758000150323,
+                "cores_used": 0.04111465230222554,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.6683350000530481,
+                "p99_ms": 1.3006370002403855,
+                "cores_used": 0.06135126809292128,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000.1,
+              "sirannon_p99_ms": 1.268180999904871,
+              "postgres_p99_ms": 1.6069310000166297,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.6838189996778965,
+                "p99_ms": 1.268180999904871,
+                "cores_used": 0.05751605127130004,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000.1,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.3,
+                "p50_ms": 0.7256990000605583,
+                "p99_ms": 1.6069310000166297,
+                "cores_used": 0.16067976218215105,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 4000,
+              "postgres_ops": 4000,
+              "sirannon_p99_ms": 1.3304279996082187,
+              "postgres_p99_ms": 1.9040660001337528,
+              "sirannon": {
+                "ops": 4000,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.3,
+                "p50_ms": 0.7811560006812215,
+                "p99_ms": 1.3304279996082187,
+                "cores_used": 0.09668348428593437,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000,
+                "ops_ci_low": 3999.7,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 0.7908260002732277,
+                "p99_ms": 1.9040660001337528,
+                "cores_used": 0.26838808717528256,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000.2,
+              "postgres_ops": 7999.9,
+              "sirannon_p99_ms": 1.4973179996013641,
+              "postgres_p99_ms": 20.058919000439346,
+              "sirannon": {
+                "ops": 8000.2,
+                "ops_ci_low": 7999.6,
+                "ops_ci_high": 8000.5,
+                "p50_ms": 0.8468939997255802,
+                "p99_ms": 1.4973179996013641,
+                "cores_used": 0.16159127171474663,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 7999.9,
+                "ops_ci_low": 7999.8,
+                "ops_ci_high": 8000.2,
+                "p50_ms": 1.0572359999641776,
+                "p99_ms": 20.058919000439346,
+                "cores_used": 0.5528465051192221,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 15999.6,
+              "postgres_ops": 16000.2,
+              "sirannon_p99_ms": 2.8995389994233847,
+              "postgres_p99_ms": 290.7282289993018,
+              "sirannon": {
+                "ops": 15999.6,
+                "ops_ci_low": 14099.6,
+                "ops_ci_high": 16000.7,
+                "p50_ms": 1.049430999904871,
+                "p99_ms": 2.8995389994233847,
+                "cores_used": 0.29210753880224877,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000.2,
+                "ops_ci_low": 15999.6,
+                "ops_ci_high": 16286.2,
+                "p50_ms": 1.657939000055194,
+                "p99_ms": 290.7282289993018,
+                "cores_used": 1.1567468153589582,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31999.7,
+              "postgres_ops": 23070.3,
+              "sirannon_p99_ms": 4.947947000153363,
+              "postgres_p99_ms": 5082.992867000401,
+              "sirannon": {
+                "ops": 31999.7,
+                "ops_ci_low": 21618.4,
+                "ops_ci_high": 32003.7,
+                "p50_ms": 1.2848260002210736,
+                "p99_ms": 4.947947000153363,
+                "cores_used": 0.5342593859061078,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 23070.3,
+                "ops_ci_low": 22838.1,
+                "ops_ci_high": 23539,
+                "p50_ms": 3062.3865990005434,
+                "p99_ms": 5082.992867000401,
+                "cores_used": 1.623473573861738,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 36663.6,
+              "postgres_ops": 24377,
+              "sirannon_p99_ms": 13522.832212000154,
+              "postgres_p99_ms": 20996.06038000062,
+              "sirannon": {
+                "ops": 36663.6,
+                "ops_ci_low": 35019.5,
+                "ops_ci_high": 36887.3,
+                "p50_ms": 3598.6763450000435,
+                "p99_ms": 13522.832212000154,
+                "cores_used": 0.5843982185522794,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 24377,
+                "ops_ci_low": 23611.4,
+                "ops_ci_high": 24590.8,
+                "p50_ms": 12999.451078000478,
+                "p99_ms": 20996.06038000062,
+                "cores_used": 1.6669202942720422,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "ycsb-f",
+          "category": "ycsb",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.2502819998189807,
+              "postgres_p99_ms": 1.3701310008764267,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000.1,
+                "p50_ms": 0.8650629995390773,
+                "p99_ms": 2.2502819998189807,
+                "cores_used": 0.10151521120914586,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 1000,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.4721780000254512,
+                "p99_ms": 1.3701310008764267,
+                "cores_used": 0.1241897945359835,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000,
+              "postgres_ops": 2000.1,
+              "sirannon_p99_ms": 2.229418999515474,
+              "postgres_p99_ms": 1.591008000075817,
+              "sirannon": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.2,
+                "p50_ms": 0.9279300002381206,
+                "p99_ms": 2.229418999515474,
+                "cores_used": 0.16883534107086678,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000.1,
+                "ops_ci_low": 1998.4,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.7555290004238486,
+                "p99_ms": 1.591008000075817,
+                "cores_used": 0.23011691704246978,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.9,
+              "postgres_ops": 4000.1,
+              "sirannon_p99_ms": 1.9634180003777146,
+              "postgres_p99_ms": 1.7519429996609688,
+              "sirannon": {
+                "ops": 3999.9,
+                "ops_ci_low": 3999.5,
+                "ops_ci_high": 4000,
+                "p50_ms": 0.9767590006813407,
+                "p99_ms": 1.9634180003777146,
+                "cores_used": 0.27817400639252127,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.6,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.8859490007162094,
+                "p99_ms": 1.7519429996609688,
+                "cores_used": 0.41648128586790634,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 8000,
+              "postgres_ops": 8000.2,
+              "sirannon_p99_ms": 4.41278599947691,
+              "postgres_p99_ms": 2.3264599991962314,
+              "sirannon": {
+                "ops": 8000,
+                "ops_ci_low": 7998.4,
+                "ops_ci_high": 8000.2,
+                "p50_ms": 1.1155980005860329,
+                "p99_ms": 4.41278599947691,
+                "cores_used": 0.4393096408954888,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000.2,
+                "ops_ci_low": 7997.6,
+                "ops_ci_high": 8000.8,
+                "p50_ms": 1.1424400005489588,
+                "p99_ms": 2.3264599991962314,
+                "cores_used": 0.7704068223490712,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000.5,
+              "postgres_ops": 16000.7,
+              "sirannon_p99_ms": 9.329087000340223,
+              "postgres_p99_ms": 224.22616699989885,
+              "sirannon": {
+                "ops": 16000.5,
+                "ops_ci_low": 13308.3,
+                "ops_ci_high": 16002.3,
+                "p50_ms": 1.4409310007467866,
+                "p99_ms": 9.329087000340223,
+                "cores_used": 0.6487289369287708,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 16000.7,
+                "ops_ci_low": 15852.2,
+                "ops_ci_high": 16268.9,
+                "p50_ms": 2.478775999508798,
+                "p99_ms": 224.22616699989885,
+                "cores_used": 1.6290104593966321,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 31990.8,
+              "postgres_ops": 17166.5,
+              "sirannon_p99_ms": 14.718937000259757,
+              "postgres_p99_ms": 11128.271071999334,
+              "sirannon": {
+                "ops": 31990.8,
+                "ops_ci_low": 20050.8,
+                "ops_ci_high": 32013.4,
+                "p50_ms": 1.6061589997261763,
+                "p99_ms": 14.718937000259757,
+                "cores_used": 1.095389706295903,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 17166.5,
+                "ops_ci_low": 17034,
+                "ops_ci_high": 18113.8,
+                "p50_ms": 6847.788251999766,
+                "p99_ms": 11128.271071999334,
+                "cores_used": 1.7800296509189077,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 36150.7,
+              "postgres_ops": 18013,
+              "sirannon_p99_ms": 13707.269241999835,
+              "postgres_p99_ms": 33341.115585000254,
+              "sirannon": {
+                "ops": 36150.7,
+                "ops_ci_low": 33682.7,
+                "ops_ci_high": 36356.3,
+                "p50_ms": 6164.037299000658,
+                "p99_ms": 13707.269241999835,
+                "cores_used": 0.9637463712522891,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 18013,
+                "ops_ci_low": 17960,
+                "ops_ci_high": 18092.2,
+                "p50_ms": 20475.16157200001,
+                "p99_ms": 33341.115585000254,
+                "cores_used": 1.8263500382155675,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
+            }
+          ]
+        },
+        {
+          "workload": "tpc-c-derived",
+          "category": "oltp",
+          "curve": [
+            {
+              "target_rate": 1000,
+              "sirannon_ops": 1000,
+              "postgres_ops": 1000,
+              "sirannon_p99_ms": 2.3288519997149706,
+              "postgres_p99_ms": 1.973938999697566,
+              "sirannon": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.7763919997960329,
+                "p99_ms": 2.3288519997149706,
+                "cores_used": 0.08309839769844556,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 1000,
+                "ops_ci_low": 999.9,
+                "ops_ci_high": 1000,
+                "p50_ms": 0.7316110003739595,
+                "p99_ms": 1.973938999697566,
+                "cores_used": 0.08774663663584366,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 2000,
+              "sirannon_ops": 2000.1,
+              "postgres_ops": 2000,
+              "sirannon_p99_ms": 5.894496000371873,
+              "postgres_p99_ms": 1.9190340004861355,
+              "sirannon": {
+                "ops": 2000.1,
+                "ops_ci_low": 1999.9,
+                "ops_ci_high": 2000.1,
+                "p50_ms": 0.8714499995112419,
+                "p99_ms": 5.894496000371873,
+                "cores_used": 0.13616499798787568,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 2000,
+                "ops_ci_low": 1999.8,
+                "ops_ci_high": 2000.4,
+                "p50_ms": 0.7283149994909763,
+                "p99_ms": 1.9190340004861355,
+                "cores_used": 0.12486034084496077,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 4000,
+              "sirannon_ops": 3999.8,
+              "postgres_ops": 4000.1,
+              "sirannon_p99_ms": 9.528060999698937,
+              "postgres_p99_ms": 2.051834000274539,
+              "sirannon": {
+                "ops": 3999.8,
+                "ops_ci_low": 3999.6,
+                "ops_ci_high": 4000.4,
+                "p50_ms": 0.9141589999198914,
+                "p99_ms": 9.528060999698937,
+                "cores_used": 0.17166985553490843,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 4000.1,
+                "ops_ci_low": 3999.8,
+                "ops_ci_high": 4000.1,
+                "p50_ms": 0.7854740004986525,
+                "p99_ms": 2.051834000274539,
+                "cores_used": 0.23530111455173108,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 8000,
+              "sirannon_ops": 7999.6,
+              "postgres_ops": 8000.1,
+              "sirannon_p99_ms": 12.17868799995631,
+              "postgres_p99_ms": 2.3064980003982782,
+              "sirannon": {
+                "ops": 7999.6,
+                "ops_ci_low": 7998.5,
+                "ops_ci_high": 8000.8,
+                "p50_ms": 0.9755749991163611,
+                "p99_ms": 12.17868799995631,
+                "cores_used": 0.26927348985754607,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 8000.1,
+                "ops_ci_low": 7999.3,
+                "ops_ci_high": 8000.5,
+                "p50_ms": 0.9647300001233816,
+                "p99_ms": 2.3064980003982782,
+                "cores_used": 0.4531607302771448,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 16000,
+              "sirannon_ops": 16000.3,
+              "postgres_ops": 15999.2,
+              "sirannon_p99_ms": 16.293549000285566,
+              "postgres_p99_ms": 2.4433679999783635,
+              "sirannon": {
+                "ops": 16000.3,
+                "ops_ci_low": 15998.8,
+                "ops_ci_high": 16000.8,
+                "p50_ms": 1.1838999995961785,
+                "p99_ms": 16.293549000285566,
+                "cores_used": 0.4368550157676556,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 15999.2,
+                "ops_ci_low": 15998.6,
+                "ops_ci_high": 16000.6,
+                "p50_ms": 1.5707419998943806,
+                "p99_ms": 2.4433679999783635,
+                "cores_used": 0.9233177841501042,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 32000,
+              "sirannon_ops": 32000.3,
+              "postgres_ops": 31102.4,
+              "sirannon_p99_ms": 17.877965999767184,
+              "postgres_p99_ms": 297.6141349999234,
+              "sirannon": {
+                "ops": 32000.3,
+                "ops_ci_low": 31955.2,
+                "ops_ci_high": 32005.1,
+                "p50_ms": 1.9202410001307726,
+                "p99_ms": 17.877965999767184,
+                "cores_used": 0.7060476402980662,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 31102.4,
+                "ops_ci_low": 29751.7,
+                "ops_ci_high": 31813.5,
+                "p50_ms": 4.73273800034076,
+                "p99_ms": 297.6141349999234,
+                "cores_used": 1.981780066418095,
+                "cores_allowed": 4,
+                "sustained": true,
+                "error_rate": 0
+              }
+            },
+            {
+              "target_rate": 64000,
+              "sirannon_ops": 49669.3,
+              "postgres_ops": 32189.9,
+              "sirannon_p99_ms": 3622.3806030005217,
+              "postgres_p99_ms": 13231.416224999353,
+              "sirannon": {
+                "ops": 49669.3,
+                "ops_ci_low": 47266.9,
+                "ops_ci_high": 50623.5,
+                "p50_ms": 2287.1022049998865,
+                "p99_ms": 3622.3806030005217,
+                "cores_used": 1.0021870610121941,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              },
+              "postgres": {
+                "ops": 32189.9,
+                "ops_ci_low": 31869,
+                "ops_ci_high": 32547.9,
+                "p50_ms": 8181.232288999483,
+                "p99_ms": 13231.416224999353,
+                "cores_used": 2.0711097582150924,
+                "cores_allowed": 4,
+                "sustained": false,
+                "error_rate": 0
+              }
             }
           ]
         }

@@ -43,7 +43,12 @@ def _operating_metrics(workload: dict) -> dict:
         "ops_cv": throughput["cv"],
         "ops_samples": throughput.get("samples", []),
         "p50_ms": latency["p50"],
+        "p95_ms": latency.get("p95"),
         "p99_ms": latency["p99"],
+        "p999_ms": latency.get("p999"),
+        "max_ms": latency.get("max"),
+        "cores_used": (point.get("engine_cpu") or {}).get("cores_used"),
+        "cores_allowed": (point.get("engine_cpu") or {}).get("cores_allowed"),
     }
 
 
@@ -78,11 +83,40 @@ def _sweep_point(workload: dict) -> list[dict]:
     return workload.get("sweep", [])
 
 
-def _scaling_rows(sirannon: dict, postgres: dict, scaling_workloads: list[str]) -> list[dict]:
+def _curve_side(point: dict | None) -> dict:
+    if point is None:
+        return {
+            "ops": None,
+            "ops_ci_low": None,
+            "ops_ci_high": None,
+            "p50_ms": None,
+            "p99_ms": None,
+            "cores_used": None,
+            "cores_allowed": None,
+            "sustained": None,
+            "error_rate": None,
+        }
+    throughput = point["throughput"]
+    latency = point["latency_ms"]
+    cpu = point.get("engine_cpu") or {}
+    return {
+        "ops": throughput["median_ops"],
+        "ops_ci_low": throughput.get("ci_low_ops"),
+        "ops_ci_high": throughput.get("ci_high_ops"),
+        "p50_ms": latency["p50"],
+        "p99_ms": latency["p99"],
+        "cores_used": cpu.get("cores_used"),
+        "cores_allowed": cpu.get("cores_allowed"),
+        "sustained": point.get("sustained"),
+        "error_rate": point.get("error_rate"),
+    }
+
+
+def _scaling_rows(sirannon: dict, postgres: dict, order: list[str]) -> list[dict]:
     sirannon_workloads = _workload_index(sirannon)
     postgres_workloads = _workload_index(postgres)
     scaling: list[dict] = []
-    for name in scaling_workloads:
+    for name in order:
         sir = sirannon_workloads.get(name)
         pg = postgres_workloads.get(name)
         if sir is None or pg is None:
@@ -91,16 +125,18 @@ def _scaling_rows(sirannon: dict, postgres: dict, scaling_workloads: list[str]) 
         pg_by_rate = {point["target_rate"]: point for point in _sweep_point(pg)}
         curve: list[dict] = []
         for rate in sorted(set(sir_by_rate) | set(pg_by_rate)):
-            sir_point = sir_by_rate.get(rate)
-            pg_point = pg_by_rate.get(rate)
+            sir_side = _curve_side(sir_by_rate.get(rate))
+            pg_side = _curve_side(pg_by_rate.get(rate))
             curve.append({
                 "target_rate": rate,
-                "sirannon_ops": sir_point["throughput"]["median_ops"] if sir_point else None,
-                "postgres_ops": pg_point["throughput"]["median_ops"] if pg_point else None,
-                "sirannon_p99_ms": sir_point["latency_ms"]["p99"] if sir_point else None,
-                "postgres_p99_ms": pg_point["latency_ms"]["p99"] if pg_point else None,
+                "sirannon_ops": sir_side["ops"],
+                "postgres_ops": pg_side["ops"],
+                "sirannon_p99_ms": sir_side["p99_ms"],
+                "postgres_p99_ms": pg_side["p99_ms"],
+                "sirannon": sir_side,
+                "postgres": pg_side,
             })
-        scaling.append({"workload": name, "curve": curve})
+        scaling.append({"workload": name, "category": sir.get("category", ""), "curve": curve})
     return scaling
 
 
@@ -134,7 +170,7 @@ def build_comparison(run_dir: Path, manifest: dict) -> dict:
         order = config.get("workloads", [])
         durabilities[durability] = {
             "workloads": _workload_rows(sirannon, postgres, order, int(config.get("seed", 42))),
-            "scaling": _scaling_rows(sirannon, postgres, config.get("scaling_workloads", [])),
+            "scaling": _scaling_rows(sirannon, postgres, order),
             "sirannon_engine": sirannon.get("engine", {}),
             "postgres_engine": postgres.get("engine", {}),
             "client_saturation": {

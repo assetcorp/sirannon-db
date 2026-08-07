@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 import sys
 
 from server_section import blocks, comparison_document
-from sources import benchmarks_page, comparison_path, load_source
+from sources import Source, benchmarks_page, comparison_path, load_source, repo_root
+
+_IMAGE_SOURCE = re.compile(r'<img src="([^"]+)"')
 
 
 def _inject(text: str, regions: dict[str, str]) -> str:
@@ -18,6 +21,11 @@ def _inject(text: str, regions: dict[str, str]) -> str:
         tail = text[end_at:]
         text = f"{head}\n{content}\n{tail}"
     return text
+
+
+def _missing_figures(page_text: str, source: Source) -> list[str]:
+    root = repo_root()
+    return sorted({path for path in _IMAGE_SOURCE.findall(page_text) if not (root / path).is_file()})
 
 
 def main(argv: list[str]) -> int:
@@ -42,6 +50,13 @@ def main(argv: list[str]) -> int:
             sys.stderr.write(
                 f"Benchmark writeup is out of date with the latest run: {', '.join(stale)}. "
                 "Run `python3 benchmarks/writeup/generate.py` and commit the result.\n"
+            )
+            return 1
+        missing = _missing_figures(updated, source) if source is not None else []
+        if missing:
+            sys.stderr.write(
+                f"The writeup references {len(missing)} figure(s) that are not committed, starting with "
+                f"{missing[0]}. Run `python3 benchmarks/writeup/charts.py` and commit the result.\n"
             )
             return 1
         sys.stdout.write("Benchmark writeup is up to date with the latest run.\n")

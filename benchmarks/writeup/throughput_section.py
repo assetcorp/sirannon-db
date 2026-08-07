@@ -4,6 +4,8 @@ from comparison_view import durabilities, durability_label, workload_label
 from render import HIGHER_IS_BETTER, emphasize_best, is_number, ms, ops, percent, ratio, table
 from sources import Source
 
+from chart_paths import figure, operating_points_chart, tail_chart
+
 
 def _durability_table(node: dict) -> str:
     rows = node.get("workloads", [])
@@ -58,18 +60,33 @@ def _durability_table(node: dict) -> str:
     return rendered
 
 
-def throughput_block(source: Source) -> str:
+def throughput_block(source: Source, chart_dir: str) -> str:
     recorded = durabilities(source.comparison)
     if not recorded:
         return "No engine results were recorded."
     parts: list[str] = []
     for name, node in recorded:
-        parts.append(f"### {durability_label(name)}")
+        label = durability_label(name)
+        parts.append(f"### {label}")
+        parts.append(
+            figure(
+                operating_points_chart(chart_dir, name),
+                f"Grouped bars of each engine's operating point on every workload at {label.lower()}, "
+                "with 95% confidence intervals.",
+            )
+        )
+        parts.append(
+            figure(
+                tail_chart(chart_dir, name),
+                f"Latency at the p50, p95, p99, p99.9 and maximum percentiles for both engines on every "
+                f"workload at {label.lower()}, on a logarithmic scale.",
+            )
+        )
         parts.append(_durability_table(node))
     note = (
         "_Bold marks the higher of the two operating points on each workload. Where both engines held the target "
         "at the same rate, the row carries no mark. Each p99 belongs to its own engine's operating point, so the "
-        "two p99 columns describe different offered rates, and the sweep tables below give tail latency at one "
+        "two p99 columns describe different offered rates, and the sweep figures below give tail latency at one "
         "rate._\n\n"
         "_Each throughput figure is the median of several independent runs at the operating point, the highest "
         "offered rate the engine held under the p99 target, shown with a 95% bootstrap confidence interval "
@@ -78,7 +95,7 @@ def throughput_block(source: Source) -> str:
         "delivered a higher rate with p99 above the target, its operating point is the lower rate it last held, "
         "so a ratio compares operating points rather than the work each engine performed. Read every ratio as "
         "approximate too, because the sweep offers rates in doublings and each operating point is the last rung "
-        "an engine cleared, so its true ceiling lies between that rung and the next. The sweep tables below give "
+        "an engine cleared, so its true ceiling lies between that rung and the next. The sweep figures below give "
         "the rungs themselves. TPC-C-derived is a TPC-C-shaped mix of new-order and payment, not an "
         "audited TPC-C result. The YCSB subset is A, B, C, and F, and leaves out D and E._"
     )

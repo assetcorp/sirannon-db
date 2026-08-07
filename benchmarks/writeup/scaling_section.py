@@ -4,6 +4,8 @@ from comparison_view import durabilities, durability_label, workload_label
 from render import HIGHER_IS_BETTER, LOWER_IS_BETTER, emphasize_best, integer, ms, ops, table
 from sources import Source
 
+from chart_paths import figure, sweep_chart
+
 
 def _curve_row(point: dict) -> list[str]:
     sirannon_ops_cell, postgres_ops_cell = emphasize_best(
@@ -25,18 +27,28 @@ def _curve_row(point: dict) -> list[str]:
     ]
 
 
-def scaling_block(source: Source) -> str:
+def tabled_scaling(comparison: dict, node: dict) -> list[dict]:
+    wanted = comparison.get("config", {}).get("scaling_workloads", [])
+    entries = node.get("scaling", [])
+    if not wanted:
+        return entries
+    return [entry for entry in entries if entry.get("workload") in wanted]
+
+
+def scaling_block(source: Source, chart_dir: str) -> str:
     recorded = durabilities(source.comparison)
     if not recorded:
         return "No scaling results were recorded."
     name, node = recorded[0]
-    scaling = node.get("scaling", [])
+    scaling = tabled_scaling(source.comparison, node)
     if not scaling:
         return "No scaling results were recorded."
     parts: list[str] = [
-        "The tables below show achieved throughput and p99 latency as the offered rate climbs, at "
-        f"{durability_label(name).lower()}. PostgreSQL relies on row-level locking and Sirannon on a "
-        "single writer, so which one holds throughput as the rate rises depends on the workload.",
+        "Each figure and table below covers one workload at "
+        f"{durability_label(name).lower()}, as the offered rate climbs. PostgreSQL relies on row-level locking "
+        "and Sirannon on a single writer, so which one holds throughput as the rate rises depends on the "
+        "workload. The dotted line on the top panel is the offered rate, so a curve leaving it marks the point "
+        "where that engine stopped keeping up.",
         "_Both engines answer the same offered rate on every row, so bold marks the better figure of the two: the "
         "higher achieved throughput and the lower p99. Where the two figures are equal, the row carries no "
         "mark._",
@@ -52,8 +64,21 @@ def scaling_block(source: Source) -> str:
             "could not sustain. Where a column ends is that engine's limit._"
         )
     for entry in scaling:
-        parts.append(f"### {workload_label(entry.get('workload', 'n/a'))}")
+        workload = entry.get("workload", "n/a")
+        label = workload_label(workload)
+        parts.append(f"### {label}")
+        parts.append(
+            figure(
+                sweep_chart(chart_dir, name, workload),
+                f"Three panels for {label} at {durability_label(name).lower()}: achieved rate against offered "
+                "rate, p99 latency against offered rate on a logarithmic scale with the target marked, and "
+                "engine cores busy against offered rate.",
+            )
+        )
         body = [_curve_row(point) for point in entry.get("curve", [])]
         headers = ["Target ops/s", "Sirannon ops/s", "Sirannon p99 ms", "Postgres ops/s", "Postgres p99 ms"]
         parts.append(table(headers, ["right", "right", "right", "right", "right"], body))
+    parts.append(
+        f"_The same three-panel figure is drawn for every workload at both durability levels, in `{chart_dir}/`._"
+    )
     return "\n\n".join(parts)

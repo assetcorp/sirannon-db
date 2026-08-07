@@ -9,6 +9,8 @@ from soak_section import soak_block
 from sources import Source
 from throughput_section import throughput_block
 
+from chart_paths import repo_chart_dir, run_report_chart_dir
+
 _NO_RUN_NOTICE = (
     "_No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit "
     "its run directory under `benchmarks/server/results/runs/` to publish numbers here._"
@@ -17,10 +19,11 @@ _NO_RUN_NOTICE = (
 
 def comparison_document(source: Source) -> str:
     date = run_date(source.comparison) or "an unrecorded date"
+    charts = run_report_chart_dir()
     intro = (
         f"This report records one run of the Sirannon and PostgreSQL benchmark, `{source.run_id}` from "
         f"{date}. It measures what each engine does under the same workloads: the rates each one holds, the tail "
-        "latency each one reaches, and the point where each one stops keeping up. Both databases answer those "
+        "latency it records at those rates, and the rate where it stops keeping up. Both databases answer those "
         "workloads over the client each provides, on the same host, so the figures come from the two engines "
         "doing the same work."
     )
@@ -32,11 +35,11 @@ def comparison_document(source: Source) -> str:
         "## Run and machine",
         run_block(source),
         "## Operating points",
-        throughput_block(source),
+        throughput_block(source, charts),
         "## Throughput versus offered load",
-        scaling_block(source),
+        scaling_block(source, charts),
         "## Holding the operating point",
-        soak_block(source),
+        soak_block(source, charts),
         "## Sirannon-only characterizations",
         features_block(source),
     ]
@@ -53,11 +56,12 @@ def blocks(source: Source | None) -> dict[str, str]:
             "soak": _NO_RUN_NOTICE,
             "features": _NO_RUN_NOTICE,
         }
+    charts = repo_chart_dir(source.run_id)
     return {
         "methodology": METHODOLOGY,
         "setup": run_block(source),
-        "comparison": throughput_block(source),
-        "scaling": scaling_block(source),
-        "soak": soak_block(source),
+        "comparison": throughput_block(source, charts),
+        "scaling": scaling_block(source, charts),
+        "soak": soak_block(source, charts),
         "features": features_block(source),
     }

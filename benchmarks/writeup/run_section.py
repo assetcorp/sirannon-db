@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from comparison_view import durabilities, durability_label, run_date, workload_label
-from render import decimal, gigabytes, humanized_list, integer, is_number, ops, speedup
+from render import decimal, gigabytes, humanized_list, integer, is_number, ops, ratio
 from sources import Source
 
 
@@ -87,8 +87,8 @@ def run_block(source: Source) -> str:
         bullets.append(
             "- **Load-client headroom.** Run on its own against the live engines, the Sirannon SDK "
             f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
-            f"{ops(postgres_ceiling.get('ceiling_ops'))}, {speedup(sirannon_ceiling.get('headroom_factor'))} and "
-            f"{speedup(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. Each client stays above "
+            f"{ops(postgres_ceiling.get('ceiling_ops'))}, {ratio(sirannon_ceiling.get('headroom_factor'))} and "
+            f"{ratio(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. Each client stays above "
             "the operating points its engine reached, so every reported operating point reflects the database's "
             "speed. A client below 1.00x could not offer the very top rate of the sweep, and the rates above its "
             "ceiling measure the client rather than the engine."

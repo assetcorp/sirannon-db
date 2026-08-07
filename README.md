@@ -142,7 +142,7 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 
 ## Benchmarks
 
-The suite compares Sirannon against Postgres 17 on the same OLTP workloads: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over HTTP into its real server and Postgres over its socket, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and the write-up generator rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from the latest committed run.
+The suite measures Sirannon and Postgres 17 on the same OLTP workloads: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over its SDK's WebSocket transport into the real server and Postgres over node-postgres on its binary socket protocol, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and the write-up generator rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from the latest committed run.
 
 ## Development
 

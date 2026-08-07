@@ -18,9 +18,11 @@ _NO_RUN_NOTICE = (
 def comparison_document(source: Source) -> str:
     date = run_date(source.comparison) or "an unrecorded date"
     intro = (
-        f"This report records one run of the Sirannon-versus-PostgreSQL benchmark, `{source.run_id}` from "
-        f"{date}. Both databases answer the same workloads over the client each provides, on the same host, so "
-        "the figures measure the two engines doing the same work."
+        f"This report records one run of the Sirannon and PostgreSQL benchmark, `{source.run_id}` from "
+        f"{date}. It measures what each engine does under the same workloads: the rates each one holds, the tail "
+        "latency each one reaches, and the point where each one stops keeping up. Both databases answer those "
+        "workloads over the client each provides, on the same host, so the figures come from the two engines "
+        "doing the same work."
     )
     sections = [
         "# Sirannon and PostgreSQL on one host",
@@ -29,7 +31,7 @@ def comparison_document(source: Source) -> str:
         METHODOLOGY,
         "## Run and machine",
         run_block(source),
-        "## Single-client and sustained-throughput comparison",
+        "## Operating points",
         throughput_block(source),
         "## Throughput versus offered load",
         scaling_block(source),

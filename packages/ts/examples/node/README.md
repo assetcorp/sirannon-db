@@ -2,19 +2,18 @@
 
 This self-contained Node.js example demonstrates Sirannon DB core features with either the `better-sqlite3` driver or Node's built-in `node:sqlite` driver.
 
-## Prerequisites
-
-- Node.js >= 22
-- pnpm
-
 ## Setup
 
-From the monorepo root:
+This example needs Node.js 22 or newer and pnpm.
+
+The example imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
 
 ```bash
 pnpm install
 pnpm --filter @delali/sirannon-db build
 ```
+
+Run the build again whenever you change anything under `packages/ts/src`.
 
 ## Run
 

@@ -2,6 +2,19 @@
 
 A work order app whose data is a real SQLite database in the browser. Every read and write hits that local database through wa-sqlite and IndexedDB, so the page keeps working with the server switched off. A `SyncController` carries local writes up to the server and applies the server's changes back down, and the list on screen is a local live query that redraws when either happens.
 
+## Setup
+
+This example needs Node.js 22 or newer and pnpm.
+
+The server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
+
+```bash
+pnpm install
+pnpm --filter @delali/sirannon-db build
+```
+
+Run the build again whenever you change anything under `packages/ts/src`.
+
 ## Run
 
 Start the server and the browser app together:
@@ -74,15 +87,6 @@ This example binds to localhost and runs no authentication. Two things are worth
 The server restricts CORS to the app origin and refuses SQL from the network, so a caller reaches the sync routes and nothing else. That part transfers.
 
 The authentication does not, because there is nothing to transfer. `SyncController` sends `headers` on its HTTP requests, but it opens the pull WebSocket with no credentials and offers no option to add any, so a browser device cannot authenticate that socket today. Put a similar deployment behind an authenticating proxy that terminates TLS and checks the upgrade, and treat this example as a localhost demonstration.
-
-## Prerequisites
-
-Node.js >= 22 and pnpm. From the repository root:
-
-```bash
-pnpm install
-pnpm --filter @delali/sirannon-db build
-```
 
 ## Environment
 

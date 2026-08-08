@@ -38,6 +38,19 @@ The containers use Docker-internal Toxiproxy links:
 
 Each node advertises its localhost HTTP endpoint through coordinator discovery. The HTTP and WebSocket clients use those records to find the current primary and eligible read replicas after failover.
 
+## Setup
+
+This example needs Node.js 22 or newer, pnpm, and Docker with Compose.
+
+The dashboard imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
+
+```sh
+pnpm install
+pnpm --filter @delali/sirannon-db build
+```
+
+The code generator behind `pnpm run codegen` reads that same output. The Dockerfile builds the package again for the three nodes, so a change under `packages/ts/src` reaches them on the next `pnpm run cluster:up`. Run the build on your machine again whenever you change the library source.
+
 ## Start the example
 
 From this directory, run:

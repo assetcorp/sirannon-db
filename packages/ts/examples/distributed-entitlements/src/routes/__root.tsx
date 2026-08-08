@@ -18,7 +18,7 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>

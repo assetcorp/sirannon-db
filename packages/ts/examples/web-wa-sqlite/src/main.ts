@@ -13,7 +13,6 @@ import {
 import { renderBanner, renderLink, renderOrders, renderSnapshot, renderSyncError, renderSyncStatus } from './render'
 import type { WorkOrder } from './schema'
 import { mountThemeToggle } from './theme'
-import './styles.css'
 
 const SERVER_URL = import.meta.env.VITE_SIRANNON_URL ?? 'http://127.0.0.1:9876'
 const STATUS_INTERVAL_MS = 700

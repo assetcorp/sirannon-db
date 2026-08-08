@@ -66,13 +66,14 @@ function ThemeOption({
  * Segmented control that switches the page between the system setting, light, and dark.
  */
 export function ThemeToggle() {
-  const [choice, setChoice] = useState<ThemeChoice>('system')
+  const [choice, setChoice] = useState<ThemeChoice | null>(null)
 
   useEffect(() => {
     setChoice(readStoredChoice())
   }, [])
 
   useEffect(() => {
+    if (choice === null) return
     applyTheme(choice)
     if (choice !== 'system') return
     return watchSystemTheme(() => {

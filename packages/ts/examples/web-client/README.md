@@ -2,6 +2,19 @@
 
 An inventory console where every list on the page is a live query. The browser opens two live queries over one WebSocket and never fetches a snapshot, never polls, and never applies a change event by hand. Writes go through registered operations, so the data server accepts no SQL from the network at all.
 
+## Setup
+
+This example needs Node.js 22 or newer and pnpm.
+
+The data server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
+
+```bash
+pnpm install
+pnpm --filter @delali/sirannon-db build
+```
+
+The code generator behind `pnpm run codegen` reads that same output. Run the build again whenever you change anything under `packages/ts/src`.
+
 ## Run
 
 Start the Sirannon data server and the application server together:
@@ -73,15 +86,6 @@ SIRANNON_ENDPOINT=http://localhost:9876
 SIRANNON_DEMO_TOKEN=sirannon-demo-token
 VITE_SIRANNON_ENDPOINT=http://localhost:9876
 VITE_SIRANNON_DEMO_TOKEN=sirannon-warehouse-token
-```
-
-## Prerequisites
-
-Node.js >= 22 and pnpm. From the repository root:
-
-```bash
-pnpm install
-pnpm --filter @delali/sirannon-db build
 ```
 
 ## Security model

@@ -51,21 +51,20 @@ export interface DeviceTabLock {
   release: () => void
 }
 
-export async function acquireDeviceTabLock(name: string): Promise<DeviceTabLock> {
-  if (typeof navigator === 'undefined' || navigator.locks === undefined) {
-    return { acquired: true, release: () => {} }
-  }
+const TAB_LOCK_ATTEMPTS = 3
+const TAB_LOCK_RETRY_DELAY_MS = 150
 
+function requestTabLock(name: string): Promise<DeviceTabLock | null> {
   let release: () => void = () => {}
   const heldUntilReleased = new Promise<void>(resolve => {
     release = resolve
   })
 
-  return new Promise<DeviceTabLock>(resolve => {
+  return new Promise<DeviceTabLock | null>(resolve => {
     navigator.locks
       .request(`${TAB_LOCK_PREFIX}${name}`, { ifAvailable: true }, lock => {
         if (lock === null) {
-          resolve({ acquired: false, release: () => {} })
+          resolve(null)
           return
         }
         resolve({ acquired: true, release })
@@ -75,4 +74,24 @@ export async function acquireDeviceTabLock(name: string): Promise<DeviceTabLock>
         resolve({ acquired: true, release: () => {} })
       })
   })
+}
+
+export async function acquireDeviceTabLock(name: string): Promise<DeviceTabLock> {
+  if (typeof navigator === 'undefined' || navigator.locks === undefined) {
+    return { acquired: true, release: () => {} }
+  }
+
+  for (let attempt = 0; attempt < TAB_LOCK_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => {
+        setTimeout(resolve, TAB_LOCK_RETRY_DELAY_MS)
+      })
+    }
+    const lock = await requestTabLock(name)
+    if (lock !== null) {
+      return lock
+    }
+  }
+
+  return { acquired: false, release: () => {} }
 }

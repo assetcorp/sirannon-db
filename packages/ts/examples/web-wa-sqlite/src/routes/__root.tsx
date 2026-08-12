@@ -3,12 +3,26 @@ import { TooltipProvider } from '@delali/sirannon-example-shared/ui/tooltip'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import '../styles.css'
 
+const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Sirannon · Field Service' },
+      {
+        name: 'description',
+        content:
+          'A work order app backed by a real SQLite database in the browser, which keeps working offline and syncs local writes back to the server.',
+      },
+      { name: 'theme-color', content: '#0d9488' },
+    ],
+    links: [
+      { rel: 'icon', type: 'image/svg+xml', href: asset('sirannon.svg') },
+      { rel: 'icon', href: asset('sirannon.ico'), sizes: 'any' },
+      { rel: 'apple-touch-icon', href: asset('sirannon-apple.png') },
+      { rel: 'manifest', href: asset('manifest.json') },
     ],
     scripts: [{ children: THEME_BOOT_SCRIPT }],
   }),

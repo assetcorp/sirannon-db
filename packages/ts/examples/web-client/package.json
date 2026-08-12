@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Sirannon web-client example: an inventory console whose every list is a live query over one WebSocket.",
   "scripts": {
     "server": "tsx src/data-server.ts",
     "codegen": "tsx ../../dist/codegen/cli.mjs --registry ./src/operations.ts --out ./src/generated/operations.ts",

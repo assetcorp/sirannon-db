@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Sirannon web-wa-sqlite example: a work order app on a real SQLite database in the browser that keeps working offline and syncs back to the server.",
   "scripts": {
     "server": "tsx src/data-server.ts",
     "app:dev": "vite",

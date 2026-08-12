@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Sirannon distributed-entitlements example: a three-node entitlement control plane with etcd authority, gRPC replication, and automatic failover.",
   "scripts": {
     "certs": "tsx src/scripts/generate-certs.ts",
     "proxy:setup": "tsx src/scripts/setup-proxies.ts",

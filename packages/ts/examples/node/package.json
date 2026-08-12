@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Sirannon node example: the core features on either the better-sqlite3 driver or Node's built-in node:sqlite driver.",
   "engines": {
     "node": ">=22"
   },

@@ -4,6 +4,8 @@ import type { ReactNode } from 'react'
 import { readThemeChoice } from '../lib/theme.functions'
 import '../styles.css'
 
+const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`
+
 function head() {
   return {
     meta: [
@@ -17,6 +19,21 @@ function head() {
       {
         title: 'Sirannon Inventory Demo',
       },
+      {
+        name: 'description',
+        content:
+          'A fulfillment operations console where every list on the page is a live query served over one Sirannon WebSocket.',
+      },
+      {
+        name: 'theme-color',
+        content: '#0d9488',
+      },
+    ],
+    links: [
+      { rel: 'icon', type: 'image/svg+xml', href: asset('sirannon.svg') },
+      { rel: 'icon', href: asset('sirannon.ico'), sizes: 'any' },
+      { rel: 'apple-touch-icon', href: asset('sirannon-apple.png') },
+      { rel: 'manifest', href: asset('manifest.json') },
     ],
     scripts: [{ children: THEME_BOOT_SCRIPT }],
   }

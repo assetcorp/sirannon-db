@@ -2,6 +2,7 @@ import { testDriver } from '../../core/__tests__/helpers/test-driver.js'
 import { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import { Sirannon } from '../../core/sirannon.js'
 import type { QueryOptions } from '../../core/types.js'
+import { toClusterStatusInfo, toReplicationStatusInfo } from '../../replication/cluster-status.js'
 import { createEtcdCoordinator } from '../../replication/coordinator/etcd.js'
 import { ReplicationEngine } from '../../replication/engine.js'
 import { PrimaryReplicaTopology } from '../../replication/topology/primary-replica.js'
@@ -18,7 +19,7 @@ import {
   serializeError,
   stringPayload,
 } from './cluster-node-payloads.js'
-import { toClusterStatusInfo, toReplicationStatusInfo } from './cluster-node-status.js'
+
 import type { FailoverNodeConfig, SerializedError } from './node-process.js'
 import { serializeJson } from './node-process.js'
 
@@ -130,7 +131,8 @@ server = createServer(sirannon, {
   acceptSql: true,
   resolveExecutionTarget: id => (id === databaseId ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
-  getClusterStatus: id => toClusterStatusInfo(config, id, engine.status()),
+  getClusterStatus: id =>
+    id === databaseId ? toClusterStatusInfo(engine.status(), { databaseId, endpoints: config.httpEndpoints }) : null,
   authorizeClusterStatus: () => true,
 })
 await server.listen()

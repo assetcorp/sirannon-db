@@ -1,16 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '../../core/database.js'
 import { RequestDeniedError } from '../../core/errors.js'
 import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../../core/internal-tables.js'
 import { Sirannon } from '../../core/sirannon.js'
 import type { ChangeEvent } from '../../core/types.js'
+import { SIRANNON_WS_SUBPROTOCOL } from '../../core/ws-handshake.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
 import type { SirannonServer } from '../../server/server.js'
 import { createServer } from '../../server/server.js'
-import { SyncController, type SyncControllerOptions } from '../sync-controller.js'
+import { SyncController, type SyncControllerOptions, type SyncStatus } from '../sync-controller.js'
 
 const driver = betterSqlite3()
 
@@ -323,5 +324,119 @@ describe('SyncController credentials', () => {
     await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 90')).length === 1)
 
     expect(upgradeAuthorization).toContain('Bearer device-token')
+  })
+
+  it('offers the plain identifier ahead of a ticket on the pull upgrade', async () => {
+    const ticket = 'sirannon.device.auth.abc'
+    const upgradeOffers: (string | undefined)[] = []
+
+    await server.close()
+    server = createServer<unknown>(sirannon, {
+      acceptSql: true,
+      port: 0,
+      authenticate: ({ headers }) => {
+        if (headers['sec-websocket-key'] === undefined) return undefined
+        upgradeOffers.push(headers['sec-websocket-protocol'])
+        const offered = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
+        if (!offered.includes(ticket)) {
+          throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing device ticket')
+        }
+        return undefined
+      },
+    })
+    await server.listen()
+    baseUrl = `http://127.0.0.1:${server.listeningPort}`
+
+    const controller = makeController({ webSocketProtocols: [ticket] })
+    await startSettled(controller)
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (91, 'written on the server')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 91')).length === 1)
+
+    expect(upgradeOffers[0]).toBe(`${SIRANNON_WS_SUBPROTOCOL}, ${ticket}`)
+  })
+
+  it('refuses a ticket the handshake cannot carry, without repeating it', () => {
+    const ticket = 'sirannon device auth abc'
+    let message = ''
+    try {
+      makeController({ webSocketProtocols: [ticket] })
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err)
+    }
+
+    expect(message).toContain('webSocketProtocols')
+    expect(message).not.toContain(ticket)
+    expect(() => makeController({ webSocketProtocols: ['ticket-a', 'ticket-a'] })).toThrowError(/webSocketProtocols/)
+  })
+
+  it('refuses to start a browser device whose headers cannot reach the pull upgrade', () => {
+    vi.stubGlobal('window', {})
+    try {
+      expect(() => makeController({ headers: { Authorization: 'Bearer device-token' } })).toThrowError(
+        /webSocketProtocols/,
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('SyncController status reporting', () => {
+  it('reports the start without the application asking for status', async () => {
+    const reports: SyncStatus[] = []
+    const controller = makeController({ onStatusChange: status => reports.push(status) })
+
+    await startSettled(controller)
+    await until(() => reports.some(status => status.state === 'running'))
+
+    expect(reports[0].state).toBe('starting')
+    expect(reports.at(-1)?.deviceId).not.toBeNull()
+  })
+
+  it('reports a local write reaching the server and a server write reaching the device', async () => {
+    const reports: SyncStatus[] = []
+    const controller = makeController({ onStatusChange: status => reports.push(status) })
+    await startSettled(controller)
+
+    await deviceDb.execute("INSERT INTO notes (id, body) VALUES (92, 'typed on the device')")
+    controller.triggerPush()
+    await until(() => reports.some(status => status.lastPushedSeq > 0n && status.pushCaughtUp))
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (93, 'written on the server')")
+    await until(() => reports.some(status => status.lastPulledSeq !== null))
+  })
+
+  it('reports a snapshot too brief to survive an interval', async () => {
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (95, 'the only row')")
+    const reports: SyncStatus[] = []
+    const controller = makeController({ autoResync: false, onStatusChange: status => reports.push(status) })
+    await startSettled(controller)
+
+    await controller.downloadSnapshot()
+
+    expect(reports.map(status => status.state)).toContain('snapshotting')
+  })
+
+  it('has reported the stop by the time stop resolves', async () => {
+    const reports: SyncStatus[] = []
+    const controller = makeController({ onStatusChange: status => reports.push(status) })
+    await startSettled(controller)
+
+    await controller.stop()
+
+    expect(reports.at(-1)?.state).toBe('stopped')
+  })
+
+  it('keeps syncing when the status listener throws', async () => {
+    const controller = makeController({
+      onStatusChange: () => {
+        throw new Error('the application listener failed')
+      },
+    })
+    await startSettled(controller)
+
+    await serverDb.execute("INSERT INTO notes (id, body) VALUES (94, 'written on the server')")
+    await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 94')).length === 1)
   })
 })

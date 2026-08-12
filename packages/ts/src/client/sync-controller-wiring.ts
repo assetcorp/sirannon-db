@@ -6,6 +6,11 @@ import { PullStream } from './sync-pull-stream.js'
 import { PushLoop } from './sync-push-loop.js'
 import { ResyncScheduler } from './sync-resync-scheduler.js'
 
+export function describeError(err: unknown): { code: string; message: string } {
+  const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
+  return { code, message: err instanceof Error ? err.message : String(err) }
+}
+
 export const DEFAULT_BATCH_SIZE = 100
 export const DEFAULT_PUSH_INTERVAL_MS = 1_000
 export const DEFAULT_ACK_INTERVAL_MS = 2_000
@@ -65,6 +70,7 @@ export function createSyncCollaborators(
       databaseId: options.databaseId,
       tables: options.tables,
       headers: options.headers,
+      webSocketProtocols: options.webSocketProtocols,
       ackIntervalMs: options.ackIntervalMs ?? DEFAULT_ACK_INTERVAL_MS,
       requestTimeout: options.requestTimeout,
       immediateAckAfterChanges: options.immediateAckAfterChanges,

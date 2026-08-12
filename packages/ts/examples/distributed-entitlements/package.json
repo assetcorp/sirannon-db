@@ -14,7 +14,6 @@
     "app:dev": "vite dev --host 127.0.0.1",
     "dev": "concurrently -c cyan,magenta \"pnpm run cluster:up\" \"pnpm run app:dev\"",
     "build": "vite build",
-    "serve": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

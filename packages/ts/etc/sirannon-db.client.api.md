@@ -245,6 +245,7 @@ export interface SyncControllerOptions {
     onResyncRequired?: () => void;
     onSnapshotComplete?: (outcome: SnapshotOutcome) => void;
     onSnapshotProgress?: (progress: SnapshotProgress) => void;
+    onStatusChange?: (status: SyncStatus) => void;
     pushIntervalMs?: number;
     requestTimeout?: number;
     resolver?: ConflictResolver | ((table: string) => ConflictResolver);
@@ -252,6 +253,7 @@ export interface SyncControllerOptions {
     snapshotRetryDelayMs?: number;
     tables: readonly string[];
     url: string;
+    webSocketProtocols?: string | string[];
 }
 
 // @public

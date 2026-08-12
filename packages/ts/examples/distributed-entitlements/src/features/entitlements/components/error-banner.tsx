@@ -1,7 +1,7 @@
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@delali/sirannon-example-shared/ui/alert'
+import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { AlertCircle, X } from 'lucide-react'
 import { useCallback } from 'react'
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 
 export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   const handleDismiss = useCallback(() => {

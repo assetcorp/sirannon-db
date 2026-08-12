@@ -1,8 +1,15 @@
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
+import { Badge } from '@delali/sirannon-example-shared/ui/badge'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@delali/sirannon-example-shared/ui/card'
+import { Separator } from '@delali/sirannon-example-shared/ui/separator'
 import { UserRound } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
 import type { CustomerEntitlement } from '../../../lib/schemas'
 import { formatCompactNumber, formatDateTime } from '../entitlements-utils'
 import { type StatusTone, TONE_BADGE } from './status'

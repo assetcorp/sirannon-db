@@ -1,5 +1,5 @@
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
 import type { LucideIcon } from 'lucide-react'
-import { cn } from '@/lib/utils'
 
 export function CommandButton({
   icon: Icon,

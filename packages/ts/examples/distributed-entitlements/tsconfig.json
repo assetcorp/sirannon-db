@@ -7,9 +7,6 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "strictNullChecks": true,
-    "paths": {
-      "@/*": ["./src/*"]
-    },
     "skipLibCheck": true,
     "noEmit": true,
     "types": ["vite/client", "node"]

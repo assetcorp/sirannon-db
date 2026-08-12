@@ -1,5 +1,5 @@
+import { Card, CardContent } from '@delali/sirannon-example-shared/ui/card'
 import { KeyRound, type LucideIcon, RadioTower, Users, WalletCards } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import { formatCompactNumber } from '../entitlements-utils'
 import type { ControlPlaneStats } from '../types'
 

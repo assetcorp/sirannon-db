@@ -1,6 +1,7 @@
+import { THEME_BOOT_SCRIPT } from '@delali/sirannon-example-shared/theme'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { THEME_BOOT_SCRIPT } from '../lib/theme'
+import { readThemeChoice } from '../lib/theme.functions'
 import '../styles.css'
 
 function head() {
@@ -23,6 +24,7 @@ function head() {
 
 export const Route = createRootRoute({
   head,
+  loader: () => readThemeChoice(),
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
 })

@@ -35,6 +35,18 @@
       "react": "recommended"
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/ts/examples/shared/src/theme.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noDocumentCookie": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

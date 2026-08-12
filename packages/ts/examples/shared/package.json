@@ -1,0 +1,112 @@
+{
+  "name": "@delali/sirannon-example-shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Theme module, design tokens, and shadcn primitives shared by the Sirannon browser examples.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    "./theme": {
+      "types": "./src/theme.ts",
+      "import": "./src/theme.ts"
+    },
+    "./tokens.css": "./src/tokens.css",
+    "./lib/utils": {
+      "types": "./src/lib/utils.ts",
+      "import": "./src/lib/utils.ts"
+    },
+    "./components/theme-toggle": {
+      "types": "./src/components/theme-toggle.tsx",
+      "import": "./src/components/theme-toggle.tsx"
+    },
+    "./ui/alert": {
+      "types": "./src/components/ui/alert.tsx",
+      "import": "./src/components/ui/alert.tsx"
+    },
+    "./ui/badge": {
+      "types": "./src/components/ui/badge.tsx",
+      "import": "./src/components/ui/badge.tsx"
+    },
+    "./ui/button": {
+      "types": "./src/components/ui/button.tsx",
+      "import": "./src/components/ui/button.tsx"
+    },
+    "./ui/card": {
+      "types": "./src/components/ui/card.tsx",
+      "import": "./src/components/ui/card.tsx"
+    },
+    "./ui/collapsible": {
+      "types": "./src/components/ui/collapsible.tsx",
+      "import": "./src/components/ui/collapsible.tsx"
+    },
+    "./ui/dialog": {
+      "types": "./src/components/ui/dialog.tsx",
+      "import": "./src/components/ui/dialog.tsx"
+    },
+    "./ui/input": {
+      "types": "./src/components/ui/input.tsx",
+      "import": "./src/components/ui/input.tsx"
+    },
+    "./ui/label": {
+      "types": "./src/components/ui/label.tsx",
+      "import": "./src/components/ui/label.tsx"
+    },
+    "./ui/progress": {
+      "types": "./src/components/ui/progress.tsx",
+      "import": "./src/components/ui/progress.tsx"
+    },
+    "./ui/scroll-area": {
+      "types": "./src/components/ui/scroll-area.tsx",
+      "import": "./src/components/ui/scroll-area.tsx"
+    },
+    "./ui/select": {
+      "types": "./src/components/ui/select.tsx",
+      "import": "./src/components/ui/select.tsx"
+    },
+    "./ui/separator": {
+      "types": "./src/components/ui/separator.tsx",
+      "import": "./src/components/ui/separator.tsx"
+    },
+    "./ui/skeleton": {
+      "types": "./src/components/ui/skeleton.tsx",
+      "import": "./src/components/ui/skeleton.tsx"
+    },
+    "./ui/switch": {
+      "types": "./src/components/ui/switch.tsx",
+      "import": "./src/components/ui/switch.tsx"
+    },
+    "./ui/tabs": {
+      "types": "./src/components/ui/tabs.tsx",
+      "import": "./src/components/ui/tabs.tsx"
+    },
+    "./ui/tooltip": {
+      "types": "./src/components/ui/tooltip.tsx",
+      "import": "./src/components/ui/tooltip.tsx"
+    }
+  },
+  "peerDependencies": {
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.0.0",
+    "lucide-react": "^1.17.0",
+    "radix-ui": "^1.5.0",
+    "react": "^19.0.0",
+    "tailwind-merge": "^3.0.0"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.2.7",
+    "@fontsource/pt-sans": "5.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.15",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.17.0",
+    "radix-ui": "^1.5.0",
+    "react": "^19.2.6",
+    "shadcn": "4.10.0",
+    "tailwind-merge": "^3.6.0",
+    "typescript": "5.9.3"
+  }
+}

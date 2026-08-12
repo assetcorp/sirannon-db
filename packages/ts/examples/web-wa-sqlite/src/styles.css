@@ -1,6 +1,6 @@
-@import "@fontsource/pt-sans/400.css";
-@import "@fontsource/pt-sans/700.css";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
-@import "./styles/base.css";
-@import "./styles/app.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@delali/sirannon-example-shared/tokens.css";
+
+@source "../../shared/src";

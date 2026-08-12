@@ -1,7 +1,7 @@
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
+import { Label } from '@delali/sirannon-example-shared/ui/label'
+import { SelectItem } from '@delali/sirannon-example-shared/ui/select'
 import type { ReactNode } from 'react'
-import { Label } from '@/components/ui/label'
-import { SelectItem } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
 import type { Plan, SupportTier } from '../../../lib/schemas'
 
 export const PLAN_OPTIONS: Plan[] = ['free', 'growth', 'scale', 'enterprise']

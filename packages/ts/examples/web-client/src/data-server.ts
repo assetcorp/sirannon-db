@@ -44,7 +44,6 @@ const sirannon = new Sirannon({
 const db = await sirannon.open(DATABASE_ID, join(tempDir, 'inventory.db'), {
   readPoolSize: 4,
   walMode: true,
-  cdcPollInterval: 50,
 })
 
 await db.execute(`

@@ -1,6 +1,7 @@
+import { THEME_BOOT_SCRIPT } from '@delali/sirannon-example-shared/theme'
+import { TooltipProvider } from '@delali/sirannon-example-shared/ui/tooltip'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { THEME_BOOT_SCRIPT } from '../lib/theme'
+import { readThemeChoice } from '../lib/theme.functions'
 import '../styles.css'
 
 export const Route = createRootRoute({
@@ -12,6 +13,7 @@ export const Route = createRootRoute({
     ],
     scripts: [{ children: THEME_BOOT_SCRIPT }],
   }),
+  loader: () => readThemeChoice(),
   component: RootLayout,
   notFoundComponent: NotFoundComponent,
 })

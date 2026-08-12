@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils'
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
 
 export type StatusTone = 'success' | 'warning' | 'destructive' | 'neutral'
 

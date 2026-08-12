@@ -1,8 +1,15 @@
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
+import { Badge } from '@delali/sirannon-example-shared/ui/badge'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@delali/sirannon-example-shared/ui/card'
+import { ScrollArea } from '@delali/sirannon-example-shared/ui/scroll-area'
 import { CircleDashed, DatabaseZap, type LucideIcon, ReceiptText, ScrollText } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { cn } from '@/lib/utils'
 import type { AuditRecord, BillingEvent, CustomerEntitlement, UsageEvent } from '../../../lib/schemas'
 import { formatDateTime } from '../entitlements-utils'
 import { type StatusTone, TONE_BADGE } from './status'

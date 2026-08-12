@@ -152,6 +152,8 @@ ClusterStatusInfo {
 
 `health` and `healthReason` carry `NodeHealth`, defined in [03-replication.md](03-replication.md). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
 
+`readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`.
+
 ### Error Responses
 
 ```json

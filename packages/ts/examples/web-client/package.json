@@ -9,7 +9,6 @@
     "app:dev": "vite dev",
     "dev": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm run app:dev\"",
     "build": "vite build",
-    "serve": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

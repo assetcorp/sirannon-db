@@ -122,7 +122,8 @@ Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, al
 | `url` | `string` | required | Server base URL |
 | `databaseId` | `string` | required | Database to sync against |
 | `tables` | `readonly string[]` | required | Tables the device syncs |
-| `headers` | `Record<string, string>` | - | Headers sent on push, snapshot, and migration requests |
+| `headers` | `Record<string, string>` | - | Headers sent on push, snapshot, and migration requests, and on the pull upgrade under Node and Bun; a browser device that sets it without `webSocketProtocols` fails with `INVALID_ARGUMENT` |
+| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered on the pull upgrade, which is how a browser device carries a credential; the controller offers `sirannon.v1` ahead of them |
 | `batchSize` | `number` | `100` | Changes per push request |
 | `pushIntervalMs` | `number` | `1_000` | Push loop interval, also the base for retry backoff |
 | `ackIntervalMs` | `number` | `2_000` | How often the device acknowledges applied changes |
@@ -135,6 +136,7 @@ Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, al
 | `immediateAckAfterChanges` | `number` | half the server's window | Outstanding changes that trigger an immediate acknowledgement |
 | `resolver` | `ConflictResolver \| ((table: string) => ConflictResolver)` | `LWWResolver` | Conflict resolution for pulled changes |
 | `onChange` | `(event: ChangeEvent) => void` | - | Called for each pulled change after it commits locally |
+| `onStatusChange` | `(status: SyncStatus) => void` | - | Called with the device's status on a state change, a push, an applied pull batch, a required resync, and an error recorded or cleared; `pendingPushCount` can lag the rest of the status |
 | `onResyncRequired` | `() => void` | - | Called before a snapshot replaces local data |
 | `onSnapshotProgress` | `(progress: SnapshotProgress) => void` | - | Table and row progress during a snapshot |
 | `onSnapshotComplete` | `(outcome: SnapshotOutcome) => void` | - | Called once a snapshot load ends, carrying whether the local database is usable again |

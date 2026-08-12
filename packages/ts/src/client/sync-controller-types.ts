@@ -14,8 +14,10 @@ export interface SyncControllerOptions {
   databaseId: string
   /** Tables this device syncs. */
   tables: readonly string[]
-  /** Headers attached to every request and to the WebSocket upgrade. */
+  /** Headers attached to every HTTP request, and to the pull subscription's WebSocket upgrade in a runtime whose WebSocket carries a handshake header. */
   headers?: Record<string, string>
+  /** Subprotocols offered on the pull subscription's WebSocket upgrade, which is how a browser device carries a credential. The controller offers `sirannon.v1` ahead of them. */
+  webSocketProtocols?: string | string[]
   /** Changes sent in one push. */
   batchSize?: number
   /** Milliseconds between pushes of locally recorded changes. */
@@ -40,6 +42,8 @@ export interface SyncControllerOptions {
   resolver?: ConflictResolver | ((table: string) => ConflictResolver)
   /** Called for each change this device pulls. */
   onChange?: (event: ChangeEvent) => void
+  /** Called with this device's status when the controller changes state, pushes a batch, applies a pulled batch, needs a resync, or records or clears an error. */
+  onStatusChange?: (status: SyncStatus) => void
   /** Called when the server says the device must download a fresh snapshot. */
   onResyncRequired?: () => void
   /** Called as each snapshot page arrives. */

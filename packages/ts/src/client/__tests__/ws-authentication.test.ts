@@ -6,7 +6,11 @@ import { SIRANNON_WS_SUBPROTOCOL } from '../../core/ws-handshake.js'
 import { SirannonClient } from '../client.js'
 import { TopologyAwareClient } from '../topology.js'
 import { WebSocketTransport } from '../transport/ws.js'
-import { assertHandshakeHeadersSupported, runtimeSupportsHandshakeHeaders } from '../transport/ws-headers.js'
+import {
+  assertHandshakeHeadersSupported,
+  assertWebSocketProtocolsValid,
+  runtimeSupportsHandshakeHeaders,
+} from '../transport/ws-headers.js'
 import { RemoteError } from '../types.js'
 import { until } from './helpers.js'
 import { createClientServerHarness } from './server-harness.js'
@@ -128,6 +132,24 @@ describe('WebSocket handshake headers', () => {
     expect(() => assertHandshakeHeadersSupported({ Authorization: 'Bearer t' }, '', {})).toThrow(RemoteError)
     expect(() => assertHandshakeHeadersSupported({}, undefined, {})).not.toThrow()
     expect(() => assertHandshakeHeadersSupported(undefined, undefined, {})).not.toThrow()
+  })
+
+  it('refuses a subprotocol the handshake cannot carry, and keeps the credential out of the message', () => {
+    const ticket = 'sirannon ticket abc'
+    expect(() => assertWebSocketProtocolsValid([ticket])).toThrow(RemoteError)
+    expect(() => assertWebSocketProtocolsValid([ticket])).toThrow(/webSocketProtocols/)
+    try {
+      assertWebSocketProtocolsValid([ticket])
+    } catch (err) {
+      expect(err instanceof Error ? err.message : '').not.toContain(ticket)
+    }
+    expect(() => assertWebSocketProtocolsValid(['sirannon,ticket'])).toThrow(RemoteError)
+    expect(() => assertWebSocketProtocolsValid(['"sirannon.ticket"'])).toThrow(RemoteError)
+    expect(() => assertWebSocketProtocolsValid([''])).toThrow(RemoteError)
+    expect(() => assertWebSocketProtocolsValid(['sirannon.ticket', 'sirannon.ticket'])).toThrow(RemoteError)
+    expect(() => assertWebSocketProtocolsValid('sirannon.ticket.abc')).not.toThrow()
+    expect(() => assertWebSocketProtocolsValid(['sirannon.ticket.abc', 'sirannon.ticket.def'])).not.toThrow()
+    expect(() => assertWebSocketProtocolsValid(undefined)).not.toThrow()
   })
 
   it('accepts headers alongside a subprotocol credential in a runtime that attaches none', () => {

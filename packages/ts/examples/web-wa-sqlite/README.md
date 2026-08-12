@@ -86,7 +86,7 @@ This example binds to localhost and runs no authentication. Two things are worth
 
 The server restricts CORS to the app origin and refuses SQL from the network, so a caller reaches the sync routes and nothing else. That part transfers.
 
-The authentication does not, because there is nothing to transfer. `SyncController` sends `headers` on its HTTP requests, but it opens the pull WebSocket with no credentials and offers no option to add any, so a browser device cannot authenticate that socket today. Put a similar deployment behind an authenticating proxy that terminates TLS and checks the upgrade, and treat this example as a localhost demonstration.
+The authentication does not, because this example configures none. A deployed device needs both credentials: `headers` covers the HTTP requests, and `webSocketProtocols` covers the pull WebSocket, which a browser opens without any header of its own. Mint a short-lived ticket per device rather than passing a long-lived token, check the `Origin` of the upgrade, serve the whole thing over TLS, and redact both the authorization header and the offered subprotocols from your access logs.
 
 ## Environment
 

@@ -2,6 +2,8 @@ FROM node:22-trixie-slim
 
 WORKDIR /repo
 
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml nx.json tsconfig.json .npmrc ./
@@ -10,6 +12,7 @@ COPY packages/ts/package.json packages/ts/package.json
 COPY packages/ts/examples/node/package.json packages/ts/examples/node/package.json
 COPY packages/ts/examples/web-client/package.json packages/ts/examples/web-client/package.json
 COPY packages/ts/examples/web-wa-sqlite/package.json packages/ts/examples/web-wa-sqlite/package.json
+COPY packages/ts/examples/shared/package.json packages/ts/examples/shared/package.json
 COPY packages/ts/examples/distributed-entitlements/package.json packages/ts/examples/distributed-entitlements/package.json
 
 RUN pnpm install --frozen-lockfile

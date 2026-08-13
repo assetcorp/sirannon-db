@@ -1,13 +1,13 @@
-import { Monitor, Moon, Sun } from 'lucide-react'
-import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 import {
   applyTheme,
-  readStoredChoice,
   storeChoice,
   THEME_CHOICES,
   type ThemeChoice,
   watchSystemTheme,
-} from '../../../lib/theme'
+} from '@delali/sirannon-example-shared/theme'
+import { getRouteApi } from '@tanstack/react-router'
+import { Monitor, Moon, Sun } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 
 const OPTION_ICON = {
   system: Monitor,
@@ -20,6 +20,8 @@ const OPTION_LABEL = {
   light: 'Light theme',
   dark: 'Dark theme',
 } as const
+
+const rootRoute = getRouteApi('__root__')
 
 function ThemeOption({
   choice,
@@ -50,11 +52,8 @@ function ThemeOption({
 }
 
 export function ThemeToggle() {
-  const [choice, setChoice] = useState<ThemeChoice>('system')
-
-  useEffect(() => {
-    setChoice(readStoredChoice())
-  }, [])
+  const initialChoice = rootRoute.useLoaderData()
+  const [choice, setChoice] = useState<ThemeChoice>(initialChoice)
 
   useEffect(() => {
     applyTheme(choice)

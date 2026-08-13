@@ -13,10 +13,13 @@ import {
   createSyncCollaborators,
   DEFAULT_MAX_PUSH_RETRY_DELAY_MS,
   DEFAULT_PUSH_INTERVAL_MS,
+  describeError,
 } from './sync-controller-wiring.js'
 import type { PullStream } from './sync-pull-stream.js'
 import type { PushLoop } from './sync-push-loop.js'
 import type { ResyncScheduler } from './sync-resync-scheduler.js'
+import { SyncStatusNotifier } from './sync-status-notifier.js'
+import { assertWebSocketCredentials } from './transport/ws-headers.js'
 import { RemoteError } from './types.js'
 
 export type {
@@ -39,14 +42,16 @@ export class SyncController {
   private readonly pull: PullStream
   private readonly push: PushLoop
   private readonly resync: ResyncScheduler
+  private readonly statusChanges: SyncStatusNotifier
 
   private port: DeviceSyncPort | null = null
   private deviceId: string | null = null
   private capabilities: string[] | null = null
   private schemaVersion: number | null = null
-  private state: SyncState = 'stopped'
+  private syncState: SyncState = 'stopped'
   private pullRetryTimer: ReturnType<typeof setTimeout> | null = null
   private consecutivePullFailures = 0
+  private pendingPushCount = 0
   private lastError: { code: string; message: string } | null = null
 
   constructor(
@@ -56,19 +61,24 @@ export class SyncController {
     this.baseUrl = toBaseUrl(options.url)
     this.pushIntervalMs = options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS
     this.maxPushRetryDelayMs = options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS
+    assertWebSocketCredentials(options.headers, options.webSocketProtocols)
+    this.statusChanges = new SyncStatusNotifier(
+      options.onStatusChange,
+      () => this.captureStatus(),
+      () => this.refreshOutboxCount(),
+    )
     const collaborators = createSyncCollaborators(this.baseUrl, options, {
       state: () => this.state,
       port: () => this.port,
       schemaVersion: () => this.schemaVersion ?? 0,
       reconcileSchema: () => this.reconcileSchema(),
       recordError: err => this.recordError(err),
-      clearError: () => {
-        this.lastError = null
-      },
+      clearError: () => this.setError(null),
       markResyncRequired: () => this.markResyncRequired(),
       onApplyFailure: err => this.handleApplyFailure(err),
       onApplySuccess: () => {
         this.consecutivePullFailures = 0
+        this.statusChanges.notify()
       },
       download: () =>
         this.downloadSnapshot({ pageSize: options.snapshotPageSize, onProgress: options.onSnapshotProgress }),
@@ -78,12 +88,27 @@ export class SyncController {
     this.resync = collaborators.resync
   }
 
+  private get state(): SyncState {
+    return this.syncState
+  }
+
+  private setState(next: SyncState): void {
+    if (this.syncState === next) return
+    this.syncState = next
+    this.statusChanges.notify()
+  }
+
+  private setError(failure: { code: string; message: string } | null): void {
+    this.lastError = failure
+    this.statusChanges.notify()
+  }
+
   /**
    * Connects to the server and starts pushing and pulling changes.
    */
   async start(): Promise<void> {
     if (this.state === 'running' || this.state === 'starting') return
-    this.state = 'starting'
+    this.setState('starting')
     try {
       await this.verifyCapabilities()
       this.pull.stagedStream = this.capabilities?.includes(STAGED_STREAM_CAPABILITY) ?? false
@@ -108,10 +133,10 @@ export class SyncController {
       if (!this.resync.required) {
         await this.openPull()
       }
-      this.state = 'running'
+      this.setState('running')
     } catch (err) {
       this.teardownStream()
-      this.state = 'stopped'
+      this.setState('stopped')
       throw err
     }
     this.push.start()
@@ -127,7 +152,7 @@ export class SyncController {
   pause(): void {
     if (this.state !== 'running') return
     this.teardownStream()
-    this.state = 'paused'
+    this.setState('paused')
     void this.pull.persist()
   }
 
@@ -136,7 +161,7 @@ export class SyncController {
    */
   async resume(): Promise<void> {
     if (this.state !== 'paused') return
-    this.state = 'stopped'
+    this.setState('stopped')
     await this.start()
   }
 
@@ -146,7 +171,7 @@ export class SyncController {
   async stop(): Promise<void> {
     if (this.state === 'stopped') return
     this.teardownStream()
-    this.state = 'stopped'
+    this.setState('stopped')
     await this.pull.persist()
   }
 
@@ -156,19 +181,30 @@ export class SyncController {
    * @returns The device's state, cursors, pending push count, and last failure.
    */
   async status(): Promise<SyncStatus> {
-    const pendingPushCount = this.port ? await this.port.countOutboxPending(this.push.cursor) : 0
+    await this.refreshOutboxCount()
+    return this.captureStatus()
+  }
+
+  private captureStatus(): SyncStatus {
     return {
       state: this.state,
       deviceId: this.deviceId,
       serverCapabilities: this.capabilities,
       schemaVersion: this.schemaVersion,
-      pendingPushCount,
+      pendingPushCount: this.pendingPushCount,
       lastPushedSeq: this.push.cursor,
       lastPulledSeq: this.pull.pullSeq,
-      pushCaughtUp: pendingPushCount === 0,
+      pushCaughtUp: this.pendingPushCount === 0,
       resyncRequired: this.resync.required,
       lastError: this.lastError,
     }
+  }
+
+  private async refreshOutboxCount(): Promise<boolean> {
+    const counted = this.port === null ? 0 : await this.port.countOutboxPending(this.push.cursor)
+    const changed = counted !== this.pendingPushCount
+    this.pendingPushCount = counted
+    return changed
   }
 
   /**
@@ -207,10 +243,10 @@ export class SyncController {
     if (result.status === 'resync-required') {
       this.markResyncRequired()
     } else if (result.status === 'ahead') {
-      this.lastError = {
+      this.setError({
         code: 'SCHEMA_AHEAD',
         message: `Device schema version ${result.schemaVersion} is ahead of server version ${result.serverVersion}`,
-      }
+      })
     }
     return result.status
   }
@@ -218,6 +254,7 @@ export class SyncController {
   private markResyncRequired(): void {
     this.resync.markRequired()
     this.resync.schedule()
+    this.statusChanges.notify()
   }
 
   /**
@@ -238,7 +275,7 @@ export class SyncController {
     }
 
     this.teardownStream()
-    this.state = 'snapshotting'
+    this.setState('snapshotting')
     try {
       await this.push.drainFully(port)
       await downloadDatabaseSnapshot(port, {
@@ -252,22 +289,22 @@ export class SyncController {
       this.schemaVersion = await this.localSchemaVersion()
       await port.setResyncRequired(false)
       this.resync.recordSuccess()
-      this.lastError = null
+      this.setError(null)
     } catch (err) {
       const failure = describeError(err)
-      this.lastError = failure
+      this.setError(failure)
       this.resync.recordFailure()
       const databaseUsable = await this.snapshotGateOpen(port)
-      this.state = 'stopped'
+      this.setState('stopped')
       try {
         await this.start()
       } catch {
-        this.state = 'paused'
+        this.setState('paused')
       }
       this.resync.complete({ ok: false, error: failure, databaseUsable, retrying: this.resync.retryScheduled })
       throw err
     }
-    this.state = 'stopped'
+    this.setState('stopped')
     try {
       await this.start()
     } finally {
@@ -290,7 +327,7 @@ export class SyncController {
   }
 
   private recordError(err: unknown): void {
-    this.lastError = describeError(err)
+    this.setError(describeError(err))
   }
 
   private handleApplyFailure(err: unknown): void {
@@ -343,7 +380,7 @@ export class SyncController {
     if (status === 'ahead') throw refusal
 
     this.pull.teardown()
-    this.lastError = null
+    this.setError(null)
     await this.pull.open(deviceId, this.schemaVersion ?? 0)
   }
 
@@ -356,9 +393,4 @@ export class SyncController {
     }
     this.pull.teardown()
   }
-}
-
-function describeError(err: unknown): { code: string; message: string } {
-  const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
-  return { code, message: err instanceof Error ? err.message : String(err) }
 }

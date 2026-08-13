@@ -210,11 +210,11 @@ The controller drives a device's sync loop.
 ```text
 SyncControllerOptions {
   url, databaseId, tables,
-  headers?, batchSize? (100), pushIntervalMs? (1000), ackIntervalMs? (2000),
+  headers?, webSocketProtocols?, batchSize? (100), pushIntervalMs? (1000), ackIntervalMs? (2000),
   immediateAckAfterChanges?, maxPushRetryDelayMs? (30000), requestTimeout? (30000),
   autoResync? (true), snapshotRetryDelayMs? (5000), maxSnapshotRetryDelayMs? (300000),
   snapshotPageSize?, resolver?,
-  onChange?, onResyncRequired?, onSnapshotProgress?, onSnapshotComplete?
+  onChange?, onStatusChange?, onResyncRequired?, onSnapshotProgress?, onSnapshotComplete?
 }
 
 SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapshotting'
@@ -240,7 +240,9 @@ SyncStatus {
 }
 ```
 
-`headers` applies to the controller's HTTP requests and to the pull subscription's WebSocket upgrade in a runtime whose WebSocket carries a handshake header.
+`headers` applies to the controller's HTTP requests and to the pull subscription's WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A controller constructed with `headers`, no `webSocketProtocols`, and a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`.
+
+`webSocketProtocols` applies to the pull subscription's WebSocket upgrade. A device carries a short-lived credential in `webSocketProtocols`. A controller that configures subprotocols must offer the `sirannon.v1` identifier ahead of them (see [05-server.md](05-server.md#subprotocol-negotiation)). A controller that configures none must offer no subprotocol. Each configured subprotocol is one or more of the characters a header token allows, and no two are equal; a controller given anything else must fail at construction with `INVALID_ARGUMENT`, name `webSocketProtocols`, and leave the value out of the message.
 
 - **start** verifies server capabilities first and caches them; a `SYNC_UNSUPPORTED` result aborts the start, while an indeterminate failure is recorded and the controller continues degraded. It then reconciles the migration handshake (falling back to the local version when offline), opens the live pull, and starts the push loop.
 - **push** drains the outbox after the durable `device_sync_pushed_seq` cursor in batches (default 100), advancing the cursor and the retention boundary per batch; a failure backs off exponentially to a cap (default 30,000 ms). A push refused with `MIGRATION_REQUIRED` reconciles migrations and retries.
@@ -249,5 +251,7 @@ SyncStatus {
 - **pause** tears down the loops and persists cursors; **resume** restarts; **stop** tears down and persists.
 
 `onChange` reports each pulled change after the controller commits it, including a change staged before a restart.
+
+The controller reports the current `SyncStatus` through `onStatusChange` on a state change, on a push that advances the cursor, on an applied pull batch, on a resync becoming required, and on an error recorded or cleared. Every one of those reaches the listener, in the order it occurred. `pendingPushCount` can lag the rest of a reported status, because the controller counts the outbox on its own schedule and raises a further status when that count changes.
 
 The controller calls `onResyncRequired` when a resync becomes required: the server signals one, the migration handshake returns `resync-required`, or a start finds one the device still owes. It calls `onSnapshotComplete` once a snapshot load ends and the state has settled, for an automatic resync and for the application's own `downloadSnapshot()`. A failure after the wipe begins leaves the local database refusing reads and writes, so the outcome reports `databaseUsable` from the device's own load marker and `retrying` from whether another attempt is scheduled.

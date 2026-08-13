@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { ChangeTracker, RequestDeniedError, Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
-import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
+import {
+  PrimaryReplicaTopology,
+  ReplicationEngine,
+  toClusterStatusInfo,
+  toReplicationStatusInfo,
+} from '@delali/sirannon-db/replication'
 import { createEtcdCoordinator } from '@delali/sirannon-db/replication/coordinator/etcd'
 import { createServer, type SirannonServer } from '@delali/sirannon-db/server'
 import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
@@ -16,7 +21,6 @@ import {
   requireRole,
 } from './cluster-node-env'
 import { REPLICATED_TABLES, SCHEMA, SEED_SQL } from './cluster-node-schema'
-import { type ClusterStatusContext, toClusterStatusInfo, toReplicationStatusInfo } from './cluster-node-status'
 import { type ControlPlaneOperator, operations } from './operations'
 
 const DATABASE_ID = 'entitlements'
@@ -43,7 +47,6 @@ const etcdHosts = requireCsv('ETCD_ENDPOINTS')
 const token = requireClusterToken()
 const seedSchema = process.env.SEED_SCHEMA === 'true'
 const httpEndpoints = { ...DEFAULT_HTTP_ENDPOINTS, [nodeId]: requireEnv('HTTP_PUBLIC_ENDPOINT') }
-const statusContext: ClusterStatusContext = { databaseId: DATABASE_ID, nodeId, httpEndpoints }
 const driver = betterSqlite3({ busyTimeout: 10_000 })
 
 const conn = await driver.open(dbPath)
@@ -169,7 +172,10 @@ server = createServer<ControlPlaneOperator>(sirannon, {
   authorizeClusterStatus: ({ headers }) => isBearerAuthorized(headers, token),
   resolveExecutionTarget: id => (id === DATABASE_ID ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
-  getClusterStatus: id => toClusterStatusInfo(id, engine.status(), statusContext),
+  getClusterStatus: id =>
+    id === DATABASE_ID
+      ? toClusterStatusInfo(engine.status(), { databaseId: DATABASE_ID, endpoints: httpEndpoints })
+      : null,
 })
 
 await server.listen()

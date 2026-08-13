@@ -1,7 +1,14 @@
+import { cn } from '@delali/sirannon-example-shared/lib/utils'
+import { Badge } from '@delali/sirannon-example-shared/ui/badge'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@delali/sirannon-example-shared/ui/card'
 import { ChevronRight, Database, type LucideIcon, Waves } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
 import { getMajorityWriteAvailability } from '../../../lib/cluster-readiness'
 import type { ClusterNode } from '../../../lib/schemas'
 import { clusterHealthLabel, clusterHealthReasonLabel } from '../entitlements-utils'

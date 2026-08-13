@@ -2,6 +2,12 @@ export { FieldMergeResolver } from '../core/sync/conflict/field-merge.js'
 export { LWWResolver } from '../core/sync/conflict/lww.js'
 export { PrimaryWinsResolver } from '../core/sync/conflict/primary-wins.js'
 export { HLC } from '../core/sync/hlc.js'
+export {
+  type ClusterStatusOptions,
+  toClusterReadEndpoints,
+  toClusterStatusInfo,
+  toReplicationStatusInfo,
+} from './cluster-status.js'
 export type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,

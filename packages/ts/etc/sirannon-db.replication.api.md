@@ -70,6 +70,12 @@ export interface ClusterCoordinator {
 }
 
 // @public
+export interface ClusterStatusOptions {
+    databaseId: string;
+    endpoints: Readonly<Record<string, string>>;
+}
+
+// @public
 export interface CompareAndAdvancePrimaryTermInput {
     clusterId: string;
     expectedPrimaryTerm: bigint;
@@ -759,6 +765,12 @@ export interface SyncTableManifest {
 }
 
 // @public
+export function toClusterReadEndpoints(coordinator: CoordinatorRuntimeStatus, endpoints: Readonly<Record<string, string>>): ClusterReadEndpointInfo[];
+
+// @public
+export function toClusterStatusInfo(status: ReplicationStatus, options: ClusterStatusOptions): ClusterStatusInfo;
+
+// @public
 export interface Topology {
     canWrite(): boolean;
     requiresConflictResolution(): boolean;
@@ -774,6 +786,9 @@ export class TopologyError extends ReplicationError {
 
 // @public
 export type TopologyRole = 'primary' | 'replica';
+
+// @public
+export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationStatusInfo;
 
 // @public
 export interface TransportConfig {

@@ -44,7 +44,7 @@ TopologyAwareClientOptions extends ClientOptions {
 
 `headers` applies to HTTP requests, to coordinator discovery requests, and to the WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A client constructed with `headers`, no `webSocketProtocols`, and the WebSocket transport in a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`. A client given both must send `headers` on its HTTP requests and the subprotocols on the upgrade.
 
-A browser client carries a short-lived credential in `webSocketProtocols`. A client that configures subprotocols must offer the `sirannon.v1` identifier ahead of them, and the server selects that identifier (see [05-server.md](05-server.md#subprotocol-negotiation)). A client that configures none must offer no subprotocol.
+A browser client carries a short-lived credential in `webSocketProtocols`. A client that configures subprotocols must offer the `sirannon.v1` identifier ahead of them, and the server selects that identifier (see [05-server.md](05-server.md#subprotocol-negotiation)). A client that configures none must offer no subprotocol. Each configured subprotocol is one or more of the characters a header token allows, and no two are equal; a client given anything else must fail at construction with `INVALID_ARGUMENT`, name `webSocketProtocols`, and leave the value out of the message.
 
 `database(id)` returns a cached `RemoteDatabase` for the URL-encoded id. `close` closes every connection, cancels active subscriptions, and rejects pending requests.
 

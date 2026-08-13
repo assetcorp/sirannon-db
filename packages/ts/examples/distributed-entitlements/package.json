@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "Sirannon distributed-entitlements example: a three-node entitlement control plane with etcd authority, gRPC replication, and automatic failover.",
   "scripts": {
     "certs": "tsx src/scripts/generate-certs.ts",
     "proxy:setup": "tsx src/scripts/setup-proxies.ts",
@@ -14,13 +15,11 @@
     "app:dev": "vite dev --host 127.0.0.1",
     "dev": "concurrently -c cyan,magenta \"pnpm run cluster:up\" \"pnpm run app:dev\"",
     "build": "vite build",
-    "serve": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@delali/sirannon-db": "workspace:*",
-    "@fontsource-variable/ibm-plex-sans": "5.2.8",
-    "@fontsource/ibm-plex-mono": "5.2.7",
+    "@delali/sirannon-example-shared": "workspace:*",
     "@grpc/grpc-js": "1.14.3",
     "@tailwindcss/vite": "4.3.0",
     "@tanstack/react-router": "1.170.10",

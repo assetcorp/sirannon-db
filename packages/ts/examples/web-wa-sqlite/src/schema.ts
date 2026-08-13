@@ -42,6 +42,11 @@ export const SEED_WORK_ORDERS: readonly Pick<WorkOrder, 'id' | 'site' | 'task'>[
   { id: 'wo-1044', site: 'Eastfield depot', task: 'Recalibrate the flow meter' },
 ]
 
+export const SEED_UPDATED_AT = '2026-01-05T08:00:00.000Z'
+
+export const SEED_INSERT_SQL = `INSERT INTO ${WORK_ORDERS_TABLE} (id, site, task, status, technician, note, updated_at)
+VALUES (?, ?, ?, 'scheduled', '', '', ?)`
+
 export function isWorkOrderStatus(value: string): value is WorkOrderStatus {
   return (WORK_ORDER_STATUSES as readonly string[]).includes(value)
 }

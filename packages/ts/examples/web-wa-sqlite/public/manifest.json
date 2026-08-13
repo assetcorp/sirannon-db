@@ -1,0 +1,27 @@
+{
+  "short_name": "Sirannon",
+  "name": "Sirannon web-wa-sqlite example",
+  "icons": [
+    {
+      "src": "sirannon.ico",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "sirannon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "sirannon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0d9488",
+  "background_color": "#ffffff"
+}

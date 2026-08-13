@@ -1,8 +1,8 @@
+import { Button } from '@delali/sirannon-example-shared/ui/button'
+import { Input } from '@delali/sirannon-example-shared/ui/input'
+import { Select, SelectContent, SelectTrigger, SelectValue } from '@delali/sirannon-example-shared/ui/select'
 import { Plus } from 'lucide-react'
 import { type ChangeEvent, type FormEvent, useCallback, useId, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { CreateCustomerInput, Plan, SupportTier } from '../../../lib/schemas'
 import { FormField, PLAN_OPTIONS, renderOption, SUPPORT_OPTIONS } from './form-field'
 

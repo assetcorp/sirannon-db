@@ -6,6 +6,7 @@ Read the file you're editing and follow what it already does. The rules below co
 
 ## Rules
 
+- Re-read and apply the user's writing guidelines fully, if available, whenever you are writing TS-Doc or any prose in the repo.
 - Leave `packages/spec` alone. The developer owns every spec change and makes it directly. When your work needs a different wire format, value encoding, client-facing error code, or replication invariant, say so and wait for their decision. Write no code against a spec change they have not approved.
 - Treat the spec test vectors as fixed. When your change breaks that test, revert the change or raise it with the developer.
 - Keep every source file under 400 lines. Measure a file when you touch it, and split it before your change pushes it over. The limit covers source only, because a test file grows with the cases it covers, and splitting one breaks up a suite that reads best in one place.

@@ -34,3 +34,17 @@ Read the file you're editing and follow what it already does. The rules below co
 - **The supply-chain gate refuses a package published less than four days ago.** Install with `pnpm add -E` from inside the target workspace.
 
 Read `CONTRIBUTING.md` for the house style. The `/grill-with-docs` skill writes the decision records in `docs/adr/`, so load that skill for an architectural decision whenever it's available. Preserve the automatic-failover invariants when you change replication code.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues on `assetcorp/sirannon-db`, and every operation runs through the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and the existing `docs/adr/` at the repo root cover both packages. See `docs/agents/domain.md`.

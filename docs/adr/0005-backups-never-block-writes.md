@@ -4,7 +4,9 @@ A backup must copy the database while writes continue. The copy runs on its own 
 
 Sirannon runs those checkpoints itself rather than leaving them to SQLite, because incremental capture must read every log frame before a checkpoint allows SQLite to overwrite it. The prototype behind ADR 0006 measured 186 of 300 transactions lost when SQLite chose the checkpoint moments, and none lost when Sirannon captured first and checkpointed second.
 
-Today the backup controller runs `VACUUM INTO` inside the writer lock, and the CDC and sync controllers share that lock, so a backup blocks user writes and replication apply for the whole copy. SQLite requires none of that, because `VACUUM INTO` takes only a read transaction on the source.
+Today the backup controller in the TypeScript implementation runs `VACUUM INTO` inside the writer lock, and the CDC and sync controllers share that lock, so a backup blocks user writes and replication apply for the whole copy. SQLite requires none of that, because `VACUUM INTO` takes only a read transaction on the source.
+
+Every rule below follows from how SQLite behaves, so it binds every implementation. The measurements come from the TypeScript implementation's drivers, and they describe SQLite rather than those drivers.
 
 ## Why this over the alternatives
 
@@ -17,7 +19,7 @@ Today the backup controller runs `VACUUM INTO` inside the writer lock, and the C
 - The copy runs on a dedicated read connection through the stepped backup interface, and no backup operation takes the writer lock. The stepped interface is load-bearing rather than preferable, because a destination that accepts writes and returns nothing readable fails a `VACUUM INTO` at every size with `database disk image is malformed`, measured from 100 MB to 6.4 GB on both Node drivers. `VACUUM INTO` read its destination back 126 times during a 6.4 GB copy, where the stepped interface read 100 bytes once.
 - Sirannon sets `wal_autocheckpoint = 0` on every database it opens with backups enabled, and runs its own cycle: capture the log frames, then checkpoint. The cycle interval sets the log bound directly, measured at 0.6 MB peak for a cycle every 25 transactions and 0.1 MB for every 5, against 6.7 MB and growing with no checkpointing at all.
 - Sirannon watches the pages-remaining counter after every step. A jump upwards means another connection restarted the copy. Sirannon counts restarts, stops after a small bound, and reports an error that names what happened and what to do about it. A restart is never retried silently and never retried forever, because a copy that restarts endlessly at terabyte scale would burn disk and processor for months while reporting nothing.
-- Bulk load no longer forces a `TRUNCATE` checkpoint, because a forcing checkpoint from a second connection sends an in-progress copy back to page one, and bulk load is the one such trigger inside Sirannon. An outside process forcing a `RESTART` or `TRUNCATE` checkpoint remains a documented hazard, because Sirannon cannot prevent it.
+- No Sirannon code path forces a `RESTART` or `TRUNCATE` checkpoint while a copy runs, because a forcing checkpoint from a second connection sends an in-progress copy back to page one. Bulk load is the one such trigger present today, in `core/bulk-load.ts` of the TypeScript implementation, and it loses that checkpoint. An outside process forcing one remains a documented hazard, because Sirannon cannot prevent it.
 - A scheduled backup that finds the previous run still in progress skips, and the skip is reported with its reason. Queueing would build a permanent backlog behind a slow copy at exactly the sizes where backups matter most.
 
 ## Cost

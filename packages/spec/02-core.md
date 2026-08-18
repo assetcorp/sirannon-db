@@ -141,7 +141,7 @@ Creation rules:
 1. When not read-only, create one writer with WAL mode.
 2. When the driver reports `multipleConnections`, create `max(readPoolSize, 1)` readers, each opened read-only. Otherwise create no readers and route reads through the writer under the writer lock.
 
-`acquireReader` returns the next reader by round-robin, or the writer when no readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only.
+`acquireReader` returns the next reader by round-robin, or the writer when no readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only. `connections` returns the writer and every reader, for work that must apply to the whole pool, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
 
 Write work on the writer connection is serialised by a writer lock so grouped writes, transactions, migrations, backups, and extension loads never overlap.
 
@@ -459,6 +459,26 @@ BackupScheduleOptions {
 ```
 
 `scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates files matching `backup-*.db` beyond `maxFiles` by modification time. The cron expression is evaluated in `timezone` when supplied, otherwise the host zone. The scheduler checks the time on a recurring tick and does not backfill: a scheduled time skipped while the host sleeps or the clock jumps forward is not run late, and a backward clock step repeats nothing until real time passes the last completed backup. Across a daylight-saving forward transition the missing hour is skipped; across a backward transition a time in the repeated hour runs once.
+
+---
+
+## Extensions
+
+`loadExtension(extensionPath)` loads a compiled SQLite extension into a database under the writer lock. A load that cannot complete fails with `EXTENSION_ERROR`.
+
+The call proceeds in this order:
+
+1. Reject an empty path, a path holding a null byte or a control character, and a path holding a `..` segment.
+2. Reject the call when any connection exposes no `loadExtension`.
+3. Reject the call when the driver reports `extensions: true` and supplies no `resolveExtensionPath`.
+4. Resolve the path through `resolveExtensionPath` where the driver supplies one.
+5. Call each connection's own `loadExtension` with the resolved path, never the SQL `load_extension` function.
+
+A driver reporting `extensions: false` refuses at step 5, and the message must state which runtime cannot load an extension. A missing file and a runtime that cannot load an extension must produce different messages.
+
+The load must apply to the writer, every reader, and every further connection the database has open. A connection the database opens afterwards must load every extension already loaded. A writer worker that restarts must load them onto its new connection. Loading and opening must not interleave.
+
+SQLite cannot unload an extension, so a load that fails part-way leaves it on the connections loaded before the failure.
 
 ---
 

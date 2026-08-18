@@ -2,6 +2,26 @@ import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { ExtensionError } from './errors.js'
 import { loadExtension } from './extension-loader.js'
 
+function forwardingConnection(connection: SQLiteConnection, onClose: () => void): SQLiteConnection {
+  const { loadExtension, runBatch, runBatchSummary, runGroup } = connection
+  const forwarding: SQLiteConnection = {
+    exec: sql => connection.exec(sql),
+    prepare: sql => connection.prepare(sql),
+    transaction: fn => connection.transaction(fn),
+    close: async () => {
+      onClose()
+      await connection.close()
+    },
+  }
+  if (loadExtension) forwarding.loadExtension = path => loadExtension.call(connection, path)
+  if (runBatch) forwarding.runBatch = (sql, paramsBatch) => runBatch.call(connection, sql, paramsBatch)
+  if (runBatchSummary) {
+    forwarding.runBatchSummary = (sql, paramsBatch) => runBatchSummary.call(connection, sql, paramsBatch)
+  }
+  if (runGroup) forwarding.runGroup = units => runGroup.call(connection, units)
+  return forwarding
+}
+
 /**
  * Holds the resolved path of every compiled extension a database has loaded,
  * along with every connection this database opened beyond its pool, so each of
@@ -45,7 +65,14 @@ export class LoadedExtensions {
     })
   }
 
-  /** Opens a connection carrying every recorded extension, and stops tracking it once its caller closes it. */
+  /**
+   * Opens a connection, loads every recorded extension onto it, and returns a
+   * connection that forwards to it. Closing the returned connection stops the
+   * tracking and closes the one underneath.
+   *
+   * @param openConnection - Opens the connection this database needs.
+   * @returns The connection to read and write through.
+   */
   open(openConnection: () => Promise<SQLiteConnection>): Promise<SQLiteConnection> {
     return this.runInTurn(async () => {
       const connection = await openConnection()
@@ -56,13 +83,9 @@ export class LoadedExtensions {
         throw err
       }
 
-      const tracked: SQLiteConnection = {
-        ...connection,
-        close: async () => {
-          this.openedConnections.delete(tracked)
-          await connection.close()
-        },
-      }
+      const tracked = forwardingConnection(connection, () => {
+        this.openedConnections.delete(tracked)
+      })
       this.openedConnections.add(tracked)
       return tracked
     })

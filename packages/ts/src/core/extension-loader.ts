@@ -18,6 +18,10 @@ function assertPathIsSafe(extensionPath: string): void {
   }
 }
 
+function isAbsolutePath(candidate: string): boolean {
+  return candidate.startsWith('/') || candidate.startsWith('\\') || /^[A-Za-z]:[/\\]/.test(candidate)
+}
+
 /**
  * Loads a compiled SQLite extension into every connection given, so both reads
  * and writes can call the extension's functions. Each runtime loads through its
@@ -60,6 +64,13 @@ export async function loadExtension(
   }
 
   const resolved = driver.resolveExtensionPath?.(extensionPath) ?? extensionPath
+
+  if (driver.resolveExtensionPath && !isAbsolutePath(resolved)) {
+    throw new ExtensionError(
+      extensionPath,
+      'The current driver resolved the extension to a relative path, which would let the dynamic linker search its own paths',
+    )
+  }
 
   for (const connection of connections) {
     try {

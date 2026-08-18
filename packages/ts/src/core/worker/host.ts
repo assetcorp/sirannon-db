@@ -1,5 +1,11 @@
 import { Worker } from 'node:worker_threads'
-import type { DriverWorkerEntry, GroupRunOutcome, OpenOptions, SQLiteConnection } from '../driver/types.js'
+import type {
+  DatabaseCopyStep,
+  DriverWorkerEntry,
+  GroupRunOutcome,
+  OpenOptions,
+  SQLiteConnection,
+} from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import {
   deserializeError,
@@ -25,6 +31,8 @@ interface PendingRequest {
   timer: NodeJS.Timeout | null
   graceTimer: NodeJS.Timeout | null
   cancellable: boolean
+  kind: WorkerRequestBody['kind']
+  onStep?: (step: DatabaseCopyStep) => void
 }
 
 type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
@@ -97,6 +105,10 @@ export class WriterWorker {
   }
 
   private onResponse(res: WorkerResponse): void {
+    if ('kind' in res) {
+      this.onCopyStep(res.id, res.step)
+      return
+    }
     const entry = this.pending.get(res.id)
     if (!entry) return
     this.pending.delete(res.id)
@@ -117,6 +129,26 @@ export class WriterWorker {
     entry.reject(deserializeError(res.error))
   }
 
+  private onCopyStep(id: number, step: DatabaseCopyStep): void {
+    const entry = this.pending.get(id)
+    if (!entry) return
+    if (entry.timer) {
+      clearTimeout(entry.timer)
+      entry.timer = this.timeoutMs > 0 ? setTimeout(() => this.onDeadline(id), this.timeoutMs) : null
+      entry.timer?.unref?.()
+    }
+    try {
+      entry.onStep?.(step)
+    } catch (err) {
+      this.pending.delete(id)
+      clearPendingTimers(entry)
+      try {
+        this.worker?.postMessage({ kind: 'cancel', id })
+      } catch {}
+      entry.reject(err instanceof Error ? err : new Error(String(err)))
+    }
+  }
+
   private rejectPending(id: number, err: Error): void {
     const entry = this.pending.get(id)
     if (!entry) return
@@ -125,7 +157,13 @@ export class WriterWorker {
     entry.reject(err)
   }
 
-  private unresponsiveError(waitedMs: number): SirannonError {
+  private unresponsiveError(waitedMs: number, kind?: WorkerRequestBody['kind']): SirannonError {
+    if (kind === 'copyDatabase') {
+      return new SirannonError(
+        `The writer worker moved no page of the copy for ${waitedMs}ms, so the copy was stopped and nothing it wrote is usable`,
+        'BACKUP_STALLED',
+      )
+    }
     return new SirannonError(
       `Writer worker did not respond within ${waitedMs}ms; the operation's outcome is unknown`,
       'WRITER_WORKER_TIMEOUT',
@@ -141,17 +179,17 @@ export class WriterWorker {
     if (!entry) return
     const worker = this.worker
     if (!entry.cancellable || !worker) {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs))
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs, entry.kind))
       return
     }
     try {
       worker.postMessage({ kind: 'cancel', id })
     } catch {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs))
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs, entry.kind))
       return
     }
     entry.graceTimer = setTimeout(() => {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs * 2))
+      this.rejectPending(id, this.unresponsiveError(this.timeoutMs * 2, entry.kind))
     }, this.timeoutMs)
     entry.graceTimer.unref?.()
   }
@@ -188,7 +226,7 @@ export class WriterWorker {
     this.spawn()
   }
 
-  private send(request: WorkerRequestBody): Promise<unknown> {
+  private send(request: WorkerRequestBody, onStep?: (step: DatabaseCopyStep) => void): Promise<unknown> {
     const worker = this.worker
     if (!worker) {
       return Promise.reject(
@@ -204,7 +242,15 @@ export class WriterWorker {
         timer.unref?.()
       }
       const cancellable = request.kind !== 'open' && request.kind !== 'close' && request.kind !== 'loadExtension'
-      this.pending.set(id, { resolve, reject, timer, graceTimer: null, cancellable })
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        graceTimer: null,
+        cancellable,
+        kind: request.kind,
+        ...(onStep ? { onStep } : {}),
+      })
       try {
         worker.postMessage(message)
       } catch (err) {
@@ -220,11 +266,11 @@ export class WriterWorker {
     })
   }
 
-  private request(request: WorkerRequestBody): Promise<unknown> {
+  private request(request: WorkerRequestBody, onStep?: (step: DatabaseCopyStep) => void): Promise<unknown> {
     if (this.fatal) return Promise.reject(this.fatal)
     if (this.closed) return Promise.reject(new SirannonError('Writer worker is closed', 'WRITER_WORKER_CLOSED'))
     return this.ready
-      .then(() => this.send(request))
+      .then(() => this.send(request, onStep))
       .then(value => {
         this.restarts = 0
         return value
@@ -262,6 +308,11 @@ export class WriterWorker {
             })),
           })),
         }) as Promise<GroupRunOutcome[]>,
+      copyDatabase: request =>
+        this.request(
+          { kind: 'copyDatabase', destPath: request.destPath, pagesPerStep: request.pagesPerStep },
+          request.onStep,
+        ) as Promise<DatabaseCopyStep>,
       loadExtension: async (extensionPath: string) => {
         await this.request({ kind: 'loadExtension', path: extensionPath })
         if (!this.loadedExtensions.includes(extensionPath)) this.loadedExtensions.push(extensionPath)

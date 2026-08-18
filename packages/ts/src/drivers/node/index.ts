@@ -7,6 +7,7 @@ import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../c
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
+import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
  * @public
@@ -31,7 +32,7 @@ export interface NodeSqliteOptions {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
@@ -141,6 +142,10 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
               db.enableLoadExtension(false)
             }
           })
+        },
+
+        copyDatabase(request) {
+          return copyDatabaseWithNodeSqlite(db, request)
         },
 
         async close(): Promise<void> {

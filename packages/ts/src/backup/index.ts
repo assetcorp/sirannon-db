@@ -1,0 +1,5 @@
+export type { AssembleResult } from '../core/backup/assemble.js'
+export { assembleFromDestination } from '../core/backup/assemble.js'
+export type { BackupCapabilities } from '../core/backup/capabilities.js'
+export type { BackupDestination, BackupPiece } from '../core/backup/destination.js'
+export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from '../core/backup/report.js'

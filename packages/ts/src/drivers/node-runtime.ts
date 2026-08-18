@@ -21,7 +21,8 @@ export function nodeBackupEngine(): BackupEngine {
   const manager = new BackupManager()
   const scheduler = new BackupScheduler(manager)
   return {
-    backup: (conn, destPath) => manager.backup(conn, destPath),
+    backup: (conn, destPath, onFirstStep) => manager.backup(conn, destPath, onFirstStep),
+    copyToDestination: (conn, request) => manager.copyToDestination(conn, request),
     schedule: (conn, options, runExclusive) => scheduler.schedule(conn, options, runExclusive),
   }
 }

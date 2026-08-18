@@ -73,6 +73,10 @@
       "types": "./dist/file-migrations/index.d.ts",
       "import": "./dist/file-migrations/index.mjs"
     },
+    "./backup": {
+      "types": "./dist/backup/index.d.ts",
+      "import": "./dist/backup/index.mjs"
+    },
     "./backup-scheduler": {
       "types": "./dist/backup-scheduler/index.d.ts",
       "import": "./dist/backup-scheduler/index.mjs"

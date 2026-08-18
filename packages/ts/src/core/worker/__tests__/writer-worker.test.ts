@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
+import { memoryDestination } from '../../__tests__/backup/memory-destination.js'
 import type { Database } from '../../database.js'
 import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
@@ -42,6 +43,45 @@ describe('writer worker offload', () => {
 
     const rows = await db.query<{ id: number; name: string }>('SELECT id, name FROM items')
     expect(rows).toEqual([{ id: 1, name: 'widget' }])
+  })
+
+  it('copies the database on the worker while writes keep committing', async () => {
+    await openOffloaded()
+    await db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+    await db.bulkLoad(
+      'INSERT INTO items (name) VALUES (?)',
+      Array.from({ length: 20000 }, (_, index) => [`row-${index}`.padEnd(200, 'x')]),
+    )
+
+    let writesDuringCopy = 0
+    let copying = true
+    const writer = (async () => {
+      while (copying) {
+        await new Promise(resolve => setImmediate(resolve))
+        if (!copying) break
+        await db.execute("INSERT INTO items (name) VALUES ('during-copy')")
+        writesDuringCopy++
+      }
+    })()
+
+    let stepsSeen = 0
+    const report = await db.backupTo({
+      destination: memoryDestination(),
+      pagesPerStep: 8,
+      stagingDir: dir,
+      onProgress: progress => {
+        if (progress.phase === 'copy') stepsSeen++
+      },
+    })
+    copying = false
+    await writer
+
+    expect(report.restarts).toBe(0)
+    expect(stepsSeen).toBeGreaterThan(10)
+    expect(writesDuringCopy).toBeGreaterThan(1)
+    expect(await db.queryOne<{ n: number }>('SELECT count(*) AS n FROM items')).toEqual({
+      n: 20000 + writesDuringCopy,
+    })
   })
 
   it('runs a batch atomically and returns a result per row', async () => {

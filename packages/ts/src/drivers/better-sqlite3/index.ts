@@ -6,6 +6,7 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
+import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 
 /**
  * @public
@@ -88,6 +89,10 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
       await loadThroughRuntime(extensionPath, () => db.loadExtension(extensionPath))
     },
 
+    copyDatabase(request) {
+      return copyDatabaseWithBetterSqlite3(db, request)
+    },
+
     async close(): Promise<void> {
       db.close()
     },
@@ -107,7 +112,7 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
 export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)

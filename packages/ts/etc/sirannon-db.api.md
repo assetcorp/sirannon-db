@@ -26,8 +26,63 @@ export interface AppliedMigrationEntry {
 export type AuthenticateHook<Identity = unknown> = (ctx: RequestContext) => Identity | undefined | Promise<Identity | undefined>;
 
 // @public
+export interface BackupCapabilities {
+    fullCopy: boolean;
+    localDiskRequired: 'none' | 'equal-to-backup';
+    schedule: boolean;
+    stagedCopy: boolean;
+    streamedCopy: boolean;
+}
+
+// @public
+export interface BackupDestination {
+    listPieces(name: string): Promise<BackupPiece[]>;
+    readPiece(name: string, index: number): Promise<Uint8Array>;
+    writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>;
+}
+
+// @public
 export class BackupError extends SirannonError {
     constructor(message: string);
+}
+
+// @public
+export interface BackupPiece {
+    byteLength: number;
+    index: number;
+}
+
+// @public
+export interface BackupProgress {
+    bytesWritten: number;
+    phase: 'copy' | 'transfer';
+    piecesWritten: number;
+    remainingPages: number;
+    restarts: number;
+    runId: string;
+    totalPages: number;
+}
+
+// @public
+export interface BackupRunReport {
+    bytesWritten: number;
+    copyMs: number;
+    databaseId: string;
+    destinationName: string;
+    durationMs: number;
+    fingerprint?: string;
+    finishedAt: number;
+    kind: 'full';
+    pageCount: number;
+    pageSize: number;
+    pieceBytes: number;
+    pieceCount: number;
+    restarts: number;
+    route: 'staged' | 'streamed';
+    runId: string;
+    sourcePath: string;
+    startedAt: number;
+    transferMs: number;
 }
 
 // @public
@@ -37,6 +92,20 @@ export interface BackupScheduleOptions {
     maxFiles?: number;
     onError?: (error: Error) => void;
     timezone?: string;
+}
+
+// @public
+export interface BackupToDestinationOptions {
+    destination: BackupDestination;
+    fingerprint?: boolean;
+    name?: string;
+    noProgressStepLimit?: number;
+    onProgress?: (progress: BackupProgress) => void;
+    pagesPerStep?: number;
+    pieceBytes?: number;
+    restartLimit?: number;
+    stagingDir?: string;
+    stallTimeoutMs?: number;
 }
 
 // @public
@@ -260,6 +329,8 @@ export class Database {
     // @internal (undocumented)
     applyChanges(batch: ReplicationBatch, resolver?: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
     backup(destPath: string): Promise<void>;
+    backupCapabilities(): BackupCapabilities;
+    backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
     bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>;
     close(): Promise<void>;
     get closed(): boolean;
@@ -306,6 +377,19 @@ export class DatabaseAlreadyExistsError extends SirannonError {
 export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>;
 
 // @public
+export interface DatabaseCopyRequest {
+    destPath: string;
+    onStep?: (step: DatabaseCopyStep) => void;
+    pagesPerStep: number;
+}
+
+// @public
+export interface DatabaseCopyStep {
+    remainingPages: number;
+    totalPages: number;
+}
+
+// @public
 export class DatabaseNotFoundError extends SirannonError {
     constructor(id: string);
 }
@@ -340,6 +424,7 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver;
 export interface DriverCapabilities {
     extensions: boolean;
     multipleConnections: boolean;
+    steppedCopy: boolean;
 }
 
 // @public
@@ -865,6 +950,7 @@ export interface SirannonOptions {
 // @public
 export interface SQLiteConnection {
     close(): Promise<void>;
+    copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>;
     exec(sql: string): Promise<void>;
     loadExtension?(extensionPath: string): Promise<void>;
     prepare(sql: string): Promise<SQLiteStatement>;

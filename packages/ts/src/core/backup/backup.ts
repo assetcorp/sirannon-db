@@ -1,9 +1,21 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
-import { BackupError } from '../errors.js'
+import { BackupError, SirannonError } from '../errors.js'
+import type { BackupRunReport, BackupRunRequest } from './report.js'
+import { copyToDestinationStaged } from './staged-copy.js'
+import { copyDatabaseStepwise } from './stepped-copy.js'
 
 const BACKUP_FILE_PREFIX = 'backup'
+
+function once(action: () => void): () => void {
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    action()
+  }
+}
 
 function hasControlCharacters(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
@@ -14,7 +26,7 @@ function hasControlCharacters(s: string): boolean {
 }
 
 export class BackupManager {
-  async backup(conn: SQLiteConnection, destPath: string): Promise<void> {
+  async backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void> {
     if (hasControlCharacters(destPath)) {
       throw new BackupError('Backup path contains invalid characters')
     }
@@ -41,16 +53,19 @@ export class BackupManager {
       throw new BackupError(`Backup destination '${destPath}' already exists`)
     }
 
-    const escaped = resolved.replace(/'/g, "''")
-
     try {
-      await conn.exec(`VACUUM INTO '${escaped}'`)
+      await copyDatabaseStepwise(conn, { destPath: resolved, onStep: onFirstStep ? once(onFirstStep) : undefined })
     } catch (err) {
       try {
         rmSync(resolved, { force: true })
       } catch {}
+      if (err instanceof SirannonError) throw err
       throw new BackupError(`Backup to '${destPath}' failed: ${err instanceof Error ? err.message : String(err)}`)
     }
+  }
+
+  copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
+    return copyToDestinationStaged(conn, request)
   }
 
   generateFilename(): string {

@@ -60,7 +60,7 @@ describe('Extension loading via Database', () => {
 
     const refusing: SQLiteDriver = {
       ...testDriver,
-      capabilities: { multipleConnections: false, extensions: false },
+      capabilities: { multipleConnections: false, extensions: false, steppedCopy: false },
       open: async (path, options) => {
         const conn = await testDriver.open(path, options)
         return { ...conn, loadExtension: undefined }
@@ -82,7 +82,7 @@ describe('Extension loading via Database', () => {
       'wa-sqlite runs SQLite compiled to WebAssembly, and a browser loads no native shared library into it'
     const browserLike: SQLiteDriver = {
       ...testDriver,
-      capabilities: { multipleConnections: false, extensions: false },
+      capabilities: { multipleConnections: false, extensions: false, steppedCopy: false },
       open: async (path, options) => {
         const conn = await testDriver.open(path, options)
         return {

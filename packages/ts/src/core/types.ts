@@ -121,9 +121,9 @@ export interface DatabaseOptions {
    * interval. A backup then costs what changed since the last one, not what the
    * database holds, so a terabyte that changed by 200 MB pays for 200 MB.
    *
-   * Setting this takes checkpointing away from SQLite and gives it to Sirannon.
-   * It has to: a checkpoint lets SQLite overwrite log frames nothing has
-   * captured yet. Default: off.
+   * A database given this option takes checkpointing away from SQLite and runs
+   * it itself. It has to: a checkpoint lets SQLite overwrite log frames nothing
+   * has captured yet. Default: off.
    */
   backups?: BackupCycleOptions
 }

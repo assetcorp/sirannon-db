@@ -58,7 +58,7 @@ export interface BackupCycleState {
 }
 
 /**
- * Works out where the cycle keeps its state.
+ * Names the file the cycle keeps its state in.
  *
  * @param stagingDir - Directory the cycle stages captures in.
  * @returns Path of the state file.

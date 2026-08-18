@@ -585,9 +585,9 @@ A capture that fails stops the checkpoint behind it. A staged capture reaches th
 
 The first capture of a chain starts at frame one and carries the log header. Pieces covering one run of the log hold contiguous frames, so they concatenate into a log SQLite recovers from.
 
-Every capture compares the log's salts against the ones the chain last recorded. A run that changed without a checkpoint the implementation ran fails with `BACKUP_LOG_REWOUND`, and the implementation then starts a fresh chain.
+Every capture compares the log's salts against the ones the chain last recorded. Where they differ and the implementation ran no checkpoint, the capture fails with `BACKUP_LOG_REWOUND` and the implementation starts a fresh chain.
 
-A database captures its log once more as it closes, after its writes drain and before its connections close.
+A database captures its log a final time during close, after its writes drain and before its pool closes.
 
 ### Chain records
 

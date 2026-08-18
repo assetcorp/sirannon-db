@@ -21,9 +21,9 @@ export const DEFAULT_BACKUP_NAME_PREFIX = 'sirannon-backup'
  * How Sirannon runs the cycle that captures a database's change log and then
  * checkpoints it.
  *
- * Setting this takes checkpointing away from SQLite. It has to: a checkpoint
- * lets SQLite overwrite log frames nothing has captured yet, and it says
- * nothing when it does.
+ * A database given these options takes checkpointing away from SQLite. It has
+ * to: a checkpoint lets SQLite overwrite log frames nothing has captured yet,
+ * and it reports success either way.
  *
  * @public
  */

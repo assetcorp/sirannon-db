@@ -126,9 +126,9 @@ function destinationError(message: string, err?: unknown): SirannonError {
 }
 
 /**
- * Works out the name one chain's own records are stored under. Each chain gets
- * a name of its own, so deleting an old chain leaves the rest of the
- * destination alone.
+ * Names the file one chain stores its own records under. Each chain gets a name
+ * of its own, so deleting an old chain leaves the rest of the destination
+ * alone.
  *
  * @param chainName - Name the list of chains is stored under.
  * @param chainId - Identifier of the chain.

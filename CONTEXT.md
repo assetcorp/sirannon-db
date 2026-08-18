@@ -12,14 +12,15 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 ## Backup
 
 - A **backup chain** is one full copy of a database plus an ordered series of change pieces. The newest piece alone restores nothing, and the chain restores everything up to its end.
-- A **full copy** is a complete, openable SQLite file produced by the stepped backup interface on a dedicated read connection, so writes continue while it runs.
+- A **full copy** is a complete, openable SQLite file produced by the stepped backup interface on the connection that writes, so writes continue in the gaps between its steps.
 - A **change piece** captures the write-ahead log frames written since the previous backup, so its size scales with what changed rather than with the size of the database.
 - The **chain position** is the always-increasing marker recording where in the database's change sequence a piece starts and ends. Every completion report carries it, and the next change piece starts from it.
-- A **destination** is the caller-supplied pair of directions Sirannon moves backup bytes through: write a piece, read a piece, and list pieces. Pieces are fixed in size and arrive in any order, because SQLite writes page one last. Sirannon carries no storage client of its own.
+- A **destination** is the caller-supplied set of directions Sirannon moves backup bytes through: write a piece, read a piece, and list pieces. Pieces are fixed in size and arrive in any order, because SQLite writes page one last. Sirannon carries no storage client of its own.
 - The **checkpoint cycle** is Sirannon capturing the log frames and then folding the log back into the main file, in that order. SQLite's automatic checkpointing is off wherever backups are on, because a checkpoint Sirannon did not choose overwrites frames it has yet to capture.
 - The **streaming extension** is the compiled SQLite VFS Sirannon owns, published as one optional npm package per platform, which delivers a full copy to a destination without writing a local file. Where no binary exists for a platform, the **staged fallback** writes a temporary local file first and declares that it did.
 - A **capability report** is how a runtime states which backup operations it supports, so a caller learns before running that a browser hands over whole databases only.
-- A **restart** is the stepped copy returning to page one because another connection wrote to the source or forced a checkpoint. Sirannon counts restarts and stops with an error after a bound, and it never retries silently.
+- A **restart** is the stepped copy returning to page one because another connection wrote to the source or forced a `RESTART` or `TRUNCATE` checkpoint on it. Sirannon counts restarts and stops with an error after a bound, and it never retries silently.
+- A **stall** is the copy moving no pages inside its deadline, which happens when the runtime's event loop never reaches the copy's continuation. Sirannon fails the run rather than waiting.
 - The **preferred backup node** is the one node in a replication group whose scheduled backup proceeds, chosen by the coordinator, replica-preferred by default. Chains belong to the node that started them, so a failover starts a fresh chain.
 - A **restore** names a moment and produces a database. Sirannon selects the pieces, fetches them through the destination one at a time, and composes the file as they arrive, with a disk floor of the finished database plus one piece plus a capped change log.
 - **Safe-to-delete** is the question Sirannon answers from its chain records: which pieces no possible restore still needs.

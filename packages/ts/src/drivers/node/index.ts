@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { defineDriver } from '../../core/driver/define.js'
 import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
@@ -7,6 +8,7 @@ import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../c
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
+import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
  * @public
@@ -20,6 +22,14 @@ export interface NodeSqliteOptions {
   busyTimeout?: number
 }
 
+function carriesSteppedBackupCall(): boolean {
+  try {
+    return typeof createRequire(import.meta.url)('node:sqlite').backup === 'function'
+  } catch {
+    return false
+  }
+}
+
 /**
  * @public
  *
@@ -31,7 +41,7 @@ export interface NodeSqliteOptions {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: carriesSteppedBackupCall() },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
@@ -141,6 +151,10 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
               db.enableLoadExtension(false)
             }
           })
+        },
+
+        copyDatabase(request) {
+          return copyDatabaseWithNodeSqlite(db, request)
         },
 
         async close(): Promise<void> {

@@ -75,6 +75,9 @@ export async function createDatabaseRuntime(
   const backups = new DatabaseBackupController(
     op => writerLock.run(op),
     () => pool.acquireWriter(),
+    driver.capabilities,
+    id,
+    path,
     driver.createBackupEngine?.(),
   )
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'

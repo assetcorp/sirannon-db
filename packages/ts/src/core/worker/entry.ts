@@ -5,6 +5,7 @@ import { executeGroup } from '../query-executor.js'
 import {
   serializeError,
   WORKER_CANCELLED_CODE,
+  WORKER_COPY_ABORTED_CODE,
   type WorkerCancel,
   type WorkerRequest,
   type WorkerResult,
@@ -64,6 +65,8 @@ async function open(
   connection = await driver.open(path, options as Parameters<SQLiteDriver['open']>[1])
 }
 
+const runningCopies = new Map<number, { aborted: boolean }>()
+
 async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
   switch (req.kind) {
     case 'open':
@@ -113,6 +116,31 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       await conn.loadExtension(req.path)
       return undefined
     }
+    case 'copyDatabase': {
+      const conn = requireConnection()
+      if (!conn.copyDatabase) {
+        throw new SirannonError(
+          'The driver rebuilt inside the writer worker opens connections without a stepped copy call',
+          'BACKUP_UNSUPPORTED',
+        )
+      }
+      const copy = { aborted: false }
+      runningCopies.set(req.id, copy)
+      try {
+        return await conn.copyDatabase({
+          destPath: req.destPath,
+          pagesPerStep: req.pagesPerStep,
+          onStep: step => {
+            if (copy.aborted) {
+              throw new SirannonError('The caller stopped this copy', WORKER_COPY_ABORTED_CODE)
+            }
+            port.postMessage({ id: req.id, kind: 'copyStep', step })
+          },
+        })
+      } finally {
+        runningCopies.delete(req.id)
+      }
+    }
     case 'close':
       if (connection) await connection.close()
       connection = null
@@ -124,8 +152,8 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
 const cancelledIds = new Set<number>()
 let latestDispatchedId = 0
 
-async function handle(req: WorkerRequest): Promise<void> {
-  latestDispatchedId = req.id
+async function handle(req: WorkerRequest, queued = true): Promise<void> {
+  if (queued) latestDispatchedId = req.id
   if (cancelledIds.delete(req.id)) {
     port.postMessage({
       id: req.id,
@@ -153,7 +181,16 @@ function settleDeliveredMessages(): Promise<void> {
 let tail: Promise<void> = Promise.resolve()
 port.on('message', (msg: WorkerRequest | WorkerCancel) => {
   if (msg.kind === 'cancel') {
+    const copy = runningCopies.get(msg.id)
+    if (copy) {
+      copy.aborted = true
+      return
+    }
     if (msg.id > latestDispatchedId) cancelledIds.add(msg.id)
+    return
+  }
+  if (msg.kind === 'copyDatabase') {
+    void handle(msg, false)
     return
   }
   tail = tail.then(settleDeliveredMessages).then(() => handle(msg))

@@ -84,6 +84,8 @@ Database {
   appliedMigrations(): async -> List<AppliedMigration>
 
   backup(destPath): async -> void
+  backupTo(options): async -> BackupRunReport
+  backupCapabilities(): BackupCapabilities
   scheduleBackup(options): void
   loadExtension(extensionPath): async -> void
 
@@ -143,7 +145,7 @@ Creation rules:
 
 `acquireReader` returns the next reader by round-robin, or the writer when no readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only. `connections` returns the writer and every reader, for work that must apply to the whole pool, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
 
-Write work on the writer connection is serialised by a writer lock so grouped writes, transactions, migrations, backups, and extension loads never overlap.
+Write work on the writer connection is serialised by a writer lock so grouped writes, transactions, migrations, and extension loads never overlap. A backup takes that lock to start its copy and releases it once the copy's first step completes, so writes made after that step run in the gaps between the steps that follow.
 
 ---
 
@@ -446,7 +448,114 @@ BulkLoadResult { rowsLoaded: number, changes: number }
 
 ## Backups
 
-`backup(destPath)` creates a point-in-time snapshot with `VACUUM INTO`. Paths containing null bytes, control characters, or `..` segments, and destinations that already exist, are rejected; the parent directory is created recursively; a failure makes a best-effort cleanup of the partial file and then fails with `BACKUP_ERROR`. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
+A backup copies a database while writes continue. The copy runs through SQLite's stepped backup interface on the connection that writes, because SQLite returns a copy to page one whenever any other connection writes to the source or runs a `RESTART` or `TRUNCATE` checkpoint on it. No backup operation may hold the writer lock for longer than its first step.
+
+### Full copy to a path
+
+`backup(destPath)` copies the database to a local file. Paths containing null bytes, control characters, or `..` segments, and destinations that already exist, are rejected; the parent directory is created recursively; a failure makes a best-effort cleanup of the partial file and then fails with `BACKUP_ERROR`. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
+
+### Restarts and stalls
+
+An implementation compares the pages copied, which is `totalPages - remainingPages`, against the previous step's. A fall in that count is a restart, because SQLite has returned the copy to page one; a rise in both counters is the source growing under the copy and is not a restart. An implementation counts restarts, stops after `restartLimit` of them, and fails with `BACKUP_RESTARTED`, naming what restarts a copy and what the operator does about it. A restart is never retried silently and never retried forever.
+
+A copy restarted on every step reports the same pages copied at every step, so the count of restarts alone leaves it running for ever. An implementation therefore tracks the furthest the copy has reached and fails with `BACKUP_RESTARTED` after `noProgressStepLimit` steps that reach no further, which also catches a source growing faster than the copy moves it.
+
+An implementation restarts a stall deadline on every step and fails with `BACKUP_STALLED` when no step arrives inside `stallTimeoutMs`, because a runtime whose event loop never reaches the copy's continuation holds the copy still without ending it.
+
+### Destination
+
+`backupTo(options)` copies the database to a destination the caller supplies. Sirannon carries no storage client, so the caller supplies three operations and connects object storage or anything else that moves bytes.
+
+```text
+BackupDestination {
+  writePiece(name: string, index: number, bytes: Bytes): async -> void
+  readPiece(name: string, index: number): async -> Bytes
+  listPieces(name: string): async -> List<BackupPiece>
+}
+
+BackupPiece {
+  index:      number
+  byteLength: number
+}
+```
+
+Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must hold more than one name, because SQLite opens a journal file beside the database file it writes. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to.
+
+Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros rather than moving every later byte. Reassembly checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
+
+```text
+BackupToDestinationOptions {
+  destination:          BackupDestination
+  name?:                string  (default: backup-{ISO timestamp}.db)
+  pieceBytes?:          number  (default: 16 MiB, recommended)
+  pagesPerStep?:        number  (default: 256, recommended)
+  restartLimit?:        number  (default: 3, recommended)
+  stallTimeoutMs?:      number  (default: 30000, recommended)
+  noProgressStepLimit?: number  (default: 256, recommended)
+  stagingDir?:          string  (default: the host temporary directory)
+  fingerprint?:         boolean (default: true)
+  onProgress?:          (progress: BackupProgress) -> void
+}
+```
+
+An implementation that cannot deliver the copy to the destination as SQLite writes it takes the staged route, which writes one local file and sends that file on in pieces. The staged route needs local disk equal to the backup, and the capability report states that requirement. The staged route sends one name to the destination, because SQLite's journal stays beside the local file and goes when that file goes, so a report from this route names one file. A route that sends the journal to the destination as well must record every name it wrote, since the destination lists the pieces of a name it is given and never the names it holds.
+
+### Reports
+
+`onProgress` is called at step resolution while the copy runs and once per piece while the pieces travel.
+
+```text
+BackupProgress {
+  runId:          string
+  phase:          'copy' | 'transfer'
+  totalPages:     number
+  remainingPages: number
+  restarts:       number
+  piecesWritten:  number
+  bytesWritten:   number
+}
+
+BackupRunReport {
+  runId:           string
+  databaseId:      string
+  sourcePath:      string
+  kind:            'full'
+  route:           'staged' | 'streamed'
+  destinationName: string
+  startedAt:       number
+  finishedAt:      number
+  durationMs:      number
+  copyMs:          number
+  transferMs:      number
+  pageCount:       number
+  pageSize:        number
+  bytesWritten:    number
+  pieceCount:      number
+  pieceBytes:      number
+  restarts:        number
+  fingerprint?:    string
+}
+```
+
+The fingerprint is the SHA-256 of what the run wrote, and a caller turns it off where the read it costs is not worth its price.
+
+### Capability report
+
+`backupCapabilities()` states which backup operations the runtime supports, so a caller learns before a run rather than when one fails.
+
+```text
+BackupCapabilities {
+  fullCopy:          boolean
+  streamedCopy:      boolean
+  stagedCopy:        boolean
+  localDiskRequired: 'none' | 'equal-to-backup'
+  schedule:          boolean
+}
+```
+
+A runtime that hands over whole databases only reports `fullCopy: false`, a runtime taking the staged route reports `localDiskRequired: 'equal-to-backup'`, and `schedule` follows `fullCopy`, because a scheduled run makes a full copy.
+
+### Schedule
 
 ```text
 BackupScheduleOptions {

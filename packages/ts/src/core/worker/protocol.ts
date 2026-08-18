@@ -1,4 +1,11 @@
-import type { BatchSummary, DriverWorkerEntry, GroupRunOutcome, OpenOptions, RunResult } from '../driver/types.js'
+import type {
+  BatchSummary,
+  DatabaseCopyStep,
+  DriverWorkerEntry,
+  GroupRunOutcome,
+  OpenOptions,
+  RunResult,
+} from '../driver/types.js'
 
 export type WorkerRequest =
   | { id: number; kind: 'open'; entry: DriverWorkerEntry; path: string; options: OpenOptions }
@@ -11,6 +18,7 @@ export type WorkerRequest =
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[]; trusted?: boolean }[] }[] }
   | { id: number; kind: 'loadExtension'; path: string }
+  | { id: number; kind: 'copyDatabase'; destPath: string; pagesPerStep: number }
   | { id: number; kind: 'close' }
 
 export type WorkerCancel = { kind: 'cancel'; id: number }
@@ -29,9 +37,14 @@ export interface SerializedError {
   code?: string
 }
 
+export type WorkerCopyStep = { id: number; kind: 'copyStep'; step: DatabaseCopyStep }
+
 export type WorkerResponse =
   | { id: number; ok: true; value: WorkerResult }
   | { id: number; ok: false; error: SerializedError }
+  | WorkerCopyStep
+
+export const WORKER_COPY_ABORTED_CODE = 'BACKUP_ABORTED'
 
 export function serializeError(err: unknown): SerializedError {
   if (err instanceof Error) {

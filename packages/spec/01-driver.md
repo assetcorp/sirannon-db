@@ -35,6 +35,7 @@ SQLiteDriver {
 DriverCapabilities {
   multipleConnections: boolean
   extensions: boolean
+  steppedCopy: boolean
 }
 ```
 
@@ -42,6 +43,7 @@ DriverCapabilities {
 |-------|-------------|
 | `multipleConnections` | The engine can open several independent connections to one database file. When `true`, Sirannon creates a pool with dedicated reader connections; when `false`, all reads and writes share one connection. |
 | `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
+| `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
 
 ### OpenOptions
 
@@ -84,6 +86,7 @@ SQLiteConnection {
   transaction<T>(fn: (conn: SQLiteConnection) -> async T): async -> T
   close(): async -> void
   loadExtension?(extensionPath: string): async -> void
+  copyDatabase?(request: DatabaseCopyRequest): async -> DatabaseCopyStep
 
   runBatch?(sql: string, paramsBatch: List<List<any>>): async -> List<RunResult>
   runBatchSummary?(sql: string, paramsBatch: List<List<any>>): async -> BatchSummary
@@ -96,6 +99,20 @@ SQLiteConnection {
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
 - **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
+- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`.
+
+```text
+DatabaseCopyRequest {
+  destPath:     string
+  pagesPerStep: number
+  onStep?:      (step: DatabaseCopyStep) -> void
+}
+
+DatabaseCopyStep {
+  totalPages:     number
+  remainingPages: number
+}
+```
 
 The optional methods let a driver accelerate bulk work:
 

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { resolve } from 'node:path'
 import { BackupManager } from '../core/backup/backup.js'
+import { createBackupCycle } from '../core/backup/cycle.js'
 import { BackupScheduler } from '../core/backup/scheduler.js'
 import type { BackupEngine, WriterContext } from '../core/driver/types.js'
 
@@ -23,6 +24,7 @@ export function nodeBackupEngine(): BackupEngine {
   return {
     backup: (conn, destPath, onFirstStep) => manager.backup(conn, destPath, onFirstStep),
     copyToDestination: (conn, request) => manager.copyToDestination(conn, request),
+    createCycle: request => createBackupCycle(request),
     schedule: (conn, options, runExclusive) => scheduler.schedule(conn, options, runExclusive),
   }
 }

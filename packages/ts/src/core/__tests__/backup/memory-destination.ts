@@ -4,11 +4,13 @@ export interface MemoryDestination extends BackupDestination {
   names(): string[]
   bytesFor(name: string): Uint8Array
   refusePiece(index: number): void
+  refuseName(name: string | null): void
 }
 
 export function memoryDestination(): MemoryDestination {
   const files = new Map<string, Map<number, Uint8Array>>()
   let refusedIndex: number | null = null
+  let refusedName: string | null = null
 
   const pieces = (name: string): Map<number, Uint8Array> => {
     const existing = files.get(name)
@@ -21,6 +23,7 @@ export function memoryDestination(): MemoryDestination {
   return {
     async writePiece(name, index, bytes) {
       if (index === refusedIndex) throw new Error(`refusing piece ${index}`)
+      if (name === refusedName) throw new Error(`refusing every piece of '${name}'`)
       pieces(name).set(index, bytes.slice())
     },
     async readPiece(name, index) {
@@ -51,6 +54,9 @@ export function memoryDestination(): MemoryDestination {
     },
     refusePiece(index) {
       refusedIndex = index
+    },
+    refuseName(name) {
+      refusedName = name
     },
   }
 }

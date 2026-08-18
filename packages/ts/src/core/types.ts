@@ -1,3 +1,4 @@
+import type { BackupCycleOptions } from './backup/cycle-options.js'
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import type { HookConfig } from './hook-types.js'
 import type { MetricsConfig } from './metrics-types.js'
@@ -115,6 +116,16 @@ export interface DatabaseOptions {
    * one), otherwise opening throws. Default: off.
    */
   writerWorker?: boolean | WriterWorkerOptions
+  /**
+   * Capture this database's write-ahead log to a destination you supply, on an
+   * interval. A backup then costs what changed since the last one, not what the
+   * database holds, so a terabyte that changed by 200 MB pays for 200 MB.
+   *
+   * Setting this takes checkpointing away from SQLite and gives it to Sirannon.
+   * It has to: a checkpoint lets SQLite overwrite log frames nothing has
+   * captured yet. Default: off.
+   */
+  backups?: BackupCycleOptions
 }
 
 /** Limits and recovery settings for the thread that runs writes.

@@ -54,6 +54,9 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
       }
       await sqlite3.exec(db, `PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       await sqlite3.exec(db, 'PRAGMA foreign_keys = ON')
+      if (options?.walAutoCheckpoint !== undefined) {
+        await sqlite3.exec(db, `PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      }
 
       async function execStatements(
         sql: string,

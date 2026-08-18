@@ -26,6 +26,7 @@ export interface BulkLoadRun {
   walMode: boolean
   durability: BulkLoadDurability | undefined
   checkpoint?: boolean
+  capturesChangeLog?: boolean
   loadRows: () => Promise<BulkLoadResult>
 }
 
@@ -67,6 +68,11 @@ export interface BulkLoadRun {
  * SQLite's automatic checkpoint keeps the WAL bounded during the import at the
  * relaxed level with no fsync of its own.
  *
+ * A database that captures its own change log runs no checkpoint here at all,
+ * whatever the caller asked for. A checkpoint ahead of the capture would let
+ * SQLite overwrite the very frames this load wrote. Its cycle checkpoints
+ * instead, once it has those frames.
+ *
  * @internal
  */
 export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
@@ -103,7 +109,7 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
     throw new SirannonError('Bulk load completed without a result', 'INTERNAL_ERROR')
   }
 
-  if ((run.checkpoint ?? true) && run.walMode && result.changes > 0) {
+  if ((run.checkpoint ?? true) && run.walMode && !run.capturesChangeLog && result.changes > 0) {
     await checkpoint(run.writer)
   }
   return result

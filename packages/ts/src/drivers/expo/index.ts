@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { ExtensionError } from '../../core/errors.js'
 
 /**
  * @public
@@ -60,6 +61,13 @@ export function expoSqlite(): SQLiteDriver {
             result = await fn(txConn)
           })
           return result as T
+        },
+
+        async loadExtension(extensionPath: string): Promise<void> {
+          throw new ExtensionError(
+            extensionPath,
+            'expo-sqlite carries no extension loading call, so a device running Expo loads no compiled extension',
+          )
         },
 
         async close(): Promise<void> {

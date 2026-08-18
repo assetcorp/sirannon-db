@@ -10,6 +10,7 @@ export type WorkerRequest =
   | { id: number; kind: 'runBatch'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[]; trusted?: boolean }[] }[] }
+  | { id: number; kind: 'loadExtension'; path: string }
   | { id: number; kind: 'close' }
 
 export type WorkerCancel = { kind: 'cancel'; id: number }

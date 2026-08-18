@@ -86,12 +86,14 @@ describe('Database', () => {
     it('converts non-Error extension load failures', async () => {
       const db = await createTestDb()
       ;(
-        db as unknown as { runtime: { pool: { acquireWriter: () => { exec: (sql: string) => Promise<void> } } } }
-      ).runtime.pool.acquireWriter = () => ({
-        exec: async () => {
-          throw 'load failed'
+        db as unknown as { runtime: { pool: { connections: () => { loadExtension: () => Promise<void> }[] } } }
+      ).runtime.pool.connections = () => [
+        {
+          loadExtension: async () => {
+            throw 'load failed'
+          },
         },
-      })
+      ]
 
       try {
         await db.loadExtension('ext.so')

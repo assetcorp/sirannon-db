@@ -38,6 +38,7 @@ export class WriterWorker {
   private closed = false
   private fatal: Error | null = null
   private restarts = 0
+  private readonly loadedExtensions: string[] = []
   readonly connection: SQLiteConnection
 
   private constructor(
@@ -85,8 +86,14 @@ export class WriterWorker {
         this.fault(new SirannonError(`Writer worker exited with code ${code}`, 'WRITER_WORKER_EXIT'))
       }
     })
-    this.ready = this.send(this.openRequest).then(() => undefined)
+    this.ready = this.send(this.openRequest).then(() => this.reloadExtensionsOntoRestartedConnection())
     this.ready.catch(() => {})
+  }
+
+  private async reloadExtensionsOntoRestartedConnection(): Promise<void> {
+    for (const path of this.loadedExtensions) {
+      await this.send({ kind: 'loadExtension', path })
+    }
   }
 
   private onResponse(res: WorkerResponse): void {
@@ -196,7 +203,7 @@ export class WriterWorker {
         timer = setTimeout(() => this.onDeadline(id), this.timeoutMs)
         timer.unref?.()
       }
-      const cancellable = request.kind !== 'open' && request.kind !== 'close'
+      const cancellable = request.kind !== 'open' && request.kind !== 'close' && request.kind !== 'loadExtension'
       this.pending.set(id, { resolve, reject, timer, graceTimer: null, cancellable })
       try {
         worker.postMessage(message)
@@ -255,6 +262,10 @@ export class WriterWorker {
             })),
           })),
         }) as Promise<GroupRunOutcome[]>,
+      loadExtension: async (extensionPath: string) => {
+        await this.request({ kind: 'loadExtension', path: extensionPath })
+        if (!this.loadedExtensions.includes(extensionPath)) this.loadedExtensions.push(extensionPath)
+      },
       transaction: async fn => {
         await conn.exec('BEGIN')
         try {

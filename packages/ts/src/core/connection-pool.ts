@@ -103,6 +103,14 @@ export class ConnectionPool {
     return this.writer
   }
 
+  /** Returns the writer and every reader, for an operation that must apply to the whole pool. */
+  connections(): readonly SQLiteConnection[] {
+    if (this.closed) {
+      throw new ConnectionPoolError('Connection pool is closed')
+    }
+    return this.writer ? [this.writer, ...this.readers] : [...this.readers]
+  }
+
   get readerCount(): number {
     return this.readers.length
   }

@@ -31,7 +31,7 @@ export interface CaptureRequest {
 }
 
 /**
- * Works out where a capture stages its frames. The cycle rebuilds this path
+ * Names the file a capture stages its frames in. The cycle rebuilds this path
  * from the chain position each time, so no path it reads back off disk ever
  * reaches an unlink.
  *

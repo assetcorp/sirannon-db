@@ -177,7 +177,7 @@ export function readValidLogFrame(
 }
 
 /**
- * Works out where one frame starts in the log file.
+ * Gives the byte offset one frame starts at in the log file.
  *
  * @param frameNumber - The frame, counted from one.
  * @param frameBytes - Size of one frame in bytes.

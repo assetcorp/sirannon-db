@@ -1,8 +1,10 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
 
@@ -40,7 +42,8 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
     resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
       const { DatabaseSync } = await import('node:sqlite')
-      const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false })
+      const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false, allowExtension: true })
+      db.enableLoadExtension?.(false)
       if (options?.walMode !== false) db.exec('PRAGMA journal_mode = WAL')
       db.exec(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.exec('PRAGMA foreign_keys = ON')
@@ -121,6 +124,23 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
             } catch {}
             throw err
           }
+        },
+
+        async loadExtension(extensionPath: string): Promise<void> {
+          if (typeof db.loadExtension !== 'function' || typeof db.enableLoadExtension !== 'function') {
+            throw new ExtensionError(
+              extensionPath,
+              `Node's own SQLite module on ${process.version} carries no extension loading call`,
+            )
+          }
+          await loadThroughRuntime(extensionPath, () => {
+            db.enableLoadExtension(true)
+            try {
+              db.loadExtension(extensionPath)
+            } finally {
+              db.enableLoadExtension(false)
+            }
+          })
         },
 
         async close(): Promise<void> {

@@ -104,6 +104,15 @@ export interface SQLiteConnection {
   transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T>
   /** Closes the connection. */
   close(): Promise<void>
+  /**
+   * Loads a compiled SQLite extension into this connection through the
+   * runtime's own loading call, so a query on this connection can call the
+   * extension's functions. SQLite scopes a loaded extension to the connection
+   * that loaded it, so a caller that needs it everywhere loads it on every
+   * connection. Where the runtime carries no loading call, this rejects with an
+   * error that names that runtime.
+   */
+  loadExtension?(extensionPath: string): Promise<void>
   /** Optional fast path that applies one statement over many parameter sets. */
   runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
   /** Optional fast path that applies one statement over many parameter sets and returns only the totals. */

@@ -27,7 +27,7 @@ SQLiteDriver {
 | `startWriterHost` | Opens the writer connection on a worker thread so slow disk work does not block the caller. Present only when the runtime has threads. See [Writer Worker](02-core.md#writer-worker). |
 | `createWriterContext` | Produces a [WriterContext](#writercontext) that distinguishes the caller holding the writer from one waiting on it. |
 | `createBackupEngine` | Produces a backup engine. See [Backups](02-core.md#backups). |
-| `resolveExtensionPath` | Resolves an extension path to an absolute path, so `load_extension` cannot search the dynamic linker's own paths. |
+| `resolveExtensionPath` | Resolves an extension path to an absolute path, so the dynamic linker cannot search its own paths; required when `capabilities.extensions` is `true`. |
 
 ### DriverCapabilities
 
@@ -41,7 +41,7 @@ DriverCapabilities {
 | Field | Description |
 |-------|-------------|
 | `multipleConnections` | The engine can open several independent connections to one database file. When `true`, Sirannon creates a pool with dedicated reader connections; when `false`, all reads and writes share one connection. |
-| `extensions` | The engine can load native SQLite extensions through `load_extension`. |
+| `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
 
 ### OpenOptions
 
@@ -83,6 +83,7 @@ SQLiteConnection {
   prepare(sql: string): async -> SQLiteStatement
   transaction<T>(fn: (conn: SQLiteConnection) -> async T): async -> T
   close(): async -> void
+  loadExtension?(extensionPath: string): async -> void
 
   runBatch?(sql: string, paramsBatch: List<List<any>>): async -> List<RunResult>
   runBatchSummary?(sql: string, paramsBatch: List<List<any>>): async -> BatchSummary
@@ -94,6 +95,7 @@ SQLiteConnection {
 - **prepare** compiles a statement that can run many times. Callers should cache prepared statements to avoid reparsing.
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
+- **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
 
 The optional methods let a driver accelerate bulk work:
 

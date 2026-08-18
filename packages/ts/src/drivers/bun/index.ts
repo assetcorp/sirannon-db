@@ -1,5 +1,7 @@
 /// <reference path="./bun-sqlite.d.ts" />
+import { resolve } from 'node:path'
 import { defineDriver } from '../../core/driver/define.js'
+import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
@@ -30,6 +32,7 @@ export interface BunSqliteOptions {
 export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true },
+    resolveExtensionPath: extensionPath => resolve(extensionPath),
     async open(path, options) {
       const { Database } = await import('bun:sqlite')
       const db = new Database(path, { readonly: options?.readonly ?? false, safeIntegers: true })
@@ -79,6 +82,10 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
             } catch {}
             throw err
           }
+        },
+
+        async loadExtension(extensionPath: string): Promise<void> {
+          await loadThroughRuntime(extensionPath, () => db.loadExtension(extensionPath))
         },
 
         async close(): Promise<void> {

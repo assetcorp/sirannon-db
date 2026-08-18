@@ -10,9 +10,9 @@ import { DatabaseWriteController } from './database-writes.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteDriver } from './driver/types.js'
 import { SirannonError } from './errors.js'
-import { loadExtension } from './extension-loader.js'
 import { GroupCommitter } from './group-committer.js'
 import { HookRegistry } from './hooks/registry.js'
+import { LoadedExtensions } from './loaded-extensions.js'
 import type { MetricsCollector } from './metrics/collector.js'
 import { snapshotLoadPending } from './sync/snapshot-apply.js'
 import type { DatabaseOptions } from './types.js'
@@ -78,12 +78,14 @@ export async function createDatabaseRuntime(
     driver.createBackupEngine?.(),
   )
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
+  const extensions = new LoadedExtensions(driver)
+  const openSnapshotConnection = () => extensions.open(() => driver.open(path, { readonly: true, walMode: false }))
   const cdc = new DatabaseCdcController(
     op => writerLock.run(op),
     () => pool.acquireWriter(),
     options?.cdcPollInterval ?? 50,
     options?.cdcRetention ?? 3_600_000,
-    canOpenSnapshotConnection ? () => driver.open(path, { readonly: true, walMode: false }) : null,
+    canOpenSnapshotConnection ? openSnapshotConnection : null,
   )
   const sync = new DatabaseSyncController(
     op => writeGate.run(() => writerLock.run(op)),
@@ -129,7 +131,7 @@ export async function createDatabaseRuntime(
     writes,
     reads: { pool, writerLock, observer },
     migrations,
-    loadExtension: extensionPath => writerLock.run(() => loadExtension(driver, pool.acquireWriter(), extensionPath)),
+    loadExtension: extensionPath => writerLock.run(() => extensions.load(pool.connections(), extensionPath)),
   }
 }
 

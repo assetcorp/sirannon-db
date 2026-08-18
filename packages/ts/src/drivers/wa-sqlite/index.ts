@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { ExtensionError } from '../../core/errors.js'
 
 /**
  * @public
@@ -145,6 +146,13 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
             } catch {}
             throw err
           }
+        },
+
+        async loadExtension(extensionPath: string): Promise<void> {
+          throw new ExtensionError(
+            extensionPath,
+            'wa-sqlite runs SQLite compiled to WebAssembly, which carries no dynamic loading call, so a browser loads no compiled extension',
+          )
         },
 
         async close(): Promise<void> {

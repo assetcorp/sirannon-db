@@ -1,4 +1,11 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  compiledExtensionPath,
+  EXTENSION_PROBE_FUNCTION,
+  EXTENSION_PROBE_VALUE,
+} from '../../__tests__/helpers/compiled-extension.js'
 import type { SQLiteDriver } from '../../core/driver/types.js'
 
 export function runConformanceTests(driverFactory: () => SQLiteDriver, label: string) {
@@ -143,6 +150,38 @@ export function runConformanceTests(driverFactory: () => SQLiteDriver, label: st
       expect(driver.capabilities).toBeDefined()
       expect(typeof driver.capabilities.multipleConnections).toBe('boolean')
       expect(typeof driver.capabilities.extensions).toBe('boolean')
+    })
+
+    it('carries loadExtension on every connection when it declares extension support', async () => {
+      const driver = driverFactory()
+      const conn = await driver.open(':memory:')
+      if (driver.capabilities.extensions) {
+        expect(typeof conn.loadExtension).toBe('function')
+      }
+      await conn.close()
+    })
+
+    it.skipIf(!compiledExtensionPath())('loads a compiled extension whose function then answers a query', async () => {
+      const driver = driverFactory()
+      if (!driver.capabilities.extensions) return
+      const extensionPath = compiledExtensionPath() ?? ''
+
+      const conn = await driver.open(':memory:')
+      await conn.loadExtension?.(extensionPath)
+      const stmt = await conn.prepare(`SELECT ${EXTENSION_PROBE_FUNCTION}() AS value`)
+      const row = await stmt.get<{ value: string }>()
+      expect(row?.value).toBe(EXTENSION_PROBE_VALUE)
+      await conn.close()
+    })
+
+    it('rejects a missing extension file with an error naming what the loader could not open', async () => {
+      const driver = driverFactory()
+      if (!driver.capabilities.extensions) return
+      const conn = await driver.open(':memory:')
+      await expect(conn.loadExtension?.(join(tmpdir(), 'sirannon-absent-extension.so'))).rejects.toThrow(
+        /dlopen|cannot open|No such file|not a valid|image not found/i,
+      )
+      await conn.close()
     })
 
     it('reads integers beyond 2^53 - 1 back as exact BigInt values', async () => {

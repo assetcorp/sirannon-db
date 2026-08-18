@@ -23,6 +23,7 @@ declare module 'bun:sqlite' {
     constructor(filename: string, options?: BunSqliteOpenOptions)
     query<Row = unknown>(sql: string): Statement<Row>
     run(sql: string, ...params: unknown[]): BunSqliteChanges
+    loadExtension(path: string, entryPoint?: string): void
     close(throwOnError?: boolean): void
   }
 }

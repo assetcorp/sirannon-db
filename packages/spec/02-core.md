@@ -87,6 +87,10 @@ Database {
   backupTo(options): async -> BackupRunReport
   backupCapabilities(): BackupCapabilities
   scheduleBackup(options): void
+  captureBackupChanges(): async -> BackupRunReport or null
+  backupChain(): async -> List<BackupChain>
+  backupRestorePlan(moment): async -> BackupRestorePlan
+  backupPiecesSafeToDelete(options?): async -> List<BackupChainRecord>
   loadExtension(extensionPath): async -> void
 
   onBeforeQuery(hook): DisposeFn
@@ -103,6 +107,7 @@ DatabaseOptions {
   cdcPollInterval?: number           (default: 50 ms, recommended)
   cdcRetention?:    number           (default: 3_600_000 ms, recommended)
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
+  backups?:         BackupCycleOptions (default: off)
 }
 
 ExecuteResult { changes: number, lastInsertRowId: number or bigint }
@@ -118,7 +123,7 @@ Params        = Map<string, any> or List<any>
 - **watch** installs CDC triggers on the table and starts the poll loop. **unwatch** removes them and stops polling once no table is watched. **on** returns a subscription builder; a subscription receives events only for tables that are watched.
 - **live** returns a query result that change events keep current; see [Live Queries](#live-queries).
 - **query options** carry `writeConcern` and `readConcern`. The core layer passes them to hooks and, for a replication execution target, to the replication engine, which enforces their meaning (see [03-replication.md](03-replication.md)). Plain core execution does not otherwise act on them.
-- **close** stops CDC polling, cancels scheduled backups, drains pending grouped writes, closes the pool, and runs close listeners. Afterwards every method fails with `DATABASE_CLOSED`. While a device-sync snapshot load is in progress, reads and writes fail with `SNAPSHOT_IN_PROGRESS` (see [08-device-sync.md](08-device-sync.md)).
+- **close** stops CDC polling, cancels scheduled backups, drains pending grouped writes, captures the change log a final time, closes the pool, and runs close listeners. Afterwards every method fails with `DATABASE_CLOSED`. While a device-sync snapshot load is in progress, reads and writes fail with `SNAPSHOT_IN_PROGRESS` (see [08-device-sync.md](08-device-sync.md)).
 
 ---
 
@@ -442,7 +447,7 @@ BulkLoadOptions {
 BulkLoadResult { rowsLoaded: number, changes: number }
 ```
 
-`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards, retrying a few times and deferring rather than failing when a reader holds pages.
+`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards, retrying a few times and deferring rather than failing when a reader holds pages. A database opened with `backups` runs no checkpoint here, whatever the caller set.
 
 ---
 
@@ -487,6 +492,7 @@ Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unw
 BackupToDestinationOptions {
   destination:          BackupDestination
   name?:                string  (default: backup-{ISO timestamp}.db)
+  chainId?:             string  (default: an identifier the run mints)
   pieceBytes?:          number  (default: 16 MiB, recommended)
   pagesPerStep?:        number  (default: 256, recommended)
   restartLimit?:        number  (default: 3, recommended)
@@ -519,7 +525,8 @@ BackupRunReport {
   runId:           string
   databaseId:      string
   sourcePath:      string
-  kind:            'full'
+  kind:            'full' | 'change'
+  chainId:         string
   route:           'staged' | 'streamed'
   destinationName: string
   startedAt:       number
@@ -533,11 +540,129 @@ BackupRunReport {
   pieceCount:      number
   pieceBytes:      number
   restarts:        number
+  position?:       BackupChainPosition
   fingerprint?:    string
 }
 ```
 
 The fingerprint is the SHA-256 of what the run wrote, and a caller turns it off where the read it costs is not worth its price.
+
+`chainId` names the chain the run belongs to; a full copy begins one and every change piece extends it. A change capture reports `kind: 'change'`, sets `position` to the frames it took, and counts them in `pageCount`. A full copy carries no `position`.
+
+### Change capture
+
+A database opened with `backups` captures its write-ahead log on an interval, then checkpoints it. Those backups form a chain: one full copy, then one change piece per capture.
+
+```text
+BackupCycleOptions {
+  destination:          BackupDestination
+  intervalMs?:          number  (default: 60000, recommended)
+  fullCopyIntervalMs?:  number  (default: 86400000, recommended)
+  chainName?:           string  (default: sirannon-backup-chain)
+  namePrefix?:          string  (default: sirannon-backup)
+  pieceBytes?:          number  (default: 16 MiB, recommended)
+  fingerprint?:         boolean (default: true)
+  stagingDir?:          string  (default: a directory beside the database file)
+  pagesPerStep?:        number
+  restartLimit?:        number
+  stallTimeoutMs?:      number
+  noProgressStepLimit?: number
+  onRun?:               (report: BackupRunReport) -> void
+  onError?:             (error) -> void
+}
+```
+
+Such a database opens its writer with `walAutoCheckpoint` at zero. An in-memory database and one outside WAL mode both fail with `BACKUP_UNSUPPORTED`.
+
+Each turn of the cycle runs in this order:
+
+1. Send any capture still waiting.
+2. Under the writer lock, stage the log frames written since the previous capture.
+3. Checkpoint the log under that same lock.
+4. Send the staged capture and append its chain record.
+
+A capture that fails stops the checkpoint behind it. A staged capture reaches the destination before the next capture runs. The first turn after a chain passes `fullCopyIntervalMs` starts a fresh chain.
+
+The first capture of a chain starts at frame one and carries the log header. Pieces covering one run of the log hold contiguous frames, so they concatenate into a log SQLite recovers from.
+
+Every capture compares the log's salts against the ones the chain last recorded. A run that changed without a checkpoint the implementation ran fails with `BACKUP_LOG_REWOUND`, and the implementation then starts a fresh chain.
+
+A database captures its log once more as it closes, after its writes drain and before its connections close.
+
+### Chain records
+
+An implementation stores the chain at the destination, never inside the database, and only ever appends to it.
+
+```text
+BackupChainPosition {
+  logSequence: number
+  salt1:       number
+  salt2:       number
+  firstFrame:  number
+  lastFrame:   number
+}
+
+BackupChainBase {
+  kind:         'full'
+  chainId:      string
+  name:         string
+  runId:        string
+  finishedAt:   number
+  pieceCount:   number
+  pieceBytes:   number
+  bytesWritten: number
+  fingerprint?: string
+}
+
+BackupChainChange {
+  kind:         'change'
+  chainId:      string
+  name:         string
+  runId:        string
+  sequence:     number
+  position:     BackupChainPosition
+  capturedAt:   number
+  frameCount:   number
+  pieceCount:   number
+  pieceBytes:   number
+  bytesWritten: number
+  checkpointed: boolean
+  fingerprint?: string
+}
+
+BackupChainRecord = BackupChainBase or BackupChainChange
+
+BackupChain {
+  chainId:          string
+  startedAt:        number
+  previousChainId?: string
+  base?:            BackupChainBase
+  changes:          List<BackupChainChange>
+}
+```
+
+The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list.
+
+`backupChain` returns the chains newest first, each with its own records oldest first. A chain whose full copy the destination no longer holds carries no `base`.
+
+### Restore selection
+
+```text
+BackupRestorePlan {
+  chainId:    string
+  base:       BackupChainBase
+  changes:    List<BackupChainChange>
+  restoresTo: number
+}
+
+BackupSafeToDeleteOptions {
+  restorableFrom?: number
+}
+```
+
+`backupRestorePlan(moment)` selects the newest full copy finished at or before `moment`, then every change piece of that chain captured at or before it, in `sequence` order. `restoresTo` is the last selected piece's `capturedAt`, or the full copy's `finishedAt` where the plan selects none. A moment no full copy reaches, and a gap in the selected sequence, both fail with `BACKUP_CHAIN_BROKEN` naming the missing piece.
+
+`backupPiecesSafeToDelete(options?)` reports every record of a chain whose full copy is absent, and every change piece after a gap. Given `restorableFrom`, it also reports every record of a chain older than the newest full copy finished at or before that moment. It deletes nothing.
 
 ### Capability report
 

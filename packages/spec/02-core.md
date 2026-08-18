@@ -498,7 +498,7 @@ BackupToDestinationOptions {
 }
 ```
 
-An implementation that cannot deliver the copy to the destination as SQLite writes it takes the staged route, which writes one local file and sends that file on in pieces. The staged route needs local disk equal to the backup, and the capability report states that requirement.
+An implementation that cannot deliver the copy to the destination as SQLite writes it takes the staged route, which writes one local file and sends that file on in pieces. The staged route needs local disk equal to the backup, and the capability report states that requirement. The staged route sends one name to the destination, because SQLite's journal stays beside the local file and goes when that file goes, so a report from this route names one file. A route that sends the journal to the destination as well must record every name it wrote, since the destination lists the pieces of a name it is given and never the names it holds.
 
 ### Reports
 

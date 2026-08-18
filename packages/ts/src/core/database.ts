@@ -1,15 +1,10 @@
 import type { BackupCapabilities } from './backup/capabilities.js'
 import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
-import {
-  closeDatabaseRuntime,
-  createDatabaseRuntime,
-  type DatabaseInternals,
-  type DatabaseRuntime,
-} from './database-create.js'
+import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
+import { DatabaseLifecycle } from './database-lifecycle.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
-import { ReadOnlyError, SirannonError } from './errors.js'
 import { openLiveQuery } from './live/database-live.js'
 import type { LiveQuery, LiveQueryOptions } from './live/types.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
@@ -38,25 +33,7 @@ export type { DatabaseInternals } from './database-create.js'
  *
  * @public
  */
-export class Database {
-  /** Identifier this database was opened under. */
-  readonly id: string
-  /** File path of the SQLite database. */
-  readonly path: string
-  /** Whether this database refuses writes. */
-  readonly readOnly: boolean
-
-  private readonly runtime: DatabaseRuntime
-  private readonly closeListeners: (() => void | Promise<void>)[] = []
-  private _closed = false
-
-  private constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions) {
-    this.id = id
-    this.path = path
-    this.runtime = runtime
-    this.readOnly = options?.readOnly ?? false
-  }
-
+export class Database extends DatabaseLifecycle {
   /** @internal */
   static async create(
     id: string,
@@ -229,7 +206,7 @@ export class Database {
    * @internal
    */
   async runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void> {
-    if (this._closed) return
+    if (this.closed) return
     await this.runtime.writerLock.run(() => op(this.runtime.pool.acquireWriter()))
   }
 
@@ -377,55 +354,5 @@ export class Database {
    */
   onAfterQuery(hook: AfterQueryHook): void {
     this.runtime.hookRegistry.register('afterQuery', hook)
-  }
-
-  /** @internal */
-  addCloseListener(fn: () => void | Promise<void>): void {
-    this.ensureNotClosed()
-    this.closeListeners.push(fn)
-  }
-
-  /**
-   * Closes every connection this database holds and ends its subscriptions.
-   */
-  async close(): Promise<void> {
-    if (this._closed) return
-    this._closed = true
-    await closeDatabaseRuntime(this.runtime, this.closeListeners)
-  }
-
-  /**
-   * Whether this database has been closed.
-   */
-  get closed(): boolean {
-    return this._closed
-  }
-
-  /**
-   * Number of read connections the pool holds.
-   */
-  get readerCount(): number {
-    return this.runtime.pool.readerCount
-  }
-
-  private ensureWritable(): void {
-    this.ensureOpen()
-    if (this.readOnly) throw new ReadOnlyError(this.id)
-  }
-
-  private ensureOpen(): void {
-    this.ensureNotClosed()
-    if (this.runtime.sync.snapshotLoadBlocked) {
-      throw new SirannonError(
-        `Database '${this.id}' is replacing its data from a sync snapshot; retry once the snapshot load completes`,
-        'SNAPSHOT_IN_PROGRESS',
-      )
-    }
-  }
-
-  private ensureNotClosed(): void {
-    if (this._closed) {
-      throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
-    }
   }
 }

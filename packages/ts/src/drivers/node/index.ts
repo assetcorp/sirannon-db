@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { defineDriver } from '../../core/driver/define.js'
 import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
@@ -21,6 +22,14 @@ export interface NodeSqliteOptions {
   busyTimeout?: number
 }
 
+function carriesSteppedBackupCall(): boolean {
+  try {
+    return typeof createRequire(import.meta.url)('node:sqlite').backup === 'function'
+  } catch {
+    return false
+  }
+}
+
 /**
  * @public
  *
@@ -32,7 +41,7 @@ export interface NodeSqliteOptions {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: carriesSteppedBackupCall() },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)

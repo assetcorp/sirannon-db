@@ -28,6 +28,7 @@ export interface SteppedCopyOptions {
   stallTimeoutMs?: number
   noProgressStepLimit?: number
   onStep?: (progress: SteppedCopyProgress) => void
+  onCopyLeftRunning?: (copy: Promise<unknown>) => void
 }
 
 /** What one finished stepped copy moved.
@@ -150,11 +151,14 @@ export async function copyDatabaseStepwise(
         : new BackupError(`Copy to '${options.destPath}' failed: ${err instanceof Error ? err.message : String(err)}`)
     })
 
+  copy.catch(() => {})
   try {
     const final = await Promise.race([copy, stalled])
     return { pageCount: final.totalPages, restarts }
+  } catch (err) {
+    options.onCopyLeftRunning?.(copy)
+    throw err
   } finally {
     if (stallTimer) clearTimeout(stallTimer)
-    copy.catch(() => {})
   }
 }

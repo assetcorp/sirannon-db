@@ -10,7 +10,7 @@ import {
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { nodeSqlite } from '../../../drivers/node/index.js'
 import { Database } from '../../database.js'
-import type { SQLiteDriver } from '../../driver/types.js'
+import type { SQLiteConnection, SQLiteDriver } from '../../driver/types.js'
 import { ExtensionError, SirannonError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
 
@@ -166,6 +166,50 @@ describe('Extension loading via Database', () => {
       /declares extension support but resolves no absolute path/,
     )
 
+    await db.close()
+  })
+
+  it('refuses a resolver that returns a relative path', async () => {
+    const relativeResolver: SQLiteDriver = { ...testDriver, resolveExtensionPath: () => 'probe.so' }
+    const db = await Database.create('test', join(tempDir, 'relative.db'), relativeResolver)
+
+    await expect(db.loadExtension('probe.so')).rejects.toThrow(/resolved the extension to a relative path/)
+
+    await db.close()
+  })
+
+  it('reads and writes through a connection opened from a class-based driver', async () => {
+    class ClassConnection {
+      constructor(private readonly inner: SQLiteConnection) {}
+      exec(sql: string) {
+        return this.inner.exec(sql)
+      }
+      prepare(sql: string) {
+        return this.inner.prepare(sql)
+      }
+      transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>) {
+        return this.inner.transaction(fn)
+      }
+      close() {
+        return this.inner.close()
+      }
+      loadExtension(extensionPath: string) {
+        return this.inner.loadExtension?.(extensionPath) ?? Promise.resolve()
+      }
+    }
+    const classDriver: SQLiteDriver = {
+      ...testDriver,
+      open: async (path, options) => new ClassConnection(await testDriver.open(path, options)),
+    }
+    const db = await Database.create('test', join(tempDir, 'class.db'), classDriver)
+    await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
+    await db.execute("INSERT INTO notes (id, body) VALUES (1, 'first')")
+
+    const live = await db.live<{ body: string }>('SELECT body FROM notes')
+    const state = live.getState()
+    expect(state.status === 'ready' && state.rows[0]?.body).toBe('first')
+
+    await live.close()
     await db.close()
   })
 

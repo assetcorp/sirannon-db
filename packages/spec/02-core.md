@@ -472,9 +472,10 @@ The call proceeds in this order:
 2. Reject the call when any connection exposes no `loadExtension`.
 3. Reject the call when the driver reports `extensions: true` and supplies no `resolveExtensionPath`.
 4. Resolve the path through `resolveExtensionPath` where the driver supplies one.
-5. Call each connection's own `loadExtension` with the resolved path, never the SQL `load_extension` function.
+5. Reject a relative path from that resolver.
+6. Call each connection's own `loadExtension` with the resolved path, never the SQL `load_extension` function.
 
-A driver reporting `extensions: false` refuses at step 5, and the message must state which runtime cannot load an extension. A missing file and a runtime that cannot load an extension must produce different messages.
+A driver reporting `extensions: false` refuses at step 6, and the message must state which runtime cannot load an extension. A missing file and a runtime that cannot load an extension must produce different messages.
 
 The load must apply to the writer, every reader, and every further connection the database has open. A connection the database opens afterwards must load every extension already loaded. A writer worker that restarts must load them onto its new connection. Loading and opening must not interleave.
 

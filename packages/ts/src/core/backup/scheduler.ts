@@ -5,6 +5,7 @@ import { BackupError } from '../errors.js'
 import type { BackupScheduleOptions } from '../types.js'
 import { BackupManager } from './backup.js'
 import { assertValidTimeZone, type CronExpression, type CronParts, parseCron, wallClockParts } from './cron.js'
+import { startCopyWithoutHoldingWriter } from './start-guard.js'
 
 const DEFAULT_MAX_FILES = 5
 const MINUTE_RESOLUTION_MS = 60_000
@@ -161,7 +162,9 @@ export class BackupScheduler {
     const runBackup = async (): Promise<void> => {
       try {
         const destPath = join(resolvedDir, this.manager.generateFilename())
-        await runExclusive(() => this.manager.backup(conn, destPath))
+        await startCopyWithoutHoldingWriter(runExclusive, onFirstStep =>
+          this.manager.backup(conn, destPath, onFirstStep),
+        )
         this.manager.rotate(resolvedDir, maxFiles)
       } catch (err) {
         if (onError) {

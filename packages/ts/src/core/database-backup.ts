@@ -1,4 +1,7 @@
-import type { BackupEngine, SQLiteConnection } from './driver/types.js'
+import { type BackupCapabilities, describeBackupCapabilities } from './backup/capabilities.js'
+import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+import { startCopyWithoutHoldingWriter } from './backup/start-guard.js'
+import type { BackupEngine, DriverCapabilities, SQLiteConnection } from './driver/types.js'
 import { SirannonError } from './errors.js'
 import type { BackupScheduleOptions } from './types.js'
 
@@ -10,6 +13,9 @@ export class DatabaseBackupController {
   constructor(
     private readonly runExclusive: RunExclusive,
     private readonly acquireWriter: () => SQLiteConnection,
+    private readonly driverCapabilities: DriverCapabilities,
+    private readonly databaseId: string,
+    private readonly sourcePath: string,
     private readonly engine?: BackupEngine,
   ) {}
 
@@ -23,9 +29,27 @@ export class DatabaseBackupController {
     return this.engine
   }
 
+  capabilities(): BackupCapabilities {
+    return describeBackupCapabilities(this.driverCapabilities, this.engine !== undefined)
+  }
+
   backup(destPath: string): Promise<void> {
     const engine = this.require()
-    return this.runExclusive(() => engine.backup(this.acquireWriter(), destPath))
+    return startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
+      engine.backup(this.acquireWriter(), destPath, onFirstStep),
+    )
+  }
+
+  backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
+    const engine = this.require()
+    return startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
+      engine.copyToDestination(this.acquireWriter(), {
+        ...options,
+        databaseId: this.databaseId,
+        sourcePath: this.sourcePath,
+        onFirstStep,
+      }),
+    )
   }
 
   schedule(options: BackupScheduleOptions): void {

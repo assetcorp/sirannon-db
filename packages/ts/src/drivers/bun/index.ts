@@ -31,7 +31,7 @@ export interface BunSqliteOptions {
  */
 export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: false },
     resolveExtensionPath: extensionPath => resolve(extensionPath),
     async open(path, options) {
       const { Database } = await import('bun:sqlite')

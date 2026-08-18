@@ -1,7 +1,5 @@
-import type { BackupCapabilities } from './backup/capabilities.js'
-import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+import { DatabaseBackups } from './database-backups.js'
 import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
-import { DatabaseLifecycle } from './database-lifecycle.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
@@ -13,7 +11,6 @@ import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type {
   AfterQueryHook,
-  BackupScheduleOptions,
   BeforeQueryHook,
   BulkLoadOptions,
   BulkLoadResult,
@@ -33,7 +30,7 @@ export type { DatabaseInternals } from './database-create.js'
  *
  * @public
  */
-export class Database extends DatabaseLifecycle {
+export class Database extends DatabaseBackups {
   /** @internal */
   static async create(
     id: string,
@@ -276,56 +273,6 @@ export class Database extends DatabaseLifecycle {
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
     return this.runtime.migrations.rollback(migrations, version)
-  }
-
-  /**
-   * Copies this database to a file while it stays open for reads and writes.
-   *
-   * SQLite moves the pages in steps on the connection that writes, so a write
-   * runs in the gap between two steps rather than waiting for the whole copy.
-   *
-   * @param destPath - Path the copy is written to.
-   */
-  async backup(destPath: string): Promise<void> {
-    this.ensureOpen()
-    await this.runtime.backups.backup(destPath)
-  }
-
-  /**
-   * Copies this database to a destination you supply, in fixed-size pieces,
-   * while it stays open for reads and writes.
-   *
-   * Sirannon carries no storage client, so the destination is where you
-   * connect object storage or anything else that moves bytes. This route
-   * writes one local file first and needs local disk equal to the backup,
-   * which {@link Database.backupCapabilities} states.
-   *
-   * @param options - Destination, naming, piece size, and progress reporting.
-   * @returns The run identifier, the timings, what the run wrote, and how often the copy restarted.
-   */
-  async backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
-    this.ensureOpen()
-    return this.runtime.backups.backupTo(options)
-  }
-
-  /**
-   * Reports which backup operations this database's runtime supports, so you
-   * learn before a run rather than when one fails.
-   *
-   * @returns What this runtime copies, whether it needs local disk, and whether it schedules.
-   */
-  backupCapabilities(): BackupCapabilities {
-    return this.runtime.backups.capabilities()
-  }
-
-  /**
-   * Starts repeating backups on a cron schedule, keeping a bounded number of files.
-   *
-   * @param options - Cron expression, destination directory, retention, time zone, and failure callback.
-   */
-  scheduleBackup(options: BackupScheduleOptions): void {
-    this.ensureOpen()
-    this.runtime.backups.schedule(options)
   }
 
   /**

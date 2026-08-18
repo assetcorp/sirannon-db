@@ -40,6 +40,9 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
       db.run(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.run('PRAGMA foreign_keys = ON')
       db.run(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
+      if (options?.walAutoCheckpoint !== undefined) {
+        db.run(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      }
 
       const conn: SQLiteConnection = {
         async exec(sql: string): Promise<void> {

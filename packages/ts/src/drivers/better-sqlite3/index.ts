@@ -129,6 +129,9 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       db.pragma(`synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.pragma('foreign_keys = ON')
       db.pragma(`busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
+      if (options?.walAutoCheckpoint !== undefined) {
+        db.pragma(`wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      }
       return createConnection(db)
     },
   })

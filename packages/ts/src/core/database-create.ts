@@ -1,6 +1,6 @@
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { ConnectionPool } from './connection-pool.js'
-import { DatabaseBackupController } from './database-backup.js'
+import { assertChangeLogCaptureSupported, DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
 import { DatabaseMigrationController } from './database-migrations.js'
 import { DatabaseObserver } from './database-observability.js'
@@ -57,6 +57,10 @@ export async function createDatabaseRuntime(
     )
   }
 
+  if (options?.backups && !readOnly) {
+    assertChangeLogCaptureSupported(driver, id, path, options.walMode ?? true)
+  }
+
   const pool = await ConnectionPool.create({
     driver,
     path,
@@ -64,6 +68,7 @@ export async function createDatabaseRuntime(
     readPoolSize: options?.readPoolSize ?? 4,
     walMode: options?.walMode ?? true,
     synchronous: options?.synchronous,
+    ...(options?.backups ? { walAutoCheckpoint: 0 } : {}),
     useWriterWorker: writerWorker.enabled && !readOnly,
     workerHostOptions: writerWorker.host,
   })
@@ -113,6 +118,7 @@ export async function createDatabaseRuntime(
     observer,
     synchronous: options?.synchronous ?? DEFAULT_SYNCHRONOUS,
     walMode: options?.walMode ?? true,
+    capturesChangeLog: options?.backups !== undefined && !readOnly,
   })
 
   const migrations = new DatabaseMigrationController({
@@ -120,6 +126,8 @@ export async function createDatabaseRuntime(
     writerLock,
     changeTracker: () => cdc.changeTracker,
   })
+
+  if (options?.backups && !readOnly) backups.startCycle(options.backups)
 
   return {
     pool,
@@ -150,6 +158,7 @@ export async function closeDatabaseRuntime(
     await runtime.cdc.closeLiveConnection()
     await runtime.writes.drain()
     await runtime.writerLock.settle()
+    await runtime.backups.stopCycle()
     await runtime.pool.close()
   } catch (err) {
     poolError = err

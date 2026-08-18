@@ -58,6 +58,9 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       db.exec(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.exec('PRAGMA foreign_keys = ON')
       db.exec(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
+      if (options?.walAutoCheckpoint !== undefined) {
+        db.exec(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      }
 
       const batchStatementFor = createStatementCache(sql => {
         const stmt = db.prepare(sql)

@@ -35,6 +35,75 @@ export interface BackupCapabilities {
 }
 
 // @public
+export interface BackupChain {
+    base?: BackupChainBase;
+    chainId: string;
+    changes: BackupChainChange[];
+    previousChainId?: string;
+    startedAt: number;
+}
+
+// @public
+export interface BackupChainBase {
+    bytesWritten: number;
+    chainId: string;
+    fingerprint?: string;
+    finishedAt: number;
+    kind: 'full';
+    name: string;
+    pieceBytes: number;
+    pieceCount: number;
+    runId: string;
+}
+
+// @public
+export interface BackupChainChange {
+    bytesWritten: number;
+    capturedAt: number;
+    chainId: string;
+    checkpointed: boolean;
+    fingerprint?: string;
+    frameCount: number;
+    kind: 'change';
+    name: string;
+    pieceBytes: number;
+    pieceCount: number;
+    position: BackupChainPosition;
+    runId: string;
+    sequence: number;
+}
+
+// @public
+export interface BackupChainPosition {
+    firstFrame: number;
+    lastFrame: number;
+    logSequence: number;
+    salt1: number;
+    salt2: number;
+}
+
+// @public
+export type BackupChainRecord = BackupChainBase | BackupChainChange;
+
+// @public
+export interface BackupCycleOptions {
+    chainName?: string;
+    destination: BackupDestination;
+    fingerprint?: boolean;
+    fullCopyIntervalMs?: number;
+    intervalMs?: number;
+    namePrefix?: string;
+    noProgressStepLimit?: number;
+    onError?: (error: Error) => void;
+    onRun?: (report: BackupRunReport) => void;
+    pagesPerStep?: number;
+    pieceBytes?: number;
+    restartLimit?: number;
+    stagingDir?: string;
+    stallTimeoutMs?: number;
+}
+
+// @public
 export interface BackupDestination {
     listPieces(name: string): Promise<BackupPiece[]>;
     readPiece(name: string, index: number): Promise<Uint8Array>;
@@ -53,6 +122,9 @@ export interface BackupPiece {
 }
 
 // @public
+export function backupPiecesSafeToDelete(chains: readonly BackupChain[], options?: BackupSafeToDeleteOptions): BackupChainRecord[];
+
+// @public
 export interface BackupProgress {
     bytesWritten: number;
     phase: 'copy' | 'transfer';
@@ -64,25 +136,40 @@ export interface BackupProgress {
 }
 
 // @public
+export interface BackupRestorePlan {
+    base: BackupChainBase;
+    chainId: string;
+    changes: BackupChainChange[];
+    restoresTo: number;
+}
+
+// @public
 export interface BackupRunReport {
     bytesWritten: number;
+    chainId: string;
     copyMs: number;
     databaseId: string;
     destinationName: string;
     durationMs: number;
     fingerprint?: string;
     finishedAt: number;
-    kind: 'full';
+    kind: 'full' | 'change';
     pageCount: number;
     pageSize: number;
     pieceBytes: number;
     pieceCount: number;
+    position?: BackupChainPosition;
     restarts: number;
     route: 'staged' | 'streamed';
     runId: string;
     sourcePath: string;
     startedAt: number;
     transferMs: number;
+}
+
+// @public
+export interface BackupSafeToDeleteOptions {
+    restorableFrom?: number;
 }
 
 // @public
@@ -96,6 +183,7 @@ export interface BackupScheduleOptions {
 
 // @public
 export interface BackupToDestinationOptions {
+    chainId?: string;
     destination: BackupDestination;
     fingerprint?: boolean;
     name?: string;
@@ -303,6 +391,8 @@ export interface ConnectionPoolOptions {
     // (undocumented)
     useWriterWorker?: boolean;
     // (undocumented)
+    walAutoCheckpoint?: number;
+    // (undocumented)
     walMode?: boolean;
     // (undocumented)
     workerHostOptions?: WorkerHostOptions;
@@ -322,13 +412,10 @@ export function createTenantResolver(options: TenantResolverOptions): (id: strin
 } | undefined;
 
 // @public
-export class Database extends DatabaseLifecycle {
+export class Database extends DatabaseBackups {
     appliedMigrations(): Promise<AppliedMigrationRow[]>;
     // @internal (undocumented)
     applyChanges(batch: ReplicationBatch, resolver?: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
-    backup(destPath: string): Promise<void>;
-    backupCapabilities(): BackupCapabilities;
-    backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
     bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>;
     // @internal (undocumented)
     static create(id: string, path: string, driver: SQLiteDriver, options?: DatabaseOptions, internals?: DatabaseInternals): Promise<Database>;
@@ -354,7 +441,6 @@ export class Database extends DatabaseLifecycle {
     rollback(migrations: Migration[], version?: number): Promise<RollbackResult>;
     // @internal
     runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void>;
-    scheduleBackup(options: BackupScheduleOptions): void;
     transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>;
     unwatch(table: string): Promise<void>;
     watch(table: string): Promise<void>;
@@ -363,6 +449,18 @@ export class Database extends DatabaseLifecycle {
 // @public
 export class DatabaseAlreadyExistsError extends SirannonError {
     constructor(id: string);
+}
+
+// @public
+export class DatabaseBackups extends DatabaseLifecycle {
+    backup(destPath: string): Promise<void>;
+    backupCapabilities(): BackupCapabilities;
+    backupChain(): Promise<BackupChain[]>;
+    backupPiecesSafeToDelete(options?: BackupSafeToDeleteOptions): Promise<BackupChainRecord[]>;
+    backupRestorePlan(moment: number): Promise<BackupRestorePlan>;
+    backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
+    captureBackupChanges(): Promise<BackupRunReport | undefined>;
+    scheduleBackup(options: BackupScheduleOptions): void;
 }
 
 // @public
@@ -420,6 +518,7 @@ export interface DatabaseOperations<Identity = unknown> {
 
 // @public
 export interface DatabaseOptions {
+    backups?: BackupCycleOptions;
     cdcPollInterval?: number;
     cdcRetention?: number;
     readOnly?: boolean;
@@ -428,6 +527,9 @@ export interface DatabaseOptions {
     walMode?: boolean;
     writerWorker?: boolean | WriterWorkerOptions;
 }
+
+// @public
+export const DEFAULT_CHAIN_NAME = "sirannon-backup-chain";
 
 // @public
 export const DEFAULT_SYNCHRONOUS: SynchronousLevel;
@@ -714,6 +816,7 @@ export type NodeHealthState = 'healthy' | 'degraded' | 'failing_over' | 'repairi
 export interface OpenOptions {
     readonly?: boolean;
     synchronous?: SynchronousLevel;
+    walAutoCheckpoint?: number;
     walMode?: boolean;
 }
 
@@ -757,6 +860,9 @@ export interface ParsedMigrationFilename {
 // @public
 export function parseMigrationFilename(filename: string): ParsedMigrationFilename | null;
 
+// @public
+export function planBackupRestore(chains: readonly BackupChain[], moment: number): BackupRestorePlan;
+
 // @internal
 export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T[]>;
 
@@ -795,6 +901,9 @@ export interface QueryOptions {
     readConcern?: ReadConcern;
     writeConcern?: WriteConcern;
 }
+
+// @public
+export function readBackupChains(destination: BackupDestination, chainName?: string): Promise<BackupChain[]>;
 
 // @public
 export interface ReadConcern {

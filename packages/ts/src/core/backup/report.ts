@@ -1,3 +1,4 @@
+import type { BackupChainPosition } from './chain.js'
 import type { BackupDestination } from './destination.js'
 
 export const DEFAULT_PIECE_BYTES = 16 * 1024 * 1024
@@ -32,8 +33,10 @@ export interface BackupRunReport {
   databaseId: string
   /** File the copy was taken from. */
   sourcePath: string
-  /** What the run copied, which is the whole database. */
-  kind: 'full'
+  /** What the run wrote: the whole database, or the log frames written since the run before it. */
+  kind: 'full' | 'change'
+  /** The chain this run belongs to. A full copy begins one, and every change piece after it extends the same one. */
+  chainId: string
   /** Whether the bytes reached the destination through a local file or without one. */
   route: 'staged' | 'streamed'
   /**
@@ -66,6 +69,8 @@ export interface BackupRunReport {
   pieceBytes: number
   /** Times the copy returned to page one. */
   restarts: number
+  /** The stretch of log a change piece covers. A full copy has none. */
+  position?: BackupChainPosition
   /** SHA-256 of the copied file, unless the caller turned it off. */
   fingerprint?: string
 }
@@ -78,6 +83,8 @@ export interface BackupToDestinationOptions {
   destination: BackupDestination
   /** Name the pieces are stored under. Defaults to a timestamped name. */
   name?: string
+  /** The chain this copy begins. Defaults to an identifier the run mints for itself. */
+  chainId?: string
   /** Bytes one whole piece holds. Defaults to 16 MiB. */
   pieceBytes?: number
   /** Pages SQLite moves in one step. */

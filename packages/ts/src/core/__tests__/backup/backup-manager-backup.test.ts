@@ -174,8 +174,8 @@ describe('BackupManager', () => {
 
     it('formats non-Error values thrown during backup execution', async () => {
       const fakeConn = {
-        async exec() {
-          throw 'string exec failure'
+        async copyDatabase() {
+          throw 'string copy failure'
         },
       } as unknown as SQLiteConnection
       const destPath = join(temp.path, 'non-error-exec.db')
@@ -185,7 +185,7 @@ describe('BackupManager', () => {
         expect.unreachable('should have thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(BackupError)
-        expect((err as BackupError).message).toContain('string exec failure')
+        expect((err as BackupError).message).toContain('string copy failure')
       }
     })
 

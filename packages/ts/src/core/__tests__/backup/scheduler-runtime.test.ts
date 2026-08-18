@@ -5,17 +5,18 @@ import { BackupManager } from '../../backup/backup.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
 import { BackupError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
-import { createTestDb, tempDirPerTest } from './shared.js'
+import { countingManager, createTestDb, settleUntil, tempDirPerTest, useCronTimers } from './shared.js'
 
 const temp = tempDirPerTest()
 
 describe('BackupScheduler', () => {
   it('fires a backup on cron schedule', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       const backupDir = join(temp.path, 'scheduled')
-      const scheduler = new BackupScheduler()
+      const counting = countingManager()
+      const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
@@ -24,6 +25,7 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => counting.completed() >= 1)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
@@ -42,11 +44,12 @@ describe('BackupScheduler', () => {
   })
 
   it('rotates files according to maxFiles', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       const backupDir = join(temp.path, 'rotated')
-      const scheduler = new BackupScheduler()
+      const counting = countingManager()
+      const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
@@ -55,6 +58,7 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(4500)
+      await settleUntil(() => counting.completed() >= 3)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))
@@ -67,11 +71,12 @@ describe('BackupScheduler', () => {
   })
 
   it('cancel function stops future backups', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       const backupDir = join(temp.path, 'cancelled')
-      const scheduler = new BackupScheduler()
+      const counting = countingManager()
+      const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
         cron: '* * * * * *',
@@ -80,12 +85,14 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => counting.completed() >= 1)
       cancel()
 
       const countAfterCancel = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
       expect(countAfterCancel).toBeGreaterThanOrEqual(1)
 
       await vi.advanceTimersByTimeAsync(3000)
+      await settleUntil(() => false, 50)
       const countLater = readdirSync(backupDir).filter(f => f.endsWith('.db')).length
       expect(countLater).toBe(countAfterCancel)
       await conn.close()
@@ -95,7 +102,7 @@ describe('BackupScheduler', () => {
   })
 
   it('defaults maxFiles to 5 when not specified', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       const backupDir = join(temp.path, 'defaults')
@@ -115,6 +122,7 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => observedMaxFiles !== undefined)
       cancel()
 
       expect(observedMaxFiles).toBe(5)
@@ -125,7 +133,7 @@ describe('BackupScheduler', () => {
   })
 
   it('calls onError when a scheduled backup fails', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       await conn.close()
@@ -142,6 +150,7 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => errors.length >= 1)
       cancel()
 
       expect(errors.length).toBeGreaterThanOrEqual(1)
@@ -153,7 +162,7 @@ describe('BackupScheduler', () => {
   })
 
   it('silently discards errors when onError is not provided', async () => {
-    vi.useFakeTimers()
+    useCronTimers()
     try {
       const conn = await createTestDb(temp.path)
       await conn.close()
@@ -168,6 +177,7 @@ describe('BackupScheduler', () => {
       })
 
       await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => false, 50)
       cancel()
 
       const files = readdirSync(backupDir).filter(f => f.endsWith('.db'))

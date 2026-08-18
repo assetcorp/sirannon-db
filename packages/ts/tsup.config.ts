@@ -57,6 +57,7 @@ const nodeEntry = {
   'driver/better-sqlite3': 'src/drivers/better-sqlite3/index.ts',
   'driver/node': 'src/drivers/node/index.ts',
   'file-migrations/index': 'src/utils/file-migrations/index.ts',
+  'backup/index': 'src/backup/index.ts',
   'backup-scheduler/index': 'src/utils/backup-scheduler/index.ts',
   'replication/index': 'src/replication/index.ts',
   'replication/coordinator/etcd': 'src/replication/coordinator/etcd.ts',

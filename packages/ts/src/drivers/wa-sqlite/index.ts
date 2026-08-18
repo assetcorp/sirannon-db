@@ -25,7 +25,7 @@ export interface WaSqliteOptions {
  */
 export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: false, extensions: false },
+    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false },
     async open(path, options) {
       const { default: SQLiteESMFactory } = await import('wa-sqlite/dist/wa-sqlite-async.mjs')
       const { Factory } = await import('wa-sqlite')

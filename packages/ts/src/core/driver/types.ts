@@ -1,3 +1,4 @@
+import type { BackupRunReport, BackupRunRequest } from '../backup/report.js'
 import type { BackupScheduleOptions } from '../types.js'
 import type { WorkerHostOptions } from '../worker/host.js'
 
@@ -33,13 +34,37 @@ export interface WriterContext {
  */
 export interface BackupEngine {
   /** Copies the database behind a connection to a destination path. */
-  backup(conn: SQLiteConnection, destPath: string): Promise<void>
+  backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void>
+  /** Copies the database behind a connection to a caller-supplied destination. */
+  copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport>
   /** Starts a repeating backup and returns a function that stops it. */
   schedule(
     conn: SQLiteConnection,
     options: BackupScheduleOptions,
     runExclusive: (op: () => Promise<void>) => Promise<void>,
   ): () => void
+}
+
+/** What one step of a stepped database copy reported.
+ * @public
+ */
+export interface DatabaseCopyStep {
+  /** Pages the copy has to move in total. */
+  totalPages: number
+  /** Pages the copy has yet to move. */
+  remainingPages: number
+}
+
+/** What Sirannon asks a driver to copy, and how finely.
+ * @public
+ */
+export interface DatabaseCopyRequest {
+  /** Path the copy is written to. */
+  destPath: string
+  /** Pages the driver moves in one step. */
+  pagesPerStep: number
+  /** Called after every step with that step's counters. */
+  onStep?: (step: DatabaseCopyStep) => void
 }
 
 /** Totals for one statement applied over many parameter sets.
@@ -113,6 +138,17 @@ export interface SQLiteConnection {
    * error that names that runtime.
    */
   loadExtension?(extensionPath: string): Promise<void>
+  /**
+   * Copies this connection's database to a file through SQLite's stepped
+   * backup interface, one step at a time, so writes on this connection run in
+   * the gaps between steps. SQLite restarts a copy whose source is written
+   * through any other connection, so the copy must run on the connection that
+   * writes. A copy started while a transaction is already open on this
+   * connection produces nothing, so the caller starts one only when no
+   * transaction is open. Where the runtime carries no stepped backup call,
+   * this rejects with an error that names that runtime.
+   */
+  copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>
   /** Optional fast path that applies one statement over many parameter sets. */
   runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
   /** Optional fast path that applies one statement over many parameter sets and returns only the totals. */
@@ -159,6 +195,8 @@ export interface DriverCapabilities {
   multipleConnections: boolean
   /** Whether the runtime loads SQLite extensions. */
   extensions: boolean
+  /** Whether the runtime copies an open database through SQLite's stepped backup interface. */
+  steppedCopy: boolean
 }
 
 /**

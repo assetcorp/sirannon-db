@@ -1,3 +1,5 @@
+import type { BackupCapabilities } from './backup/capabilities.js'
+import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import {
   closeDatabaseRuntime,
   createDatabaseRuntime,
@@ -302,11 +304,41 @@ export class Database {
   /**
    * Copies this database to a file while it stays open for reads and writes.
    *
+   * SQLite moves the pages in steps on the connection that writes, so a write
+   * runs in the gap between two steps rather than waiting for the whole copy.
+   *
    * @param destPath - Path the copy is written to.
    */
   async backup(destPath: string): Promise<void> {
     this.ensureOpen()
     await this.runtime.backups.backup(destPath)
+  }
+
+  /**
+   * Copies this database to a destination you supply, in fixed-size pieces,
+   * while it stays open for reads and writes.
+   *
+   * Sirannon carries no storage client, so the destination is where you
+   * connect object storage or anything else that moves bytes. This route
+   * writes one local file first and needs local disk equal to the backup,
+   * which {@link Database.backupCapabilities} states.
+   *
+   * @param options - Destination, naming, piece size, and progress reporting.
+   * @returns The run identifier, the timings, what the run wrote, and how often the copy restarted.
+   */
+  async backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
+    this.ensureOpen()
+    return this.runtime.backups.backupTo(options)
+  }
+
+  /**
+   * Reports which backup operations this database's runtime supports, so you
+   * learn before a run rather than when one fails.
+   *
+   * @returns What this runtime copies, whether it needs local disk, and whether it schedules.
+   */
+  backupCapabilities(): BackupCapabilities {
+    return this.runtime.backups.capabilities()
   }
 
   /**

@@ -205,6 +205,7 @@ export class ConnectionPool {
     acquireWriter(): SQLiteConnection;
     // (undocumented)
     close(): Promise<void>;
+    connections(): readonly SQLiteConnection[];
     // (undocumented)
     static create(options: ConnectionPoolOptions): Promise<ConnectionPool>;
     // (undocumented)
@@ -865,6 +866,7 @@ export interface SirannonOptions {
 export interface SQLiteConnection {
     close(): Promise<void>;
     exec(sql: string): Promise<void>;
+    loadExtension?(extensionPath: string): Promise<void>;
     prepare(sql: string): Promise<SQLiteStatement>;
     runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>;
     runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>;

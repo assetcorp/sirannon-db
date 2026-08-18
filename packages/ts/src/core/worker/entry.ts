@@ -102,6 +102,17 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
         outcome.ok ? { ok: true, results: outcome.values } : { ok: false, error: serializeError(outcome.error) },
       )
     }
+    case 'loadExtension': {
+      const conn = requireConnection()
+      if (!conn.loadExtension) {
+        throw new SirannonError(
+          'The driver rebuilt inside the writer worker opens connections without an extension loading call',
+          'EXTENSION_ERROR',
+        )
+      }
+      await conn.loadExtension(req.path)
+      return undefined
+    }
     case 'close':
       if (connection) await connection.close()
       connection = null

@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
@@ -81,6 +82,10 @@ function createConnection(db: import('better-sqlite3').Database): SQLiteConnecti
         } catch {}
         throw err
       }
+    },
+
+    async loadExtension(extensionPath: string): Promise<void> {
+      await loadThroughRuntime(extensionPath, () => db.loadExtension(extensionPath))
     },
 
     async close(): Promise<void> {

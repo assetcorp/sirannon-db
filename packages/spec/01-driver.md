@@ -26,7 +26,7 @@ SQLiteDriver {
 | `worker` | Points a worker thread at a module that rebuilds the driver, since `open` cannot cross a thread boundary. |
 | `startWriterHost` | Opens the writer connection on a worker thread so slow disk work does not block the caller. Present only when the runtime has threads. See [Writer Worker](02-core.md#writer-worker). |
 | `createWriterContext` | Produces a [WriterContext](#writercontext) that distinguishes the caller holding the writer from one waiting on it. |
-| `createBackupEngine` | Produces a backup engine. See [Backups](02-core.md#backups). |
+| `createBackupEngine` | Produces a backup engine: it copies a database, schedules that copy, and builds the checkpoint cycle. See [Backups](02-core.md#backups). |
 | `resolveExtensionPath` | Resolves an extension path to an absolute path, so the dynamic linker cannot search its own paths; required when `capabilities.extensions` is `true`. |
 
 ### DriverCapabilities
@@ -49,9 +49,10 @@ DriverCapabilities {
 
 ```text
 OpenOptions {
-  readonly?:     boolean          (default: false)
-  walMode?:      boolean          (default: true)
-  synchronous?:  SynchronousLevel (default: 'normal')
+  readonly?:           boolean          (default: false)
+  walMode?:            boolean          (default: true)
+  synchronous?:        SynchronousLevel (default: 'normal')
+  walAutoCheckpoint?:  number           (default: unset, leaving SQLite's own threshold in force)
 }
 
 SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
@@ -62,6 +63,7 @@ SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
 | `readonly` | Opens the database read-only. A write on a read-only connection must fail. |
 | `walMode` | Enables WAL journal mode. |
 | `synchronous` | Selects the `PRAGMA synchronous` durability level. |
+| `walAutoCheckpoint` | Sets the frame count at which SQLite checkpoints the log on its own; `0` disables that. A driver applies it on every connection it opens, including one a restarted writer worker opens. |
 
 ### open(path, options?)
 
@@ -71,6 +73,7 @@ Opens a connection to the database at `path`, or the special string `':memory:'`
 PRAGMA journal_mode = WAL      -- when walMode is not false
 PRAGMA synchronous = NORMAL    -- the level chosen by synchronous, NORMAL by default
 PRAGMA foreign_keys = ON
+PRAGMA wal_autocheckpoint = N  -- only when walAutoCheckpoint is set
 ```
 
 The `synchronous` value maps to its pragma argument through a fixed allowlist (`off`, `normal`, `full`, `extra`); a value outside the allowlist must fail with error code `INVALID_SYNCHRONOUS`. A driver may set further pragmas the runtime needs; the reference drivers on native engines also set `PRAGMA busy_timeout = 5000`. On failure, the driver must throw an error carrying enough context to tell a missing file, a permission failure, and a corrupt database apart.

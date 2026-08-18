@@ -92,6 +92,7 @@ export async function copyToDestinationStaged(
   const stagingRoot = await mkdtemp(join(request.stagingDir ?? tmpdir(), 'sirannon-backup-'))
   const stagedPath = join(stagingRoot, STAGED_FILE_NAME)
   let firstStepSeen = false
+  let copyLeftRunning: Promise<unknown> | null = null
 
   const emit = (progress: Omit<BackupProgress, 'runId'>) => request.onProgress?.({ runId, ...progress })
 
@@ -104,6 +105,9 @@ export async function copyToDestinationStaged(
       ...(request.restartLimit === undefined ? {} : { restartLimit: request.restartLimit }),
       ...(request.stallTimeoutMs === undefined ? {} : { stallTimeoutMs: request.stallTimeoutMs }),
       ...(request.noProgressStepLimit === undefined ? {} : { noProgressStepLimit: request.noProgressStepLimit }),
+      onCopyLeftRunning: copy => {
+        copyLeftRunning = copy
+      },
       onStep: step => {
         if (!firstStepSeen) {
           firstStepSeen = true
@@ -155,6 +159,8 @@ export async function copyToDestinationStaged(
       ...(sent.fingerprint ? { fingerprint: sent.fingerprint } : {}),
     }
   } finally {
-    await rm(stagingRoot, { recursive: true, force: true }).catch(() => {})
+    const removeStaging = () => rm(stagingRoot, { recursive: true, force: true }).catch(() => {})
+    if (copyLeftRunning) void (copyLeftRunning as Promise<unknown>).then(removeStaging, removeStaging)
+    else await removeStaging()
   }
 }

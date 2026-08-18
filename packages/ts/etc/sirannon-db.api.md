@@ -322,9 +322,7 @@ export function createTenantResolver(options: TenantResolverOptions): (id: strin
 } | undefined;
 
 // @public
-export class Database {
-    // @internal (undocumented)
-    addCloseListener(fn: () => void | Promise<void>): void;
+export class Database extends DatabaseLifecycle {
     appliedMigrations(): Promise<AppliedMigrationRow[]>;
     // @internal (undocumented)
     applyChanges(batch: ReplicationBatch, resolver?: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
@@ -332,8 +330,6 @@ export class Database {
     backupCapabilities(): BackupCapabilities;
     backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
     bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>;
-    close(): Promise<void>;
-    get closed(): boolean;
     // @internal (undocumented)
     static create(id: string, path: string, driver: SQLiteDriver, options?: DatabaseOptions, internals?: DatabaseInternals): Promise<Database>;
     deviceSync(): DeviceSyncPort;
@@ -345,20 +341,16 @@ export class Database {
         sql: string;
         params?: Params;
     }[]): Promise<ExecuteResult[]>;
-    readonly id: string;
     live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
     on(table: string): SubscriptionBuilder;
     onAfterQuery(hook: AfterQueryHook): void;
     onBeforeQuery(hook: BeforeQueryHook): void;
-    readonly path: string;
     query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
     // @internal (undocumented)
     queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>;
     queryOne<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T | undefined>;
-    get readerCount(): number;
-    readonly readOnly: boolean;
     rollback(migrations: Migration[], version?: number): Promise<RollbackResult>;
     // @internal
     runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void>;
@@ -387,6 +379,29 @@ export interface DatabaseCopyRequest {
 export interface DatabaseCopyStep {
     remainingPages: number;
     totalPages: number;
+}
+
+// @public
+export class DatabaseLifecycle {
+    protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions);
+    // @internal
+    addCloseListener(fn: () => void | Promise<void>): void;
+    close(): Promise<void>;
+    get closed(): boolean;
+    // @internal
+    protected readonly closeListeners: (() => void | Promise<void>)[];
+    // @internal
+    protected ensureNotClosed(): void;
+    // @internal
+    protected ensureOpen(): void;
+    // @internal
+    protected ensureWritable(): void;
+    readonly id: string;
+    readonly path: string;
+    get readerCount(): number;
+    readonly readOnly: boolean;
+    // @internal
+    protected readonly runtime: DatabaseRuntime;
 }
 
 // @public

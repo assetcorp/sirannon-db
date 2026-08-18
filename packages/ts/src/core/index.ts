@@ -7,6 +7,7 @@ export type { ChangeTrackerOptions } from './cdc/types.js'
 export type { ConnectionPoolOptions } from './connection-pool.js'
 export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'
+export { DatabaseLifecycle } from './database-lifecycle.js'
 export { defineDriver } from './driver/define.js'
 export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'
 export type {

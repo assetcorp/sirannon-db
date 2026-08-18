@@ -36,7 +36,13 @@ export interface BackupRunReport {
   kind: 'full'
   /** Whether the bytes reached the destination through a local file or without one. */
   route: 'staged' | 'streamed'
-  /** Name the pieces are stored under at the destination. */
+  /**
+   * Name the pieces are stored under at the destination. The staged route
+   * writes this one name and no other, because SQLite's journal beside the
+   * copy stays on local disk and goes when the staging directory goes. A route
+   * that sends a second name to the destination records both, so that a
+   * restore finds them.
+   */
   destinationName: string
   /** Epoch milliseconds the run started at. */
   startedAt: number

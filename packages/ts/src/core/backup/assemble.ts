@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { open } from 'node:fs/promises'
+import { open, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 import type { BackupDestination, BackupPiece } from './destination.js'
 import type { BackupRunReport } from './report.js'
@@ -73,14 +73,16 @@ export async function assembleFromDestination(
     await file.close()
   }
 
-  if (bytesWritten !== report.bytesWritten) {
-    throw destinationError(
-      `The pieces of '${name}' hold ${bytesWritten} bytes where the run wrote ${report.bytesWritten}`,
-    )
-  }
   const fingerprint = digest?.digest('hex')
-  if (fingerprint !== undefined && fingerprint !== report.fingerprint) {
-    throw destinationError(`The pieces of '${name}' do not match the fingerprint the run recorded`)
+  const failure =
+    bytesWritten !== report.bytesWritten
+      ? `The pieces of '${name}' hold ${bytesWritten} bytes where the run wrote ${report.bytesWritten}`
+      : fingerprint !== undefined && fingerprint !== report.fingerprint
+        ? `The pieces of '${name}' do not match the fingerprint the run recorded`
+        : null
+  if (failure !== null) {
+    await rm(destPath, { force: true }).catch(() => {})
+    throw destinationError(failure)
   }
   return { bytesWritten, pieceCount: pieces.length, ...(fingerprint ? { fingerprint } : {}) }
 }

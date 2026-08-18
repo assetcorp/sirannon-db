@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { assembleFromDestination } from '../../backup/assemble.js'
 import { Database } from '../../database.js'
 import { Sirannon } from '../../sirannon.js'
 import { memoryDestination } from '../backup/memory-destination.js'
@@ -118,6 +119,14 @@ describe('Backup integration via Database', () => {
 
     expect(destination.names()).toEqual(['products.db'])
     expect(report.bytesWritten).toBeGreaterThan(0)
+
+    const assembledPath = join(tempDir, 'products-copy.db')
+    const assembled = await assembleFromDestination(destination, report, assembledPath)
+    expect(assembled.bytesWritten).toBe(report.bytesWritten)
+
+    const verify = await Database.create('verify-dest', assembledPath, testDriver, { walMode: false })
+    expect(await verify.query<{ title: string }>('SELECT title FROM products')).toEqual([{ title: 'Widget' }])
+    await verify.close()
   })
 
   it('states which backup operations the runtime supports', async () => {

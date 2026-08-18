@@ -1,9 +1,10 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { assembleFromDestination } from '../../backup/assemble.js'
 import type { BackupProgress, BackupRunReport } from '../../backup/report.js'
 import { copyToDestinationStaged } from '../../backup/staged-copy.js'
+import type { SQLiteConnection } from '../../driver/types.js'
 import type { SirannonError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
 import { memoryDestination } from './memory-destination.js'
@@ -164,6 +165,40 @@ describe('copyToDestinationStaged', () => {
     expect(readdirSync(stagingDir)).toEqual([])
     expect(existsSync(stagingDir)).toBe(true)
     await conn.close()
+  })
+
+  it('leaves the staged file alone until a stalled copy settles', async () => {
+    const stagingDir = join(temp.path, 'stalled-staging')
+    mkdirSync(stagingDir, { recursive: true })
+    let releaseCopy: (() => void) | undefined
+    const conn = {
+      copyDatabase() {
+        return new Promise(resolve => {
+          releaseCopy = () => resolve({ totalPages: 0, remainingPages: 0 })
+        })
+      },
+      async prepare() {
+        return {
+          async get() {
+            return { page_size: 4096 }
+          },
+        }
+      },
+    } as unknown as SQLiteConnection
+
+    const error = await copyToDestinationStaged(conn, {
+      databaseId: 'main',
+      sourcePath: join(temp.path, 'source.db'),
+      destination: memoryDestination(),
+      stagingDir,
+      stallTimeoutMs: 20,
+    }).catch((err: unknown) => err)
+
+    expect((error as SirannonError).code).toBe('BACKUP_STALLED')
+    expect(readdirSync(stagingDir)).toHaveLength(1)
+
+    releaseCopy?.()
+    await vi.waitFor(() => expect(readdirSync(stagingDir)).toHaveLength(0))
   })
 
   it('leaves the fingerprint out when the caller turns it off', async () => {

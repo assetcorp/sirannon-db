@@ -25,15 +25,21 @@ export interface BackupCapabilities {
  *
  * @param capabilities - What the driver declares its runtime supports.
  * @param hasEngine - Whether the driver supplies a backup engine.
+ * @param streams - Whether the engine carries a full copy to the destination without a local file.
  * @returns The backup operations a caller can run on this runtime.
  */
-export function describeBackupCapabilities(capabilities: DriverCapabilities, hasEngine: boolean): BackupCapabilities {
+export function describeBackupCapabilities(
+  capabilities: DriverCapabilities,
+  hasEngine: boolean,
+  streams = false,
+): BackupCapabilities {
   const fullCopy = hasEngine && capabilities.steppedCopy
+  const streamedCopy = fullCopy && streams
   return {
     fullCopy,
-    streamedCopy: false,
+    streamedCopy,
     stagedCopy: fullCopy,
-    localDiskRequired: fullCopy ? 'equal-to-backup' : 'none',
+    localDiskRequired: fullCopy && !streamedCopy ? 'equal-to-backup' : 'none',
     schedule: fullCopy,
   }
 }

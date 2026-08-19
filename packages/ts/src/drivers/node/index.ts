@@ -7,7 +7,7 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
-import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeWriterContext } from '../node-runtime.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
@@ -20,6 +20,19 @@ export interface NodeSqliteOptions {
    * Milliseconds a statement waits for the write lock before it fails.
    */
   busyTimeout?: number
+  /**
+   * Path to the compiled extension that streams a backup to a caller-supplied
+   * destination. It defaults to the binary the install fetched for this
+   * platform, and naming one here is how a host with no published binary
+   * streams a copy from an extension it built itself.
+   */
+  vfsExtensionPath?: string
+}
+
+const FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI = 23
+
+function parsesBackupUris(): boolean {
+  return Number.parseInt(process.versions.node, 10) >= FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI
 }
 
 function carriesSteppedBackupCall(): boolean {
@@ -48,7 +61,14 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       return host.connection
     },
     createWriterContext: nodeWriterContext,
-    createBackupEngine: nodeBackupEngine,
+    createBackupEngine: driver =>
+      nodeBackupEngine(
+        nodeStreamingSupport({
+          driver,
+          uriFilenames: parsesBackupUris(),
+          ...(driverOptions?.vfsExtensionPath === undefined ? {} : { extensionPath: driverOptions.vfsExtensionPath }),
+        }),
+      ),
     resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
       const { DatabaseSync } = await import('node:sqlite')
@@ -155,6 +175,8 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
             }
           })
         },
+
+        copyRunsOffCallerThread: true,
 
         copyDatabase(request) {
           return copyDatabaseWithNodeSqlite(db, request)

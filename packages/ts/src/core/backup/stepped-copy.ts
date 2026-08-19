@@ -27,6 +27,7 @@ export interface SteppedCopyOptions {
   restartLimit?: number
   stallTimeoutMs?: number
   noProgressStepLimit?: number
+  pauseWhile?: () => boolean
   onStep?: (progress: SteppedCopyProgress) => void
   onCopyLeftRunning?: (copy: Promise<unknown>) => void
 }
@@ -94,6 +95,7 @@ export async function copyDatabaseStepwise(
     )
   }
 
+  const pagesPerStep = options.pagesPerStep ?? DEFAULT_PAGES_PER_STEP
   const restartLimit = options.restartLimit ?? DEFAULT_RESTART_LIMIT
   const stallTimeoutMs = options.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS
   const noProgressStepLimit = options.noProgressStepLimit ?? DEFAULT_NO_PROGRESS_STEP_LIMIT
@@ -101,6 +103,7 @@ export async function copyDatabaseStepwise(
   let restarts = 0
   let furthestCopied = -1
   let stepsWithoutProgress = 0
+  let pausedPreviousStep = false
   let stopped: SirannonError | null = null
 
   let stallTimer: ReturnType<typeof setTimeout> | null = null
@@ -112,6 +115,10 @@ export async function copyDatabaseStepwise(
     if (stallTimeoutMs <= 0) return
     if (stallTimer) clearTimeout(stallTimer)
     stallTimer = setTimeout(() => {
+      if (options.pauseWhile?.() === true) {
+        armStall()
+        return
+      }
       stopped = stallError(stallTimeoutMs, options.destPath)
       reportStall(stopped)
     }, stallTimeoutMs)
@@ -122,10 +129,16 @@ export async function copyDatabaseStepwise(
   const copy = conn
     .copyDatabase({
       destPath: options.destPath,
-      pagesPerStep: options.pagesPerStep ?? DEFAULT_PAGES_PER_STEP,
+      pagesPerStep,
       onStep: step => {
         if (stopped) throw stopped
         armStall()
+        const pausing = options.pauseWhile?.() === true
+        if (pausedPreviousStep && previous !== null && copiedPages(step) === copiedPages(previous)) {
+          pausedPreviousStep = pausing
+          return pausing ? 0 : pagesPerStep
+        }
+        pausedPreviousStep = pausing
         if (hasRestarted(step, previous)) {
           restarts++
           if (restarts > restartLimit) {
@@ -142,6 +155,7 @@ export async function copyDatabaseStepwise(
         }
         previous = step
         options.onStep?.({ totalPages: step.totalPages, remainingPages: step.remainingPages, restarts })
+        return pausing ? 0 : pagesPerStep
       },
     })
     .catch((err: unknown) => {

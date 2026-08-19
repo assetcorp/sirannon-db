@@ -34,9 +34,13 @@ export class DatabaseBackups extends DatabaseLifecycle {
    * while it stays open for reads and writes.
    *
    * Sirannon carries no storage client, so the destination is where you
-   * connect object storage or anything else that moves bytes. This route
-   * writes one local file first and needs local disk equal to the backup,
-   * which {@link DatabaseBackups.backupCapabilities} states.
+   * connect object storage or anything else that moves bytes.
+   *
+   * The pieces reach the destination as SQLite writes them where this runtime
+   * carries the compiled streaming extension, so the run needs no local disk.
+   * Every other runtime writes one local file first and needs local disk equal
+   * to the backup. {@link DatabaseBackups.backupCapabilities} states which of
+   * the two this one does.
    *
    * @param options - Destination, naming, piece size, and progress reporting.
    * @returns The run identifier, the timings, what the run wrote, and how often the copy restarted.

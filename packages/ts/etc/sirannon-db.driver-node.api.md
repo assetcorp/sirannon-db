@@ -10,6 +10,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver;
 // @public
 export interface NodeSqliteOptions {
     busyTimeout?: number;
+    vfsExtensionPath?: string;
 }
 
 // (No @packageDocumentation comment for this package)

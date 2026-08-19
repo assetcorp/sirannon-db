@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
+    "build:vfs": "node ../../native/vfs/build.mjs",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
     "check:api": "node scripts/assert-api-reports.mjs",
@@ -206,5 +207,13 @@
     "typescript": "5.9.3",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.69.0",
     "vitest": "4.0.18"
+  },
+  "optionalDependencies": {
+    "@delali/sirannon-vfs-darwin-arm64": "0.2.2",
+    "@delali/sirannon-vfs-darwin-x64": "0.2.2",
+    "@delali/sirannon-vfs-linux-arm64": "0.2.2",
+    "@delali/sirannon-vfs-linux-x64": "0.2.2",
+    "@delali/sirannon-vfs-win32-arm64": "0.2.2",
+    "@delali/sirannon-vfs-win32-x64": "0.2.2"
   }
 }

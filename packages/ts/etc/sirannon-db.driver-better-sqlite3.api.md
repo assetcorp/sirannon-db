@@ -10,6 +10,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
 // @public
 export interface BetterSqlite3Options {
     busyTimeout?: number;
+    vfsExtensionPath?: string;
 }
 
 // (No @packageDocumentation comment for this package)

@@ -15,12 +15,48 @@ export interface SentPieces {
   fingerprint?: string
 }
 
-function destinationError(name: string, index: number, err: unknown): SirannonError {
+/**
+ * Wraps whatever a caller's destination threw in the error code a caller
+ * matches on. The message states which piece failed and which file it
+ * belongs to.
+ *
+ * @param name - Name the piece is stored under.
+ * @param index - Position of the piece in the file.
+ * @param err - What the destination threw.
+ * @returns The error to report for that piece.
+ */
+export function destinationPieceError(name: string, index: number, err: unknown): SirannonError {
   if (err instanceof SirannonError) return err
   return new SirannonError(
     `The destination refused piece ${index} of '${name}': ${err instanceof Error ? err.message : String(err)}`,
     'BACKUP_DESTINATION_ERROR',
   )
+}
+
+/**
+ * Reads back every piece a run stored and fingerprints them in the order they
+ * assemble in. A run that never held the whole file has no other way to
+ * report one.
+ *
+ * @param destination - Where the pieces are read from.
+ * @param name - Name they were stored under.
+ * @param pieceCount - Pieces the run stored.
+ * @returns The SHA-256 of the file those pieces assemble into.
+ */
+export async function fingerprintStoredPieces(
+  destination: BackupDestination,
+  name: string,
+  pieceCount: number,
+): Promise<string> {
+  const digest = createHash('sha256')
+  for (let index = 0; index < pieceCount; index++) {
+    try {
+      digest.update(await destination.readPiece(name, index))
+    } catch (err) {
+      throw destinationPieceError(name, index, err)
+    }
+  }
+  return digest.digest('hex')
 }
 
 /**
@@ -63,7 +99,7 @@ export async function sendFileInPieces(
       try {
         await destination.writePiece(name, index, piece)
       } catch (err) {
-        throw destinationError(name, index, err)
+        throw destinationPieceError(name, index, err)
       }
       index++
       bytesWritten += filled

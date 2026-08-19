@@ -25,6 +25,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/__tests__/e2e/**/*.soak.test.ts'],
+    env: { SQLITE_USE_URI: '1' },
     exclude: ['node_modules/**', 'dist/**'],
     testTimeout,
     hookTimeout: 30_000,

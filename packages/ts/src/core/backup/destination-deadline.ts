@@ -14,7 +14,6 @@ async function withinDeadline<T>(operation: Promise<T>, action: string, timeoutM
         ),
       )
     }, timeoutMs)
-    timer.unref?.()
   })
   try {
     return await Promise.race([operation, deadline])
@@ -25,18 +24,25 @@ async function withinDeadline<T>(operation: Promise<T>, action: string, timeoutM
 
 /**
  * Wraps a caller's destination so every call to it fails once it passes the
- * deadline. A storage client can leave a write or a read pending for ever, and
+ * deadline. A storage client can leave a write or a read pending forever, and
  * the copy's own stall deadline counts that wait as work in progress. A run
  * without this deadline would therefore never end.
  *
  * @param destination - Destination the caller supplied.
- * @param timeoutMs - Milliseconds one call may take. Zero and below leave the calls unbounded.
+ * @param timeoutMs - Milliseconds one call may take. Zero leaves the calls unbounded.
  * @returns The same destination with a deadline on each of its three calls.
+ * @throws A `BACKUP_ERROR` where the deadline is negative or is not a number.
  *
  * @internal
  */
 export function destinationWithDeadline(destination: BackupDestination, timeoutMs: number): BackupDestination {
-  if (timeoutMs <= 0) return destination
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new SirannonError(
+      `The destination deadline must be a number of milliseconds that is zero or above, and it was ${timeoutMs}`,
+      'BACKUP_ERROR',
+    )
+  }
+  if (timeoutMs === 0) return destination
   return {
     writePiece: (name, index, bytes) =>
       withinDeadline(destination.writePiece(name, index, bytes), `store piece ${index} of '${name}'`, timeoutMs),

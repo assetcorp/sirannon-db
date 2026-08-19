@@ -138,7 +138,7 @@ export interface BackupToDestinationOptions {
   restartLimit?: number
   /** Milliseconds the copy may move no pages before it stops with an error. */
   stallTimeoutMs?: number
-  /** Milliseconds one call to the destination may take before the run stops with an error. Defaults to 10 minutes. */
+  /** Milliseconds one call to the destination may take before the run stops with an error. Defaults to 10 minutes, and zero leaves the calls unbounded. */
   destinationTimeoutMs?: number
   /** Steps the copy may take without moving a page it had not already moved. */
   noProgressStepLimit?: number

@@ -11,8 +11,7 @@ export async function copyDatabaseWithBetterSqlite3(
   if (db.inTransaction) throw new BackupError(OPEN_TRANSACTION_MESSAGE)
   const final = await db.backup(request.destPath, {
     progress: step => {
-      request.onStep?.(step)
-      return request.pagesPerStep
+      return request.onStep?.(step) ?? request.pagesPerStep
     },
   })
   request.onStep?.(final)

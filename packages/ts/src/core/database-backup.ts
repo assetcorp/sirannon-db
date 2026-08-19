@@ -83,7 +83,11 @@ export class DatabaseBackupController {
   }
 
   capabilities(): BackupCapabilities {
-    return describeBackupCapabilities(this.driverCapabilities, this.engine !== undefined)
+    return describeBackupCapabilities(
+      this.driverCapabilities,
+      this.engine !== undefined,
+      this.engine?.streamsToDestination() ?? false,
+    )
   }
 
   backup(destPath: string): Promise<void> {

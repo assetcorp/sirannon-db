@@ -469,7 +469,7 @@ export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<v
 // @public
 export interface DatabaseCopyRequest {
     destPath: string;
-    onStep?: (step: DatabaseCopyStep) => void;
+    onStep?: (step: DatabaseCopyStep) => number;
     pagesPerStep: number;
 }
 
@@ -1075,6 +1075,7 @@ export interface SirannonOptions {
 export interface SQLiteConnection {
     close(): Promise<void>;
     copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>;
+    readonly copyRunsOffCallerThread?: boolean;
     exec(sql: string): Promise<void>;
     loadExtension?(extensionPath: string): Promise<void>;
     prepare(sql: string): Promise<SQLiteStatement>;
@@ -1093,7 +1094,7 @@ export interface SQLiteConnection {
 // @public
 export interface SQLiteDriver {
     readonly capabilities: DriverCapabilities;
-    createBackupEngine?(): BackupEngine;
+    createBackupEngine?(driver: SQLiteDriver): BackupEngine;
     createWriterContext?(): WriterContext;
     open(path: string, options?: OpenOptions): Promise<SQLiteConnection>;
     resolveExtensionPath?(extensionPath: string): string;

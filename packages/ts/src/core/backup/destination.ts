@@ -13,8 +13,8 @@ export interface BackupPiece {
  * no storage client, so a caller supplies these three operations and connects
  * object storage, another machine, or anything else that moves bytes. Pieces
  * are fixed in size and arrive in any order, because SQLite writes page one
- * last. A backup uses more than one name, since SQLite opens a journal file
- * beside the database file it writes.
+ * last. A backup chain uses more than one name, since its full copy, each
+ * change piece, and its own log are each stored under a name of their own.
  *
  * @public
  */

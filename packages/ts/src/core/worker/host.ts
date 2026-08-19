@@ -308,6 +308,7 @@ export class WriterWorker {
             })),
           })),
         }) as Promise<GroupRunOutcome[]>,
+      copyRunsOffCallerThread: true,
       copyDatabase: request =>
         this.request(
           { kind: 'copyDatabase', destPath: request.destPath, pagesPerStep: request.pagesPerStep },

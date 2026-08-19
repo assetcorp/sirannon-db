@@ -39,6 +39,8 @@ export interface BackupEngine {
   backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void>
   /** Copies the database behind a connection to a caller-supplied destination. */
   copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport>
+  /** Reports whether a full copy reaches the destination without a local file. */
+  streamsToDestination(): boolean
   /** Builds the cycle that captures the write-ahead log and then checkpoints it. */
   createCycle(request: BackupCycleRequest): BackupCycle
   /** Starts a repeating backup and returns a function that stops it. */
@@ -67,8 +69,13 @@ export interface DatabaseCopyRequest {
   destPath: string
   /** Pages the driver moves in one step. */
   pagesPerStep: number
-  /** Called after every step with that step's counters. */
-  onStep?: (step: DatabaseCopyStep) => void
+  /**
+   * Called after every step with that step's counters. It returns the pages for
+   * the next step, and a driver whose runtime takes a fresh count on each step
+   * passes that number on. Zero holds the copy still while the caller catches
+   * up.
+   */
+  onStep?: (step: DatabaseCopyStep) => number
 }
 
 /** Totals for one statement applied over many parameter sets.
@@ -153,6 +160,12 @@ export interface SQLiteConnection {
    * this rejects with an error that names that runtime.
    */
   copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>
+  /**
+   * Whether the runtime steps this connection's copy on a thread other than the
+   * caller's. A copy on its own thread can wait for the caller to catch up, and
+   * a copy on the caller's thread would stop the only thread there is.
+   */
+  readonly copyRunsOffCallerThread?: boolean
   /** Optional fast path that applies one statement over many parameter sets. */
   runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>
   /** Optional fast path that applies one statement over many parameter sets and returns only the totals. */
@@ -247,8 +260,12 @@ export interface SQLiteDriver {
   startWriterHost?(path: string, options: OpenOptions, hostOptions?: WorkerHostOptions): Promise<SQLiteConnection>
   /** Builds the tracker that tells the caller holding the writer from one waiting on it. */
   createWriterContext?(): WriterContext
-  /** Builds the engine that copies a database to a file. */
-  createBackupEngine?(): BackupEngine
+  /**
+   * Builds the engine that copies a database to a file. The driver is passed
+   * back so the engine can open a connection of its own, which a streamed copy
+   * needs for the extension that carries the bytes.
+   */
+  createBackupEngine?(driver: SQLiteDriver): BackupEngine
   /**
    * Makes an extension path absolute. Passing a bare name to `load_extension`
    * would let the dynamic linker search its own paths and open a different

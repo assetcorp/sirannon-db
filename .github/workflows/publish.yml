@@ -19,7 +19,14 @@ permissions:
   contents: write
   id-token: write
 
+env:
+  VFS_TARGETS: darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64
+
 jobs:
+  extension:
+    name: Streaming extension
+    uses: ./.github/workflows/streaming-extension.yml
+
   plan:
     name: Decide whether this push earns a prerelease
     if: github.event_name == 'push'
@@ -38,7 +45,7 @@ jobs:
 
   prerelease:
     name: Prerelease under the next dist-tag
-    needs: plan
+    needs: [plan, extension]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     concurrency:
@@ -78,6 +85,17 @@ jobs:
         working-directory: packages/ts
         run: npm pkg set "version=${{ needs.plan.outputs.version }}"
 
+      - name: Download the compiled extensions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sirannon-vfs-*
+          path: native/artifacts
+
+      - name: Version and publish the platform packages
+        run: node .github/scripts/publish-vfs-packages.js "${{ needs.plan.outputs.version }}" next
+        env:
+          NPM_CONFIG_PROVENANCE: true
+
       - name: Publish
         working-directory: packages/ts
         run: npm publish --tag next --access public
@@ -86,6 +104,7 @@ jobs:
 
   publish:
     name: Release & Publish
+    needs: extension
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -127,6 +146,19 @@ jobs:
         run: pnpm nx release ${{ inputs.version }} ${{ inputs.dry-run && '--dry-run' || '' }} --skip-publish
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+
+      - name: Download the compiled extensions
+        if: ${{ !inputs.dry-run }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sirannon-vfs-*
+          path: native/artifacts
+
+      - name: Version and publish the platform packages
+        if: ${{ !inputs.dry-run }}
+        run: node .github/scripts/publish-vfs-packages.js "$(node -p "require('./packages/ts/package.json').version")" latest
+        env:
+          NPM_CONFIG_PROVENANCE: true
 
       - name: Publish
         if: ${{ !inputs.dry-run }}

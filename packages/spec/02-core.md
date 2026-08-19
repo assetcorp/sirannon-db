@@ -484,27 +484,28 @@ BackupPiece {
 }
 ```
 
-Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must hold more than one name, because SQLite opens a journal file beside the database file it writes. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to.
+Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must hold more than one name, because a chain stores its full copy, each change piece, and its chain log under a name of its own. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to. A destination call that has not returned inside `destinationTimeoutMs` fails with the same code, because a pending destination call resets the stall deadline.
 
 Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros rather than moving every later byte. Reassembly checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
 
 ```text
 BackupToDestinationOptions {
-  destination:          BackupDestination
-  name?:                string  (default: backup-{ISO timestamp}.db)
-  chainId?:             string  (default: an identifier the run mints)
-  pieceBytes?:          number  (default: 16 MiB, recommended)
-  pagesPerStep?:        number  (default: 256, recommended)
-  restartLimit?:        number  (default: 3, recommended)
-  stallTimeoutMs?:      number  (default: 30000, recommended)
-  noProgressStepLimit?: number  (default: 256, recommended)
-  stagingDir?:          string  (default: the host temporary directory)
-  fingerprint?:         boolean (default: true)
-  onProgress?:          (progress: BackupProgress) -> void
+  destination:           BackupDestination
+  name?:                 string  (default: backup-{ISO timestamp}.db)
+  chainId?:              string  (default: an identifier the run mints)
+  pieceBytes?:           number  (default: 16 MiB, recommended)
+  pagesPerStep?:         number  (default: 256, recommended)
+  restartLimit?:         number  (default: 3, recommended)
+  stallTimeoutMs?:       number  (default: 30000, recommended)
+  destinationTimeoutMs?: number  (default: 600000, recommended)
+  noProgressStepLimit?:  number  (default: 256, recommended)
+  stagingDir?:           string  (default: the host temporary directory)
+  fingerprint?:          boolean (default: true)
+  onProgress?:           (progress: BackupProgress) -> void
 }
 ```
 
-An implementation that cannot deliver the copy to the destination as SQLite writes it takes the staged route, which writes one local file and sends that file on in pieces. The staged route needs local disk equal to the backup, and the capability report states that requirement. The staged route sends one name to the destination, because SQLite's journal stays beside the local file and goes when that file goes, so a report from this route names one file. A route that sends the journal to the destination as well must record every name it wrote, since the destination lists the pieces of a name it is given and never the names it holds.
+An implementation that cannot deliver the copy to the destination as SQLite writes it takes the staged route, which writes one local file and sends that file on in pieces. The staged route needs local disk equal to the backup, and the capability report states that requirement. The journal SQLite opens beside a copy stays with the implementation that writes it and reaches no destination, so every run reports one name.
 
 ### Reports
 
@@ -555,20 +556,21 @@ A database opened with `backups` captures its write-ahead log on an interval, th
 
 ```text
 BackupCycleOptions {
-  destination:          BackupDestination
-  intervalMs?:          number  (default: 60000, recommended)
-  fullCopyIntervalMs?:  number  (default: 86400000, recommended)
-  chainName?:           string  (default: sirannon-backup-chain)
-  namePrefix?:          string  (default: sirannon-backup)
-  pieceBytes?:          number  (default: 16 MiB, recommended)
-  fingerprint?:         boolean (default: true)
-  stagingDir?:          string  (default: a directory beside the database file)
-  pagesPerStep?:        number
-  restartLimit?:        number
-  stallTimeoutMs?:      number
-  noProgressStepLimit?: number
-  onRun?:               (report: BackupRunReport) -> void
-  onError?:             (error) -> void
+  destination:           BackupDestination
+  intervalMs?:           number  (default: 60000, recommended)
+  fullCopyIntervalMs?:   number  (default: 86400000, recommended)
+  chainName?:            string  (default: sirannon-backup-chain)
+  namePrefix?:           string  (default: sirannon-backup)
+  pieceBytes?:           number  (default: 16 MiB, recommended)
+  fingerprint?:          boolean (default: true)
+  stagingDir?:           string  (default: a directory beside the database file)
+  pagesPerStep?:         number
+  restartLimit?:         number
+  stallTimeoutMs?:       number
+  destinationTimeoutMs?: number
+  noProgressStepLimit?:  number
+  onRun?:                (report: BackupRunReport) -> void
+  onError?:              (error) -> void
 }
 ```
 

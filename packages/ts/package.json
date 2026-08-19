@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
+    "build:vfs": "node ../../native/vfs/build.mjs",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
     "check:api": "node scripts/assert-api-reports.mjs",

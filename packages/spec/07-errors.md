@@ -36,7 +36,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `BACKUP_UNSUPPORTED` | The driver provides no backup engine, the runtime carries no stepped backup interface, or a database asked to capture its change log holds none. |
 | `BACKUP_RESTARTED` | SQLite returned the copy to page one more often than the restart limit allows, or the copy reached no further across the no-progress step limit. |
 | `BACKUP_STALLED` | The copy moved no pages inside the stall deadline. |
-| `BACKUP_DESTINATION_ERROR` | The caller's destination refused a piece, or holds pieces that do not match the run that wrote them. |
+| `BACKUP_DESTINATION_ERROR` | The caller's destination refused a piece, did not answer inside the deadline, or holds pieces that do not match the run that wrote them. |
 | `BACKUP_LOG_REWOUND` | The write-ahead log restarted before a capture read it, so those writes are in no backup. |
 | `BACKUP_CHAIN_BROKEN` | No full copy reaches back to the moment asked for, or the chain is missing a piece the restore needs. |
 | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured. |

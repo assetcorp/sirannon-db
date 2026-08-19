@@ -2,9 +2,11 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError, SirannonError } from '../errors.js'
+import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import type { BackupRunReport, BackupRunRequest } from './report.js'
 import { copyToDestinationStaged } from './staged-copy.js'
 import { copyDatabaseStepwise } from './stepped-copy.js'
+import { type BackupStreamingSupport, copyToDestinationStreamed } from './streamed-copy.js'
 
 const BACKUP_FILE_PREFIX = 'backup'
 
@@ -26,6 +28,8 @@ function hasControlCharacters(s: string): boolean {
 }
 
 export class BackupManager {
+  constructor(private readonly streaming?: BackupStreamingSupport) {}
+
   async backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void> {
     if (hasControlCharacters(destPath)) {
       throw new BackupError('Backup path contains invalid characters')
@@ -64,8 +68,21 @@ export class BackupManager {
     }
   }
 
-  copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
-    return copyToDestinationStaged(conn, request)
+  async copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
+    const bounded = {
+      ...request,
+      destination: destinationWithDeadline(
+        request.destination,
+        request.destinationTimeoutMs ?? DEFAULT_DESTINATION_TIMEOUT_MS,
+      ),
+    }
+    return this.streaming
+      ? copyToDestinationStreamed(conn, bounded, this.streaming)
+      : copyToDestinationStaged(conn, bounded)
+  }
+
+  streamsToDestination(): boolean {
+    return this.streaming !== undefined
   }
 
   generateFilename(): string {

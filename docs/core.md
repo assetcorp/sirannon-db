@@ -146,7 +146,7 @@ const s3Destination: BackupDestination = {
 }
 ```
 
-Sirannon relies on two properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name.
+Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name.
 
 ## Incremental backups
 

@@ -1,18 +1,29 @@
+import { existsSync, writeFileSync } from 'node:fs'
 import { betterSqlite3 } from '../../../../drivers/better-sqlite3/index.js'
 import { defineDriver } from '../../../driver/define.js'
 import type { SQLiteDriver } from '../../../driver/types.js'
 import { WriterWorker } from '../../host.js'
 
-const SLEEP_MARKER = 'sirannon_worker_sleep_ms'
+const HOLD_MARKER = 'sirannon_worker_hold_until_file'
+const HOLD_POLL_MS = 25
 
-export function sleepSql(ms: number): string {
-  return `SELECT 1 /* ${SLEEP_MARKER}:${ms} */`
+export function heldSql(sql: string, releaseFile: string): string {
+  return `${sql} /* ${HOLD_MARKER}:${releaseFile} */`
 }
 
-function sleepIfMarked(sql: string): void {
-  const match = sql.match(new RegExp(`${SLEEP_MARKER}:(\\d+)`))
-  if (!match) return
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(match[1]))
+export function releaseHeldWrite(releaseFile: string): void {
+  writeFileSync(releaseFile, '')
+}
+
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function pauseIfMarked(sql: string): void {
+  const hold = sql.match(new RegExp(`${HOLD_MARKER}:(.+?) \\*/`))
+  const releaseFile = hold?.[1]
+  if (!releaseFile) return
+  while (!existsSync(releaseFile)) pause(HOLD_POLL_MS)
 }
 
 export function sleepingDriver(): SQLiteDriver {
@@ -29,12 +40,12 @@ export function sleepingDriver(): SQLiteDriver {
       const conn = await base.open(path, options)
       const originalPrepare = conn.prepare.bind(conn)
       conn.prepare = async (sql: string) => {
-        sleepIfMarked(sql)
+        pauseIfMarked(sql)
         return originalPrepare(sql)
       }
       const originalExec = conn.exec.bind(conn)
       conn.exec = async (sql: string) => {
-        sleepIfMarked(sql)
+        pauseIfMarked(sql)
         return originalExec(sql)
       }
       return conn

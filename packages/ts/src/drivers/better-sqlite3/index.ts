@@ -5,7 +5,7 @@ import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
-import { nodeBackupEngine, nodeResolveExtensionPath, nodeWriterContext } from '../node-runtime.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeWriterContext } from '../node-runtime.js'
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 
 /**
@@ -18,6 +18,13 @@ export interface BetterSqlite3Options {
    * Milliseconds a statement waits for the write lock before it fails.
    */
   busyTimeout?: number
+  /**
+   * Path to the compiled extension that streams a backup to a caller-supplied
+   * destination. It defaults to the binary the install fetched for this
+   * platform, and naming one here is how a host with no published binary
+   * streams a copy from an extension it built itself.
+   */
+  vfsExtensionPath?: string
 }
 
 function createConnection(db: import('better-sqlite3').Database): SQLiteConnection {
@@ -119,7 +126,14 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       return host.connection
     },
     createWriterContext: nodeWriterContext,
-    createBackupEngine: nodeBackupEngine,
+    createBackupEngine: driver =>
+      nodeBackupEngine(
+        nodeStreamingSupport({
+          driver,
+          uriFilenames: process.env.SQLITE_USE_URI === '1',
+          ...(driverOptions?.vfsExtensionPath === undefined ? {} : { extensionPath: driverOptions.vfsExtensionPath }),
+        }),
+      ),
     resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
       const Database = (await import('better-sqlite3')).default

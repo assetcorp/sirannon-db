@@ -83,7 +83,7 @@ export async function createDatabaseRuntime(
     driver.capabilities,
     id,
     path,
-    driver.createBackupEngine?.(),
+    driver.createBackupEngine?.(driver),
   )
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
   const extensions = new LoadedExtensions(driver)

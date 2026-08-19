@@ -58,6 +58,7 @@ export async function startChain(
     ...(request.pagesPerStep === undefined ? {} : { pagesPerStep: request.pagesPerStep }),
     ...(request.restartLimit === undefined ? {} : { restartLimit: request.restartLimit }),
     ...(request.stallTimeoutMs === undefined ? {} : { stallTimeoutMs: request.stallTimeoutMs }),
+    ...(request.destinationTimeoutMs === undefined ? {} : { destinationTimeoutMs: request.destinationTimeoutMs }),
     ...(request.noProgressStepLimit === undefined ? {} : { noProgressStepLimit: request.noProgressStepLimit }),
   })
 

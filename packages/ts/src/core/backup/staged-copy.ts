@@ -2,19 +2,20 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
-import { SirannonError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
 import { sendFileInPieces } from './pieces.js'
-import { type BackupProgress, type BackupRunReport, type BackupRunRequest, DEFAULT_PIECE_BYTES } from './report.js'
+import {
+  assertPieceBytes,
+  type BackupProgress,
+  type BackupRunReport,
+  type BackupRunRequest,
+  DEFAULT_PIECE_BYTES,
+  defaultDestinationName,
+  readPageSize,
+} from './report.js'
 import { copyDatabaseStepwise } from './stepped-copy.js'
 
 const STAGED_FILE_NAME = 'copy.db'
-
-async function readPageSize(conn: SQLiteConnection): Promise<number> {
-  const stmt = await conn.prepare('PRAGMA page_size')
-  const row = await stmt.get<{ page_size: number | bigint }>()
-  return row ? Number(row.page_size) : 0
-}
 
 /**
  * Copies a database to a caller-supplied destination by writing one local file
@@ -30,14 +31,9 @@ export async function copyToDestinationStaged(
   request: BackupRunRequest,
 ): Promise<BackupRunReport> {
   const runId = randomHex(8)
-  const name = request.name ?? `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`
+  const name = request.name ?? defaultDestinationName()
   const pieceBytes = request.pieceBytes ?? DEFAULT_PIECE_BYTES
-  if (!Number.isInteger(pieceBytes) || pieceBytes <= 0) {
-    throw new SirannonError(
-      `Piece size must be a positive whole number of bytes, and it was ${pieceBytes}`,
-      'BACKUP_ERROR',
-    )
-  }
+  assertPieceBytes(pieceBytes)
 
   const startedAt = Date.now()
   const stagingRoot = await mkdtemp(join(request.stagingDir ?? tmpdir(), 'sirannon-backup-'))

@@ -1,0 +1,26 @@
+{
+  "name": "@delali/sirannon-vfs-linux-x64",
+  "version": "0.0.0",
+  "description": "Compiled SQLite extension that streams a Sirannon backup to a caller-supplied destination, for Linux on x86-64.",
+  "license": "Apache-2.0",
+  "author": "Delali (https://sondelali.com)",
+  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/assetcorp/sirannon-db.git",
+    "directory": "native/npm/linux-x64"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "sirannonvfs.so",
+    "musl/sirannonvfs.so"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

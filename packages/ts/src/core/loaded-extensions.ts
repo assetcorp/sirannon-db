@@ -5,6 +5,9 @@ import { loadExtension } from './extension-loader.js'
 function forwardingConnection(connection: SQLiteConnection, onClose: () => void): SQLiteConnection {
   const { loadExtension, runBatch, runBatchSummary, runGroup } = connection
   const forwarding: SQLiteConnection = {
+    ...(connection.copyRunsOffCallerThread === undefined
+      ? {}
+      : { copyRunsOffCallerThread: connection.copyRunsOffCallerThread }),
     exec: sql => connection.exec(sql),
     prepare: sql => connection.prepare(sql),
     transaction: fn => connection.transaction(fn),

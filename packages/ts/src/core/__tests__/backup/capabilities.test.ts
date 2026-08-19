@@ -26,6 +26,33 @@ describe('describeBackupCapabilities', () => {
     expect(report.schedule).toBe(false)
   })
 
+  it('states that a runtime streaming its copy needs no local disk', () => {
+    const report = describeBackupCapabilities(
+      { multipleConnections: true, extensions: true, steppedCopy: true },
+      true,
+      true,
+    )
+
+    expect(report).toEqual({
+      fullCopy: true,
+      streamedCopy: true,
+      stagedCopy: true,
+      localDiskRequired: 'none',
+      schedule: true,
+    })
+  })
+
+  it('reports no streamed copy where the runtime carries no stepped copy call', () => {
+    const report = describeBackupCapabilities(
+      { multipleConnections: false, extensions: false, steppedCopy: false },
+      true,
+      true,
+    )
+
+    expect(report.streamedCopy).toBe(false)
+    expect(report.localDiskRequired).toBe('none')
+  })
+
   it('reports nothing at all where the driver supplies no backup engine', () => {
     const report = describeBackupCapabilities({ multipleConnections: true, extensions: true, steppedCopy: true }, false)
 

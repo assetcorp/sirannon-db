@@ -135,6 +135,7 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
               throw new SirannonError('The caller stopped this copy', WORKER_COPY_ABORTED_CODE)
             }
             port.postMessage({ id: req.id, kind: 'copyStep', step })
+            return req.pagesPerStep
           },
         })
       } finally {

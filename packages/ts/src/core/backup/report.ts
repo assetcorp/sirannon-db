@@ -1,7 +1,51 @@
+import type { SQLiteConnection } from '../driver/types.js'
+import { SirannonError } from '../errors.js'
 import type { BackupChainPosition } from './chain.js'
 import type { BackupDestination } from './destination.js'
 
 export const DEFAULT_PIECE_BYTES = 16 * 1024 * 1024
+
+/**
+ * Names the file a run stores its pieces under where the caller named none.
+ *
+ * @returns A name carrying the moment the run started.
+ *
+ * @internal
+ */
+export function defaultDestinationName(): string {
+  return `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.db`
+}
+
+/**
+ * Refuses a piece size that no run could store its bytes in.
+ *
+ * @param pieceBytes - Bytes one whole piece is meant to hold.
+ *
+ * @internal
+ */
+export function assertPieceBytes(pieceBytes: number): void {
+  if (!Number.isInteger(pieceBytes) || pieceBytes <= 0) {
+    throw new SirannonError(
+      `Piece size must be a positive whole number of bytes, and it was ${pieceBytes}`,
+      'BACKUP_ERROR',
+    )
+  }
+}
+
+/**
+ * Reads the page size of the database behind a connection, which a report
+ * states alongside the pages a copy moved.
+ *
+ * @param conn - Connection to read from.
+ * @returns Bytes one page holds, or zero where SQLite reported none.
+ *
+ * @internal
+ */
+export async function readPageSize(conn: SQLiteConnection): Promise<number> {
+  const stmt = await conn.prepare('PRAGMA page_size')
+  const row = await stmt.get<{ page_size: number | bigint }>()
+  return row ? Number(row.page_size) : 0
+}
 
 /** How far one backup run has moved, reported at step resolution.
  * @public
@@ -40,11 +84,9 @@ export interface BackupRunReport {
   /** Whether the bytes reached the destination through a local file or without one. */
   route: 'staged' | 'streamed'
   /**
-   * Name the pieces are stored under at the destination. The staged route
-   * writes this one name and no other, because SQLite's journal beside the
-   * copy stays on local disk and goes when the staging directory goes. A route
-   * that sends a second name to the destination records both, so that a
-   * restore finds them.
+   * Name the pieces are stored under at the destination. A run writes this one
+   * name and no other, because the journal SQLite opens beside a copy stays on
+   * local disk.
    */
   destinationName: string
   /** Epoch milliseconds the run started at. */
@@ -85,7 +127,10 @@ export interface BackupToDestinationOptions {
   name?: string
   /** The chain this copy begins. Defaults to an identifier the run mints for itself. */
   chainId?: string
-  /** Bytes one whole piece holds. Defaults to 16 MiB. */
+  /**
+   * Bytes one whole piece holds. Defaults to 16 MiB. A streamed copy hands
+   * SQLite whole 512-byte blocks, so it needs a size that divides by 512.
+   */
   pieceBytes?: number
   /** Pages SQLite moves in one step. */
   pagesPerStep?: number
@@ -93,11 +138,17 @@ export interface BackupToDestinationOptions {
   restartLimit?: number
   /** Milliseconds the copy may move no pages before it stops with an error. */
   stallTimeoutMs?: number
+  /** Milliseconds one call to the destination may take before the run stops with an error. Defaults to 10 minutes, and zero leaves the calls unbounded. */
+  destinationTimeoutMs?: number
   /** Steps the copy may take without moving a page it had not already moved. */
   noProgressStepLimit?: number
   /** Directory the staged route writes its local file in. Defaults to the system temporary directory. */
   stagingDir?: string
-  /** Whether the run fingerprints what it wrote. Defaults to true. */
+  /**
+   * Whether the run fingerprints what it wrote. Defaults to true. A streamed
+   * copy reads every piece back from the destination to compute it, because it
+   * never holds the whole file, so a run to remote storage pays for that read.
+   */
   fingerprint?: boolean
   /** Called at step resolution while the run proceeds. */
   onProgress?: (progress: BackupProgress) => void

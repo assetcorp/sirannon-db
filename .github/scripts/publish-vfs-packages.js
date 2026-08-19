@@ -49,6 +49,7 @@ for (const packageName of PACKAGES) {
 }
 
 writeVersion(join('packages', 'ts', 'package.json'), manifest => {
+  manifest.optionalDependencies = {}
   for (const packageName of PACKAGES) {
     manifest.optionalDependencies[`@delali/sirannon-vfs-${packageName}`] = version
   }

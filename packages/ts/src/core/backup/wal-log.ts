@@ -1,4 +1,5 @@
 import { open } from 'node:fs/promises'
+import { SirannonError } from '../errors.js'
 import {
   LOG_HEADER_BYTES,
   type LogChecksum,
@@ -155,7 +156,7 @@ export async function scanLogFrames(
  * @param startOffset - First byte to copy.
  * @param endOffset - The byte just past the last one to copy.
  * @param destPath - Where to write them.
- * @returns How many bytes it wrote.
+ * @returns How many bytes it wrote, which is always the whole run.
  */
 export async function copyLogRange(
   logPath: string,
@@ -173,8 +174,24 @@ export async function copyLogRange(
       while (at < endOffset) {
         const wanted = Math.min(buffer.byteLength, endOffset - at)
         const { bytesRead } = await source.read(buffer, 0, wanted, at)
-        if (bytesRead === 0) break
-        await dest.write(buffer, 0, bytesRead)
+        if (bytesRead === 0) {
+          throw new SirannonError(
+            `The write-ahead log '${logPath}' ends at byte ${at} while the frames captured from it run to byte ${endOffset}, so it lost frames while Sirannon was reading it. ` +
+              'Another connection checkpointed the log. Route every write and every checkpoint through Sirannon, and take a fresh full copy so a new chain starts from a known state.',
+            'BACKUP_LOG_REWOUND',
+          )
+        }
+        let put = 0
+        while (put < bytesRead) {
+          const { bytesWritten } = await dest.write(buffer, put, bytesRead - put)
+          if (bytesWritten === 0) {
+            throw new SirannonError(
+              `The capture of '${logPath}' could write no more than ${written + put} of its ${endOffset - startOffset} bytes into '${destPath}'. Check the free space and the permissions on that directory.`,
+              'BACKUP_ERROR',
+            )
+          }
+          put += bytesWritten
+        }
         at += bytesRead
         written += bytesRead
       }

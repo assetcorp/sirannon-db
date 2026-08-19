@@ -19,7 +19,11 @@ export interface BackupPiece {
  * @public
  */
 export interface BackupDestination {
-  /** Stores one piece of a named file. */
+  /**
+   * Stores one piece of a named file. A second write to the same name and index
+   * must replace the piece already there, because a run that stops between
+   * storing a piece and recording it stores that piece again when it resumes.
+   */
   writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>
   /** Returns one piece of a named file. */
   readPiece(name: string, index: number): Promise<Uint8Array>

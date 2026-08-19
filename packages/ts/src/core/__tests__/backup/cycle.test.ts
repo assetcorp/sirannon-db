@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs'
+import { rmSync, statSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
@@ -238,5 +239,75 @@ describe('the checkpoint cycle', () => {
     const chains = await replaced.chains()
     expect(chains.length).toBeGreaterThanOrEqual(2)
     expect(chains[0]?.previousChainId).toBe(chains[1]?.chainId)
+  })
+  it('appends nothing to a chain it could not check, and takes that chain up once it can', async () => {
+    const { cycle, build, conn, destination } = await harness()
+    await cycle.start()
+    await cycle.stop()
+    const chain = (await cycle.chains())[0]
+    const captured = chain?.changes.length ?? 0
+
+    const errors: Error[] = []
+    destination.refuseListing('sirannon-backup-chain')
+    const restarted = build({ onError: err => errors.push(err) })
+    await restarted.start()
+    await insert(conn, 'first')
+    const refused = await restarted.runOnce().catch((err: unknown) => err as Error)
+
+    expect(errors[0]?.message).toContain('refusing to list')
+    expect((refused as Error).message).toContain('refusing to list')
+    destination.refuseListing(null)
+    expect((await restarted.chains())[0]?.changes).toHaveLength(captured)
+
+    const sent = await restarted.runOnce()
+    expect(sent?.chainId).toBe(chain?.chainId)
+    expect((await restarted.chains())[0]?.changes).toHaveLength(captured + 1)
+  })
+
+  it('reports staged frames that have gone, and starts a fresh chain', async () => {
+    const { cycle, conn, destination } = await harness()
+    await cycle.start()
+    const chainId = (await cycle.chains())[0]?.chainId
+    await insert(conn, 'first')
+
+    destination.refuseName(`sirannon-backup-${chainId}-000001.wal`)
+    await cycle.runOnce().catch(() => {})
+    destination.refuseName(null)
+    rmSync(join(temp.path, 'staging', 'capture-1.wal'))
+
+    const error = await cycle.runOnce().catch((err: unknown) => err as SirannonError)
+
+    expect((error as SirannonError).code).toBe('BACKUP_CHAIN_BROKEN')
+    expect(await cycle.chains()).toHaveLength(2)
+  })
+
+  it('refuses a chain whose record is missing fields Sirannon writes into every one it stores', async () => {
+    const { cycle, destination } = await harness()
+    await cycle.start()
+    const chainId = (await cycle.chains())[0]?.chainId
+    const record = JSON.stringify({ kind: 'full', chainId, name: 'sirannon-backup-truncated.db' })
+    await destination.writePiece(`sirannon-backup-chain.${chainId}`, 0, new TextEncoder().encode(record))
+
+    const error = await cycle.chains().catch((err: unknown) => err as SirannonError)
+
+    expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
+    expect((error as SirannonError).message).toContain('missing fields')
+  })
+
+  it('starts a fresh chain where the state it left behind is incomplete', async () => {
+    const { cycle, build, conn } = await harness()
+    await cycle.start()
+    const chainId = (await cycle.chains())[0]?.chainId
+    await insert(conn, 'first')
+    await cycle.runOnce()
+    await cycle.stop()
+    await writeFile(join(temp.path, 'staging', 'cycle.json'), JSON.stringify({ chainId, records: 2 }))
+
+    const restarted = build({})
+    await restarted.start()
+
+    const chains = await restarted.chains()
+    expect(chains).toHaveLength(2)
+    expect(chains[0]?.previousChainId).toBeUndefined()
   })
 })

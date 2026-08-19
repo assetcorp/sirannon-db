@@ -35,7 +35,7 @@ async function takeOnePiece(framed: Uint8Array): Promise<{ index: number; bytes:
 
 describe('BackupStreamHost.take', () => {
   it('returns the bytes a whole frame carries', async () => {
-    await expect(takeOnePiece(frame(3, 16, 16))).resolves.toMatchObject({ index: 3 })
+    await expect(takeOnePiece(frame(3, 16, 16))).resolves.toEqual({ index: 3, bytes: new Uint8Array(16).fill(7) })
   })
 
   it('refuses a frame shorter than its header', async () => {

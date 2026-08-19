@@ -68,7 +68,7 @@ export class BackupManager {
     }
   }
 
-  copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
+  async copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
     const bounded = {
       ...request,
       destination: destinationWithDeadline(

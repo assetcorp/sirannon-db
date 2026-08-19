@@ -58,4 +58,13 @@ describe('destinationWithDeadline', () => {
 
     expect(destinationWithDeadline(destination, 0)).toBe(destination)
   })
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('refuses a deadline of %s', deadline => {
+    expect(() => destinationWithDeadline(memoryDestination(), deadline)).toThrow(
+      expect.objectContaining({
+        code: 'BACKUP_ERROR',
+        message: `The destination deadline must be a number of milliseconds that is zero or above, and it was ${deadline}`,
+      }),
+    )
+  })
 })

@@ -62,7 +62,7 @@ export interface BackupCycleOptions {
   restartLimit?: number
   /** How long the full copy may move no pages at all, in milliseconds, before it gives up. */
   stallTimeoutMs?: number
-  /** How long one call to the destination may take, in milliseconds, before the cycle gives up on it. Defaults to 10 minutes. */
+  /** How long one call to the destination may take, in milliseconds, before the cycle gives up on it. Defaults to 10 minutes, and zero leaves the calls unbounded. */
   destinationTimeoutMs?: number
   /** How many steps the full copy may take without reaching a page it had not already copied. */
   noProgressStepLimit?: number

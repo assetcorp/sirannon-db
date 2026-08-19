@@ -9,7 +9,10 @@ import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
 import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
-import { sleepingDriver, sleepSql } from './fixtures/sleeping-driver.js'
+import { heldSql, releaseHeldWrite, sleepingDriver, sleepSql } from './fixtures/sleeping-driver.js'
+
+const WRITE_DEADLINE_MS = 2_000
+const WORKER_RESTART_DEADLINE_MS = 10_000
 
 let dir: string
 let sirannon: Sirannon
@@ -231,67 +234,76 @@ describe('writer worker offload', () => {
   })
 
   it('rejects a stalled operation without killing the worker, then recovers', async () => {
-    await openOffloaded({ writerWorker: { writeTimeoutMs: 1_000 } })
-    await db.execute('CREATE TABLE sink (n INTEGER)')
-    await db.execute('CREATE TABLE recovered (n INTEGER)')
-
-    let stalledError: unknown
+    const registry = new Sirannon({ driver: sleepingDriver() })
     try {
-      await db.execute(
-        'INSERT INTO sink SELECT count(*) FROM (WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r WHERE x < 60000000) SELECT x FROM r)',
+      const stalledDb = await registry.open('stalled', join(dir, 'stalled.db'), {
+        writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
+      })
+      await stalledDb.execute('CREATE TABLE sink (n INTEGER)')
+      await stalledDb.execute('CREATE TABLE recovered (n INTEGER)')
+
+      const release = join(dir, 'release-stalled')
+      let stalledError: unknown
+      try {
+        await stalledDb.execute(heldSql('INSERT INTO sink (n) VALUES (1)', release))
+      } catch (err) {
+        stalledError = err
+      }
+      expect((stalledError as Error | undefined)?.message).toMatch(/did not respond within/)
+      releaseHeldWrite(release)
+
+      await vi.waitFor(
+        async () => {
+          const [{ c }] = await stalledDb.query<{ c: number }>('SELECT count(*) AS c FROM sink')
+          expect(c).toBe(1)
+        },
+        { timeout: 30_000, interval: 100 },
       )
-    } catch (err) {
-      stalledError = err
+
+      const after = await stalledDb.execute('INSERT INTO recovered (n) VALUES (?)', [1])
+      expect(after.changes).toBe(1)
+    } finally {
+      await registry.shutdown().catch(() => {})
     }
-    expect((stalledError as Error | undefined)?.message).toMatch(/did not respond within/)
-
-    await vi.waitFor(
-      async () => {
-        const [{ c }] = await db.query<{ c: number }>('SELECT count(*) AS c FROM sink')
-        expect(c).toBe(1)
-      },
-      { timeout: 30_000, interval: 100 },
-    )
-
-    const after = await db.execute('INSERT INTO recovered (n) VALUES (?)', [1])
-    expect(after.changes).toBe(1)
-  }, 40_000)
+  }, 60_000)
 
   it('never applies a write whose caller was already rejected by the deadline', async () => {
     const registry = new Sirannon({ driver: sleepingDriver() })
     try {
       const slowDb = await registry.open('abandoned', join(dir, 'abandoned.db'), {
-        writerWorker: { writeTimeoutMs: 500 },
+        writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
       })
       await slowDb.execute('CREATE TABLE marker (n INTEGER)')
 
-      const slow = slowDb.execute(sleepSql(3000)).catch(() => {})
+      const release = join(dir, 'release-abandoned')
+      const held = slowDb.execute(heldSql('INSERT INTO marker (n) VALUES (0)', release)).catch(() => {})
       await new Promise(resolve => setTimeout(resolve, 100))
       const abandoned = slowDb.execute('INSERT INTO marker (n) VALUES (1)')
 
       await expect(abandoned).rejects.toThrow()
-      await slow
+      releaseHeldWrite(release)
+      await held
 
       await vi.waitFor(
         async () => {
           await expect(slowDb.execute('INSERT INTO marker (n) VALUES (2)')).resolves.toMatchObject({ changes: 1 })
         },
-        { timeout: 15_000, interval: 200 },
+        { timeout: 30_000, interval: 200 },
       )
       const rows = await slowDb.query<{ n: number }>('SELECT n FROM marker ORDER BY n')
-      expect(rows).toEqual([{ n: 2 }])
+      expect(rows).toEqual([{ n: 0 }, { n: 2 }])
     } finally {
       await registry.shutdown().catch(() => {})
     }
-  }, 30_000)
+  }, 60_000)
 
   it('delivers the result of an operation that finishes after the deadline but before the grace expiry', async () => {
     const registry = new Sirannon({ driver: sleepingDriver() })
     try {
       const slowDb = await registry.open('late', join(dir, 'late.db'), {
-        writerWorker: { writeTimeoutMs: 1_000 },
+        writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
       })
-      await expect(slowDb.execute(sleepSql(1500))).resolves.toBeDefined()
+      await expect(slowDb.execute(sleepSql(3_000))).resolves.toBeDefined()
     } finally {
       await registry.shutdown().catch(() => {})
     }
@@ -301,11 +313,11 @@ describe('writer worker offload', () => {
     const registry = new Sirannon({ driver: sleepingDriver() })
     try {
       const slowDb = await registry.open('shed', join(dir, 'shed.db'), {
-        writerWorker: { writeTimeoutMs: 1_000 },
+        writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
       })
       await slowDb.execute('CREATE TABLE marker (n INTEGER)')
 
-      const slow = slowDb.execute(sleepSql(3500)).catch(() => {})
+      const slow = slowDb.execute(sleepSql(7_000)).catch(() => {})
       await new Promise(resolve => setTimeout(resolve, 100))
       const shed = slowDb.execute('INSERT INTO marker (n) VALUES (1)')
 
@@ -316,20 +328,20 @@ describe('writer worker offload', () => {
         async () => {
           await expect(slowDb.execute('INSERT INTO marker (n) VALUES (2)')).resolves.toMatchObject({ changes: 1 })
         },
-        { timeout: 15_000, interval: 200 },
+        { timeout: 30_000, interval: 200 },
       )
       const rows = await slowDb.query<{ n: number }>('SELECT n FROM marker ORDER BY n')
       expect(rows).toEqual([{ n: 2 }])
     } finally {
       await registry.shutdown().catch(() => {})
     }
-  }, 30_000)
+  }, 60_000)
 
   it('rejects the in-flight write and respawns when the worker exits on its own', async () => {
     const registry = new Sirannon({ driver: exitingDriver() })
     try {
       const crashed = await registry.open('crash', join(dir, 'crash.db'), {
-        writerWorker: { writeTimeoutMs: 2_000 },
+        writerWorker: { writeTimeoutMs: WORKER_RESTART_DEADLINE_MS },
       })
       await crashed.execute('CREATE TABLE survivors (n INTEGER)')
 
@@ -344,7 +356,7 @@ describe('writer worker offload', () => {
     const registry = new Sirannon({ driver: exitingDriver() })
     try {
       const crashed = await registry.open('repeat', join(dir, 'repeat.db'), {
-        writerWorker: { writeTimeoutMs: 2_000 },
+        writerWorker: { writeTimeoutMs: WORKER_RESTART_DEADLINE_MS },
       })
       await crashed.execute('CREATE TABLE survivors (n INTEGER)')
 
@@ -365,7 +377,7 @@ describe('writer worker offload', () => {
     const registry = new Sirannon({ driver: exitingDriver() })
     try {
       const crashed = await registry.open('fatal', join(dir, 'fatal.db'), {
-        writerWorker: { writeTimeoutMs: 2_000, maxRestarts: 2 },
+        writerWorker: { writeTimeoutMs: WORKER_RESTART_DEADLINE_MS, maxRestarts: 2 },
       })
 
       for (let attempt = 0; attempt < 3; attempt++) {

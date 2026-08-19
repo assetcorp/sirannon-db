@@ -2,18 +2,14 @@
 
 SQLITE_EXTENSION_INIT3
 
-static sqlite3_mutex *sirannonMutex = 0;
-
-int sirannonRuntimeStart(void) {
-  if (sirannonMutex) return SQLITE_OK;
-  sirannonMutex = sqlite3_mutex_alloc(SQLITE_MUTEX_FAST);
-  return sirannonMutex ? SQLITE_OK : SQLITE_NOMEM;
+static sqlite3_mutex *sirannonRuntimeMutex(void) {
+  return sqlite3_mutex_alloc(SQLITE_MUTEX_STATIC_APP1);
 }
 
 void sirannonEnter(void) {
-  sqlite3_mutex_enter(sirannonMutex);
+  sqlite3_mutex_enter(sirannonRuntimeMutex());
 }
 
 void sirannonLeave(void) {
-  sqlite3_mutex_leave(sirannonMutex);
+  sqlite3_mutex_leave(sirannonRuntimeMutex());
 }

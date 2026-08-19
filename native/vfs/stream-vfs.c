@@ -9,6 +9,7 @@
 SQLITE_EXTENSION_INIT3
 
 #define SIRANNON_SECTOR_BYTES 4096
+#define SIRANNON_MILLISECONDS_PER_DAY 86400000.0
 
 typedef struct SirannonFile {
   sqlite3_file base;
@@ -213,7 +214,15 @@ static int vfsSleep(sqlite3_vfs *vfs, int microseconds) {
 }
 
 static int vfsCurrentTime(sqlite3_vfs *vfs, double *out) {
-  return host(vfs)->xCurrentTime(host(vfs), out);
+  sqlite3_vfs *base = host(vfs);
+  sqlite3_int64 milliseconds;
+  int rc;
+  if (base->xCurrentTime) return base->xCurrentTime(base, out);
+  if (base->iVersion < 2 || !base->xCurrentTimeInt64) return SQLITE_ERROR;
+  rc = base->xCurrentTimeInt64(base, &milliseconds);
+  if (rc != SQLITE_OK) return rc;
+  *out = (double)milliseconds / SIRANNON_MILLISECONDS_PER_DAY;
+  return SQLITE_OK;
 }
 
 static int vfsGetLastError(sqlite3_vfs *vfs, int size, char *out) {
@@ -223,7 +232,15 @@ static int vfsGetLastError(sqlite3_vfs *vfs, int size, char *out) {
 }
 
 static int vfsCurrentTimeInt64(sqlite3_vfs *vfs, sqlite3_int64 *out) {
-  return host(vfs)->xCurrentTimeInt64(host(vfs), out);
+  sqlite3_vfs *base = host(vfs);
+  double day;
+  int rc;
+  if (base->iVersion >= 2 && base->xCurrentTimeInt64) return base->xCurrentTimeInt64(base, out);
+  if (!base->xCurrentTime) return SQLITE_ERROR;
+  rc = base->xCurrentTime(base, &day);
+  if (rc != SQLITE_OK) return rc;
+  *out = (sqlite3_int64)(day * SIRANNON_MILLISECONDS_PER_DAY);
+  return SQLITE_OK;
 }
 
 static sqlite3_vfs sirannonVfs = {
@@ -252,14 +269,20 @@ static sqlite3_vfs sirannonVfs = {
 };
 
 int sirannonVfsRegister(void) {
-  int rc;
-  if (sirannonVfsRegistered) return SQLITE_OK;
-  rc = sirannonRuntimeStart();
-  if (rc != SQLITE_OK) return rc;
-  sirannonVfs.pAppData = sqlite3_vfs_find(0);
-  if (!sirannonVfs.pAppData) return SQLITE_ERROR;
-  sirannonVfs.mxPathname = ((sqlite3_vfs *)sirannonVfs.pAppData)->mxPathname;
-  rc = sqlite3_vfs_register(&sirannonVfs, 0);
-  if (rc == SQLITE_OK) sirannonVfsRegistered = 1;
+  int rc = SQLITE_OK;
+  sqlite3_vfs *base;
+  sirannonEnter();
+  if (!sirannonVfsRegistered) {
+    base = sqlite3_vfs_find(0);
+    if (!base) {
+      rc = SQLITE_ERROR;
+    } else {
+      sirannonVfs.pAppData = base;
+      sirannonVfs.mxPathname = base->mxPathname;
+      rc = sqlite3_vfs_register(&sirannonVfs, 0);
+      if (rc == SQLITE_OK) sirannonVfsRegistered = 1;
+    }
+  }
+  sirannonLeave();
   return rc;
 }

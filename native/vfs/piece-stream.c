@@ -14,7 +14,23 @@ SQLITE_EXTENSION_INIT3
 
 #define SIRANNON_FULL_QUEUE_WAIT_US 250
 #define SIRANNON_FULL_QUEUE_LIMIT_US 60000000
+#define SIRANNON_FULL_QUEUE_LIMIT_TURNS (SIRANNON_FULL_QUEUE_LIMIT_US / SIRANNON_FULL_QUEUE_WAIT_US)
 #define SIRANNON_MAX_PIECE_INDEX 2147483647
+
+static sqlite3_int64 monotonicMicroseconds(void) {
+#ifdef _WIN32
+  LARGE_INTEGER frequency;
+  LARGE_INTEGER ticks;
+  if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return 0;
+  if (!QueryPerformanceCounter(&ticks)) return 0;
+  return (sqlite3_int64)((ticks.QuadPart / frequency.QuadPart) * 1000000 +
+                         ((ticks.QuadPart % frequency.QuadPart) * 1000000) / frequency.QuadPart);
+#else
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+  return (sqlite3_int64)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+#endif
+}
 
 static void waitOneTurn(void) {
 #ifdef _WIN32
@@ -116,15 +132,18 @@ static int pieceLength(SirannonStream *stream, int index) {
 }
 
 static int waitForQueue(SirannonStream *stream) {
-  sqlite3_int64 waitedUs = 0;
+  sqlite3_int64 startedAt;
+  sqlite3_int64 turns = 0;
   if (stream->maxQueued <= 0 || !stream->waitWhenFull) return SQLITE_OK;
+  startedAt = monotonicMicroseconds();
   while (stream->queued >= stream->maxQueued) {
     if (stream->failure) return SQLITE_IOERR_WRITE;
     sirannonLeave();
     waitOneTurn();
     sirannonEnter();
-    waitedUs += SIRANNON_FULL_QUEUE_WAIT_US;
-    if (waitedUs >= SIRANNON_FULL_QUEUE_LIMIT_US) {
+    turns++;
+    if (monotonicMicroseconds() - startedAt >= SIRANNON_FULL_QUEUE_LIMIT_US ||
+        turns >= SIRANNON_FULL_QUEUE_LIMIT_TURNS) {
       recordFailure(
         stream,
         "the destination took the pieces no faster than SQLite produced them for a whole minute, so the copy stopped "

@@ -24,6 +24,85 @@ export interface BackupCapabilities {
 }
 
 // @public
+export interface BackupChain {
+    base?: BackupChainBase;
+    chainId: string;
+    changes: BackupChainChange[];
+    previousChainId?: string;
+    startedAt: number;
+}
+
+// @public
+export interface BackupChainBase {
+    bytesWritten: number;
+    chainId: string;
+    fingerprint?: string;
+    finishedAt: number;
+    kind: 'full';
+    name: string;
+    pieceBytes: number;
+    pieceCount: number;
+    runId: string;
+}
+
+// @public
+export interface BackupChainChange {
+    bytesWritten: number;
+    capturedAt: number;
+    chainId: string;
+    checkpointed: boolean;
+    fingerprint?: string;
+    frameCount: number;
+    kind: 'change';
+    name: string;
+    pieceBytes: number;
+    pieceCount: number;
+    position: BackupChainPosition;
+    runId: string;
+    sequence: number;
+}
+
+// @public
+export interface BackupChainPosition {
+    firstFrame: number;
+    lastFrame: number;
+    logSequence: number;
+    salt1: number;
+    salt2: number;
+}
+
+// @public
+export type BackupChainRecord = BackupChainBase | BackupChainChange;
+
+// @public
+export class BackupCycle {
+    // @internal
+    constructor(request: BackupCycleRequest);
+    chains(): Promise<BackupChain[]>;
+    runOnce(): Promise<BackupRunReport | undefined>;
+    start(): Promise<void>;
+    stop(): Promise<void>;
+}
+
+// @public
+export interface BackupCycleOptions {
+    chainName?: string;
+    destination: BackupDestination;
+    fingerprint?: boolean;
+    fullCopyIntervalMs?: number;
+    intervalMs?: number;
+    namePrefix?: string;
+    noProgressStepLimit?: number;
+    onError?: (error: Error) => void;
+    onRun?: (report: BackupRunReport) => void;
+    pagesPerStep?: number;
+    pieceBytes?: number;
+    restartLimit?: number;
+    stagingDir?: string;
+    stallTimeoutMs?: number;
+}
+
+// @public
 export interface BackupDestination {
     listPieces(name: string): Promise<BackupPiece[]>;
     readPiece(name: string, index: number): Promise<Uint8Array>;
@@ -37,6 +116,9 @@ export interface BackupPiece {
 }
 
 // @public
+export function backupPiecesSafeToDelete(chains: readonly BackupChain[], options?: BackupSafeToDeleteOptions): BackupChainRecord[];
+
+// @public
 export interface BackupProgress {
     bytesWritten: number;
     phase: 'copy' | 'transfer';
@@ -48,19 +130,29 @@ export interface BackupProgress {
 }
 
 // @public
+export interface BackupRestorePlan {
+    base: BackupChainBase;
+    chainId: string;
+    changes: BackupChainChange[];
+    restoresTo: number;
+}
+
+// @public
 export interface BackupRunReport {
     bytesWritten: number;
+    chainId: string;
     copyMs: number;
     databaseId: string;
     destinationName: string;
     durationMs: number;
     fingerprint?: string;
     finishedAt: number;
-    kind: 'full';
+    kind: 'full' | 'change';
     pageCount: number;
     pageSize: number;
     pieceBytes: number;
     pieceCount: number;
+    position?: BackupChainPosition;
     restarts: number;
     route: 'staged' | 'streamed';
     runId: string;
@@ -70,7 +162,13 @@ export interface BackupRunReport {
 }
 
 // @public
+export interface BackupSafeToDeleteOptions {
+    restorableFrom?: number;
+}
+
+// @public
 export interface BackupToDestinationOptions {
+    chainId?: string;
     destination: BackupDestination;
     fingerprint?: boolean;
     name?: string;
@@ -82,6 +180,18 @@ export interface BackupToDestinationOptions {
     stagingDir?: string;
     stallTimeoutMs?: number;
 }
+
+// @public
+export function chainLogName(chainName: string, chainId: string): string;
+
+// @public
+export const DEFAULT_CHAIN_NAME = "sirannon-backup-chain";
+
+// @public
+export function planBackupRestore(chains: readonly BackupChain[], moment: number): BackupRestorePlan;
+
+// @public
+export function readBackupChains(destination: BackupDestination, chainName?: string): Promise<BackupChain[]>;
 
 // (No @packageDocumentation comment for this package)
 

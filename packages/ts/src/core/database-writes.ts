@@ -20,6 +20,7 @@ export interface DatabaseWriteDeps {
   observer: DatabaseObserver
   synchronous: SynchronousLevel
   walMode: boolean
+  capturesChangeLog: boolean
 }
 
 export class DatabaseWriteController {
@@ -48,7 +49,7 @@ export class DatabaseWriteController {
   }
 
   bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
-    const { observer, writeGate, writerLock, pool, synchronous, walMode } = this.deps
+    const { observer, writeGate, writerLock, pool, synchronous, walMode, capturesChangeLog } = this.deps
     return observer.withQueryHooks(sql, undefined, undefined, () =>
       writeGate.run(() =>
         writerLock.run(() => {
@@ -59,6 +60,7 @@ export class DatabaseWriteController {
             walMode,
             durability: options?.durability,
             checkpoint: options?.checkpoint ?? true,
+            capturesChangeLog,
             loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
           })
         }),

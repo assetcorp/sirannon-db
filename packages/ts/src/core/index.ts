@@ -1,4 +1,15 @@
 export type { BackupCapabilities } from './backup/capabilities.js'
+export type {
+  BackupChain,
+  BackupChainBase,
+  BackupChainChange,
+  BackupChainPosition,
+  BackupChainRecord,
+} from './backup/chain.js'
+export { DEFAULT_CHAIN_NAME, readBackupChains } from './backup/chain.js'
+export type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chain-queries.js'
+export { backupPiecesSafeToDelete, planBackupRestore } from './backup/chain-queries.js'
+export type { BackupCycleOptions } from './backup/cycle-options.js'
 export type { BackupDestination, BackupPiece } from './backup/destination.js'
 export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 export { isBulkLoadDurability, runBulkLoad } from './bulk-load.js'
@@ -7,6 +18,7 @@ export type { ChangeTrackerOptions } from './cdc/types.js'
 export type { ConnectionPoolOptions } from './connection-pool.js'
 export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'
+export { DatabaseBackups } from './database-backups.js'
 export { DatabaseLifecycle } from './database-lifecycle.js'
 export { defineDriver } from './driver/define.js'
 export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'

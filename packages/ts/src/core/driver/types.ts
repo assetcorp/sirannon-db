@@ -1,3 +1,5 @@
+import type { BackupCycle } from '../backup/cycle.js'
+import type { BackupCycleRequest } from '../backup/cycle-options.js'
 import type { BackupRunReport, BackupRunRequest } from '../backup/report.js'
 import type { BackupScheduleOptions } from '../types.js'
 import type { WorkerHostOptions } from '../worker/host.js'
@@ -37,6 +39,8 @@ export interface BackupEngine {
   backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void>
   /** Copies the database behind a connection to a caller-supplied destination. */
   copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport>
+  /** Builds the cycle that captures the write-ahead log and then checkpoints it. */
+  createCycle(request: BackupCycleRequest): BackupCycle
   /** Starts a repeating backup and returns a function that stops it. */
   schedule(
     conn: SQLiteConnection,
@@ -185,6 +189,15 @@ export interface OpenOptions {
   walMode?: boolean
   /** Writer durability the connection runs at. */
   synchronous?: SynchronousLevel
+  /**
+   * How many frames the write-ahead log may reach before SQLite checkpoints it
+   * on its own. Zero turns that off, which a database capturing its own log
+   * needs: a checkpoint lets SQLite overwrite frames nothing has captured yet.
+   *
+   * SQLite holds this per connection, so a driver applies it every time it
+   * opens one, including after a writer worker restarts.
+   */
+  walAutoCheckpoint?: number
 }
 
 /** What a driver's runtime supports.

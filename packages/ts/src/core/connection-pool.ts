@@ -14,6 +14,7 @@ export interface ConnectionPoolOptions {
   readPoolSize?: number
   walMode?: boolean
   synchronous?: SynchronousLevel
+  walAutoCheckpoint?: number
   useWriterWorker?: boolean
   workerHostOptions?: WorkerHostOptions
 }
@@ -45,6 +46,11 @@ export class ConnectionPool {
 
   static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
     const { driver, path, readOnly = false, readPoolSize = 4, walMode = true, synchronous } = options
+    const writerOptions = {
+      walMode,
+      synchronous,
+      ...(options.walAutoCheckpoint === undefined ? {} : { walAutoCheckpoint: options.walAutoCheckpoint }),
+    }
 
     let writer: SQLiteConnection | null = null
     const readers: SQLiteConnection[] = []
@@ -58,9 +64,9 @@ export class ConnectionPool {
               'WRITER_WORKER_UNSUPPORTED',
             )
           }
-          writer = await driver.startWriterHost(path, { walMode, synchronous }, options.workerHostOptions)
+          writer = await driver.startWriterHost(path, writerOptions, options.workerHostOptions)
         } else {
-          writer = await driver.open(path, { walMode, synchronous })
+          writer = await driver.open(path, writerOptions)
         }
       }
 

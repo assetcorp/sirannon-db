@@ -36,7 +36,12 @@ Over the network, an HTTP response and a WebSocket error message carry the same 
 | `RequestDeniedError` | the code you supply | The `authenticate` hook refused the request with a status and code of its own |
 | `CDCError` | `CDC_ERROR` | The change-data-capture pipeline failed, or a statement cannot back a live query |
 | `BackupError` | `BACKUP_ERROR` | A backup failed |
-| - | `BACKUP_UNSUPPORTED` | The driver provides no backup engine |
+| - | `BACKUP_UNSUPPORTED` | The driver has no backup engine, or the database has no write-ahead log to capture |
+| - | `BACKUP_RESTARTED` | Another connection sent the copy back to page one more often than the limit allows |
+| - | `BACKUP_STALLED` | The copy moved no pages inside the stall deadline |
+| - | `BACKUP_DESTINATION_ERROR` | Your destination refused a piece, or holds pieces that do not match the run that wrote them |
+| - | `BACKUP_LOG_REWOUND` | The log restarted before the capture reached it, so those writes are in no backup |
+| - | `BACKUP_CHAIN_BROKEN` | No full copy reaches back to the moment you asked for, or a piece the chain needs is missing |
 | `ConnectionPoolError` | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured |
 | `MaxDatabasesError` | `MAX_DATABASES` | Opening a database would pass the configured cap |
 | `ExtensionError` | `EXTENSION_ERROR` | A native SQLite extension could not be loaded |

@@ -20,6 +20,18 @@ if (!version || !distTag) {
   process.exit(2)
 }
 
+function alreadyOnTheRegistry(packageName) {
+  try {
+    const published = execFileSync('npm', ['view', `${packageName}@${version}`, 'version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return published.trim() === version
+  } catch {
+    return false
+  }
+}
+
 function writeVersion(manifestPath, apply) {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   apply(manifest)
@@ -37,15 +49,21 @@ for (const [build, { package: packageName, library }] of Object.entries(BUILDS))
   copyFileSync(built, destination)
 }
 
+let publishedCount = 0
 for (const packageName of PACKAGES) {
   const packageDirectory = join('native', 'npm', packageName)
   writeVersion(join(packageDirectory, 'package.json'), manifest => {
     manifest.version = version
   })
+  if (alreadyOnTheRegistry(`@delali/sirannon-vfs-${packageName}`)) {
+    console.log(`@delali/sirannon-vfs-${packageName}@${version} is already published, so this run left it alone`)
+    continue
+  }
   execFileSync('npm', ['publish', '--tag', distTag, '--access', 'public'], {
     cwd: packageDirectory,
     stdio: 'inherit',
   })
+  publishedCount++
 }
 
 writeVersion(join('packages', 'ts', 'package.json'), manifest => {
@@ -55,4 +73,6 @@ writeVersion(join('packages', 'ts', 'package.json'), manifest => {
   }
 })
 
-console.log(`Published ${PACKAGES.length} platform packages at ${version} under the ${distTag} tag`)
+console.log(
+  `Published ${publishedCount} of ${PACKAGES.length} platform packages at ${version} under the ${distTag} tag`,
+)

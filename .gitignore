@@ -111,3 +111,4 @@ loadtest/results*/
 
 native/npm/*/*
 !native/npm/*/package.json
+!native/npm/*/README.md

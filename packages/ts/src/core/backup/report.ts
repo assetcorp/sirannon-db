@@ -84,11 +84,9 @@ export interface BackupRunReport {
   /** Whether the bytes reached the destination through a local file or without one. */
   route: 'staged' | 'streamed'
   /**
-   * Name the pieces are stored under at the destination. The staged route
-   * writes this one name and no other, because SQLite's journal beside the
-   * copy stays on local disk and goes when the staging directory goes. A route
-   * that sends a second name to the destination records both, so that a
-   * restore finds them.
+   * Name the pieces are stored under at the destination. A run writes this one
+   * name and no other, because the journal SQLite opens beside a copy stays on
+   * local disk.
    */
   destinationName: string
   /** Epoch milliseconds the run started at. */
@@ -140,6 +138,8 @@ export interface BackupToDestinationOptions {
   restartLimit?: number
   /** Milliseconds the copy may move no pages before it stops with an error. */
   stallTimeoutMs?: number
+  /** Milliseconds one call to the destination may take before the run stops with an error. Defaults to 10 minutes. */
+  destinationTimeoutMs?: number
   /** Steps the copy may take without moving a page it had not already moved. */
   noProgressStepLimit?: number
   /** Directory the staged route writes its local file in. Defaults to the system temporary directory. */

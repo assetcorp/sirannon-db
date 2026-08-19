@@ -89,6 +89,7 @@ export type BackupChainRecord = BackupChainBase | BackupChainChange;
 export interface BackupCycleOptions {
     chainName?: string;
     destination: BackupDestination;
+    destinationTimeoutMs?: number;
     fingerprint?: boolean;
     fullCopyIntervalMs?: number;
     intervalMs?: number;
@@ -185,6 +186,7 @@ export interface BackupScheduleOptions {
 export interface BackupToDestinationOptions {
     chainId?: string;
     destination: BackupDestination;
+    destinationTimeoutMs?: number;
     fingerprint?: boolean;
     name?: string;
     noProgressStepLimit?: number;

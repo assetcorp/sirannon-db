@@ -4,13 +4,8 @@ import { defineDriver } from '../../../driver/define.js'
 import type { SQLiteDriver } from '../../../driver/types.js'
 import { WriterWorker } from '../../host.js'
 
-const SLEEP_MARKER = 'sirannon_worker_sleep_ms'
 const HOLD_MARKER = 'sirannon_worker_hold_until_file'
 const HOLD_POLL_MS = 25
-
-export function sleepSql(ms: number): string {
-  return `SELECT 1 /* ${SLEEP_MARKER}:${ms} */`
-}
 
 export function heldSql(sql: string, releaseFile: string): string {
   return `${sql} /* ${HOLD_MARKER}:${releaseFile} */`
@@ -25,8 +20,6 @@ function pause(ms: number): void {
 }
 
 function pauseIfMarked(sql: string): void {
-  const sleep = sql.match(new RegExp(`${SLEEP_MARKER}:(\\d+)`))
-  if (sleep?.[1]) pause(Number(sleep[1]))
   const hold = sql.match(new RegExp(`${HOLD_MARKER}:(.+?) \\*/`))
   const releaseFile = hold?.[1]
   if (!releaseFile) return

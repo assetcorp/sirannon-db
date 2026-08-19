@@ -2,6 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError, SirannonError } from '../errors.js'
+import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import type { BackupRunReport, BackupRunRequest } from './report.js'
 import { copyToDestinationStaged } from './staged-copy.js'
 import { copyDatabaseStepwise } from './stepped-copy.js'
@@ -68,9 +69,16 @@ export class BackupManager {
   }
 
   copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {
+    const bounded = {
+      ...request,
+      destination: destinationWithDeadline(
+        request.destination,
+        request.destinationTimeoutMs ?? DEFAULT_DESTINATION_TIMEOUT_MS,
+      ),
+    }
     return this.streaming
-      ? copyToDestinationStreamed(conn, request, this.streaming)
-      : copyToDestinationStaged(conn, request)
+      ? copyToDestinationStreamed(conn, bounded, this.streaming)
+      : copyToDestinationStaged(conn, bounded)
   }
 
   streamsToDestination(): boolean {

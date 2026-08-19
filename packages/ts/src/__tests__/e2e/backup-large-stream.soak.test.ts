@@ -6,7 +6,7 @@ import { assembleFromDestination } from '../../core/backup/assemble.js'
 import type { BackupDestination, BackupPiece } from '../../core/backup/destination.js'
 import { Database } from '../../core/database.js'
 import { betterSqlite3 } from '../../drivers/better-sqlite3/index.js'
-import { builtStreamingExtensionPath } from '../helpers/streaming-extension.js'
+import { builtStreamingExtensionPath, driverStreamsToDestination } from '../helpers/streaming-extension.js'
 
 const PENDING_BYTE_OFFSET = 1_073_741_824
 const ROW_BYTES = 4000
@@ -37,6 +37,8 @@ function fileDestination(root: string): BackupDestination {
 }
 
 const extensionPath = builtStreamingExtensionPath()
+const driver = betterSqlite3(extensionPath ? { vfsExtensionPath: extensionPath } : {})
+const streams = driverStreamsToDestination(driver)
 
 let dir: string
 
@@ -49,11 +51,10 @@ afterEach(() => {
 })
 
 describe('streamed copy past the pending byte page', () => {
-  it.skipIf(!extensionPath)(
+  it.skipIf(!streams)(
     'carries a source larger than 1 GiB to the destination without a local file',
     async () => {
       const sourcePath = join(dir, 'large.db')
-      const driver = betterSqlite3(extensionPath ? { vfsExtensionPath: extensionPath } : {})
       const db = await Database.create('large', sourcePath, driver, { synchronous: 'off' })
       await db.execute('CREATE TABLE blobs (id INTEGER PRIMARY KEY, payload TEXT)')
       const payload = 'p'.repeat(ROW_BYTES)

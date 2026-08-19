@@ -2,7 +2,10 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { builtStreamingExtensionPath } from '../../../__tests__/helpers/streaming-extension.js'
+import {
+  builtStreamingExtensionPath,
+  driverStreamsToDestination,
+} from '../../../__tests__/helpers/streaming-extension.js'
 import { assembleFromDestination } from '../../backup/assemble.js'
 import type { BackupProgress } from '../../backup/report.js'
 import { Database } from '../../database.js'
@@ -32,6 +35,7 @@ export function describeStreamedBackup(
 ): void {
   const extensionPath = builtStreamingExtensionPath()
   const driver = buildDriver(extensionPath ? { vfsExtensionPath: extensionPath } : {})
+  const streams = driverStreamsToDestination(driver)
   let tempDir: string
 
   beforeEach(() => {
@@ -43,7 +47,7 @@ export function describeStreamedBackup(
   })
 
   describe(`Streamed backup on ${label}`, () => {
-    it.skipIf(!extensionPath)('reports streaming as available', async () => {
+    it.skipIf(!streams)('reports streaming as available', async () => {
       const db = await Database.create('test', join(tempDir, 'capabilities.db'), driver)
 
       expect(db.backupCapabilities()).toEqual({
@@ -57,7 +61,7 @@ export function describeStreamedBackup(
       await db.close()
     })
 
-    it.skipIf(!extensionPath)('carries a whole copy to the destination and writes no local file', async () => {
+    it.skipIf(!streams)('carries a whole copy to the destination and writes no local file', async () => {
       const db = await Database.create('test', join(tempDir, 'source.db'), driver)
       await seedPages(db, 4000)
       const destination = memoryDestination()
@@ -82,7 +86,7 @@ export function describeStreamedBackup(
       await restored.close()
     })
 
-    it.skipIf(!extensionPath)('reports the pieces travelling while the copy runs', async () => {
+    it.skipIf(!streams)('reports the pieces travelling while the copy runs', async () => {
       const db = await Database.create('test', join(tempDir, 'progress.db'), driver)
       await seedPages(db, 4000)
       const seen: BackupProgress[] = []
@@ -101,7 +105,7 @@ export function describeStreamedBackup(
       await db.close()
     })
 
-    it.skipIf(!extensionPath)('refuses a piece size SQLite cannot write in whole blocks', async () => {
+    it.skipIf(!streams)('refuses a piece size SQLite cannot write in whole blocks', async () => {
       const db = await Database.create('test', join(tempDir, 'blocks.db'), driver)
       await seedPages(db, 10)
 
@@ -112,7 +116,7 @@ export function describeStreamedBackup(
       await db.close()
     })
 
-    it.skipIf(!extensionPath)('keeps its virtual file system after the connection that loaded it closes', async () => {
+    it.skipIf(!streams)('keeps its virtual file system after the connection that loaded it closes', async () => {
       const sourcePath = join(tempDir, 'permanent.db')
       const db = await Database.create('test', sourcePath, driver)
       await seedPages(db, 10)
@@ -130,7 +134,7 @@ export function describeStreamedBackup(
       expect(failure).not.toContain('no such vfs')
     })
 
-    it.skipIf(!extensionPath)('reports what the destination refused', async () => {
+    it.skipIf(!streams)('reports what the destination refused', async () => {
       const db = await Database.create('test', join(tempDir, 'refusal.db'), driver)
       await seedPages(db, 4000)
       const destination = memoryDestination()

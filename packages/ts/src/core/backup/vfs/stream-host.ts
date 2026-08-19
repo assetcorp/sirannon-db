@@ -18,9 +18,22 @@ export interface BackupStreamPiece {
 }
 
 function decodePiece(framed: Uint8Array): BackupStreamPiece {
+  if (framed.byteLength < PIECE_HEADER_BYTES) {
+    throw new SirannonError(
+      `The streaming extension returned ${framed.byteLength} bytes for a piece, which is less than its ${PIECE_HEADER_BYTES}-byte header`,
+      'BACKUP_ERROR',
+    )
+  }
   const header = new DataView(framed.buffer, framed.byteOffset, PIECE_HEADER_BYTES)
   const index = header.getUint32(0, true)
   const length = header.getUint32(4, true)
+  const carried = framed.byteLength - PIECE_HEADER_BYTES
+  if (carried < length) {
+    throw new SirannonError(
+      `The streaming extension declared ${length} bytes for piece ${index} and returned ${carried}`,
+      'BACKUP_ERROR',
+    )
+  }
   return { index, bytes: framed.subarray(PIECE_HEADER_BYTES, PIECE_HEADER_BYTES + length) }
 }
 

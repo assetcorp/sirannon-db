@@ -176,7 +176,13 @@ export class BackupCycle {
     if (this.verified || !this.state) return
     const heads = await readChainHeads(this.request.destination, this.chainName)
     if (heads.some(head => head.chainId === this.state?.chainId)) this.verified = true
-    else this.state = null
+    else await this.discardState()
+  }
+
+  private async discardState(): Promise<void> {
+    const pending = this.state?.pending
+    if (pending) await rm(stagedCapturePath(this.stagingDir, pending.sequence), { force: true })
+    this.state = null
   }
 
   /**
@@ -221,11 +227,11 @@ export class BackupCycle {
   }
 
   private async replaceChain(): Promise<BackupRunReport | undefined> {
-    const previous = this.state
-    if (previous?.pending) await rm(stagedCapturePath(this.stagingDir, previous.pending.sequence), { force: true })
+    const previousChainId = this.state?.chainId
+    await this.discardState()
 
     const headIndex = (await readChainHeads(this.request.destination, this.chainName)).length
-    const started = await startChain(this.request, this.chainName, this.namePrefix, headIndex, previous?.chainId)
+    const started = await startChain(this.request, this.chainName, this.namePrefix, headIndex, previousChainId)
 
     this.verified = true
     this.state = {

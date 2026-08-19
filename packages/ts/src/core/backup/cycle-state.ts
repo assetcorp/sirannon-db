@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { type BackupChainPosition, isBackupChainPosition } from './chain.js'
+import type { BackupChainPosition } from './chain.js'
+import { isBackupChainPosition } from './chain-records.js'
 import type { LogCursor } from './wal-log.js'
 
 const STATE_FILE_NAME = 'cycle.json'
@@ -57,19 +58,19 @@ export interface BackupCycleState {
   closedCleanly: boolean
 }
 
-function isNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
+function isWholeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 function isCursor(value: unknown): value is LogCursor {
   const cursor = value as LogCursor
   return (
-    isNumber(cursor?.logSequence) &&
-    isNumber(cursor.salt1) &&
-    isNumber(cursor.salt2) &&
-    isNumber(cursor.lastFrame) &&
-    isNumber(cursor.checksum1) &&
-    isNumber(cursor.checksum2) &&
+    isWholeNumber(cursor?.logSequence) &&
+    isWholeNumber(cursor.salt1) &&
+    isWholeNumber(cursor.salt2) &&
+    isWholeNumber(cursor.lastFrame) &&
+    isWholeNumber(cursor.checksum1) &&
+    isWholeNumber(cursor.checksum2) &&
     typeof cursor.checkpointed === 'boolean'
   )
 }
@@ -79,15 +80,16 @@ function isPendingCapture(value: unknown): value is PendingCapture {
   return (
     typeof pending?.name === 'string' &&
     typeof pending.runId === 'string' &&
-    isNumber(pending.sequence) &&
+    isWholeNumber(pending.sequence) &&
+    pending.sequence >= 1 &&
     isBackupChainPosition(pending.position) &&
     isCursor(pending.cursor) &&
-    isNumber(pending.startedAt) &&
-    isNumber(pending.capturedAt) &&
-    isNumber(pending.copyMs) &&
-    isNumber(pending.frameCount) &&
-    isNumber(pending.byteLength) &&
-    isNumber(pending.pageSize)
+    isWholeNumber(pending.startedAt) &&
+    isWholeNumber(pending.capturedAt) &&
+    isWholeNumber(pending.copyMs) &&
+    isWholeNumber(pending.frameCount) &&
+    isWholeNumber(pending.byteLength) &&
+    isWholeNumber(pending.pageSize)
   )
 }
 
@@ -96,8 +98,8 @@ function isCycleState(value: unknown): value is BackupCycleState {
   return (
     typeof state?.chainName === 'string' &&
     typeof state.chainId === 'string' &&
-    isNumber(state.chainStartedAt) &&
-    isNumber(state.records) &&
+    isWholeNumber(state.chainStartedAt) &&
+    isWholeNumber(state.records) &&
     (state.cursor === null || isCursor(state.cursor)) &&
     (state.pending === null || isPendingCapture(state.pending)) &&
     typeof state.closedCleanly === 'boolean'

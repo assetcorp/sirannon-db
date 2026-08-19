@@ -1,4 +1,4 @@
-import { rmSync, statSync } from 'node:fs'
+import { existsSync, rmSync, statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -309,5 +309,35 @@ describe('the checkpoint cycle', () => {
     const chains = await restarted.chains()
     expect(chains).toHaveLength(2)
     expect(chains[0]?.previousChainId).toBeUndefined()
+  })
+  it('removes the staged frames of a chain the destination no longer holds', async () => {
+    const { cycle, build, conn, destination } = await harness()
+    await cycle.start()
+    await insert(conn, 'first')
+    destination.refuseName(`sirannon-backup-${(await cycle.chains())[0]?.chainId}-000001.wal`)
+    await cycle.runOnce().catch(() => {})
+
+    const staged = join(temp.path, 'staging', 'capture-1.wal')
+    expect(existsSync(staged)).toBe(true)
+
+    const elsewhere = build({ destination: memoryDestination() })
+    await elsewhere.start()
+
+    expect(existsSync(staged)).toBe(false)
+  })
+
+  it('refuses a chain holding a change record whose frames run backwards', async () => {
+    const { cycle, conn, destination } = await harness()
+    await cycle.start()
+    await insert(conn, 'first')
+    await cycle.runOnce()
+    const chain = (await cycle.chains())[0]
+    const change = chain?.changes[0]
+    const backwards = JSON.stringify({ ...change, position: { ...change?.position, firstFrame: 4, lastFrame: 2 } })
+    await destination.writePiece(`sirannon-backup-chain.${chain?.chainId}`, 1, new TextEncoder().encode(backwards))
+
+    const error = await cycle.chains().catch((err: unknown) => err as SirannonError)
+
+    expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
   })
 })

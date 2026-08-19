@@ -15,6 +15,8 @@ import { startChain, transferCapture } from './cycle-transfer.js'
 import type { BackupRunReport } from './report.js'
 
 const LOG_REWOUND = 'BACKUP_LOG_REWOUND'
+const CHAIN_BROKEN = 'BACKUP_CHAIN_BROKEN'
+const STARTS_A_FRESH_CHAIN = [LOG_REWOUND, CHAIN_BROKEN]
 
 function toError(value: unknown): Error {
   if (value instanceof Error) return value
@@ -58,6 +60,7 @@ export class BackupCycle {
   private state: BackupCycleState | null = null
   private inFlight: Promise<unknown> = Promise.resolve()
   private started = false
+  private verified = false
   private ticking = false
   private stopped = false
 
@@ -81,7 +84,7 @@ export class BackupCycle {
     this.started = true
     await this.serialise(async () => {
       try {
-        if (this.state && !(await this.destinationHoldsChain(this.state.chainId))) this.state = null
+        await this.verifyChain()
         if (this.state) await this.sendWaitingCapture()
         else await this.replaceChain()
       } catch (err) {
@@ -162,9 +165,18 @@ export class BackupCycle {
     }
   }
 
-  private async destinationHoldsChain(chainId: string): Promise<boolean> {
+  /**
+   * Checks that the destination still holds the chain the state file names.
+   * Where the check cannot reach the destination, the chain stays unverified and
+   * the next turn runs it again before it appends anything. A record appended
+   * under a chain the destination has lost would be in no listing, so no restore
+   * could reach it.
+   */
+  private async verifyChain(): Promise<void> {
+    if (this.verified || !this.state) return
     const heads = await readChainHeads(this.request.destination, this.chainName)
-    return heads.some(head => head.chainId === chainId)
+    if (heads.some(head => head.chainId === this.state?.chainId)) this.verified = true
+    else this.state = null
   }
 
   /**
@@ -176,7 +188,7 @@ export class BackupCycle {
     try {
       return await this.turn()
     } catch (err) {
-      if (err instanceof SirannonError && err.code === LOG_REWOUND) {
+      if (err instanceof SirannonError && STARTS_A_FRESH_CHAIN.includes(err.code)) {
         this.report(err)
         await this.replaceChain().catch(chainErr => this.report(chainErr))
       }
@@ -187,6 +199,7 @@ export class BackupCycle {
   private async turn(): Promise<BackupRunReport | undefined> {
     if (!this.started) throw new SirannonError('The backup cycle has not started', 'BACKUP_ERROR')
 
+    await this.verifyChain()
     const state = this.state
     if (!state) return this.replaceChain()
 
@@ -214,6 +227,7 @@ export class BackupCycle {
     const headIndex = (await readChainHeads(this.request.destination, this.chainName)).length
     const started = await startChain(this.request, this.chainName, this.namePrefix, headIndex, previous?.chainId)
 
+    this.verified = true
     this.state = {
       chainName: this.chainName,
       chainId: started.chainId,
@@ -267,7 +281,7 @@ export class BackupCycle {
       throw new SirannonError(
         `The frames staged for change piece ${pending.sequence} of chain '${state.chainId}' are no longer in '${stagedPath}', so the writes they carried are in no backup. ` +
           'Leave the staging directory to Sirannon, and take a fresh full copy so a new chain starts from a known state.',
-        LOG_REWOUND,
+        CHAIN_BROKEN,
       )
     }
     const report = await transferCapture(

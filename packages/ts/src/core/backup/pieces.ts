@@ -16,6 +16,7 @@ export interface SentPieces {
 }
 
 function destinationError(name: string, index: number, err: unknown): SirannonError {
+  if (err instanceof SirannonError) return err
   return new SirannonError(
     `The destination refused piece ${index} of '${name}': ${err instanceof Error ? err.message : String(err)}`,
     'BACKUP_DESTINATION_ERROR',

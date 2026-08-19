@@ -121,6 +121,7 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 function destinationError(message: string, err?: unknown): SirannonError {
+  if (err instanceof SirannonError) return err
   const detail = err instanceof Error ? `: ${err.message}` : ''
   return new SirannonError(`${message}${detail}`, 'BACKUP_DESTINATION_ERROR')
 }
@@ -179,14 +180,47 @@ async function readRecords(destination: BackupDestination, name: string): Promis
   return records
 }
 
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 function isChainHead(value: unknown): value is BackupChainHead {
   const head = value as BackupChainHead
-  return typeof head?.chainId === 'string' && typeof head.startedAt === 'number'
+  return typeof head?.chainId === 'string' && isNumber(head.startedAt)
+}
+
+/**
+ * Checks that a value read back off disk or out of a destination holds every
+ * field of a chain position.
+ *
+ * @param value - The value to check.
+ * @returns Whether it is a complete position.
+ *
+ * @internal
+ */
+export function isBackupChainPosition(value: unknown): value is BackupChainPosition {
+  const position = value as BackupChainPosition
+  return (
+    isNumber(position?.logSequence) &&
+    isNumber(position.salt1) &&
+    isNumber(position.salt2) &&
+    isNumber(position.firstFrame) &&
+    isNumber(position.lastFrame)
+  )
 }
 
 function isChainBase(value: unknown): value is BackupChainBase {
   const base = value as BackupChainBase
-  return base?.kind === 'full' && typeof base.chainId === 'string' && typeof base.name === 'string'
+  return (
+    base?.kind === 'full' &&
+    typeof base.chainId === 'string' &&
+    typeof base.name === 'string' &&
+    typeof base.runId === 'string' &&
+    isNumber(base.finishedAt) &&
+    isNumber(base.pieceCount) &&
+    isNumber(base.pieceBytes) &&
+    isNumber(base.bytesWritten)
+  )
 }
 
 function isChainChange(value: unknown): value is BackupChainChange {
@@ -195,9 +229,33 @@ function isChainChange(value: unknown): value is BackupChainChange {
     change?.kind === 'change' &&
     typeof change.chainId === 'string' &&
     typeof change.name === 'string' &&
-    typeof change.sequence === 'number' &&
-    typeof change.capturedAt === 'number'
+    typeof change.runId === 'string' &&
+    isNumber(change.sequence) &&
+    isBackupChainPosition(change.position) &&
+    isNumber(change.capturedAt) &&
+    isNumber(change.frameCount) &&
+    isNumber(change.pieceCount) &&
+    isNumber(change.pieceBytes) &&
+    isNumber(change.bytesWritten) &&
+    typeof change.checkpointed === 'boolean'
   )
+}
+
+function chainRecords(records: readonly unknown[], name: string): BackupChainRecord[] {
+  const kept: BackupChainRecord[] = []
+  for (const record of records) {
+    const kind = (record as { kind?: unknown } | null)?.kind
+    if (kind !== 'full' && kind !== 'change') continue
+    if (kind === 'full' ? isChainBase(record) : isChainChange(record)) {
+      kept.push(record as BackupChainRecord)
+      continue
+    }
+    const label = kind === 'full' ? 'full copy' : 'change piece'
+    throw destinationError(
+      `A ${label} record of '${name}' is missing fields Sirannon writes into every record it stores, so no restore can use this chain until you put that record back`,
+    )
+  }
+  return kept
 }
 
 /**
@@ -267,9 +325,12 @@ export async function readBackupChains(
   const heads = await readChainHeads(destination, chainName)
   const chains: BackupChain[] = []
   for (const head of heads) {
-    const records = await readRecords(destination, chainLogName(chainName, head.chainId))
-    const changes = records.filter(isChainChange).sort((left, right) => left.sequence - right.sequence)
-    const base = records.find(isChainBase)
+    const logName = chainLogName(chainName, head.chainId)
+    const records = chainRecords(await readRecords(destination, logName), logName)
+    const changes = records
+      .filter((record): record is BackupChainChange => record.kind === 'change')
+      .sort((left, right) => left.sequence - right.sequence)
+    const base = records.find((record): record is BackupChainBase => record.kind === 'full')
     chains.push({
       chainId: head.chainId,
       startedAt: head.startedAt,

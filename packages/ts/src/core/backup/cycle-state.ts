@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { BackupChainPosition } from './chain.js'
+import { type BackupChainPosition, isBackupChainPosition } from './chain.js'
 import type { LogCursor } from './wal-log.js'
 
 const STATE_FILE_NAME = 'cycle.json'
@@ -57,6 +57,53 @@ export interface BackupCycleState {
   closedCleanly: boolean
 }
 
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isCursor(value: unknown): value is LogCursor {
+  const cursor = value as LogCursor
+  return (
+    isNumber(cursor?.logSequence) &&
+    isNumber(cursor.salt1) &&
+    isNumber(cursor.salt2) &&
+    isNumber(cursor.lastFrame) &&
+    isNumber(cursor.checksum1) &&
+    isNumber(cursor.checksum2) &&
+    typeof cursor.checkpointed === 'boolean'
+  )
+}
+
+function isPendingCapture(value: unknown): value is PendingCapture {
+  const pending = value as PendingCapture
+  return (
+    typeof pending?.name === 'string' &&
+    typeof pending.runId === 'string' &&
+    isNumber(pending.sequence) &&
+    isBackupChainPosition(pending.position) &&
+    isCursor(pending.cursor) &&
+    isNumber(pending.startedAt) &&
+    isNumber(pending.capturedAt) &&
+    isNumber(pending.copyMs) &&
+    isNumber(pending.frameCount) &&
+    isNumber(pending.byteLength) &&
+    isNumber(pending.pageSize)
+  )
+}
+
+function isCycleState(value: unknown): value is BackupCycleState {
+  const state = value as BackupCycleState
+  return (
+    typeof state?.chainName === 'string' &&
+    typeof state.chainId === 'string' &&
+    isNumber(state.chainStartedAt) &&
+    isNumber(state.records) &&
+    (state.cursor === null || isCursor(state.cursor)) &&
+    (state.pending === null || isPendingCapture(state.pending)) &&
+    typeof state.closedCleanly === 'boolean'
+  )
+}
+
 /**
  * Names the file the cycle keeps its state in.
  *
@@ -77,8 +124,8 @@ export function cycleStatePath(stagingDir: string): string {
 export async function readCycleState(stagingDir: string): Promise<BackupCycleState | undefined> {
   try {
     const text = await readFile(cycleStatePath(stagingDir), 'utf8')
-    const state = JSON.parse(text) as BackupCycleState
-    return typeof state?.chainId === 'string' && typeof state.records === 'number' ? state : undefined
+    const state = JSON.parse(text) as unknown
+    return isCycleState(state) ? state : undefined
   } catch {
     return undefined
   }

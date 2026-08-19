@@ -5,12 +5,14 @@ export interface MemoryDestination extends BackupDestination {
   bytesFor(name: string): Uint8Array
   refusePiece(index: number): void
   refuseName(name: string | null): void
+  refuseListing(name: string | null): void
 }
 
 export function memoryDestination(): MemoryDestination {
   const files = new Map<string, Map<number, Uint8Array>>()
   let refusedIndex: number | null = null
   let refusedName: string | null = null
+  let refusedListing: string | null = null
 
   const pieces = (name: string): Map<number, Uint8Array> => {
     const existing = files.get(name)
@@ -32,6 +34,7 @@ export function memoryDestination(): MemoryDestination {
       return piece
     },
     async listPieces(name): Promise<BackupPiece[]> {
+      if (name === refusedListing) throw new Error(`refusing to list '${name}'`)
       const listed = [...pieces(name).entries()].map(([index, bytes]) => ({
         index,
         byteLength: bytes.byteLength,
@@ -57,6 +60,9 @@ export function memoryDestination(): MemoryDestination {
     },
     refuseName(name) {
       refusedName = name
+    },
+    refuseListing(name) {
+      refusedListing = name
     },
   }
 }

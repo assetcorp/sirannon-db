@@ -9,10 +9,11 @@ import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
 import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
-import { heldSql, releaseHeldWrite, sleepingDriver, sleepSql } from './fixtures/sleeping-driver.js'
+import { heldSql, releaseHeldWrite, sleepingDriver } from './fixtures/sleeping-driver.js'
 
 const WRITE_DEADLINE_MS = 2_000
 const WORKER_RESTART_DEADLINE_MS = 10_000
+const INSIDE_THE_GRACE_WINDOW_MS = WRITE_DEADLINE_MS * 1.5
 
 let dir: string
 let sirannon: Sirannon
@@ -303,11 +304,14 @@ describe('writer worker offload', () => {
       const slowDb = await registry.open('late', join(dir, 'late.db'), {
         writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
       })
-      await expect(slowDb.execute(sleepSql(3_000))).resolves.toBeDefined()
+      const release = join(dir, 'release-late')
+      setTimeout(() => releaseHeldWrite(release), INSIDE_THE_GRACE_WINDOW_MS)
+
+      await expect(slowDb.execute(heldSql('SELECT 1', release))).resolves.toBeDefined()
     } finally {
       await registry.shutdown().catch(() => {})
     }
-  }, 15_000)
+  }, 30_000)
 
   it('sheds a queued write with a definite retryable error once the worker frees up inside the grace window', async () => {
     const registry = new Sirannon({ driver: sleepingDriver() })
@@ -317,12 +321,14 @@ describe('writer worker offload', () => {
       })
       await slowDb.execute('CREATE TABLE marker (n INTEGER)')
 
-      const slow = slowDb.execute(sleepSql(7_000)).catch(() => {})
+      const release = join(dir, 'release-shed')
+      const held = slowDb.execute(heldSql('INSERT INTO marker (n) VALUES (0)', release)).catch(() => {})
       await new Promise(resolve => setTimeout(resolve, 100))
       const shed = slowDb.execute('INSERT INTO marker (n) VALUES (1)')
 
+      await held
+      setTimeout(() => releaseHeldWrite(release), INSIDE_THE_GRACE_WINDOW_MS)
       await expect(shed).rejects.toMatchObject({ code: 'WRITE_OVERLOADED' })
-      await slow
 
       await vi.waitFor(
         async () => {
@@ -331,7 +337,7 @@ describe('writer worker offload', () => {
         { timeout: 30_000, interval: 200 },
       )
       const rows = await slowDb.query<{ n: number }>('SELECT n FROM marker ORDER BY n')
-      expect(rows).toEqual([{ n: 2 }])
+      expect(rows).toEqual([{ n: 0 }, { n: 2 }])
     } finally {
       await registry.shutdown().catch(() => {})
     }

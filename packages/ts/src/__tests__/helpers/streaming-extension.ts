@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { SQLiteDriver } from '../../core/driver/types.js'
 import { usesMuslLibc, vfsLibrarySegments } from '../../drivers/vfs-library.js'
 
 /**
@@ -20,4 +21,14 @@ export function builtStreamingExtensionPath(): string | null {
     ...vfsLibrarySegments(process.platform, usesMuslLibc()),
   )
   return existsSync(library) ? library : null
+}
+
+/**
+ * Reports whether a driver streams a copy on this host. The compiled library is
+ * one of the conditions and the runtime supplies the rest. A test that gates on
+ * the library alone therefore fails on a host that takes the staged route,
+ * rather than skipping.
+ */
+export function driverStreamsToDestination(driver: SQLiteDriver): boolean {
+  return driver.createBackupEngine?.(driver).streamsToDestination() === true
 }

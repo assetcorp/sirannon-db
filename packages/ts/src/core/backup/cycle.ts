@@ -12,6 +12,7 @@ import {
 } from './cycle-options.js'
 import { type BackupCycleState, readCycleState, writeCycleState } from './cycle-state.js'
 import { startChain, transferCapture } from './cycle-transfer.js'
+import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import type { BackupRunReport } from './report.js'
 
 const LOG_REWOUND = 'BACKUP_LOG_REWOUND'
@@ -316,5 +317,11 @@ export class BackupCycle {
  * @returns The cycle.
  */
 export function createBackupCycle(request: BackupCycleRequest): BackupCycle {
-  return new BackupCycle(request)
+  return new BackupCycle({
+    ...request,
+    destination: destinationWithDeadline(
+      request.destination,
+      request.destinationTimeoutMs ?? DEFAULT_DESTINATION_TIMEOUT_MS,
+    ),
+  })
 }

@@ -239,6 +239,7 @@ describe('assembleFromDestination', () => {
       databaseId: 'main',
       sourcePath: '/tmp/source.db',
       kind: 'full',
+      chainId: 'bbbbbbbbbbbbbbbb',
       route: 'staged',
       destinationName: 'gapped.db',
       startedAt: 0,

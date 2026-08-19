@@ -27,6 +27,9 @@ export function expoSqlite(): SQLiteDriver {
       if (options?.walMode !== false) await db.execAsync('PRAGMA journal_mode = WAL')
       await db.execAsync(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       await db.execAsync('PRAGMA foreign_keys = ON')
+      if (options?.walAutoCheckpoint !== undefined) {
+        await db.execAsync(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      }
 
       const buildConnectionFromHandle = (dbHandle: SQLiteHandle): SQLiteConnection => ({
         async exec(sql: string): Promise<void> {

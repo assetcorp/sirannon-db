@@ -1,4 +1,5 @@
 import { SirannonError } from '../errors.js'
+import { isBackupChainBase, isBackupChainChange, isBackupChainHead } from './chain-records.js'
 import type { BackupDestination } from './destination.js'
 
 /** Name a destination stores the list of chains under, unless you set another.
@@ -180,73 +181,12 @@ async function readRecords(destination: BackupDestination, name: string): Promis
   return records
 }
 
-function isNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-function isChainHead(value: unknown): value is BackupChainHead {
-  const head = value as BackupChainHead
-  return typeof head?.chainId === 'string' && isNumber(head.startedAt)
-}
-
-/**
- * Checks that a value read back off disk or out of a destination holds every
- * field of a chain position.
- *
- * @param value - The value to check.
- * @returns Whether it is a complete position.
- *
- * @internal
- */
-export function isBackupChainPosition(value: unknown): value is BackupChainPosition {
-  const position = value as BackupChainPosition
-  return (
-    isNumber(position?.logSequence) &&
-    isNumber(position.salt1) &&
-    isNumber(position.salt2) &&
-    isNumber(position.firstFrame) &&
-    isNumber(position.lastFrame)
-  )
-}
-
-function isChainBase(value: unknown): value is BackupChainBase {
-  const base = value as BackupChainBase
-  return (
-    base?.kind === 'full' &&
-    typeof base.chainId === 'string' &&
-    typeof base.name === 'string' &&
-    typeof base.runId === 'string' &&
-    isNumber(base.finishedAt) &&
-    isNumber(base.pieceCount) &&
-    isNumber(base.pieceBytes) &&
-    isNumber(base.bytesWritten)
-  )
-}
-
-function isChainChange(value: unknown): value is BackupChainChange {
-  const change = value as BackupChainChange
-  return (
-    change?.kind === 'change' &&
-    typeof change.chainId === 'string' &&
-    typeof change.name === 'string' &&
-    typeof change.runId === 'string' &&
-    isNumber(change.sequence) &&
-    isBackupChainPosition(change.position) &&
-    isNumber(change.capturedAt) &&
-    isNumber(change.frameCount) &&
-    isNumber(change.pieceCount) &&
-    isNumber(change.pieceBytes) &&
-    isNumber(change.bytesWritten) &&
-    typeof change.checkpointed === 'boolean'
-  )
-}
-
 function chainRecords(records: readonly unknown[], name: string): BackupChainRecord[] {
   const kept: BackupChainRecord[] = []
   for (const record of records) {
     const kind = (record as { kind?: unknown } | null)?.kind
     if (kind !== 'full' && kind !== 'change') continue
-    if (kind === 'full' ? isChainBase(record) : isChainChange(record)) {
+    if (kind === 'full' ? isBackupChainBase(record) : isBackupChainChange(record)) {
       kept.push(record as BackupChainRecord)
       continue
     }
@@ -304,7 +244,7 @@ export async function appendChainRecord(
  */
 export async function readChainHeads(destination: BackupDestination, chainName: string): Promise<BackupChainHead[]> {
   const records = await readRecords(destination, chainName)
-  return records.filter(isChainHead).reverse()
+  return records.filter(isBackupChainHead).reverse()
 }
 
 /**

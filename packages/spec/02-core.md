@@ -484,7 +484,7 @@ BackupPiece {
 }
 ```
 
-Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must hold more than one name, because SQLite opens a journal file beside the database file it writes. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to.
+Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must hold more than one name, because SQLite opens a journal file beside the database file it writes. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to.
 
 Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros rather than moving every later byte. Reassembly checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
 
@@ -591,7 +591,7 @@ A database captures its log a final time during close, after its writes drain an
 
 ### Chain records
 
-An implementation stores the chain at the destination, never inside the database, and only ever appends to it.
+An implementation stores the chain at the destination, never inside the database, and never changes a record it has stored.
 
 ```text
 BackupChainPosition {

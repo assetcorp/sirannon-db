@@ -148,6 +148,32 @@ const s3Destination: BackupDestination = {
 
 Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name.
 
+### How the bytes travel
+
+Sirannon takes one of two routes. `backupCapabilities()` reports which one this process would take:
+
+```ts
+const { streamedCopy, localDiskRequired } = db.backupCapabilities()
+```
+
+The streamed route passes each piece to your destination as SQLite writes it, so a run needs no local disk. That route uses a compiled SQLite extension that Sirannon publishes as one small package per platform, and your install fetches only the package for the platform you are on. On a platform with no published binary, Sirannon writes one local file and sends that file on. `localDiskRequired` reads `equal-to-backup` when it does.
+
+Node's own SQLite streams from version 23 upwards, and version 22 takes the staged route. better-sqlite3 streams once the operator sets `SQLITE_USE_URI=1` before the module loads:
+
+```bash
+SQLITE_USE_URI=1 node server.js
+```
+
+That variable turns on URI parsing for every file name the process opens. SQLite would then read a database path containing a question mark as a URI, so check the paths your application opens before you set it. Without the variable, `streamedCopy` reads `false` and every run takes the staged route.
+
+One process loads the extension into a single SQLite build, so a streamed run through a second driver fails with an error that says so. The fingerprint costs a read of every piece back from your destination, and `fingerprint: false` skips it.
+
+To stream on a platform Sirannon publishes no binary for, compile the extension yourself and name it:
+
+```ts
+const driver = betterSqlite3({ vfsExtensionPath: '/opt/sirannon/sirannonvfs.so' })
+```
+
 ## Incremental backups
 
 Every backup above copies the whole database, however little of it changed since the last run. On a large database the cost of that mounts quickly.

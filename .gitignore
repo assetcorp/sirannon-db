@@ -108,3 +108,6 @@ __pycache__/
 .nx/
 
 loadtest/results*/
+
+native/npm/*/*
+!native/npm/*/package.json

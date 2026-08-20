@@ -374,6 +374,49 @@ describe('restoreBackup', () => {
     expect(existsSync(`${destPath}-wal`)).toBe(false)
   })
 
+  it('replaces a database whose log it cannot fold back in', async () => {
+    const context = await harness()
+    await context.cycle.start()
+    await insertAndCapture(context, 2)
+
+    const destPath = join(temp.path, 'busy-log.db')
+    const live = await testDriver.open(destPath, { walMode: true, walAutoCheckpoint: 0 })
+    openConnections.push(live)
+    await live.exec('CREATE TABLE ledger (id INTEGER PRIMARY KEY, entry TEXT)')
+    await live.exec("INSERT INTO ledger (entry) VALUES ('opening balance')")
+    expect(existsSync(`${destPath}-wal`)).toBe(true)
+
+    const busyRow = { busy: 1, log: 1, checkpointed: 0 }
+    const refusingDriver: SQLiteDriver = {
+      ...testDriver,
+      open: async (path, openOptions) => {
+        const conn = await testDriver.open(path, openOptions)
+        if (path !== destPath) return conn
+        return {
+          ...conn,
+          prepare: async (sql: string): Promise<SQLiteStatement> => {
+            if (!sql.includes('wal_checkpoint')) return conn.prepare(sql)
+            return {
+              all: async () => [busyRow] as never[],
+              get: async () => busyRow as never,
+              run: async () => ({ changes: 0, lastInsertRowId: 0 }),
+            }
+          },
+        }
+      },
+    }
+
+    await restoreBackup({
+      destination: context.destination,
+      driver: refusingDriver,
+      destPath,
+      replaceExisting: true,
+    })
+
+    expect(await readNotes(destPath)).toEqual(['note-1', 'note-2'])
+    expect(existsSync(`${destPath}-wal`)).toBe(false)
+  })
+
   it('leaves the log of a database at that path alone until the rebuild is whole', async () => {
     const context = await harness()
     await context.cycle.start()

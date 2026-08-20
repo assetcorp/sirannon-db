@@ -35,6 +35,9 @@ async function seedPages(db: Database, rows: number): Promise<void> {
  * Runs the streamed backup suite against one driver. Each driver needs a test
  * file of its own, because a process loads the compiled extension into one
  * SQLite build and the two drivers carry a build each.
+ *
+ * @param label - Name of the driver, which every test title carries.
+ * @param buildDriver - Builds that driver, taking the path of the compiled extension where one is built.
  */
 export function describeStreamedBackup(
   label: string,
@@ -180,6 +183,9 @@ export function describeStreamedBackup(
  * Runs the backpressure suite against a driver whose copy runs off the caller's
  * thread. Only those drivers ask the extension to hold the copy back, because a
  * copy on the caller's thread cannot outrun the caller that takes the pieces.
+ *
+ * @param label - Name of the driver, which every test title carries.
+ * @param buildDriver - Builds that driver, taking the path of the compiled extension where one is built.
  */
 export function describeStreamedBackupBackpressure(
   label: string,

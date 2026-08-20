@@ -86,10 +86,21 @@ export class BackupStreamHost {
    * @param pieceBytes - Bytes one whole piece holds.
    * @param maxQueuedPieces - Pieces the extension holds before it stops taking more.
    * @param waitWhenFull - Whether the copy waits for the destination to catch up rather than queueing further pieces.
+   * @param stoppedTakerMicroseconds - How long the extension waits without a report from {@link BackupStreamHost.reportStillTaking} before it lets a piece through anyway.
    * @returns The identifier of the open stream.
    */
-  async open(pieceBytes: number, maxQueuedPieces: number, waitWhenFull: boolean): Promise<number> {
-    const streamId = await this.statements.selectNewStreamId(pieceBytes, maxQueuedPieces, waitWhenFull ? 1 : 0)
+  async open(
+    pieceBytes: number,
+    maxQueuedPieces: number,
+    waitWhenFull: boolean,
+    stoppedTakerMicroseconds: number,
+  ): Promise<number> {
+    const streamId = await this.statements.selectNewStreamId(
+      pieceBytes,
+      maxQueuedPieces,
+      waitWhenFull ? 1 : 0,
+      stoppedTakerMicroseconds,
+    )
     if (streamId === 0) {
       throw new SirannonError('The streaming extension opened no stream for this run', 'BACKUP_ERROR')
     }
@@ -108,11 +119,11 @@ export class BackupStreamHost {
   }
 
   /**
-   * Tells the extension that this process is still taking pieces. The copy
-   * holds SQLite's own lock on the database while it waits for room in the
-   * queue, so a caller that stopped calling would leave every statement on that
-   * database waiting behind it. The extension therefore lets a piece through
-   * once these calls stop arriving.
+   * Reports that this run is still taking pieces. SQLite holds the database's
+   * own lock for the whole of a copy step, so a run that stopped reporting
+   * would leave every other statement on that database waiting behind that
+   * step. The extension therefore lets one piece past its cap once these
+   * reports stop arriving.
    *
    * @param streamId - Stream to report against.
    * @returns The pieces the extension is holding.

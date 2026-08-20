@@ -24,6 +24,7 @@ struct SirannonStream {
   int pieceBytes;
   int maxQueued;
   int waitWhenFull;
+  int stoppedTakerMicroseconds;
   unsigned char *first;
   unsigned char *current;
   int currentIndex;
@@ -34,11 +35,13 @@ struct SirannonStream {
   int queued;
   int finished;
   int openFiles;
-  sqlite3_int64 consumerSeenAt;
+  sqlite3_int64 takerSeenAt;
+  sqlite3_int64 pieceLetPastAt;
   char *failure;
 };
 
-SirannonStream *sirannonStreamOpen(int pieceBytes, int maxQueued, int waitWhenFull);
+SirannonStream *sirannonStreamOpen(int pieceBytes, int maxQueued, int waitWhenFull,
+                                   sqlite3_int64 stoppedTakerMicroseconds);
 SirannonStream *sirannonStreamById(sqlite3_int64 id);
 int sirannonStreamIdFromName(const char *name, sqlite3_int64 *id);
 int sirannonStreamWrite(SirannonStream *stream, const void *bytes, int amount, sqlite3_int64 offset);
@@ -46,7 +49,7 @@ int sirannonStreamRead(SirannonStream *stream, void *bytes, int amount, sqlite3_
 int sirannonStreamTruncate(SirannonStream *stream, sqlite3_int64 size);
 int sirannonStreamFinish(SirannonStream *stream);
 SirannonPiece *sirannonStreamTakePiece(SirannonStream *stream);
-void sirannonStreamConsumerSeen(SirannonStream *stream);
+void sirannonStreamTakerSeen(SirannonStream *stream);
 void sirannonPieceFree(SirannonPiece *piece);
 void sirannonStreamRelease(SirannonStream *stream);
 

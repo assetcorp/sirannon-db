@@ -108,6 +108,20 @@ export class BackupStreamHost {
   }
 
   /**
+   * Tells the extension that this process is still taking pieces. The copy
+   * holds SQLite's own lock on the database while it waits for room in the
+   * queue, so a caller that stopped calling would leave every statement on that
+   * database waiting behind it. The extension therefore lets a piece through
+   * once these calls stop arriving.
+   *
+   * @param streamId - Stream to report against.
+   * @returns The pieces the extension is holding.
+   */
+  reportStillTaking(streamId: number): Promise<number> {
+    return this.statements.selectQueuedPieces(streamId)
+  }
+
+  /**
    * Reports how many bytes of the copy have reached the extension.
    *
    * @param streamId - Stream to ask about.

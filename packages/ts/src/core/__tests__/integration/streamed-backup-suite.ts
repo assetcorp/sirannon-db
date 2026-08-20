@@ -7,10 +7,15 @@ import {
   driverStreamsToDestination,
 } from '../../../__tests__/helpers/streaming-extension.js'
 import { assembleFromDestination } from '../../backup/assemble.js'
+import type { BackupDestination } from '../../backup/destination.js'
 import type { BackupProgress } from '../../backup/report.js'
 import { Database } from '../../database.js'
 import type { SQLiteDriver } from '../../driver/types.js'
 import { memoryDestination } from '../backup/memory-destination.js'
+
+const COPIES_IN_ONE_PROCESS = 60
+const COPY_STALL_MS = 5000
+const SLOW_DESTINATION_MS = 15
 
 export interface StreamingExtensionOptions {
   vfsExtensionPath?: string
@@ -144,6 +149,70 @@ export function describeStreamedBackup(
         'The destination refused piece',
       )
 
+      await db.close()
+    })
+
+    it.skipIf(!streams)(
+      'finishes every copy in a process that has run many of them',
+      async () => {
+        const slowest: number[] = []
+        for (let run = 0; run < COPIES_IN_ONE_PROCESS; run++) {
+          const path = join(tempDir, `repeat-${run}.db`)
+          const db = await Database.create('test', path, driver)
+          await seedPages(db, 4000)
+          const startedAt = Date.now()
+          await db.backupTo({ destination: memoryDestination(), pieceBytes: 65536, pagesPerStep: 8 })
+          slowest.push(Date.now() - startedAt)
+          await db.close()
+          for (const beside of ['', '-wal', '-shm']) rmSync(`${path}${beside}`, { force: true })
+        }
+
+        expect(Math.max(...slowest)).toBeLessThan(COPY_STALL_MS)
+      },
+      COPIES_IN_ONE_PROCESS * COPY_STALL_MS,
+    )
+  })
+}
+
+/**
+ * Runs the backpressure suite against a driver whose copy runs off the caller's
+ * thread. Only those drivers ask the extension to hold the copy back, because a
+ * copy on the caller's thread cannot outrun the caller that takes the pieces.
+ */
+export function describeStreamedBackupBackpressure(
+  label: string,
+  buildDriver: (options: StreamingExtensionOptions) => SQLiteDriver,
+): void {
+  const extensionPath = builtStreamingExtensionPath()
+  const driver = buildDriver(extensionPath ? { vfsExtensionPath: extensionPath } : {})
+  const streams = driverStreamsToDestination(driver)
+  let tempDir: string
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'sirannon-backpressure-'))
+  })
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  describe(`Streamed backup backpressure on ${label}`, () => {
+    it.skipIf(!streams)('holds the copy back while the destination is still storing a piece', async () => {
+      const db = await Database.create('test', join(tempDir, 'backpressure.db'), driver)
+      await seedPages(db, 4000)
+      const stored = memoryDestination()
+      const slowDestination: BackupDestination = {
+        ...stored,
+        async writePiece(name, index, bytes) {
+          await new Promise(resolve => setTimeout(resolve, SLOW_DESTINATION_MS))
+          await stored.writePiece(name, index, bytes)
+        },
+      }
+
+      const report = await db.backupTo({ destination: slowDestination, pieceBytes: 65536, pagesPerStep: 8 })
+
+      expect(report.pieceCount).toBeGreaterThan(4)
+      expect(report.copyMs).toBeGreaterThanOrEqual((report.pieceCount / 2) * SLOW_DESTINATION_MS)
       await db.close()
     })
   })

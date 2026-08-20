@@ -19,6 +19,7 @@ import { BackupStreamHost } from './vfs/stream-host.js'
 const VFS_NAME = 'sirannon'
 const PIECE_BLOCK_BYTES = 512
 const DRAIN_POLL_MS = 1
+const STILL_TAKING_REPORT_MS = 5
 
 /** What one runtime needs before a copy can reach a destination without a local file.
  * @internal
@@ -132,6 +133,10 @@ export async function copyToDestinationStreamed(
     throw err
   }
   const uri = destinationUri(streamId)
+  const stillTaking = setInterval(() => {
+    void host.reportStillTaking(streamId).catch(() => undefined)
+  }, STILL_TAKING_REPORT_MS)
+  stillTaking.unref?.()
 
   let firstStepSeen = false
   let copyLeftRunning: Promise<unknown> | null = null
@@ -243,6 +248,7 @@ export async function copyToDestinationStreamed(
   } finally {
     discarding = true
     const release = async () => {
+      clearInterval(stillTaking)
       copying = false
       await pumping
       await host.close(streamId).catch(() => undefined)

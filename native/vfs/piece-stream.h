@@ -34,6 +34,7 @@ struct SirannonStream {
   int queued;
   int finished;
   int openFiles;
+  sqlite3_int64 consumerSeenAt;
   char *failure;
 };
 
@@ -45,6 +46,7 @@ int sirannonStreamRead(SirannonStream *stream, void *bytes, int amount, sqlite3_
 int sirannonStreamTruncate(SirannonStream *stream, sqlite3_int64 size);
 int sirannonStreamFinish(SirannonStream *stream);
 SirannonPiece *sirannonStreamTakePiece(SirannonStream *stream);
+void sirannonStreamConsumerSeen(SirannonStream *stream);
 void sirannonPieceFree(SirannonPiece *piece);
 void sirannonStreamRelease(SirannonStream *stream);
 

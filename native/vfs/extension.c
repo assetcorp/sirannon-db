@@ -73,6 +73,18 @@ static void takeFunction(sqlite3_context *context, int argc, sqlite3_value **arg
   sqlite3_result_blob64(context, framed, (sqlite3_uint64)(SIRANNON_PIECE_HEADER_BYTES + length), sqlite3_free);
 }
 
+static void aliveFunction(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  SirannonStream *stream;
+  (void)argc;
+  sirannonEnter();
+  stream = argumentStream(context, argv[0]);
+  if (stream) {
+    sirannonStreamConsumerSeen(stream);
+    sqlite3_result_int64(context, stream->queued);
+  }
+  sirannonLeave();
+}
+
 static void writtenFunction(sqlite3_context *context, int argc, sqlite3_value **argv) {
   SirannonStream *stream;
   (void)argc;
@@ -129,6 +141,7 @@ static const SirannonFunction sirannonFunctions[] = {
   {"sirannon_vfs_version", 0, versionFunction},
   {"sirannon_stream_open", 3, openFunction},
   {"sirannon_stream_take", 1, takeFunction},
+  {"sirannon_stream_alive", 1, aliveFunction},
   {"sirannon_stream_written", 1, writtenFunction},
   {"sirannon_stream_error", 1, errorFunction},
   {"sirannon_stream_finish", 1, finishFunction},

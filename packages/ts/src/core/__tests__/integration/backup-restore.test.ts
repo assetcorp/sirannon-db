@@ -9,7 +9,7 @@ import type { BackupCycleRequest } from '../../backup/cycle-options.js'
 import { restoreBackup } from '../../backup/restore.js'
 import type { BackupRestoreProgress } from '../../backup/restore-options.js'
 import { LOG_HEADER_BYTES } from '../../backup/wal-format.js'
-import type { SQLiteConnection, SQLiteStatement } from '../../driver/types.js'
+import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../driver/types.js'
 import type { SirannonError } from '../../errors.js'
 import { type MemoryDestination, memoryDestination } from '../backup/memory-destination.js'
 import { tempDirPerTest } from '../backup/shared.js'
@@ -333,6 +333,45 @@ describe('restoreBackup', () => {
     })
 
     expect(await readNotes(destPath)).toEqual(['note-1', 'note-2'])
+  })
+
+  it('folds the log of the database it replaces back in before it removes that log', async () => {
+    const context = await harness()
+    await context.cycle.start()
+    await insertAndCapture(context, 2)
+
+    const destPath = join(temp.path, 'folded.db')
+    const live = await testDriver.open(destPath, { walMode: true, walAutoCheckpoint: 0 })
+    openConnections.push(live)
+    await live.exec('CREATE TABLE ledger (id INTEGER PRIMARY KEY, entry TEXT)')
+    await live.exec("INSERT INTO ledger (entry) VALUES ('opening balance')")
+    expect(existsSync(`${destPath}-wal`)).toBe(true)
+
+    const checkpointedPaths: string[] = []
+    const watchingDriver: SQLiteDriver = {
+      ...testDriver,
+      open: async (path, openOptions) => {
+        const conn = await testDriver.open(path, openOptions)
+        return {
+          ...conn,
+          prepare: async (sql: string): Promise<SQLiteStatement> => {
+            if (sql.includes('wal_checkpoint')) checkpointedPaths.push(path)
+            return conn.prepare(sql)
+          },
+        }
+      },
+    }
+
+    await restoreBackup({
+      destination: context.destination,
+      driver: watchingDriver,
+      destPath,
+      replaceExisting: true,
+    })
+
+    expect(checkpointedPaths).toContain(destPath)
+    expect(await readNotes(destPath)).toEqual(['note-1', 'note-2'])
+    expect(existsSync(`${destPath}-wal`)).toBe(false)
   })
 
   it('leaves the log of a database at that path alone until the rebuild is whole', async () => {

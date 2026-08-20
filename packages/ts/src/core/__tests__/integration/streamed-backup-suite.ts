@@ -17,6 +17,7 @@ const COPIES_IN_ONE_PROCESS = 60
 const SLOWEST_ACCEPTABLE_COPY_MS = 15_000
 const REPEATED_COPIES_TIMEOUT_MS = 120_000
 const SLOW_DESTINATION_MS = 15
+const COARSE_LOOP_CLOCK_TICK_MS = 1
 
 export interface StreamingExtensionOptions {
   vfsExtensionPath?: string
@@ -211,9 +212,10 @@ export function describeStreamedBackupBackpressure(
       }
 
       const report = await db.backupTo({ destination: slowDestination, pieceBytes: 65536, pagesPerStep: 8 })
+      const slowestTimerCanReport = SLOW_DESTINATION_MS - COARSE_LOOP_CLOCK_TICK_MS
 
       expect(report.pieceCount).toBeGreaterThan(4)
-      expect(report.transferMs).toBeGreaterThanOrEqual(report.pieceCount * SLOW_DESTINATION_MS)
+      expect(report.transferMs).toBeGreaterThanOrEqual(report.pieceCount * slowestTimerCanReport)
       expect(report.copyMs).toBeGreaterThanOrEqual(report.transferMs / 2)
       await db.close()
     })

@@ -1,9 +1,11 @@
 import { rename, rm, stat } from 'node:fs/promises'
+import type { SQLiteDriver } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { assembleStoredFile } from './assemble.js'
 import type { BackupChainChange } from './chain.js'
 import { DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
 import { planBackupRestore } from './chain-queries.js'
+import { checkpointLog } from './checkpoint.js'
 import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import { applyChangeBatch, assertChangePiecesRunOn, countDatabasePages } from './restore-apply.js'
 import { readDatabaseHeader } from './restore-log.js'
@@ -33,6 +35,15 @@ async function removeLogBeside(path: string): Promise<void> {
 async function removeDatabaseAndLog(path: string): Promise<void> {
   await rm(path, { force: true }).catch(() => {})
   await removeLogBeside(path)
+}
+
+async function foldLogIntoDatabase(driver: SQLiteDriver, path: string): Promise<void> {
+  const existing = await stat(path).catch(() => undefined)
+  if (!existing) return
+  const conn = await driver.open(path, { walMode: false, walAutoCheckpoint: 0 }).catch(() => undefined)
+  if (!conn) return
+  await checkpointLog(conn).catch(() => undefined)
+  await conn.close().catch(() => undefined)
 }
 
 async function assertPathIsFree(destPath: string, replaceExisting: boolean): Promise<void> {
@@ -73,9 +84,12 @@ function batchesOf(changes: readonly BackupChainChange[], batchSize: number): Ba
  * Sirannon assembles the rebuilt database beside the path you named and renames
  * it onto that path once the last batch is folded in. A restore that fails, or
  * one the machine kills part-way, therefore leaves that path holding whatever
- * it held before. A database already there stops the call unless you set
- * `replaceExisting`, because the rename removes the write-ahead log beside it
- * and any commit that log still held would go with it.
+ * it held before. Where a database already sits at that path, Sirannon folds its
+ * write-ahead log back into it before the rename, so the log Sirannon then
+ * removes carries nothing that database has not already taken in. A database
+ * already there stops the call unless you set `replaceExisting`, because the
+ * rename leaves the rebuilt database at that path and nothing of the one it
+ * replaced.
  *
  * The disk this needs is the finished database, plus one stored piece, plus the
  * log Sirannon writes for one batch of change pieces. `batchSize` sets that
@@ -154,6 +168,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
     }
 
     await countDatabasePages(options.driver, buildPath)
+    await foldLogIntoDatabase(options.driver, destPath)
     await removeLogBeside(destPath)
     await rename(buildPath, destPath)
   } catch (err) {

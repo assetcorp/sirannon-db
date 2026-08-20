@@ -50,6 +50,7 @@ for (const [build, { package: packageName, library }] of Object.entries(BUILDS))
 }
 
 let publishedCount = 0
+const refused = []
 for (const packageName of PACKAGES) {
   const packageDirectory = join('native', 'npm', packageName)
   writeVersion(join(packageDirectory, 'package.json'), manifest => {
@@ -59,11 +60,24 @@ for (const packageName of PACKAGES) {
     console.log(`@delali/sirannon-vfs-${packageName}@${version} is already published, so this run left it alone`)
     continue
   }
-  execFileSync('npm', ['publish', '--tag', distTag, '--access', 'public'], {
-    cwd: packageDirectory,
-    stdio: 'inherit',
-  })
-  publishedCount++
+  try {
+    execFileSync('npm', ['publish', '--tag', distTag, '--access', 'public'], {
+      cwd: packageDirectory,
+      stdio: 'inherit',
+    })
+    publishedCount++
+  } catch {
+    refused.push(`@delali/sirannon-vfs-${packageName}`)
+  }
+}
+
+if (refused.length > 0) {
+  console.error(
+    `The registry refused ${refused.length} of ${PACKAGES.length} platform packages at ${version}: ${refused.join(', ')}. ` +
+      'A package that exists and answers 404 to a publish has no trusted publisher for this workflow, ' +
+      'which npm configures with: npm trust github <package> --file publish.yml --repo assetcorp/sirannon-db',
+  )
+  process.exit(1)
 }
 
 writeVersion(join('packages', 'ts', 'package.json'), manifest => {

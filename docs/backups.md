@@ -50,16 +50,19 @@ const s3Destination: BackupDestination = {
     return new Uint8Array(await object.Body.transformToByteArray())
   },
   async listPieces(name) {
-    const listed = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: `${name}/` }))
-    return (listed.Contents ?? []).map(object => ({
-      index: Number(object.Key.split('/').pop()),
-      byteLength: object.Size,
-    }))
+    const pieces: { index: number; byteLength: number }[] = []
+    for await (const page of paginateListObjectsV2({ client: s3 }, { Bucket, Prefix: `${name}/` })) {
+      for (const object of page.Contents ?? []) {
+        if (!object.Key || object.Size === undefined) continue
+        pieces.push({ index: Number(object.Key.split('/').pop()), byteLength: object.Size })
+      }
+    }
+    return pieces
   },
 }
 ```
 
-Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name.
+Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name. S3 sends at most a thousand keys in one response, which is why the example pages through them; a listing that stopped at the first response would hide every piece past the thousandth from a restore.
 
 Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline.
 
@@ -91,7 +94,7 @@ const driver = betterSqlite3({ vfsExtensionPath: '/opt/sirannon/sirannonvfs.so' 
 
 ## Incremental backups
 
-Every backup above copies the whole database, however little of it changed since the last run. On a large database the cost of that mounts quickly.
+Every backup above copies the whole database, however little of it changed since the last run. On a large database, the cost of that mounts quickly.
 
 The `backups` option copies the whole database once, then sends only what changed since the previous run. A 1 TB database that changed by 200 MB in a day uploads 200 MB.
 
@@ -156,12 +159,17 @@ Leave `moment` out to reach the newest backup you hold. This call opens no datab
 
 Sirannon checks each file it fetches against the byte count and the fingerprint its backup recorded. Two kinds of gap fail the call. A chain missing a change file fails with `BACKUP_CHAIN_BROKEN` naming that file, and storage missing one of the numbered pieces a file was stored in fails with `BACKUP_DESTINATION_ERROR` naming that piece.
 
-Sirannon assembles the rebuilt database beside the path you named and renames it onto that path once the last batch is folded in. A restore that fails, or one the machine kills part-way, therefore leaves that path holding whatever it held before.
+Sirannon assembles the rebuilt database beside the path you named and renames it onto that path once the last batch is folded in. A restore that fails, or one the machine kills part-way, therefore leaves that path holding whatever it held before. Where a database already sits at that path, Sirannon folds its write-ahead log back into it before the rename, so a machine that stops the restore between the two steps still leaves that database whole.
 
-A database already at that path stops the call, because the rename removes the write-ahead log beside it and any commit that log still held would go with it. Say `replaceExisting: true` where you mean to restore over a database you no longer want:
+A database already at that path stops the call, because the rename leaves the rebuilt database there and nothing of the one it replaced. Say `replaceExisting: true` where you mean to restore over a database you no longer want:
 
 ```ts
-await restoreBackup({ destination, driver, destPath: './data/main.db', replaceExisting: true })
+await restoreBackup({
+  destination,
+  driver: betterSqlite3(),
+  destPath: './data/main.db',
+  replaceExisting: true,
+})
 ```
 
 ### How much disk a restore needs
@@ -175,8 +183,9 @@ free disk = the finished database + one piece + one batch of change files
 - **The finished database** is the full copy plus everything the change files add to it.
 - **One piece** is the `pieceBytes` the backup used, 16 MiB by default.
 - **One batch** is `batchSize` change files, 16 by default. Sirannon writes one batch into the log beside the database and folds it in with a checkpoint. The log is empty again before the next batch begins, so the length of the chain never enters this figure.
+- **The database you are replacing** counts as well where you pass `replaceExisting`, because Sirannon keeps it where it is until the rebuilt file is renamed over it.
 
-Suppose a 200 GB database, backed up in 16 MiB pieces, capturing 40 MB of changes a minute. At the default batch size the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Lower `batchSize` where disk is tight, and raise it where a long chain spends too long checkpointing.
+Suppose a 200 GB database, backed up in 16 MiB pieces, capturing 40 MB of changes a minute. At the default batch size the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Restoring over the running copy of that same database would need roughly 400.7 GB, since both files sit on the disk until the rename. Lower `batchSize` where disk is tight, and raise it where a long chain spends too long checkpointing.
 
 ### Working out what a restore needs
 

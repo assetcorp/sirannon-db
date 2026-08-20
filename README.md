@@ -65,7 +65,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters |
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` and `.down.sql` files from a directory |
-| `@delali/sirannon-db/backup` | Backup destination types, the chain records a backup builds, and `restoreBackup` |
+| `@delali/sirannon-db/backup` | Backup destination types, backup chain records, and `restoreBackup` |
 | `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation, also re-exported from the core entry |
 | `@delali/sirannon-db/server` | HTTP and WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser and Node.js client SDK with auto-reconnect, subscription restore, and the device sync controller |

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { assembleFromDestination } from '../../backup/assemble.js'
@@ -278,6 +279,19 @@ describe('assembleFromDestination', () => {
     ).catch((err: unknown) => err)
 
     expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
+  })
+
+  it('leaves a file already at that path untouched when a piece is missing', async () => {
+    const destination = memoryDestination()
+    await destination.writePiece('gapped.db', 0, new Uint8Array(4))
+    await destination.writePiece('gapped.db', 2, new Uint8Array(4))
+    const destPath = join(temp.path, 'occupied-copy.db')
+    await writeFile(destPath, new Uint8Array(64))
+
+    const error = await assembleFromDestination(destination, reportFor({}), destPath).catch((err: unknown) => err)
+
+    expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
+    expect(statSync(destPath).size).toBe(64)
   })
 
   it('refuses a piece left behind by a longer run under the same name', async () => {

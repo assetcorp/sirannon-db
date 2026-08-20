@@ -15,3 +15,9 @@ export type { BackupCycle } from '../core/backup/cycle.js'
 export type { BackupCycleOptions } from '../core/backup/cycle-options.js'
 export type { BackupDestination, BackupPiece } from '../core/backup/destination.js'
 export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from '../core/backup/report.js'
+export { restoreBackup } from '../core/backup/restore.js'
+export type {
+  BackupRestoreOptions,
+  BackupRestoreProgress,
+  BackupRestoreReport,
+} from '../core/backup/restore-options.js'

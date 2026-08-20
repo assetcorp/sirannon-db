@@ -14,7 +14,7 @@ SQLITE_EXTENSION_INIT3
 
 #define SIRANNON_FULL_QUEUE_WAIT_US 5000
 #define SIRANNON_FULL_QUEUE_LIMIT_US 60000000
-#define SIRANNON_STOPPED_CONSUMER_US 30000
+#define SIRANNON_MIN_STOPPED_TAKER_US 1000
 #define SIRANNON_MAX_PIECE_INDEX 2147483647
 
 static sqlite3_int64 monotonicMicroseconds(void) {
@@ -30,6 +30,12 @@ static sqlite3_int64 monotonicMicroseconds(void) {
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
   return (sqlite3_int64)now.tv_sec * 1000000 + now.tv_nsec / 1000;
 #endif
+}
+
+static int clampedStoppedTaker(sqlite3_int64 microseconds) {
+  if (microseconds < SIRANNON_MIN_STOPPED_TAKER_US) return SIRANNON_MIN_STOPPED_TAKER_US;
+  if (microseconds > SIRANNON_FULL_QUEUE_LIMIT_US) return SIRANNON_FULL_QUEUE_LIMIT_US;
+  return (int)microseconds;
 }
 
 static SirannonStream *sirannonStreams = 0;
@@ -70,23 +76,25 @@ int sirannonStreamIdFromName(const char *name, sqlite3_int64 *id) {
   return 1;
 }
 
-SirannonStream *sirannonStreamOpen(int pieceBytes, int maxQueued, int waitWhenFull) {
+SirannonStream *sirannonStreamOpen(int pieceBytes, int maxQueued, int waitWhenFull,
+                                   sqlite3_int64 stoppedTakerMicroseconds) {
   SirannonStream *stream = (SirannonStream *)sqlite3_malloc(sizeof(SirannonStream));
   if (!stream) return 0;
   memset(stream, 0, sizeof(SirannonStream));
   stream->pieceBytes = pieceBytes;
   stream->maxQueued = maxQueued;
   stream->waitWhenFull = waitWhenFull;
+  stream->stoppedTakerMicroseconds = clampedStoppedTaker(stoppedTakerMicroseconds);
   stream->currentIndex = -1;
-  stream->consumerSeenAt = monotonicMicroseconds();
+  stream->takerSeenAt = monotonicMicroseconds();
   stream->id = sirannonNextStreamId++;
   stream->next = sirannonStreams;
   sirannonStreams = stream;
   return stream;
 }
 
-void sirannonStreamConsumerSeen(SirannonStream *stream) {
-  stream->consumerSeenAt = monotonicMicroseconds();
+void sirannonStreamTakerSeen(SirannonStream *stream) {
+  stream->takerSeenAt = monotonicMicroseconds();
 }
 
 void sirannonPieceFree(SirannonPiece *piece) {
@@ -96,7 +104,7 @@ void sirannonPieceFree(SirannonPiece *piece) {
 
 SirannonPiece *sirannonStreamTakePiece(SirannonStream *stream) {
   SirannonPiece *piece = stream->queueHead;
-  stream->consumerSeenAt = monotonicMicroseconds();
+  stream->takerSeenAt = monotonicMicroseconds();
   if (!piece) return 0;
   stream->queueHead = piece->next;
   if (!stream->queueHead) stream->queueTail = 0;
@@ -129,19 +137,23 @@ static int pieceLength(SirannonStream *stream, int index) {
 }
 
 static int waitForQueue(SirannonStream *stream) {
-  sqlite3_int64 idleFor;
+  sqlite3_int64 now;
   if (stream->maxQueued <= 0 || !stream->waitWhenFull) return SQLITE_OK;
   while (stream->queued >= stream->maxQueued) {
     if (stream->failure) return SQLITE_IOERR_WRITE;
-    idleFor = monotonicMicroseconds() - stream->consumerSeenAt;
-    if (idleFor >= SIRANNON_FULL_QUEUE_LIMIT_US) {
+    now = monotonicMicroseconds();
+    if (now - stream->takerSeenAt >= SIRANNON_FULL_QUEUE_LIMIT_US) {
       recordFailure(
         stream,
         "the run took no piece from it for a whole minute, so the copy stopped rather than hold more of the database "
         "in memory");
       return SQLITE_IOERR_WRITE;
     }
-    if (idleFor >= SIRANNON_STOPPED_CONSUMER_US) return SQLITE_OK;
+    if (now - stream->takerSeenAt >= stream->stoppedTakerMicroseconds &&
+        now - stream->pieceLetPastAt >= stream->stoppedTakerMicroseconds) {
+      stream->pieceLetPastAt = now;
+      return SQLITE_OK;
+    }
     sirannonAwaitTurn(SIRANNON_FULL_QUEUE_WAIT_US);
   }
   return SQLITE_OK;

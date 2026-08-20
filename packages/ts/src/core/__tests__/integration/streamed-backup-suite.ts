@@ -14,7 +14,8 @@ import type { SQLiteDriver } from '../../driver/types.js'
 import { memoryDestination } from '../backup/memory-destination.js'
 
 const COPIES_IN_ONE_PROCESS = 60
-const COPY_STALL_MS = 5000
+const SLOWEST_ACCEPTABLE_COPY_MS = 15_000
+const REPEATED_COPIES_TIMEOUT_MS = 120_000
 const SLOW_DESTINATION_MS = 15
 
 export interface StreamingExtensionOptions {
@@ -167,9 +168,9 @@ export function describeStreamedBackup(
           for (const beside of ['', '-wal', '-shm']) rmSync(`${path}${beside}`, { force: true })
         }
 
-        expect(Math.max(...slowest)).toBeLessThan(COPY_STALL_MS)
+        expect(Math.max(...slowest)).toBeLessThan(SLOWEST_ACCEPTABLE_COPY_MS)
       },
-      COPIES_IN_ONE_PROCESS * COPY_STALL_MS,
+      REPEATED_COPIES_TIMEOUT_MS,
     )
   })
 }
@@ -212,7 +213,8 @@ export function describeStreamedBackupBackpressure(
       const report = await db.backupTo({ destination: slowDestination, pieceBytes: 65536, pagesPerStep: 8 })
 
       expect(report.pieceCount).toBeGreaterThan(4)
-      expect(report.copyMs).toBeGreaterThanOrEqual((report.pieceCount / 2) * SLOW_DESTINATION_MS)
+      expect(report.transferMs).toBeGreaterThanOrEqual(report.pieceCount * SLOW_DESTINATION_MS)
+      expect(report.copyMs).toBeGreaterThanOrEqual(report.transferMs / 2)
       await db.close()
     })
   })

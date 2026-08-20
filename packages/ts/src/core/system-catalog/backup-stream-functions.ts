@@ -1,8 +1,8 @@
 import type { SQLiteConnection } from '../driver/types.js'
 
-const SELECT_NEW_STREAM_ID = 'SELECT sirannon_stream_open(?, ?, ?) AS streamId'
+const SELECT_NEW_STREAM_ID = 'SELECT sirannon_stream_open(?, ?, ?, ?) AS streamId'
 const SELECT_NEXT_PIECE = 'SELECT sirannon_stream_take(?) AS piece'
-const SELECT_QUEUED_PIECES = 'SELECT sirannon_stream_alive(?) AS queued'
+const SELECT_QUEUED_PIECES = 'SELECT sirannon_stream_taker_seen(?) AS queued'
 const SELECT_BYTES_WRITTEN = 'SELECT sirannon_stream_written(?) AS bytes'
 const SELECT_FAILURE = 'SELECT sirannon_stream_error(?) AS failure'
 const SELECT_FINISHED_BYTES = 'SELECT sirannon_stream_finish(?) AS bytes'
@@ -16,7 +16,12 @@ const SELECT_RELEASED_BYTES = 'SELECT sirannon_stream_close(?) AS bytes'
  */
 export interface BackupStreamStatements {
   /** Opens a stream and returns the identifier that names it in the destination URI. */
-  selectNewStreamId(pieceBytes: number, maxQueuedPieces: number, waitWhenFull: number): Promise<number>
+  selectNewStreamId(
+    pieceBytes: number,
+    maxQueuedPieces: number,
+    waitWhenFull: number,
+    stoppedTakerMicroseconds: number,
+  ): Promise<number>
   /** Returns the next whole piece the copy has produced, or null where it has produced none. */
   selectNextPiece(streamId: number): Promise<Uint8Array | null>
   /** Reports that the caller is still running, and returns the pieces the extension holds. */
@@ -60,8 +65,13 @@ export async function prepareBackupStreamStatements(conn: SQLiteConnection): Pro
   }
 
   return {
-    async selectNewStreamId(pieceBytes, maxQueuedPieces, waitWhenFull) {
-      const row = await newStreamId.get<{ streamId: number | bigint }>(pieceBytes, maxQueuedPieces, waitWhenFull)
+    async selectNewStreamId(pieceBytes, maxQueuedPieces, waitWhenFull, stoppedTakerMicroseconds) {
+      const row = await newStreamId.get<{ streamId: number | bigint }>(
+        pieceBytes,
+        maxQueuedPieces,
+        waitWhenFull,
+        stoppedTakerMicroseconds,
+      )
       return row ? Number(row.streamId) : 0
     },
     async selectNextPiece(streamId) {

@@ -1,5 +1,15 @@
-const MAGIC_WITH_LITTLE_ENDIAN_CONTENT = 0x377f0682
+/** Magic number at the front of a log whose checksums read their words little-endian.
+ * @internal
+ */
+export const MAGIC_WITH_LITTLE_ENDIAN_CONTENT = 0x377f0682
+
 const MAGIC_WITH_BIG_ENDIAN_CONTENT = 0x377f0683
+
+/** Log format version SQLite writes into the header, and the only one it reads.
+ * @internal
+ */
+export const LOG_FORMAT_VERSION = 3007000
+
 const SMALLEST_PAGE_BYTES = 512
 const LARGEST_PAGE_BYTES = 65536
 

@@ -66,6 +66,7 @@ React Native uses the same shape through `expoSqlite()` with `readPoolSize: 1`.
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters (see the table above) |
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` and `.down.sql` files from a directory |
+| `@delali/sirannon-db/backup` | Backup destination types, chain records, and `restoreBackup` |
 | `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation |
 | `@delali/sirannon-db/server` | HTTP and WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Client SDK with auto-reconnect, subscription restore, and device sync |
@@ -93,7 +94,7 @@ const balance = await db.transaction(async tx => {
 })
 ```
 
-A large import runs faster through `bulkLoad`, which trades durability for speed inside one transaction and restores the configured level afterwards. The [core engine guide](../../docs/core.md) covers it, along with migrations, backups, hooks, metrics, and the multi-tenant lifecycle.
+A large import runs faster through `bulkLoad`, which trades durability for speed inside one transaction and restores the configured level afterwards. The [core engine guide](../../docs/core.md) covers it, along with migrations, hooks, metrics, and the multi-tenant lifecycle. Backups have a [guide of their own](../../docs/backups.md).
 
 ## Change data capture and live queries
 
@@ -225,7 +226,8 @@ The [security guide](https://sirannon.sondelali.com/docs) covers each of these i
 
 | Guide | What it covers |
 | --- | --- |
-| [Core engine](../../docs/core.md) | Bulk load, live queries, migrations, backups, hooks, metrics, and the multi-tenant lifecycle |
+| [Core engine](../../docs/core.md) | Bulk load, live queries, migrations, hooks, metrics, and the multi-tenant lifecycle |
+| [Backups](../../docs/backups.md) | Copies to a file or to storage you supply, the chain of changes after one, and restoring from a moment you name |
 | [Server](../../docs/server.md) | HTTP routes, WebSocket messages, authentication, write shapes, the writer worker, and value encoding |
 | [Registered operations](../../docs/operations.md) | Naming the statements a server runs, identity-filled arguments, capabilities, and code generation |
 | [Live queries](../../docs/live-queries.md) | Maintained query results locally, over the network, and in React |

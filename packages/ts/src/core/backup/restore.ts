@@ -37,13 +37,16 @@ async function removeDatabaseAndLog(path: string): Promise<void> {
   await removeLogBeside(path)
 }
 
-async function foldLogIntoDatabase(driver: SQLiteDriver, path: string): Promise<void> {
+async function foldLogIntoDatabase(driver: SQLiteDriver, path: string): Promise<boolean> {
   const existing = await stat(path).catch(() => undefined)
-  if (!existing) return
+  if (!existing) return true
+  const log = await stat(`${path}-wal`).catch(() => undefined)
+  if (!log || log.size === 0) return true
   const conn = await driver.open(path, { walMode: false, walAutoCheckpoint: 0 }).catch(() => undefined)
-  if (!conn) return
-  await checkpointLog(conn).catch(() => undefined)
+  if (!conn) return false
+  const folded = await checkpointLog(conn).catch(() => undefined)
   await conn.close().catch(() => undefined)
+  return folded?.emptied === true
 }
 
 async function assertPathIsFree(destPath: string, replaceExisting: boolean): Promise<void> {
@@ -85,11 +88,14 @@ function batchesOf(changes: readonly BackupChainChange[], batchSize: number): Ba
  * it onto that path once the last batch is folded in. A restore that fails, or
  * one the machine kills part-way, therefore leaves that path holding whatever
  * it held before. Where a database already sits at that path, Sirannon folds its
- * write-ahead log back into it before the rename, so the log Sirannon then
- * removes carries nothing that database has not already taken in. A database
- * already there stops the call unless you set `replaceExisting`, because the
- * rename leaves the rebuilt database at that path and nothing of the one it
- * replaced.
+ * write-ahead log back into it before the rename, so a machine that stops the
+ * restore between those two steps leaves that database whole. Where the fold
+ * cannot empty that log, because another connection holds the database or
+ * SQLite cannot open the file at all, Sirannon removes that database together
+ * with its log, so a machine stopping there leaves the path plainly empty
+ * rather than quietly short of its last commits. A database already there stops
+ * the call unless you set `replaceExisting`, because the rename leaves the
+ * rebuilt database at that path and nothing of the one it replaced.
  *
  * The disk this needs is the finished database, plus one stored piece, plus the
  * log Sirannon writes for one batch of change pieces. `batchSize` sets that
@@ -168,8 +174,9 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
     }
 
     await countDatabasePages(options.driver, buildPath)
-    await foldLogIntoDatabase(options.driver, destPath)
-    await removeLogBeside(destPath)
+    const logFoldedIn = await foldLogIntoDatabase(options.driver, destPath)
+    if (logFoldedIn) await removeLogBeside(destPath)
+    else await removeDatabaseAndLog(destPath)
     await rename(buildPath, destPath)
   } catch (err) {
     await removeDatabaseAndLog(buildPath)

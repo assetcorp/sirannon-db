@@ -25,6 +25,7 @@ static void openFunction(sqlite3_context *context, int argc, sqlite3_value **arg
   int pieceBytes = sqlite3_value_int(argv[0]);
   int maxQueued = sqlite3_value_int(argv[1]);
   int waitWhenFull = sqlite3_value_int(argv[2]);
+  sqlite3_int64 stoppedTakerMicroseconds = sqlite3_value_int64(argv[3]);
   SirannonStream *stream;
   (void)argc;
   if (pieceBytes < SIRANNON_MIN_PIECE_BYTES || pieceBytes > SIRANNON_MAX_PIECE_BYTES || (pieceBytes % 512) != 0) {
@@ -32,7 +33,7 @@ static void openFunction(sqlite3_context *context, int argc, sqlite3_value **arg
     return;
   }
   sirannonEnter();
-  stream = sirannonStreamOpen(pieceBytes, maxQueued, waitWhenFull);
+  stream = sirannonStreamOpen(pieceBytes, maxQueued, waitWhenFull, stoppedTakerMicroseconds);
   if (stream) sqlite3_result_int64(context, stream->id);
   else sqlite3_result_error_nomem(context);
   sirannonLeave();
@@ -71,6 +72,18 @@ static void takeFunction(sqlite3_context *context, int argc, sqlite3_value **arg
   memcpy(framed + SIRANNON_PIECE_HEADER_BYTES, piece->data, (size_t)length);
   sirannonPieceFree(piece);
   sqlite3_result_blob64(context, framed, (sqlite3_uint64)(SIRANNON_PIECE_HEADER_BYTES + length), sqlite3_free);
+}
+
+static void takerSeenFunction(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  SirannonStream *stream;
+  (void)argc;
+  sirannonEnter();
+  stream = argumentStream(context, argv[0]);
+  if (stream) {
+    sirannonStreamTakerSeen(stream);
+    sqlite3_result_int64(context, stream->queued);
+  }
+  sirannonLeave();
 }
 
 static void writtenFunction(sqlite3_context *context, int argc, sqlite3_value **argv) {
@@ -127,8 +140,9 @@ typedef struct SirannonFunction {
 
 static const SirannonFunction sirannonFunctions[] = {
   {"sirannon_vfs_version", 0, versionFunction},
-  {"sirannon_stream_open", 3, openFunction},
+  {"sirannon_stream_open", 4, openFunction},
   {"sirannon_stream_take", 1, takeFunction},
+  {"sirannon_stream_taker_seen", 1, takerSeenFunction},
   {"sirannon_stream_written", 1, writtenFunction},
   {"sirannon_stream_error", 1, errorFunction},
   {"sirannon_stream_finish", 1, finishFunction},

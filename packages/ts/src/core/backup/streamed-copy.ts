@@ -19,6 +19,9 @@ import { BackupStreamHost } from './vfs/stream-host.js'
 const VFS_NAME = 'sirannon'
 const PIECE_BLOCK_BYTES = 512
 const DRAIN_POLL_MS = 1
+const STILL_TAKING_REPORT_MS = 5
+const REPORTS_BEFORE_THE_EXTENSION_STOPS_WAITING = 6
+const MICROSECONDS_PER_MS = 1000
 
 /** What one runtime needs before a copy can reach a destination without a local file.
  * @internal
@@ -123,15 +126,30 @@ export async function copyToDestinationStreamed(
     pieceBytes,
     pageSize,
   )
+  const copyRunsOffCallerThread = conn.copyRunsOffCallerThread === true
   const host = await BackupStreamHost.start(support.openConnection, support.extensionPath)
   let streamId: number
   try {
-    streamId = await host.open(pieceBytes, maxQueuedPieces, conn.copyRunsOffCallerThread === true)
+    streamId = await host.open(
+      pieceBytes,
+      maxQueuedPieces,
+      copyRunsOffCallerThread,
+      STILL_TAKING_REPORT_MS * REPORTS_BEFORE_THE_EXTENSION_STOPS_WAITING * MICROSECONDS_PER_MS,
+    )
   } catch (err) {
     await host.stop().catch(() => undefined)
     throw err
   }
   const uri = destinationUri(streamId)
+  const stillTaking = copyRunsOffCallerThread
+    ? setInterval(() => {
+        void host.reportStillTaking(streamId).catch(() => undefined)
+      }, STILL_TAKING_REPORT_MS)
+    : null
+  stillTaking?.unref?.()
+  const stopReporting = () => {
+    if (stillTaking) clearInterval(stillTaking)
+  }
 
   let firstStepSeen = false
   let copyLeftRunning: Promise<unknown> | null = null
@@ -175,9 +193,11 @@ export async function copyToDestinationStreamed(
     }
   }
 
-  const pumping = pump().catch((err: unknown) => {
-    pumpFailure = err
-  })
+  const pumping = pump()
+    .catch((err: unknown) => {
+      pumpFailure = err
+    })
+    .finally(stopReporting)
 
   try {
     const copyStartedAt = Date.now()
@@ -243,6 +263,7 @@ export async function copyToDestinationStreamed(
   } finally {
     discarding = true
     const release = async () => {
+      stopReporting()
       copying = false
       await pumping
       await host.close(streamId).catch(() => undefined)

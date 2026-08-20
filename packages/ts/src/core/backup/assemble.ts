@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
 import { open, rm } from 'node:fs/promises'
-import { SirannonError } from '../errors.js'
-import type { BackupDestination, BackupPiece } from './destination.js'
+import type { BackupDestination } from './destination.js'
 import type { BackupRunReport } from './report.js'
+import { fetchStoredFile, listStoredFilePieces, type StoredFile } from './restore-fetch.js'
+import { writeFully } from './write-fully.js'
 
 /** What one assembled file took to build.
  * @public
@@ -16,73 +16,73 @@ export interface AssembleResult {
   fingerprint?: string
 }
 
-function destinationError(message: string): SirannonError {
-  return new SirannonError(message, 'BACKUP_DESTINATION_ERROR')
-}
-
-function assertChainIsWhole(pieces: BackupPiece[], report: BackupRunReport): void {
-  if (pieces.length === 0) {
-    throw destinationError(`The destination holds no pieces named '${report.destinationName}'`)
-  }
-  for (let expected = 0; expected < report.pieceCount; expected++) {
-    if (pieces[expected]?.index !== expected) {
-      throw destinationError(
-        `The destination is missing piece ${expected} of '${report.destinationName}', so the file cannot be assembled`,
-      )
+/**
+ * Builds a local file from the pieces a destination holds, fetching one piece
+ * at a time and writing it where its index places it. Where SQLite never wrote
+ * a piece that stretch of the file stays zero, and every later byte goes to the
+ * offset its own index sets.
+ *
+ * Sirannon checks the listing before it opens the local file, so that a
+ * destination missing a piece is refused while the path named here is still
+ * untouched. Once the file is open, Sirannon removes it after any failure,
+ * because a database missing its middle would otherwise stay on disk as though
+ * the assembly had finished.
+ *
+ * @param destination - Where the pieces are read from.
+ * @param file - What the run that wrote those pieces recorded, which the assembly checks its result against.
+ * @param destPath - Path the assembled file is written to.
+ * @param onPiece - Called after each piece with the running counts.
+ * @returns The bytes and pieces the assembly wrote, and the fingerprint it computed.
+ *
+ * @internal
+ */
+export async function assembleStoredFile(
+  destination: BackupDestination,
+  file: StoredFile,
+  destPath: string,
+  onPiece?: (piecesRead: number, bytesWritten: number) => void,
+): Promise<AssembleResult> {
+  const pieces = await listStoredFilePieces(destination, file)
+  try {
+    const handle = await open(destPath, 'w')
+    let piecesRead = 0
+    let bytesWritten = 0
+    try {
+      const fetched = await fetchStoredFile(destination, file, pieces, async (index, bytes) => {
+        await writeFully(handle, destPath, bytes, bytes.byteLength, index * file.pieceBytes)
+        piecesRead++
+        bytesWritten += bytes.byteLength
+        onPiece?.(piecesRead, bytesWritten)
+      })
+      return {
+        bytesWritten: fetched.bytesFetched,
+        pieceCount: fetched.pieceCount,
+        ...(fetched.fingerprint === undefined ? {} : { fingerprint: fetched.fingerprint }),
+      }
+    } finally {
+      await handle.close()
     }
-  }
-  if (pieces.length > report.pieceCount) {
-    throw destinationError(
-      `The destination holds ${pieces.length} pieces of '${report.destinationName}' where the run wrote ${report.pieceCount}, so a later piece belongs to a different run`,
-    )
+  } catch (err) {
+    await rm(destPath, { force: true }).catch(() => {})
+    throw err
   }
 }
 
 /**
- * Builds a local file from the pieces a destination holds, fetching one piece
- * at a time and writing it where its index places it, so a piece SQLite never
- * wrote leaves zeros rather than moving every later byte.
+ * Builds a local file from the pieces a destination holds, checking the result
+ * against what the run that wrote them reported.
  *
  * @param destination - Where the pieces are read from.
- * @param report - What the run that wrote those pieces recorded, which the assembly checks its result against.
+ * @param report - What the run that wrote those pieces recorded.
  * @param destPath - Path the assembled file is written to.
  * @returns The bytes and pieces the assembly wrote, and the fingerprint it computed.
  *
  * @public
  */
-export async function assembleFromDestination(
+export function assembleFromDestination(
   destination: BackupDestination,
   report: BackupRunReport,
   destPath: string,
 ): Promise<AssembleResult> {
-  const name = report.destinationName
-  const pieces = [...(await destination.listPieces(name))].sort((a, b) => a.index - b.index)
-  assertChainIsWhole(pieces, report)
-
-  const digest = report.fingerprint === undefined ? null : createHash('sha256')
-  const file = await open(destPath, 'w')
-  let bytesWritten = 0
-  try {
-    for (const piece of pieces) {
-      const bytes = await destination.readPiece(name, piece.index)
-      await file.write(bytes, 0, bytes.byteLength, piece.index * report.pieceBytes)
-      digest?.update(bytes)
-      bytesWritten += bytes.byteLength
-    }
-  } finally {
-    await file.close()
-  }
-
-  const fingerprint = digest?.digest('hex')
-  const failure =
-    bytesWritten !== report.bytesWritten
-      ? `The pieces of '${name}' hold ${bytesWritten} bytes where the run wrote ${report.bytesWritten}`
-      : fingerprint !== undefined && fingerprint !== report.fingerprint
-        ? `The pieces of '${name}' do not match the fingerprint the run recorded`
-        : null
-  if (failure !== null) {
-    await rm(destPath, { force: true }).catch(() => {})
-    throw destinationError(failure)
-  }
-  return { bytesWritten, pieceCount: pieces.length, ...(fingerprint ? { fingerprint } : {}) }
+  return assembleStoredFile(destination, { ...report, name: report.destinationName }, destPath)
 }

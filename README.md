@@ -65,6 +65,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 | `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters |
 | `@delali/sirannon-db/file-migrations` | Load `.up.sql` and `.down.sql` files from a directory |
+| `@delali/sirannon-db/backup` | Backup destination types, backup chain records, and `restoreBackup` |
 | `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation, also re-exported from the core entry |
 | `@delali/sirannon-db/server` | HTTP and WebSocket server powered by uWebSockets.js |
 | `@delali/sirannon-db/client` | Browser and Node.js client SDK with auto-reconnect, subscription restore, and the device sync controller |
@@ -84,7 +85,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 - **Registered operations.** The server runs statements you registered under a name and accepts no SQL from the network by default. `sirannon-codegen` turns that registry into typed client references.
 - **Migrations.** File-based or programmatic migrations apply once each with content checksums, mirror `PRAGMA user_version`, roll back to any version, squash into a baseline, and survive two processes migrating at once. A set declared on the registry covers every database it opens, tenants included.
 - **Bulk load.** A large import runs in one transaction under relaxed durability, then Sirannon restores the configured level, so the import pays one durability barrier rather than one per row.
-- **Backups.** Take a one-shot snapshot with `VACUUM INTO`, or schedule rotating backups on a cron expression.
+- **Backups.** `backup()` copies a database to a file while it stays open for reads and writes, because SQLite moves the pages in steps and a write runs in the gap between two of them. `scheduleBackup()` repeats that copy on a cron expression, and `backupTo()` puts it in storage you supply instead of on local disk. The `backups` option follows a first full copy with only what changed since the previous run, and `restoreBackup()` rebuilds the database from any moment that chain reaches.
 - **Hooks and metrics.** Before and after hooks cover queries, connections, and subscriptions, and throwing from a before-hook denies the operation. Metrics callbacks collect query timing, connection events, and CDC activity.
 - **Multi-tenant lifecycle.** Databases open on first access, close on an idle timeout, and evict least-recently-used past a cap.
 - **Server and client SDK.** Expose a registry over HTTP and WebSocket with one call, and reach it through a client that mirrors the core interface, reconnects, and restores its subscriptions.
@@ -97,7 +98,8 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 | Guide | What it covers |
 | --- | --- |
-| [Core engine](docs/core.md) | Bulk load, live queries, migrations, backups, hooks, metrics, and the multi-tenant lifecycle |
+| [Core engine](docs/core.md) | Bulk load, live queries, migrations, hooks, metrics, and the multi-tenant lifecycle |
+| [Backups](docs/backups.md) | Copies to a file or to storage you supply, the chain of changes after one, and restoring from a moment you name |
 | [Server](docs/server.md) | HTTP routes, WebSocket messages, authentication, write shapes, the writer worker, and value encoding |
 | [Registered operations](docs/operations.md) | Naming the statements a server runs, identity-filled arguments, capabilities, and code generation |
 | [Live queries](docs/live-queries.md) | Maintained query results locally, over the network, and in React |

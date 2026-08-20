@@ -1,5 +1,7 @@
 import type { Migration } from '@delali/sirannon-db'
 import { Sirannon, SirannonError } from '@delali/sirannon-db'
+import type { BackupDestination } from '@delali/sirannon-db/backup'
+import { restoreBackup } from '@delali/sirannon-db/backup'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { bunSqlite } from '@delali/sirannon-db/driver/bun'
 import { LWWResolver } from '@delali/sirannon-db/replication'
@@ -33,3 +35,13 @@ export const startServer = async (): Promise<void> => {
 export const serverSideResolver = new LWWResolver()
 
 export const bunRegistry = (): Sirannon => new Sirannon({ driver: bunSqlite({ busyTimeout: 10_000 }) })
+
+export const recoverFromBackup = async (destination: BackupDestination): Promise<string> => {
+  const report = await restoreBackup({
+    destination,
+    driver: betterSqlite3(),
+    destPath: './data/recovered.db',
+    moment: Date.now(),
+  })
+  return report.destPath
+}

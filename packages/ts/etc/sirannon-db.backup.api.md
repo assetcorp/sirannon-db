@@ -131,11 +131,49 @@ export interface BackupProgress {
 }
 
 // @public
+export interface BackupRestoreOptions {
+    batchSize?: number;
+    chainName?: string;
+    destination: BackupDestination;
+    destinationTimeoutMs?: number;
+    destPath: string;
+    driver: SQLiteDriver;
+    moment?: number;
+    onProgress?: (progress: BackupRestoreProgress) => void;
+    replaceExisting?: boolean;
+}
+
+// @public
 export interface BackupRestorePlan {
     base: BackupChainBase;
     chainId: string;
     changes: BackupChainChange[];
     restoresTo: number;
+}
+
+// @public
+export interface BackupRestoreProgress {
+    bytesFetched: number;
+    changesApplied: number;
+    changesTotal: number;
+    phase: 'full-copy' | 'changes';
+    piecesFetched: number;
+}
+
+// @public
+export interface BackupRestoreReport {
+    baseName: string;
+    batchCount: number;
+    bytesFetched: number;
+    chainId: string;
+    changesApplied: number;
+    destPath: string;
+    durationMs: number;
+    finishedAt: number;
+    framesApplied: number;
+    pieceCount: number;
+    restoresTo: number;
+    startedAt: number;
 }
 
 // @public
@@ -194,6 +232,9 @@ export function planBackupRestore(chains: readonly BackupChain[], moment: number
 
 // @public
 export function readBackupChains(destination: BackupDestination, chainName?: string): Promise<BackupChain[]>;
+
+// @public
+export function restoreBackup(options: BackupRestoreOptions): Promise<BackupRestoreReport>;
 
 // (No @packageDocumentation comment for this package)
 

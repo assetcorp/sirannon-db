@@ -1,7 +1,8 @@
 import type { SQLiteConnection } from '../driver/types.js'
 
-const SELECT_NEW_STREAM_ID = 'SELECT sirannon_stream_open(?, ?, ?) AS streamId'
+const SELECT_NEW_STREAM_ID = 'SELECT sirannon_stream_open(?, ?, ?, ?) AS streamId'
 const SELECT_NEXT_PIECE = 'SELECT sirannon_stream_take(?) AS piece'
+const SELECT_QUEUED_PIECES = 'SELECT sirannon_stream_taker_seen(?) AS queued'
 const SELECT_BYTES_WRITTEN = 'SELECT sirannon_stream_written(?) AS bytes'
 const SELECT_FAILURE = 'SELECT sirannon_stream_error(?) AS failure'
 const SELECT_FINISHED_BYTES = 'SELECT sirannon_stream_finish(?) AS bytes'
@@ -15,9 +16,16 @@ const SELECT_RELEASED_BYTES = 'SELECT sirannon_stream_close(?) AS bytes'
  */
 export interface BackupStreamStatements {
   /** Opens a stream and returns the identifier that names it in the destination URI. */
-  selectNewStreamId(pieceBytes: number, maxQueuedPieces: number, waitWhenFull: number): Promise<number>
+  selectNewStreamId(
+    pieceBytes: number,
+    maxQueuedPieces: number,
+    waitWhenFull: number,
+    stoppedTakerMicroseconds: number,
+  ): Promise<number>
   /** Returns the next whole piece the copy has produced, or null where it has produced none. */
   selectNextPiece(streamId: number): Promise<Uint8Array | null>
+  /** Reports that the caller is still running, and returns the pieces the extension holds. */
+  selectQueuedPieces(streamId: number): Promise<number>
   /** Returns the bytes SQLite has written to a stream. */
   selectBytesWritten(streamId: number): Promise<number>
   /** Returns what stopped a stream, or null where nothing did. */
@@ -36,14 +44,17 @@ export interface BackupStreamStatements {
  * @returns The compiled statements, each returning the value its question asks for.
  */
 export async function prepareBackupStreamStatements(conn: SQLiteConnection): Promise<BackupStreamStatements> {
-  const [newStreamId, nextPiece, bytesWritten, failure, finishedBytes, releasedBytes] = await Promise.all([
-    conn.prepare(SELECT_NEW_STREAM_ID),
-    conn.prepare(SELECT_NEXT_PIECE),
-    conn.prepare(SELECT_BYTES_WRITTEN),
-    conn.prepare(SELECT_FAILURE),
-    conn.prepare(SELECT_FINISHED_BYTES),
-    conn.prepare(SELECT_RELEASED_BYTES),
-  ])
+  const [newStreamId, nextPiece, queuedPieces, bytesWritten, failure, finishedBytes, releasedBytes] = await Promise.all(
+    [
+      conn.prepare(SELECT_NEW_STREAM_ID),
+      conn.prepare(SELECT_NEXT_PIECE),
+      conn.prepare(SELECT_QUEUED_PIECES),
+      conn.prepare(SELECT_BYTES_WRITTEN),
+      conn.prepare(SELECT_FAILURE),
+      conn.prepare(SELECT_FINISHED_BYTES),
+      conn.prepare(SELECT_RELEASED_BYTES),
+    ],
+  )
 
   const readBytes = async (
     stmt: Awaited<ReturnType<SQLiteConnection['prepare']>>,
@@ -54,13 +65,22 @@ export async function prepareBackupStreamStatements(conn: SQLiteConnection): Pro
   }
 
   return {
-    async selectNewStreamId(pieceBytes, maxQueuedPieces, waitWhenFull) {
-      const row = await newStreamId.get<{ streamId: number | bigint }>(pieceBytes, maxQueuedPieces, waitWhenFull)
+    async selectNewStreamId(pieceBytes, maxQueuedPieces, waitWhenFull, stoppedTakerMicroseconds) {
+      const row = await newStreamId.get<{ streamId: number | bigint }>(
+        pieceBytes,
+        maxQueuedPieces,
+        waitWhenFull,
+        stoppedTakerMicroseconds,
+      )
       return row ? Number(row.streamId) : 0
     },
     async selectNextPiece(streamId) {
       const row = await nextPiece.get<{ piece: Uint8Array | null }>(streamId)
       return row?.piece ?? null
+    },
+    async selectQueuedPieces(streamId) {
+      const row = await queuedPieces.get<{ queued: number | bigint }>(streamId)
+      return row ? Number(row.queued) : 0
     },
     selectBytesWritten: streamId => readBytes(bytesWritten, streamId),
     async selectFailure(streamId) {

@@ -17,7 +17,7 @@ pnpm add -E @delali/sirannon-db
 
 ## What it does
 
-The extension registers a SQLite virtual file system named `sirannon`. Sirannon opens every copy through that file system, so the bytes reach no file on your disk. It takes each piece as SQLite writes it and passes that piece to your destination. Where this binary is absent, Sirannon reports `streamedCopy: false` and copies through a local file instead. Streaming also needs a runtime that parses URI file names, which the [backup documentation](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md) explains.
+The extension registers a SQLite virtual file system named `sirannon`. Sirannon opens every copy through that file system, so the bytes reach no file on your disk. It takes each piece as SQLite writes it and passes that piece to your destination. Where this binary is absent, Sirannon reports `streamedCopy: false` and copies through a local file instead. Streaming also needs a runtime that parses URI file names, which the [backup documentation](https://github.com/assetcorp/sirannon-db/blob/main/docs/backups.md) explains.
 
 This package holds two builds, one for glibc and one for musl, because a shared object built against one C library cannot load against the other. Sirannon picks the musl build where the host reports no glibc runtime.
 

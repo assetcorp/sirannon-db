@@ -622,7 +622,7 @@ BackupSkip {
 
 An implementation runs every turn where the options carry no `replicationGroup`.
 
-`'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary. An object resolves to the identifier it carries. An implementation reads no membership for that form.
+`'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary where that node is eligible, and to no node otherwise. An object resolves to the identifier it carries. An implementation reads no membership for that form.
 
 `readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator omits the nodes the group records as draining, repairing, or faulted (see [03-replication.md](03-replication.md#replication-group-and-node-identity)).
 

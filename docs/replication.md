@@ -114,6 +114,8 @@ const engine = new ReplicationEngine(db, writerConn, {
 
 Every coordinator-mode node needs a stable, persisted `nodeId`, and automatic write failover needs at least three voting data-bearing nodes, since fewer voters cannot prove majority authority after losing one. Production access requires HTTPS and an authenticated identity; the in-memory coordinator and `allowInsecure: true` are for tests.
 
+The same coordinator decides which node of the group takes its backups. See [Backups in a replication group](backups.md#backups-in-a-replication-group).
+
 ## Conflict resolution
 
 A receiver that finds the target row already present passes the local and incoming versions to the configured resolver.

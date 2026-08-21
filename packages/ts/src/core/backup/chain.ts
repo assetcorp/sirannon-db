@@ -118,6 +118,8 @@ export interface BackupChainHead {
   previousChainId?: string
 }
 
+const HEAD_APPEND_ATTEMPTS = 8
+
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
@@ -152,6 +154,28 @@ async function appendRecord(
     await destination.writePiece(name, index, encoder.encode(JSON.stringify(record)))
   } catch (err) {
     throw destinationError(`The destination refused record ${index} of '${name}'`, err)
+  }
+}
+
+async function listRecordIndices(destination: BackupDestination, name: string): Promise<number[]> {
+  try {
+    return (await destination.listPieces(name)).map(piece => piece.index)
+  } catch (err) {
+    throw destinationError(`The destination could not list the records of '${name}'`, err)
+  }
+}
+
+async function readRecord(destination: BackupDestination, name: string, index: number): Promise<unknown> {
+  let bytes: Uint8Array
+  try {
+    bytes = await destination.readPiece(name, index)
+  } catch (err) {
+    throw destinationError(`The destination could not return record ${index} of '${name}'`, err)
+  }
+  try {
+    return JSON.parse(decoder.decode(bytes))
+  } catch (err) {
+    throw destinationError(`Record ${index} of '${name}' is not a record Sirannon wrote`, err)
   }
 }
 
@@ -203,18 +227,34 @@ function chainRecords(records: readonly unknown[], name: string): BackupChainRec
  * a machine that has never seen this database, finds the chain through that
  * list without being told its identifier.
  *
+ * During a failover, two nodes of a replication group can pick the same index
+ * for one moment, where the second write would replace the first. This reads
+ * back the record it wrote, and moves on to the next index wherever it finds
+ * another chain, so both chains survive.
+ *
  * @param destination - Where the list is stored.
  * @param chainName - Name the list is stored under.
  * @param head - The chain to add.
- * @param index - Where it goes in the list, counted from zero.
+ * @returns Where the chain went in the list, counted from zero.
  */
 export async function appendChainHead(
   destination: BackupDestination,
   chainName: string,
   head: BackupChainHead,
-  index: number,
-): Promise<void> {
-  await appendRecord(destination, chainName, index, head)
+): Promise<number> {
+  const taken = await listRecordIndices(destination, chainName)
+  let index = taken.reduce((next, piece) => Math.max(next, piece + 1), 0)
+
+  for (let attempt = 0; attempt < HEAD_APPEND_ATTEMPTS; attempt++) {
+    await appendRecord(destination, chainName, index, head)
+    const stored = await readRecord(destination, chainName, index)
+    if (isBackupChainHead(stored) && stored.chainId === head.chainId) return index
+    index++
+  }
+
+  throw destinationError(
+    `Another chain took every one of the ${HEAD_APPEND_ATTEMPTS} places Sirannon tried for chain '${head.chainId}' in '${chainName}'. Point one replication group at this chain name, and give any other group a chainName of its own.`,
+  )
 }
 
 /**

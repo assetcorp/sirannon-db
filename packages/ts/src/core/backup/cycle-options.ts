@@ -1,5 +1,6 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import type { BackupDestination } from './destination.js'
+import type { BackupGroupSource, BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport, BackupToDestinationOptions } from './report.js'
 
 /** How long the cycle waits between captures when nobody sets an interval.
@@ -16,6 +17,20 @@ export const DEFAULT_FULL_COPY_INTERVAL_MS = 24 * 60 * 60 * 1000
  * @internal
  */
 export const DEFAULT_BACKUP_NAME_PREFIX = 'sirannon-backup'
+
+/**
+ * Works out where a database stages its captures when the operator names no
+ * directory. It goes beside the database file, so a capture that has yet to
+ * reach the destination is still there after a restart.
+ *
+ * @param sourcePath - Path of the database file.
+ * @returns Path of that directory.
+ *
+ * @internal
+ */
+export function defaultStagingDir(sourcePath: string): string {
+  return `${sourcePath}-backup`
+}
 
 /**
  * How Sirannon runs the cycle that captures a database's change log and then
@@ -64,10 +79,41 @@ export interface BackupCycleOptions {
   stallTimeoutMs?: number
   /** How long one call to the destination may take, in milliseconds, before the cycle gives up on it. Defaults to 10 minutes, and zero leaves the calls unbounded. */
   destinationTimeoutMs?: number
+  /**
+   * How large the write-ahead log may grow while the cycle captures nothing, in
+   * bytes. It is unlimited by default, which keeps the chain whole and lets the
+   * log grow for as long as the stall lasts.
+   *
+   * Set it where the disk matters more than the chain. Sirannon measures the
+   * log after any turn that captured nothing. Past this figure it empties that
+   * log and reports `BACKUP_CHAIN_BROKEN`, so the writes the log held reach no
+   * backup and the next turn that can run starts a fresh chain with a full
+   * copy.
+   */
+  maxUncapturedLogBytes?: number
   /** How many steps the full copy may take without reaching a page it had not already copied. */
   noProgressStepLimit?: number
+  /**
+   * Where this node reads its own identity and its replication group's
+   * membership. Every node of a group carries the same cycle, and this is what
+   * one turn asks before it copies anything. Leave it out on a single-node
+   * deployment, where every turn belongs to the only node there is.
+   */
+  replicationGroup?: BackupGroupSource
+  /**
+   * Which node of that group takes its backups. Defaults to `'replica'`, so
+   * the node serving writes keeps serving them. A group with no other node
+   * falls back to its primary.
+   */
+  preferredNode?: BackupNodePreference
   /** Called with the report of every backup the cycle finishes. */
   onRun?: (report: BackupRunReport) => void
+  /**
+   * Called with every turn the cycle passed over, and what it passed it over
+   * for. A node that takes none of its group's backups reports one of these
+   * each turn.
+   */
+  onSkip?: (skip: BackupSkip) => void
   /**
    * Called when a capture, a transfer, or a checkpoint fails. Set this one. A
    * cycle that stops running while writes carry on lets the log grow without

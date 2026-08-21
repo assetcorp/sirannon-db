@@ -93,12 +93,16 @@ export interface BackupCycleOptions {
     fingerprint?: boolean;
     fullCopyIntervalMs?: number;
     intervalMs?: number;
+    maxUncapturedLogBytes?: number;
     namePrefix?: string;
     noProgressStepLimit?: number;
     onError?: (error: Error) => void;
     onRun?: (report: BackupRunReport) => void;
+    onSkip?: (skip: BackupSkip) => void;
     pagesPerStep?: number;
     pieceBytes?: number;
+    preferredNode?: BackupNodePreference;
+    replicationGroup?: BackupGroupSource;
     restartLimit?: number;
     stagingDir?: string;
     stallTimeoutMs?: number;

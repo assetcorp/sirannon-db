@@ -2,6 +2,8 @@ export { FieldMergeResolver } from '../core/sync/conflict/field-merge.js'
 export { LWWResolver } from '../core/sync/conflict/lww.js'
 export { PrimaryWinsResolver } from '../core/sync/conflict/primary-wins.js'
 export { HLC } from '../core/sync/hlc.js'
+export type { CoordinatorBackupGroupOptions } from './backup-group.js'
+export { coordinatorBackupGroup } from './backup-group.js'
 export {
   type ClusterStatusOptions,
   toClusterReadEndpoints,

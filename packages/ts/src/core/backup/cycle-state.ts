@@ -44,6 +44,8 @@ export interface BackupCycleState {
   chainId: string
   /** Epoch milliseconds that chain started. */
   chainStartedAt: number
+  /** Where the chain went in the list, so a check reads that one record. */
+  headIndex?: number
   /** How many records the chain holds, counting its full copy. */
   records: number
   /** Where the last capture stopped in the log. */
@@ -99,6 +101,7 @@ function isCycleState(value: unknown): value is BackupCycleState {
     typeof state?.chainName === 'string' &&
     typeof state.chainId === 'string' &&
     isWholeNumber(state.chainStartedAt) &&
+    (state.headIndex === undefined || isWholeNumber(state.headIndex)) &&
     isWholeNumber(state.records) &&
     (state.cursor === null || isCursor(state.cursor)) &&
     (state.pending === null || isPendingCapture(state.pending)) &&

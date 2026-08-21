@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { resolve } from 'node:path'
 import { BackupManager } from '../core/backup/backup.js'
-import { createBackupCycle } from '../core/backup/cycle.js'
+import { createBackupCycle } from '../core/backup/cycle-factory.js'
 import { BackupScheduler } from '../core/backup/scheduler.js'
 import type { BackupStreamingSupport } from '../core/backup/streamed-copy.js'
 import type { BackupEngine, SQLiteDriver, WriterContext } from '../core/driver/types.js'

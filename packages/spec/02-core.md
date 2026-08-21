@@ -618,10 +618,11 @@ BackupGroupMembership {
 }
 
 BackupSkip {
-  reason:           'not-preferred' or 'group-unavailable' or 'previous-run-active'
-  message:          string
-  nodeId?:          string
-  preferredNodeId?: string
+  reason:              'not-preferred' or 'group-unavailable' or 'previous-run-active'
+  message:             string
+  nodeId?:             string
+  preferredNodeId?:    string
+  uncapturedLogBytes?: number
 }
 ```
 
@@ -633,7 +634,9 @@ An implementation runs every turn where the options carry no `replicationGroup`.
 
 On a node other than the preferred one, an implementation sends any staged capture, deletes its cycle state, checkpoints the log, and reports a skip of `'not-preferred'`. Where the destination refuses that capture, the implementation keeps the chain, the staged capture, and the log, and stands down on a later turn. A chain continues on the node that started it and on no other, so the next turn on a node holding no cycle state starts a fresh chain with a full copy.
 
-Where `readMembership` fails, an implementation captures nothing, checkpoints nothing, and reports a skip of `'group-unavailable'`. Where a scheduled turn falls due while the previous turn runs, an implementation reports a skip of `'previous-run-active'` and takes no other action. An implementation passes every one of those skips to `onSkip`.
+Where `readMembership` fails, an implementation captures nothing, checkpoints nothing, and reports a skip of `'group-unavailable'`. Where a scheduled turn falls due while the previous turn runs, an implementation reports a skip of `'previous-run-active'` and takes no other action. An implementation passes every one of those skips to `onSkip`, each carrying the size of the write-ahead log at the moment it skipped, so an operator sees a held log grow before `maxUncapturedLogBytes` ends the chain.
+
+An implementation whose options carry a `replicationGroup` and whose destination offers no `writePieceIfAbsent` reports `BACKUP_DESTINATION_ERROR` to `onError` as the cycle starts, because that is the one arrangement where two nodes starting a chain at the same moment lose one between them.
 
 `maxUncapturedLogBytes` bounds the write-ahead log across turns that capture nothing. Past that figure an implementation empties the log, drops any staged capture the destination still refuses, and reports `BACKUP_CHAIN_BROKEN` to `onError`. The writes that log held reach no backup, and the next turn that runs starts a fresh chain with a full copy. An absent value leaves the log unbounded and the chain whole.
 
@@ -690,6 +693,8 @@ BackupChain {
 ```
 
 The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list. An implementation appends a chain to that list past the highest index the destination lists. Where the destination offers `writePieceIfAbsent`, the implementation claims that index through it and moves to the next index wherever the claim reports false. Otherwise it writes the record, reads it back, and appends again at the next index where it finds another chain, which loses a chain where the other node's write lands between those two calls.
+
+An implementation records the place its chain took in that list and reads that one record to check the chain, which costs a destination a single read however many chains it holds. Anything else stored there sends it back to the whole list.
 
 `backupChain` returns the chains newest first, each with its own records oldest first. A chain whose full copy the destination no longer holds carries no `base`.
 

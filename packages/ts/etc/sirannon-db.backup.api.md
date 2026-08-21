@@ -233,6 +233,7 @@ export interface BackupSkip {
     nodeId?: string;
     preferredNodeId?: string;
     reason: BackupSkipReason;
+    uncapturedLogBytes?: number;
 }
 
 // @public

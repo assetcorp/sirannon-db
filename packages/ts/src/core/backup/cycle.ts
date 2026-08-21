@@ -3,7 +3,15 @@ import { SirannonError } from '../errors.js'
 import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
 import { captureLogFrames, stagedCapturePath } from './cycle-capture.js'
-import { chainMissingFromList, decideBackupTurn, previousRunStillActive } from './cycle-guard.js'
+import {
+  chainMissingFromList,
+  decideBackupTurn,
+  previousRunStillActive,
+  startsAFreshChain,
+  toBackupError,
+  uncapturedLogBytes,
+  unclaimableChainList,
+} from './cycle-guard.js'
 import {
   type BackupCycleRequest,
   DEFAULT_BACKUP_NAME_PREFIX,
@@ -14,18 +22,8 @@ import {
 import { releaseChainPastLogLimit, type StandDownRequest, standDownFromChain } from './cycle-standdown.js'
 import { type BackupCycleState, readCycleState, removeCycleState, writeCycleState } from './cycle-state.js'
 import { sendStagedCapture, startChain } from './cycle-transfer.js'
-import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import type { BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport } from './report.js'
-
-const LOG_REWOUND = 'BACKUP_LOG_REWOUND'
-const CHAIN_BROKEN = 'BACKUP_CHAIN_BROKEN'
-const STARTS_A_FRESH_CHAIN = [LOG_REWOUND, CHAIN_BROKEN]
-
-function toError(value: unknown): Error {
-  if (value instanceof Error) return value
-  return new SirannonError(typeof value === 'string' ? value : 'The backup cycle failed', 'BACKUP_ERROR')
-}
 
 /**
  * Captures a database's write-ahead log and then checkpoints it, in that order,
@@ -80,6 +78,8 @@ export class BackupCycle {
     await mkdir(this.stagingDir, { recursive: true })
     this.state = (await readCycleState(this.stagingDir)) ?? null
     this.started = true
+    const unclaimable = unclaimableChainList(this.request, this.chainName)
+    if (unclaimable) this.report(unclaimable)
     await this.runTurn(async () => {
       try {
         if (!(await this.takesTheTurn())) return
@@ -190,7 +190,7 @@ export class BackupCycle {
   private async takesTheTurn(): Promise<boolean> {
     const decision = await decideBackupTurn(this.request.replicationGroup, this.preferredNode)
     if (decision.runs) return true
-    this.reportSkip(decision.skip)
+    await this.reportSkip(decision.skip)
     if (decision.skip?.reason === 'not-preferred') {
       try {
         if (await standDownFromChain(this.standDownRequest)) this.captured = true
@@ -201,10 +201,12 @@ export class BackupCycle {
     return false
   }
 
-  private reportSkip(skip: BackupSkip | undefined): void {
+  /** Passes a skipped turn on, counting the log this node was holding as it skipped. */
+  private async reportSkip(skip: BackupSkip | undefined): Promise<void> {
     if (!skip || !this.request.onSkip) return
+    const held = await uncapturedLogBytes(this.logPath)
     try {
-      this.request.onSkip(skip)
+      this.request.onSkip(held === undefined ? skip : { ...skip, uncapturedLogBytes: held })
     } catch {}
   }
 
@@ -226,7 +228,7 @@ export class BackupCycle {
   private async tick(): Promise<void> {
     if (this.stopped) return
     if (this.busy) {
-      this.reportSkip(previousRunStillActive())
+      await this.reportSkip(previousRunStillActive())
       return
     }
     try {
@@ -237,18 +239,22 @@ export class BackupCycle {
   }
 
   /**
-   * Checks that the destination still holds the chain the state file names. A
-   * chain this cycle started itself counts as unchecked until a listing shows
-   * it, because another node writing at the same moment can replace the record
-   * that lists it. Where the check cannot reach the destination, the chain stays
-   * unverified and the next turn runs it again before it appends anything. A
-   * record appended under a chain the destination has lost would be in no
-   * listing, so no restore could reach it.
+   * Checks that the destination still lists the chain the state file names,
+   * including one this cycle started itself, because a record appended under a
+   * chain no listing names is a record no restore reaches. A check that cannot
+   * reach the destination leaves the chain unverified for the next turn to try
+   * again before it appends anything.
    */
   private async verifyChain(): Promise<void> {
     if (this.verified || !this.state) return
     const request = this.request
-    const lost = await chainMissingFromList(request.destination, this.chainName, this.state.chainId, request.databaseId)
+    const lost = await chainMissingFromList(
+      request.destination,
+      this.chainName,
+      this.state.chainId,
+      request.databaseId,
+      this.state.headIndex,
+    )
     if (!lost) {
       this.verified = true
       return
@@ -272,7 +278,7 @@ export class BackupCycle {
     try {
       return await this.turn()
     } catch (err) {
-      if (err instanceof SirannonError && STARTS_A_FRESH_CHAIN.includes(err.code)) {
+      if (startsAFreshChain(err)) {
         this.report(err)
         await this.replaceChain().catch(chainErr => this.report(chainErr))
       }
@@ -300,7 +306,7 @@ export class BackupCycle {
   private report(err: unknown): void {
     if (!this.request.onError) return
     try {
-      this.request.onError(toError(err))
+      this.request.onError(toBackupError(err))
     } catch {}
   }
 
@@ -315,6 +321,7 @@ export class BackupCycle {
       chainName: this.chainName,
       chainId: started.chainId,
       chainStartedAt: started.startedAt,
+      headIndex: started.headIndex,
       records: 1,
       cursor: null,
       pending: null,
@@ -371,21 +378,4 @@ export class BackupCycle {
       throw err
     }
   }
-}
-
-/**
- * Builds the cycle that captures a database's log and checkpoints it. It runs
- * nothing until someone starts it.
- *
- * @param request - The operator's settings, plus the database to run against.
- * @returns The cycle.
- */
-export function createBackupCycle(request: BackupCycleRequest): BackupCycle {
-  return new BackupCycle({
-    ...request,
-    destination: destinationWithDeadline(
-      request.destination,
-      request.destinationTimeoutMs ?? DEFAULT_DESTINATION_TIMEOUT_MS,
-    ),
-  })
 }

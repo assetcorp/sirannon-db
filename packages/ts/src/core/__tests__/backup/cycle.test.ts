@@ -3,8 +3,9 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
-import { createBackupCycle } from '../../backup/cycle.js'
+import { createBackupCycle } from '../../backup/cycle-factory.js'
 import type { BackupCycleRequest } from '../../backup/cycle-options.js'
+import type { BackupDestination } from '../../backup/destination.js'
 import type { BackupRunReport } from '../../backup/report.js'
 import type { SQLiteConnection, SQLiteStatement } from '../../driver/types.js'
 import type { SirannonError } from '../../errors.js'
@@ -213,6 +214,37 @@ describe('the checkpoint cycle', () => {
     expect(errors[0]?.message).toContain(String(lost))
   })
 
+  it('checks its chain by reading the one record it wrote, however many chains the list holds', async () => {
+    const { build, conn, destination } = await harness()
+    let reads = 0
+    const counting: BackupDestination = {
+      ...destination,
+      async readPiece(name, index) {
+        if (name === 'sirannon-backup-chain') reads++
+        return destination.readPiece(name, index)
+      },
+    }
+    const cycle = build({ destination: counting })
+    await cycle.start()
+    const encoder = new TextEncoder()
+    for (const [index, chainId] of [
+      [1, 'other-one'],
+      [2, 'other-two'],
+    ] as const) {
+      await destination.writePiece(
+        'sirannon-backup-chain',
+        index,
+        encoder.encode(JSON.stringify({ chainId, startedAt: 1 })),
+      )
+    }
+    await insert(conn, 'first')
+    reads = 0
+
+    await cycle.runOnce()
+
+    expect(reads).toBe(1)
+  })
+
   it('captures the log a restart finds, whatever limit the operator put on an uncaptured one', async () => {
     const errors: Error[] = []
     const { cycle, build, conn } = await harness()
@@ -286,8 +318,16 @@ describe('the checkpoint cycle', () => {
     const captured = chain?.changes.length ?? 0
 
     const errors: Error[] = []
+    let unreachable = true
+    const refusing: BackupDestination = {
+      ...destination,
+      async readPiece(name, index) {
+        if (unreachable && name === 'sirannon-backup-chain') throw new Error('refusing to read the list')
+        return destination.readPiece(name, index)
+      },
+    }
     destination.refuseListing('sirannon-backup-chain')
-    const restarted = build({ onError: err => errors.push(err) })
+    const restarted = build({ destination: refusing, onError: err => errors.push(err) })
     await restarted.start()
     await insert(conn, 'first')
     const refused = await restarted.runOnce().catch((err: unknown) => err as Error)
@@ -295,6 +335,7 @@ describe('the checkpoint cycle', () => {
     expect(errors[0]?.message).toContain('refusing to list')
     expect((refused as Error).message).toContain('refusing to list')
     destination.refuseListing(null)
+    unreachable = false
     expect((await restarted.chains())[0]?.changes).toHaveLength(captured)
 
     const sent = await restarted.runOnce()

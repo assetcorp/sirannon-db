@@ -348,7 +348,7 @@ The coordinator must provide, at least: acquiring and renewing a controller leas
 
 ### Replication Group and Node Identity
 
-A replication group is the set of nodes holding copies of one database and sharing one primary authority; a process may host several groups, with no process-wide global primary. Each data-bearing node has a stable persisted identity tied to its durable database copy: a restarted process reusing that copy reuses its identity, while a new empty node receives a new identity and must sync before serving safe reads or becoming promotable. Session leases represent a running session and do not replace stable identity.
+A replication group is the set of nodes holding copies of one database and sharing one primary authority; a process may host several groups, with no process-wide global primary. Each data-bearing node has a stable persisted identity tied to its durable database copy: a restarted process reusing that copy reuses its identity, while a new empty node receives a new identity and must sync before serving safe reads or becoming promotable. Session leases represent a running session and do not replace stable identity. A backup cycle on any node of the group resolves its preferred backup node from the group's membership (see [02-core.md](02-core.md#preferred-backup-node)).
 
 ### Term Fencing
 

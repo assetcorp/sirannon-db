@@ -1,40 +1,29 @@
-import { existsSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
-import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains, readChainHeads } from './chain.js'
+import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
 import { captureLogFrames, stagedCapturePath } from './cycle-capture.js'
+import {
+  chainMissingFromList,
+  decideBackupTurn,
+  previousRunStillActive,
+  startsAFreshChain,
+  toBackupError,
+  uncapturedLogBytes,
+  unclaimableChainList,
+} from './cycle-guard.js'
 import {
   type BackupCycleRequest,
   DEFAULT_BACKUP_NAME_PREFIX,
   DEFAULT_CAPTURE_INTERVAL_MS,
   DEFAULT_FULL_COPY_INTERVAL_MS,
+  defaultStagingDir,
 } from './cycle-options.js'
-import { type BackupCycleState, readCycleState, writeCycleState } from './cycle-state.js'
-import { startChain, transferCapture } from './cycle-transfer.js'
-import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
+import { releaseChainPastLogLimit, type StandDownRequest, standDownFromChain } from './cycle-standdown.js'
+import { type BackupCycleState, readCycleState, removeCycleState, writeCycleState } from './cycle-state.js'
+import { sendStagedCapture, startChain } from './cycle-transfer.js'
+import type { BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport } from './report.js'
-
-const LOG_REWOUND = 'BACKUP_LOG_REWOUND'
-const CHAIN_BROKEN = 'BACKUP_CHAIN_BROKEN'
-const STARTS_A_FRESH_CHAIN = [LOG_REWOUND, CHAIN_BROKEN]
-
-function toError(value: unknown): Error {
-  if (value instanceof Error) return value
-  return new SirannonError(typeof value === 'string' ? value : 'The backup cycle failed', 'BACKUP_ERROR')
-}
-
-/**
- * Works out where a database stages its captures when the operator names no
- * directory. It goes beside the database file, so a capture that has yet to
- * reach the destination is still there after a restart.
- *
- * @param sourcePath - Path of the database file.
- * @returns Path of that directory.
- */
-export function defaultStagingDir(sourcePath: string): string {
-  return `${sourcePath}-backup`
-}
 
 /**
  * Captures a database's write-ahead log and then checkpoints it, in that order,
@@ -56,13 +45,16 @@ export class BackupCycle {
   private readonly logPath: string
   private readonly intervalMs: number
   private readonly fullCopyIntervalMs: number
+  private readonly preferredNode: BackupNodePreference
 
   private timer: ReturnType<typeof setInterval> | null = null
   private state: BackupCycleState | null = null
   private inFlight: Promise<unknown> = Promise.resolve()
   private started = false
   private verified = false
-  private ticking = false
+  private busy = false
+  private captured = false
+  private sendRefused = false
   private stopped = false
 
   /** @internal */
@@ -73,21 +65,25 @@ export class BackupCycle {
     this.logPath = `${request.sourcePath}-wal`
     this.intervalMs = request.intervalMs ?? DEFAULT_CAPTURE_INTERVAL_MS
     this.fullCopyIntervalMs = request.fullCopyIntervalMs ?? DEFAULT_FULL_COPY_INTERVAL_MS
+    this.preferredNode = request.preferredNode ?? 'replica'
   }
 
   /**
    * Picks a chain up where the previous run left it, or starts a new one with a
-   * full copy, and then repeats on the interval.
+   * full copy, and then repeats on the interval. A chain picked up takes an
+   * ordinary turn, so the frames written while this node was down reach the
+   * destination rather than waiting for the first interval.
    */
   async start(): Promise<void> {
     await mkdir(this.stagingDir, { recursive: true })
     this.state = (await readCycleState(this.stagingDir)) ?? null
     this.started = true
-    await this.serialise(async () => {
+    const unclaimable = unclaimableChainList(this.request, this.chainName)
+    if (unclaimable) this.report(unclaimable)
+    await this.runTurn(async () => {
       try {
-        await this.verifyChain()
-        if (this.state) await this.sendWaitingCapture()
-        else await this.replaceChain()
+        if (!(await this.takesTheTurn())) return
+        await this.turnOrStartOver()
       } catch (err) {
         this.report(err)
       }
@@ -99,10 +95,16 @@ export class BackupCycle {
    * Runs one turn now. A turn sends any capture still waiting, reads the frames
    * written since the previous turn, and checkpoints the log.
    *
-   * @returns What the turn wrote, or undefined where the log held nothing new.
+   * A turn on a node its group backs up from somewhere else writes nothing and
+   * reports a skip instead.
+   *
+   * @returns What the turn wrote, or undefined where it wrote nothing.
    */
   runOnce(): Promise<BackupRunReport | undefined> {
-    return this.serialise(() => this.turnOrStartOver())
+    return this.runTurn(async () => {
+      if (!(await this.takesTheTurn())) return undefined
+      return this.turnOrStartOver()
+    })
   }
 
   /**
@@ -117,7 +119,7 @@ export class BackupCycle {
       clearInterval(this.timer)
       this.timer = null
     }
-    await this.serialise(async () => {
+    await this.runTurn(async () => {
       const state = this.state
       if (!state) return
       try {
@@ -139,6 +141,75 @@ export class BackupCycle {
     return readBackupChains(this.request.destination, this.chainName)
   }
 
+  private runTurn<T>(op: () => Promise<T>): Promise<T> {
+    return this.serialise(async () => {
+      this.busy = true
+      this.captured = false
+      this.sendRefused = false
+      try {
+        return await op()
+      } finally {
+        if (!this.captured) await this.releaseLogPastLimit()
+        this.busy = false
+      }
+    })
+  }
+
+  /** What the stand-down path needs of this cycle to let go of its chain. */
+  private get standDownRequest(): StandDownRequest {
+    return {
+      request: this.request,
+      logPath: this.logPath,
+      holdsChain: () => this.state !== null,
+      sendStagedCapture: () => this.sendWaitingCapture(),
+      forgetChain: async () => {
+        await this.discardState()
+        await removeCycleState(this.stagingDir)
+        this.verified = false
+      },
+      report: err => this.report(err),
+    }
+  }
+
+  /** Empties a log this turn captured nothing from, past the operator's limit. */
+  private async releaseLogPastLimit(): Promise<void> {
+    if (this.stopped) return
+    try {
+      if (await releaseChainPastLogLimit(this.standDownRequest)) this.captured = true
+    } catch (err) {
+      this.report(err)
+    }
+  }
+
+  /**
+   * Asks whether this node takes the turn it is starting. A node the group
+   * backs up from somewhere else stands down from its chain and empties its
+   * log instead. A node that could not read its group holds everything where
+   * it is, because the frames it has yet to capture are still in no backup.
+   */
+  private async takesTheTurn(): Promise<boolean> {
+    const decision = await decideBackupTurn(this.request.replicationGroup, this.preferredNode)
+    if (decision.runs) return true
+    await this.reportSkip(decision.skip)
+    if (decision.skip?.reason === 'not-preferred') {
+      try {
+        if (await standDownFromChain(this.standDownRequest)) this.captured = true
+      } catch (err) {
+        this.report(err)
+      }
+    }
+    return false
+  }
+
+  /** Passes a skipped turn on, counting the log this node was holding as it skipped. */
+  private async reportSkip(skip: BackupSkip | undefined): Promise<void> {
+    if (!skip || !this.request.onSkip) return
+    const held = await uncapturedLogBytes(this.logPath)
+    try {
+      this.request.onSkip(held === undefined ? skip : { ...skip, uncapturedLogBytes: held })
+    } catch {}
+  }
+
   private serialise<T>(op: () => Promise<T>): Promise<T> {
     const run = this.inFlight.then(op, op)
     this.inFlight = run.then(
@@ -155,29 +226,41 @@ export class BackupCycle {
   }
 
   private async tick(): Promise<void> {
-    if (this.ticking || this.stopped) return
-    this.ticking = true
+    if (this.stopped) return
+    if (this.busy) {
+      await this.reportSkip(previousRunStillActive())
+      return
+    }
     try {
       await this.runOnce()
     } catch (err) {
       this.report(err)
-    } finally {
-      this.ticking = false
     }
   }
 
   /**
-   * Checks that the destination still holds the chain the state file names.
-   * Where the check cannot reach the destination, the chain stays unverified and
-   * the next turn runs it again before it appends anything. A record appended
-   * under a chain the destination has lost would be in no listing, so no restore
-   * could reach it.
+   * Checks that the destination still lists the chain the state file names,
+   * including one this cycle started itself, because a record appended under a
+   * chain no listing names is a record no restore reaches. A check that cannot
+   * reach the destination leaves the chain unverified for the next turn to try
+   * again before it appends anything.
    */
   private async verifyChain(): Promise<void> {
     if (this.verified || !this.state) return
-    const heads = await readChainHeads(this.request.destination, this.chainName)
-    if (heads.some(head => head.chainId === this.state?.chainId)) this.verified = true
-    else await this.discardState()
+    const request = this.request
+    const lost = await chainMissingFromList(
+      request.destination,
+      this.chainName,
+      this.state.chainId,
+      request.databaseId,
+      this.state.headIndex,
+    )
+    if (!lost) {
+      this.verified = true
+      return
+    }
+    await this.discardState()
+    this.report(lost)
   }
 
   private async discardState(): Promise<void> {
@@ -195,7 +278,7 @@ export class BackupCycle {
     try {
       return await this.turn()
     } catch (err) {
-      if (err instanceof SirannonError && STARTS_A_FRESH_CHAIN.includes(err.code)) {
+      if (startsAFreshChain(err)) {
         this.report(err)
         await this.replaceChain().catch(chainErr => this.report(chainErr))
       }
@@ -223,7 +306,7 @@ export class BackupCycle {
   private report(err: unknown): void {
     if (!this.request.onError) return
     try {
-      this.request.onError(toError(err))
+      this.request.onError(toBackupError(err))
     } catch {}
   }
 
@@ -231,20 +314,21 @@ export class BackupCycle {
     const previousChainId = this.state?.chainId
     await this.discardState()
 
-    const headIndex = (await readChainHeads(this.request.destination, this.chainName)).length
-    const started = await startChain(this.request, this.chainName, this.namePrefix, headIndex, previousChainId)
+    const started = await startChain(this.request, this.chainName, this.namePrefix, previousChainId)
 
-    this.verified = true
+    this.verified = false
     this.state = {
       chainName: this.chainName,
       chainId: started.chainId,
       chainStartedAt: started.startedAt,
+      headIndex: started.headIndex,
       records: 1,
       cursor: null,
       pending: null,
       closedCleanly: false,
     }
     await writeCycleState(this.stagingDir, this.state)
+    this.captured = true
     this.request.onRun?.(started.report)
     return started.report
   }
@@ -275,53 +359,23 @@ export class BackupCycle {
       if (cursor) cursor.checkpointed = checkpointed
       state.closedCleanly = false
       await writeCycleState(this.stagingDir, state)
+      this.captured = true
     })
   }
 
+  /**
+   * Sends the capture staged against the chain this cycle holds. A turn offers
+   * a capture the destination has already refused no second time, because that
+   * second offer waits out the destination deadline again and delays every turn
+   * behind it.
+   */
   private async sendWaitingCapture(): Promise<BackupRunReport | undefined> {
-    const state = this.state
-    const pending = state?.pending
-    if (!state || !pending) return undefined
-
-    const stagedPath = stagedCapturePath(this.stagingDir, pending.sequence)
-    if (!existsSync(stagedPath)) {
-      throw new SirannonError(
-        `The frames staged for change piece ${pending.sequence} of chain '${state.chainId}' are no longer in '${stagedPath}', so the writes they carried are in no backup. ` +
-          'Leave the staging directory to Sirannon, and take a fresh full copy so a new chain starts from a known state.',
-        CHAIN_BROKEN,
-      )
+    if (this.sendRefused) return undefined
+    try {
+      return await sendStagedCapture(this.request, this.chainName, this.stagingDir, this.state)
+    } catch (err) {
+      this.sendRefused = true
+      throw err
     }
-    const report = await transferCapture(
-      this.request,
-      this.chainName,
-      state.chainId,
-      pending,
-      state.records,
-      stagedPath,
-    )
-    state.records++
-    state.cursor = pending.cursor
-    state.pending = null
-    await writeCycleState(this.stagingDir, state)
-    await rm(stagedPath, { force: true })
-    this.request.onRun?.(report)
-    return report
   }
-}
-
-/**
- * Builds the cycle that captures a database's log and checkpoints it. It runs
- * nothing until someone starts it.
- *
- * @param request - The operator's settings, plus the database to run against.
- * @returns The cycle.
- */
-export function createBackupCycle(request: BackupCycleRequest): BackupCycle {
-  return new BackupCycle({
-    ...request,
-    destination: destinationWithDeadline(
-      request.destination,
-      request.destinationTimeoutMs ?? DEFAULT_DESTINATION_TIMEOUT_MS,
-    ),
-  })
 }

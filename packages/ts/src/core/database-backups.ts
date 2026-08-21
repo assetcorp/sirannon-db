@@ -75,9 +75,11 @@ export class DatabaseBackups extends DatabaseLifecycle {
    * interval. A turn sends any capture still waiting, reads the log frames
    * written since the previous turn, and then checkpoints the log.
    *
-   * A database needs the `backups` option to have a cycle at all.
+   * A database needs the `backups` option to have a cycle at all. On a node its
+   * replication group backs up from somewhere else, the turn writes nothing and
+   * reports a skip through `onSkip`.
    *
-   * @returns What the turn wrote, or undefined where the log held nothing new.
+   * @returns What the turn wrote, or undefined where it wrote nothing.
    */
   async captureBackupChanges(): Promise<BackupRunReport | undefined> {
     this.ensureOpen()

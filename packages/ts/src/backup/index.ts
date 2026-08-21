@@ -14,6 +14,13 @@ export { backupPiecesSafeToDelete, planBackupRestore } from '../core/backup/chai
 export type { BackupCycle } from '../core/backup/cycle.js'
 export type { BackupCycleOptions } from '../core/backup/cycle-options.js'
 export type { BackupDestination, BackupPiece } from '../core/backup/destination.js'
+export type {
+  BackupGroupMembership,
+  BackupGroupSource,
+  BackupNodePreference,
+  BackupSkip,
+  BackupSkipReason,
+} from '../core/backup/preferred-node.js'
 export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from '../core/backup/report.js'
 export { restoreBackup } from '../core/backup/restore.js'
 export type {

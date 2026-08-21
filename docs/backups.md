@@ -125,6 +125,8 @@ While this option is on, Sirannon takes over one piece of SQLite housekeeping: t
 
 Plan for what that costs when it stops. A cycle that fails while your app keeps writing lets the log grow until it fills the disk. A destination that stops accepting writes does that, and so do credentials that expire overnight. `onError` is your only warning, so treat anything arriving there as urgent.
 
+`maxUncapturedLogBytes` bounds that growth in bytes. Past the figure you set, Sirannon empties the log, reports `BACKUP_CHAIN_BROKEN` through `onError`, and starts a fresh chain with a full copy on the next turn it runs. The writes that log held reach no backup, which is why it defaults to unset. PostgreSQL gives the same choice over the log a replication slot pins, through `max_slot_wal_keep_size`, and it defaults to unlimited too.
+
 Sirannon also stages each capture beside your database file before sending it, so leave a little headroom on that volume. `stagingDir` moves it elsewhere.
 
 ### Checking on the cycle
@@ -133,6 +135,40 @@ Sirannon also stages each capture beside your database file before sending it, s
 await db.captureBackupChanges()   // run one now instead of waiting for the interval
 await db.backupChain()            // every chain at the destination, newest first
 ```
+
+### Backups in a replication group
+
+Every node of a group opens with the same `backups` option. Before a turn of the cycle copies anything, Sirannon asks one question: does this group take its backups here? One node finds that it does, while the rest stand down. A failover changes which node answers yes, but it changes no schedule.
+
+Give it the coordinator your nodes already fail over through:
+
+```ts
+import { coordinatorBackupGroup } from '@delali/sirannon-db/replication'
+
+const db = await sirannon.open('main', './data/main.db', {
+  backups: {
+    destination,
+    replicationGroup: coordinatorBackupGroup({
+      coordinator,
+      clusterId: 'commerce-production',
+      groupId: 'orders',
+      nodeId: 'orders-node-a',
+    }),
+    onSkip: skip => log.info(skip.message),
+    onError: err => pageOnCall(err),
+  },
+})
+```
+
+The backups go to a replica by default, which leaves the primary serving writes. `preferredNode: 'primary'` puts them on the primary instead, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to one node you name. A node matching itself against a name it was given asks the coordinator nothing, so a pinned deployment keeps backing up through a coordinator outage.
+
+A node that takes none of the backups keeps no chain of its own, though it still trims its log every turn as though it were capturing. Once a failover brings the backups to it, its first turn copies the whole database and starts a fresh chain. That full copy is unavoidable, because two nodes hold the same rows in physically different files and a chain of change files from one node continues on no other.
+
+A node that cannot reach its coordinator holds everything where it is. It captures nothing, trims nothing, and reports the skip, since the frames it has yet to capture are in no backup and a trim would lose them. Watch for those skips: a node partitioned for hours will grow its log for the whole partition. `maxUncapturedLogBytes` is the lever that bounds it.
+
+`onSkip` receives one report per turn that wrote nothing. Its `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence you can log as it stands.
+
+A database opened without `replicationGroup` takes every turn, which is the answer a single-node deployment wants. Set one on every node of a group. Two nodes backing up at once write two chains into the same destination, so a restore then has to choose between them.
 
 ## Restoring to a moment
 

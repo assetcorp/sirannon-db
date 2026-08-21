@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { BackupChainPosition } from './chain.js'
 import { isBackupChainPosition } from './chain-records.js'
@@ -147,4 +147,15 @@ export async function writeCycleState(stagingDir: string, state: BackupCycleStat
   const staged = `${path}.writing`
   await writeFile(staged, JSON.stringify(state), 'utf8')
   await rename(staged, path)
+}
+
+/**
+ * Forgets the chain the cycle was extending. A node that stops taking its
+ * group's backups calls this, and the turn that brings them back to it starts a
+ * fresh chain with a full copy.
+ *
+ * @param stagingDir - Directory the cycle stages captures in.
+ */
+export async function removeCycleState(stagingDir: string): Promise<void> {
+  await rm(cycleStatePath(stagingDir), { force: true })
 }

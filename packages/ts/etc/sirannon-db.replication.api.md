@@ -120,6 +120,17 @@ export interface ConflictResolver {
 }
 
 // @public
+export function coordinatorBackupGroup(options: CoordinatorBackupGroupOptions): BackupGroupSource;
+
+// @public
+export interface CoordinatorBackupGroupOptions {
+    clusterId: string;
+    coordinator: ClusterCoordinator;
+    groupId: string;
+    nodeId: string;
+}
+
+// @public
 export interface CoordinatorCompatibilityMetadata {
     packageVersion?: string;
     protocolVersion?: string;

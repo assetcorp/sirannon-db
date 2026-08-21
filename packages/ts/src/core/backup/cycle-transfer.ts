@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
+import { SirannonError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
 import {
   appendChainHead,
@@ -6,8 +9,9 @@ import {
   type BackupChainChange,
   type BackupChainHead,
 } from './chain.js'
+import { stagedCapturePath } from './cycle-capture.js'
 import type { BackupCycleRequest } from './cycle-options.js'
-import type { PendingCapture } from './cycle-state.js'
+import { type BackupCycleState, type PendingCapture, writeCycleState } from './cycle-state.js'
 import { sendFileInPieces } from './pieces.js'
 import { type BackupRunReport, DEFAULT_PIECE_BYTES } from './report.js'
 
@@ -34,7 +38,6 @@ export interface StartedChain {
  * @param request - Destination, naming, and the full copy to run.
  * @param chainName - Name the list of chains is stored under.
  * @param namePrefix - What to name the copy after.
- * @param headIndex - Where the new chain goes in the list, counted from zero.
  * @param previousChainId - The chain it replaces, where the cycle was extending one.
  * @returns The new chain, and what its full copy wrote.
  */
@@ -42,7 +45,6 @@ export async function startChain(
   request: BackupCycleRequest,
   chainName: string,
   namePrefix: string,
-  headIndex: number,
   previousChainId?: string,
 ): Promise<StartedChain> {
   const chainId = randomHex(8)
@@ -80,7 +82,7 @@ export async function startChain(
     startedAt,
     ...(previousChainId ? { previousChainId } : {}),
   }
-  await appendChainHead(request.destination, chainName, head, headIndex)
+  await appendChainHead(request.destination, chainName, head)
 
   return { chainId, startedAt, report }
 }
@@ -157,4 +159,45 @@ export async function transferCapture(
     position: pending.position,
     ...(sent.fingerprint ? { fingerprint: sent.fingerprint } : {}),
   }
+}
+
+/**
+ * Sends the capture a previous turn staged on local disk, and records it as the
+ * next piece of its chain. The cycle runs this before it reads the log again,
+ * so the destination holds the pieces in the order the database wrote them.
+ *
+ * @param request - Destination, naming, and the database the capture came from.
+ * @param chainName - Name the list of chains is stored under.
+ * @param stagingDir - Directory the capture was staged in.
+ * @param state - What the cycle remembers about the chain, which this advances.
+ * @returns What the transfer wrote, or undefined where no capture was waiting.
+ *
+ * @internal
+ */
+export async function sendStagedCapture(
+  request: BackupCycleRequest,
+  chainName: string,
+  stagingDir: string,
+  state: BackupCycleState | null,
+): Promise<BackupRunReport | undefined> {
+  const pending = state?.pending
+  if (!state || !pending) return undefined
+
+  const stagedPath = stagedCapturePath(stagingDir, pending.sequence)
+  if (!existsSync(stagedPath)) {
+    throw new SirannonError(
+      `The frames staged for change piece ${pending.sequence} of chain '${state.chainId}' are no longer in '${stagedPath}', so the writes they carried are in no backup. ` +
+        'Leave the staging directory to Sirannon, and take a fresh full copy so a new chain starts from a known state.',
+      'BACKUP_CHAIN_BROKEN',
+    )
+  }
+
+  const report = await transferCapture(request, chainName, state.chainId, pending, state.records, stagedPath)
+  state.records++
+  state.cursor = pending.cursor
+  state.pending = null
+  await writeCycleState(stagingDir, state)
+  await rm(stagedPath, { force: true })
+  request.onRun?.(report)
+  return report
 }

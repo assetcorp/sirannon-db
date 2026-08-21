@@ -1,7 +1,9 @@
 import { stat } from 'node:fs/promises'
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
+import { readChainHeads } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
+import type { BackupDestination } from './destination.js'
 import {
   type BackupGroupSource,
   type BackupNodePreference,
@@ -41,8 +43,8 @@ export function previousRunStillActive(): BackupSkip {
 }
 
 /**
- * Answers the one question a scheduled turn puts before it copies anything: is
- * this node the one its replication group backs up from right now?
+ * Works out whether this node is the one its replication group backs up from
+ * right now, which a scheduled turn settles before it copies anything.
  *
  * A database with no group source answers yes every time, so a single-node
  * deployment runs the same cycle as a replicated one.
@@ -127,6 +129,38 @@ export async function checkpointWithoutCapturing(request: {
   await request.runExclusive(async () => {
     await checkpointLog(request.acquireWriter())
   })
+}
+
+/**
+ * Looks for a chain in the list its destination holds, and reports the loss
+ * where the list no longer names it.
+ *
+ * Another node writing its own chain at the same moment can replace the record
+ * that lists this one, and a record appended under a chain no listing names is
+ * a record no restore reaches.
+ *
+ * @param destination - Where the list of chains is stored.
+ * @param chainName - Name that list is stored under.
+ * @param chainId - Identifier of the chain to look for.
+ * @param databaseId - Identifier the report names the database by.
+ * @returns The error to report, or null while the list still holds the chain.
+ *
+ * @internal
+ */
+export async function chainMissingFromList(
+  destination: BackupDestination,
+  chainName: string,
+  chainId: string,
+  databaseId: string,
+): Promise<SirannonError | null> {
+  const heads = await readChainHeads(destination, chainName)
+  if (heads.some(head => head.chainId === chainId)) return null
+
+  return new SirannonError(
+    `The list of chains in '${chainName}' no longer names chain '${chainId}', so no restore can reach what that chain captured of database '${databaseId}'. ` +
+      'The next turn starts a fresh chain with a full copy.',
+    'BACKUP_CHAIN_BROKEN',
+  )
 }
 
 /**

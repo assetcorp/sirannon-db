@@ -25,6 +25,15 @@ export interface BackupDestination {
    * storing a piece and recording it stores that piece again when it resumes.
    */
   writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>
+  /**
+   * Stores one piece only where that name and index hold none, and reports
+   * whether this call is the one that stored it. Sirannon claims each place in
+   * its list of chains through this, so two nodes writing at once keep both
+   * chains. Leave it out and Sirannon writes the record and reads it back
+   * instead, which loses a chain where the other node's write lands between
+   * those two calls.
+   */
+  writePieceIfAbsent?(name: string, index: number, bytes: Uint8Array): Promise<boolean>
   /** Returns one piece of a named file. */
   readPiece(name: string, index: number): Promise<Uint8Array>
   /** Returns every piece a named file has, in any order. */

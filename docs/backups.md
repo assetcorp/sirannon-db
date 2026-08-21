@@ -36,7 +36,7 @@ report.durationMs
 
 ## Supplying a destination
 
-Sirannon carries no storage client, so you write three functions and it calls them. It splits every backup into fixed-size pieces, 16 MiB by default, and numbers them:
+Sirannon carries no storage client, so you write three functions and it calls them. A fourth is optional, and you should write it wherever more than one node backs up to the same storage. Sirannon splits every backup into fixed-size pieces, 16 MiB by default, and numbers them:
 
 ```ts
 import type { BackupDestination } from '@delali/sirannon-db'
@@ -44,6 +44,15 @@ import type { BackupDestination } from '@delali/sirannon-db'
 const s3Destination: BackupDestination = {
   async writePiece(name, index, bytes) {
     await s3.send(new PutObjectCommand({ Bucket, Key: `${name}/${index}`, Body: bytes }))
+  },
+  async writePieceIfAbsent(name, index, bytes) {
+    try {
+      await s3.send(new PutObjectCommand({ Bucket, Key: `${name}/${index}`, Body: bytes, IfNoneMatch: '*' }))
+      return true
+    } catch (err) {
+      if ((err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 412) return false
+      throw err
+    }
   },
   async readPiece(name, index) {
     const object = await s3.send(new GetObjectCommand({ Bucket, Key: `${name}/${index}` }))
@@ -63,6 +72,10 @@ const s3Destination: BackupDestination = {
 ```
 
 Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name. S3 sends at most a thousand keys in one response, which is why the example pages through them; a listing that stopped at the first response would hide every piece past the thousandth from a restore.
+
+`writePieceIfAbsent` is the fourth function, and it stores a piece only where that name and index hold none, reporting whether this call is the one that stored it. Sirannon keeps its list of chains under a single name, one record per chain, so two nodes that start a chain at the same moment can pick the same index for it. Where each node claims its index through this function, the storage settles which one gets it and both chains stay in the list. Where you leave the function out, Sirannon writes the record and reads it back instead, which catches the other node's write unless that write lands between those two calls, and the chain it misses drops out of the list.
+
+Write it against whichever store you keep the backups in: S3 and R2 take `IfNoneMatch: '*'` and answer 412 where the key exists, Google Cloud Storage takes `ifGenerationMatch: 0`, Azure Blob Storage takes `If-None-Match: *`, and a local filesystem opens the file with the `wx` flag.
 
 Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline.
 
@@ -138,7 +151,7 @@ await db.backupChain()            // every chain at the destination, newest firs
 
 ### Backups in a replication group
 
-Every node of a group opens with the same `backups` option. Before a turn of the cycle copies anything, Sirannon asks one question: does this group take its backups here? One node finds that it does, while the rest stand down. A failover changes which node answers yes, but it changes no schedule.
+Every node of a group opens with the same `backups` option. Before a turn of the cycle copies anything, Sirannon works out which node of the group takes its backups. One node finds its own identifier in that answer, while the rest stand down. A failover changes which node answers yes, but it changes no schedule.
 
 Give it the coordinator your nodes already fail over through:
 
@@ -162,9 +175,9 @@ const db = await sirannon.open('main', './data/main.db', {
 
 The backups go to a replica by default, which leaves the primary serving writes. `preferredNode: 'primary'` puts them on the primary instead, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to one node you name. A node matching itself against a name it was given asks the coordinator nothing, so a pinned deployment keeps backing up through a coordinator outage.
 
-A node that takes none of the backups keeps no chain of its own, though it still trims its log every turn as though it were capturing. Once a failover brings the backups to it, its first turn copies the whole database and starts a fresh chain. That full copy is unavoidable, because two nodes hold the same rows in physically different files and a chain of change files from one node continues on no other.
+A node that takes none of the backups keeps no chain of its own, though it still trims its log every turn as though it were capturing. It sends whatever capture it had staged before it lets that chain go, and where the destination refuses that capture it holds the chain, the staged frames, and the log until a later turn can send them. Once a failover brings the backups to it, its first turn copies the whole database and starts a fresh chain. That full copy is unavoidable, because two nodes hold the same rows in physically different files and a chain of change files from one node continues on no other.
 
-A node that cannot reach its coordinator holds everything where it is. It captures nothing, trims nothing, and reports the skip, since the frames it has yet to capture are in no backup and a trim would lose them. Watch for those skips: a node partitioned for hours will grow its log for the whole partition. `maxUncapturedLogBytes` is the lever that bounds it.
+A node that cannot reach its coordinator holds everything where it is. It captures nothing, trims nothing, and reports the skip, since the frames it has yet to capture are in no backup and a trim would lose them. Watch for those skips: a node partitioned for hours will grow its log for the whole partition. Set `maxUncapturedLogBytes` to bound how far that log grows.
 
 `onSkip` receives one report per turn that wrote nothing. Its `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence you can log as it stands.
 

@@ -112,6 +112,7 @@ export interface BackupDestination {
     listPieces(name: string): Promise<BackupPiece[]>;
     readPiece(name: string, index: number): Promise<Uint8Array>;
     writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>;
+    writePieceIfAbsent?(name: string, index: number, bytes: Uint8Array): Promise<boolean>;
 }
 
 // @public

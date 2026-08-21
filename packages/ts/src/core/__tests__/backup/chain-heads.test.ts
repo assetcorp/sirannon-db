@@ -24,6 +24,35 @@ function contested(destination: MemoryDestination, competitors: number): BackupD
   }
 }
 
+function claiming(destination: MemoryDestination): BackupDestination {
+  return {
+    ...destination,
+    async writePieceIfAbsent(name, index, bytes) {
+      const taken = await destination.listPieces(name)
+      if (taken.some(piece => piece.index === index)) return false
+      await destination.writePiece(name, index, bytes)
+      return true
+    },
+  }
+}
+
+function claimedFirstBy(destination: MemoryDestination, competitors: number): BackupDestination {
+  const encoder = new TextEncoder()
+  const atomic = claiming(destination)
+  let displaced = 0
+  return {
+    ...atomic,
+    async writePieceIfAbsent(name, index, bytes) {
+      if (name !== CHAIN_NAME || displaced >= competitors) {
+        return atomic.writePieceIfAbsent?.(name, index, bytes) ?? false
+      }
+      displaced++
+      await destination.writePiece(name, index, encoder.encode(JSON.stringify(headFor(`other-${displaced}`))))
+      return false
+    },
+  }
+}
+
 describe('adding a chain to the list a destination holds', () => {
   it('puts the first chain at index zero', async () => {
     const destination = memoryDestination()
@@ -45,6 +74,28 @@ describe('adding a chain to the list a destination holds', () => {
 
     expect(index).toBe(1)
     expect(heads.map(head => head.chainId).sort()).toEqual(['other-1', 'ours'])
+  })
+
+  it('takes the next place where a destination that claims one tells it another node got there first', async () => {
+    const destination = memoryDestination()
+    const index = await appendChainHead(claimedFirstBy(destination, 1), CHAIN_NAME, headFor('ours'))
+    const heads = await readChainHeads(destination, CHAIN_NAME)
+
+    expect(index).toBe(1)
+    expect(heads.map(head => head.chainId).sort()).toEqual(['other-1', 'ours'])
+  })
+
+  it('trusts the place a destination claimed for it, rather than reading the record back', async () => {
+    const destination = memoryDestination()
+    const unreadable: BackupDestination = {
+      ...claiming(destination),
+      readPiece: async () => {
+        throw new Error('this destination answers no read of a record it just stored')
+      },
+    }
+
+    expect(await appendChainHead(unreadable, CHAIN_NAME, headFor('ours'))).toBe(0)
+    expect((await readChainHeads(destination, CHAIN_NAME)).map(head => head.chainId)).toEqual(['ours'])
   })
 
   it('leaves the places of a chain an operator deleted alone', async () => {

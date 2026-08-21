@@ -192,6 +192,44 @@ describe('the checkpoint cycle', () => {
     expect(chains[0]?.chainId).not.toBe((await cycle.chains())[0]?.chainId)
   })
 
+  it('extends no chain the list lost after it started, and says the writes reached no backup', async () => {
+    const errors: Error[] = []
+    const { build, conn, destination } = await harness()
+    const cycle = build({ onError: err => errors.push(err) })
+    await cycle.start()
+    const lost = (await cycle.chains())[0]?.chainId
+    await destination.writePiece(
+      'sirannon-backup-chain',
+      0,
+      new TextEncoder().encode(JSON.stringify({ chainId: 'another-node', startedAt: 1 })),
+    )
+    await insert(conn, 'first')
+
+    await cycle.runOnce()
+
+    const chains = await cycle.chains()
+    expect(chains.map(chain => chain.chainId)).not.toContain(lost)
+    expect(chains[0]?.base?.kind).toBe('full')
+    expect(errors[0]?.message).toContain(String(lost))
+  })
+
+  it('captures the log a restart finds, whatever limit the operator put on an uncaptured one', async () => {
+    const errors: Error[] = []
+    const { cycle, build, conn } = await harness()
+    await cycle.start()
+    const chainId = (await cycle.chains())[0]?.chainId
+    await insert(conn, 'first')
+
+    const restarted = build({ maxUncapturedLogBytes: 1, onError: err => errors.push(err) })
+    await restarted.start()
+
+    const chains = await restarted.chains()
+    expect(chains).toHaveLength(1)
+    expect(chains[0]?.chainId).toBe(chainId)
+    expect(chains[0]?.changes.map(piece => piece.sequence)).toEqual([1])
+    expect(errors).toEqual([])
+  })
+
   it('takes the same chain up again after a restart rather than copying the database afresh', async () => {
     const { cycle, build, conn } = await harness()
     await cycle.start()

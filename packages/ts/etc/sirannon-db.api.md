@@ -113,12 +113,30 @@ export interface BackupDestination {
     listPieces(name: string): Promise<BackupPiece[]>;
     readPiece(name: string, index: number): Promise<Uint8Array>;
     writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>;
+    writePieceIfAbsent?(name: string, index: number, bytes: Uint8Array): Promise<boolean>;
 }
 
 // @public
 export class BackupError extends SirannonError {
     constructor(message: string);
 }
+
+// @public
+export interface BackupGroupMembership {
+    nodeIds: string[];
+    primaryNodeId: string | null;
+}
+
+// @public
+export interface BackupGroupSource {
+    readonly nodeId: string;
+    readMembership(): Promise<BackupGroupMembership>;
+}
+
+// @public
+export type BackupNodePreference = 'replica' | 'primary' | {
+    nodeId: string;
+};
 
 // @public
 export interface BackupPiece {
@@ -185,6 +203,17 @@ export interface BackupScheduleOptions {
     onError?: (error: Error) => void;
     timezone?: string;
 }
+
+// @public
+export interface BackupSkip {
+    message: string;
+    nodeId?: string;
+    preferredNodeId?: string;
+    reason: BackupSkipReason;
+}
+
+// @public
+export type BackupSkipReason = 'not-preferred' | 'group-unavailable' | 'previous-run-active';
 
 // @public
 export interface BackupToDestinationOptions {

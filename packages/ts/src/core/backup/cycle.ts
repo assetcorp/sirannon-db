@@ -1,14 +1,9 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
-import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains, readChainHeads } from './chain.js'
+import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
 import { captureLogFrames, stagedCapturePath } from './cycle-capture.js'
-import {
-  checkpointWithoutCapturing,
-  decideBackupTurn,
-  logGrownPastLimit,
-  previousRunStillActive,
-} from './cycle-guard.js'
+import { chainMissingFromList, decideBackupTurn, previousRunStillActive } from './cycle-guard.js'
 import {
   type BackupCycleRequest,
   DEFAULT_BACKUP_NAME_PREFIX,
@@ -16,6 +11,7 @@ import {
   DEFAULT_FULL_COPY_INTERVAL_MS,
   defaultStagingDir,
 } from './cycle-options.js'
+import { releaseChainPastLogLimit, type StandDownRequest, standDownFromChain } from './cycle-standdown.js'
 import { type BackupCycleState, readCycleState, removeCycleState, writeCycleState } from './cycle-state.js'
 import { sendStagedCapture, startChain } from './cycle-transfer.js'
 import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
@@ -60,6 +56,7 @@ export class BackupCycle {
   private verified = false
   private busy = false
   private captured = false
+  private sendRefused = false
   private stopped = false
 
   /** @internal */
@@ -75,7 +72,9 @@ export class BackupCycle {
 
   /**
    * Picks a chain up where the previous run left it, or starts a new one with a
-   * full copy, and then repeats on the interval.
+   * full copy, and then repeats on the interval. A chain picked up takes an
+   * ordinary turn, so the frames written while this node was down reach the
+   * destination rather than waiting for the first interval.
    */
   async start(): Promise<void> {
     await mkdir(this.stagingDir, { recursive: true })
@@ -84,9 +83,7 @@ export class BackupCycle {
     await this.runTurn(async () => {
       try {
         if (!(await this.takesTheTurn())) return
-        await this.verifyChain()
-        if (this.state) await this.sendWaitingCapture()
-        else await this.replaceChain()
+        await this.turnOrStartOver()
       } catch (err) {
         this.report(err)
       }
@@ -148,6 +145,7 @@ export class BackupCycle {
     return this.serialise(async () => {
       this.busy = true
       this.captured = false
+      this.sendRefused = false
       try {
         return await op()
       } finally {
@@ -157,18 +155,27 @@ export class BackupCycle {
     })
   }
 
-  /**
-   * Empties a log the cycle has left behind, where the operator set a limit and
-   * this turn captured nothing. The chain ends there, with the report naming
-   * the writes that reach no backup.
-   */
+  /** What the stand-down path needs of this cycle to let go of its chain. */
+  private get standDownRequest(): StandDownRequest {
+    return {
+      request: this.request,
+      logPath: this.logPath,
+      holdsChain: () => this.state !== null,
+      sendStagedCapture: () => this.sendWaitingCapture(),
+      forgetChain: async () => {
+        await this.discardState()
+        await removeCycleState(this.stagingDir)
+        this.verified = false
+      },
+      report: err => this.report(err),
+    }
+  }
+
+  /** Empties a log this turn captured nothing from, past the operator's limit. */
   private async releaseLogPastLimit(): Promise<void> {
     if (this.stopped) return
     try {
-      const lost = await logGrownPastLimit(this.logPath, this.request.maxUncapturedLogBytes, this.request.databaseId)
-      if (!lost) return
-      this.report(lost)
-      await this.standDown()
+      if (await releaseChainPastLogLimit(this.standDownRequest)) this.captured = true
     } catch (err) {
       this.report(err)
     }
@@ -186,34 +193,12 @@ export class BackupCycle {
     this.reportSkip(decision.skip)
     if (decision.skip?.reason === 'not-preferred') {
       try {
-        await this.standDown()
+        if (await standDownFromChain(this.standDownRequest)) this.captured = true
       } catch (err) {
         this.report(err)
       }
     }
     return false
-  }
-
-  /**
-   * Lets go of the chain this node was building. Its captures reach the
-   * destination first, because a piece already read off the log is a piece the
-   * chain can still use. The turn that brings the group's backups back to this
-   * node starts a fresh chain, since a chain of physical pieces from one node
-   * continues on no other.
-   */
-  private async standDown(): Promise<void> {
-    if (this.state) {
-      try {
-        await this.sendWaitingCapture()
-      } catch (err) {
-        this.report(err)
-      }
-      await this.discardState()
-      await removeCycleState(this.stagingDir)
-      this.verified = false
-    }
-    await checkpointWithoutCapturing(this.request)
-    this.captured = true
   }
 
   private reportSkip(skip: BackupSkip | undefined): void {
@@ -252,17 +237,24 @@ export class BackupCycle {
   }
 
   /**
-   * Checks that the destination still holds the chain the state file names.
-   * Where the check cannot reach the destination, the chain stays unverified and
-   * the next turn runs it again before it appends anything. A record appended
-   * under a chain the destination has lost would be in no listing, so no restore
-   * could reach it.
+   * Checks that the destination still holds the chain the state file names. A
+   * chain this cycle started itself counts as unchecked until a listing shows
+   * it, because another node writing at the same moment can replace the record
+   * that lists it. Where the check cannot reach the destination, the chain stays
+   * unverified and the next turn runs it again before it appends anything. A
+   * record appended under a chain the destination has lost would be in no
+   * listing, so no restore could reach it.
    */
   private async verifyChain(): Promise<void> {
     if (this.verified || !this.state) return
-    const heads = await readChainHeads(this.request.destination, this.chainName)
-    if (heads.some(head => head.chainId === this.state?.chainId)) this.verified = true
-    else await this.discardState()
+    const request = this.request
+    const lost = await chainMissingFromList(request.destination, this.chainName, this.state.chainId, request.databaseId)
+    if (!lost) {
+      this.verified = true
+      return
+    }
+    await this.discardState()
+    this.report(lost)
   }
 
   private async discardState(): Promise<void> {
@@ -318,7 +310,7 @@ export class BackupCycle {
 
     const started = await startChain(this.request, this.chainName, this.namePrefix, previousChainId)
 
-    this.verified = true
+    this.verified = false
     this.state = {
       chainName: this.chainName,
       chainId: started.chainId,
@@ -364,8 +356,20 @@ export class BackupCycle {
     })
   }
 
-  private sendWaitingCapture(): Promise<BackupRunReport | undefined> {
-    return sendStagedCapture(this.request, this.chainName, this.stagingDir, this.state)
+  /**
+   * Sends the capture staged against the chain this cycle holds. A turn offers
+   * a capture the destination has already refused no second time, because that
+   * second offer waits out the destination deadline again and delays every turn
+   * behind it.
+   */
+  private async sendWaitingCapture(): Promise<BackupRunReport | undefined> {
+    if (this.sendRefused) return undefined
+    try {
+      return await sendStagedCapture(this.request, this.chainName, this.stagingDir, this.state)
+    } catch (err) {
+      this.sendRefused = true
+      throw err
+    }
   }
 }
 

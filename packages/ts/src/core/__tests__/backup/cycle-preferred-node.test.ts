@@ -195,6 +195,55 @@ describe('a backup cycle that every node of a group carries', () => {
     expect(chain?.changes.map(piece => piece.sequence)).toEqual([1])
   })
 
+  it('keeps a capture the destination refused while it stands down, and sends it once the destination answers', async () => {
+    const { build, conn, destination, group, logPath, errors } = await harness()
+    const cycle = build()
+    await cycle.start()
+    const chainId = (await cycle.chains())[0]?.chainId
+    await insert(conn, 'first')
+    destination.refuseName(`sirannon-backup-${chainId}-000001.wal`)
+    await cycle.runOnce().catch(() => {})
+    const staged = join(temp.path, 'source-staging', 'capture-1.wal')
+    group.membership = { primaryNodeId: 'node-a', nodeIds: ['node-a'] }
+
+    await cycle.runOnce()
+
+    expect(existsSync(staged)).toBe(true)
+    expect(errors.at(-1)?.message).toContain('refusing')
+
+    destination.refuseName(null)
+    await cycle.runOnce()
+
+    expect(existsSync(staged)).toBe(false)
+    expect(statSync(logPath).size).toBe(0)
+    const chain = (await cycle.chains()).find(held => held.chainId === chainId)
+    expect(chain?.changes.map(piece => piece.sequence)).toEqual([1])
+  })
+
+  it('offers a refused capture once in the turn that lets its chain go, rather than waiting on it twice', async () => {
+    const { build, conn, destination, group } = await harness()
+    let offers = 0
+    const counting: BackupDestination = {
+      ...destination,
+      async writePiece(pieceName, index, bytes) {
+        if (pieceName.endsWith('.wal')) offers++
+        await destination.writePiece(pieceName, index, bytes)
+      },
+    }
+    const cycle = build({ destination: counting, maxUncapturedLogBytes: 1 })
+    await cycle.start()
+    await insert(conn, 'first')
+    destination.refuseName(`sirannon-backup-${(await cycle.chains())[0]?.chainId}-000001.wal`)
+    await cycle.runOnce().catch(() => {})
+    await insert(conn, 'second')
+    group.membership = { primaryNodeId: 'node-a', nodeIds: ['node-a'] }
+    offers = 0
+
+    await cycle.runOnce()
+
+    expect(offers).toBe(1)
+  })
+
   it('asks its group nothing where the operator pinned the backups to one node', async () => {
     const { build, group } = await harness()
     const cycle = build({ preferredNode: { nodeId: 'node-b' } })

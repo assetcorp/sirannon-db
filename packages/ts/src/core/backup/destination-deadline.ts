@@ -30,7 +30,7 @@ async function withinDeadline<T>(operation: Promise<T>, action: string, timeoutM
  *
  * @param destination - Destination the caller supplied.
  * @param timeoutMs - Milliseconds one call may take. Zero leaves the calls unbounded.
- * @returns The same destination with a deadline on each of its three calls.
+ * @returns The same destination with a deadline on every call it answers.
  * @throws A `BACKUP_ERROR` where the deadline is negative or is not a number.
  *
  * @internal
@@ -43,9 +43,16 @@ export function destinationWithDeadline(destination: BackupDestination, timeoutM
     )
   }
   if (timeoutMs === 0) return destination
+  const claim = destination.writePieceIfAbsent?.bind(destination)
   return {
     writePiece: (name, index, bytes) =>
       withinDeadline(destination.writePiece(name, index, bytes), `store piece ${index} of '${name}'`, timeoutMs),
+    ...(claim
+      ? {
+          writePieceIfAbsent: (name: string, index: number, bytes: Uint8Array) =>
+            withinDeadline(claim(name, index, bytes), `claim piece ${index} of '${name}'`, timeoutMs),
+        }
+      : {}),
     readPiece: (name, index) =>
       withinDeadline(destination.readPiece(name, index), `return piece ${index} of '${name}'`, timeoutMs),
     listPieces: name => withinDeadline(destination.listPieces(name), `list the pieces of '${name}'`, timeoutMs),

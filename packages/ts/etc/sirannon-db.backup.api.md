@@ -92,12 +92,16 @@ export interface BackupCycleOptions {
     fingerprint?: boolean;
     fullCopyIntervalMs?: number;
     intervalMs?: number;
+    maxUncapturedLogBytes?: number;
     namePrefix?: string;
     noProgressStepLimit?: number;
     onError?: (error: Error) => void;
     onRun?: (report: BackupRunReport) => void;
+    onSkip?: (skip: BackupSkip) => void;
     pagesPerStep?: number;
     pieceBytes?: number;
+    preferredNode?: BackupNodePreference;
+    replicationGroup?: BackupGroupSource;
     restartLimit?: number;
     stagingDir?: string;
     stallTimeoutMs?: number;
@@ -108,7 +112,25 @@ export interface BackupDestination {
     listPieces(name: string): Promise<BackupPiece[]>;
     readPiece(name: string, index: number): Promise<Uint8Array>;
     writePiece(name: string, index: number, bytes: Uint8Array): Promise<void>;
+    writePieceIfAbsent?(name: string, index: number, bytes: Uint8Array): Promise<boolean>;
 }
+
+// @public
+export interface BackupGroupMembership {
+    nodeIds: string[];
+    primaryNodeId: string | null;
+}
+
+// @public
+export interface BackupGroupSource {
+    readonly nodeId: string;
+    readMembership(): Promise<BackupGroupMembership>;
+}
+
+// @public
+export type BackupNodePreference = 'replica' | 'primary' | {
+    nodeId: string;
+};
 
 // @public
 export interface BackupPiece {
@@ -204,6 +226,18 @@ export interface BackupRunReport {
 export interface BackupSafeToDeleteOptions {
     restorableFrom?: number;
 }
+
+// @public
+export interface BackupSkip {
+    message: string;
+    nodeId?: string;
+    preferredNodeId?: string;
+    reason: BackupSkipReason;
+    uncapturedLogBytes?: number;
+}
+
+// @public
+export type BackupSkipReason = 'not-preferred' | 'group-unavailable' | 'previous-run-active';
 
 // @public
 export interface BackupToDestinationOptions {

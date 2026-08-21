@@ -469,11 +469,12 @@ An implementation restarts a stall deadline on every step and fails with `BACKUP
 
 ### Destination
 
-`backupTo(options)` copies the database to a destination the caller supplies. Sirannon carries no storage client, so the caller supplies three operations and connects object storage or anything else that moves bytes.
+`backupTo(options)` copies the database to a destination the caller supplies. Sirannon carries no storage client, so the caller supplies three operations, and a fourth where the storage behind them can claim a name, and connects object storage or anything else that moves bytes.
 
 ```text
 BackupDestination {
   writePiece(name: string, index: number, bytes: Bytes): async -> void
+  writePieceIfAbsent?(name: string, index: number, bytes: Bytes): async -> boolean
   readPiece(name: string, index: number): async -> Bytes
   listPieces(name: string): async -> List<BackupPiece>
 }
@@ -484,7 +485,7 @@ BackupPiece {
 }
 ```
 
-Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must hold more than one name, because a chain stores its full copy, each change piece, and its chain log under a name of its own. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to. A destination call that has not returned inside `destinationTimeoutMs` fails with the same code, because a pending destination call resets the stall deadline.
+Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must return from `readPiece` what the most recent `writePiece` to that name and index stored, because an implementation reads a chain record back to confirm that no other node replaced it. `writePieceIfAbsent` stores the piece only where that name and index hold none, reports whether this call stored it, and leaves a piece already stored as it is; a destination that offers it must settle two such calls arriving at once so that exactly one reports true. A destination must hold more than one name, because a chain stores its full copy, each change piece, and its chain log under a name of its own. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to. A destination call that has not returned inside `destinationTimeoutMs` fails with the same code, because a pending destination call resets the stall deadline.
 
 Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros rather than moving every later byte. Reassembly checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
 
@@ -556,21 +557,25 @@ A database opened with `backups` captures its write-ahead log on an interval, th
 
 ```text
 BackupCycleOptions {
-  destination:           BackupDestination
-  intervalMs?:           number  (default: 60000, recommended)
-  fullCopyIntervalMs?:   number  (default: 86400000, recommended)
-  chainName?:            string  (default: sirannon-backup-chain)
-  namePrefix?:           string  (default: sirannon-backup)
-  pieceBytes?:           number  (default: 16 MiB, recommended)
-  fingerprint?:          boolean (default: true)
-  stagingDir?:           string  (default: a directory beside the database file)
-  pagesPerStep?:         number
-  restartLimit?:         number
-  stallTimeoutMs?:       number
-  destinationTimeoutMs?: number
-  noProgressStepLimit?:  number
-  onRun?:                (report: BackupRunReport) -> void
-  onError?:              (error) -> void
+  destination:            BackupDestination
+  intervalMs?:            number  (default: 60000, recommended)
+  fullCopyIntervalMs?:    number  (default: 86400000, recommended)
+  chainName?:             string  (default: sirannon-backup-chain)
+  namePrefix?:            string  (default: sirannon-backup)
+  pieceBytes?:            number  (default: 16 MiB, recommended)
+  fingerprint?:           boolean (default: true)
+  stagingDir?:            string  (default: a directory beside the database file)
+  replicationGroup?:      BackupGroupSource (default: none)
+  preferredNode?:         BackupNodePreference (default: 'replica')
+  maxUncapturedLogBytes?: number  (default: unbounded)
+  pagesPerStep?:          number
+  restartLimit?:          number
+  stallTimeoutMs?:        number
+  destinationTimeoutMs?:  number
+  noProgressStepLimit?:   number
+  onRun?:                 (report: BackupRunReport) -> void
+  onSkip?:                (skip: BackupSkip) -> void
+  onError?:               (error) -> void
 }
 ```
 
@@ -585,11 +590,55 @@ Each turn of the cycle runs in this order:
 
 A capture that fails stops the checkpoint behind it. A staged capture reaches the destination before the next capture runs. The first turn after a chain passes `fullCopyIntervalMs` starts a fresh chain.
 
+An implementation reads the list of chains once for each chain it holds, before the first record it appends to that chain and including a chain it started itself, because another node's write can replace the record that lists one. Where that list names the chain no longer, the implementation discards it, reports `BACKUP_CHAIN_BROKEN` to `onError`, and starts a fresh chain with a full copy on the next turn.
+
 The first capture of a chain starts at frame one and carries the log header. Pieces covering one run of the log hold contiguous frames, so they concatenate into a log SQLite recovers from.
 
 Every capture compares the log's salts against the ones the chain last recorded. Where they differ and the implementation ran no checkpoint, the capture fails with `BACKUP_LOG_REWOUND` and the implementation starts a fresh chain.
 
+A database opening onto a chain a previous run left behind takes an ordinary turn at once, so the frames written while it was down reach the destination ahead of the first interval.
+
 A database captures its log a final time during close, after its writes drain and before its pool closes.
+
+### Preferred backup node
+
+Every node of a replication group carries the same `BackupCycleOptions`. An implementation resolves the preferred backup node at the start of each turn, and only the node it resolves to copies anything.
+
+```text
+BackupNodePreference = 'replica' or 'primary' or { nodeId: string }
+
+BackupGroupSource {
+  nodeId:           string
+  readMembership(): async -> BackupGroupMembership
+}
+
+BackupGroupMembership {
+  primaryNodeId: string or null
+  nodeIds:       List<string>
+}
+
+BackupSkip {
+  reason:              'not-preferred' or 'group-unavailable' or 'previous-run-active'
+  message:             string
+  nodeId?:             string
+  preferredNodeId?:    string
+  uncapturedLogBytes?: number
+}
+```
+
+An implementation runs every turn where the options carry no `replicationGroup`.
+
+`'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary where that node is eligible, and to no node otherwise. An object resolves to the identifier it carries. An implementation reads no membership for that form.
+
+`readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator omits the nodes the group records as draining, repairing, or faulted (see [03-replication.md](03-replication.md#replication-group-and-node-identity)).
+
+On a node other than the preferred one, an implementation sends any staged capture, deletes its cycle state, checkpoints the log, and reports a skip of `'not-preferred'`. Where the destination refuses that capture, the implementation keeps the chain, the staged capture, and the log, and stands down on a later turn. A chain continues on the node that started it and on no other, so the next turn on a node holding no cycle state starts a fresh chain with a full copy.
+
+Where `readMembership` fails, an implementation captures nothing, checkpoints nothing, and reports a skip of `'group-unavailable'`. Where a scheduled turn falls due while the previous turn runs, an implementation reports a skip of `'previous-run-active'` and takes no other action. An implementation passes every one of those skips to `onSkip`, each carrying the size of the write-ahead log at the moment it skipped, so an operator sees a held log grow before `maxUncapturedLogBytes` ends the chain.
+
+An implementation whose options carry a `replicationGroup` and whose destination offers no `writePieceIfAbsent` reports `BACKUP_DESTINATION_ERROR` to `onError` as the cycle starts, because that is the one arrangement where two nodes starting a chain at the same moment lose one between them.
+
+`maxUncapturedLogBytes` bounds the write-ahead log across turns that capture nothing. Past that figure an implementation empties the log, drops any staged capture the destination still refuses, and reports `BACKUP_CHAIN_BROKEN` to `onError`. The writes that log held reach no backup, and the next turn that runs starts a fresh chain with a full copy. An absent value leaves the log unbounded and the chain whole.
 
 ### Chain records
 
@@ -643,7 +692,9 @@ BackupChain {
 }
 ```
 
-The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list.
+The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list. An implementation appends a chain to that list past the highest index the destination lists. Where the destination offers `writePieceIfAbsent`, the implementation claims that index through it and moves to the next index wherever the claim reports false. Otherwise it writes the record, reads it back, and appends again at the next index where it finds another chain, which loses a chain where the other node's write lands between those two calls.
+
+An implementation records the place its chain took in that list and reads that one record to check the chain, which costs a destination a single read however many chains it holds. Anything else stored there sends it back to the whole list.
 
 `backupChain` returns the chains newest first, each with its own records oldest first. A chain whose full copy the destination no longer holds carries no `base`.
 

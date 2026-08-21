@@ -11,6 +11,13 @@ export type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chai
 export { backupPiecesSafeToDelete, planBackupRestore } from './backup/chain-queries.js'
 export type { BackupCycleOptions } from './backup/cycle-options.js'
 export type { BackupDestination, BackupPiece } from './backup/destination.js'
+export type {
+  BackupGroupMembership,
+  BackupGroupSource,
+  BackupNodePreference,
+  BackupSkip,
+  BackupSkipReason,
+} from './backup/preferred-node.js'
 export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 export { isBulkLoadDurability, runBulkLoad } from './bulk-load.js'
 export { ChangeTracker } from './cdc/change-tracker.js'

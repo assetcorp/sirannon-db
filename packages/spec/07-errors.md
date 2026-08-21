@@ -38,7 +38,9 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `BACKUP_STALLED` | The copy moved no pages inside the stall deadline. |
 | `BACKUP_DESTINATION_ERROR` | The caller's destination refused a piece, did not answer inside the deadline, or holds pieces that do not match the run that wrote them. |
 | `BACKUP_LOG_REWOUND` | The write-ahead log restarted before a capture read it, so those writes are in no backup. |
-| `BACKUP_CHAIN_BROKEN` | No full copy reaches back to the moment asked for, or the chain is missing a piece the restore needs. |
+| `BACKUP_CHAIN_BROKEN` | No full copy goes back as far as the moment asked for, the chain is missing a piece the restore needs, or no chain record states the name a verify asked for. |
+| `BACKUP_RESTORE_NOT_ACCEPTED` | The server was configured with `acceptBackupRestore` false, so it restores no database over the wire. |
+| `BACKUP_RESTORE_IN_PROGRESS` | A restore of that database is already under way and keeps its file to itself. |
 | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured. |
 | `MAX_DATABASES` | Opening a database would exceed the configured cap. |
 | `EXTENSION_ERROR` | A native SQLite extension could not be loaded. |

@@ -11,10 +11,19 @@ import type {
   ServerExecutionTargetResolver,
   ServerOptions,
 } from '../core/types.js'
+import { BackupRestoreRuns } from './backup-restore-runs.js'
 import { handleCapabilities } from './capabilities.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { handleLiveness, handleReadiness } from './health.js'
+import { handleBackupRestore, handleBackupRestoreStatus } from './http-backup-restore.js'
+import {
+  handleBackupChain,
+  handleBackupSafeToDelete,
+  handleBackupStatus,
+  handleBackupTrigger,
+  handleBackupVerify,
+} from './http-backups.js'
 import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import {
@@ -33,7 +42,7 @@ import { handleMigrationList } from './http-migrations.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { handleOperationExecute, handleOperationQuery } from './http-operations.js'
 import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
-import { resolveMaxBodyBytes, resolveWsBackpressure } from './limits.js'
+import { assertBackupRestoreAuthenticated, resolveMaxBodyBytes, resolveWsBackpressure } from './limits.js'
 import { operationRegistryDigest } from './operation-lookup.js'
 import { wrapOperationRoute } from './operation-route.js'
 import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
@@ -61,6 +70,8 @@ export class SirannonServer<Identity = unknown> {
   private readonly cors: ResolvedCors | null
   private readonly authenticateHook: AuthenticateHook<Identity> | undefined
   private readonly acceptSql: boolean
+  private readonly acceptBackupRestore: boolean
+  private readonly restoreRuns = new BackupRestoreRuns()
   private readonly operations: OperationRegistry<Identity> | undefined
   private readonly registryDigest: string | undefined
   private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
@@ -79,6 +90,8 @@ export class SirannonServer<Identity = unknown> {
     this.cors = resolveCors(options?.cors)
     this.authenticateHook = options?.authenticate
     this.acceptSql = options?.acceptSql === true
+    this.acceptBackupRestore = options?.acceptBackupRestore === true
+    assertBackupRestoreAuthenticated(this.acceptBackupRestore, this.authenticateHook !== undefined)
     this.operations = options?.operations
     this.registryDigest = operationRegistryDigest(options?.operations)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
@@ -193,6 +206,8 @@ export class SirannonServer<Identity = unknown> {
       this.wrapOperationRoute(handleOperationExecute(this.sirannon, this.operations, this.resolveExecutionTarget)),
     )
 
+    this.registerBackupRoutes()
+
     this.app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
     this.app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
     this.app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
@@ -203,6 +218,19 @@ export class SirannonServer<Identity = unknown> {
     this.app.any('/*', res => {
       sendError(res, 404, 'NOT_FOUND', 'Route not found')
     })
+  }
+
+  private registerBackupRoutes(): void {
+    this.app.post('/db/:id/backup', this.wrapDbRoute(handleBackupTrigger(this.sirannon)))
+    this.app.get('/db/:id/backup', this.wrapDbGetRoute(handleBackupStatus(this.sirannon)))
+    this.app.get('/db/:id/backup/chain', this.wrapDbGetRoute(handleBackupChain(this.sirannon)))
+    this.app.post('/db/:id/backup/verify', this.wrapDbRoute(handleBackupVerify(this.sirannon)))
+    this.app.post('/db/:id/backup/safe-to-delete', this.wrapDbRoute(handleBackupSafeToDelete(this.sirannon)))
+    this.app.post(
+      '/db/:id/backup/restore',
+      this.wrapDbRoute(handleBackupRestore(this.sirannon, this.acceptBackupRestore, this.restoreRuns)),
+    )
+    this.app.get('/db/:id/backup/restore', this.wrapDbGetRoute(handleBackupRestoreStatus(this.restoreRuns)))
   }
 
   private registerWebSocketRoute(): void {

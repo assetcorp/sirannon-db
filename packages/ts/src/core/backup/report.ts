@@ -55,11 +55,11 @@ export interface BackupProgress {
   runId: string
   /** Whether the run is copying pages or sending pieces. */
   phase: 'copy' | 'transfer'
-  /** Pages the copy has to move in total. */
+  /** Pages the copy has to move in total. A change piece reports the number of log frames it covers. */
   totalPages: number
-  /** Pages the copy has yet to move. */
+  /** Pages the copy has yet to move. Every report of the transfer phase states zero, since the copy has finished by then. */
   remainingPages: number
-  /** Times the copy has returned to page one. */
+  /** Times the copy has returned to page one. A change piece reports zero, since it reads the log and copies no pages. */
   restarts: number
   /** Pieces the run has stored at the destination. */
   piecesWritten: number

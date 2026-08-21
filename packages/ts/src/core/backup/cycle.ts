@@ -1,10 +1,8 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
-import { checkpointLog } from './checkpoint.js'
-import { captureLogFrames, stagedCapturePath } from './cycle-capture.js'
+import { captureAndCheckpointTurn, stagedCapturePath } from './cycle-capture.js'
 import {
-  chainMissingFromList,
   decideBackupTurn,
   previousRunStillActive,
   startsAFreshChain,
@@ -19,11 +17,19 @@ import {
   DEFAULT_FULL_COPY_INTERVAL_MS,
   defaultStagingDir,
 } from './cycle-options.js'
-import { releaseChainPastLogLimit, type StandDownRequest, standDownFromChain } from './cycle-standdown.js'
+import { BackupCycleTimer, SerialTurns } from './cycle-scheduling.js'
+import {
+  confirmChainStillListed,
+  releaseChainPastLogLimit,
+  type StandDownRequest,
+  standDownFromChain,
+} from './cycle-standdown.js'
 import { type BackupCycleState, readCycleState, removeCycleState, writeCycleState } from './cycle-state.js'
-import { sendStagedCapture, startChain } from './cycle-transfer.js'
+import { type BackupCycleStatus, BackupCycleStatusRecorder } from './cycle-status.js'
+import { beginReplacementChain, sendStagedCapture } from './cycle-transfer.js'
 import type { BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport } from './report.js'
+import { type BackupVerifyResult, verifyBackupRecord } from './verify.js'
 
 /**
  * Captures a database's write-ahead log and then checkpoints it, in that order,
@@ -47,9 +53,10 @@ export class BackupCycle {
   private readonly fullCopyIntervalMs: number
   private readonly preferredNode: BackupNodePreference
 
-  private timer: ReturnType<typeof setInterval> | null = null
+  private readonly timer = new BackupCycleTimer()
   private state: BackupCycleState | null = null
-  private inFlight: Promise<unknown> = Promise.resolve()
+  private queued: Promise<BackupRunReport | undefined> | null = null
+  private readonly turns = new SerialTurns()
   private started = false
   private verified = false
   private busy = false
@@ -57,8 +64,22 @@ export class BackupCycle {
   private sendRefused = false
   private stopped = false
 
+  private readonly request: BackupCycleRequest
+  private readonly statusRecord = new BackupCycleStatusRecorder()
+
   /** @internal */
-  constructor(private readonly request: BackupCycleRequest) {
+  constructor(request: BackupCycleRequest) {
+    this.request = {
+      ...request,
+      onRun: report => {
+        this.statusRecord.ran(report)
+        request.onRun?.(report)
+      },
+      onProgress: progress => {
+        this.statusRecord.progressed(progress)
+        request.onProgress?.(progress)
+      },
+    }
     this.chainName = request.chainName ?? DEFAULT_CHAIN_NAME
     this.namePrefix = request.namePrefix ?? DEFAULT_BACKUP_NAME_PREFIX
     this.stagingDir = request.stagingDir ?? defaultStagingDir(request.sourcePath)
@@ -88,23 +109,35 @@ export class BackupCycle {
         this.report(err)
       }
     })
-    this.arm()
+    if (!this.stopped) this.timer.arm(this.intervalMs, () => void this.tick())
   }
 
   /**
-   * Runs one turn now. A turn sends any capture still waiting, reads the frames
-   * written since the previous turn, and checkpoints the log.
+   * Takes one turn now. A turn sends any capture still waiting, reads the
+   * frames written since the previous turn, and then checkpoints the log.
    *
-   * A turn on a node its group backs up from somewhere else writes nothing and
-   * reports a skip instead.
+   * One turn waits at a time. A call made while a turn is under way queues one
+   * behind it, and every call after that joins the queued turn, which reads the
+   * log once it begins and so covers their writes as well. Without that bound,
+   * a caller asking repeatedly during a long full copy would build a queue of
+   * turns with nothing left for any of them to capture.
+   *
+   * A turn on a node whose group backs up from somewhere else writes nothing
+   * and reports a skip.
    *
    * @returns What the turn wrote, or undefined where it wrote nothing.
    */
   runOnce(): Promise<BackupRunReport | undefined> {
-    return this.runTurn(async () => {
+    const queued = this.queued
+    if (queued) return queued
+
+    const turn = this.runTurn(async () => {
+      this.queued = null
       if (!(await this.takesTheTurn())) return undefined
       return this.turnOrStartOver()
     })
+    this.queued = turn
+    return turn
   }
 
   /**
@@ -115,10 +148,7 @@ export class BackupCycle {
   async stop(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
+    this.timer.disarm()
     await this.runTurn(async () => {
       const state = this.state
       if (!state) return
@@ -141,16 +171,45 @@ export class BackupCycle {
     return readBackupChains(this.request.destination, this.chainName)
   }
 
+  /**
+   * Reads what the cycle is doing at this moment, and what its recent turns
+   * produced.
+   *
+   * A caller following a long full copy reads this without having to wait on
+   * the turn, and it answers between turns as well.
+   *
+   * @returns Whether a turn is under way, how far it has got, and the last run, skip, and failure.
+   */
+  status(): BackupCycleStatus {
+    return this.statusRecord.read(this.state?.chainId)
+  }
+
+  /**
+   * Reads one of this chain's backups back out of the destination and compares
+   * it against the record the backup that wrote it left behind.
+   *
+   * @param name - Name the backup is stored under.
+   * @returns The pieces read, the bytes they add up to, and the digest where the backup recorded one.
+   */
+  async verify(name: string): Promise<BackupVerifyResult> {
+    return verifyBackupRecord(this.request.destination, await this.chains(), name)
+  }
+
   private runTurn<T>(op: () => Promise<T>): Promise<T> {
-    return this.serialise(async () => {
+    return this.turns.run(async () => {
       this.busy = true
       this.captured = false
       this.sendRefused = false
+      this.statusRecord.turnStarted()
       try {
         return await op()
+      } catch (err) {
+        this.statusRecord.failed(toBackupError(err))
+        throw err
       } finally {
         if (!this.captured) await this.releaseLogPastLimit()
         this.busy = false
+        this.statusRecord.turnFinished()
       }
     })
   }
@@ -203,26 +262,14 @@ export class BackupCycle {
 
   /** Passes a skipped turn on, counting the log this node was holding as it skipped. */
   private async reportSkip(skip: BackupSkip | undefined): Promise<void> {
-    if (!skip || !this.request.onSkip) return
+    if (!skip) return
     const held = await uncapturedLogBytes(this.logPath)
+    const passed = held === undefined ? skip : { ...skip, uncapturedLogBytes: held }
+    this.statusRecord.skipped(passed)
+    if (!this.request.onSkip) return
     try {
-      this.request.onSkip(held === undefined ? skip : { ...skip, uncapturedLogBytes: held })
+      this.request.onSkip(passed)
     } catch {}
-  }
-
-  private serialise<T>(op: () => Promise<T>): Promise<T> {
-    const run = this.inFlight.then(op, op)
-    this.inFlight = run.then(
-      () => {},
-      () => {},
-    )
-    return run
-  }
-
-  private arm(): void {
-    if (this.stopped || this.intervalMs <= 0) return
-    this.timer = setInterval(() => void this.tick(), this.intervalMs)
-    this.timer.unref?.()
   }
 
   private async tick(): Promise<void> {
@@ -238,29 +285,15 @@ export class BackupCycle {
     }
   }
 
-  /**
-   * Checks that the destination still lists the chain the state file names,
-   * including one this cycle started itself, because a record appended under a
-   * chain no listing names is a record no restore reaches. A check that cannot
-   * reach the destination leaves the chain unverified for the next turn to try
-   * again before it appends anything.
-   */
   private async verifyChain(): Promise<void> {
-    if (this.verified || !this.state) return
-    const request = this.request
-    const lost = await chainMissingFromList(
-      request.destination,
-      this.chainName,
-      this.state.chainId,
-      request.databaseId,
-      this.state.headIndex,
-    )
-    if (!lost) {
-      this.verified = true
-      return
-    }
-    await this.discardState()
-    this.report(lost)
+    this.verified = await confirmChainStillListed({
+      request: this.request,
+      chainName: this.chainName,
+      state: this.state,
+      verified: this.verified,
+      discardState: () => this.discardState(),
+      report: err => this.report(err),
+    })
   }
 
   private async discardState(): Promise<void> {
@@ -304,9 +337,11 @@ export class BackupCycle {
   }
 
   private report(err: unknown): void {
+    const failure = toBackupError(err)
+    this.statusRecord.failed(failure)
     if (!this.request.onError) return
     try {
-      this.request.onError(toBackupError(err))
+      this.request.onError(failure)
     } catch {}
   }
 
@@ -314,53 +349,33 @@ export class BackupCycle {
     const previousChainId = this.state?.chainId
     await this.discardState()
 
-    const started = await startChain(this.request, this.chainName, this.namePrefix, previousChainId)
+    const begun = await beginReplacementChain(
+      this.request,
+      this.chainName,
+      this.namePrefix,
+      this.stagingDir,
+      previousChainId,
+    )
 
     this.verified = false
-    this.state = {
-      chainName: this.chainName,
-      chainId: started.chainId,
-      chainStartedAt: started.startedAt,
-      headIndex: started.headIndex,
-      records: 1,
-      cursor: null,
-      pending: null,
-      closedCleanly: false,
-    }
-    await writeCycleState(this.stagingDir, this.state)
+    this.state = begun.state
     this.captured = true
-    this.request.onRun?.(started.report)
-    return started.report
+    this.request.onRun?.(begun.report)
+    return begun.report
   }
 
   private async captureAndCheckpoint(): Promise<void> {
     const state = this.state
     if (!state) return
 
-    await this.request.runExclusive(async () => {
-      const captured = await captureLogFrames({
-        sourcePath: this.request.sourcePath,
-        logPath: this.logPath,
-        stagingDir: this.stagingDir,
-        chainId: state.chainId,
-        namePrefix: this.namePrefix,
-        sequence: state.records,
-        cursor: state.cursor,
-        expectNewLog: state.closedCleanly,
-      })
-
-      if (captured) {
-        state.pending = captured
-        await writeCycleState(this.stagingDir, state)
-      }
-
-      const checkpointed = (await checkpointLog(this.request.acquireWriter())).emptied
-      const cursor = captured?.cursor ?? state.cursor
-      if (cursor) cursor.checkpointed = checkpointed
-      state.closedCleanly = false
-      await writeCycleState(this.stagingDir, state)
-      this.captured = true
+    await captureAndCheckpointTurn({
+      request: this.request,
+      state,
+      logPath: this.logPath,
+      stagingDir: this.stagingDir,
+      namePrefix: this.namePrefix,
     })
+    this.captured = true
   }
 
   /**

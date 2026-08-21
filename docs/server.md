@@ -108,7 +108,7 @@ authenticate: ctx => {
 }
 ```
 
-Without a check of that shape, every identity your hook accepts may call all six routes, and with `acceptBackupRestore` on that includes the one that replaces the database.
+Without a check of that shape, every identity your hook accepts may call all seven backup routes, including the one that replaces the database when `acceptBackupRestore` is on.
 
 The server answers a triggered backup with `202 Accepted` straight away and waits for no turn, since a full copy of a large database may continue past the deadline any proxy between you and the server allows. Read the outcome from the matching `GET`:
 
@@ -117,7 +117,7 @@ curl -XPOST -H "$AUTH" https://db.example.com/db/orders/backup
 curl -H "$AUTH" https://db.example.com/db/orders/backup
 ```
 
-That progress route answers with `running`, the `chainId` the cycle is extending, the `progress` of the turn under way, and the `lastRun`, `lastSkip`, and `lastError` it recorded. A second trigger sent while a turn is under way queues one behind it, and every trigger after that joins the queued turn, so at most one turn ever waits. A database you opened without the `backups` option answers `501 BACKUP_UNSUPPORTED` on all of these routes but `GET /db/{id}/backup/restore`, which reports on restores and reads no database. `POST /db/{id}/backup/verify` takes `{ name }`, which is the name any entry of the chain route states, and `POST /db/{id}/backup/safe-to-delete` takes an optional `{ restorableFrom }`.
+That progress route answers with `running`, the `chainId` the cycle is extending, the `progress` of the turn under way, and the `lastRun`, `lastSkip`, and `lastError` it recorded. A second trigger sent while a turn is under way queues one behind it, and every trigger after that joins the queued turn, so at most one turn ever waits. A database you opened without the `backups` option answers `501 BACKUP_UNSUPPORTED` on all of these routes but `GET /db/{id}/backup/restore`, which reports on restores and reads no database. However, `POST /db/{id}/backup/restore` refuses with `403 BACKUP_RESTORE_NOT_ACCEPTED` before it looks that database up, so a server with `acceptBackupRestore` off answers 403 for a database opened without `backups` too. `POST /db/{id}/backup/verify` takes `{ name }`, which is the name any entry of the chain route states, and `POST /db/{id}/backup/safe-to-delete` takes an optional `{ restorableFrom }`.
 
 ### Restoring over the network
 

@@ -101,6 +101,7 @@ A dash in the class column means Sirannon raises the base `SirannonError` carryi
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` failed validation or fell below `maxBodyBytes` |
+| `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is on and the server has no `authenticate` hook |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load |
 | `INVALID_MESSAGE` | A WebSocket message lacks a required field or carries a wrong type |
 | `UNKNOWN_TYPE` | A WebSocket message carries an unrecognised type |
@@ -185,12 +186,13 @@ A validation code such as `INVALID_WRITER_WORKER`, `INVALID_MAX_BODY_BYTES`, or 
 | --- | --- |
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED` |
+| 502 | `BACKUP_DESTINATION_ERROR` |
 | 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
 
 A code outside the table maps to 500, and a `RequestDeniedError` uses the status you gave it.

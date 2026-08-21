@@ -3,14 +3,23 @@ import type { Database } from './database.js'
 /** What one database taken out of service produced.
  * @internal
  */
-export interface OfflineOutcome<T> {
-  /** Whatever the action produced, where it produced anything. */
-  value?: T
-  /** What the action threw, where it threw. */
-  failure?: unknown
-  /** What the reopen threw, where it threw. The action's own result still stands. */
-  reopenFailure?: unknown
-}
+export type OfflineOutcome<T> =
+  | {
+      /** True where the action returned. */
+      ok: true
+      /** What the action produced. */
+      value: T
+      /** What the reopen threw, where it threw. The action's own result still stands. */
+      reopenFailure?: unknown
+    }
+  | {
+      /** False where the action threw. */
+      ok: false
+      /** What the action threw. */
+      failure: unknown
+      /** What the reopen threw, where it threw. */
+      reopenFailure?: unknown
+    }
 
 /** One database taken out of service while Sirannon replaces its file.
  * @internal
@@ -42,13 +51,16 @@ export interface DatabaseOffline<T> {
  * one database, so that failure passes straight to the caller and the registry
  * has nothing open under the identifier.
  *
+ * The `ok` field separates an action that returned from one that threw, since
+ * an action producing `undefined`, `null`, `0`, or `false` has still succeeded.
+ *
  * The action's result and the reopen's failure are both reported. A restore
  * that replaced the data and then failed to open the database again has done
  * both of those things, and a caller shown only the second would believe its
  * data untouched.
  *
  * @param offline - The database, its path, the action, and how to open it again.
- * @returns What the action produced, what it threw, and what the reopen threw.
+ * @returns Whether the action returned, what it produced or threw, and what the reopen threw.
  *
  * @internal
  */
@@ -57,9 +69,9 @@ export async function takeDatabaseOffline<T>(offline: DatabaseOffline<T>): Promi
 
   let outcome: OfflineOutcome<T>
   try {
-    outcome = { value: await offline.action(offline.path) }
+    outcome = { ok: true, value: await offline.action(offline.path) }
   } catch (err) {
-    outcome = { failure: err }
+    outcome = { ok: false, failure: err }
   }
 
   try {

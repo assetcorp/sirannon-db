@@ -59,11 +59,12 @@ async function rebuildDatabase(request: RestoreRequest): Promise<void> {
         destPath,
         replaceExisting: true,
         moment: request.moment,
+        ...(location.destinationTimeoutMs === undefined ? {} : { destinationTimeoutMs: location.destinationTimeoutMs }),
         ...(request.batchSize === undefined ? {} : { batchSize: request.batchSize }),
         onProgress: progress => runs.progressed(databaseId, progress),
       })
     })
-    if (!outcome.value) {
+    if (!outcome.ok) {
       runs.failed(databaseId, outcome.failure)
       return
     }

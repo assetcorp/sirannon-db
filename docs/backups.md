@@ -77,7 +77,7 @@ Sirannon relies on three properties here. Pieces arrive in any order, since SQLi
 
 Write it against whichever store you keep the backups in: S3 and R2 take `IfNoneMatch: '*'` and answer 412 where the key exists, Google Cloud Storage takes `ifGenerationMatch: 0`, Azure Blob Storage takes `If-None-Match: *`, and a local filesystem opens the file with the `wx` flag.
 
-Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline.
+Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline, which a restore over the server's route applies as well.
 
 ## How the bytes travel
 

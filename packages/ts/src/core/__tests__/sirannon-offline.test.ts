@@ -72,11 +72,20 @@ describe('taking one database offline while its file is replaced', () => {
       throw new Error('the destination went away')
     })
 
-    expect(outcome.value).toBeUndefined()
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) throw new Error('the action was reported as having returned')
     expect(outcome.failure).toMatchObject({ message: 'the destination went away' })
     expect(outcome.reopenFailure).toBeUndefined()
     expect(sirannon.has('orders')).toBe(true)
     expect(await sirannon.get('orders')?.query('SELECT total FROM orders')).toEqual([{ total: 10 }])
+  })
+
+  it('reports an action that produced nothing as one that returned', async () => {
+    await openOrders()
+
+    const outcome = await sirannon.withDatabaseOffline('orders', async () => undefined)
+
+    expect(outcome.ok).toBe(true)
   })
 
   it('delays a shutdown until the file it was replacing is back in service', async () => {
@@ -98,6 +107,46 @@ describe('taking one database offline while its file is replaced', () => {
 
     expect(finished).toBe(true)
     await offline
+  })
+
+  it('answers nothing for the identifier until the reopen has the database back in service', async () => {
+    const path = join(tempDir, 'auto.db')
+    const auto = new Sirannon({
+      driver: testDriver,
+      lifecycle: { autoOpen: { resolver: id => (id === 'orders' ? { path } : undefined) } },
+    })
+    const db = await auto.open('orders', path)
+    await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY)')
+    let duringReopen: Promise<unknown> = Promise.resolve('the reopen never opened a connection')
+    let asked = false
+    auto.onBeforeConnect(() => {
+      if (asked) return
+      asked = true
+      duringReopen = auto.resolve('orders')
+    })
+
+    await auto.withDatabaseOffline('orders', async () => {})
+
+    await expect(duringReopen).resolves.toBeUndefined()
+    expect(auto.has('orders')).toBe(true)
+    await auto.shutdown()
+  })
+
+  it('opens the database again for a restore that was under way when the shutdown started', async () => {
+    await openOrders()
+    let release = (): void => {}
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const offline = sirannon.withDatabaseOffline('orders', () => held)
+    const shutdown = sirannon.shutdown()
+    release()
+    const outcome = await offline
+    await shutdown
+
+    expect(outcome.reopenFailure).toBeUndefined()
+    expect(sirannon.has('orders')).toBe(false)
   })
 
   it('refuses an identifier with no open database under it', async () => {

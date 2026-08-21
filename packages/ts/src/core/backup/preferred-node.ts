@@ -2,9 +2,10 @@
  * Which node of a replication group takes its backups.
  *
  * `'replica'` prefers a replica and falls back to the primary where the group
- * has no other node to offer. `'primary'` puts the backups on whichever node
- * the group names primary. An object names one node outright. A node matching
- * itself against that name needs no coordinator to answer.
+ * has no other node to offer. `'primary'` puts the backups on the node the
+ * group names primary, and names nobody while that node is out of service. An
+ * object names one node outright. A node matching itself against that name
+ * needs no coordinator to answer.
  *
  * @public
  */
@@ -96,17 +97,12 @@ export function preferredBackupNode(
   }
 
   const primaryNodeId = membership.primaryNodeId
+  const eligible = [...membership.nodeIds].sort()
+  const primary = primaryNodeId !== null && eligible.includes(primaryNodeId) ? primaryNodeId : null
   if (preference === 'primary') {
-    return primaryNodeId
+    return primary
   }
 
-  const eligible = [...membership.nodeIds].sort()
   const replica = eligible.find(nodeId => nodeId !== primaryNodeId)
-  if (replica !== undefined) {
-    return replica
-  }
-  if (primaryNodeId !== null && eligible.includes(primaryNodeId)) {
-    return primaryNodeId
-  }
-  return null
+  return replica ?? primary
 }

@@ -154,8 +154,9 @@ export async function logGrownPastLimit(
   let bytes: number
   try {
     bytes = (await stat(logPath)).size
-  } catch {
-    return null
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
   }
   if (bytes <= maxBytes) return null
 

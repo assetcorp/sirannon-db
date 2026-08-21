@@ -1,6 +1,11 @@
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { decideBackupTurn, previousRunStillActive } from '../../backup/cycle-guard.js'
+import { decideBackupTurn, logGrownPastLimit, previousRunStillActive } from '../../backup/cycle-guard.js'
 import { type BackupGroupSource, preferredBackupNode } from '../../backup/preferred-node.js'
+import { tempDirPerTest } from './shared.js'
+
+const temp = tempDirPerTest()
 
 const GROUP = { primaryNodeId: 'node-a', nodeIds: ['node-c', 'node-a', 'node-b'] }
 
@@ -37,6 +42,10 @@ describe('the node a replication group backs up from', () => {
 
   it('names nobody where the operator pins the backups to a primary the group currently lacks', () => {
     expect(preferredBackupNode({ primaryNodeId: null, nodeIds: ['node-b'] }, 'primary')).toBeNull()
+  })
+
+  it('names nobody where the primary the operator pinned them to is out of service', () => {
+    expect(preferredBackupNode({ primaryNodeId: 'node-a', nodeIds: ['node-b'] }, 'primary')).toBeNull()
   })
 
   it('names the node the operator pinned them to', () => {
@@ -93,5 +102,22 @@ describe('the question a turn asks before it copies anything', () => {
 
   it('describes the turn it drops behind one that is still running', () => {
     expect(previousRunStillActive().reason).toBe('previous-run-active')
+  })
+})
+
+describe('the log a turn captured nothing from', () => {
+  it('measures nothing on a database that has written no log yet', async () => {
+    expect(await logGrownPastLimit(join(temp.path, 'source.db-wal'), 4096, 'source')).toBeNull()
+  })
+
+  it('reports a filesystem that refuses to measure the log, rather than passing it as small enough', async () => {
+    const file = join(temp.path, 'source.db')
+    writeFileSync(file, 'not a directory')
+
+    await expect(logGrownPastLimit(join(file, 'source.db-wal'), 4096, 'source')).rejects.toThrow()
+  })
+
+  it('measures nothing where the operator set no limit', async () => {
+    expect(await logGrownPastLimit(join(temp.path, 'source.db-wal'), undefined, 'source')).toBeNull()
   })
 })

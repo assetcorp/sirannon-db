@@ -1,7 +1,10 @@
 import type { BackupCapabilities } from './backup/capabilities.js'
 import type { BackupChain, BackupChainRecord } from './backup/chain.js'
 import type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chain-queries.js'
+import type { BackupCycleStatus } from './backup/cycle-status.js'
 import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+import type { BackupVerifyResult } from './backup/verify.js'
+import type { BackupChainLocation } from './database-backup.js'
 import { DatabaseLifecycle } from './database-lifecycle.js'
 import type { BackupScheduleOptions } from './types.js'
 
@@ -94,6 +97,57 @@ export class DatabaseBackups extends DatabaseLifecycle {
   async backupChain(): Promise<BackupChain[]> {
     this.ensureNotClosed()
     return this.runtime.backups.chains()
+  }
+
+  /**
+   * Reads what this database's backup cycle is doing at this moment, and what
+   * its recent turns produced.
+   *
+   * A caller that triggers a turn with {@link DatabaseBackups.captureBackupChanges}
+   * without waiting on it would read this until that turn finishes. A full copy
+   * of a large database reports its pages as SQLite moves them.
+   *
+   * @returns Whether a turn is under way, how far it has got, and the last run, skip, and failure.
+   */
+  backupStatus(): BackupCycleStatus {
+    this.ensureNotClosed()
+    return this.runtime.backups.status()
+  }
+
+  /**
+   * Reads one of this database's backups back out of the destination and
+   * compares it against the record the backup that wrote it left behind.
+   *
+   * A restore would fail on a damaged piece only once that restore had already
+   * begun, so name the backup here beforehand. Sirannon then fetches every
+   * piece in order and folds a SHA-256 over the bytes as they arrive, and it
+   * compares that digest and the byte count against the record. Only one piece
+   * is in memory at any moment, so a check over a large full copy needs no
+   * local storage of its own.
+   *
+   * A missing piece, a byte count that differs from the recorded one, and a
+   * digest that differs from the recorded one will each fail with
+   * `BACKUP_DESTINATION_ERROR`.
+   *
+   * @param name - Name the backup is stored under, which every entry {@link DatabaseBackups.backupChain} returns states.
+   * @returns The pieces read, the bytes they add up to, and the digest where the backup recorded one.
+   */
+  async verifyBackup(name: string): Promise<BackupVerifyResult> {
+    this.ensureNotClosed()
+    return this.runtime.backups.verify(name)
+  }
+
+  /**
+   * Reads where this database's backups are stored.
+   *
+   * `restoreBackup` accepts what you get back, and it then rebuilds this
+   * database from its own backups at whatever path you name.
+   *
+   * @returns The destination, the name its chains are listed under, and the directory Sirannon stages captures in.
+   */
+  backupLocation(): BackupChainLocation {
+    this.ensureNotClosed()
+    return this.runtime.backups.location()
   }
 
   /**

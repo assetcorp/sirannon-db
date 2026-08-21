@@ -150,6 +150,17 @@ describe('POST /db/:id/query/:name', () => {
     expect(((await res.json()) as ApiResponse).error.code).toBe('UNKNOWN_QUERY')
   })
 
+  it('rejects a body that parses as a JSON array', async () => {
+    await start()
+    const res = await fetch(`${baseUrl}/db/test/query/ordersForCustomer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '[]',
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as ApiResponse).error.code).toBe('INVALID_REQUEST')
+  })
+
   it('rejects a missing declared argument', async () => {
     await start()
     const res = await fetch(`${baseUrl}/db/test/query/ordersForCustomer`, {

@@ -78,12 +78,70 @@ const db = await sirannon.open('app', './data/app.db', {
 | `POST` | `/db/{id}/migrations` | List the migrations a database has applied |
 | `POST` | `/db/{id}/snapshot` | Open a snapshot and return its manifest |
 | `POST` | `/db/{id}/snapshot/page` | Read one page of a snapshot |
+| `POST` | `/db/{id}/backup` | Run one turn of the checkpoint cycle, returns `202` |
+| `GET` | `/db/{id}/backup` | What the cycle is doing and what its recent turns produced |
+| `GET` | `/db/{id}/backup/chain` | Every chain at the backup destination, newest first |
+| `POST` | `/db/{id}/backup/verify` | Read one stored backup back and check it |
+| `POST` | `/db/{id}/backup/safe-to-delete` | The records no restore still needs |
+| `POST` | `/db/{id}/backup/restore` | Rebuild the database from a moment, returns `202` |
+| `GET` | `/db/{id}/backup/restore` | How that restore went |
 | `GET` | `/db/{id}/cluster` | Role, replication group, current primary, primary term, read endpoints, and health |
 | `GET` | `/capabilities` | Announced capabilities and the registry digest |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/health/ready` | Readiness check with per-database status |
 
 The [device sync guide](device-sync.md) covers the four device routes. A read body carries `readConcern` and a write body carries `writeConcern`; the [replication guide](replication.md#read-concern) defines both.
+
+## Backup routes
+
+The server serves these to an operator, and it runs your `authenticate` hook before each of them as before every other `/db/{id}` route. The [backups guide](backups.md) covers what the cycle behind them does.
+
+Reserve them for an operator credential. Your hook receives `ctx.path` and `ctx.method` on every request, which is how a single hook admits your application on the data routes and refuses it here:
+
+```ts
+authenticate: ctx => {
+  const identity = verifyToken(ctx.headers.authorization)
+  if (ctx.path.startsWith(`/db/${ctx.databaseId}/backup`) && !identity.operator) {
+    throw new RequestDeniedError(403, 'HOOK_DENIED', 'Only an operator may reach the backups')
+  }
+  return identity
+}
+```
+
+Without a check of that shape, every identity your hook accepts may call all seven backup routes, including the one that replaces the database when `acceptBackupRestore` is on.
+
+The server answers a triggered backup with `202 Accepted` straight away and waits for no turn, since a full copy of a large database may continue past the deadline any proxy between you and the server allows. Read the outcome from the matching `GET`:
+
+```bash
+curl -XPOST -H "$AUTH" https://db.example.com/db/orders/backup
+curl -H "$AUTH" https://db.example.com/db/orders/backup
+```
+
+That progress route answers with `running`, the `chainId` the cycle is extending, the `progress` of the turn under way, and the `lastRun`, `lastSkip`, and `lastError` it recorded. A second trigger sent while a turn is under way queues one behind it, and every trigger after that joins the queued turn, so at most one turn ever waits. A database you opened without the `backups` option answers `501 BACKUP_UNSUPPORTED` on all of these routes but `GET /db/{id}/backup/restore`, which reports on restores and reads no database. However, `POST /db/{id}/backup/restore` refuses with `403 BACKUP_RESTORE_NOT_ACCEPTED` before it looks that database up, so a server with `acceptBackupRestore` off answers 403 for a database opened without `backups` too. `POST /db/{id}/backup/verify` takes `{ name }`, which is the name any entry of the chain route states, and `POST /db/{id}/backup/safe-to-delete` takes an optional `{ restorableFrom }`.
+
+### Restoring over the network
+
+`POST /db/{id}/backup/restore` stays shut until you set `acceptBackupRestore: true`. A restore replaces the database that is serving your traffic, so every default configuration leaves that route closed.
+
+```ts
+const server = createServer(sirannon, {
+  authenticate: identifyOperator,
+  acceptBackupRestore: true,
+})
+```
+
+That hook is required here. A server built with `acceptBackupRestore: true` and no `authenticate` refuses to start, since the hook is the only gate that names the caller of a route which destroys a database.
+
+Name the moment you want back, and Sirannon rebuilds the database at the path it already occupies:
+
+```bash
+curl -XPOST -H "$AUTH" -d '{"moment":1755500000000}' https://db.example.com/db/orders/backup/restore
+curl -H "$AUTH" https://db.example.com/db/orders/backup/restore
+```
+
+The server closes the database, and that close captures its log a final time. It then discards the chain the old file was extending, rebuilds the file from that database's own backups, and opens the database again under the same identifier with the settings it had. Every route answers `404 DATABASE_NOT_FOUND` for that identifier while the rebuild proceeds, which is why the status route reads the server's own record. The first turn of the cycle after the reopen copies the whole database and starts a fresh chain, since the rebuilt file's log continues none of the old one. You pay for that full copy in exchange for the safe order: Sirannon discards the chain before it replaces the file, so a process that dies part-way through a restore can never resume capturing onto a chain that restore has replaced.
+
+A second restore of the same database while one is under way answers `409 BACKUP_RESTORE_IN_PROGRESS`. A rebuild that fails still opens the database again, and the status route states the code it stopped with. A close that fails leaves nothing open under that identifier, since a second runtime over a file the old connections may still be using would put two writers on one database. A reopen that fails after a successful rebuild reports `done` with the report and a separate `reopenError`, since Sirannon replaced the data either way and only the process needs restarting.
 
 ## WebSocket messages
 

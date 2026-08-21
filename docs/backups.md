@@ -77,7 +77,7 @@ Sirannon relies on three properties here. Pieces arrive in any order, since SQLi
 
 Write it against whichever store you keep the backups in: S3 and R2 take `IfNoneMatch: '*'` and answer 412 where the key exists, Google Cloud Storage takes `ifGenerationMatch: 0`, Azure Blob Storage takes `If-None-Match: *`, and a local filesystem opens the file with the `wx` flag.
 
-Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline.
+Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline, which a restore over the server's route applies as well.
 
 ## How the bytes travel
 
@@ -147,7 +147,25 @@ Sirannon also stages each capture beside your database file before sending it, s
 ```ts
 await db.captureBackupChanges()   // run one now instead of waiting for the interval
 await db.backupChain()            // every chain at the destination, newest first
+db.backupStatus()                 // what the cycle is doing at this moment
 ```
+
+`backupStatus()` answers whenever you ask, so you can read it without having to catch a callback as it fires. It tells you whether a turn is under way, and while one is, its `progress` states the pages the copy has left to move and the bytes that have reached the destination. Once the copy has finished and the pieces are going out, `phase` reads `transfer` and `remainingPages` is zero, so read `bytesWritten` from that point onward. Between turns the status reports `lastRun`, `lastSkip`, and `lastError`, each of them the most recent of its kind. Take the `onProgress` callback in the `backups` option where you want every step, and read this member where you want the figure as it stands.
+
+### Checking a backup is still readable
+
+You would discover that a piece is damaged only once a restore had already begun. Reading the backup back beforehand reports that same damage while your database is still whole:
+
+```ts
+const chains = await db.backupChain()
+const fullCopy = chains[0]?.base
+if (fullCopy) {
+  const checked = await db.verifyBackup(fullCopy.name)
+  log.info(`${checked.pieceCount} pieces, ${checked.bytesRead} bytes read`)
+}
+```
+
+Sirannon fetches every piece in order and folds a SHA-256 over the bytes as they arrive, and it then compares that digest and the byte count against the record the backup that wrote them left behind. Only one piece is in memory at any moment, so a check over a terabyte needs no local storage of its own. A missing piece, a byte count that differs from the recorded one, and a digest that differs from the recorded one will each throw `BACKUP_DESTINATION_ERROR`. Where you turned fingerprinting off, the piece listing and the byte count are the whole comparison, and the result reports no digest.
 
 ### Backups in a replication group
 
@@ -236,7 +254,7 @@ free disk = the finished database + one piece + one batch of change files
 - **One batch** is `batchSize` change files, 16 by default. Sirannon writes one batch into the log beside the database and folds it in with a checkpoint. The log is empty again before the next batch begins, so the length of the chain never enters this figure.
 - **The database you are replacing** counts as well where you pass `replaceExisting`, because Sirannon keeps it where it is until the rebuilt file is renamed over it.
 
-Suppose a 200 GB database, backed up in 16 MiB pieces, capturing 40 MB of changes a minute. At the default batch size the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Restoring over the running copy of that same database would need roughly 400.7 GB, since both files sit on the disk until the rename. Lower `batchSize` where disk is tight, and raise it where a long chain spends too long checkpointing.
+Suppose a 200 GB database, backed up in 16 MiB pieces, capturing 40 MB of changes a minute. At the default batch size the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Restoring over the running copy of that same database would need roughly 400.7 GB, since both files sit on the disk until the rename. Lower `batchSize` where disk is tight, and raise it where a long chain spends too long checkpointing. It accepts up to 4096, which at the default capture interval covers close to three days of change pieces, longer than the day a chain lasts before a fresh full copy replaces it.
 
 ### Working out what a restore needs
 
@@ -271,3 +289,7 @@ Each record names one file. Your destination holds that file as the numbered pie
 Sirannon deletes nothing from your destination; it only tells you what is safe to remove.
 
 Every `BACKUP_*` code, and the error class it arrives as, is in the [errors guide](errors.md). The normative definition is in [`packages/spec/02-core.md`](../packages/spec/02-core.md#backups).
+
+## Reaching backups over the server
+
+An operator can trigger a backup, read its progress, list what the destination stores, check one stored backup, and ask what is safe to delete, all over the routes your server already authenticates. Sirannon also restores a database over those routes, behind a flag that stays off until you turn it on. The [server guide](server.md#backup-routes) lists the routes and what each one answers with.

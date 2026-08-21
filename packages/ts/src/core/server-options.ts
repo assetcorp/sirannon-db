@@ -175,6 +175,13 @@ export interface ServerOptions<Identity = unknown> {
   operations?: OperationRegistry<Identity>
   /** Opens the five statement routes and their WebSocket messages. Default: false. */
   acceptSql?: boolean
+  /**
+   * Opens the route that rebuilds a database from its backups. A restore
+   * replaces the database that is serving traffic, so the route stays shut
+   * until you open it here, and a server that opens it without an
+   * `authenticate` hook refuses to start. Default: false.
+   */
+  acceptBackupRestore?: boolean
   /** Finds what the server runs a database's statements against. */
   resolveExecutionTarget?: ServerExecutionTargetResolver
   /** Supplies the replication figures the readiness endpoint reports. */

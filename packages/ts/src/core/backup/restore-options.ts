@@ -6,6 +6,20 @@ import type { BackupDestination } from './destination.js'
  */
 export const DEFAULT_RESTORE_BATCH_SIZE = 16
 
+/**
+ * The most change pieces one batch may replay.
+ *
+ * A batch is what bounds the log a restore writes beside the database, so an
+ * unbounded batch size would put a whole chain into one log and the working
+ * space would then scale with the size of the database. At the default capture
+ * interval of one minute, this figure covers close to three days of change
+ * pieces, which is longer than the day a chain lasts before a fresh full copy
+ * replaces it.
+ *
+ * @internal
+ */
+export const MAX_RESTORE_BATCH_SIZE = 4096
+
 /** How far one restore has got, reported after every piece it fetches.
  * @public
  */
@@ -47,9 +61,9 @@ export interface BackupRestoreOptions {
   chainName?: string
   /**
    * How many change pieces to replay between one checkpoint and the next.
-   * Defaults to 16. This is what bounds the log the restore writes beside the
-   * database, so lower it where disk is tight and raise it where a long chain
-   * takes too many checkpoints.
+   * Defaults to 16, and 4096 is the most it accepts. This is what bounds the
+   * log the restore writes beside the database, so lower it where disk is tight
+   * and raise it where a long chain takes too many checkpoints.
    */
   batchSize?: number
   /** Milliseconds one call to the destination may take before the restore stops with an error. Defaults to 10 minutes, and zero leaves the calls unbounded. */

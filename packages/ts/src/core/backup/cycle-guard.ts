@@ -285,3 +285,22 @@ export async function logGrownPastLimit(
     'BACKUP_CHAIN_BROKEN',
   )
 }
+
+/**
+ * Asks whether the destination still lists the chain the cycle's state file
+ * names.
+ *
+ * @param request - Destination and database the cycle backs up.
+ * @param chainName - Name the list of chains is stored under.
+ * @param state - The chain the cycle is extending, and its place in that list.
+ * @returns The error where the chain is absent, or null where it is still listed.
+ *
+ * @internal
+ */
+export async function chainLostFromList(
+  request: { destination: BackupDestination; databaseId: string },
+  chainName: string,
+  state: { chainId: string; headIndex?: number },
+): Promise<SirannonError | null> {
+  return chainMissingFromList(request.destination, chainName, state.chainId, request.databaseId, state.headIndex)
+}

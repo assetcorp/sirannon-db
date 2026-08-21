@@ -13,6 +13,7 @@ export type { BackupRestorePlan, BackupSafeToDeleteOptions } from '../core/backu
 export { backupPiecesSafeToDelete, planBackupRestore } from '../core/backup/chain-queries.js'
 export type { BackupCycle } from '../core/backup/cycle.js'
 export type { BackupCycleOptions } from '../core/backup/cycle-options.js'
+export type { BackupCycleError, BackupCycleStatus } from '../core/backup/cycle-status.js'
 export type { BackupDestination, BackupPiece } from '../core/backup/destination.js'
 export type {
   BackupGroupMembership,
@@ -28,3 +29,6 @@ export type {
   BackupRestoreProgress,
   BackupRestoreReport,
 } from '../core/backup/restore-options.js'
+export type { BackupVerifyResult } from '../core/backup/verify.js'
+export { verifyBackupRecord } from '../core/backup/verify.js'
+export type { BackupChainLocation } from '../core/database-backup.js'

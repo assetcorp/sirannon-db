@@ -63,6 +63,14 @@ export interface BackupChainChange {
 }
 
 // @public
+export interface BackupChainLocation {
+    chainName: string;
+    destination: BackupDestination;
+    destinationTimeoutMs?: number;
+    stagingDir: string;
+}
+
+// @public
 export interface BackupChainPosition {
     firstFrame: number;
     lastFrame: number;
@@ -81,7 +89,16 @@ export class BackupCycle {
     chains(): Promise<BackupChain[]>;
     runOnce(): Promise<BackupRunReport | undefined>;
     start(): Promise<void>;
+    status(): BackupCycleStatus;
     stop(): Promise<void>;
+    verify(name: string): Promise<BackupVerifyResult>;
+}
+
+// @public
+export interface BackupCycleError {
+    at: number;
+    code: string;
+    message: string;
 }
 
 // @public
@@ -96,6 +113,7 @@ export interface BackupCycleOptions {
     namePrefix?: string;
     noProgressStepLimit?: number;
     onError?: (error: Error) => void;
+    onProgress?: (progress: BackupProgress) => void;
     onRun?: (report: BackupRunReport) => void;
     onSkip?: (skip: BackupSkip) => void;
     pagesPerStep?: number;
@@ -105,6 +123,16 @@ export interface BackupCycleOptions {
     restartLimit?: number;
     stagingDir?: string;
     stallTimeoutMs?: number;
+}
+
+// @public
+export interface BackupCycleStatus {
+    chainId?: string;
+    lastError?: BackupCycleError;
+    lastRun?: BackupRunReport;
+    lastSkip?: BackupSkip;
+    progress?: BackupProgress;
+    running: boolean;
 }
 
 // @public
@@ -256,6 +284,16 @@ export interface BackupToDestinationOptions {
 }
 
 // @public
+export interface BackupVerifyResult {
+    bytesRead: number;
+    chainId: string;
+    fingerprint?: string;
+    kind: 'full' | 'change';
+    name: string;
+    pieceCount: number;
+}
+
+// @public
 export function chainLogName(chainName: string, chainId: string): string;
 
 // @public
@@ -269,6 +307,9 @@ export function readBackupChains(destination: BackupDestination, chainName?: str
 
 // @public
 export function restoreBackup(options: BackupRestoreOptions): Promise<BackupRestoreReport>;
+
+// @public
+export function verifyBackupRecord(destination: BackupDestination, chains: readonly BackupChain[], name: string): Promise<BackupVerifyResult>;
 
 // (No @packageDocumentation comment for this package)
 

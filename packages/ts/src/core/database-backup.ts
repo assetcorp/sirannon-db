@@ -29,6 +29,8 @@ export interface BackupChainLocation {
   chainName: string
   /** Directory the cycle stages each capture in before that capture goes out. */
   stagingDir: string
+  /** Deadline the operator set on every call to that destination, where they set one. */
+  destinationTimeoutMs?: number
 }
 
 /**
@@ -179,6 +181,7 @@ export class DatabaseBackupController {
       destination: options.destination,
       chainName: options.chainName ?? DEFAULT_CHAIN_NAME,
       stagingDir: options.stagingDir ?? defaultStagingDir(this.sourcePath),
+      ...(options.destinationTimeoutMs === undefined ? {} : { destinationTimeoutMs: options.destinationTimeoutMs }),
     }
   }
 

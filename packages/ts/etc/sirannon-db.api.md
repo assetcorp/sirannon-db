@@ -77,6 +77,7 @@ export interface BackupChainChange {
 export interface BackupChainLocation {
     chainName: string;
     destination: BackupDestination;
+    destinationTimeoutMs?: number;
     stagingDir: string;
 }
 

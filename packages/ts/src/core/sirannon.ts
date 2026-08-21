@@ -78,7 +78,7 @@ export class Sirannon {
    * @throws When the identifier is already registered.
    */
   async open(id: string, path: string, options?: DatabaseOptions): Promise<Database> {
-    this.ensureRunning()
+    this.ensureOpenAllowed(id)
     if (this.dbs.has(id) || this.opening.has(id)) {
       throw new DatabaseAlreadyExistsError(id)
     }
@@ -119,7 +119,7 @@ export class Sirannon {
       this.opening.delete(id)
     }
 
-    if (this._shutdown) {
+    if (this._shutdown && !this.offline.has(id)) {
       await db.close().catch(() => {})
       throw new SirannonError('Sirannon has been shut down', 'SHUTDOWN')
     }
@@ -190,12 +190,12 @@ export class Sirannon {
    *
    * A restore rebuilds a database at the path it already occupies, so no
    * connection may be open on that file while Sirannon replaces its bytes. The
-   * identifier answers nothing for as long as the action continues, and an
+   * identifier answers nothing until that database is open again, though an
    * action that failed still leaves a database open at the end.
    *
    * @param id - Identifier of the database to take offline.
    * @param action - Runs with the database closed, and receives its file path.
-   * @returns What the action produced, what it threw, and what a failed reopen threw.
+   * @returns Whether the action returned, what it produced or threw, and what a failed reopen threw.
    * @throws When no database is open under the identifier, when it refuses writes, or when the close fails.
    *
    * @internal
@@ -215,10 +215,13 @@ export class Sirannon {
       database: db,
       path: opened.path,
       action,
-      reopen: () => {
+      reopen: async () => {
         this.opening.delete(id)
-        this.offline.delete(id)
-        return this.open(id, opened.path, opened.options)
+        try {
+          return await this.open(id, opened.path, opened.options)
+        } finally {
+          this.offline.delete(id)
+        }
       },
     }).finally(() => {
       this.opening.delete(id)
@@ -371,5 +374,10 @@ export class Sirannon {
     if (this._shutdown) {
       throw new SirannonError('Sirannon has been shut down', 'SHUTDOWN')
     }
+  }
+
+  private ensureOpenAllowed(id: string): void {
+    if (this.offline.has(id)) return
+    this.ensureRunning()
   }
 }

@@ -28,18 +28,18 @@ function pause(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function backupSettled(): Promise<void> {
+async function backupSettled(id = 'orders'): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt++) {
-    const status = (await (await fetch(`${baseUrl}/db/orders/backup`)).json()) as BackupCycleStatus
+    const status = (await (await fetch(`${baseUrl}/db/${id}/backup`)).json()) as BackupCycleStatus
     if (!status.running && status.lastRun) return
     await pause(10)
   }
   throw new Error('the backup never finished')
 }
 
-async function restoreSettled(): Promise<BackupRestoreStatus> {
+async function restoreSettled(id = 'orders'): Promise<BackupRestoreStatus> {
   for (let attempt = 0; attempt < 400; attempt++) {
-    const status = (await (await fetch(`${baseUrl}/db/orders/backup/restore`)).json()) as BackupRestoreStatus
+    const status = (await (await fetch(`${baseUrl}/db/${id}/backup/restore`)).json()) as BackupRestoreStatus
     if (status.state === 'done' || status.state === 'failed') return status
     await pause(10)
   }
@@ -78,6 +78,15 @@ describe('the restore route the operator opens', () => {
     await listen()
 
     const response = await fetch(`${baseUrl}/db/orders/backup/restore`, { method: 'POST', body: '{}' })
+
+    expect(response.status).toBe(403)
+    expect((await response.json()).error.code).toBe('BACKUP_RESTORE_NOT_ACCEPTED')
+  })
+
+  it('refuses a shut route before it looks the database up, so one opened without backups is refused the same way', async () => {
+    await listen()
+
+    const response = await fetch(`${baseUrl}/db/ledger/backup/restore`, { method: 'POST', body: '{}' })
 
     expect(response.status).toBe(403)
     expect((await response.json()).error.code).toBe('BACKUP_RESTORE_NOT_ACCEPTED')
@@ -153,6 +162,38 @@ describe('the restore route the operator opens', () => {
 
     expect(response.status).toBe(501)
     expect((await response.json()).error.code).toBe('BACKUP_UNSUPPORTED')
+  })
+
+  it('holds the restore to the deadline the operator set on that destination', async () => {
+    const stored = memoryDestination()
+    let stallReads = false
+    const stalling: MemoryDestination = {
+      ...stored,
+      readPiece: async (name, index) => {
+        if (stallReads) await new Promise<never>(() => {})
+        return stored.readPiece(name, index)
+      },
+    }
+    const slow = await sirannon.open('slow', join(tempDir, 'slow.db'), {
+      backups: {
+        destination: stalling,
+        intervalMs: 0,
+        stagingDir: join(tempDir, 'slow-staging'),
+        destinationTimeoutMs: 50,
+        onError: () => {},
+      },
+    })
+    await slow.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)')
+    await listen({ acceptBackupRestore: true })
+    await fetch(`${baseUrl}/db/slow/backup`, { method: 'POST' })
+    await backupSettled('slow')
+
+    stallReads = true
+    await fetch(`${baseUrl}/db/slow/backup/restore`, { method: 'POST', body: '{}' })
+    const status = await restoreSettled('slow')
+
+    expect(status.state).toBe('failed')
+    expect(status.error?.code).toBe('BACKUP_DESTINATION_ERROR')
   })
 
   it('reports a restore that found no backup reaching back to the moment asked for', async () => {

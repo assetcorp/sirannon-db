@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
+import { reportQuietly } from './cycle-callbacks.js'
 import { captureAndCheckpointTurn, stagedCapturePath } from './cycle-capture.js'
 import {
   decideBackupTurn,
@@ -73,11 +74,11 @@ export class BackupCycle {
       ...request,
       onRun: report => {
         this.statusRecord.ran(report)
-        request.onRun?.(report)
+        reportQuietly(request.onRun, report)
       },
       onProgress: progress => {
         this.statusRecord.progressed(progress)
-        request.onProgress?.(progress)
+        reportQuietly(request.onProgress, progress)
       },
     }
     this.chainName = request.chainName ?? DEFAULT_CHAIN_NAME
@@ -266,10 +267,7 @@ export class BackupCycle {
     const held = await uncapturedLogBytes(this.logPath)
     const passed = held === undefined ? skip : { ...skip, uncapturedLogBytes: held }
     this.statusRecord.skipped(passed)
-    if (!this.request.onSkip) return
-    try {
-      this.request.onSkip(passed)
-    } catch {}
+    reportQuietly(this.request.onSkip, passed)
   }
 
   private async tick(): Promise<void> {
@@ -339,10 +337,7 @@ export class BackupCycle {
   private report(err: unknown): void {
     const failure = toBackupError(err)
     this.statusRecord.failed(failure)
-    if (!this.request.onError) return
-    try {
-      this.request.onError(failure)
-    } catch {}
+    reportQuietly(this.request.onError, failure)
   }
 
   private async replaceChain(): Promise<BackupRunReport | undefined> {

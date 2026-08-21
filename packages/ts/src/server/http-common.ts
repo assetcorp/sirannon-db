@@ -102,7 +102,7 @@ export function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
     sendError(res, 400, 'INVALID_JSON', 'Request body is not valid JSON')
     return null
   }
-  if (typeof parsed !== 'object' || parsed === null) {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     sendError(res, 400, 'INVALID_REQUEST', 'Request body must be a JSON object')
     return null
   }

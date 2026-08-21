@@ -421,6 +421,40 @@ describe('the checkpoint cycle', () => {
   })
 })
 
+describe('a caller whose reporting callbacks throw', () => {
+  it('finishes the turn and records it, so a fault in the reporting fails no backup', async () => {
+    const { build, destination } = await harness()
+    const failing = (): never => {
+      throw new Error('the operator log went away')
+    }
+    const cycle = build({ onRun: failing, onProgress: failing, onError: failing })
+
+    await cycle.start()
+
+    const chains = await cycle.chains()
+    expect(chains[0]?.base?.kind).toBe('full')
+    expect(destination.names()).toContain(chains[0]?.base?.name)
+    expect(cycle.status().lastRun?.kind).toBe('full')
+    expect(cycle.status().lastError).toBeUndefined()
+    await cycle.stop()
+  })
+
+  it('takes the next turn after one whose callbacks threw', async () => {
+    const { build, conn } = await harness()
+    const failing = (): never => {
+      throw new Error('the operator log went away')
+    }
+    const cycle = build({ onRun: failing, onProgress: failing, onError: failing })
+    await cycle.start()
+    await insert(conn, 'first')
+
+    const report = await cycle.runOnce()
+
+    expect(report?.kind).toBe('change')
+    await cycle.stop()
+  })
+})
+
 describe('the turns a caller can ask for at once', () => {
   it('joins every call made before the queued turn starts, so no more than one turn ever waits', async () => {
     const { cycle } = await harness()

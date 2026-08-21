@@ -757,13 +757,14 @@ An implementation lists the pieces stored under `name`, fetches them in index or
 
 ### Chain location
 
-`backupLocation()` states where one database's backups are stored, so a restore of that database reads the same chain. A database opened without `backups`, which includes every read-only database, fails with `BACKUP_UNSUPPORTED`.
+`backupLocation()` states where one database's backups are stored, so a restore of that database reads the same chain. A database opened without `backups`, which includes every read-only database, fails with `BACKUP_UNSUPPORTED`. `destinationTimeoutMs` states the deadline the operator opened that database with, so a restore applies the same deadline to that destination.
 
 ```text
 BackupChainLocation {
-  destination: BackupDestination
-  chainName:   string
-  stagingDir:  string
+  destination:           BackupDestination
+  chainName:             string
+  stagingDir:            string
+  destinationTimeoutMs?: number
 }
 ```
 

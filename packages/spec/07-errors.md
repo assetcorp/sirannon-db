@@ -38,7 +38,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `BACKUP_STALLED` | The copy moved no pages inside the stall deadline. |
 | `BACKUP_DESTINATION_ERROR` | The caller's destination refused a piece, did not answer inside the deadline, or holds pieces that do not match the run that wrote them. |
 | `BACKUP_LOG_REWOUND` | The write-ahead log restarted before a capture read it, so those writes are in no backup. |
-| `BACKUP_CHAIN_BROKEN` | No full copy goes back as far as the moment asked for, the chain is missing a piece the restore needs, or no chain record states the name a verify asked for. |
+| `BACKUP_CHAIN_BROKEN` | No full copy goes back as far as the moment asked for, the chain is missing a piece the restore needs, or no chain record states the name the caller asked to verify. |
 | `BACKUP_RESTORE_NOT_ACCEPTED` | The server was configured with `acceptBackupRestore` false, so it restores no database over the wire. |
 | `BACKUP_RESTORE_IN_PROGRESS` | A restore of that database is already under way and keeps its file to itself. |
 | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured. |
@@ -123,6 +123,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused. |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
+| `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is true and the server has no `authenticate` hook. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |
 | `UNKNOWN_QUERY` | No operation of that name is registered for the database. |
 | `MISSING_ARGUMENT` | A declared argument was absent from the request. |

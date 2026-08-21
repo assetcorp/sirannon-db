@@ -144,17 +144,27 @@ export function chainLogName(chainName: string, chainId: string): string {
   return `${chainName}.${chainId}`
 }
 
-async function appendRecord(
-  destination: BackupDestination,
+type ClaimPiece = (name: string, index: number, bytes: Uint8Array) => Promise<boolean>
+
+async function storeRecord<T>(
+  store: (bytes: Uint8Array) => Promise<T>,
   name: string,
   index: number,
   record: unknown,
-): Promise<void> {
+): Promise<T> {
   try {
-    await destination.writePiece(name, index, encoder.encode(JSON.stringify(record)))
+    return await store(encoder.encode(JSON.stringify(record)))
   } catch (err) {
     throw destinationError(`The destination refused record ${index} of '${name}'`, err)
   }
+}
+
+function appendRecord(destination: BackupDestination, name: string, index: number, record: unknown): Promise<void> {
+  return storeRecord(bytes => destination.writePiece(name, index, bytes), name, index, record)
+}
+
+function claimRecord(claim: ClaimPiece, name: string, index: number, record: unknown): Promise<boolean> {
+  return storeRecord(bytes => claim(name, index, bytes), name, index, record)
 }
 
 async function listRecordIndices(destination: BackupDestination, name: string): Promise<number[]> {
@@ -180,27 +190,10 @@ async function readRecord(destination: BackupDestination, name: string, index: n
 }
 
 async function readRecords(destination: BackupDestination, name: string): Promise<unknown[]> {
-  let listed: { index: number }[]
-  try {
-    listed = await destination.listPieces(name)
-  } catch (err) {
-    throw destinationError(`The destination could not list the records of '${name}'`, err)
-  }
-
-  const ordered = [...listed].sort((left, right) => left.index - right.index)
+  const ordered = (await listRecordIndices(destination, name)).sort((left, right) => left - right)
   const records: unknown[] = []
-  for (const piece of ordered) {
-    let bytes: Uint8Array
-    try {
-      bytes = await destination.readPiece(name, piece.index)
-    } catch (err) {
-      throw destinationError(`The destination could not return record ${piece.index} of '${name}'`, err)
-    }
-    try {
-      records.push(JSON.parse(decoder.decode(bytes)))
-    } catch (err) {
-      throw destinationError(`Record ${piece.index} of '${name}' is not a record Sirannon wrote`, err)
-    }
+  for (const index of ordered) {
+    records.push(await readRecord(destination, name, index))
   }
   return records
 }
@@ -228,9 +221,11 @@ function chainRecords(records: readonly unknown[], name: string): BackupChainRec
  * list without being told its identifier.
  *
  * During a failover, two nodes of a replication group can pick the same index
- * for one moment, where the second write would replace the first. This reads
- * back the record it wrote, and moves on to the next index wherever it finds
- * another chain, so both chains survive.
+ * for one moment, where the second write would replace the first. A destination
+ * that claims a place through `writePieceIfAbsent` settles that outright, and
+ * this moves on to the next index wherever the claim fails. A destination
+ * without one has its record read back instead, which catches the other node's
+ * write except where it lands between the two calls.
  *
  * @param destination - Where the list is stored.
  * @param chainName - Name the list is stored under.
@@ -245,7 +240,14 @@ export async function appendChainHead(
   const taken = await listRecordIndices(destination, chainName)
   let index = taken.reduce((next, piece) => Math.max(next, piece + 1), 0)
 
+  const claim = destination.writePieceIfAbsent?.bind(destination)
+
   for (let attempt = 0; attempt < HEAD_APPEND_ATTEMPTS; attempt++) {
+    if (claim) {
+      if (await claimRecord(claim, chainName, index, head)) return index
+      index++
+      continue
+    }
     await appendRecord(destination, chainName, index, head)
     const stored = await readRecord(destination, chainName, index)
     if (isBackupChainHead(stored) && stored.chainId === head.chainId) return index

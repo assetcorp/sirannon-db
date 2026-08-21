@@ -53,6 +53,38 @@ describe('destinationWithDeadline', () => {
     await expectDeadline(bounded.listPieces('copy.db'), "list the pieces of 'copy.db'")
   })
 
+  it('carries the claim of a destination that has one, so a chain still keeps its place', async () => {
+    const destination = memoryDestination()
+    const claiming: BackupDestination = {
+      ...destination,
+      writePieceIfAbsent: async (name, index, bytes) => {
+        await destination.writePiece(name, index, bytes)
+        return true
+      },
+    }
+    const bounded = destinationWithDeadline(claiming, DEFAULT_DESTINATION_TIMEOUT_MS)
+
+    expect(await bounded.writePieceIfAbsent?.('copy.db', 0, new Uint8Array([7]))).toBe(true)
+    expect(await bounded.readPiece('copy.db', 0)).toEqual(new Uint8Array([7]))
+  })
+
+  it('offers no claim of its own where the destination has none', () => {
+    const bounded = destinationWithDeadline(memoryDestination(), DEFAULT_DESTINATION_TIMEOUT_MS)
+
+    expect(bounded.writePieceIfAbsent).toBeUndefined()
+  })
+
+  it('stops a run whose destination never answers a claim', async () => {
+    vi.useFakeTimers()
+    const silentClaim: BackupDestination = { ...SILENT, writePieceIfAbsent: () => new Promise<boolean>(() => {}) }
+    const bounded = destinationWithDeadline(silentClaim, DEFAULT_DESTINATION_TIMEOUT_MS)
+
+    await expectDeadline(
+      bounded.writePieceIfAbsent?.('copy.db', 3, new Uint8Array(1)) ?? Promise.resolve(),
+      "claim piece 3 of 'copy.db'",
+    )
+  })
+
   it('leaves the calls unbounded where the deadline is zero', () => {
     const destination = memoryDestination()
 

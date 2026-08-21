@@ -3,8 +3,8 @@
  *
  * `'replica'` prefers a replica and falls back to the primary where the group
  * has no other node to offer. `'primary'` puts the backups on the node the
- * group names primary, and names nobody while that node is out of service. An
- * object names one node outright. A node matching itself against that name
+ * group names primary, and leaves them to no node at all while that node is out
+ * of service. An object names one node outright. A node matching itself against that name
  * needs no coordinator to answer.
  *
  * @public

@@ -23,6 +23,8 @@ export interface StartedChain {
   chainId: string
   /** Epoch milliseconds it started. */
   startedAt: number
+  /** Where it went in the list of chains, counted from zero. */
+  headIndex: number
   /** What the full copy at its head wrote. */
   report: BackupRunReport
 }
@@ -82,9 +84,9 @@ export async function startChain(
     startedAt,
     ...(previousChainId ? { previousChainId } : {}),
   }
-  await appendChainHead(request.destination, chainName, head)
+  const headIndex = await appendChainHead(request.destination, chainName, head)
 
-  return { chainId, startedAt, report }
+  return { chainId, startedAt, headIndex, report }
 }
 
 /**

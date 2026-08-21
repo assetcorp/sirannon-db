@@ -179,7 +179,9 @@ A node that takes none of the backups keeps no chain of its own, though it still
 
 A node that cannot reach its coordinator holds everything where it is. It captures nothing, trims nothing, and reports the skip, since the frames it has yet to capture are in no backup and a trim would lose them. Watch for those skips: a node partitioned for hours will grow its log for the whole partition. Set `maxUncapturedLogBytes` to bound how far that log grows.
 
-`onSkip` receives one report per turn that wrote nothing. Its `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence you can log as it stands.
+`onSkip` receives one report per turn that wrote nothing. Its `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence you can log as it stands. Each report also carries `uncapturedLogBytes`, the size of the write-ahead log at the moment the node skipped, so alerting on that figure tells you a node is holding its log long before any limit ends its chain.
+
+Sirannon reports through `onError` as the cycle starts where you give it a `replicationGroup` and a destination with no `writePieceIfAbsent`, because two of those nodes starting a chain at the same moment would lose one between them. Add the function, or give each node a `chainName` of its own.
 
 A database opened without `replicationGroup` takes every turn, which is the answer a single-node deployment wants. Set one on every node of a group. Two nodes backing up at once write two chains into the same destination, so a restore then has to choose between them.
 

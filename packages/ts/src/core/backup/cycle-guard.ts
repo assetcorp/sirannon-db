@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises'
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
-import { readChainHeads } from './chain.js'
+import { readChainHeadAt, readChainHeads } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
 import type { BackupDestination } from './destination.js'
 import {
@@ -22,6 +22,34 @@ export interface BackupTurnDecision {
 }
 
 const TAKES_THE_TURN: BackupTurnDecision = { runs: true }
+
+const STARTS_A_FRESH_CHAIN = ['BACKUP_LOG_REWOUND', 'BACKUP_CHAIN_BROKEN']
+
+/**
+ * Says whether a failed turn leaves a chain nothing can extend, which is what
+ * sends the cycle back to a full copy.
+ *
+ * @param err - What the turn failed with.
+ * @returns Whether the next turn has to start a fresh chain.
+ *
+ * @internal
+ */
+export function startsAFreshChain(err: unknown): boolean {
+  return err instanceof SirannonError && STARTS_A_FRESH_CHAIN.includes(err.code)
+}
+
+/**
+ * Turns whatever a turn threw into the error an operator reads.
+ *
+ * @param value - What the turn threw.
+ * @returns That error, or one naming the cycle where it was no error at all.
+ *
+ * @internal
+ */
+export function toBackupError(value: unknown): Error {
+  if (value instanceof Error) return value
+  return new SirannonError(typeof value === 'string' ? value : 'The backup cycle failed', 'BACKUP_ERROR')
+}
 
 function causeOf(err: unknown): string {
   if (err instanceof Error) return err.message
@@ -139,10 +167,15 @@ export async function checkpointWithoutCapturing(request: {
  * that lists this one, and a record appended under a chain no listing names is
  * a record no restore reaches.
  *
+ * A cycle that remembers the place its chain took reads that one record, which
+ * costs the destination a single read however many chains it holds. Anything
+ * else it finds there sends it back to the whole list.
+ *
  * @param destination - Where the list of chains is stored.
  * @param chainName - Name that list is stored under.
  * @param chainId - Identifier of the chain to look for.
  * @param databaseId - Identifier the report names the database by.
+ * @param headIndex - The place that chain took, where the cycle recorded one.
  * @returns The error to report, or null while the list still holds the chain.
  *
  * @internal
@@ -152,15 +185,67 @@ export async function chainMissingFromList(
   chainName: string,
   chainId: string,
   databaseId: string,
+  headIndex?: number,
 ): Promise<SirannonError | null> {
+  if (headIndex !== undefined) {
+    const listed = await readChainHeadAt(destination, chainName, headIndex).catch(() => undefined)
+    if (listed?.chainId === chainId) return null
+    if (listed) return chainLost(chainName, chainId, databaseId)
+  }
+
   const heads = await readChainHeads(destination, chainName)
   if (heads.some(head => head.chainId === chainId)) return null
+  return chainLost(chainName, chainId, databaseId)
+}
 
+function chainLost(chainName: string, chainId: string, databaseId: string): SirannonError {
   return new SirannonError(
     `The list of chains in '${chainName}' no longer names chain '${chainId}', so no restore can reach what that chain captured of database '${databaseId}'. ` +
       'The next turn starts a fresh chain with a full copy.',
     'BACKUP_CHAIN_BROKEN',
   )
+}
+
+/**
+ * Tells an operator whose nodes share a destination that cannot claim a place
+ * in the list of chains, which is the one arrangement where two nodes starting
+ * a chain at the same moment lose one between them.
+ *
+ * @param request - The operator's settings, plus the database the cycle runs against.
+ * @param chainName - Name the list of chains is stored under.
+ * @returns The error to report, or null where the arrangement is sound.
+ *
+ * @internal
+ */
+export function unclaimableChainList(
+  request: { destination: BackupDestination; replicationGroup?: unknown; databaseId: string },
+  chainName: string,
+): SirannonError | null {
+  if (!request.replicationGroup || request.destination.writePieceIfAbsent) return null
+
+  return new SirannonError(
+    `The backups of database '${request.databaseId}' belong to a replication group, and this destination offers no writePieceIfAbsent. ` +
+      `Two nodes starting a chain at the same moment would each replace the record listing the other's in '${chainName}'. ` +
+      'Give the destination that function, or give each node a chainName of its own.',
+    'BACKUP_DESTINATION_ERROR',
+  )
+}
+
+/**
+ * Measures the write-ahead log a node is holding, for the report it gives an
+ * operator each turn it backs nothing up.
+ *
+ * @param logPath - Path of the write-ahead log.
+ * @returns How many bytes it holds, or undefined where the filesystem answers none.
+ *
+ * @internal
+ */
+export async function uncapturedLogBytes(logPath: string): Promise<number | undefined> {
+  try {
+    return (await stat(logPath)).size
+  } catch {
+    return undefined
+  }
 }
 
 /**

@@ -72,6 +72,12 @@ export interface BackupSkip {
   nodeId?: string
   /** Identifier of the node whose turn it was, where the group named one. */
   preferredNodeId?: string
+  /**
+   * How many bytes of write-ahead log this node was holding when it skipped.
+   * Alert on this figure rising and you hear about a node holding its log long
+   * before `maxUncapturedLogBytes` ends its chain.
+   */
+  uncapturedLogBytes?: number
 }
 
 /**

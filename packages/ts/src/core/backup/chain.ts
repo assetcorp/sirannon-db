@@ -278,6 +278,24 @@ export async function appendChainRecord(
 }
 
 /**
+ * Reads the one place in the list a chain took, which is what a cycle holding
+ * that place checks rather than reading every chain the destination lists.
+ *
+ * @param destination - Where the list is stored.
+ * @param chainName - Name the list is stored under.
+ * @param index - The place to read, counted from zero.
+ * @returns The chain listed there, or null where that record lists none.
+ */
+export async function readChainHeadAt(
+  destination: BackupDestination,
+  chainName: string,
+  index: number,
+): Promise<BackupChainHead | null> {
+  const record = await readRecord(destination, chainName, index)
+  return isBackupChainHead(record) ? record : null
+}
+
+/**
  * Reads the list of chains a destination holds.
  *
  * @param destination - Where the list is stored.

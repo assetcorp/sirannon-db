@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
-import { createBackupCycle } from '../../backup/cycle.js'
+import { createBackupCycle } from '../../backup/cycle-factory.js'
 import type { BackupCycleRequest } from '../../backup/cycle-options.js'
 import type { BackupDestination } from '../../backup/destination.js'
 import type { BackupGroupMembership, BackupSkip } from '../../backup/preferred-node.js'
@@ -47,6 +47,18 @@ function heldOnChangePieces(destination: BackupDestination, gate: Promise<void>)
   }
 }
 
+function claiming(destination: BackupDestination): BackupDestination {
+  return {
+    ...destination,
+    async writePieceIfAbsent(name, index, bytes) {
+      const taken = await destination.listPieces(name)
+      if (taken.some(piece => piece.index === index)) return false
+      await destination.writePiece(name, index, bytes)
+      return true
+    },
+  }
+}
+
 async function harness(nodeId = 'node-b', name = 'source', shared?: MemoryDestination): Promise<Harness> {
   const dbPath = join(temp.path, `${name}.db`)
   const conn = await testDriver.open(dbPath, { walMode: true, walAutoCheckpoint: 0 })
@@ -64,7 +76,7 @@ async function harness(nodeId = 'node-b', name = 'source', shared?: MemoryDestin
   const errors: Error[] = []
 
   const request: BackupCycleRequest = {
-    destination,
+    destination: claiming(destination),
     intervalMs: 0,
     databaseId: 'main',
     sourcePath: dbPath,
@@ -155,6 +167,36 @@ describe('a backup cycle that every node of a group carries', () => {
     expect(skips[0]?.reason).toBe('group-unavailable')
     expect(skips[0]?.message).toContain('etcd deadline exceeded')
     expect(statSync(logPath).size).toBeGreaterThan(0)
+  })
+
+  it('counts the log a skipping node is holding, so an operator sees it grow before any limit bites', async () => {
+    const { build, conn, group, logPath, skips } = await harness()
+    const cycle = build()
+    await cycle.start()
+    await insert(conn, 'first')
+    group.fail = new Error('etcd deadline exceeded')
+
+    await cycle.runOnce()
+
+    expect(skips.at(-1)?.uncapturedLogBytes).toBe(statSync(logPath).size)
+  })
+
+  it('warns once where a group shares a destination that cannot claim a place in the list', async () => {
+    const { build, destination, errors } = await harness()
+    const cycle = build({ destination })
+
+    await cycle.start()
+    await cycle.runOnce()
+
+    expect(errors.filter(err => err.message.includes('writePieceIfAbsent'))).toHaveLength(1)
+  })
+
+  it('warns about no such destination where it can claim a place', async () => {
+    const { build, errors } = await harness()
+
+    await build().start()
+
+    expect(errors.filter(err => err.message.includes('writePieceIfAbsent'))).toEqual([])
   })
 
   it('starts a fresh chain with a full copy once a failover brings the backups back to it', async () => {

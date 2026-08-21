@@ -1,8 +1,15 @@
+import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { SirannonError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
-import type { PendingCapture } from './cycle-state.js'
+import { checkpointLog } from './checkpoint.js'
+import type { BackupCycleRequest } from './cycle-options.js'
+import { type BackupCycleState, type PendingCapture, removeCycleState, writeCycleState } from './cycle-state.js'
 import { logFrameOffset } from './wal-format.js'
+
+const STAGED_CAPTURE_PREFIX = 'capture-'
+const STAGED_CAPTURE_SUFFIX = '.wal'
+
 import { copyLogRange, cursorChecksum, type LogCursor, readLogFileHeader, sameLog, scanLogFrames } from './wal-log.js'
 
 /** What one capture reads from, and where it puts what it finds.
@@ -40,7 +47,7 @@ export interface CaptureRequest {
  * @returns Path of that file.
  */
 export function stagedCapturePath(stagingDir: string, sequence: number): string {
-  return join(stagingDir, `capture-${sequence}.wal`)
+  return join(stagingDir, `${STAGED_CAPTURE_PREFIX}${sequence}${STAGED_CAPTURE_SUFFIX}`)
 }
 
 function rewoundError(request: CaptureRequest, detail: string): SirannonError {
@@ -137,5 +144,85 @@ export async function captureLogFrames(request: CaptureRequest): Promise<Pending
     frameCount: scan.lastCommitFrame - from.frame,
     byteLength,
     pageSize: header.pageSize,
+  }
+}
+
+/** What one turn of the cycle reads its frames with, and what it records them against.
+ * @internal
+ */
+export interface CaptureTurnRequest {
+  /** Destination, naming, and the locks the turn takes its checkpoint under. */
+  request: BackupCycleRequest
+  /** What the cycle records about the chain it is extending, which this advances. */
+  state: BackupCycleState
+  /** Path of the database's write-ahead log. */
+  logPath: string
+  /** Directory Sirannon stages the frames in. */
+  stagingDir: string
+  /** What the pieces are named after at the destination. */
+  namePrefix: string
+}
+
+/**
+ * Reads the frames written since the previous turn and then checkpoints the
+ * log, both with nothing else holding the writer lock.
+ *
+ * The order is what makes the capture safe. SQLite lets a checkpoint overwrite
+ * frames nothing has read yet, and it reports success either way, so the frames
+ * reach local disk first and the checkpoint follows inside the same held
+ * writer. Sirannon writes the state file after each of those two steps, which
+ * is what lets a turn interrupted between them start again where it stopped.
+ *
+ * @param turn - The cycle's request, its state, and where Sirannon stages the frames.
+ *
+ * @internal
+ */
+export async function captureAndCheckpointTurn(turn: CaptureTurnRequest): Promise<void> {
+  const { request, state, stagingDir } = turn
+  await request.runExclusive(async () => {
+    const captured = await captureLogFrames({
+      sourcePath: request.sourcePath,
+      logPath: turn.logPath,
+      stagingDir,
+      chainId: state.chainId,
+      namePrefix: turn.namePrefix,
+      sequence: state.records,
+      cursor: state.cursor,
+      expectNewLog: state.closedCleanly,
+    })
+
+    if (captured) {
+      state.pending = captured
+      await writeCycleState(stagingDir, state)
+    }
+
+    const checkpointed = (await checkpointLog(request.acquireWriter())).emptied
+    const cursor = captured?.cursor ?? state.cursor
+    if (cursor) cursor.checkpointed = checkpointed
+    state.closedCleanly = false
+    await writeCycleState(stagingDir, state)
+  })
+}
+
+/**
+ * Discards the chain a staging directory was built around, by removing the
+ * state file and every set of frames staged against that chain.
+ *
+ * A restore calls this before it replaces the database file, since the rebuilt
+ * file's log continues none of the old chain and the frames staged against that
+ * chain then belong to no backup. Files left there would occupy disk for a
+ * chain nothing extends.
+ *
+ * @param stagingDir - Directory the cycle staged its captures in.
+ *
+ * @internal
+ */
+export async function discardStagedChain(stagingDir: string): Promise<void> {
+  await removeCycleState(stagingDir)
+  const entries = await readdir(stagingDir).catch(() => [])
+  for (const entry of entries) {
+    if (entry.startsWith(STAGED_CAPTURE_PREFIX) && entry.endsWith(STAGED_CAPTURE_SUFFIX)) {
+      await rm(join(stagingDir, entry), { force: true })
+    }
   }
 }

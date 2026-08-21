@@ -14,12 +14,13 @@ import {
   type BackupRestoreProgress,
   type BackupRestoreReport,
   DEFAULT_RESTORE_BATCH_SIZE,
+  MAX_RESTORE_BATCH_SIZE,
 } from './restore-options.js'
 
 function assertBatchSize(batchSize: number): void {
-  if (!Number.isInteger(batchSize) || batchSize < 1) {
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_RESTORE_BATCH_SIZE) {
     throw new SirannonError(
-      `A restore replays at least one change piece per batch, and the batch size given was ${batchSize}`,
+      `A restore replays between one and ${MAX_RESTORE_BATCH_SIZE} change pieces per batch, and the batch size given was ${batchSize}`,
       'BACKUP_ERROR',
     )
   }

@@ -1,7 +1,7 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import type { BackupDestination } from './destination.js'
 import type { BackupGroupSource, BackupNodePreference, BackupSkip } from './preferred-node.js'
-import type { BackupRunReport, BackupToDestinationOptions } from './report.js'
+import type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './report.js'
 
 /** How long the cycle waits between captures when nobody sets an interval.
  * @internal
@@ -108,6 +108,14 @@ export interface BackupCycleOptions {
   preferredNode?: BackupNodePreference
   /** Called with the report of every backup the cycle finishes. */
   onRun?: (report: BackupRunReport) => void
+  /**
+   * Called at step resolution while a turn proceeds, with the counters that
+   * turn has reached. A caller sending a large full copy to remote storage
+   * drives its own reporting from these. The cycle also records the latest
+   * figures as they arrive, so take this callback where you want every step,
+   * and read the cycle's status where you want the figure as it stands.
+   */
+  onProgress?: (progress: BackupProgress) => void
   /**
    * Called with every turn the cycle passed over, and what it passed it over
    * for. A node that takes none of its group's backups reports one of these

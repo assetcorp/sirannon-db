@@ -79,6 +79,7 @@ Both options reach a local `db.live` only. A remote subscription carries no opti
 | `authenticate` | `AuthenticateHook<Identity>` | - | Runs before every database route and WebSocket upgrade; returns the caller identity, throws `RequestDeniedError` to refuse |
 | `operations` | `OperationRegistry<Identity>` | - | Reads and writes this server serves by name, keyed by database ID |
 | `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
+| `acceptBackupRestore` | `boolean` | `false` | Whether the server rebuilds a database from its backups over the network |
 | `resolveExecutionTarget` | `ServerExecutionTargetResolver` | - | Resolves the target each database runs against, which is how replication enforces authority |
 | `getReplicationStatus` | `() => ReplicationStatusInfo \| null` | - | Feeds `GET /health/ready` with replication state |
 | `getClusterStatus` | `(databaseId: string) => ClusterStatusInfo \| null` | - | Feeds `GET /db/{id}/cluster` with routing metadata |

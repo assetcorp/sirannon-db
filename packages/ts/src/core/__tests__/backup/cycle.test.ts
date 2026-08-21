@@ -420,3 +420,67 @@ describe('the checkpoint cycle', () => {
     expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
   })
 })
+
+describe('a caller whose reporting callbacks throw', () => {
+  it('finishes the turn and records it, so a fault in the reporting fails no backup', async () => {
+    const { build, destination } = await harness()
+    const failing = (): never => {
+      throw new Error('the operator log went away')
+    }
+    const cycle = build({ onRun: failing, onProgress: failing, onError: failing })
+
+    await cycle.start()
+
+    const chains = await cycle.chains()
+    expect(chains[0]?.base?.kind).toBe('full')
+    expect(destination.names()).toContain(chains[0]?.base?.name)
+    expect(cycle.status().lastRun?.kind).toBe('full')
+    expect(cycle.status().lastError).toBeUndefined()
+    await cycle.stop()
+  })
+
+  it('takes the next turn after one whose callbacks threw', async () => {
+    const { build, conn } = await harness()
+    const failing = (): never => {
+      throw new Error('the operator log went away')
+    }
+    const cycle = build({ onRun: failing, onProgress: failing, onError: failing })
+    await cycle.start()
+    await insert(conn, 'first')
+
+    const report = await cycle.runOnce()
+
+    expect(report?.kind).toBe('change')
+    await cycle.stop()
+  })
+})
+
+describe('the turns a caller can ask for at once', () => {
+  it('joins every call made before the queued turn starts, so no more than one turn ever waits', async () => {
+    const { cycle } = await harness()
+    await cycle.start()
+
+    const first = cycle.runOnce()
+    const second = cycle.runOnce()
+    const third = cycle.runOnce()
+
+    expect(second).toBe(first)
+    expect(third).toBe(first)
+    await Promise.all([first, second, third])
+    expect(cycle.status().running).toBe(false)
+    await cycle.stop()
+  })
+
+  it('takes a fresh turn once the queued one has started', async () => {
+    const { cycle } = await harness()
+    await cycle.start()
+
+    const queued = cycle.runOnce()
+    await queued
+    const later = cycle.runOnce()
+
+    expect(later).not.toBe(queued)
+    await later
+    await cycle.stop()
+  })
+})

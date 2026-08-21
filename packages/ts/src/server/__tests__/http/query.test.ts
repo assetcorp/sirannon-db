@@ -120,6 +120,17 @@ describe('POST /db/:id/query', () => {
     expect(body.error.code).toBe('INVALID_REQUEST')
   })
 
+  it('returns 400 for a body that parses as a JSON array', async () => {
+    const res = await fetch(`${baseUrl}/db/test/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '[]',
+    })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as ApiResponse
+    expect(body.error.code).toBe('INVALID_REQUEST')
+  })
+
   it('returns 400 for invalid JSON body', async () => {
     const res = await fetch(`${baseUrl}/db/test/query`, {
       method: 'POST',

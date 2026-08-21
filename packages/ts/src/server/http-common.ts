@@ -95,18 +95,24 @@ export function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
     return null
   }
 
+  let parsed: unknown
   try {
-    return JSON.parse(raw.toString('utf-8')) as T
+    parsed = JSON.parse(raw.toString('utf-8'))
   } catch {
     sendError(res, 400, 'INVALID_JSON', 'Request body is not valid JSON')
     return null
   }
+  if (typeof parsed !== 'object' || parsed === null) {
+    sendError(res, 400, 'INVALID_REQUEST', 'Request body must be a JSON object')
+    return null
+  }
+  return parsed as T
 }
 
-export function sendJson(res: HttpResponse, data: unknown): void {
+export function sendJson(res: HttpResponse, data: unknown, status = '200 OK'): void {
   const payload = JSON.stringify(data)
   res.cork(() => {
-    res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
+    res.writeStatus(status).writeHeader('Content-Type', 'application/json').end(payload)
   })
 }
 
@@ -150,6 +156,12 @@ export function httpStatusForError(err: SirannonError): number {
       return 409
     case 'HOOK_DENIED':
       return 403
+    case 'BACKUP_CHAIN_BROKEN':
+      return 409
+    case 'BACKUP_UNSUPPORTED':
+      return 501
+    case 'BACKUP_DESTINATION_ERROR':
+      return 502
     case 'DATABASE_CLOSED':
     case 'SHUTDOWN':
     case 'READ_CONCERN_ERROR':

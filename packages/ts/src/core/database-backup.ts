@@ -1,5 +1,5 @@
 import { type BackupCapabilities, describeBackupCapabilities } from './backup/capabilities.js'
-import type { BackupChain, BackupChainRecord } from './backup/chain.js'
+import { type BackupChain, type BackupChainRecord, DEFAULT_CHAIN_NAME } from './backup/chain.js'
 import {
   type BackupRestorePlan,
   type BackupSafeToDeleteOptions,
@@ -7,14 +7,29 @@ import {
   planBackupRestore,
 } from './backup/chain-queries.js'
 import type { BackupCycle } from './backup/cycle.js'
-import type { BackupCycleOptions } from './backup/cycle-options.js'
+import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
+import type { BackupCycleStatus } from './backup/cycle-status.js'
+import type { BackupDestination } from './backup/destination.js'
 import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import { startCopyWithoutHoldingWriter } from './backup/start-guard.js'
+import type { BackupVerifyResult } from './backup/verify.js'
 import type { BackupEngine, DriverCapabilities, SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { SirannonError } from './errors.js'
 import type { BackupScheduleOptions } from './types.js'
 
 type RunExclusive = (op: () => Promise<void>) => Promise<void>
+
+/** Where one database's backups are stored, and what a restore of that database reads.
+ * @public
+ */
+export interface BackupChainLocation {
+  /** The destination its pieces and its chain records go to. */
+  destination: BackupDestination
+  /** Name that destination lists its chains under. */
+  chainName: string
+  /** Directory the cycle stages each capture in before that capture goes out. */
+  stagingDir: string
+}
 
 /**
  * Refuses a database whose change log no cycle could ever read. The refusal
@@ -51,6 +66,7 @@ export function assertChangeLogCaptureSupported(
 export class DatabaseBackupController {
   private readonly cancellers: (() => void)[] = []
   private cycle: BackupCycle | null = null
+  private cycleOptions: BackupCycleOptions | null = null
   private cycleStarted: Promise<void> = Promise.resolve()
 
   constructor(
@@ -75,7 +91,7 @@ export class DatabaseBackupController {
   private requireCycle(): BackupCycle {
     if (!this.cycle) {
       throw new SirannonError(
-        `Database '${this.databaseId}' opened without the backups option, so it captures no change log and holds no chain`,
+        `Database '${this.databaseId}' opened without the backups option, so it captures no change log and extends no chain`,
         'BACKUP_UNSUPPORTED',
       )
     }
@@ -121,6 +137,7 @@ export class DatabaseBackupController {
    */
   startCycle(options: BackupCycleOptions): void {
     const engine = this.require()
+    this.cycleOptions = options
     this.cycle = engine.createCycle({
       ...options,
       databaseId: this.databaseId,
@@ -144,6 +161,29 @@ export class DatabaseBackupController {
 
   chains(): Promise<BackupChain[]> {
     return this.requireCycle().chains()
+  }
+
+  status(): BackupCycleStatus {
+    return this.requireCycle().status()
+  }
+
+  location(): BackupChainLocation {
+    const options = this.cycleOptions
+    if (!options) {
+      throw new SirannonError(
+        `Database '${this.databaseId}' opened without the backups option, so it captures no change log and extends no chain`,
+        'BACKUP_UNSUPPORTED',
+      )
+    }
+    return {
+      destination: options.destination,
+      chainName: options.chainName ?? DEFAULT_CHAIN_NAME,
+      stagingDir: options.stagingDir ?? defaultStagingDir(this.sourcePath),
+    }
+  }
+
+  verify(name: string): Promise<BackupVerifyResult> {
+    return this.requireCycle().verify(name)
   }
 
   async restorePlan(moment: number): Promise<BackupRestorePlan> {

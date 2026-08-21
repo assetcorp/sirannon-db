@@ -41,7 +41,9 @@ Over the network, an HTTP response and a WebSocket error message carry the same 
 | - | `BACKUP_STALLED` | The copy moved no pages inside the stall deadline |
 | - | `BACKUP_DESTINATION_ERROR` | Your destination refused a piece, or holds pieces that do not match the run that wrote them |
 | - | `BACKUP_LOG_REWOUND` | The log restarted before the capture reached it, so those writes are in no backup |
-| - | `BACKUP_CHAIN_BROKEN` | No full copy reaches back to the moment you asked for, or a piece the chain needs is missing |
+| - | `BACKUP_CHAIN_BROKEN` | No full copy goes back as far as the moment you asked for, a piece the chain needs is missing, or no chain record states the name you asked to check |
+| - | `BACKUP_RESTORE_NOT_ACCEPTED` | The server runs with `acceptBackupRestore` off, so it restores no database over the wire |
+| - | `BACKUP_RESTORE_IN_PROGRESS` | A restore of that database is already under way and keeps its file to itself |
 | `ConnectionPoolError` | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured |
 | `MaxDatabasesError` | `MAX_DATABASES` | Opening a database would pass the configured cap |
 | `ExtensionError` | `EXTENSION_ERROR` | A native SQLite extension could not be loaded |

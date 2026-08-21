@@ -64,6 +64,7 @@ export async function startChain(
     ...(request.stallTimeoutMs === undefined ? {} : { stallTimeoutMs: request.stallTimeoutMs }),
     ...(request.destinationTimeoutMs === undefined ? {} : { destinationTimeoutMs: request.destinationTimeoutMs }),
     ...(request.noProgressStepLimit === undefined ? {} : { noProgressStepLimit: request.noProgressStepLimit }),
+    ...(request.onProgress === undefined ? {} : { onProgress: request.onProgress }),
   })
 
   const base: BackupChainBase = {
@@ -118,7 +119,16 @@ export async function transferCapture(
     pending.name,
     pieceBytes,
     request.fingerprint ?? true,
-    () => {},
+    (piecesWritten, bytesWritten) =>
+      request.onProgress?.({
+        runId: pending.runId,
+        phase: 'transfer',
+        totalPages: pending.frameCount,
+        remainingPages: 0,
+        restarts: 0,
+        piecesWritten,
+        bytesWritten,
+      }),
   )
   const finishedAt = Date.now()
 
@@ -202,4 +212,42 @@ export async function sendStagedCapture(
   await rm(stagedPath, { force: true })
   request.onRun?.(report)
   return report
+}
+
+/**
+ * Starts a fresh chain with a full copy and returns the state the cycle records
+ * against that chain.
+ *
+ * A cycle calls this on its first turn, once a chain has passed its full-copy
+ * interval, and where a log restarted before a capture had read it.
+ *
+ * @param request - Destination, naming, and the full copy to take.
+ * @param chainName - Name the list of chains is stored under.
+ * @param namePrefix - What to name the copy after.
+ * @param stagingDir - Directory the cycle stages its captures in.
+ * @param previousChainId - The chain this one replaces, where the cycle was extending one.
+ * @returns The state to record against the new chain, and what its full copy wrote.
+ *
+ * @internal
+ */
+export async function beginReplacementChain(
+  request: BackupCycleRequest,
+  chainName: string,
+  namePrefix: string,
+  stagingDir: string,
+  previousChainId?: string,
+): Promise<{ state: BackupCycleState; report: BackupRunReport }> {
+  const started = await startChain(request, chainName, namePrefix, previousChainId)
+  const state: BackupCycleState = {
+    chainName,
+    chainId: started.chainId,
+    chainStartedAt: started.startedAt,
+    headIndex: started.headIndex,
+    records: 1,
+    cursor: null,
+    pending: null,
+    closedCleanly: false,
+  }
+  await writeCycleState(stagingDir, state)
+  return { state, report: started.report }
 }

@@ -1,10 +1,12 @@
 import { Database } from './database.js'
 import type { SQLiteDriver } from './driver/types.js'
-import { DatabaseAlreadyExistsError, DatabaseNotFoundError, MigrationError, SirannonError } from './errors.js'
+import { DatabaseAlreadyExistsError, DatabaseNotFoundError, ReadOnlyError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
+import { RegistryMigrationSet } from './migrations/registry-set.js'
 import type { Migration } from './migrations/types.js'
+import { type OfflineOutcome, takeDatabaseOffline } from './sirannon-offline.js'
 import type {
   AfterQueryHook,
   BeforeConnectHook,
@@ -24,15 +26,18 @@ import type {
  */
 export class Sirannon {
   private readonly dbs = new Map<string, Database>()
+  private readonly openedWith = new Map<string, { path: string; options?: DatabaseOptions }>()
+  private readonly offline = new Set<string>()
+  private readonly offlineWork = new Set<Promise<unknown>>()
   private readonly opening = new Set<string>()
   private readonly resolving = new Map<string, Promise<Database | undefined>>()
-  private migrationSet: Promise<Migration[]> | null = null
   private _shutdown = false
 
   private readonly _driver: SQLiteDriver
   private readonly hookRegistry: HookRegistry
   private readonly metricsCollector: MetricsCollector | null
   private readonly lifecycleManager: LifecycleManager | null
+  private readonly migrations: RegistryMigrationSet
 
   /** The driver, hooks, metrics, lifecycle, migrations, and writer-worker default this registry was built with. */
   readonly options: SirannonOptions
@@ -46,6 +51,7 @@ export class Sirannon {
     this.options = options
     this._driver = options.driver
     this.hookRegistry = new HookRegistry(options.hooks)
+    this.migrations = new RegistryMigrationSet(options.migrations)
     this.metricsCollector = options.metrics ? new MetricsCollector(options.metrics) : null
     this.lifecycleManager = options.lifecycle
       ? new LifecycleManager(options.lifecycle, {
@@ -79,13 +85,15 @@ export class Sirannon {
 
     this.opening.add(id)
 
+    const resolvedOptions = this.withRegistryDefaults(options)
+
     let db: Database
     try {
       if (this.hookRegistry.has('beforeConnect')) {
         this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
       }
 
-      db = await Database.create(id, path, this._driver, this.withRegistryDefaults(options), {
+      db = await Database.create(id, path, this._driver, resolvedOptions, {
         parentHooks: this.hookRegistry,
         metrics: this.metricsCollector ?? undefined,
       })
@@ -99,7 +107,7 @@ export class Sirannon {
     }
 
     try {
-      await this.applyRegistryMigrations(db)
+      await this.migrations.applyTo(db)
     } catch (err) {
       await db.close().catch(() => {})
       if (err instanceof SirannonError) throw err
@@ -118,6 +126,7 @@ export class Sirannon {
 
     db.addCloseListener(() => {
       this.dbs.delete(id)
+      this.openedWith.delete(id)
       this.lifecycleManager?.untrack(id)
 
       if (this.hookRegistry.has('databaseClose')) {
@@ -135,6 +144,7 @@ export class Sirannon {
     })
 
     this.dbs.set(id, db)
+    this.openedWith.set(id, resolvedOptions === undefined ? { path } : { path, options: resolvedOptions })
     this.lifecycleManager?.markActive(id)
 
     if (this.hookRegistry.has('databaseOpen')) {
@@ -174,6 +184,52 @@ export class Sirannon {
   }
 
   /**
+   * Closes one database, calls an action against the file behind it, and then
+   * opens that database again under the same identifier with the settings it
+   * had before.
+   *
+   * A restore rebuilds a database at the path it already occupies, so no
+   * connection may be open on that file while Sirannon replaces its bytes. The
+   * identifier answers nothing for as long as the action continues, and an
+   * action that failed still leaves a database open at the end.
+   *
+   * @param id - Identifier of the database to take offline.
+   * @param action - Runs with the database closed, and receives its file path.
+   * @returns What the action produced, what it threw, and what a failed reopen threw.
+   * @throws When no database is open under the identifier, when it refuses writes, or when the close fails.
+   *
+   * @internal
+   */
+  async withDatabaseOffline<T>(id: string, action: (path: string) => Promise<T>): Promise<OfflineOutcome<T>> {
+    this.ensureRunning()
+    const db = this.dbs.get(id)
+    const opened = this.openedWith.get(id)
+    if (!db || !opened) throw new DatabaseNotFoundError(id)
+    if (db.readOnly) throw new ReadOnlyError(id)
+
+    this.dbs.delete(id)
+    this.opening.add(id)
+    this.offline.add(id)
+
+    const work = takeDatabaseOffline({
+      database: db,
+      path: opened.path,
+      action,
+      reopen: () => {
+        this.opening.delete(id)
+        this.offline.delete(id)
+        return this.open(id, opened.path, opened.options)
+      },
+    }).finally(() => {
+      this.opening.delete(id)
+      this.offline.delete(id)
+      this.offlineWork.delete(work)
+    })
+    this.offlineWork.add(work)
+    return work
+  }
+
+  /**
    * Returns an already-open database.
    *
    * @param id - Identifier of the database.
@@ -193,7 +249,7 @@ export class Sirannon {
   async resolve(id: string): Promise<Database | undefined> {
     const db = this.get(id)
     if (db) return db
-    if (this._shutdown) return undefined
+    if (this._shutdown || this.offline.has(id)) return undefined
     const manager = this.lifecycleManager
     if (!manager) return undefined
 
@@ -209,42 +265,7 @@ export class Sirannon {
 
   /** @internal */
   registryMigrations(): Promise<Migration[]> {
-    return this.loadMigrationSet()
-  }
-
-  private async applyRegistryMigrations(db: Database): Promise<void> {
-    if (this.options.migrations === undefined || db.readOnly) return
-    const migrations = await this.loadMigrationSet()
-    if (migrations.length === 0) return
-    await db.migrate(migrations)
-  }
-
-  private loadMigrationSet(): Promise<Migration[]> {
-    const source = this.options.migrations
-    if (source === undefined || Array.isArray(source)) {
-      return Promise.resolve(source ?? [])
-    }
-    if (this.migrationSet) return this.migrationSet
-
-    const loading = (async () => {
-      const set = await source()
-      if (!Array.isArray(set)) {
-        throw new MigrationError(
-          'The migrations source must return an array of migrations',
-          0,
-          'MIGRATION_SOURCE_INVALID',
-        )
-      }
-      return set
-    })()
-
-    loading.catch(() => {
-      if (this.migrationSet === loading) {
-        this.migrationSet = null
-      }
-    })
-    this.migrationSet = loading
-    return loading
+    return this.migrations.load()
   }
 
   /**
@@ -268,10 +289,18 @@ export class Sirannon {
 
   /**
    * Closes every open database and stops the lifecycle timers.
+   *
+   * A database whose file Sirannon is replacing delays the shutdown until that
+   * work finishes, since a process that exits part-way through would leave the
+   * path with no database on it at all.
    */
   async shutdown(): Promise<void> {
     if (this._shutdown) return
     this._shutdown = true
+
+    while (this.offlineWork.size > 0) {
+      await Promise.allSettled([...this.offlineWork])
+    }
 
     this.lifecycleManager?.dispose()
 

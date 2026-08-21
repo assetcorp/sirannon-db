@@ -74,6 +74,13 @@ export interface BackupChainChange {
 }
 
 // @public
+export interface BackupChainLocation {
+    chainName: string;
+    destination: BackupDestination;
+    stagingDir: string;
+}
+
+// @public
 export interface BackupChainPosition {
     firstFrame: number;
     lastFrame: number;
@@ -84,6 +91,13 @@ export interface BackupChainPosition {
 
 // @public
 export type BackupChainRecord = BackupChainBase | BackupChainChange;
+
+// @public
+export interface BackupCycleError {
+    at: number;
+    code: string;
+    message: string;
+}
 
 // @public
 export interface BackupCycleOptions {
@@ -97,6 +111,7 @@ export interface BackupCycleOptions {
     namePrefix?: string;
     noProgressStepLimit?: number;
     onError?: (error: Error) => void;
+    onProgress?: (progress: BackupProgress) => void;
     onRun?: (report: BackupRunReport) => void;
     onSkip?: (skip: BackupSkip) => void;
     pagesPerStep?: number;
@@ -106,6 +121,16 @@ export interface BackupCycleOptions {
     restartLimit?: number;
     stagingDir?: string;
     stallTimeoutMs?: number;
+}
+
+// @public
+export interface BackupCycleStatus {
+    chainId?: string;
+    lastError?: BackupCycleError;
+    lastRun?: BackupRunReport;
+    lastSkip?: BackupSkip;
+    progress?: BackupProgress;
+    running: boolean;
 }
 
 // @public
@@ -230,6 +255,16 @@ export interface BackupToDestinationOptions {
     restartLimit?: number;
     stagingDir?: string;
     stallTimeoutMs?: number;
+}
+
+// @public
+export interface BackupVerifyResult {
+    bytesRead: number;
+    chainId: string;
+    fingerprint?: string;
+    kind: 'full' | 'change';
+    name: string;
+    pieceCount: number;
 }
 
 // @public
@@ -492,11 +527,14 @@ export class DatabaseBackups extends DatabaseLifecycle {
     backup(destPath: string): Promise<void>;
     backupCapabilities(): BackupCapabilities;
     backupChain(): Promise<BackupChain[]>;
+    backupLocation(): BackupChainLocation;
     backupPiecesSafeToDelete(options?: BackupSafeToDeleteOptions): Promise<BackupChainRecord[]>;
     backupRestorePlan(moment: number): Promise<BackupRestorePlan>;
+    backupStatus(): BackupCycleStatus;
     backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
     captureBackupChanges(): Promise<BackupRunReport | undefined>;
     scheduleBackup(options: BackupScheduleOptions): void;
+    verifyBackup(name: string): Promise<BackupVerifyResult>;
 }
 
 // @public
@@ -1050,6 +1088,7 @@ export type ServerExecutionTargetResolver = (databaseId: string) => ServerExecut
 
 // @public
 export interface ServerOptions<Identity = unknown> {
+    acceptBackupRestore?: boolean;
     acceptSql?: boolean;
     authenticate?: AuthenticateHook<Identity>;
     authorizeClusterStatus?: ClusterStatusAuthorizer;
@@ -1088,6 +1127,8 @@ export class Sirannon {
     // @internal (undocumented)
     resolve(id: string): Promise<Database | undefined>;
     shutdown(): Promise<void>;
+    // @internal
+    withDatabaseOffline<T>(id: string, action: (path: string) => Promise<T>): Promise<OfflineOutcome<T>>;
 }
 
 // @public

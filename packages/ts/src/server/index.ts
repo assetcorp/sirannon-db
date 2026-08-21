@@ -1,4 +1,15 @@
 export type {
+  BackupChainResponse,
+  BackupRestoreRequest,
+  BackupSafeToDeleteRequest,
+  BackupSafeToDeleteResponse,
+  BackupStatusResponse,
+  BackupTriggerResponse,
+  BackupVerifyRequest,
+  BackupVerifyResponse,
+} from './backup-protocol.js'
+export type { BackupRestoreState, BackupRestoreStatus } from './backup-restore-runs.js'
+export type {
   BatchRequest,
   BatchResponse,
   ErrorResponse,

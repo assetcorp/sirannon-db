@@ -1,5 +1,7 @@
-import { checkpointWithoutCapturing, logGrownPastLimit } from './cycle-guard.js'
+import type { SirannonError } from '../errors.js'
+import { chainLostFromList, checkpointWithoutCapturing, logGrownPastLimit } from './cycle-guard.js'
 import type { BackupCycleRequest } from './cycle-options.js'
+import type { BackupCycleState } from './cycle-state.js'
 
 /**
  * What a cycle hands the stand-down path, so that path lets go of a chain
@@ -78,4 +80,45 @@ export async function releaseChainPastLogLimit(cycle: StandDownRequest): Promise
   await letGoOfChain(cycle)
   cycle.report(lost)
   return true
+}
+
+/** What a cycle supplies to the chain check, so that check reads no cycle state of its own.
+ * @internal
+ */
+export interface ChainGrip {
+  /** The operator's settings, plus the database the cycle runs against. */
+  request: BackupCycleRequest
+  /** Name the list of chains is stored under. */
+  chainName: string
+  /** The chain the cycle is extending, or null where it has none. */
+  state: BackupCycleState | null
+  /** Whether an earlier turn already found that chain in the list. */
+  verified: boolean
+  /** Discards the chain and the capture staged against it. */
+  discardState: () => Promise<void>
+  /** Passes an error to the operator. */
+  report: (err: SirannonError) => void
+}
+
+/**
+ * Checks that the destination still lists the chain the cycle's state names,
+ * including a chain that cycle started itself.
+ *
+ * No restore ever reads a record appended under a chain the listing omits, so
+ * this check comes before the first record of every turn. A check that cannot
+ * read the destination leaves the chain unverified, and the next turn tries
+ * again before it appends anything.
+ *
+ * @param grip - The chain the cycle is extending, and what it does where that chain is absent.
+ * @returns Whether the chain is still listed, which the cycle records until it discards that chain.
+ *
+ * @internal
+ */
+export async function confirmChainStillListed(grip: ChainGrip): Promise<boolean> {
+  if (grip.verified || !grip.state) return grip.verified
+  const lost = await chainLostFromList(grip.request, grip.chainName, grip.state)
+  if (!lost) return true
+  await grip.discardState()
+  grip.report(lost)
+  return false
 }

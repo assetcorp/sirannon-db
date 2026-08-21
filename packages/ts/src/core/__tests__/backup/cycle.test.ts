@@ -420,3 +420,33 @@ describe('the checkpoint cycle', () => {
     expect((error as SirannonError).code).toBe('BACKUP_DESTINATION_ERROR')
   })
 })
+
+describe('the turns a caller can ask for at once', () => {
+  it('joins every call made before the queued turn starts, so no more than one turn ever waits', async () => {
+    const { cycle } = await harness()
+    await cycle.start()
+
+    const first = cycle.runOnce()
+    const second = cycle.runOnce()
+    const third = cycle.runOnce()
+
+    expect(second).toBe(first)
+    expect(third).toBe(first)
+    await Promise.all([first, second, third])
+    expect(cycle.status().running).toBe(false)
+    await cycle.stop()
+  })
+
+  it('takes a fresh turn once the queued one has started', async () => {
+    const { cycle } = await harness()
+    await cycle.start()
+
+    const queued = cycle.runOnce()
+    await queued
+    const later = cycle.runOnce()
+
+    expect(later).not.toBe(queued)
+    await later
+    await cycle.stop()
+  })
+})

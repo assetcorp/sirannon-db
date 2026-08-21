@@ -5,6 +5,64 @@
 ```ts
 
 // @public
+export interface BackupChainResponse {
+    chains: BackupChain[];
+}
+
+// @public
+export interface BackupRestoreRequest {
+    batchSize?: unknown;
+    moment?: unknown;
+}
+
+// @public
+export type BackupRestoreState = 'idle' | 'running' | 'done' | 'failed';
+
+// @public
+export interface BackupRestoreStatus {
+    error?: {
+        code: string;
+        message: string;
+    };
+    finishedAt?: number;
+    moment?: number;
+    progress?: BackupRestoreProgress;
+    reopenError?: {
+        code: string;
+        message: string;
+    };
+    report?: BackupRestoreReport;
+    startedAt?: number;
+    state: BackupRestoreState;
+}
+
+// @public
+export interface BackupSafeToDeleteRequest {
+    restorableFrom?: unknown;
+}
+
+// @public
+export interface BackupSafeToDeleteResponse {
+    records: BackupChainRecord[];
+}
+
+// @public
+export type BackupStatusResponse = BackupCycleStatus;
+
+// @public
+export interface BackupTriggerResponse {
+    started: true;
+}
+
+// @public
+export interface BackupVerifyRequest {
+    name?: unknown;
+}
+
+// @public
+export type BackupVerifyResponse = BackupVerifyResult;
+
+// @public
 export interface BatchRequest {
     paramsBatch: (Record<string, unknown> | unknown[])[];
     sql: string;

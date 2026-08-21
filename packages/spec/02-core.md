@@ -89,6 +89,9 @@ Database {
   scheduleBackup(options): void
   captureBackupChanges(): async -> BackupRunReport or null
   backupChain(): async -> List<BackupChain>
+  backupStatus(): BackupCycleStatus
+  verifyBackup(name): async -> BackupVerifyResult
+  backupLocation(): BackupChainLocation
   backupRestorePlan(moment): async -> BackupRestorePlan
   backupPiecesSafeToDelete(options?): async -> List<BackupChainRecord>
   loadExtension(extensionPath): async -> void
@@ -574,6 +577,7 @@ BackupCycleOptions {
   destinationTimeoutMs?:  number
   noProgressStepLimit?:   number
   onRun?:                 (report: BackupRunReport) -> void
+  onProgress?:            (progress: BackupProgress) -> void
   onSkip?:                (skip: BackupSkip) -> void
   onError?:               (error) -> void
 }
@@ -716,6 +720,52 @@ BackupSafeToDeleteOptions {
 `backupRestorePlan(moment)` selects the newest full copy finished at or before `moment`, then every change piece of that chain captured at or before it, in `sequence` order. `restoresTo` is the last selected piece's `capturedAt`, or the full copy's `finishedAt` where the plan selects none. A moment no full copy reaches, and a gap in the selected sequence, both fail with `BACKUP_CHAIN_BROKEN` naming the missing piece.
 
 `backupPiecesSafeToDelete(options?)` reports every record of a chain whose full copy is absent, and every change piece after a gap. Given `restorableFrom`, it also reports every record of a chain older than the newest full copy finished at or before that moment. It deletes nothing.
+
+### Cycle status
+
+`backupStatus()` states what the cycle is doing and what its recent turns produced. A database opened without `backups` fails with `BACKUP_UNSUPPORTED`.
+
+```text
+BackupCycleStatus {
+  running:    boolean
+  chainId?:   string
+  progress?:  BackupProgress
+  lastRun?:   BackupRunReport
+  lastSkip?:  BackupSkip
+  lastError?: { code: string, message: string, at: number }
+}
+```
+
+`running` is true from the start of a turn to its end. `progress` states the counters of the turn under way, and is absent between turns. `lastRun`, `lastSkip`, and `lastError` each state the most recent of their kind, and each outlives the turn that produced it. An implementation calls `onProgress` with the same counters at step resolution, during a full copy and during a change transfer.
+
+### Verifying a stored backup
+
+`verifyBackup(name)` reads one stored backup back out of the destination and compares it against the chain record that names it.
+
+```text
+BackupVerifyResult {
+  name:         string
+  chainId:      string
+  kind:         'full' | 'change'
+  pieceCount:   number
+  bytesRead:    number
+  fingerprint?: string
+}
+```
+
+An implementation lists the pieces stored under `name`, fetches them in index order, and keeps one piece in memory at a time. A name no chain record states fails with `BACKUP_CHAIN_BROKEN`. A missing piece, a piece past the recorded count, a byte count differing from the recorded one, and a fingerprint differing from the recorded one each fail with `BACKUP_DESTINATION_ERROR`. Where the backup recorded no fingerprint, the result states none, and the piece listing and the byte count are the whole check.
+
+### Chain location
+
+`backupLocation()` states where one database's backups are stored, so a restore of that database reads the same chain. A database opened without `backups`, which includes every read-only database, fails with `BACKUP_UNSUPPORTED`.
+
+```text
+BackupChainLocation {
+  destination: BackupDestination
+  chainName:   string
+  stagingDir:  string
+}
+```
 
 ### Capability report
 

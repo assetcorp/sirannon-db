@@ -19,6 +19,7 @@ ServerOptions {
   authenticate?:                  AuthenticateHook
   operations?:                    OperationRegistry
   acceptSql?:                     boolean  (default: false)
+  acceptBackupRestore?:           boolean  (default: false)
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
   getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
@@ -37,7 +38,7 @@ AuthenticateHook = (ctx: RequestContext) -> Identity or null, or async of either
 RequestContext   { headers: Map<string, string>, method, path, databaseId?, remoteAddress }
 ```
 
-The server must invoke `authenticate` before every `/db/{id}` request: the HTTP data routes, `GET /db/{id}/cluster`, and the WebSocket upgrade. It must not invoke the hook for `GET /health`, `GET /health/ready`, or `GET /capabilities`. The hook returns the identity for the request, or nothing for an anonymous request. To reject a request, the hook throws. An error with a `status` property must produce that status, code, and message; any other error must produce status 500 with code `HOOK_ERROR`. Sirannon defines no built-in authentication, so the hook is where an implementation authenticates a request.
+The server must invoke `authenticate` before every `/db/{id}` request: the HTTP data routes, the backup routes, `GET /db/{id}/cluster`, and the WebSocket upgrade. It must not invoke the hook for `GET /health`, `GET /health/ready`, or `GET /capabilities`. The hook returns the identity for the request, or nothing for an anonymous request. To reject a request, the hook throws. An error with a `status` property must produce that status, code, and message; any other error must produce status 500 with code `HOOK_ERROR`. Sirannon defines no built-in authentication, so the hook is where an implementation authenticates a request.
 
 On the WebSocket upgrade the server must complete the handshake and close immediately with code 4401 for a refusal of status 401 and 4403 for a refusal of status 403, carrying the error code and message as the close reason. A refusal of any other status must produce the HTTP status response.
 
@@ -102,6 +103,13 @@ Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded da
 | `POST /db/{id}/migrations` | List applied migrations (see [08-device-sync.md](08-device-sync.md)) |
 | `POST /db/{id}/snapshot` | Snapshot manifest (see [08-device-sync.md](08-device-sync.md)) |
 | `POST /db/{id}/snapshot/page` | Snapshot page (see [08-device-sync.md](08-device-sync.md)) |
+| `POST /db/{id}/backup` | Run one turn of the checkpoint cycle |
+| `GET /db/{id}/backup` | Cycle status and the progress of the run in flight |
+| `GET /db/{id}/backup/chain` | List what the backup destination stores |
+| `POST /db/{id}/backup/verify` | Read one stored backup back and check it |
+| `POST /db/{id}/backup/safe-to-delete` | List the records no restore still needs |
+| `POST /db/{id}/backup/restore` | Rebuild the database from a moment |
+| `GET /db/{id}/backup/restore` | How that restore went |
 | `GET /db/{id}/cluster` | Routing and authority metadata |
 | `GET /capabilities` | Announced server capabilities (see [08-device-sync.md](08-device-sync.md)) |
 | `GET /health`, `GET /health/ready` | Liveness and readiness |
@@ -154,6 +162,51 @@ ClusterStatusInfo {
 
 `readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`.
 
+### Backup Endpoints
+
+The server serves the backup routes to an operator. It runs `authenticate` before each of them, as before every `/db/{id}` request, and defines no separate authorisation hook: `RequestContext` states `method` and `path`, so one hook accepts an identity on the data routes and refuses it here.
+
+```text
+POST /db/{id}/backup                                             -> 202 { started: true }
+GET  /db/{id}/backup                                             -> BackupCycleStatus
+GET  /db/{id}/backup/chain                                       -> { chains: List<BackupChain> }
+POST /db/{id}/backup/verify          { name }                    -> BackupVerifyResult
+POST /db/{id}/backup/safe-to-delete  { restorableFrom? }         -> { records: List<BackupChainRecord> }
+POST /db/{id}/backup/restore         { moment?, batchSize? }     -> 202 { started: true }
+GET  /db/{id}/backup/restore                                     -> BackupRestoreStatus
+```
+
+[02-core.md](02-core.md) defines `BackupCycleStatus`, `BackupVerifyResult`, `BackupChain`, `BackupChainRecord`, `BackupRestoreProgress`, and `BackupRestoreReport`.
+
+A body whose every field is optional may be empty. A missing `name`, a `moment` or `restorableFrom` below zero or fractional, a `batchSize` outside one to 4096, and a body that parses as JSON but is not an object each fail with `400 INVALID_REQUEST`.
+
+Every route but `GET /db/{id}/backup/restore` addresses an open database. An identifier with none open fails with `404 DATABASE_NOT_FOUND`, and a database opened without `backups` fails with `501 BACKUP_UNSUPPORTED`.
+
+The server answers `POST /db/{id}/backup` with `202` once it has accepted the turn, and must not wait for that turn. `GET /db/{id}/backup` reports the outcome. A turn triggered while another is under way queues behind it, and every turn triggered before that queued turn begins joins it, so at most one turn waits.
+
+`acceptBackupRestore` governs `POST /db/{id}/backup/restore` and defaults to false. With it false, the server fails that route with `403 BACKUP_RESTORE_NOT_ACCEPTED`. A server configured with `acceptBackupRestore` true and no `authenticate` hook refuses to start, with `INVALID_BACKUP_RESTORE`.
+
+A restore rebuilds the database at the path it already occupies, from the chain that database's own backups form. The server closes the database, which captures its log a final time; discards the cycle state and the staged captures of the chain it was extending; rebuilds the file; and opens the database again under the same identifier with the settings it had. That order is normative: an implementation discards the state before it replaces the file, so that no process resumes capturing onto a chain a restore has replaced.
+
+The server answers `404 DATABASE_NOT_FOUND` for that identifier on every route while the rebuild proceeds. The first turn after the reopen starts a fresh chain with a full copy. A rebuild that fails still opens the database again. A close that fails leaves nothing open under the identifier. A reopen that fails after a rebuild succeeded reports `done`, with the report and a `reopenError`.
+
+The server answers `POST /db/{id}/backup/restore` with `202` and must not wait. A second restore of the same database while one is under way fails with `409 BACKUP_RESTORE_IN_PROGRESS`.
+
+```text
+BackupRestoreStatus {
+  state:        'idle' | 'running' | 'done' | 'failed'
+  moment?:      number
+  startedAt?:   number
+  finishedAt?:  number
+  progress?:    BackupRestoreProgress
+  report?:      BackupRestoreReport
+  error?:       { code: string, message: string }
+  reopenError?: { code: string, message: string }
+}
+```
+
+`GET /db/{id}/backup/restore` reads the server's own record, so it answers while that database is closed. It reports `idle` where no restore has started since the server did, and the server keeps one record per identifier, replaced by each new restore. `error` and `reopenError` state a message only where a `SirannonError` supplied one.
+
 ### Error Responses
 
 ```json
@@ -168,12 +221,13 @@ ClusterStatusInfo {
 |--------|-------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED` |
+| 502 | `BACKUP_DESTINATION_ERROR` |
 | 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
 
 A code not listed defaults to 500, and an error carrying an explicit status uses it, which is how `authenticate` rejects with a status of its own. A `WRITE_OVERLOADED` response carries a `Retry-After` header in seconds, because the rejection is definite load shedding. `WRITER_WORKER_TIMEOUT` maps to 500 because its outcome is indeterminate. A coordinator-mode server that is not the current primary either forwards the write or rejects with `STALE_PRIMARY`, including the known primary endpoint as structured context when it has one.

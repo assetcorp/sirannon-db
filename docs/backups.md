@@ -9,10 +9,15 @@ The [core engine guide](core.md) covers migrations, live queries, bulk load, hoo
 `backup()` writes a copy to a local file. The database stays open for reads and writes throughout, because SQLite moves the pages in steps and a write runs in the gap between two of them.
 
 ```ts
-await db.backup('./backups/snapshot.db')
+const report = await db.backup('./backups/snapshot.db')
+
+report.destPath     // the absolute path of the file it wrote
+report.byteLength   // the bytes that file holds
+report.pageCount    // the pages SQLite moved
+report.durationMs   // the milliseconds the copy took
 ```
 
-`scheduleBackup()` repeats that on a cron schedule and keeps a bounded number of files:
+`scheduleBackup()` repeats that on a cron schedule and keeps a bounded number of files. `onBackup` receives the same report after every copy the schedule finishes, so you learn which file to move somewhere durable without watching the directory:
 
 ```ts
 db.scheduleBackup({
@@ -20,9 +25,12 @@ db.scheduleBackup({
   destDir: './backups',
   maxFiles: 10,
   timezone: 'America/New_York',
+  onBackup: report => uploadToObjectStorage(report.destPath, report.byteLength),
   onError: err => console.error('Backup failed:', err),
 })
 ```
+
+Sirannon waits for `onBackup` before it takes the next copy, which holds file rotation off a copy your upload is still reading. `onBackupTimeoutMs` bounds that wait and defaults to ten minutes. Past the deadline Sirannon reports the timeout through `onError` and carries on with the schedule, your callback keeps running, and rotation counts that copy among the files it may delete. Set the deadline longer than your slowest upload takes.
 
 Both of those write to local disk. `backupTo()` sends the copy to storage you supply instead:
 
@@ -132,6 +140,10 @@ Sirannon writes one full copy, then a small file per interval holding the change
 
 Sirannon starts a new chain on a schedule, once a day by default, which `fullCopyIntervalMs` sets. Without that, a chain would grow all year and a restore would have to replay every file in it.
 
+Every report states where its file comes in the chain. A change file states the stretch of log it holds in `position`, and a full copy states in `logPosition` where the log had reached when that copy finished. Both carry the two salts SQLite stamps on a log, which identify one run of that log.
+
+Expect those salts to differ between a full copy and the first change file after it, because Sirannon checkpoints the log between the two and SQLite restarts a log at every checkpoint. A restore reads such a chain correctly, since it replays each change file against the copy underneath it by chain position. Compare the salts of two consecutive change files, where a difference tells you the log restarted between them.
+
 ### Before you turn it on
 
 While this option is on, Sirannon takes over one piece of SQLite housekeeping: trimming the log file SQLite keeps beside your database. Sirannon trims it immediately after each capture instead, which keeps it small.
@@ -151,6 +163,8 @@ db.backupStatus()                 // what the cycle is doing at this moment
 ```
 
 `backupStatus()` answers whenever you ask, so you can read it without having to catch a callback as it fires. It tells you whether a turn is under way, and while one is, its `progress` states the pages the copy has left to move and the bytes that have reached the destination. Once the copy has finished and the pieces are going out, `phase` reads `transfer` and `remainingPages` is zero, so read `bytesWritten` from that point onward. Between turns the status reports `lastRun`, `lastSkip`, and `lastError`, each of them the most recent of its kind. Take the `onProgress` callback in the `backups` option where you want every step, and read this member where you want the figure as it stands.
+
+A failed run records its code, its message, and what the turn was doing. `lastError.chainId` names the chain that turn was extending. `lastError.durationMs` gives the milliseconds from the start of the turn to the failure. `lastError.progress` states the run identifier, along with the pieces and bytes that had already reached your destination before it stopped. That last figure separates a destination that refused the first piece from one that refused the last.
 
 ### Checking a backup is still readable
 

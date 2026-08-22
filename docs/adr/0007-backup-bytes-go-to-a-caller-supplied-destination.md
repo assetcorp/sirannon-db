@@ -34,7 +34,7 @@ This section binds the reference implementation alone. An implementation in a la
 
 ## Cost
 
-The TypeScript implementation takes on native binaries: one C file, six compiled artefacts per release, and a platform matrix in CI, none of which the project has today. Each platform left out of the matrix silently downgrades to the staged fallback, so the matrix is a standing maintenance duty. Streaming on better-sqlite3 depends on an environment variable the operator sets, which makes the fastest driver the one with the extra deployment step.
+The TypeScript implementation takes on native binaries: five C files, six compiled artefacts per release, and a platform matrix in CI, none of which the project has today. Each platform left out of the matrix silently downgrades to the staged fallback, so the matrix is a standing maintenance duty. Streaming on better-sqlite3 depends on an environment variable the operator sets, which makes the fastest driver the one with the extra deployment step.
 
 Streaming itself costs no measurable throughput: a 6.4 GB copy ran at 675 MB/s through the destination against 534 MB/s to a local file, with process memory under 89 MB at every size tested.
 

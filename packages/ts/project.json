@@ -57,6 +57,13 @@
         "cwd": "packages/ts"
       }
     },
+    "test:large": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm vitest run --config vitest.large.config.ts",
+        "cwd": "packages/ts"
+      }
+    },
     "test:soak": {
       "executor": "nx:run-commands",
       "options": {

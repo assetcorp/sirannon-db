@@ -48,14 +48,34 @@ export async function readPageSize(conn: SQLiteConnection): Promise<number> {
 }
 
 /**
+ * Reads the path of the database file a connection has open. A report names
+ * that path as the source its copy came from.
+ *
+ * @param conn - Connection to read from.
+ * @returns Path of that file, or an empty string where SQLite named none.
+ *
+ * @internal
+ */
+export async function readMainDatabasePath(conn: SQLiteConnection): Promise<string> {
+  const stmt = await conn.prepare('PRAGMA database_list')
+  const rows = await stmt.all<{ name: string; file: string | null }>()
+  const main = rows.find(row => row.name === 'main')
+  return main?.file ?? ''
+}
+
+/**
  * Where a database's write-ahead log had reached at one moment.
  *
  * A full copy states this, so you can tell which run of the log the database
  * was on when that copy finished. SQLite stamps a fresh pair of salts on the
- * log at every restart, and a checkpoint restarts it. Expect the salts of a
- * full copy to differ from those of the first change piece after it, and
- * compare the salts of two consecutive change pieces to see whether the log
- * restarted between them.
+ * log at every restart, and a checkpoint that empties the log restarts it.
+ *
+ * The checkpoint cycle checkpoints after each capture, and no checkpoint falls
+ * between a full copy and the first change piece extending its chain, so those
+ * two state the same salts. A change piece states later salts than the piece
+ * before it whenever the checkpoint between the two emptied the log. A reader
+ * can hold a checkpoint off, which leaves the log on the run it was already on,
+ * so two consecutive change pieces may state the same salts.
  *
  * @public
  */
@@ -137,10 +157,12 @@ export interface BackupRunReport {
   /** The stretch of log a change piece covers. A full copy has none. */
   position?: BackupChainPosition
   /**
-   * Where the write-ahead log had reached when a full copy finished. A change
-   * piece states the stretch of log it holds in
-   * {@link BackupRunReport.position} instead, and a database that keeps no
-   * write-ahead log states neither.
+   * Where the write-ahead log had reached when a full copy finished. Sirannon
+   * reads the log after the copy has moved every page, so a writer committing
+   * between those two steps would put a frame here that the copy does not hold.
+   * A change piece states the stretch of log it holds in
+   * {@link BackupRunReport.position}, and a database that keeps no write-ahead
+   * log states neither.
    */
   logPosition?: BackupLogPosition
   /** SHA-256 of the copied file, unless the caller turned it off. */

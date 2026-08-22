@@ -1,7 +1,7 @@
 import type { BackupCycle } from '../backup/cycle.js'
 import type { BackupCycleRequest } from '../backup/cycle-options.js'
 import type { BackupFileCopy, BackupRunReport, BackupRunRequest } from '../backup/report.js'
-import type { BackupScheduleRequest } from '../backup/scheduler.js'
+import type { BackupScheduleRequest } from '../backup/schedule-request.js'
 import type { WorkerHostOptions } from '../worker/host.js'
 
 /** What one write reports back through the driver.

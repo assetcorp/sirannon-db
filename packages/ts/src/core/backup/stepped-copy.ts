@@ -166,11 +166,16 @@ export async function copyDatabaseStepwise(
     })
 
   copy.catch(() => {})
+  let copyStopped = false
+  const stops = () => {
+    copyStopped = true
+  }
+  copy.then(stops, stops)
   try {
     const final = await Promise.race([copy, stalled])
     return { pageCount: final.totalPages, restarts }
   } catch (err) {
-    options.onCopyLeftRunning?.(copy)
+    if (!copyStopped) options.onCopyLeftRunning?.(copy)
     throw err
   } finally {
     if (stallTimer) clearTimeout(stallTimer)

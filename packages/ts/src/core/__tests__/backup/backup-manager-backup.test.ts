@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
 import type { SQLiteConnection } from '../../driver/types.js'
-import { BackupError } from '../../errors.js'
+import { BackupError, SirannonError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
 import { createTestDb, tempDirPerTest } from './shared.js'
 
@@ -11,6 +11,10 @@ const temp = tempDirPerTest()
 
 describe('BackupManager', () => {
   const manager = new BackupManager()
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   describe('backup', () => {
     it('creates a valid SQLite backup file', async () => {
@@ -84,6 +88,80 @@ describe('BackupManager', () => {
       expect(copies).toBe(0)
       expect(existsSync(destPath)).toBe(false)
       await conn.close()
+    })
+
+    it('reports a stalled copy without waiting for that copy to stop', async () => {
+      vi.useFakeTimers()
+      try {
+        const destPath = join(temp.path, 'stalled.db')
+        let stopCopy: (() => void) | undefined
+        const hanging = {
+          async prepare() {
+            return { get: async () => ({ page_size: 4096 }) }
+          },
+          copyDatabase() {
+            writeFileSync(destPath, 'half a database')
+            return new Promise<never>((_, reject) => {
+              stopCopy = () => reject(new Error('the copy gave up'))
+            })
+          },
+        } as unknown as SQLiteConnection
+
+        const settled = manager.backup(hanging, destPath).then(
+          () => new Error('the copy reported success'),
+          (err: Error) => err,
+        )
+        await vi.advanceTimersByTimeAsync(30_000)
+
+        const failure = await settled
+        expect(failure).toBeInstanceOf(SirannonError)
+        if (failure instanceof SirannonError) expect(failure.code).toBe('BACKUP_STALLED')
+        expect(failure.message).toContain('moved no pages')
+        expect(existsSync(destPath)).toBe(true)
+
+        stopCopy?.()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(existsSync(destPath)).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('leaves no rejection loose when the copy it stopped waiting on fails', async () => {
+      vi.useFakeTimers()
+      const loose: unknown[] = []
+      const collect = (reason: unknown) => loose.push(reason)
+      process.on('unhandledRejection', collect)
+      try {
+        const destPath = join(temp.path, 'loose.db')
+        let stopCopy: (() => void) | undefined
+        const hanging = {
+          async prepare() {
+            return { get: async () => ({ page_size: 4096 }) }
+          },
+          copyDatabase() {
+            writeFileSync(destPath, 'half a database')
+            return new Promise<never>((_, reject) => {
+              stopCopy = () => reject(new Error('the copy gave up'))
+            })
+          },
+        } as unknown as SQLiteConnection
+
+        const settled = manager.backup(hanging, destPath).then(
+          () => undefined,
+          () => undefined,
+        )
+        await vi.advanceTimersByTimeAsync(30_000)
+        await settled
+        stopCopy?.()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(loose).toEqual([])
+        expect(existsSync(destPath)).toBe(false)
+      } finally {
+        process.off('unhandledRejection', collect)
+        vi.useRealTimers()
+      }
     })
 
     it('preserves all rows and schema in the backup', async () => {

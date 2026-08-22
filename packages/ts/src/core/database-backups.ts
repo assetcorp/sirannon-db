@@ -67,7 +67,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
   /**
    * Starts repeating backups on a cron schedule, keeping a bounded number of files.
    *
-   * @param options - Cron expression, destination directory, retention, time zone, and failure callback.
+   * @param options - Cron expression, destination directory, retention, and time zone, along with the callbacks Sirannon calls after each finished copy and after each failure.
    */
   scheduleBackup(options: BackupScheduleOptions): void {
     this.ensureOpen()

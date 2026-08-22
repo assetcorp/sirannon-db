@@ -318,6 +318,47 @@ describe('the checkpoint cycle', () => {
     expect(cycle.status().chainId).not.toBe(broken)
   })
 
+  it('hands the operator each failure once when the chain that replaces a broken one also fails', async () => {
+    const errors: SirannonError[] = []
+    const { build, conn, destination, refuseCheckpoint } = await harness()
+    const cycle = build({ onError: err => errors.push(err as SirannonError) })
+    await cycle.start()
+    await insert(conn, 'first')
+    refuseCheckpoint(true)
+    await cycle.runOnce()
+    const broken = cycle.status().chainId
+
+    refuseCheckpoint(false)
+    await conn.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    await insert(conn, 'second')
+    errors.length = 0
+    destination.refusePiece(0)
+    await cycle.runOnce().catch(() => {})
+
+    expect(errors.map(err => err.code)).toEqual(['BACKUP_LOG_REWOUND', 'BACKUP_DESTINATION_ERROR'])
+    expect(cycle.status().lastError?.code).toBe('BACKUP_DESTINATION_ERROR')
+    expect(cycle.status().lastError?.chainId).toBe(broken)
+  })
+
+  it('states the same log salts on a full copy and on the first change piece extending it', async () => {
+    const { cycle, conn, reports } = await harness()
+    await cycle.start()
+    await insert(conn, 'first')
+    await cycle.runOnce()
+    await insert(conn, 'second')
+    await cycle.runOnce()
+
+    const full = reports.find(report => report.kind === 'full')
+    const changes = reports.filter(report => report.kind === 'change')
+    expect(full?.logPosition).toBeDefined()
+    expect(changes).toHaveLength(2)
+    expect(full?.logPosition?.salt1).toBe(changes[0]?.position?.salt1)
+    expect(full?.logPosition?.salt2).toBe(changes[0]?.position?.salt2)
+    expect(full?.logPosition?.logSequence).toBe(changes[0]?.position?.logSequence)
+    expect(changes[1]?.position?.logSequence).toBe((changes[0]?.position?.logSequence ?? 0) + 1)
+    expect(changes[1]?.position?.salt1).not.toBe(changes[0]?.position?.salt1)
+  })
+
   it('takes the same chain up again after a restart rather than copying the database afresh', async () => {
     const { cycle, build, conn } = await harness()
     await cycle.start()

@@ -57,6 +57,10 @@ export function describeStreamedBackup(
   })
 
   describe(`Streamed backup on ${label}`, () => {
+    it.skipIf(process.env.SIRANNON_REQUIRE_STREAMING_EXTENSION !== '1')('finds the compiled extension', () => {
+      expect(extensionPath).not.toBeNull()
+    })
+
     it.skipIf(!streams)('reports streaming as available', async () => {
       const db = await Database.create('test', join(tempDir, 'capabilities.db'), driver)
 

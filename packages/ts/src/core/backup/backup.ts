@@ -3,15 +3,13 @@ import { dirname, join, resolve } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError, SirannonError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
-import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline, withinDeadline } from './destination-deadline.js'
+import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import { type BackupFileCopy, type BackupRunReport, type BackupRunRequest, readPageSize } from './report.js'
 import { copyToDestinationStaged } from './staged-copy.js'
 import { copyDatabaseStepwise, type SteppedCopyResult } from './stepped-copy.js'
 import { type BackupStreamingSupport, copyToDestinationStreamed } from './streamed-copy.js'
 
 const BACKUP_FILE_PREFIX = 'backup'
-const ABANDONED_COPY_GRACE_MS = 5_000
-const STILL_COPYING = new SirannonError('The copy is still running', 'BACKUP_STALLED')
 
 function once(action: () => void): () => void {
   let done = false
@@ -26,6 +24,11 @@ function removeQuietly(path: string): void {
   try {
     rmSync(path, { force: true })
   } catch {}
+}
+
+function removeOnceCopyStops(copy: Promise<unknown>, path: string): void {
+  const remove = () => removeQuietly(path)
+  copy.then(remove, remove)
 }
 
 function backupFailure(destPath: string, err: unknown): Error {
@@ -120,20 +123,17 @@ export class BackupManager {
   }
 
   /**
-   * Runs the copy and removes the file it was writing where it fails, so a
-   * database missing its later pages never stays on disk as though the copy had
-   * finished.
+   * Runs the copy, and removes the file it was writing where that copy fails, so
+   * that a database missing its later pages never stays on disk as though the
+   * copy had finished. Sirannon would otherwise count that half-written file
+   * among the copies it keeps, and it would evict a whole copy to make room for
+   * one nothing can restore.
    *
-   * A stalled copy keeps writing to that file after the stall timeout has
-   * stopped waiting on it, so this waits five seconds for the copy to settle
-   * before it removes anything. A removal that raced a live copy would leave a
-   * truncated file behind, and on Windows it would fail outright.
-   *
-   * SQLite offers no way to cancel a copy under way, so a copy still running
-   * after those five seconds keeps the file for now and Sirannon removes it
-   * once that copy stops. Leaving it there for good would put a database
-   * missing its later pages among the backups, where rotation would count it as
-   * one and evict a whole copy to keep it.
+   * Sirannon stops waiting on a copy once the stall deadline passes, and SQLite
+   * keeps writing that copy to the file. A removal that raced a live copy would
+   * leave a truncated file in place, and on Windows it would fail outright.
+   * Sirannon therefore removes the file only once the copy stops, while the
+   * caller receives the failure at once and waits for none of that.
    */
   private async copyOrClearUp(
     conn: SQLiteConnection,
@@ -141,38 +141,20 @@ export class BackupManager {
     destPath: string,
     onFirstStep?: () => void,
   ): Promise<SteppedCopyResult> {
-    let stillRunning: Promise<unknown> | null = null
+    const abandoned: { copy: Promise<unknown> | null } = { copy: null }
     try {
       return await copyDatabaseStepwise(conn, {
         destPath: resolved,
         onStep: onFirstStep ? once(onFirstStep) : undefined,
         onCopyLeftRunning: copy => {
-          stillRunning = copy
+          abandoned.copy = copy
         },
       })
     } catch (err) {
-      if (await this.copyHasStopped(stillRunning)) removeQuietly(resolved)
-      else void (stillRunning as Promise<unknown> | null)?.finally(() => removeQuietly(resolved))
+      if (abandoned.copy) removeOnceCopyStops(abandoned.copy, resolved)
+      else removeQuietly(resolved)
       throw backupFailure(destPath, err)
     }
-  }
-
-  /**
-   * Waits five seconds for a copy the caller has stopped waiting on.
-   *
-   * @param stillRunning - The copy left running, or null where the run holds none.
-   * @returns Whether the file it was writing is safe to remove now.
-   */
-  private async copyHasStopped(stillRunning: Promise<unknown> | null): Promise<boolean> {
-    if (stillRunning === null) return true
-    return withinDeadline(
-      stillRunning.then(
-        () => true,
-        () => true,
-      ),
-      ABANDONED_COPY_GRACE_MS,
-      () => STILL_COPYING,
-    ).catch(() => false)
   }
 
   async copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport> {

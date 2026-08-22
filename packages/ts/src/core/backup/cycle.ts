@@ -1,16 +1,8 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 import { type BackupChain, DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
-import { reportQuietly } from './cycle-callbacks.js'
 import { captureAndCheckpointTurn, stagedCapturePath } from './cycle-capture.js'
-import {
-  decideBackupTurn,
-  previousRunStillActive,
-  startsAFreshChain,
-  toBackupError,
-  uncapturedLogBytes,
-  unclaimableChainList,
-} from './cycle-guard.js'
+import { decideBackupTurn, previousRunStillActive, startsAFreshChain, unclaimableChainList } from './cycle-guard.js'
 import {
   type BackupCycleRequest,
   DEFAULT_BACKUP_NAME_PREFIX,
@@ -18,6 +10,7 @@ import {
   DEFAULT_FULL_COPY_INTERVAL_MS,
   defaultStagingDir,
 } from './cycle-options.js'
+import { BackupTurnLog } from './cycle-reporting.js'
 import { BackupCycleTimer, SerialTurns } from './cycle-scheduling.js'
 import {
   confirmChainStillListed,
@@ -26,7 +19,7 @@ import {
   standDownFromChain,
 } from './cycle-standdown.js'
 import { type BackupCycleState, readCycleState, removeCycleState, writeCycleState } from './cycle-state.js'
-import { type BackupCycleStatus, BackupCycleStatusRecorder } from './cycle-status.js'
+import type { BackupCycleStatus } from './cycle-status.js'
 import { beginReplacementChain, sendStagedCapture } from './cycle-transfer.js'
 import type { BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport } from './report.js'
@@ -64,29 +57,23 @@ export class BackupCycle {
   private busy = false
   private captured = false
   private sendRefused = false
-  private reported: unknown = null
   private stopped = false
 
   private readonly request: BackupCycleRequest
-  private readonly statusRecord = new BackupCycleStatusRecorder()
+  private readonly turnLog: BackupTurnLog
 
   /** @internal */
   constructor(request: BackupCycleRequest) {
+    this.logPath = logPathFor(request.sourcePath)
+    this.turnLog = new BackupTurnLog(request, this.logPath)
     this.request = {
       ...request,
-      onRun: report => {
-        this.statusRecord.ran(report)
-        reportQuietly(request.onRun, report)
-      },
-      onProgress: progress => {
-        this.statusRecord.progressed(progress)
-        reportQuietly(request.onProgress, progress)
-      },
+      onRun: report => this.turnLog.ran(report),
+      onProgress: progress => this.turnLog.progressed(progress),
     }
     this.chainName = request.chainName ?? DEFAULT_CHAIN_NAME
     this.namePrefix = request.namePrefix ?? DEFAULT_BACKUP_NAME_PREFIX
     this.stagingDir = request.stagingDir ?? defaultStagingDir(request.sourcePath)
-    this.logPath = logPathFor(request.sourcePath)
     this.intervalMs = request.intervalMs ?? DEFAULT_CAPTURE_INTERVAL_MS
     this.fullCopyIntervalMs = request.fullCopyIntervalMs ?? DEFAULT_FULL_COPY_INTERVAL_MS
     this.preferredNode = request.preferredNode ?? 'replica'
@@ -184,7 +171,7 @@ export class BackupCycle {
    * @returns Whether a turn is under way, how far it has got, and the last run, skip, and failure.
    */
   status(): BackupCycleStatus {
-    return this.statusRecord.read(this.state?.chainId)
+    return this.turnLog.read(this.state?.chainId)
   }
 
   /**
@@ -199,28 +186,28 @@ export class BackupCycle {
   }
 
   /**
-   * Runs one turn and reports whatever broke it, where it broke, so the report
-   * carries the chain that turn was extending and the counters it had reached.
-   * A deeper step that already reported the same failure keeps its report.
-   * Emptying a log the turn has outgrown comes after, and its own report of
-   * writes reaching no backup is meant to replace the one made here.
+   * Runs one turn and passes whatever broke it to the operator. A deeper step
+   * announces some failures itself and then raises them, so this announces a
+   * failure only where no step has announced it already. The operator therefore
+   * hears each failure exactly once. Sirannon empties a log the turn has
+   * outgrown once all of that is done, and the report of writes reaching no
+   * backup replaces whatever failure the turn recorded.
    */
   private runTurn<T>(op: () => Promise<T>): Promise<T> {
     return this.turns.run(async () => {
       this.busy = true
       this.captured = false
       this.sendRefused = false
-      this.reported = null
-      this.statusRecord.turnStarted()
+      this.turnLog.turnStarted()
       try {
         return await op()
       } catch (err) {
-        if (this.reported !== err) this.report(err)
+        if (!this.turnLog.hasAnnounced(err)) this.report(err)
         throw err
       } finally {
         if (!this.captured) await this.releaseLogPastLimit()
         this.busy = false
-        this.statusRecord.turnFinished()
+        this.turnLog.turnFinished()
       }
     })
   }
@@ -271,13 +258,9 @@ export class BackupCycle {
     return false
   }
 
-  /** Passes a skipped turn on, counting the log this node was holding as it skipped. */
+  /** Passes a skipped turn on, where the cycle has a reason to give for it. */
   private async reportSkip(skip: BackupSkip | undefined): Promise<void> {
-    if (!skip) return
-    const held = await uncapturedLogBytes(this.logPath)
-    const passed = held === undefined ? skip : { ...skip, uncapturedLogBytes: held }
-    this.statusRecord.skipped(passed)
-    reportQuietly(this.request.onSkip, passed)
+    if (skip) await this.turnLog.skipped(skip)
   }
 
   private async tick(): Promise<void> {
@@ -310,14 +293,19 @@ export class BackupCycle {
    * Runs one turn. A log that restarted before the capture reached it leaves a
    * chain nothing can extend, so this starts a fresh one. The caller still gets
    * the error: those writes are in no backup, and an operator has to hear that.
+   * Where the replacement chain also fails to start, Sirannon records that
+   * second failure against the chain the restart broke, because the cycle holds
+   * no chain of its own by then and an operator reading the status has to know
+   * which one they have lost.
    */
   private async turnOrStartOver(): Promise<BackupRunReport | undefined> {
     try {
       return await this.turn()
     } catch (err) {
       if (startsAFreshChain(err)) {
-        this.report(err)
-        await this.replaceChain().catch(chainErr => this.report(chainErr))
+        const broken = this.state?.chainId
+        this.reportAgainstChain(err, broken)
+        await this.replaceChain().catch(chainErr => this.reportAgainstChain(chainErr, broken))
       }
       throw err
     }
@@ -340,11 +328,19 @@ export class BackupCycle {
     return last
   }
 
+  /**
+   * Passes a failure to the operator and records it as the turn's outcome.
+   *
+   * @param err - What the turn failed with.
+   * @param chainId - The chain to record it against, which defaults to the one the cycle holds now.
+   */
   private report(err: unknown): void {
-    const failure = toBackupError(err)
-    this.reported = err
-    this.statusRecord.failed(failure, this.state?.chainId)
-    reportQuietly(this.request.onError, failure)
+    this.turnLog.failed(err, this.state?.chainId)
+  }
+
+  /** Records a failure against a chain the cycle may already have let go of. */
+  private reportAgainstChain(err: unknown, chainId: string | undefined): void {
+    this.turnLog.failed(err, chainId)
   }
 
   private async replaceChain(): Promise<BackupRunReport | undefined> {

@@ -39,7 +39,7 @@ function fileDestination(root: string): BackupDestination {
 const extensionPath = builtStreamingExtensionPath()
 const driver = betterSqlite3(extensionPath ? { vfsExtensionPath: extensionPath } : {})
 const streams = driverStreamsToDestination(driver)
-const runningInCi = process.env.CI === 'true'
+const extensionRequired = process.env.SIRANNON_REQUIRE_STREAMING_EXTENSION === '1'
 
 let dir: string
 
@@ -52,7 +52,7 @@ afterEach(() => {
 })
 
 describe('streamed copy past the pending byte page', () => {
-  it.skipIf(!runningInCi)('streams to a destination on a runner that builds the extension', () => {
+  it.skipIf(!extensionRequired)('streams to a destination on a runner that builds the extension', () => {
     expect(extensionPath).not.toBeNull()
     expect(streams).toBe(true)
   })

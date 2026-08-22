@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
 import type { BackupFileReport } from '../../backup/report.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
+import type { SQLiteConnection } from '../../driver/types.js'
 import { BackupError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
 import { countingManager, createTestDb, settleUntil, tempDirPerTest, useCronTimers } from './shared.js'
@@ -219,6 +220,151 @@ describe('BackupScheduler', () => {
 
       expect(calls).toBeGreaterThanOrEqual(2)
       expect(errors[0]?.message).toContain('did not return within 50ms')
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('names the open file on its reports where the caller named no database at all', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'derived-names')
+      const reports: BackupFileReport[] = []
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(conn, {
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackup: report => {
+          reports.push(report)
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => reports.length >= 1)
+      cancel()
+
+      expect(reports[0]?.databaseId).toBe('source')
+      expect(reports[0]?.sourcePath.endsWith('source.db')).toBe(true)
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses to report a copy where nothing names the file it came from', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const errors: Error[] = []
+      const reports: BackupFileReport[] = []
+      const fileless = {
+        ...conn,
+        prepare: async (sql: string) => {
+          if (!sql.includes('database_list')) return conn.prepare(sql)
+          return { all: async () => [{ name: 'main', file: '' }], get: async () => undefined, run: async () => ({}) }
+        },
+      } as unknown as SQLiteConnection
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(fileless, {
+        cron: '* * * * * *',
+        destDir: join(temp.path, 'nameless'),
+        maxFiles: 10,
+        onBackup: report => {
+          reports.push(report)
+        },
+        onError: err => errors.push(err),
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => errors.length >= 1)
+      cancel()
+
+      expect(reports).toEqual([])
+      expect(errors[0]?.message).toContain('names no source file')
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits on a completion callback for as long as it takes where the deadline is zero', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'unbounded-callback')
+      const errors: Error[] = []
+      let releaseCallback: (() => void) | undefined
+      let finished = 0
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackupTimeoutMs: 0,
+        onBackup: () =>
+          new Promise<void>(resolve => {
+            releaseCallback = () => {
+              finished++
+              resolve()
+            }
+          }),
+        onError: err => errors.push(err),
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => releaseCallback !== undefined)
+      await vi.advanceTimersByTimeAsync(700_000)
+
+      expect(errors).toEqual([])
+      expect(finished).toBe(0)
+      releaseCallback?.()
+      await settleUntil(() => finished === 1)
+      cancel()
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports the copy it finished even where clearing the older files fails', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'rotation-failure')
+      const reports: BackupFileReport[] = []
+      const errors: Error[] = []
+      const manager = new BackupManager()
+      manager.rotate = () => {
+        throw new BackupError('the backup directory could not be listed')
+      }
+      const scheduler = new BackupScheduler(manager)
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackup: report => {
+          reports.push(report)
+        },
+        onError: err => errors.push(err),
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => reports.length >= 1)
+      cancel()
+
+      expect(reports).toHaveLength(1)
+      expect(errors.map(err => err.message)).toContain('the backup directory could not be listed')
       await conn.close()
     } finally {
       vi.useRealTimers()

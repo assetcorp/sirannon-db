@@ -14,7 +14,7 @@ import {
   readPageSize,
 } from './report.js'
 import { copyDatabaseStepwise } from './stepped-copy.js'
-import { logPathFor, readLogPosition } from './wal-log.js'
+import { readLogPosition } from './wal-log.js'
 
 const STAGED_FILE_NAME = 'copy.db'
 
@@ -65,7 +65,7 @@ export async function copyToDestinationStaged(
       },
     })
     const copyMs = Date.now() - copyStartedAt
-    const logPosition = await readLogPosition(logPathFor(request.sourcePath))
+    const logPosition = await readLogPosition(request.sourcePath)
 
     const transferStartedAt = Date.now()
     const sent = await sendFileInPieces(

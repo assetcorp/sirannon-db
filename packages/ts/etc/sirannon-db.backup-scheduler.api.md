@@ -38,10 +38,13 @@ export class BackupScheduler {
 
 // @public
 export interface BackupScheduleRequest extends BackupScheduleOptions {
-    databaseId: string;
+    databaseId?: string;
     runExclusive?: RunExclusive;
-    sourcePath: string;
+    sourcePath?: string;
 }
+
+// @public
+export type RunExclusive = (op: () => Promise<void>) => Promise<void>;
 
 // (No @packageDocumentation comment for this package)
 

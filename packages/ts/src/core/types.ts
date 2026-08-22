@@ -179,12 +179,12 @@ export interface BackupScheduleOptions {
    * what that copy moved. Use it to send the file somewhere durable, or to
    * record that the schedule is still running.
    *
-   * Sirannon waits for the promise this returns. A failure reaches
-   * {@link BackupScheduleOptions.onError}, so an upload that fails arrives
-   * where a copy that fails arrives. The next copy waits for this one's
-   * callback, which holds file rotation off a copy an upload is still reading,
-   * up to the deadline in
-   * {@link BackupScheduleOptions.onBackupTimeoutMs}.
+   * Sirannon waits for the promise this returns, and it clears the older files
+   * only once that promise settles, so it deletes no copy your upload is still
+   * reading. Sirannon passes a failure to
+   * {@link BackupScheduleOptions.onError}, which is where it reports a failed
+   * copy as well. The deadline in
+   * {@link BackupScheduleOptions.onBackupTimeoutMs} bounds that wait.
    */
   onBackup?: (report: BackupFileReport) => void | Promise<void>
   /**
@@ -192,12 +192,13 @@ export interface BackupScheduleOptions {
    * Sirannon gives up waiting on it. It defaults to ten minutes, and zero
    * leaves the wait unbounded.
    *
-   * The next copy waits for this one's callback, so an upload that hangs on a
-   * socket would hold the whole schedule still. Sirannon reports the timeout
-   * through {@link BackupScheduleOptions.onError} and takes the next copy on
-   * schedule. Your callback keeps running, and file rotation now counts that
-   * copy among the files it may delete, so set this longer than your slowest
-   * upload takes.
+   * Sirannon clears the older files and takes the next copy once this callback
+   * settles or this deadline passes. Without a deadline, a callback left waiting
+   * on a socket would hold the schedule still for good. Past the deadline
+   * Sirannon reports the timeout through
+   * {@link BackupScheduleOptions.onError} and goes on with the schedule. Your
+   * callback keeps running while Sirannon counts that copy among the files it
+   * may delete, so set this longer than your slowest upload takes.
    */
   onBackupTimeoutMs?: number
   /** Called when a scheduled backup fails. Without this, errors are silently discarded. */

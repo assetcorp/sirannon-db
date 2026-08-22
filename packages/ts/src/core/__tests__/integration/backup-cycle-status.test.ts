@@ -31,10 +31,6 @@ interface Opened {
 const WAIT_LIMIT_MS = 5_000
 const PIECE_LATENCY_MS = 2
 
-/**
- * Puts a couple of milliseconds on every piece a destination stores, so a turn
- * that fails takes long enough for a millisecond clock to measure it.
- */
 function slowDestination(destination: MemoryDestination): MemoryDestination {
   const store = destination.writePiece.bind(destination)
   destination.writePiece = async (name, index, bytes) => {

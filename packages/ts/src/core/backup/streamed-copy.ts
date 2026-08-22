@@ -15,7 +15,7 @@ import {
 } from './report.js'
 import { copyDatabaseStepwise, DEFAULT_PAGES_PER_STEP } from './stepped-copy.js'
 import { BackupStreamHost } from './vfs/stream-host.js'
-import { logPathFor, readLogPosition } from './wal-log.js'
+import { readLogPosition } from './wal-log.js'
 
 const VFS_NAME = 'sirannon'
 const PIECE_BLOCK_BYTES = 512
@@ -225,7 +225,7 @@ export async function copyToDestinationStreamed(
       },
     })
     const copyMs = Date.now() - copyStartedAt
-    const logPosition = await readLogPosition(logPathFor(request.sourcePath))
+    const logPosition = await readLogPosition(request.sourcePath)
 
     const bytesStreamed = await host.finish(streamId)
     copying = false

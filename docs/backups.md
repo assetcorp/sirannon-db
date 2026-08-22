@@ -30,7 +30,7 @@ db.scheduleBackup({
 })
 ```
 
-Sirannon waits for `onBackup` before it takes the next copy, which holds file rotation off a copy your upload is still reading. `onBackupTimeoutMs` bounds that wait and defaults to ten minutes. Past the deadline Sirannon reports the timeout through `onError` and carries on with the schedule, your callback keeps running, and rotation counts that copy among the files it may delete. Set the deadline longer than your slowest upload takes.
+Sirannon waits for `onBackup` before it clears the older files and before it takes the next copy, so it deletes no copy your upload is still reading. `onBackupTimeoutMs` bounds that wait and defaults to ten minutes, and zero leaves it unbounded. Past the deadline Sirannon reports the timeout through `onError` and goes on with the schedule. Your callback keeps running while Sirannon counts that copy among the files it may delete, so set the deadline longer than your slowest upload takes.
 
 Both of those write to local disk. `backupTo()` sends the copy to storage you supply instead:
 
@@ -142,7 +142,7 @@ Sirannon starts a new chain on a schedule, once a day by default, which `fullCop
 
 Every report states where its file comes in the chain. A change file states the stretch of log it holds in `position`, and a full copy states in `logPosition` where the log had reached when that copy finished. Both carry the two salts SQLite stamps on a log, which identify one run of that log.
 
-Expect those salts to differ between a full copy and the first change file after it, because Sirannon checkpoints the log between the two and SQLite restarts a log at every checkpoint. A restore reads such a chain correctly, since it replays each change file against the copy underneath it by chain position. Compare the salts of two consecutive change files, where a difference tells you the log restarted between them.
+Sirannon checkpoints the log after each capture, and no checkpoint falls between a full copy and the first change file that extends its chain, so those two come from one run of the log and report the same salts. A checkpoint that empties the log starts a fresh run of it, and the change file taken after that checkpoint reports the later salts. A reader can keep a checkpoint from emptying the log, which leaves the log on the run it was already on, so two consecutive change files may report the same salts. A restore reads the chain by position and needs none of this, so read the salts only where you want to know which run of the log a file came from.
 
 ### Before you turn it on
 

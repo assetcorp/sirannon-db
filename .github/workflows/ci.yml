@@ -110,5 +110,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Build the streaming extension for this runner
+        working-directory: packages/ts
+        run: pnpm build:vfs
+
       - name: Replication E2E
         run: pnpm nx run sirannon-ts:test:e2e

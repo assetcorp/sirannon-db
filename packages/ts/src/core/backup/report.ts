@@ -47,6 +47,29 @@ export async function readPageSize(conn: SQLiteConnection): Promise<number> {
   return row ? Number(row.page_size) : 0
 }
 
+/**
+ * Where a database's write-ahead log had reached at one moment.
+ *
+ * A full copy states this, so you can tell which run of the log the database
+ * was on when that copy finished. SQLite stamps a fresh pair of salts on the
+ * log at every restart, and a checkpoint restarts it. Expect the salts of a
+ * full copy to differ from those of the first change piece after it, and
+ * compare the salts of two consecutive change pieces to see whether the log
+ * restarted between them.
+ *
+ * @public
+ */
+export interface BackupLogPosition {
+  /** Checkpoint sequence of the log. SQLite adds one to it at every restart of the log. */
+  logSequence: number
+  /** First salt of that log. The two salts together tell one run of the log from the next. */
+  salt1: number
+  /** Second salt of it. */
+  salt2: number
+  /** The last frame that commits a transaction, counted from one. A log holding none reports zero. */
+  lastFrame: number
+}
+
 /** How far one backup run has moved, reported at step resolution.
  * @public
  */
@@ -113,9 +136,52 @@ export interface BackupRunReport {
   restarts: number
   /** The stretch of log a change piece covers. A full copy has none. */
   position?: BackupChainPosition
+  /**
+   * Where the write-ahead log had reached when a full copy finished. A change
+   * piece states the stretch of log it holds in
+   * {@link BackupRunReport.position} instead, and a database that keeps no
+   * write-ahead log states neither.
+   */
+  logPosition?: BackupLogPosition
   /** SHA-256 of the copied file, unless the caller turned it off. */
   fingerprint?: string
 }
+
+/** What one finished copy to a local file produced.
+ * @public
+ */
+export interface BackupFileReport {
+  /** Identifier this run is known by. */
+  runId: string
+  /** Database the copy was taken from. */
+  databaseId: string
+  /** File the copy was taken from. */
+  sourcePath: string
+  /** Absolute path of the file the copy was written to. */
+  destPath: string
+  /** Epoch milliseconds the copy started at. */
+  startedAt: number
+  /** Epoch milliseconds it finished at. */
+  finishedAt: number
+  /** Milliseconds it took. */
+  durationMs: number
+  /** Pages it moved. */
+  pageCount: number
+  /** Bytes one page holds. */
+  pageSize: number
+  /** Bytes the file it wrote holds. */
+  byteLength: number
+  /** Times the copy returned to page one. */
+  restarts: number
+}
+
+/**
+ * What one copy to a local file produced. The controller that owns the database
+ * adds its identifier and its path to build a {@link BackupFileReport}.
+ *
+ * @internal
+ */
+export type BackupFileCopy = Omit<BackupFileReport, 'databaseId' | 'sourcePath'>
 
 /** How Sirannon runs one backup to a caller-supplied destination.
  * @public

@@ -15,6 +15,8 @@ describe('BackupScheduler', () => {
 
     try {
       scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: 'not a cron',
         destDir: join(temp.path, 'invalid'),
         maxFiles: 5,
@@ -34,11 +36,31 @@ describe('BackupScheduler', () => {
 
     expect(() =>
       scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '0 0 * * *',
         destDir: join(temp.path, 'bad-tz'),
         timezone: 'Not/AZone',
       }),
     ).toThrow(/Invalid timezone 'Not\/AZone'/)
+    await conn.close()
+  })
+
+  it('refuses a completion-callback deadline no timer could hold', async () => {
+    const conn = await createTestDb(temp.path)
+    const scheduler = new BackupScheduler()
+
+    for (const deadline of [-1, Number.NaN, 2_147_483_648]) {
+      expect(() =>
+        scheduler.schedule(conn, {
+          databaseId: 'main',
+          sourcePath: join(temp.path, 'source.db'),
+          cron: '0 0 * * *',
+          destDir: join(temp.path, 'bad-deadline'),
+          onBackupTimeoutMs: deadline,
+        }),
+      ).toThrow('onBackupTimeoutMs')
+    }
     await conn.close()
   })
 
@@ -48,6 +70,8 @@ describe('BackupScheduler', () => {
     const scheduler = new BackupScheduler()
 
     const cancel = scheduler.schedule(conn, {
+      databaseId: 'main',
+      sourcePath: join(temp.path, 'source.db'),
       cron: '0 0 1 1 *',
       destDir: backupDir,
       maxFiles: 5,
@@ -72,6 +96,8 @@ describe('BackupScheduler', () => {
 
     expect(() =>
       scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '0 0 1 1 *',
         destDir: join(blocked, 'nested'),
         maxFiles: 5,
@@ -87,6 +113,8 @@ describe('BackupScheduler', () => {
     const scheduler = new BackupScheduler()
 
     const cancel = scheduler.schedule(conn, {
+      databaseId: 'main',
+      sourcePath: join(temp.path, 'source.db'),
       cron: '0 0 1 1 *',
       destDir: backupDir,
       maxFiles: 5,
@@ -114,6 +142,8 @@ describe('BackupScheduler', () => {
 
       expect(() =>
         scheduler.schedule(conn, {
+          databaseId: 'main',
+          sourcePath: join(temp.path, 'source.db'),
           cron: '0 0 1 1 *',
           destDir: join(temp.path, 'new-dir'),
         }),
@@ -137,6 +167,8 @@ describe('BackupScheduler', () => {
       const errors: Error[] = []
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: join(temp.path, 'cron-string'),
         onError: err => errors.push(err),
@@ -166,6 +198,8 @@ describe('BackupScheduler', () => {
       const errors: Error[] = []
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: join(temp.path, 'cron-number'),
         onError: err => errors.push(err),
@@ -195,6 +229,8 @@ describe('BackupScheduler', () => {
       let handlerCalls = 0
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: join(temp.path, 'throwing-handler'),
         onError: () => {

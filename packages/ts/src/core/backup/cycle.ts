@@ -31,6 +31,7 @@ import { beginReplacementChain, sendStagedCapture } from './cycle-transfer.js'
 import type { BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupRunReport } from './report.js'
 import { type BackupVerifyResult, verifyBackupRecord } from './verify.js'
+import { logPathFor } from './wal-log.js'
 
 /**
  * Captures a database's write-ahead log and then checkpoints it, in that order,
@@ -63,6 +64,7 @@ export class BackupCycle {
   private busy = false
   private captured = false
   private sendRefused = false
+  private reported: unknown = null
   private stopped = false
 
   private readonly request: BackupCycleRequest
@@ -84,7 +86,7 @@ export class BackupCycle {
     this.chainName = request.chainName ?? DEFAULT_CHAIN_NAME
     this.namePrefix = request.namePrefix ?? DEFAULT_BACKUP_NAME_PREFIX
     this.stagingDir = request.stagingDir ?? defaultStagingDir(request.sourcePath)
-    this.logPath = `${request.sourcePath}-wal`
+    this.logPath = logPathFor(request.sourcePath)
     this.intervalMs = request.intervalMs ?? DEFAULT_CAPTURE_INTERVAL_MS
     this.fullCopyIntervalMs = request.fullCopyIntervalMs ?? DEFAULT_FULL_COPY_INTERVAL_MS
     this.preferredNode = request.preferredNode ?? 'replica'
@@ -196,16 +198,24 @@ export class BackupCycle {
     return verifyBackupRecord(this.request.destination, await this.chains(), name)
   }
 
+  /**
+   * Runs one turn and reports whatever broke it, where it broke, so the report
+   * carries the chain that turn was extending and the counters it had reached.
+   * A deeper step that already reported the same failure keeps its report.
+   * Emptying a log the turn has outgrown comes after, and its own report of
+   * writes reaching no backup is meant to replace the one made here.
+   */
   private runTurn<T>(op: () => Promise<T>): Promise<T> {
     return this.turns.run(async () => {
       this.busy = true
       this.captured = false
       this.sendRefused = false
+      this.reported = null
       this.statusRecord.turnStarted()
       try {
         return await op()
       } catch (err) {
-        this.statusRecord.failed(toBackupError(err))
+        if (this.reported !== err) this.report(err)
         throw err
       } finally {
         if (!this.captured) await this.releaseLogPastLimit()
@@ -276,11 +286,7 @@ export class BackupCycle {
       await this.reportSkip(previousRunStillActive())
       return
     }
-    try {
-      await this.runOnce()
-    } catch (err) {
-      this.report(err)
-    }
+    await this.runOnce().catch(() => {})
   }
 
   private async verifyChain(): Promise<void> {
@@ -336,7 +342,8 @@ export class BackupCycle {
 
   private report(err: unknown): void {
     const failure = toBackupError(err)
-    this.statusRecord.failed(failure)
+    this.reported = err
+    this.statusRecord.failed(failure, this.state?.chainId)
     reportQuietly(this.request.onError, failure)
   }
 

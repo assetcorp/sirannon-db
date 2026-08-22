@@ -262,6 +262,62 @@ describe('the checkpoint cycle', () => {
     expect(errors).toEqual([])
   })
 
+  it('hands the operator the same failure it records, and records how far the turn had got', async () => {
+    const errors: Error[] = []
+    const { build, conn, destination } = await harness()
+    const failing = build({ pieceBytes: 512, onError: err => errors.push(err) })
+    await failing.start()
+    await insert(conn, 'first')
+
+    errors.length = 0
+    destination.refusePiece(1)
+    await failing.runOnce().catch(() => {})
+
+    const recorded = failing.status().lastError
+    expect(recorded?.code).toBe('BACKUP_DESTINATION_ERROR')
+    expect(recorded?.progress?.phase).toBe('transfer')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.message).toBe(recorded?.message)
+  })
+
+  it('leaves the writes reaching no backup as the failure it records, over the one that stopped the turn', async () => {
+    const errors: Error[] = []
+    const { build, conn, destination } = await harness()
+    const failing = build({ onError: err => errors.push(err) })
+    await failing.start()
+    await insert(conn, 'first')
+
+    destination.refusePiece(0)
+    await failing.runOnce().catch(() => {})
+    await insert(conn, 'second')
+
+    errors.length = 0
+    const emptying = build({ maxUncapturedLogBytes: 1, onError: err => errors.push(err) })
+    await emptying.start().catch(() => {})
+
+    expect(errors.map(err => (err as SirannonError).code)).toContain('BACKUP_CHAIN_BROKEN')
+    expect(emptying.status().lastError?.code).toBe('BACKUP_CHAIN_BROKEN')
+  })
+
+  it('records a log that restarted against the chain it broke, not the one that replaced it', async () => {
+    const { cycle, conn, refuseCheckpoint } = await harness()
+    await cycle.start()
+    await insert(conn, 'first')
+    refuseCheckpoint(true)
+    await cycle.runOnce()
+    const broken = cycle.status().chainId
+
+    refuseCheckpoint(false)
+    await conn.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    await insert(conn, 'second')
+    await cycle.runOnce().catch(() => {})
+
+    const failure = cycle.status().lastError
+    expect(failure?.code).toBe('BACKUP_LOG_REWOUND')
+    expect(failure?.chainId).toBe(broken)
+    expect(cycle.status().chainId).not.toBe(broken)
+  })
+
   it('takes the same chain up again after a restart rather than copying the database afresh', async () => {
     const { cycle, build, conn } = await harness()
     await cycle.start()

@@ -2,7 +2,7 @@ import type { BackupCapabilities } from './backup/capabilities.js'
 import type { BackupChain, BackupChainRecord } from './backup/chain.js'
 import type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chain-queries.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
-import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+import type { BackupFileReport, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import type { BackupVerifyResult } from './backup/verify.js'
 import type { BackupChainLocation } from './database-backup.js'
 import { DatabaseLifecycle } from './database-lifecycle.js'
@@ -26,10 +26,11 @@ export class DatabaseBackups extends DatabaseLifecycle {
    * runs in the gap between two steps rather than waiting for the whole copy.
    *
    * @param destPath - Path the copy is written to.
+   * @returns The run identifier, the timings, the pages it moved, and the bytes the file holds.
    */
-  async backup(destPath: string): Promise<void> {
+  async backup(destPath: string): Promise<BackupFileReport> {
     this.ensureOpen()
-    await this.runtime.backups.backup(destPath)
+    return this.runtime.backups.backup(destPath)
   }
 
   /**

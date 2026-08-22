@@ -1,5 +1,6 @@
 import { open } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
+import type { BackupLogPosition } from './report.js'
 import {
   LOG_HEADER_BYTES,
   type LogChecksum,
@@ -201,6 +202,52 @@ export async function copyLogRange(
     }
   } finally {
     await source.close()
+  }
+}
+
+/**
+ * Names the write-ahead log SQLite keeps beside a database file.
+ *
+ * @param sourcePath - Path of the database file.
+ * @returns Path of its log.
+ */
+export function logPathFor(sourcePath: string): string {
+  return `${sourcePath}-wal`
+}
+
+/**
+ * Reads how far a database's write-ahead log has reached at the moment of the
+ * call. A full copy reports this, so a reader can tell which run of the log the
+ * database was on when that copy finished. Writes commit while a copy runs and
+ * for as long as it takes this to answer, so the frame named here can be ahead
+ * of the last frame the copy itself took in.
+ *
+ * The walk stops at the last frame that commits a transaction, so the answer
+ * never names a frame a restore could not replay.
+ *
+ * A copy that has already moved every page is a copy worth storing, so a log
+ * this cannot read comes back as undefined while the run itself succeeds. A
+ * database that keeps no write-ahead log, and one whose log a checkpoint has
+ * emptied, come back the same way. The capture path reads the log through
+ * {@link readLogFileHeader} and {@link scanLogFrames}, where a failure does
+ * stop a capture, because those frames are the backup.
+ *
+ * @param logPath - Path of the log file.
+ * @returns Where the log had reached, or undefined where it could not be read.
+ */
+export async function readLogPosition(logPath: string): Promise<BackupLogPosition | undefined> {
+  try {
+    const header = await readLogFileHeader(logPath)
+    if (!header) return undefined
+    const scan = await scanLogFrames(logPath, header, { frame: 0, checksum: header.checksum })
+    return {
+      logSequence: header.logSequence,
+      salt1: header.salt1,
+      salt2: header.salt2,
+      lastFrame: scan.lastCommitFrame,
+    }
+  } catch {
+    return undefined
   }
 }
 

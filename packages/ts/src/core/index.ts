@@ -19,7 +19,13 @@ export type {
   BackupSkip,
   BackupSkipReason,
 } from './backup/preferred-node.js'
-export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+export type {
+  BackupFileReport,
+  BackupLogPosition,
+  BackupProgress,
+  BackupRunReport,
+  BackupToDestinationOptions,
+} from './backup/report.js'
 export type { BackupVerifyResult } from './backup/verify.js'
 export { isBulkLoadDurability, runBulkLoad } from './bulk-load.js'
 export { ChangeTracker } from './cdc/change-tracker.js'

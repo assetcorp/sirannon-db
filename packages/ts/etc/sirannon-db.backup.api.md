@@ -97,8 +97,11 @@ export class BackupCycle {
 // @public
 export interface BackupCycleError {
     at: number;
+    chainId?: string;
     code: string;
+    durationMs: number;
     message: string;
+    progress?: BackupProgress;
 }
 
 // @public
@@ -144,6 +147,21 @@ export interface BackupDestination {
 }
 
 // @public
+export interface BackupFileReport {
+    byteLength: number;
+    databaseId: string;
+    destPath: string;
+    durationMs: number;
+    finishedAt: number;
+    pageCount: number;
+    pageSize: number;
+    restarts: number;
+    runId: string;
+    sourcePath: string;
+    startedAt: number;
+}
+
+// @public
 export interface BackupGroupMembership {
     nodeIds: string[];
     primaryNodeId: string | null;
@@ -153,6 +171,14 @@ export interface BackupGroupMembership {
 export interface BackupGroupSource {
     readonly nodeId: string;
     readMembership(): Promise<BackupGroupMembership>;
+}
+
+// @public
+export interface BackupLogPosition {
+    lastFrame: number;
+    logSequence: number;
+    salt1: number;
+    salt2: number;
 }
 
 // @public
@@ -237,6 +263,7 @@ export interface BackupRunReport {
     fingerprint?: string;
     finishedAt: number;
     kind: 'full' | 'change';
+    logPosition?: BackupLogPosition;
     pageCount: number;
     pageSize: number;
     pieceBytes: number;

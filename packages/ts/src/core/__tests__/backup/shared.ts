@@ -55,8 +55,9 @@ export function countingManager(): CountingManager {
   const runBackup = manager.backup.bind(manager)
   let completed = 0
   manager.backup = async (conn, destPath, onFirstStep) => {
-    await runBackup(conn, destPath, onFirstStep)
+    const copy = await runBackup(conn, destPath, onFirstStep)
     completed++
+    return copy
   }
   return { manager, completed: () => completed }
 }

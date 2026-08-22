@@ -22,7 +22,13 @@ export type {
   BackupSkip,
   BackupSkipReason,
 } from '../core/backup/preferred-node.js'
-export type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from '../core/backup/report.js'
+export type {
+  BackupFileReport,
+  BackupLogPosition,
+  BackupProgress,
+  BackupRunReport,
+  BackupToDestinationOptions,
+} from '../core/backup/report.js'
 export { restoreBackup } from '../core/backup/restore.js'
 export type {
   BackupRestoreOptions,

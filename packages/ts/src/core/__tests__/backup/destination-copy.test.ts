@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { assembleFromDestination } from '../../backup/assemble.js'
 import type { BackupProgress, BackupRunReport } from '../../backup/report.js'
 import { copyToDestinationStaged } from '../../backup/staged-copy.js'
+import { logPathFor, readLogFileHeader } from '../../backup/wal-log.js'
 import type { SQLiteConnection } from '../../driver/types.js'
 import type { SirannonError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
@@ -56,6 +57,64 @@ describe('copyToDestinationStaged', () => {
     expect(report.pageSize).toBeGreaterThan(0)
     expect(report.restarts).toBe(0)
     expect(report.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+    await conn.close()
+  })
+
+  it('reports which run of the write-ahead log the database was on when the copy finished', async () => {
+    const conn = await createTestDb(temp.path)
+    const sourcePath = join(temp.path, 'source.db')
+    const header = await readLogFileHeader(logPathFor(sourcePath))
+
+    const report = await copyToDestinationStaged(conn, {
+      databaseId: 'main',
+      sourcePath,
+      destination: memoryDestination(),
+      stagingDir: temp.path,
+    })
+
+    expect(report.logPosition?.salt1).toBe(header?.salt1)
+    expect(report.logPosition?.salt2).toBe(header?.salt2)
+    expect(report.logPosition?.logSequence).toBe(header?.logSequence)
+    expect(report.logPosition?.lastFrame).toBeGreaterThan(0)
+    await conn.close()
+  })
+
+  it('moves the log position on as the database keeps writing', async () => {
+    const conn = await createTestDb(temp.path)
+    const sourcePath = join(temp.path, 'source.db')
+    const options = {
+      databaseId: 'main',
+      sourcePath,
+      destination: memoryDestination(),
+      stagingDir: temp.path,
+    }
+
+    const first = await copyToDestinationStaged(conn, { ...options, name: 'first.db' })
+    await conn.exec("INSERT INTO users (name, age) VALUES ('Carol', 41)")
+    const second = await copyToDestinationStaged(conn, { ...options, name: 'second.db' })
+
+    expect(second.logPosition?.salt1).toBe(first.logPosition?.salt1)
+    expect(second.logPosition?.lastFrame).toBeGreaterThan(first.logPosition?.lastFrame ?? 0)
+    await conn.close()
+  })
+
+  it('still stores the copy where the write-ahead log cannot be read', async () => {
+    const conn = await createTestDb(temp.path)
+    const unreadable = join(temp.path, 'unreadable.db')
+    mkdirSync(`${unreadable}-wal`, { recursive: true })
+    const destination = memoryDestination()
+
+    const report = await copyToDestinationStaged(conn, {
+      databaseId: 'main',
+      sourcePath: unreadable,
+      destination,
+      name: 'copy.db',
+      stagingDir: temp.path,
+    })
+
+    expect(report.logPosition).toBeUndefined()
+    expect(report.bytesWritten).toBeGreaterThan(0)
+    expect(destination.bytesFor('copy.db').byteLength).toBe(report.bytesWritten)
     await conn.close()
   })
 

@@ -5,10 +5,27 @@
 ```ts
 
 // @public
+export interface BackupFileReport {
+    byteLength: number;
+    databaseId: string;
+    destPath: string;
+    durationMs: number;
+    finishedAt: number;
+    pageCount: number;
+    pageSize: number;
+    restarts: number;
+    runId: string;
+    sourcePath: string;
+    startedAt: number;
+}
+
+// @public
 export interface BackupScheduleOptions {
     cron: string;
     destDir: string;
     maxFiles?: number;
+    onBackup?: (report: BackupFileReport) => void | Promise<void>;
+    onBackupTimeoutMs?: number;
     onError?: (error: Error) => void;
     timezone?: string;
 }
@@ -16,7 +33,14 @@ export interface BackupScheduleOptions {
 // @public
 export class BackupScheduler {
     constructor(manager?: BackupManager);
-    schedule(conn: SQLiteConnection, options: BackupScheduleOptions, runExclusive?: RunExclusive): () => void;
+    schedule(conn: SQLiteConnection, request: BackupScheduleRequest): () => void;
+}
+
+// @public
+export interface BackupScheduleRequest extends BackupScheduleOptions {
+    databaseId: string;
+    runExclusive?: RunExclusive;
+    sourcePath: string;
 }
 
 // (No @packageDocumentation comment for this package)

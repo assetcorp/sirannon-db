@@ -1,16 +1,39 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
-import { BackupError } from '../errors.js'
+import { BackupError, SirannonError } from '../errors.js'
 import type { BackupScheduleOptions } from '../types.js'
 import { BackupManager } from './backup.js'
 import { assertValidTimeZone, type CronExpression, type CronParts, parseCron, wallClockParts } from './cron.js'
+import { assertDeadline, withinDeadline } from './destination-deadline.js'
 import { startCopyWithoutHoldingWriter } from './start-guard.js'
 
 const DEFAULT_MAX_FILES = 5
 const MINUTE_RESOLUTION_MS = 60_000
 const SECOND_RESOLUTION_MS = 1_000
 const DST_LOOKBACK_MS = 3 * 60 * 60 * 1000
+const DEFAULT_ON_BACKUP_TIMEOUT_MS = 600_000
+
+/**
+ * What one repeating backup needs beyond the caller's own options, so that
+ * every report it produces names the database the copy came from.
+ *
+ * @public
+ */
+export interface BackupScheduleRequest extends BackupScheduleOptions {
+  /** Database the copies are taken from. */
+  databaseId: string
+  /** File they are taken from. */
+  sourcePath: string
+  /** Runs each copy with nothing else holding the writer. */
+  runExclusive?: RunExclusive
+}
+
+interface ResolvedSchedule extends Omit<BackupScheduleRequest, 'cron'> {
+  cron: CronExpression
+  resolvedDir: string
+  maxFiles: number
+}
 
 function toError(value: unknown): Error {
   if (value instanceof Error) {
@@ -106,12 +129,11 @@ export class BackupScheduler {
    * Starts repeating backups and returns a function that stops them.
    *
    * @param conn - Connection to the database being copied.
-   * @param options - Cron expression, destination directory, retention, time zone, and failure callback.
-   * @param runExclusive - Runs each copy with the database's writer held so that no write commits mid-copy.
+   * @param request - Cron expression, destination directory, retention, time zone, callbacks, and the database the copies come from.
    * @returns A function that stops the schedule.
    */
-  schedule(conn: SQLiteConnection, options: BackupScheduleOptions, runExclusive: RunExclusive = runDirect): () => void {
-    const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, onError, timezone } = options
+  schedule(conn: SQLiteConnection, request: BackupScheduleRequest): () => void {
+    const { cron: cronExpr, destDir, maxFiles = DEFAULT_MAX_FILES, timezone } = request
 
     let cron: CronExpression
     try {
@@ -130,6 +152,8 @@ export class BackupScheduler {
       }
     }
 
+    assertDeadline(request.onBackupTimeoutMs ?? DEFAULT_ON_BACKUP_TIMEOUT_MS, 'onBackupTimeoutMs')
+
     const resolvedDir = resolve(destDir)
     if (!existsSync(resolvedDir)) {
       try {
@@ -141,18 +165,12 @@ export class BackupScheduler {
       }
     }
 
-    return this.run(conn, cron, resolvedDir, maxFiles, timezone, runExclusive, onError)
+    return this.run(conn, { ...request, cron, resolvedDir, maxFiles, timezone })
   }
 
-  private run(
-    conn: SQLiteConnection,
-    cron: CronExpression,
-    resolvedDir: string,
-    maxFiles: number,
-    timezone: string | undefined,
-    runExclusive: RunExclusive,
-    onError?: (error: Error) => void,
-  ): () => void {
+  private run(conn: SQLiteConnection, run: ResolvedSchedule): () => void {
+    const { cron, resolvedDir, maxFiles, timezone, onBackup, onError } = run
+    const runExclusive = run.runExclusive ?? runDirect
     const tickMs = cron.hasSeconds ? SECOND_RESOLUTION_MS : MINUTE_RESOLUTION_MS
     let timer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
@@ -162,10 +180,26 @@ export class BackupScheduler {
     const runBackup = async (): Promise<void> => {
       try {
         const destPath = join(resolvedDir, this.manager.generateFilename())
-        await startCopyWithoutHoldingWriter(runExclusive, onFirstStep =>
+        const copy = await startCopyWithoutHoldingWriter(runExclusive, onFirstStep =>
           this.manager.backup(conn, destPath, onFirstStep),
         )
         this.manager.rotate(resolvedDir, maxFiles)
+        if (onBackup) {
+          const report = { ...copy, databaseId: run.databaseId, sourcePath: run.sourcePath }
+          const timeoutMs = run.onBackupTimeoutMs ?? DEFAULT_ON_BACKUP_TIMEOUT_MS
+          const handed = Promise.resolve(onBackup(report))
+          await (timeoutMs > 0
+            ? withinDeadline(
+                handed,
+                timeoutMs,
+                () =>
+                  new SirannonError(
+                    `The onBackup callback for database '${run.databaseId}' did not return within ${timeoutMs}ms, so the schedule went on without it. The copy at '${report.destPath}' is on disk and whatever that callback was doing with it has not finished.`,
+                    'BACKUP_ERROR',
+                  ),
+              )
+            : handed)
+        }
       } catch (err) {
         if (onError) {
           try {

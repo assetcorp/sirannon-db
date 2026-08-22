@@ -1,7 +1,8 @@
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, statSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { BackupManager } from '../../backup/backup.js'
+import type { BackupFileReport } from '../../backup/report.js'
 import { BackupScheduler } from '../../backup/scheduler.js'
 import { BackupError } from '../../errors.js'
 import { testDriver } from '../helpers/test-driver.js'
@@ -19,6 +20,8 @@ describe('BackupScheduler', () => {
       const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 10,
@@ -43,6 +46,185 @@ describe('BackupScheduler', () => {
     }
   })
 
+  it('reports every copy it finishes, naming the file and what that copy moved', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'reported')
+      const sourcePath = join(temp.path, 'source.db')
+      const reports: BackupFileReport[] = []
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath,
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackup: report => {
+          reports.push(report)
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => reports.length >= 1)
+      cancel()
+
+      const report = reports[0]
+      expect(report?.databaseId).toBe('main')
+      expect(report?.sourcePath).toBe(sourcePath)
+      expect(readdirSync(backupDir)).toContain(basename(report?.destPath ?? ''))
+      expect(report?.pageCount).toBeGreaterThan(0)
+      expect(report?.pageSize).toBeGreaterThan(0)
+      expect(report?.byteLength).toBe(statSync(report?.destPath ?? '').size)
+      expect(report?.restarts).toBe(0)
+      expect(report?.runId).toMatch(/^[0-9a-f]{16}$/)
+      expect(report?.finishedAt).toBeGreaterThanOrEqual(report?.startedAt ?? 0)
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves a schedule that names no completion callback running as it always did', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'no-callback')
+      const counting = countingManager()
+      const scheduler = new BackupScheduler(counting.manager)
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => counting.completed() >= 1)
+      cancel()
+
+      expect(readdirSync(backupDir).filter(f => f.endsWith('.db')).length).toBeGreaterThanOrEqual(1)
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps copying after a completion callback throws', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'throwing-callback')
+      const errors: Error[] = []
+      let calls = 0
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackup: () => {
+          calls++
+          throw new Error('the caller could not store the file')
+        },
+        onError: err => errors.push(err),
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => calls >= 1)
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => calls >= 2)
+      cancel()
+
+      expect(calls).toBeGreaterThanOrEqual(2)
+      expect(errors.map(err => err.message)).toContain('the caller could not store the file')
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a completion callback whose promise rejects, and never leaves that rejection loose', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'rejecting-callback')
+      const errors: Error[] = []
+      const loose: unknown[] = []
+      const catchLoose = (reason: unknown) => loose.push(reason)
+      const scheduler = new BackupScheduler()
+      process.on('unhandledRejection', catchLoose)
+
+      try {
+        const cancel = scheduler.schedule(conn, {
+          databaseId: 'main',
+          sourcePath: join(temp.path, 'source.db'),
+          cron: '* * * * * *',
+          destDir: backupDir,
+          maxFiles: 10,
+          onBackup: async () => {
+            throw new Error('the object store refused the upload')
+          },
+          onError: err => errors.push(err),
+        })
+
+        await vi.advanceTimersByTimeAsync(1500)
+        await settleUntil(() => errors.length >= 1)
+        cancel()
+      } finally {
+        process.off('unhandledRejection', catchLoose)
+      }
+
+      expect(errors.map(err => err.message)).toContain('the object store refused the upload')
+      expect(loose).toEqual([])
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up on a completion callback that never settles, and keeps copying', async () => {
+    useCronTimers()
+    try {
+      const conn = await createTestDb(temp.path)
+      const backupDir = join(temp.path, 'hanging-callback')
+      const errors: Error[] = []
+      let calls = 0
+      const scheduler = new BackupScheduler()
+
+      const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
+        cron: '* * * * * *',
+        destDir: backupDir,
+        maxFiles: 10,
+        onBackupTimeoutMs: 50,
+        onBackup: () => {
+          calls++
+          return new Promise<void>(() => {})
+        },
+        onError: err => errors.push(err),
+      })
+
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => errors.length >= 1)
+      await vi.advanceTimersByTimeAsync(1500)
+      await settleUntil(() => calls >= 2)
+      cancel()
+
+      expect(calls).toBeGreaterThanOrEqual(2)
+      expect(errors[0]?.message).toContain('did not return within 50ms')
+      await conn.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rotates files according to maxFiles', async () => {
     useCronTimers()
     try {
@@ -52,6 +234,8 @@ describe('BackupScheduler', () => {
       const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 2,
@@ -79,6 +263,8 @@ describe('BackupScheduler', () => {
       const scheduler = new BackupScheduler(counting.manager)
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 10,
@@ -117,6 +303,8 @@ describe('BackupScheduler', () => {
 
       const scheduler = new BackupScheduler(customManager)
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
       })
@@ -143,6 +331,8 @@ describe('BackupScheduler', () => {
       const scheduler = new BackupScheduler()
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 5,
@@ -171,6 +361,8 @@ describe('BackupScheduler', () => {
       const scheduler = new BackupScheduler()
 
       const cancel = scheduler.schedule(conn, {
+        databaseId: 'main',
+        sourcePath: join(temp.path, 'source.db'),
         cron: '* * * * * *',
         destDir: backupDir,
         maxFiles: 5,

@@ -1,4 +1,5 @@
 import type { BackupCycleOptions } from './backup/cycle-options.js'
+import type { BackupFileReport } from './backup/report.js'
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import type { HookConfig } from './hook-types.js'
 import type { MetricsConfig } from './metrics-types.js'
@@ -173,6 +174,32 @@ export interface BackupScheduleOptions {
    * When omitted, it uses the host's local time zone, which also sets the daylight saving rules that apply.
    */
   timezone?: string
+  /**
+   * Called after every copy the schedule finishes, with the file it wrote and
+   * what that copy moved. Use it to send the file somewhere durable, or to
+   * record that the schedule is still running.
+   *
+   * Sirannon waits for the promise this returns. A failure reaches
+   * {@link BackupScheduleOptions.onError}, so an upload that fails arrives
+   * where a copy that fails arrives. The next copy waits for this one's
+   * callback, which holds file rotation off a copy an upload is still reading,
+   * up to the deadline in
+   * {@link BackupScheduleOptions.onBackupTimeoutMs}.
+   */
+  onBackup?: (report: BackupFileReport) => void | Promise<void>
+  /**
+   * Milliseconds {@link BackupScheduleOptions.onBackup} may take before
+   * Sirannon gives up waiting on it. It defaults to ten minutes, and zero
+   * leaves the wait unbounded.
+   *
+   * The next copy waits for this one's callback, so an upload that hangs on a
+   * socket would hold the whole schedule still. Sirannon reports the timeout
+   * through {@link BackupScheduleOptions.onError} and takes the next copy on
+   * schedule. Your callback keeps running, and file rotation now counts that
+   * copy among the files it may delete, so set this longer than your slowest
+   * upload takes.
+   */
+  onBackupTimeoutMs?: number
   /** Called when a scheduled backup fails. Without this, errors are silently discarded. */
   onError?: (error: Error) => void
 }

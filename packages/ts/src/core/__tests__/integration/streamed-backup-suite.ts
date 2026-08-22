@@ -38,10 +38,12 @@ async function seedPages(db: Database, rows: number): Promise<void> {
  *
  * @param label - Name of the driver, which every test title carries.
  * @param buildDriver - Builds that driver, taking the path of the compiled extension where one is built.
+ * @param mustStream - Whether a runner that requires the extension must see this driver take the streamed route. Pass false only where the runtime itself cannot carry a stream, because a driver that could stream and does not has lost its coverage silently.
  */
 export function describeStreamedBackup(
   label: string,
   buildDriver: (options: StreamingExtensionOptions) => SQLiteDriver,
+  mustStream: boolean,
 ): void {
   const extensionPath = builtStreamingExtensionPath()
   const driver = buildDriver(extensionPath ? { vfsExtensionPath: extensionPath } : {})
@@ -57,9 +59,13 @@ export function describeStreamedBackup(
   })
 
   describe(`Streamed backup on ${label}`, () => {
-    it.skipIf(process.env.SIRANNON_REQUIRE_STREAMING_EXTENSION !== '1')('finds the compiled extension', () => {
-      expect(extensionPath).not.toBeNull()
-    })
+    it.skipIf(process.env.SIRANNON_REQUIRE_STREAMING_EXTENSION !== '1')(
+      'finds the compiled extension and takes the route this runner requires',
+      () => {
+        expect(extensionPath).not.toBeNull()
+        expect(streams).toBe(mustStream)
+      },
+    )
 
     it.skipIf(!streams)('reports streaming as available', async () => {
       const db = await Database.create('test', join(tempDir, 'capabilities.db'), driver)

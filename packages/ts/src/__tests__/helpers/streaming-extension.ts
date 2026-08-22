@@ -23,6 +23,17 @@ export function builtStreamingExtensionPath(): string | null {
   return existsSync(library) ? library : null
 }
 
+const FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI = 23
+
+/**
+ * Reports whether Node's own SQLite module parses the URI that names a backup
+ * destination. Version 23 was the first to parse one, so an earlier version
+ * takes the staged route even where this repository has built the extension.
+ */
+export function nodeSqliteParsesBackupUris(): boolean {
+  return Number.parseInt(process.versions.node, 10) >= FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI
+}
+
 /**
  * Reports whether a driver streams a copy on this host. The compiled library is
  * one of the conditions and the runtime supplies the rest. A test that gates on

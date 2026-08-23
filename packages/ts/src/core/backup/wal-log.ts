@@ -1,5 +1,6 @@
 import { open } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
+import type { BackupLogPosition } from './report.js'
 import {
   LOG_HEADER_BYTES,
   type LogChecksum,
@@ -201,6 +202,60 @@ export async function copyLogRange(
     }
   } finally {
     await source.close()
+  }
+}
+
+/**
+ * Names the write-ahead log SQLite keeps beside a database file.
+ *
+ * @param sourcePath - Path of the database file.
+ * @returns Path of its log.
+ *
+ * @internal
+ */
+export function logPathFor(sourcePath: string): string {
+  return `${sourcePath}-wal`
+}
+
+/**
+ * Reads how far a database's write-ahead log has reached at the moment of the
+ * call. A full copy states this, so that a reader can tell which run of the log
+ * the database was on when that copy finished.
+ *
+ * Sirannon reads the log once the copy has moved every page. A writer may
+ * commit in the gap between those two steps, and the frame named here would
+ * then be later than the last frame the copy itself took in. So read this as
+ * the state of the log at one moment.
+ *
+ * The walk stops at the last frame that commits a transaction, so the answer
+ * never names a frame a restore could not replay.
+ *
+ * A copy that has moved every page is worth storing on its own, so Sirannon
+ * answers undefined for a log it cannot read and lets the run itself succeed. A
+ * database that keeps no write-ahead log answers the same way, and so does one
+ * whose log a checkpoint has emptied. The capture path reads the log through
+ * {@link readLogFileHeader} and {@link scanLogFrames}, where a failure does stop
+ * the capture, because those frames are the backup.
+ *
+ * @param sourcePath - Path of the database file, beside which SQLite keeps the log.
+ * @returns Where the log had reached, or undefined where Sirannon could not read it.
+ *
+ * @internal
+ */
+export async function readLogPosition(sourcePath: string): Promise<BackupLogPosition | undefined> {
+  const logPath = logPathFor(sourcePath)
+  try {
+    const header = await readLogFileHeader(logPath)
+    if (!header) return undefined
+    const scan = await scanLogFrames(logPath, header, { frame: 0, checksum: header.checksum })
+    return {
+      logSequence: header.logSequence,
+      salt1: header.salt1,
+      salt2: header.salt2,
+      lastFrame: scan.lastCommitFrame,
+    }
+  } catch {
+    return undefined
   }
 }
 

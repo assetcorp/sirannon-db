@@ -83,7 +83,7 @@ Database {
   rollback(migrations, version?): async -> RollbackResult
   appliedMigrations(): async -> List<AppliedMigration>
 
-  backup(destPath): async -> void
+  backup(destPath): async -> BackupFileReport
   backupTo(options): async -> BackupRunReport
   backupCapabilities(): BackupCapabilities
   scheduleBackup(options): void
@@ -460,7 +460,27 @@ A backup copies a database while writes continue. The copy runs through SQLite's
 
 ### Full copy to a path
 
-`backup(destPath)` copies the database to a local file. Paths containing null bytes, control characters, or `..` segments, and destinations that already exist, are rejected; the parent directory is created recursively; a failure makes a best-effort cleanup of the partial file and then fails with `BACKUP_ERROR`. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
+`backup(destPath)` copies the database to a local file and reports what that copy moved. Paths containing null bytes, control characters, or `..` segments, and destinations that already exist, are rejected; the parent directory is created recursively. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
+
+```text
+BackupFileReport {
+  runId:      string
+  databaseId: string
+  sourcePath: string
+  destPath:   string
+  startedAt:  number
+  finishedAt: number
+  durationMs: number
+  pageCount:  number
+  pageSize:   number
+  byteLength: number
+  restarts:   number
+}
+```
+
+`destPath` states the path the implementation resolved, so a caller that passed a relative path reads an absolute one back.
+
+A copy that cannot finish fails with `BACKUP_STALLED` or `BACKUP_RESTARTED` where the next section applies, and with `BACKUP_ERROR` otherwise. An implementation must remove the partial file that copy was writing, because a database missing its later pages must never stay on disk as though the copy had finished. An implementation stops waiting once the stall deadline passes, and the runtime goes on writing that file after that. SQLite offers no way to cancel a copy under way, so an implementation must remove the file only once that copy stops. An implementation must not hold the caller's call open while it waits for that.
 
 ### Restarts and stalls
 
@@ -546,13 +566,25 @@ BackupRunReport {
   pieceBytes:      number
   restarts:        number
   position?:       BackupChainPosition
+  logPosition?:    BackupLogPosition
   fingerprint?:    string
+}
+
+BackupLogPosition {
+  logSequence: number
+  salt1:       number
+  salt2:       number
+  lastFrame:   number
 }
 ```
 
-The fingerprint is the SHA-256 of what the run wrote, and a caller turns it off where the read it costs is not worth its price.
+The fingerprint is the SHA-256 of what the run wrote. A caller turns it off where the read it costs is worth more than the check.
 
-`chainId` names the chain the run belongs to; a full copy begins one and every change piece extends it. A change capture reports `kind: 'change'`, sets `position` to the frames it took, and counts them in `pageCount`. A full copy carries no `position`.
+`chainId` names the chain this run writes into. A full copy starts a chain, which every change piece after it extends. A change capture reports `kind: 'change'`, sets `position` to the frames it took, and counts those frames in `pageCount`. A full copy states no `position`.
+
+A full copy sets `logPosition` to how far the write-ahead log had reached when that copy finished. A database keeping no such log states none. An implementation reads the log once the copy has moved every page, so a writer that commits between those two steps would add a frame which `logPosition` names and which the copy does not hold.
+
+SQLite stamps a fresh pair of salts on the log at every restart, and a checkpoint that empties the log restarts it. The checkpoint cycle in the section below checkpoints after each capture, and no checkpoint falls between a full copy and the first change piece extending its chain, so those two state the same salts. A change piece states later salts than the piece before it whenever the checkpoint between the two emptied the log. A reader can hold a checkpoint off, which leaves the log on the run it was already on, so two consecutive change pieces may state the same salts.
 
 ### Change capture
 
@@ -732,11 +764,24 @@ BackupCycleStatus {
   progress?:  BackupProgress
   lastRun?:   BackupRunReport
   lastSkip?:  BackupSkip
-  lastError?: { code: string, message: string, at: number }
+  lastError?: BackupCycleError
+}
+
+BackupCycleError {
+  code:       string
+  message:    string
+  at:         number
+  durationMs: number
+  chainId?:   string
+  progress?:  BackupProgress
 }
 ```
 
 `running` is true from the start of a turn to its end. `progress` states the counters of the turn under way, and is absent between turns. `lastRun`, `lastSkip`, and `lastError` each state the most recent of their kind, and each outlives the turn that produced it. An implementation calls `onProgress` with the same counters at step resolution, during a full copy and during a change transfer.
+
+`lastError` states the failure alongside what the turn was doing when that failure arrived. `durationMs` counts from the start of the turn to the failure. `chainId` names the chain that turn was extending. Where a log restarted, that is the chain the restart broke; the chain that replaced it is never the one recorded. `progress` states how far the run had reached, and a turn that failed before its copy began states no progress at all.
+
+An implementation passes each failure of a turn to `onError` exactly once. A step that reports a failure also raises it, so the code that started the turn receives that same failure a second time. An implementation therefore has to recognise the failures it has already passed on. Where a log has restarted and the replacement chain also fails to start, an implementation passes both failures to `onError` and records the second of them. It records that second failure against the chain the restart broke, because it holds no chain of its own by then and an operator has to know which one they have lost. An implementation that empties a write-ahead log grown past `maxUncapturedLogBytes` records that loss over whatever else the turn recorded, because an operator must hear that writes reached no backup before hearing what stopped the turn.
 
 ### Verifying a stored backup
 
@@ -788,15 +833,21 @@ A runtime that hands over whole databases only reports `fullCopy: false`, a runt
 
 ```text
 BackupScheduleOptions {
-  cron:      string
-  destDir:   string
-  maxFiles?: number   (default: 5, recommended)
-  timezone?: string   (IANA name; default: host time zone)
-  onError?:  (error) -> void
+  cron:               string
+  destDir:            string
+  maxFiles?:          number   (default: 5, recommended)
+  timezone?:          string   (IANA name; default: host time zone)
+  onBackup?:          (report: BackupFileReport) -> void or async -> void
+  onBackupTimeoutMs?: number   (default: 600000, recommended)
+  onError?:           (error) -> void
 }
 ```
 
-`scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates files matching `backup-*.db` beyond `maxFiles` by modification time. The cron expression is evaluated in `timezone` when supplied, otherwise the host zone. The scheduler checks the time on a recurring tick and does not backfill: a scheduled time skipped while the host sleeps or the clock jumps forward is not run late, and a backward clock step repeats nothing until real time passes the last completed backup. Across a daylight-saving forward transition the missing hour is skipped; across a backward transition a time in the repeated hour runs once.
+`scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates files matching `backup-*.db` beyond `maxFiles` by modification time. The report names the database and the file the copies come from, and an implementation states whichever of the two the caller named. Where the caller names no source file, an implementation reads the file the connection has open, and it fails with `BACKUP_ERROR` where the connection has none. Where the caller names no database, an implementation takes that name from the source file. The cron expression is evaluated in `timezone` when supplied, otherwise the host zone. The scheduler checks the time on a recurring tick and does not backfill: a scheduled time skipped while the host sleeps or the clock jumps forward is not run late, and a backward clock step repeats nothing until real time passes the last completed backup. Across a daylight-saving forward transition the missing hour is skipped; across a backward transition a time in the repeated hour runs once.
+
+An implementation calls `onBackup` after every copy the schedule finishes, passing the report `backup` returns, so that a caller learns which file to move somewhere durable without watching the directory. Where `onBackup` returns something the host can wait on, an implementation waits for it to finish before it rotates the files and before it takes the next copy, which holds rotation off a file the caller is still reading. An implementation rotates the files whether that call succeeded or failed, and it passes both a failed call and a failed rotation to `onError`, alongside the copies that fail. An implementation reports the copy that finished even where the rotation after it fails.
+
+An implementation stops waiting on `onBackup` after `onBackupTimeoutMs` and reports the timeout through `onError`, because a caller waiting on a connection that never answers would otherwise hold the schedule still for good. The call itself continues, and an implementation counts that copy among the files it may delete from that point on. A deadline of zero leaves the wait unbounded. A deadline that is negative, is not a number, or is longer than the host's timer can hold fails with `BACKUP_ERROR`.
 
 ---
 

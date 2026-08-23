@@ -47,6 +47,49 @@ export async function readPageSize(conn: SQLiteConnection): Promise<number> {
   return row ? Number(row.page_size) : 0
 }
 
+/**
+ * Reads the path of the database file a connection has open. A report names
+ * that path as the source its copy came from.
+ *
+ * @param conn - Connection to read from.
+ * @returns Path of that file, or an empty string where SQLite named none.
+ *
+ * @internal
+ */
+export async function readMainDatabasePath(conn: SQLiteConnection): Promise<string> {
+  const stmt = await conn.prepare('PRAGMA database_list')
+  const rows = await stmt.all<{ name: string; file: string | null }>()
+  const main = rows.find(row => row.name === 'main')
+  return main?.file ?? ''
+}
+
+/**
+ * Where a database's write-ahead log had reached at one moment.
+ *
+ * A full copy states this, so you can tell which run of the log the database
+ * was on when that copy finished. SQLite stamps a fresh pair of salts on the
+ * log at every restart, and a checkpoint that empties the log restarts it.
+ *
+ * The checkpoint cycle checkpoints after each capture, and no checkpoint falls
+ * between a full copy and the first change piece extending its chain, so those
+ * two state the same salts. A change piece states later salts than the piece
+ * before it whenever the checkpoint between the two emptied the log. A reader
+ * can hold a checkpoint off, which leaves the log on the run it was already on,
+ * so two consecutive change pieces may state the same salts.
+ *
+ * @public
+ */
+export interface BackupLogPosition {
+  /** Checkpoint sequence of the log. SQLite adds one to it at every restart of the log. */
+  logSequence: number
+  /** First salt of that log. The two salts together tell one run of the log from the next. */
+  salt1: number
+  /** Second salt of it. */
+  salt2: number
+  /** The last frame that commits a transaction, counted from one. A log holding none reports zero. */
+  lastFrame: number
+}
+
 /** How far one backup run has moved, reported at step resolution.
  * @public
  */
@@ -113,9 +156,54 @@ export interface BackupRunReport {
   restarts: number
   /** The stretch of log a change piece covers. A full copy has none. */
   position?: BackupChainPosition
+  /**
+   * Where the write-ahead log had reached when a full copy finished. Sirannon
+   * reads the log after the copy has moved every page, so a writer committing
+   * between those two steps would put a frame here that the copy does not hold.
+   * A change piece states the stretch of log it holds in
+   * {@link BackupRunReport.position}, and a database that keeps no write-ahead
+   * log states neither.
+   */
+  logPosition?: BackupLogPosition
   /** SHA-256 of the copied file, unless the caller turned it off. */
   fingerprint?: string
 }
+
+/** What one finished copy to a local file produced.
+ * @public
+ */
+export interface BackupFileReport {
+  /** Identifier this run is known by. */
+  runId: string
+  /** Database the copy was taken from. */
+  databaseId: string
+  /** File the copy was taken from. */
+  sourcePath: string
+  /** Absolute path of the file the copy was written to. */
+  destPath: string
+  /** Epoch milliseconds the copy started at. */
+  startedAt: number
+  /** Epoch milliseconds it finished at. */
+  finishedAt: number
+  /** Milliseconds it took. */
+  durationMs: number
+  /** Pages it moved. */
+  pageCount: number
+  /** Bytes one page holds. */
+  pageSize: number
+  /** Bytes the file it wrote holds. */
+  byteLength: number
+  /** Times the copy returned to page one. */
+  restarts: number
+}
+
+/**
+ * What one copy to a local file produced. The controller that owns the database
+ * adds its identifier and its path to build a {@link BackupFileReport}.
+ *
+ * @internal
+ */
+export type BackupFileCopy = Omit<BackupFileReport, 'databaseId' | 'sourcePath'>
 
 /** How Sirannon runs one backup to a caller-supplied destination.
  * @public

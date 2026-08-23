@@ -127,10 +127,10 @@ cd packages/ts/examples/node && pnpm start
 
 ## Architecture
 
-Application clients reach the primary and read replicas over HTTP and WebSocket. The primary accepts every write, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. An etcd coordinator tracks primary authority, node leases, and the in-sync set, and promotes an in-sync replica when the primary fails.
+Application clients reach the current primary and eligible read replicas over HTTP and WebSocket. The primary accepts writes while it can prove live authority, assigns each change a Hybrid Logical Clock timestamp, and sends checksummed batches to the replicas over gRPC with mutual TLS. A Sirannon failover controller uses leases and group state stored in etcd to select an eligible in-sync replica and atomically advance the primary term when failover is safe. Every node rejects writes and replication from stale terms.
 
 <p align="center">
-  <img src="docs/assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
+  <img src="docs/assets/replication-topology.svg" alt="Sirannon coordinator-backed replication topology: clients write to the current primary and read from eligible nodes, the primary replicates to replicas over gRPC with mutual TLS, and a Sirannon controller uses leases and atomic term updates stored in etcd to perform safe failover." width="820">
 </p>
 
 ## Security

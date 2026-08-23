@@ -24,3 +24,14 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 - The **preferred backup node** is the one node in a replication group whose scheduled backup proceeds, chosen by the coordinator, replica-preferred by default. Chains belong to the node that started them, so a failover starts a fresh chain.
 - A **restore** names a moment and produces a database. Sirannon selects the pieces, fetches them through the destination one at a time, and composes the file as they arrive, with a disk floor of the finished database plus one piece plus a capped change log.
 - **Safe-to-delete** is the question Sirannon answers from its chain records: which pieces no possible restore still needs.
+
+## Encryption
+
+- **Encryption at rest** is Sirannon encrypting every page of a database, its write-ahead log, and every backup made from it, so that only a holder of the key can read a copy of the files. Avoid 'disk encryption' and 'volume encryption', which name what the operating system does underneath.
+- The **data key** is the random key that encrypts the pages of one database. Sirannon generates it when encryption turns on, and only Sirannon handles it.
+- The **master key** is the random 32-byte key the developer supplies, which wraps the data key and never touches a page. Avoid 'password', 'passphrase', and 'secret', because Sirannon refuses a key a person could remember.
+- A **key provider** is the function or built-in that gives Sirannon the master key when a database opens. Sirannon provides one for an environment variable, a file, and a caller-supplied function, and a provider that does not answer stops the database from opening.
+- The **key record** is the wrapped data key, stored inside the database file, so that a copy of the file stays restorable by anyone who holds the master key.
+- **Master-key rotation** re-wraps the key record under a new master key and rewrites no page.
+- A **re-encryption job** is the one background copy that encrypts an existing database, removes its encryption, or gives it a new data key. Writes continue while it works, and it holds them only for the final swap.
+- An **encryption-required group** is a replication group whose setting admits only encrypted members.

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -41,6 +41,24 @@ describe('Backup integration via Database', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].name).toBe('Alice')
     await verify.close()
+  })
+
+  it('names the database and the file it came from on the report backup() returns', async () => {
+    const sourcePath = join(tempDir, 'reported-source.db')
+    const db = await Database.create('orders', sourcePath, testDriver)
+    await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)')
+    await db.execute('INSERT INTO orders (total) VALUES (42)')
+
+    const backupPath = join(tempDir, 'reported-copy.db')
+    const report = await db.backup(backupPath)
+    await db.close()
+
+    expect(report.databaseId).toBe('orders')
+    expect(report.sourcePath).toBe(sourcePath)
+    expect(report.destPath).toBe(backupPath)
+    expect(report.pageCount).toBeGreaterThan(0)
+    expect(report.byteLength).toBe(statSync(backupPath).size)
+    expect(report.restarts).toBe(0)
   })
 
   it('throws when backing up a read-only database (no writer)', async () => {

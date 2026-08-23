@@ -96,8 +96,11 @@ export type BackupChainRecord = BackupChainBase | BackupChainChange;
 // @public
 export interface BackupCycleError {
     at: number;
+    chainId?: string;
     code: string;
+    durationMs: number;
     message: string;
+    progress?: BackupProgress;
 }
 
 // @public
@@ -148,6 +151,21 @@ export class BackupError extends SirannonError {
 }
 
 // @public
+export interface BackupFileReport {
+    byteLength: number;
+    databaseId: string;
+    destPath: string;
+    durationMs: number;
+    finishedAt: number;
+    pageCount: number;
+    pageSize: number;
+    restarts: number;
+    runId: string;
+    sourcePath: string;
+    startedAt: number;
+}
+
+// @public
 export interface BackupGroupMembership {
     nodeIds: string[];
     primaryNodeId: string | null;
@@ -157,6 +175,14 @@ export interface BackupGroupMembership {
 export interface BackupGroupSource {
     readonly nodeId: string;
     readMembership(): Promise<BackupGroupMembership>;
+}
+
+// @public
+export interface BackupLogPosition {
+    lastFrame: number;
+    logSequence: number;
+    salt1: number;
+    salt2: number;
 }
 
 // @public
@@ -203,6 +229,7 @@ export interface BackupRunReport {
     fingerprint?: string;
     finishedAt: number;
     kind: 'full' | 'change';
+    logPosition?: BackupLogPosition;
     pageCount: number;
     pageSize: number;
     pieceBytes: number;
@@ -226,6 +253,8 @@ export interface BackupScheduleOptions {
     cron: string;
     destDir: string;
     maxFiles?: number;
+    onBackup?: (report: BackupFileReport) => void | Promise<void>;
+    onBackupTimeoutMs?: number;
     onError?: (error: Error) => void;
     timezone?: string;
 }
@@ -525,7 +554,7 @@ export class DatabaseAlreadyExistsError extends SirannonError {
 
 // @public
 export class DatabaseBackups extends DatabaseLifecycle {
-    backup(destPath: string): Promise<void>;
+    backup(destPath: string): Promise<BackupFileReport>;
     backupCapabilities(): BackupCapabilities;
     backupChain(): Promise<BackupChain[]>;
     backupLocation(): BackupChainLocation;

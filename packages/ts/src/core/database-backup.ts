@@ -10,7 +10,7 @@ import type { BackupCycle } from './backup/cycle.js'
 import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
 import type { BackupDestination } from './backup/destination.js'
-import type { BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
+import type { BackupFileReport, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import { startCopyWithoutHoldingWriter } from './backup/start-guard.js'
 import type { BackupVerifyResult } from './backup/verify.js'
 import type { BackupEngine, DriverCapabilities, SQLiteConnection, SQLiteDriver } from './driver/types.js'
@@ -108,11 +108,12 @@ export class DatabaseBackupController {
     )
   }
 
-  backup(destPath: string): Promise<void> {
+  async backup(destPath: string): Promise<BackupFileReport> {
     const engine = this.require()
-    return startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
+    const copy = await startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
       engine.backup(this.acquireWriter(), destPath, onFirstStep),
     )
+    return { ...copy, databaseId: this.databaseId, sourcePath: this.sourcePath }
   }
 
   backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
@@ -129,7 +130,14 @@ export class DatabaseBackupController {
 
   schedule(options: BackupScheduleOptions): void {
     const engine = this.require()
-    this.cancellers.push(engine.schedule(this.acquireWriter(), options, this.runExclusive))
+    this.cancellers.push(
+      engine.schedule(this.acquireWriter(), {
+        ...options,
+        databaseId: this.databaseId,
+        sourcePath: this.sourcePath,
+        runExclusive: this.runExclusive,
+      }),
+    )
   }
 
   /**

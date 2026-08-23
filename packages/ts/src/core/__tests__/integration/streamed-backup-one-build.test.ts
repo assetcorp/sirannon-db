@@ -2,19 +2,19 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { builtStreamingExtensionPath } from '../../../__tests__/helpers/streaming-extension.js'
+import {
+  builtStreamingExtensionPath,
+  nodeSqliteParsesBackupUris,
+} from '../../../__tests__/helpers/streaming-extension.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { nodeSqlite } from '../../../drivers/node/index.js'
 import { Database } from '../../database.js'
 import type { SQLiteDriver } from '../../driver/types.js'
 import { memoryDestination } from '../backup/memory-destination.js'
 
-const FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI = 23
-
 const extensionPath = builtStreamingExtensionPath()
 const vfsOptions = extensionPath ? { vfsExtensionPath: extensionPath } : {}
-const bothDriversStream =
-  extensionPath !== null && Number.parseInt(process.versions.node, 10) >= FIRST_NODE_MAJOR_THAT_OPENS_A_COPY_BY_URI
+const bothDriversStream = extensionPath !== null && nodeSqliteParsesBackupUris()
 
 let tempDir: string
 

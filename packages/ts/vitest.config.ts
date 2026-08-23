@@ -6,7 +6,13 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/__tests__/**/*.test.ts', 'benchmarks/__tests__/**/*.test.ts'],
     env: { SQLITE_USE_URI: '1' },
-    exclude: ['node_modules/**', 'dist/**', 'src/__tests__/e2e/**', 'src/__tests__/failover/**'],
+    exclude: [
+      'node_modules/**',
+      'dist/**',
+      'src/__tests__/e2e/**',
+      'src/__tests__/failover/**',
+      'src/__tests__/large/**',
+    ],
     testTimeout: 10_000,
     passWithNoTests: true,
     coverage: {

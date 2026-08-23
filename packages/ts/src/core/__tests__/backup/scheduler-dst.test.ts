@@ -26,8 +26,20 @@ interface Scenario {
 async function collectFires(scenario: Scenario): Promise<Fire[]> {
   const fires: Fire[] = []
   const manager = new BackupManager()
-  manager.backup = async () => {
-    fires.push({ epoch: Date.now(), parts: wallClockParts(new Date(), scenario.timezone) })
+  manager.backup = async (_conn, destPath) => {
+    const at = Date.now()
+    fires.push({ epoch: at, parts: wallClockParts(new Date(), scenario.timezone) })
+    return {
+      runId: 'stub',
+      destPath,
+      startedAt: at,
+      finishedAt: at,
+      durationMs: 0,
+      pageCount: 0,
+      pageSize: 0,
+      byteLength: 0,
+      restarts: 0,
+    }
   }
   manager.rotate = () => {}
   const scheduler = new BackupScheduler(manager)
@@ -37,6 +49,8 @@ async function collectFires(scenario: Scenario): Promise<Fire[]> {
   try {
     runCounter += 1
     const cancel = scheduler.schedule(STUB_CONN, {
+      databaseId: 'main',
+      sourcePath: join(temp.path, 'source.db'),
       cron: scenario.cron,
       destDir: join(temp.path, `run-${runCounter}`),
       timezone: scenario.timezone,

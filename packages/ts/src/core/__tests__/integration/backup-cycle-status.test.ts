@@ -28,6 +28,27 @@ interface Opened {
   destination: MemoryDestination
 }
 
+const WAIT_LIMIT_MS = 5_000
+const PIECE_LATENCY_MS = 2
+
+function slowDestination(destination: MemoryDestination): MemoryDestination {
+  const store = destination.writePiece.bind(destination)
+  destination.writePiece = async (name, index, bytes) => {
+    await new Promise(resolve => setTimeout(resolve, PIECE_LATENCY_MS))
+    await store(name, index, bytes)
+  }
+  return destination
+}
+
+async function waitFor(reached: () => boolean): Promise<void> {
+  const giveUpAt = Date.now() + WAIT_LIMIT_MS
+  while (Date.now() < giveUpAt) {
+    if (reached()) return
+    await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  throw new Error(`Nothing reached that state inside ${WAIT_LIMIT_MS}ms`)
+}
+
 async function openWithCycle(name: string, overrides?: Partial<BackupCycleOptions>): Promise<Opened> {
   const destination = memoryDestination()
   const db = await Database.create(name, join(tempDir, `${name}.db`), testDriver, {
@@ -111,6 +132,41 @@ describe('what a database reports about the backup cycle it runs', () => {
     await expect(db.captureBackupChanges()).rejects.toThrow()
 
     expect(db.backupStatus().lastError?.code).toBe('BACKUP_DESTINATION_ERROR')
+  })
+
+  it('reports how far the run that failed had got, and which chain it was extending', async () => {
+    const destination = slowDestination(memoryDestination())
+    const { db } = await openWithCycle('failed-detail', { pieceBytes: 512, destination })
+    await db.captureBackupChanges()
+    const chainId = db.backupStatus().chainId
+
+    await db.execute('INSERT INTO orders (total) VALUES (1)')
+    destination.refusePiece(1)
+    await db.captureBackupChanges().catch(() => {})
+    const failure = db.backupStatus().lastError
+
+    expect(failure?.code).toBe('BACKUP_DESTINATION_ERROR')
+    expect(failure?.chainId).toBe(chainId)
+    expect(failure?.progress?.runId).toMatch(/^[0-9a-f]{16}$/)
+    expect(failure?.progress?.phase).toBe('transfer')
+    expect(failure?.durationMs).toBeGreaterThan(0)
+  })
+
+  it('keeps that detail when the cycle runs the failing turn on its own timer', async () => {
+    const destination = slowDestination(memoryDestination())
+    const { db } = await openWithCycle('failed-on-timer', { pieceBytes: 512, intervalMs: 20, destination })
+    await db.captureBackupChanges()
+    const chainId = db.backupStatus().chainId
+
+    await db.execute('INSERT INTO orders (total) VALUES (1)')
+    destination.refusePiece(1)
+    await waitFor(() => db.backupStatus().lastError !== undefined)
+    const failure = db.backupStatus().lastError
+
+    expect(failure?.code).toBe('BACKUP_DESTINATION_ERROR')
+    expect(failure?.chainId).toBe(chainId)
+    expect(failure?.progress?.phase).toBe('transfer')
+    expect(failure?.durationMs).toBeGreaterThan(0)
   })
 
   it('reports the turn a node its group backs up from somewhere else passed over', async () => {

@@ -88,6 +88,6 @@ export function nodeBackupEngine(streaming?: BackupStreamingSupport): BackupEngi
     copyToDestination: (conn, request) => manager.copyToDestination(conn, request),
     streamsToDestination: () => manager.streamsToDestination(),
     createCycle: request => createBackupCycle(request),
-    schedule: (conn, options, runExclusive) => scheduler.schedule(conn, options, runExclusive),
+    schedule: (conn, request) => scheduler.schedule(conn, request),
   }
 }

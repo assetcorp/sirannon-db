@@ -1,4 +1,5 @@
 import type { BackupCycleOptions } from './backup/cycle-options.js'
+import type { BackupFileReport } from './backup/report.js'
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
 import type { HookConfig } from './hook-types.js'
 import type { MetricsConfig } from './metrics-types.js'
@@ -173,6 +174,33 @@ export interface BackupScheduleOptions {
    * When omitted, it uses the host's local time zone, which also sets the daylight saving rules that apply.
    */
   timezone?: string
+  /**
+   * Called after every copy the schedule finishes, with the file it wrote and
+   * what that copy moved. Use it to send the file somewhere durable, or to
+   * record that the schedule is still running.
+   *
+   * Sirannon waits for the promise this returns, and it clears the older files
+   * only once that promise settles, so it deletes no copy your upload is still
+   * reading. Sirannon passes a failure to
+   * {@link BackupScheduleOptions.onError}, which is where it reports a failed
+   * copy as well. The deadline in
+   * {@link BackupScheduleOptions.onBackupTimeoutMs} bounds that wait.
+   */
+  onBackup?: (report: BackupFileReport) => void | Promise<void>
+  /**
+   * Milliseconds {@link BackupScheduleOptions.onBackup} may take before
+   * Sirannon gives up waiting on it. It defaults to ten minutes, and zero
+   * leaves the wait unbounded.
+   *
+   * Sirannon clears the older files and takes the next copy once this callback
+   * settles or this deadline passes. Without a deadline, a callback left waiting
+   * on a socket would hold the schedule still for good. Past the deadline
+   * Sirannon reports the timeout through
+   * {@link BackupScheduleOptions.onError} and goes on with the schedule. Your
+   * callback keeps running while Sirannon counts that copy among the files it
+   * may delete, so set this longer than your slowest upload takes.
+   */
+  onBackupTimeoutMs?: number
   /** Called when a scheduled backup fails. Without this, errors are silently discarded. */
   onError?: (error: Error) => void
 }

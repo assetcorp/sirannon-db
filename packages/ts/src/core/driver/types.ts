@@ -1,7 +1,7 @@
 import type { BackupCycle } from '../backup/cycle.js'
 import type { BackupCycleRequest } from '../backup/cycle-options.js'
-import type { BackupRunReport, BackupRunRequest } from '../backup/report.js'
-import type { BackupScheduleOptions } from '../types.js'
+import type { BackupFileCopy, BackupRunReport, BackupRunRequest } from '../backup/report.js'
+import type { BackupScheduleRequest } from '../backup/schedule-request.js'
 import type { WorkerHostOptions } from '../worker/host.js'
 
 /** What one write reports back through the driver.
@@ -36,7 +36,7 @@ export interface WriterContext {
  */
 export interface BackupEngine {
   /** Copies the database behind a connection to a destination path. */
-  backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<void>
+  backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<BackupFileCopy>
   /** Copies the database behind a connection to a caller-supplied destination. */
   copyToDestination(conn: SQLiteConnection, request: BackupRunRequest): Promise<BackupRunReport>
   /** Reports whether a full copy reaches the destination without a local file. */
@@ -44,11 +44,7 @@ export interface BackupEngine {
   /** Builds the cycle that captures the write-ahead log and then checkpoints it. */
   createCycle(request: BackupCycleRequest): BackupCycle
   /** Starts a repeating backup and returns a function that stops it. */
-  schedule(
-    conn: SQLiteConnection,
-    options: BackupScheduleOptions,
-    runExclusive: (op: () => Promise<void>) => Promise<void>,
-  ): () => void
+  schedule(conn: SQLiteConnection, request: BackupScheduleRequest): () => void
 }
 
 /** What one step of a stepped database copy reported.

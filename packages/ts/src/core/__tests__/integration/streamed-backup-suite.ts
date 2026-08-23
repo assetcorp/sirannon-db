@@ -38,10 +38,12 @@ async function seedPages(db: Database, rows: number): Promise<void> {
  *
  * @param label - Name of the driver, which every test title carries.
  * @param buildDriver - Builds that driver, taking the path of the compiled extension where one is built.
+ * @param mustStream - Whether a runner that requires the extension must see this driver take the streamed route. Pass false only where the runtime itself cannot carry a stream, because a driver that could stream and does not has lost its coverage silently.
  */
 export function describeStreamedBackup(
   label: string,
   buildDriver: (options: StreamingExtensionOptions) => SQLiteDriver,
+  mustStream: boolean,
 ): void {
   const extensionPath = builtStreamingExtensionPath()
   const driver = buildDriver(extensionPath ? { vfsExtensionPath: extensionPath } : {})
@@ -57,6 +59,14 @@ export function describeStreamedBackup(
   })
 
   describe(`Streamed backup on ${label}`, () => {
+    it.skipIf(process.env.SIRANNON_REQUIRE_STREAMING_EXTENSION !== '1')(
+      'finds the compiled extension and takes the route this runner requires',
+      () => {
+        expect(extensionPath).not.toBeNull()
+        expect(streams).toBe(mustStream)
+      },
+    )
+
     it.skipIf(!streams)('reports streaming as available', async () => {
       const db = await Database.create('test', join(tempDir, 'capabilities.db'), driver)
 
@@ -74,6 +84,7 @@ export function describeStreamedBackup(
     it.skipIf(!streams)('carries a whole copy to the destination and writes no local file', async () => {
       const db = await Database.create('test', join(tempDir, 'source.db'), driver)
       await seedPages(db, 4000)
+      await db.execute("INSERT INTO users (name) VALUES ('written after the checkpoint')")
       const destination = memoryDestination()
       const beforeRun = readdirSync(tempDir).sort()
 
@@ -83,6 +94,7 @@ export function describeStreamedBackup(
       expect(report.pieceCount).toBeGreaterThan(1)
       expect(report.bytesWritten).toBe(report.pageCount * report.pageSize)
       expect(report.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+      expect(report.logPosition?.lastFrame).toBeGreaterThan(0)
       expect(destination.names()).toEqual(['copy.db'])
       expect(readdirSync(tempDir).sort()).toEqual(beforeRun)
 
@@ -92,7 +104,7 @@ export function describeStreamedBackup(
 
       const restored = await Database.create('restored', assembledPath, driver)
       const rows = await restored.query<{ total: number }>('SELECT count(*) AS total FROM users')
-      expect(rows[0]?.total).toBe(4000)
+      expect(rows[0]?.total).toBe(4001)
       await restored.close()
     })
 

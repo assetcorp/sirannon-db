@@ -1,3 +1,63 @@
+## 0.3.0 (2026-08-23)
+
+### 🚀 Features
+
+- add sirannon_stream_alive function and improve stream management with consumer tracking ([5c541fb](https://github.com/assetcorp/sirannon-db/commit/5c541fb))
+- **backup:** introduce BackupChain and related interfaces ([a3e70ba](https://github.com/assetcorp/sirannon-db/commit/a3e70ba))
+- **benchmarks:** introduce BENCH_SCHEMA_TIMEOUT_MS for schema reset limits ([25365d1](https://github.com/assetcorp/sirannon-db/commit/25365d1))
+- **ci:** add Zig setup and build step for streaming extension ([fab2604](https://github.com/assetcorp/sirannon-db/commit/fab2604))
+- **ci:** improve Zig setup, build steps, and new backup job ([2e88f30](https://github.com/assetcorp/sirannon-db/commit/2e88f30))
+- **docs:** update backup documentation ([966b57e](https://github.com/assetcorp/sirannon-db/commit/966b57e))
+- **native:** add cross-platform SQLite streaming extension support for macOS, Linux, and Windows ([5b3528d](https://github.com/assetcorp/sirannon-db/commit/5b3528d))
+- **native:** add platform-specific README ([c6a17e1](https://github.com/assetcorp/sirannon-db/commit/c6a17e1))
+- **spec:** define extension loading process and requirements in SQLiteDriver and Core specifications ([fcf963d](https://github.com/assetcorp/sirannon-db/commit/fcf963d))
+- **spec:** improve backup functionality with stepped copy capabilities and detailed error handling ([1655f66](https://github.com/assetcorp/sirannon-db/commit/1655f66))
+- **spec:** improve backup and change capture specs ([f6f0bb0](https://github.com/assetcorp/sirannon-db/commit/f6f0bb0))
+- **spec:** enhance backup cycle options with replication group support and preferred node resolution ([05613b0](https://github.com/assetcorp/sirannon-db/commit/05613b0))
+- **spec:** add server backup capabilities ([a0cd995](https://github.com/assetcorp/sirannon-db/commit/a0cd995))
+- **spec:** add timeout handling and error clarifications ([58c1b21](https://github.com/assetcorp/sirannon-db/commit/58c1b21))
+- **tests:** improve streaming backup tests with Node.js version checks and URI parsing support ([4c1d074](https://github.com/assetcorp/sirannon-db/commit/4c1d074))
+- **ts:** improve SyncController with webSocketProtocols and onStatusChange options ([5079d56](https://github.com/assetcorp/sirannon-db/commit/5079d56))
+- **ts:** add cluster status reporting functions and update documentation ([378b661](https://github.com/assetcorp/sirannon-db/commit/378b661))
+- **ts:** rebuild examples ([fb9f5e6](https://github.com/assetcorp/sirannon-db/commit/fb9f5e6))
+- **ts:** update Dockerfile to include Python and build tools for examples ([04be4d1](https://github.com/assetcorp/sirannon-db/commit/04be4d1))
+- **ts:** add Sirannon distributed-entitlements example with manifest and assets ([1614e93](https://github.com/assetcorp/sirannon-db/commit/1614e93))
+- **ts:** implement backup capabilities and destination handling ([a8c15e8](https://github.com/assetcorp/sirannon-db/commit/a8c15e8))
+- **ts:** improve memory destination handling ([aca2372](https://github.com/assetcorp/sirannon-db/commit/aca2372))
+- **ts:** improve backup chain validation ([11c67c9](https://github.com/assetcorp/sirannon-db/commit/11c67c9))
+- **ts:** add streaming backup support and improve database copy capabilities ([d27d1c3](https://github.com/assetcorp/sirannon-db/commit/d27d1c3))
+- **ts:** add destination timeout feature for backup operations and enhance streaming support ([9fc299c](https://github.com/assetcorp/sirannon-db/commit/9fc299c))
+- **ts:** implement backup restore with progress reporting and options for batch size ([3df8b56](https://github.com/assetcorp/sirannon-db/commit/3df8b56))
+- **ts:** implement backup cycle enhancements with replication group support, preferred node selection, and log management ([34c7c46](https://github.com/assetcorp/sirannon-db/commit/34c7c46))
+- **ts:** add writePieceIfAbsent function to BackupDestination for conditional piece storage and enhance backup cycle logic with improved chain handling ([e26bf40](https://github.com/assetcorp/sirannon-db/commit/e26bf40))
+- **ts:** enhance backup cycle reporting with uncaptured log bytes ([fc30ee2](https://github.com/assetcorp/sirannon-db/commit/fc30ee2))
+- **ts:** add server backup capabilities ([0ec6b79](https://github.com/assetcorp/sirannon-db/commit/0ec6b79))
+- **ts:** improve backup reporting with file metrics and add new interfaces for backup file reports ([1bfba36](https://github.com/assetcorp/sirannon-db/commit/1bfba36))
+- **ts:** add improved reporting mechanisms ([79bef0f](https://github.com/assetcorp/sirannon-db/commit/79bef0f))
+
+### 🩹 Fixes
+
+- avoid console errors ([0471e61](https://github.com/assetcorp/sirannon-db/commit/0471e61))
+- improve sirannon stream management with stopped taker tracking and function renaming ([8c6856e](https://github.com/assetcorp/sirannon-db/commit/8c6856e))
+- enhance backup restore process by ensuring write-ahead log is folded into database before removal ([88c5973](https://github.com/assetcorp/sirannon-db/commit/88c5973))
+- **docs:** clarify VFS extension description in ADR 0007 ([1a215dd](https://github.com/assetcorp/sirannon-db/commit/1a215dd))
+- **docs:** correct number of C files in backup ADR 0007 ([d72ccad](https://github.com/assetcorp/sirannon-db/commit/d72ccad))
+- **spec:** clarify backup error handling ([87d27c4](https://github.com/assetcorp/sirannon-db/commit/87d27c4))
+- **ts:** address tab locking issue ([110c6f0](https://github.com/assetcorp/sirannon-db/commit/110c6f0))
+- **ts:** load SQLite extensions through each runtime's own call ([3066d8f](https://github.com/assetcorp/sirannon-db/commit/3066d8f))
+- **ts:** reject relative paths in extension loading and enhance connection handling ([172504b](https://github.com/assetcorp/sirannon-db/commit/172504b))
+- **ts:** address issues with database lifecycle management and backup processes ([87f5bb6](https://github.com/assetcorp/sirannon-db/commit/87f5bb6))
+- **ts:** clear optionalDependencies in package.json for better package management ([5b66069](https://github.com/assetcorp/sirannon-db/commit/5b66069))
+- **ts:** address backup destination timeout issues ([e5bb04a](https://github.com/assetcorp/sirannon-db/commit/e5bb04a))
+- **ts:** ensure proper handling of database logs during backup restore process to prevent data loss ([25e4218](https://github.com/assetcorp/sirannon-db/commit/25e4218))
+- **ts:** refine preferred node selection logic and enhance log measurement error handling ([2313587](https://github.com/assetcorp/sirannon-db/commit/2313587))
+- **ts:** clarify onSkip reporting details and enhance log tracking during skipped turns ([2374645](https://github.com/assetcorp/sirannon-db/commit/2374645))
+- **ts:** address timeout handling and error codes ([87505ae](https://github.com/assetcorp/sirannon-db/commit/87505ae))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.2.2 (2026-08-04)
 
 ### 🩹 Fixes

@@ -6,11 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version bump (major, minor, patch, or explicit like 1.2.3)"
+        description: "Version bump (major, minor, patch, or explicit like 1.2.3). Republishing ignores this value."
         required: true
         type: string
       dry-run:
         description: "Dry run (skip actual publish)"
+        required: false
+        type: boolean
+        default: false
+      republish:
+        description: "Publish the version already committed on main, leaving its tag and changelog alone"
         required: false
         type: boolean
         default: false
@@ -143,6 +148,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Release
+        if: ${{ !inputs.republish }}
         run: pnpm nx release ${{ inputs.version }} ${{ inputs.dry-run && '--dry-run' || '' }} --skip-publish
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
@@ -162,6 +168,7 @@ jobs:
 
       - name: Publish
         if: ${{ !inputs.dry-run }}
-        run: pnpm nx release publish --verbose
+        working-directory: packages/ts
+        run: npm publish --access public
         env:
           NPM_CONFIG_PROVENANCE: true

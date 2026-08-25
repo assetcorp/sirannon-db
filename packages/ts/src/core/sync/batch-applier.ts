@@ -1,6 +1,6 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import { CHANGES_TABLE } from '../internal-tables.js'
+import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
 import {
   prepareInsertAppliedChange,
   selectAppliedSourceSeqsInRange,
@@ -72,7 +72,7 @@ export class BatchApplier {
 
     for (const change of batch.changes) {
       if (change.operation !== 'ddl') {
-        if (!IDENTIFIER_RE.test(change.table)) {
+        if (!IDENTIFIER_RE.test(change.table) || isReservedIdentifier(change.table)) {
           throw new BatchValidationError(`Invalid table name: ${change.table}`)
         }
       }
@@ -213,7 +213,7 @@ export class BatchApplier {
           if (change.operation === 'ddl') {
             throw new BatchValidationError('A staged device transaction cannot carry a DDL change')
           }
-          if (!IDENTIFIER_RE.test(change.table)) {
+          if (!IDENTIFIER_RE.test(change.table) || isReservedIdentifier(change.table)) {
             throw new BatchValidationError(`Invalid table name: ${change.table}`)
           }
           if (!sawFirst) {
@@ -250,6 +250,10 @@ export class BatchApplier {
     resolver: ConflictResolver | ((table: string) => ConflictResolver),
     tally: { applied: number; skipped: number; conflicts: number },
   ): Promise<void> {
+    if (isReservedIdentifier(change.table)) {
+      throw new BatchValidationError(`Invalid table name: ${change.table}`)
+    }
+
     const existingRow = await this.rows.findExistingRow(tx, change)
 
     if (existingRow === undefined) {

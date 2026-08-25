@@ -129,6 +129,10 @@ export interface RemoteSubscriptionBuilder {
    * leaves the row in the set arrives unchanged, and one that never touches the set
    * is not delivered. A synthesised event is indistinguishable from a real insert or
    * delete, so read `type` as the row's arrival or departure from the filter.
+   *
+   * The subscriber chooses this filter, so it decides how much the server delivers,
+   * and an operator who needs to bound what a caller may read does that in the
+   * `authenticate` hook.
    */
   filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
   /** Starts the subscription and calls back on each change. */

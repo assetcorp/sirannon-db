@@ -575,6 +575,7 @@ export interface DatabaseCopyRequest {
     destPath: string;
     onStep?: (step: DatabaseCopyStep) => number;
     pagesPerStep: number;
+    stallTimeoutMs?: number;
 }
 
 // @public

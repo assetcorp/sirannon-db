@@ -112,3 +112,7 @@ loadtest/results*/
 native/npm/*/*
 !native/npm/*/package.json
 !native/npm/*/README.md
+
+native/vfs-encryption-prototype/*.dylib
+native/vfs-encryption-prototype/*.so
+native/vfs-encryption-prototype/*.dll

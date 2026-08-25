@@ -130,6 +130,7 @@ export async function copyDatabaseStepwise(
     .copyDatabase({
       destPath: options.destPath,
       pagesPerStep,
+      stallTimeoutMs,
       onStep: step => {
         if (stopped) throw stopped
         armStall()

@@ -18,7 +18,7 @@ export type WorkerRequest =
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[]; trusted?: boolean }[] }[] }
   | { id: number; kind: 'loadExtension'; path: string }
-  | { id: number; kind: 'copyDatabase'; destPath: string; pagesPerStep: number }
+  | { id: number; kind: 'copyDatabase'; destPath: string; pagesPerStep: number; stallTimeoutMs?: number }
   | { id: number; kind: 'close' }
 
 export type WorkerCancel = { kind: 'cancel'; id: number }
@@ -44,7 +44,7 @@ export type WorkerResponse =
   | { id: number; ok: false; error: SerializedError }
   | WorkerCopyStep
 
-export const WORKER_COPY_ABORTED_CODE = 'BACKUP_ABORTED'
+export const WORKER_COPY_STOPPED_CODE = 'WRITER_WORKER_COPY_STOPPED'
 
 export function serializeError(err: unknown): SerializedError {
   if (err instanceof Error) {

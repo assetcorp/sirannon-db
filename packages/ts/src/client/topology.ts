@@ -3,6 +3,9 @@ import type { ClusterStatusResponse } from '../server/protocol.js'
 import { createEndpointTransport, DatabaseClient } from './client-base.js'
 import type { ClusterRoutingState, TopologyRouting } from './cluster-routing.js'
 import { clusterRoutingChanged, parseClusterRouting } from './cluster-routing.js'
+
+export { parseClusterStatus } from './cluster-status.js'
+
 import { toBaseUrl, toServerBaseUrl } from './endpoint-urls.js'
 import { unrefTimer } from './http-json.js'
 import { TopologyAwareTransport } from './topology-transport.js'

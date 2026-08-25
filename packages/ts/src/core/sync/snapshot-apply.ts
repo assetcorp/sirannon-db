@@ -1,6 +1,6 @@
 import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import { META_TABLE } from '../internal-tables.js'
+import { isReservedIdentifier, META_TABLE } from '../internal-tables.js'
 import {
   deleteAllStagedChanges,
   deleteMetaValue,
@@ -19,7 +19,7 @@ const SNAPSHOT_STATE_LOADING = 'loading'
 
 function assertTableNames(tables: readonly string[]): void {
   for (const table of tables) {
-    if (!IDENTIFIER_RE.test(table)) {
+    if (!IDENTIFIER_RE.test(table) || isReservedIdentifier(table)) {
       throw new ReplicationError(`Invalid table name: ${table}`)
     }
   }

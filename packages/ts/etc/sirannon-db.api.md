@@ -904,6 +904,12 @@ export interface MigrationsFromFilesOptions {
 export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>);
 
 // @public
+export const NODE_HEALTH_REASONS: readonly ["in-sync", "lagging", "coordinator-unreachable", "draining", "repairing", "faulted", "sync-pending", "no-group-state"];
+
+// @public
+export const NODE_HEALTH_STATES: readonly ["healthy", "degraded", "failing_over", "repairing", "syncing", "unavailable"];
+
+// @public
 export interface NodeHealth {
     canRead: boolean;
     canWrite: boolean;
@@ -912,10 +918,10 @@ export interface NodeHealth {
 }
 
 // @public
-export type NodeHealthReason = 'in-sync' | 'lagging' | 'coordinator-unreachable' | 'draining' | 'repairing' | 'faulted' | 'sync-pending' | 'no-group-state';
+export type NodeHealthReason = (typeof NODE_HEALTH_REASONS)[number];
 
 // @public
-export type NodeHealthState = 'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable';
+export type NodeHealthState = (typeof NODE_HEALTH_STATES)[number];
 
 // @public
 export interface OpenOptions {
@@ -1011,12 +1017,18 @@ export interface QueryOptions {
 export function readBackupChains(destination: BackupDestination, chainName?: string): Promise<BackupChain[]>;
 
 // @public
+export function readBearerToken(ctx: RequestContext): string | undefined;
+
+// @public
 export interface ReadConcern {
     level: ReadConcernLevel;
 }
 
 // @public
 export type ReadConcernLevel = 'local' | 'majority' | 'linearizable';
+
+// @public
+export function readHeader(ctx: RequestContext, name: string): string | undefined;
 
 // @public
 export class ReadOnlyError extends SirannonError {
@@ -1030,6 +1042,9 @@ export interface ReadOperation<Identity = unknown> {
     fromIdentity?: Readonly<Record<string, keyof Identity & string>>;
     statement(args: OperationArguments): OperationStatement;
 }
+
+// @public
+export function readSubprotocolCredential(ctx: RequestContext, prefix: string): string | undefined;
 
 // @public
 export interface ReplicationStatusInfo {
@@ -1247,6 +1262,9 @@ export interface TenantResolverOptions {
     defaultOptions?: DatabaseOptions;
     extension?: string;
 }
+
+// @public
+export function toSubprotocolCredential(prefix: string, credential: string): string;
 
 // @public
 export class Transaction {

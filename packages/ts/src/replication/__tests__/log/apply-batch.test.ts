@@ -208,6 +208,76 @@ describe('ReplicationLog', () => {
       await expect(log.applyBatch(batch, new LWWResolver())).rejects.toThrow(BatchValidationError)
     })
 
+    it('applies DDL whose column name carries a reserved prefix', async () => {
+      const hlcB = new HLC(NODE_B)
+      const hlcVal = hlcB.now()
+
+      const changes: ReplicationChange[] = [
+        {
+          table: '__ddl__',
+          operation: 'ddl',
+          rowId: '',
+          primaryKey: {},
+          hlc: hlcVal,
+          txId: 'ddl-tx-column',
+          nodeId: NODE_B,
+          newData: null,
+          oldData: null,
+          ddlStatement:
+            'CREATE TABLE hints (id INTEGER PRIMARY KEY, sqlite_hint TEXT, last_sirannon_sync TEXT, attached_at TEXT)',
+        },
+      ]
+
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
+
+      const batch: ReplicationBatch = {
+        sourceNodeId: NODE_B,
+        batchId: `${NODE_B}-22-22`,
+        fromSeq: 22n,
+        toSeq: 22n,
+        hlcRange: { min: hlcVal, max: hlcVal },
+        changes,
+        checksum,
+      }
+
+      const result = await log.applyBatch(batch, new LWWResolver())
+      expect(result.applied).toBe(1)
+    })
+
+    it('rejects DDL naming a reserved internal table', async () => {
+      const hlcB = new HLC(NODE_B)
+      const hlcVal = hlcB.now()
+
+      const changes: ReplicationChange[] = [
+        {
+          table: '__ddl__',
+          operation: 'ddl',
+          rowId: '',
+          primaryKey: {},
+          hlc: hlcVal,
+          txId: 'ddl-tx-reserved',
+          nodeId: NODE_B,
+          newData: null,
+          oldData: null,
+          ddlStatement: 'DROP TABLE main._sirannon_changes',
+        },
+      ]
+
+      const checksum = createHash('sha256').update(canonicaliseForChecksum(changes)).digest('hex')
+
+      const batch: ReplicationBatch = {
+        sourceNodeId: NODE_B,
+        batchId: `${NODE_B}-21-21`,
+        fromSeq: 21n,
+        toSeq: 21n,
+        hlcRange: { min: hlcVal, max: hlcVal },
+        changes,
+        checksum,
+      }
+
+      await expect(log.applyBatch(batch, new LWWResolver())).rejects.toThrow(BatchValidationError)
+    })
+
     it('applies safe DDL statements', async () => {
       const hlcB = new HLC(NODE_B)
       const hlcVal = hlcB.now()

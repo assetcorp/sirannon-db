@@ -10,6 +10,7 @@ import { SirannonError } from '../errors.js'
 import {
   deserializeError,
   WORKER_CANCELLED_CODE,
+  WORKER_COPY_STOPPED_CODE,
   type WorkerRequest,
   type WorkerRequestBody,
   type WorkerResponse,
@@ -30,6 +31,7 @@ interface PendingRequest {
   reject: (reason: Error) => void
   timer: NodeJS.Timeout | null
   graceTimer: NodeJS.Timeout | null
+  deadlineMs: number
   cancellable: boolean
   kind: WorkerRequestBody['kind']
   onStep?: (step: DatabaseCopyStep) => void
@@ -120,10 +122,14 @@ export class WriterWorker {
     if (res.error.code === WORKER_CANCELLED_CODE) {
       entry.reject(
         new SirannonError(
-          `The writer worker could not take this operation within ${this.timeoutMs}ms; it was not applied and is safe to retry`,
+          `The writer worker could not take this operation within ${entry.deadlineMs}ms; it was not applied and is safe to retry`,
           'WRITE_OVERLOADED',
         ),
       )
+      return
+    }
+    if (res.error.code === WORKER_COPY_STOPPED_CODE) {
+      entry.reject(this.unresponsiveError(entry.deadlineMs, entry.kind))
       return
     }
     entry.reject(deserializeError(res.error))
@@ -134,7 +140,7 @@ export class WriterWorker {
     if (!entry) return
     if (entry.timer) {
       clearTimeout(entry.timer)
-      entry.timer = this.timeoutMs > 0 ? setTimeout(() => this.onDeadline(id), this.timeoutMs) : null
+      entry.timer = entry.deadlineMs > 0 ? setTimeout(() => this.onDeadline(id), entry.deadlineMs) : null
       entry.timer?.unref?.()
     }
     try {
@@ -179,18 +185,18 @@ export class WriterWorker {
     if (!entry) return
     const worker = this.worker
     if (!entry.cancellable || !worker) {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs, entry.kind))
+      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs, entry.kind))
       return
     }
     try {
       worker.postMessage({ kind: 'cancel', id })
     } catch {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs, entry.kind))
+      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs, entry.kind))
       return
     }
     entry.graceTimer = setTimeout(() => {
-      this.rejectPending(id, this.unresponsiveError(this.timeoutMs * 2, entry.kind))
-    }, this.timeoutMs)
+      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs * 2, entry.kind))
+    }, entry.deadlineMs)
     entry.graceTimer.unref?.()
   }
 
@@ -235,10 +241,11 @@ export class WriterWorker {
     }
     const id = this.nextId++
     const message = { ...request, id } as WorkerRequest
+    const deadlineMs = copyStallDeadline(request) ?? this.timeoutMs
     return new Promise<unknown>((resolve, reject) => {
       let timer: NodeJS.Timeout | null = null
-      if (this.timeoutMs > 0) {
-        timer = setTimeout(() => this.onDeadline(id), this.timeoutMs)
+      if (deadlineMs > 0) {
+        timer = setTimeout(() => this.onDeadline(id), deadlineMs)
         timer.unref?.()
       }
       const cancellable = request.kind !== 'open' && request.kind !== 'close' && request.kind !== 'loadExtension'
@@ -247,6 +254,7 @@ export class WriterWorker {
         reject,
         timer,
         graceTimer: null,
+        deadlineMs,
         cancellable,
         kind: request.kind,
         ...(onStep ? { onStep } : {}),
@@ -311,7 +319,12 @@ export class WriterWorker {
       copyRunsOffCallerThread: true,
       copyDatabase: request =>
         this.request(
-          { kind: 'copyDatabase', destPath: request.destPath, pagesPerStep: request.pagesPerStep },
+          {
+            kind: 'copyDatabase',
+            destPath: request.destPath,
+            pagesPerStep: request.pagesPerStep,
+            ...(request.stallTimeoutMs === undefined ? {} : { stallTimeoutMs: request.stallTimeoutMs }),
+          },
           request.onStep,
         ) as Promise<DatabaseCopyStep>,
       loadExtension: async (extensionPath: string) => {
@@ -359,6 +372,10 @@ export class WriterWorker {
     }
     this.pending.clear()
   }
+}
+
+function copyStallDeadline(request: WorkerRequestBody): number | undefined {
+  return request.kind === 'copyDatabase' ? request.stallTimeoutMs : undefined
 }
 
 function clearPendingTimers(entry: PendingRequest): void {

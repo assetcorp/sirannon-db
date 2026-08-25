@@ -5,7 +5,7 @@ import { executeGroup } from '../query-executor.js'
 import {
   serializeError,
   WORKER_CANCELLED_CODE,
-  WORKER_COPY_ABORTED_CODE,
+  WORKER_COPY_STOPPED_CODE,
   type WorkerCancel,
   type WorkerRequest,
   type WorkerResult,
@@ -132,7 +132,7 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
           pagesPerStep: req.pagesPerStep,
           onStep: step => {
             if (copy.aborted) {
-              throw new SirannonError('The caller stopped this copy', WORKER_COPY_ABORTED_CODE)
+              throw new SirannonError('The caller stopped this copy', WORKER_COPY_STOPPED_CODE)
             }
             port.postMessage({ id: req.id, kind: 'copyStep', step })
             return req.pagesPerStep

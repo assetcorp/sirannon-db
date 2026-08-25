@@ -72,6 +72,13 @@ export interface DatabaseCopyRequest {
    * up.
    */
   onStep?: (step: DatabaseCopyStep) => number
+  /**
+   * Milliseconds the copy may report no step before the caller stops waiting
+   * for it. A driver that steps the copy on another thread waits this long for
+   * that thread, so a caller who allows a long stall keeps the copy running.
+   * Zero leaves that wait unbounded.
+   */
+  stallTimeoutMs?: number
 }
 
 /** Totals for one statement applied over many parameter sets.

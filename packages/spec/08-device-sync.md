@@ -32,7 +32,7 @@ A CDC trigger writes a change with `node_id`, `tx_id`, and `hlc` empty; such a r
 
 `applyChanges(batch, resolver?)` on the database applies a batch of remote changes locally, defaulting to the LWW resolver. Application validates and applies the batch as follows:
 
-- The recomputed checksum must match `batch.checksum`, or the batch fails with `BATCH_VALIDATION_ERROR`. Each non-DDL `table` must be a valid identifier.
+- The recomputed checksum must match `batch.checksum`, or the batch fails with `BATCH_VALIDATION_ERROR`. Each non-DDL `table` must be a valid identifier, and one under the reserved `_sirannon` or `sqlite_` prefix fails with `BATCH_VALIDATION_ERROR`.
 - A batch whose `toSeq` is at or below the highest already-applied sequence for its source is skipped whole. Individual changes already recorded in `_sirannon_applied_changes` are skipped, so application is idempotent.
 - Changes are grouped by `txId`, each group applied in one transaction. A change whose target row is absent is inserted directly; a change whose row exists is resolved by the resolver (see [Conflict Resolution](03-replication.md#conflict-resolution)). Each applied change is recorded in `_sirannon_applied_changes`.
 - After a group commits, the rows the applier's own triggers produced (those still holding an empty `node_id` above the pre-apply sequence) are stamped with the batch's `sourceNodeId` as origin and the highest applied `hlc`. Marking the origin as the source device is what makes the live pull suppress the echo back to that device.

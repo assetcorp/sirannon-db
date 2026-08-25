@@ -92,11 +92,15 @@ These need a filesystem and stay on the server side:
 
 ## Security model
 
-This example binds to localhost and runs no authentication. Two things are worth knowing before you copy it.
+This example binds to localhost, and it names the caller on every request. Three things are worth knowing before you copy it.
 
 The server restricts CORS to the app origin and refuses SQL from the network, so a caller reaches the sync routes and nothing else. That part transfers.
 
-The authentication does not, because this example configures none. A deployed device needs both credentials: `headers` covers the HTTP requests, and `webSocketProtocols` covers the pull WebSocket, which a browser opens without any header of its own. Mint a short-lived ticket per device rather than passing a long-lived token, check the `Origin` of the upgrade, serve the whole thing over TLS, and redact both the authorization header and the offered subprotocols from your access logs.
+Every request carries a credential, because a device needs both forms. The `headers` option covers the HTTP push and the snapshot download, and `webSocketProtocols` covers the pull subscription, which a browser opens with no header of its own. `createDeviceAuthenticator` in `src/device-identity.ts` reads whichever form the request carries, checks the `Origin`, and refuses anything else.
+
+Replace the token before you deploy this, because this one is a shared constant that the browser bundle carries in the clear. A deployed fleet mints a short-lived ticket per device from a route the application owns, serves the whole thing over TLS, and redacts both the authorization header and the offered subprotocols from its access logs.
+
+The work order table bounds what a device may write. Each text column carries a `CHECK` constraint, so the server enforces the same limit it enforces locally and a hand-written push can store no more than the form allows.
 
 ## Environment
 
@@ -104,7 +108,11 @@ The authentication does not, because this example configures none. A deployed de
 SIRANNON_PORT=9876
 HOST=127.0.0.1
 APP_ORIGIN=http://localhost:5173
+SIRANNON_DEVICE_TOKEN=sirannon-field-service-token
 VITE_SIRANNON_URL=http://127.0.0.1:9876
+VITE_SIRANNON_DEVICE_TOKEN=sirannon-field-service-token
 ```
+
+The server reads `SIRANNON_DEVICE_TOKEN` and the browser reads `VITE_SIRANNON_DEVICE_TOKEN`, so set both to the same value or leave both unset.
 
 The server database is stored in `data/`, which is ignored by git. Delete that directory to start over, and clear the site's IndexedDB storage to reset every device in a browser.

@@ -1,3 +1,4 @@
+import { NODE_HEALTH_REASONS, NODE_HEALTH_STATES } from '@delali/sirannon-db'
 import { z } from 'zod'
 
 export const planSchema = z.enum(['free', 'growth', 'scale', 'enterprise'])
@@ -55,19 +56,8 @@ export const clusterNodeSchema = z.object({
   endpoint: z.string(),
   reachable: z.boolean(),
   role: z.string().optional(),
-  health: z.enum(['healthy', 'degraded', 'failing_over', 'unavailable', 'repairing', 'syncing']).optional(),
-  healthReason: z
-    .enum([
-      'in-sync',
-      'lagging',
-      'coordinator-unreachable',
-      'draining',
-      'repairing',
-      'faulted',
-      'sync-pending',
-      'no-group-state',
-    ])
-    .optional(),
+  health: z.enum(NODE_HEALTH_STATES).optional(),
+  healthReason: z.enum(NODE_HEALTH_REASONS).optional(),
   currentPrimary: z.string().nullable(),
   primaryTerm: z.string().nullable(),
   readEndpoints: z.coerce.number().int().nonnegative(),

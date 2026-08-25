@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs'
-import { ChangeTracker, RequestDeniedError, Sirannon } from '@delali/sirannon-db'
+import {
+  ChangeTracker,
+  RequestDeniedError,
+  readBearerToken,
+  readSubprotocolCredential,
+  Sirannon,
+} from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import {
   PrimaryReplicaTopology,
@@ -21,6 +27,7 @@ import {
   requireRole,
 } from './cluster-node-env'
 import { REPLICATED_TABLES, SCHEMA, SEED_SQL } from './cluster-node-schema'
+import { WEBSOCKET_AUTH_PROTOCOL_PREFIX } from './lib/cluster-config'
 import { type ControlPlaneOperator, operations } from './operations'
 
 const DATABASE_ID = 'entitlements'
@@ -158,18 +165,18 @@ server = createServer<ControlPlaneOperator>(sirannon, {
     headers: ['Content-Type', 'Authorization'],
   },
   operations,
-  authenticate: ({ headers }) => {
-    if (isBearerAuthorized(headers, token)) {
+  authenticate: ctx => {
+    if (readBearerToken(ctx) === token) {
       return { actor: 'control-plane-operator' }
     }
 
-    if (isWebSocketAuthorized(headers, token)) {
+    if (readSubprotocolCredential(ctx, WEBSOCKET_AUTH_PROTOCOL_PREFIX) === token) {
       return { actor: 'control-plane-browser' }
     }
 
     throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing valid Sirannon entitlements demo token')
   },
-  authorizeClusterStatus: ({ headers }) => isBearerAuthorized(headers, token),
+  authorizeClusterStatus: ctx => readBearerToken(ctx) === token,
   resolveExecutionTarget: id => (id === DATABASE_ID ? engine : null),
   getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
   getClusterStatus: id =>
@@ -199,15 +206,6 @@ async function shutdown(): Promise<void> {
   await conn.close().catch(() => undefined)
 }
 
-function isBearerAuthorized(headers: Record<string, string>, expectedToken: string): boolean {
-  return headers.authorization === `Bearer ${expectedToken}`
-}
-
-function isWebSocketAuthorized(headers: Record<string, string>, expectedToken: string): boolean {
-  const protocols = (headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
-  return protocols.includes(toWebSocketAuthProtocol(expectedToken))
-}
-
 function sirannonPackageVersion(): string {
   const manifestUrl = new URL('../../../package.json', import.meta.url)
   const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8')) as { version?: unknown }
@@ -215,8 +213,4 @@ function sirannonPackageVersion(): string {
     throw new Error(`No version found in ${manifestUrl.pathname}`)
   }
   return manifest.version
-}
-
-function toWebSocketAuthProtocol(value: string): string {
-  return `sirannon.entitlements.auth.${Buffer.from(value, 'utf8').toString('base64url')}`
 }

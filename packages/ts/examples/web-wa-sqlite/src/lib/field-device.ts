@@ -1,4 +1,4 @@
-import { Database } from '@delali/sirannon-db'
+import { Database, toSubprotocolCredential } from '@delali/sirannon-db'
 import {
   type SnapshotOutcome,
   type SnapshotProgress,
@@ -9,12 +9,17 @@ import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 import type { LiveDatabase } from '@delali/sirannon-db/react'
 import {
   DATABASE_ID,
+  MAX_NOTE_LENGTH,
+  MAX_SITE_LENGTH,
+  MAX_TASK_LENGTH,
+  MAX_WORK_ORDERS,
   migrations,
   SEED_INSERT_SQL,
   SEED_UPDATED_AT,
   SEED_WORK_ORDERS,
   WORK_ORDERS_TABLE,
 } from '../schema'
+import { DEFAULT_DEVICE_TOKEN, DEVICE_AUTH_PROTOCOL_PREFIX } from './demo-config'
 
 export const WORK_ORDERS_QUERY = `SELECT id, site, task, status, technician, note, updated_at
 FROM ${WORK_ORDERS_TABLE} ORDER BY site, task`
@@ -54,10 +59,14 @@ export async function openFieldDevice(
     await seedIfEmpty(db)
   }
 
+  const deviceToken = import.meta.env.VITE_SIRANNON_DEVICE_TOKEN ?? DEFAULT_DEVICE_TOKEN
+
   const sync = new SyncController(db, {
     url: serverUrl,
     databaseId: DATABASE_ID,
     tables: [WORK_ORDERS_TABLE],
+    headers: { Authorization: `Bearer ${deviceToken}` },
+    webSocketProtocols: [toSubprotocolCredential(DEVICE_AUTH_PROTOCOL_PREFIX, deviceToken)],
     pushIntervalMs: 500,
     onStatusChange: hooks.onStatusChange,
     onChange: hooks.onServerChange,
@@ -85,7 +94,21 @@ export async function closeFieldDevice(device: FieldDevice): Promise<void> {
   }
 }
 
+function assertWithin(value: string, limit: number, field: string): void {
+  if (value.length > limit) {
+    throw new Error(`A work order ${field} is limited to ${limit} characters, and this one carries ${value.length}.`)
+  }
+}
+
 export async function createWorkOrder(device: FieldDevice, site: string, task: string): Promise<void> {
+  assertWithin(site, MAX_SITE_LENGTH, 'site')
+  assertWithin(task, MAX_TASK_LENGTH, 'task')
+
+  const existing = await device.db.queryOne<{ count: number }>(`SELECT count(*) AS count FROM ${WORK_ORDERS_TABLE}`)
+  if ((existing?.count ?? 0) >= MAX_WORK_ORDERS) {
+    throw new Error(`This board holds ${MAX_WORK_ORDERS} work orders, so close one before you add another.`)
+  }
+
   await device.db.execute(
     `INSERT INTO ${WORK_ORDERS_TABLE} (id, site, task, status, technician, note, updated_at)
      VALUES (?, ?, ?, 'scheduled', '', '', ?)`,
@@ -103,6 +126,8 @@ export async function claimWorkOrder(device: FieldDevice, id: string): Promise<v
 }
 
 export async function completeWorkOrder(device: FieldDevice, id: string, note: string): Promise<void> {
+  assertWithin(note, MAX_NOTE_LENGTH, 'note')
+
   await device.db.execute(`UPDATE ${WORK_ORDERS_TABLE} SET status = 'done', note = ?, updated_at = ? WHERE id = ?`, [
     note,
     new Date().toISOString(),

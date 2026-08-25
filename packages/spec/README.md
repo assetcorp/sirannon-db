@@ -35,6 +35,8 @@ Sirannon is organised into layers, each depending only on the layers below it.
 
 **Replication and transport layer.** Changes distribute across server nodes using Hybrid Logical Clocks for causal ordering, over a primary-replica topology where one primary per group accepts writes. In coordinator mode, Sirannon runs automatic primary failover through coordinator-backed leases, primary terms, in-sync tracking, and fail-closed promotion. The production replication transport is gRPC.
 
+**Encryption layer.** A database opened with a master key holds its file, write-ahead log, journals, and every backup made from it in ciphertext, under a data key the master key wraps. The layout, the key rules, and the re-encryption job are in [02-core.md](02-core.md).
+
 **Application layer.** An HTTP and WebSocket server exposes databases over the network, a client SDK provides a remote database proxy with subscriptions and topology-aware read routing, and device sync keeps an end-user device's local database in step with a server. The HTTP and WebSocket transports are not used for node-to-node replication.
 
 ---

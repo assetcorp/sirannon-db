@@ -36,6 +36,7 @@ DriverCapabilities {
   multipleConnections: boolean
   extensions: boolean
   steppedCopy: boolean
+  encryption: boolean
 }
 ```
 
@@ -44,6 +45,7 @@ DriverCapabilities {
 | `multipleConnections` | The engine can open several independent connections to one database file. When `true`, Sirannon creates a pool with dedicated reader connections; when `false`, all reads and writes share one connection. |
 | `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
 | `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
+| `encryption` | The engine encrypts database pages at rest; a driver reporting `true` must apply `OpenOptions.encryption` to every connection it opens for that path. |
 
 ### OpenOptions
 
@@ -53,9 +55,16 @@ OpenOptions {
   walMode?:            boolean          (default: true)
   synchronous?:        SynchronousLevel (default: 'normal')
   walAutoCheckpoint?:  number           (default: unset, leaving SQLite's own threshold in force)
+  encryption?:         EncryptionKeys   (default: unset, leaving the database in plaintext)
 }
 
 SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
+
+EncryptionKeys {
+  masterKey:     Bytes(32)
+  masterKeyName: string
+  dataKey?:      Bytes(32)
+}
 ```
 
 | Field | Description |
@@ -64,6 +73,7 @@ SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
 | `walMode` | Enables WAL journal mode. |
 | `synchronous` | Selects the `PRAGMA synchronous` durability level. |
 | `walAutoCheckpoint` | Sets the frame count at which SQLite checkpoints the log on its own; `0` disables that. A driver applies it on every connection it opens, including one a restarted writer worker opens. |
+| `encryption` | Opens the database through the encryption codec under these keys. An open that states `dataKey` encrypts every page under it and writes a key record wrapping it under `masterKey`; an open that omits `dataKey` reads the key record of a database that holds one and generates a data key for a database that holds none. [02-core.md](02-core.md) fixes the file layout. |
 
 ### open(path, options?)
 
@@ -74,7 +84,10 @@ PRAGMA journal_mode = WAL      -- when walMode is not false
 PRAGMA synchronous = NORMAL    -- the level chosen by synchronous, NORMAL by default
 PRAGMA foreign_keys = ON
 PRAGMA wal_autocheckpoint = N  -- only when walAutoCheckpoint is set
+PRAGMA temp_store = MEMORY     -- when encryption is set
 ```
+
+A driver opening with `encryption` must pass the keys to the engine through a channel that excludes `path`. It must read `PRAGMA journal_mode` once the pragmas above have run, and must fail with `INVALID_ENCRYPTION` on any mode but `wal`, so that a database created by this open reaches the check already in WAL mode. A driver whose capabilities report `encryption` false must fail an open carrying `encryption` with `ENCRYPTION_UNSUPPORTED`.
 
 The `synchronous` value maps to its pragma argument through a fixed allowlist (`off`, `normal`, `full`, `extra`); a value outside the allowlist must fail with error code `INVALID_SYNCHRONOUS`. A driver may set further pragmas the runtime needs; the reference drivers on native engines also set `PRAGMA busy_timeout = 5000`. On failure, the driver must throw an error carrying enough context to tell a missing file, a permission failure, and a corrupt database apart.
 
@@ -102,13 +115,14 @@ SQLiteConnection {
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
 - **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
-- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`.
+- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`. SQLite reads a source page decrypted and writes it through the destination, so a copy of an encrypted database must state the source's data key in `request.encryption`. A copy whose source is encrypted and whose request omits `encryption` must fail with `ENCRYPTION_KEY_MISSING`.
 
 ```text
 DatabaseCopyRequest {
   destPath:     string
   pagesPerStep: number
   onStep?:      (step: DatabaseCopyStep) -> void
+  encryption?:  EncryptionKeys
 }
 
 DatabaseCopyStep {
@@ -188,3 +202,4 @@ A conforming driver satisfies these invariants:
 6. **Integer fidelity.** An integer stored outside the safe range reads back as an exact 64-bit value, and one inside the range reads back as a number.
 7. **BLOB fidelity.** A stored BLOB reads back byte-for-byte.
 8. **Parameter safety.** All binding uses the engine's native mechanism; SQL string interpolation is forbidden.
+9. **Encryption.** With `encryption`, every page the connection writes to its database file, write-ahead log, rollback journal, and super journal reaches disk as ciphertext, and every read returns the plaintext SQLite wrote.

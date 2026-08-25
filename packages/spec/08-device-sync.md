@@ -6,6 +6,12 @@ Device sync reuses the change log ([02-core.md](02-core.md#change-data-capture-c
 
 ---
 
+## Encryption on a Device
+
+A device encrypts its own local database under a master key its application supplies from the platform key store, through the `encryption` option [02-core.md](02-core.md) defines. Each device holds a key of its own, and a server holds the keys of the databases it opens. Changes cross the wire as values under the transport's own transport-layer security, so a device and a server that hold different keys sync with each other.
+
+---
+
 ## Device Identity and Persisted State
 
 A device has a stable identity: a 32-character lowercase hexadecimal string, held in `_sirannon_meta` under `node_id` and generated once. The device keeps its sync cursors in `_sirannon_meta`:

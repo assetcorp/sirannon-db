@@ -20,6 +20,7 @@ ServerOptions {
   operations?:                    OperationRegistry
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
+  acceptEncryptionControl?:       boolean  (default: false)
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
   getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
@@ -207,6 +208,33 @@ BackupRestoreStatus {
 
 `GET /db/{id}/backup/restore` reads the server's own record, so it answers while that database is closed. It reports `idle` where no restore has started since the server did, and the server keeps one record per identifier, replaced by each new restore. `error` and `reopenError` state a message only where a `SirannonError` supplied one.
 
+### Encryption Endpoints
+
+The server serves the encryption routes to an operator, under the `authenticate` hook every `/db/{id}` request runs.
+
+```text
+POST /db/{id}/encryption          { target, dataKey? }  -> 202 { started: true }
+GET  /db/{id}/encryption                                -> EncryptionStatus
+POST /db/{id}/encryption/rotate   { masterKeyName }     -> EncryptionStatus
+POST /db/{id}/encryption/suspend                        -> 202 { started: true }
+POST /db/{id}/encryption/resume                         -> 202 { started: true }
+```
+
+```text
+EncryptionStatus {
+  encrypted:      boolean
+  masterKeyName?: string
+  rotatedAt?:     number
+  job?:           ReencryptStatus
+}
+```
+
+[02-core.md](02-core.md) defines `ReencryptRequest` and `ReencryptStatus`. Every response states the master key by its name alone.
+
+`acceptEncryptionControl` governs every route above and defaults to false. With it false, the server fails those routes with `403 ENCRYPTION_CONTROL_NOT_ACCEPTED` before it resolves the database. A server configured with `acceptEncryptionControl` true and no `authenticate` hook refuses to start, with `INVALID_ENCRYPTION_CONTROL`.
+
+The server answers `POST /db/{id}/encryption` with `202` once it has accepted the job, and `GET /db/{id}/encryption` reports the outcome. The server answers `404 DATABASE_NOT_FOUND` for that identifier while the job holds the database offline for its swap. `POST /db/{id}/encryption/rotate` re-wraps the key record and answers once it has done so, because that write touches one page.
+
 ### Error Responses
 
 ```json
@@ -221,14 +249,14 @@ BackupRestoreStatus {
 |--------|-------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `ENCRYPTION_CONTROL_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS`, `REENCRYPTION_IN_PROGRESS`, `ENCRYPTION_REQUIRED` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED` |
 | 502 | `BACKUP_DESTINATION_ERROR` |
-| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
+| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED`, `ENCRYPTION_KEY_UNAVAILABLE` |
 
 A code not listed defaults to 500, and an error carrying an explicit status uses it, which is how `authenticate` rejects with a status of its own. A `WRITE_OVERLOADED` response carries a `Retry-After` header in seconds, because the rejection is definite load shedding. `WRITER_WORKER_TIMEOUT` maps to 500 because its outcome is indeterminate. A coordinator-mode server that is not the current primary either forwards the write or rejects with `STALE_PRIMARY`, including the known primary endpoint as structured context when it has one.
 

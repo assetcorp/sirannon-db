@@ -112,6 +112,7 @@ shouldAcceptFrom(peer):     role == 'replica' and peer.role == 'primary'
 - Replication flows one way, primary to replicas. A replica accepts batches only from a primary.
 - In coordinator mode, a node with local role `primary` may write only while it also holds current authority for the group and primary term.
 - Under normal operation no conflicts occur, because writes serialise through one node.
+- A group configured with `requireEncryption` admits only nodes whose database for that group is encrypted. Every node states its encryption in the `Hello` that opens a replication stream, and a receiver terminates a stream whose `Hello` reports a plaintext database with `ENCRYPTION_REQUIRED`.
 
 ---
 
@@ -235,6 +236,7 @@ This canonical form is distinct from the [tagged value encoding](02-core.md#tagg
 | `coordinator.controller` (enabled) | true | Yes |
 | `coordinator.controller.leaseTtlMs` | 10,000 | Yes |
 | `coordinator.controller.tickIntervalMs` | 1,000 | No |
+| `requireEncryption` | false | Yes |
 
 Static mode generates a `nodeId` when none is given; coordinator mode requires a stable persisted `nodeId` and rejects a configuration without one. The `snapshotThreshold` field is reserved and has no run-time effect.
 

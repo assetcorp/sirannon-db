@@ -38,8 +38,8 @@ TransportConfig { endpoints?: List<string>, localRole?: 'primary' | 'replica',
                   groupId?, primaryTerm?: number, protocolVersion?, metadata? }
 
 NodeInfo { id, groupId?, role: 'primary' | 'replica', primaryTerm?: number,
-           protocolVersion?, joinedAt: number, lastSeenAt: number,
-           lastAckedSeq: number, metadata? }
+           protocolVersion?, encrypted: boolean, joinedAt: number,
+           lastSeenAt: number, lastAckedSeq: number, metadata? }
 ```
 
 The engine supplies `localRole` from the configured topology, and in coordinator mode also `groupId`, `primaryTerm`, and `protocolVersion`. Peers are addressed by node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as does a send to a peer that is not connected. `forward` is a request-response call bounded by a deadline (default 30,000 ms).
@@ -113,6 +113,7 @@ message Hello {
   string group_id         = 3;
   int64  primary_term     = 4;
   string protocol_version = 5;
+  bool   encrypted        = 6;
 }
 
 message ReplicationMessage {
@@ -217,7 +218,7 @@ In static mode the primary runs the gRPC server and replicas connect as clients:
 
 ### Peer Identity
 
-The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id` and `role`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
+The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id` and `role`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name. Every `Hello` states `encrypted` for the sender's own database, and a receiver whose group sets `requireEncryption` terminates a stream whose `Hello` reports false, with `ENCRYPTION_REQUIRED`.
 
 ### Stream Invariant
 

@@ -111,6 +111,7 @@ DatabaseOptions {
   cdcRetention?:    number           (default: 3_600_000 ms, recommended)
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
   backups?:         BackupCycleOptions (default: off)
+  encryption?:      EncryptionOptions (default: off)
 }
 
 ExecuteResult { changes: number, lastInsertRowId: number or bigint }
@@ -454,9 +455,82 @@ BulkLoadResult { rowsLoaded: number, changes: number }
 
 ---
 
+## Encryption at Rest
+
+A database opened with `encryption` holds every page of its database file, write-ahead log, rollback journal, and super journal in ciphertext.
+
+```text
+EncryptionOptions {
+  masterKey:     KeyProvider
+  masterKeyName: string
+}
+
+KeyProvider = () -> async Bytes(32)
+```
+
+An implementation calls `masterKey` each time it opens the database, and it fails the open with `ENCRYPTION_KEY_UNAVAILABLE` where that provider throws or returns fewer than 32 bytes. An implementation passes the key it receives to the driver through a channel that excludes both the database path and the options record it retains for reopening, and it clears its own copy once the driver holds it. A registry that runs writes on a worker thread sends the key to that thread once, over the channel that thread already reads its start-up message from.
+
+### Keys
+
+Sirannon encrypts pages under a data key and wraps that data key under the master key the provider returns. An implementation generates the data key from a cryptographically secure random source the first time it encrypts a database, and it stores the wrapped result as a key record in page 1.
+
+Master-key rotation re-wraps the key record under a new master key and rewrites no page. Changing the data key runs the re-encryption job.
+
+### File layout (Normative)
+
+An encrypted database must follow this layout, so that any implementation reads a file another implementation wrote.
+
+| Region | Content |
+|--------|---------|
+| Bytes 0 to 99 | SQLite's file header, in plaintext. |
+| Every page | 128 reserved bytes at the end of the page, of which 12 hold a nonce and 16 hold an authentication tag over the rest of that page. |
+| Page 1 reserved bytes | The key record, of 93 bytes: a one-byte version, a 16-byte salt, the 32-byte wrapped data key, the 12-byte nonce and 16-byte tag of that wrap, and a 16-byte master key name. |
+
+An implementation encrypts each page with AES-256-GCM under the data key, and it generates a fresh nonce for every write of every page.
+
+### Checksums over plaintext
+
+SQLite folds a write-ahead log frame's checksum over the page it holds in memory, which is plaintext, so an implementation folds every checksum it computes over plaintext while it stores and transfers ciphertext. The change capture decrypts each frame's page in memory to verify the chain, and it sends the frame unchanged. A restore decrypts each page before it stamps that frame's checksum, so that SQLite accepts the log the restore rebuilds.
+
+### Enforcement
+
+An implementation applies each of these, and offers no setting that waives one.
+
+- An open carrying `encryption` on a driver whose capabilities report `encryption` false fails with `ENCRYPTION_UNSUPPORTED`.
+- An open of an encrypted database whose `PRAGMA journal_mode` reports any mode but `wal` fails with `INVALID_ENCRYPTION`.
+- A master key of fewer than 32 bytes fails with `INVALID_ENCRYPTION`.
+- A backup of an encrypted database whose destination holds no data key fails with `ENCRYPTION_KEY_MISSING`.
+- Every connection to an encrypted database sets `PRAGMA temp_store = MEMORY`, because SQLite's file interface offers a codec no way to tie a temporary file or a subjournal to its database.
+
+### Re-encryption job
+
+`reencrypt(request)` encrypts a database that holds no encryption, removes encryption from one that does, or gives one a new data key. It copies the database into a new file under the target keys while writes continue, and it holds writes for the swap alone, in the offline window a restore already uses.
+
+```text
+ReencryptRequest {
+  target:   'encrypted' | 'plaintext'
+  dataKey?: 'rotate'
+}
+
+ReencryptStatus {
+  state:        'idle' | 'running' | 'suspended' | 'done' | 'failed'
+  pagesTotal?:  number
+  pagesCopied?: number
+  startedAt?:   number
+  finishedAt?:  number
+  error?:       { code: string, message: string }
+}
+```
+
+A job suspends and resumes on request, and it reports its state through `ReencryptStatus`. An implementation requires free disk equal to the database it copies. A second job on a database that already has one under way fails with `REENCRYPTION_IN_PROGRESS`.
+
+---
+
 ## Backups
 
 A backup copies a database while writes continue. The copy runs through SQLite's stepped backup interface on the connection that writes, because SQLite returns a copy to page one whenever any other connection writes to the source or runs a `RESTART` or `TRUNCATE` checkpoint on it. No backup operation may hold the writer lock for longer than its first step.
+
+A backup of an encrypted database holds ciphertext under the source's data key. An implementation states that data key to the destination before the copy starts, and the copy's own key record wraps that same data key under the master key in force for the copy. A change piece holds source log frames unchanged, so a restore folds the pieces and the full copy into one database under one data key.
 
 ### Full copy to a path
 

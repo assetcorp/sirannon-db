@@ -41,6 +41,14 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `BACKUP_CHAIN_BROKEN` | No full copy goes back as far as the moment asked for, the chain is missing a piece the restore needs, or no chain record states the name the caller asked to verify. |
 | `BACKUP_RESTORE_NOT_ACCEPTED` | The server was configured with `acceptBackupRestore` false, so it restores no database over the wire. |
 | `BACKUP_RESTORE_IN_PROGRESS` | A restore of that database is already under way and keeps its file to itself. |
+| `ENCRYPTION_UNSUPPORTED` | The driver reports no encryption capability for the runtime it wraps. |
+| `INVALID_ENCRYPTION` | The master key is shorter than 32 bytes, or an encrypted database reports a journal mode other than `wal`. |
+| `ENCRYPTION_KEY_UNAVAILABLE` | The key provider threw, or it returned fewer than 32 bytes. |
+| `ENCRYPTION_KEY_MISSING` | A copy of an encrypted database named a destination holding no data key. |
+| `ENCRYPTION_REQUIRED` | A group configured with `requireEncryption` reached a node whose database for that group is in plaintext. |
+| `REENCRYPTION_IN_PROGRESS` | A re-encryption job for that database is already under way. |
+| `ENCRYPTION_CONTROL_NOT_ACCEPTED` | The server was configured with `acceptEncryptionControl` false, so it changes no database's encryption over the wire. |
+| `INVALID_ENCRYPTION_CONTROL` | `acceptEncryptionControl` is true and the server has no `authenticate` hook. |
 | `CONNECTION_POOL_ERROR` | The pool is closed, exhausted, or misconfigured. |
 | `MAX_DATABASES` | Opening a database would exceed the configured cap. |
 | `EXTENSION_ERROR` | A native SQLite extension could not be loaded. |

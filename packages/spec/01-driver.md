@@ -102,13 +102,14 @@ SQLiteConnection {
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
 - **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
-- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`.
+- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. A driver that steps the copy on another thread must apply `stallTimeoutMs` as the deadline for the next step from that thread, in place of any deadline of its own. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`.
 
 ```text
 DatabaseCopyRequest {
-  destPath:     string
-  pagesPerStep: number
-  onStep?:      (step: DatabaseCopyStep) -> void
+  destPath:        string
+  pagesPerStep:    number
+  onStep?:         (step: DatabaseCopyStep) -> void
+  stallTimeoutMs?: number
 }
 
 DatabaseCopyStep {

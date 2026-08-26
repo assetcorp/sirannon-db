@@ -1,4 +1,3 @@
-import { cn } from '@delali/sirannon-example-shared/lib/utils'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@delali/sirannon-example-shared/ui/alert'
 import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { useNavigate } from '@tanstack/react-router'
@@ -12,9 +11,12 @@ import { LockedScreen } from './components/locked-screen'
 import { OnboardingScreen } from './components/onboarding-screen'
 import { OrderBoard } from './components/order-board'
 import { SnapshotPanel } from './components/snapshot-panel'
-import { CONSOLE_SPACER_CLASS, SqlConsole } from './components/sql-console'
+import { SqlConsole } from './components/sql-console'
 import { SyncStatusBar } from './components/sync-status-bar'
+import { useConsoleHeight } from './use-console-height'
 import { useFieldDevice } from './use-field-device'
+
+const CONSOLE_CLEARANCE_PX = 16
 
 export function FieldServiceApp({ deviceName }: { deviceName: string | undefined }) {
   if (deviceName === undefined) {
@@ -31,6 +33,7 @@ function DeviceWorkspace({ name }: { name: string }) {
   const { phase, device, view, wantsOnline, setSyncEnabled, dismissBanner, reportError, openError } =
     useFieldDevice(name)
   const navigate = useNavigate()
+  const consoleHeight = useConsoleHeight()
   const [consoleOpen, setConsoleOpen] = useState(false)
 
   const handleConsoleToggle = useCallback(() => {
@@ -122,7 +125,10 @@ function DeviceWorkspace({ name }: { name: string }) {
         consoleOpen={consoleOpen}
         onConsoleToggle={handleConsoleToggle}
       />
-      <main className={cn('mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6', consoleOpen && CONSOLE_SPACER_CLASS)}>
+      <main
+        className="mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6"
+        style={consoleOpen ? { paddingBottom: consoleHeight.height + CONSOLE_CLEARANCE_PX } : undefined}
+      >
         {browserOnly ? null : <SyncStatusBar status={view.status} changesReceived={view.changesReceived} />}
         {browserOnly || bannerError === null ? null : (
           <Alert variant="destructive" className="mt-4">
@@ -148,7 +154,7 @@ function DeviceWorkspace({ name }: { name: string }) {
           />
         )}
       </main>
-      <SqlConsole device={device} open={consoleOpen} onClose={handleConsoleClose} />
+      <SqlConsole device={device} open={consoleOpen} onClose={handleConsoleClose} consoleHeight={consoleHeight} />
     </div>
   )
 }

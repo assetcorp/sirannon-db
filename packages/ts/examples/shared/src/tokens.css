@@ -89,8 +89,8 @@
   --destructive: oklch(0.6188 0.2376 25.7658);
   --success: oklch(0.52 0.12 162);
   --warning: oklch(0.58 0.12 72);
-  --border: oklch(0.22 0.01 250 / 8%);
-  --input: oklch(0.22 0.01 250 / 13%);
+  --border: oklch(0.22 0.01 250 / 18%);
+  --input: oklch(0.22 0.01 250 / 26%);
   --ring: oklch(0.6 0.118 184.704);
   --chart-1: oklch(0.6723 0.1606 244.9955);
   --chart-2: oklch(0.6907 0.1554 160.3454);

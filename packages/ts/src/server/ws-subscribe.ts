@@ -22,6 +22,7 @@ export interface WSSubscribeDeps {
   hasSubscribeHook(): boolean
   beforeSubscribe(ctx: SubscribeHookContext): Promise<void>
   attachSubscription(conn: WSConnection, id: string, subscription: Subscription): SubscriptionAttachment
+  detachSubscription(conn: WSConnection, id: string, subscription: Subscription): void
   sendSubscribed(
     conn: WSConnection,
     id: string,
@@ -227,6 +228,7 @@ async function subscribeLive(
   table: string,
   filter: Record<string, unknown> | undefined,
 ): Promise<void> {
+  let subscription: Subscription | null = null
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
@@ -241,7 +243,7 @@ async function subscribeLive(
       grouper.flush(atTxBoundary)
     })
 
-    const subscription: Subscription = {
+    subscription = {
       unsubscribe: () => {
         removeBatchEnd()
         sub.unsubscribe()
@@ -254,6 +256,7 @@ async function subscribeLive(
     }
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, false)
   } catch (err) {
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
   }
@@ -304,19 +307,18 @@ async function subscribeResuming(
         sub.unsubscribe()
       },
     }
-
-    const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
-    const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
-    resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
-
     const attachment = deps.attachSubscription(conn, id, subscription)
     if (attachment !== 'attached') {
       releaseUnattached(deps, conn, state, id, subscription, attachment)
       return
     }
+
+    const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
+    const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
+    resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, resync)
   } catch (err) {
-    subscription?.unsubscribe()
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
     return

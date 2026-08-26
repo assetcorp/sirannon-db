@@ -80,10 +80,11 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
 
       const conn = await sirannon.driver.open(database.path, { walMode: true })
       try {
-        const startSeq = await changeLogStartSeq(conn)
-        const schema = await dumpSchema(conn)
         const tableNames = await tablesInFkOrder(conn)
         await refuseUngrantedTables(sirannon, dbId, tableNames, identity)
+
+        const startSeq = await changeLogStartSeq(conn)
+        const schema = await dumpSchema(conn)
         const tables: SnapshotManifestResponse['tables'] = []
         for (const name of tableNames) {
           tables.push({ name, rowCount: await selectCountTableRows(conn, name) })
@@ -143,14 +144,14 @@ export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
     if (!database) return
 
     try {
+      await refuseUngrantedTables(sirannon, dbId, [body.table], identity)
+
       const conn = await sirannon.driver.open(database.path, { walMode: true })
       try {
         if (!(await selectTableExists(conn, body.table))) {
           sendError(res, 404, 'TABLE_NOT_FOUND', `Table '${body.table}' not found`)
           return
         }
-
-        await refuseUngrantedTables(sirannon, dbId, [body.table], identity)
 
         const pkResolver = new PkResolver(conn)
         const pkColumns = await pkResolver.forTableOnConnection(conn, body.table)

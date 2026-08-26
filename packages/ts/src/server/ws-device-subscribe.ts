@@ -29,6 +29,7 @@ export async function subscribeDevice(
   let boundary: bigint
   let resync: boolean
   let epoch: string
+  let subscription: Subscription | null = null
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     for (const table of tables) {
@@ -82,7 +83,7 @@ export async function subscribeDevice(
     )
     const removeBatchEnd = ctx.manager.addBatchEndListener(atTxBoundary => stream.onBatchEnd(atTxBoundary))
 
-    const subscription: Subscription = {
+    subscription = {
       unsubscribe: () => {
         removeBatchEnd()
         stream.stop()
@@ -99,6 +100,7 @@ export async function subscribeDevice(
     }
     state.deviceStreams.set(id, stream)
   } catch (err) {
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
     return

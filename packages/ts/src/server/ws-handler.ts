@@ -288,6 +288,7 @@ export class WSHandler<Identity = unknown> {
       socketResumeBytes: this.socketResumeBytes,
       hasSubscribeHook: () => this.sirannon.hookRegistry.has('beforeSubscribe'),
       attachSubscription: (conn, id, subscription) => this.attachSubscription(conn, id, subscription),
+      detachSubscription: (conn, id, subscription) => this.detachSubscription(conn, id, subscription),
       beforeSubscribe: ctx => this.sirannon.hookRegistry.invoke('beforeSubscribe', ctx),
       sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
         this.send(conn, {
@@ -334,6 +335,12 @@ export class WSHandler<Identity = unknown> {
     if (state.subscriptions.has(id)) return 'duplicate'
     state.subscriptions.set(id, subscription)
     return 'attached'
+  }
+
+  private detachSubscription(conn: WSConnection, id: string, subscription: Subscription): void {
+    const state = this.connections.get(conn)
+    if (state?.subscriptions.get(id) === subscription) state.subscriptions.delete(id)
+    subscription.unsubscribe()
   }
 
   private send(conn: WSConnection, msg: WSServerMessage): WSSendOutcome {

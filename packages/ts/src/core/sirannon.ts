@@ -248,7 +248,17 @@ export class Sirannon {
     return undefined
   }
 
-  /** @internal */
+  /**
+   * Returns an open database, opening it through the lifecycle resolver where it is not open yet.
+   *
+   * This is the call an in-process application makes for a database the registry opens on first
+   * use through the `lifecycle.autoOpen` resolver, such as one file per tenant. Concurrent calls
+   * for the same unopened identifier share one open, so each receives the same database or the
+   * same error.
+   *
+   * @param id - Identifier of the database.
+   * @returns The database, or undefined when none is open and the resolver names no path for it.
+   */
   async resolve(id: string): Promise<Database | undefined> {
     const db = this.get(id)
     if (db) return db
@@ -266,7 +276,14 @@ export class Sirannon {
     return inFlight
   }
 
-  /** @internal */
+  /**
+   * Returns the registry migration set every database applies as it opens.
+   *
+   * Where the set came from a function, the registry calls that function once and
+   * caches what it returned, so this reports the same list on every call.
+   *
+   * @returns The migrations declared in `SirannonOptions.migrations`, or an empty list where none are.
+   */
   registryMigrations(): Promise<Migration[]> {
     return this.migrations.load()
   }

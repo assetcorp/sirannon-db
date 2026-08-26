@@ -38,5 +38,6 @@ export {
   RemoteError,
   type RemoteSubscription,
   type RemoteSubscriptionBuilder,
+  type SubscribeOptions,
   type Transport,
 } from './types.js'

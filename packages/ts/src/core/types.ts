@@ -246,6 +246,7 @@ export type {
   ReadConcernLevel,
   Subscription,
   SubscriptionBuilder,
+  SubscriptionOptions,
   WriteConcern,
   WriteConcernLevel,
 } from './query-types.js'

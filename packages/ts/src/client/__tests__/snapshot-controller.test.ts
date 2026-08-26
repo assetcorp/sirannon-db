@@ -116,6 +116,22 @@ async function until(predicate: () => boolean | Promise<boolean>, timeout = 5000
 }
 
 describe('SyncController.downloadSnapshot', () => {
+  it('finishes the load when a progress callback throws, leaving the database usable', async () => {
+    const controller = makeController()
+    await controller.start()
+    await until(async () => (await controller.status()).pushCaughtUp)
+
+    await controller.downloadSnapshot({
+      pageSize: 5,
+      onProgress: () => {
+        throw new Error('progress reporting failed')
+      },
+    })
+
+    const localRows = await deviceDb.query<{ id: number }>('SELECT id FROM notes ORDER BY id')
+    expect(localRows.map(row => row.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  })
+
   it('replaces divergent local data, reports progress, and resumes syncing', async () => {
     await deviceDb.execute("INSERT INTO notes (id, body) VALUES (99, 'stale local')")
     const controller = makeController()

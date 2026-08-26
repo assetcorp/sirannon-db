@@ -1,6 +1,6 @@
 # Sirannon Field Service Demo
 
-A work order app whose data is a real SQLite database in the browser. Every read and write hits that local database through wa-sqlite and IndexedDB, so the page keeps working with the server switched off. A `SyncController` carries local writes up to the server and applies the server's changes back down, and the board on screen is a local live query that redraws when either happens. The app is React on TanStack Start in SPA mode, styled with Tailwind and the shadcn primitives from `@delali/sirannon-example-shared`.
+A work order app whose data is a real SQLite database in the browser. Every read and write hits that local database through wa-sqlite and IndexedDB, so the page keeps working with the server switched off. A `SyncController` carries local writes up to the server and applies the server's changes back down, and the board on screen is a local live query that redraws when either happens. A SQL console in the page runs statements against that same local database, and `--mode browser-only` builds the whole app without device sync, which leaves a static site that needs no server behind it. The app is React on TanStack Start in SPA mode, styled with Tailwind and the shadcn primitives from `@delali/sirannon-example-shared`.
 
 ## Setup
 
@@ -32,6 +32,27 @@ pnpm --dir packages/ts/examples/web-wa-sqlite run app:dev
 
 Open `http://localhost:5173`.
 
+Or run the app on its own, with no server and no device sync:
+
+```bash
+pnpm --dir packages/ts/examples/web-wa-sqlite run app:dev:browser
+```
+
+## Browser-only mode
+
+`--mode browser-only` builds the app without device sync. The `app:dev:browser` and `build:browser` scripts pass that flag, and `vite.config.ts` turns it into the `__SIRANNON_BROWSER_ONLY__` constant, which the bundler replaces with `true` or `false` while it builds.
+
+That constant guards the single dynamic import of [`src/lib/device-sync.ts`](src/lib/device-sync.ts), which is the only file that names `SyncController`. A browser-only build therefore carries no sync client at all, and you can check that for yourself:
+
+```bash
+pnpm --dir packages/ts/examples/web-wa-sqlite run build:browser
+grep -rl SyncController dist/client
+```
+
+The search finds nothing. Run `build` in place of `build:browser` and the same search finds the sync chunk.
+
+The header drops the sync switch in this mode, and the page drops the status strip, the failure alert, and the snapshot panel, since none of them has anything to report without a server. Everything else stays, including the local database, the migration, the seed rows, the live query, and the SQL console. The output under `dist/client` is a directory of static files, so any static host can serve it.
+
 ## Devices
 
 The first visit asks you to name the device, because the name decides which local database file the tab opens. The picker lists every device this browser already holds, from a registry the app keeps in localStorage, and `?device=<name>` in the URL stays the source of truth, so a bookmark reopens the same device. The name sits in the header the whole time, next to the control that switches to another device.
@@ -46,6 +67,16 @@ One device belongs to one tab. Each tab takes a Web Lock on its device name, so 
 4. **Turn sync off on both devices and edit the same order.** The switch in the header pauses the controller; local writes keep working and queue up. Turn both back on and the two edits converge: the later write wins on the hybrid logical clock, and all three copies agree.
 5. **Stop the server and reload the page.** The app still opens with all its data, and new work orders still save. The status strip reads `Offline, working locally` and the alert shows what failed. Start the server again and the app reconnects on its own retry, sending the queued writes up.
 6. **Open a new device with the server stopped.** The device seeds itself with the four fixed work orders, so the board is never empty, and every write queues. Start the server and the device pushes its queue, then takes its first snapshot.
+
+7. **Open the SQL console.** Press the `SQL` button in the header, run `SELECT * FROM work_orders`, then insert a row and watch the board pick it up.
+
+## The SQL console
+
+The `SQL` button in the header opens a console across the bottom of the page. Type a statement, press Ctrl+Enter or Cmd+Enter, and the result appears below the editor: a grid of rows for a read, a count of changed rows for a write, and the message SQLite returned when it refuses the statement. Arrow Up and Arrow Down walk back through what you have already run.
+
+The console holds the same local database the board reads, so a row you insert there appears on the board immediately through the live query, and it queues for push like any other local write. It runs one statement per press, because `Database` takes one statement per call. `SELECT`, `EXPLAIN`, `PRAGMA`, and a read-only `WITH` go to `db.query`, and everything else goes to `db.execute`, which is what keeps a write inside the write gate.
+
+Run `SELECT * FROM _sirannon_meta` to watch the guard turn it down. Sirannon reserves every identifier beginning with `_sirannon`, and the public query API answers with an error in place of the row.
 
 ## How the two halves fit
 
@@ -113,6 +144,6 @@ VITE_SIRANNON_URL=http://127.0.0.1:9876
 VITE_SIRANNON_DEVICE_TOKEN=sirannon-field-service-token
 ```
 
-The server reads `SIRANNON_DEVICE_TOKEN` and the browser reads `VITE_SIRANNON_DEVICE_TOKEN`, so set both to the same value or leave both unset.
+The server reads `SIRANNON_DEVICE_TOKEN` and the browser reads `VITE_SIRANNON_DEVICE_TOKEN`, so set both to the same value or leave both unset. A browser-only build reads none of the `VITE_` variables, because it opens no connection.
 
 The server database is stored in `data/`, which is ignored by git. Delete that directory to start over, and clear the site's IndexedDB storage to reset every device in a browser.

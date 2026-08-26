@@ -1,3 +1,25 @@
+## 0.3.1 (2026-08-26)
+
+### 🚀 Features
+
+- **ci:** add republish option and update version description ([1aa08d5](https://github.com/assetcorp/sirannon-db/commit/1aa08d5))
+- **ts:** implement stallTimeoutMs for database copy operations ([cd24a0b](https://github.com/assetcorp/sirannon-db/commit/cd24a0b))
+- **ts:** add cluster status parsing and request credential handling functions ([53aeb9a](https://github.com/assetcorp/sirannon-db/commit/53aeb9a))
+- **ts:** add browser-only mode for SQLite app with SQL console integration ([078c755](https://github.com/assetcorp/sirannon-db/commit/078c755))
+- **ts:** enhance live query and subscription error handling with onError callbacks ([ed173fd](https://github.com/assetcorp/sirannon-db/commit/ed173fd))
+- **ts:** introduce beforeSnapshot hook for snapshot access control and enhance hook management in core and server ([ab4a931](https://github.com/assetcorp/sirannon-db/commit/ab4a931))
+- **ts:** improve subscription management ([3612886](https://github.com/assetcorp/sirannon-db/commit/3612886))
+- **ts:** implement console height management and resizable SQL console component ([6e4a9f0](https://github.com/assetcorp/sirannon-db/commit/6e4a9f0))
+
+### 🩹 Fixes
+
+- **spec:** enhance DDL validation to reject statements targeting reserved prefixes ([477964b](https://github.com/assetcorp/sirannon-db/commit/477964b))
+- **ts:** update default server host and port values in ServerOptions interface ([33a1d8e](https://github.com/assetcorp/sirannon-db/commit/33a1d8e))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.0 (2026-08-23)
 
 ### 🚀 Features

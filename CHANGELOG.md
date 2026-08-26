@@ -1,3 +1,13 @@
+## 0.3.2 (2026-08-26)
+
+### 🩹 Fixes
+
+- **ts:** enhance TSDoc comments across various modules ([5dfb443](https://github.com/assetcorp/sirannon-db/commit/5dfb443))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.1 (2026-08-26)
 
 ### 🚀 Features

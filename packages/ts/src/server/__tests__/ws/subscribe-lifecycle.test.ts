@@ -70,6 +70,17 @@ describe('subscriptions on a connection that is going away', () => {
     expect(messagesOfType('change')).toHaveLength(0)
   })
 
+  it('drops a resuming subscription whose socket closed while it was opening', async () => {
+    handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', table: 'notes', sinceSeq: '0' }))
+    handler.handleClose(conn)
+
+    await wait(100)
+    await db.execute("INSERT INTO notes (id, body) VALUES (1, 'after the close')")
+    await wait(200)
+
+    expect(messagesOfType('change')).toHaveLength(0)
+  })
+
   it('refuses the second of two subscriptions racing for one identifier and delivers each change once', async () => {
     handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', table: 'notes' }))
     handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', table: 'notes' }))

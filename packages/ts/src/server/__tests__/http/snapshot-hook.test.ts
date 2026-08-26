@@ -127,6 +127,29 @@ describe('beforeSnapshot hook', () => {
     expect(reader.status).toBe(200)
   })
 
+  it('tells a denied caller nothing about which tables exist', async () => {
+    await start({
+      onBeforeSnapshot: () => {
+        throw new HookDeniedError('beforeSnapshot', 'snapshots are closed')
+      },
+    })
+
+    const known = await post<{ error?: { code?: string } }>(
+      '/db/snapdb/snapshot/page',
+      { table: 'ledger', limit: 10 },
+      READER_TOKEN,
+    )
+    const unknown = await post<{ error?: { code?: string } }>(
+      '/db/snapdb/snapshot/page',
+      { table: 'invoices', limit: 10 },
+      READER_TOKEN,
+    )
+
+    expect(known.status).toBe(403)
+    expect(unknown.status).toBe(403)
+    expect(unknown.data.error?.code).toBe('HOOK_DENIED')
+  })
+
   it('serves the snapshot untouched when no hook is registered', async () => {
     await start({})
 

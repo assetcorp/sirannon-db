@@ -1,13 +1,11 @@
-import { cn } from '@delali/sirannon-example-shared/lib/utils'
 import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { Play, Terminal, X } from 'lucide-react'
 import { type ChangeEvent, type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
 import type { FieldDevice } from '../../../lib/field-device'
 import { runStatement, type StatementResult } from '../../../lib/sql-console'
+import type { ConsoleHeight } from '../use-console-height'
+import { ConsoleResizer } from './console-resizer'
 import { SqlConsoleResults } from './sql-console-results'
-
-export const CONSOLE_HEIGHT_CLASS = 'h-[45vh] min-h-64'
-export const CONSOLE_SPACER_CLASS = 'pb-[max(calc(45vh+1rem),17rem)]'
 
 const STARTER_STATEMENTS: readonly { label: string; sql: string }[] = [
   { label: 'Count by status', sql: 'SELECT status, count(*) AS orders FROM work_orders GROUP BY status' },
@@ -38,7 +36,17 @@ function summarise(result: StatementResult): string {
   return `${result.rowCount} ${result.rowCount === 1 ? 'row' : 'rows'} in ${elapsed}`
 }
 
-export function SqlConsole({ device, open, onClose }: { device: FieldDevice; open: boolean; onClose: () => void }) {
+export function SqlConsole({
+  device,
+  open,
+  onClose,
+  consoleHeight,
+}: {
+  device: FieldDevice
+  open: boolean
+  onClose: () => void
+  consoleHeight: ConsoleHeight
+}) {
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const [sql, setSql] = useState('SELECT * FROM work_orders ORDER BY site')
   const [result, setResult] = useState<StatementResult | null>(null)
@@ -112,11 +120,10 @@ export function SqlConsole({ device, open, onClose }: { device: FieldDevice; ope
   return (
     <section
       aria-label="SQL console"
-      className={cn(
-        'bg-background/95 border-border fixed inset-x-0 bottom-0 z-30 flex flex-col border-t shadow-2xl backdrop-blur',
-        CONSOLE_HEIGHT_CLASS,
-      )}
+      style={{ height: consoleHeight.height }}
+      className="bg-background/95 border-border fixed inset-x-0 bottom-0 z-30 flex flex-col border-t shadow-2xl backdrop-blur"
     >
+      <ConsoleResizer {...consoleHeight} />
       <header className="border-border/60 flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <Terminal className="text-muted-foreground size-3.5" aria-hidden="true" />
         <span className="text-xs font-semibold">SQL console</span>

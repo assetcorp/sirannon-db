@@ -93,7 +93,7 @@ export function OrderBoard({
               />
             ))}
             {laneOrders.length === 0 && lane.status !== 'scheduled' ? (
-              <p className="border-border text-muted-foreground rounded-lg border border-dashed px-3 py-6 text-center text-sm">
+              <p className="border-border bg-card/60 text-muted-foreground rounded-lg border-2 border-dashed px-3 py-6 text-center text-sm">
                 Nothing {lane.title.toLowerCase()} yet.
               </p>
             ) : null}

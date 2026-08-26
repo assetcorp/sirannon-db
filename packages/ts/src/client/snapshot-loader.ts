@@ -122,13 +122,13 @@ function validatePage(raw: unknown): SnapshotPageResponse {
 }
 
 /**
- * @public
- *
  * Copies a database from a server into a local one, replacing what the local database holds.
  *
  * @param port - The local database the snapshot is written into.
  * @param options - Where the snapshot comes from and how it is read.
  * @returns The change-log position and sequence space to resume from, the tables copied, and the rows written.
+ *
+ * @public
  */
 export async function downloadDatabaseSnapshot(
   port: DeviceSyncPort,

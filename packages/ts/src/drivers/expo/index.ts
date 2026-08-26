@@ -4,8 +4,6 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { ExtensionError } from '../../core/errors.js'
 
 /**
- * @public
- *
  * Builds a driver that runs SQLite on a device through `expo-sqlite`.
  *
  * Expo opens one connection per database, so this driver reports no support
@@ -13,6 +11,8 @@ import { ExtensionError } from '../../core/errors.js'
  * single connection.
  *
  * @returns The driver, ready to pass to a `Sirannon` registry in a React Native app.
+ *
+ * @public
  */
 export function expoSqlite(): SQLiteDriver {
   return defineDriver({

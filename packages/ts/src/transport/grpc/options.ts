@@ -1,7 +1,7 @@
 /**
- * @public
- *
  * Where the gRPC transport listens, and the certificates it presents and trusts.
+ *
+ * @public
  */
 export interface GrpcReplicationOptions {
   /**

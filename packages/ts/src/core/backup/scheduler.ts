@@ -104,9 +104,9 @@ function runDirect(op: () => Promise<void>): Promise<void> {
 }
 
 /**
- * @public
- *
  * Repeats a database backup on a cron schedule and keeps a bounded number of files.
+ *
+ * @public
  */
 export class BackupScheduler {
   private readonly manager: BackupManager

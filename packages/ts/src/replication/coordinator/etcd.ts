@@ -42,11 +42,11 @@ import type {
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 
 /**
- * @public
- *
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
  *
  * Build one with {@link createEtcdCoordinator}.
+ *
+ * @public
  */
 export class EtcdClusterCoordinator implements ClusterCoordinator {
   private readonly client: Etcd3
@@ -346,12 +346,12 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 }
 
 /**
- * @public
- *
  * Builds a coordinator backed by etcd.
  *
  * @param options - etcd endpoints, key prefix, credentials, and timeouts.
  * @returns The coordinator, ready to pass to a replication engine.
+ *
+ * @public
  */
 export function createEtcdCoordinator(options: EtcdClusterCoordinatorOptions): EtcdClusterCoordinator {
   return new EtcdClusterCoordinator(options)

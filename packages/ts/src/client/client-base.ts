@@ -50,6 +50,9 @@ export function createEndpointTransport(settings: TransportSettings, baseUrl: st
   })
 }
 
+/**
+ * Opens one database handle per identifier and keeps it, so a later call for the same identifier returns the handle already open.
+ */
 export abstract class DatabaseClient {
   protected readonly settings: TransportSettings
   private readonly databases = new Map<string, RemoteDatabase>()
@@ -59,6 +62,12 @@ export abstract class DatabaseClient {
     this.settings = resolveTransportSettings(options)
   }
 
+  /**
+   * Returns the handle a caller queries and writes one database through, opening it on the first call for that identifier.
+   *
+   * @param id - Identifier the server registered the database under.
+   * @returns The database handle, which stays open until the caller closes it.
+   */
   database(id: string): RemoteDatabase {
     if (this.closed) {
       throw new Error('Client is closed')
@@ -85,6 +94,9 @@ export abstract class DatabaseClient {
     )
   }
 
+  /**
+   * Closes every database this client opened, which ends their transports and stops their subscriptions.
+   */
   close(): void {
     this.closed = true
     const openDatabases = [...this.databases.values()]

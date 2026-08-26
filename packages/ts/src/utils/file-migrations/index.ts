@@ -7,9 +7,9 @@ import { LAZY_DOWN_SQL } from '../../core/migrations/lazy-down.js'
 import type { Migration } from '../../core/migrations/types.js'
 
 /**
- * @public
- *
  * How a directory of migration files is turned into migrations.
+ *
+ * @public
  */
 export interface LoadMigrationsOptions {
   /**
@@ -19,9 +19,9 @@ export interface LoadMigrationsOptions {
 }
 
 /**
- * @public
- *
  * One migration found on disk, with the paths of its up and down files.
+ *
+ * @public
  */
 export interface ScannedMigration {
   /**
@@ -50,13 +50,13 @@ function hasControlCharacters(s: string): boolean {
 }
 
 /**
- * @public
- *
  * Lists the migration files in a directory, in ascending version order.
  *
  * @param dirPath - Directory holding the migration files.
  * @returns One entry per migration, with the paths of its up and down files.
  * @throws When the path is unsafe or a file name does not parse.
+ *
+ * @public
  */
 export function scanDirectory(dirPath: string): ScannedMigration[] {
   if (hasControlCharacters(dirPath)) {
@@ -139,12 +139,12 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
 }
 
 /**
- * @public
- *
  * Reads the up files of scanned migrations, leaving each down file to be read only if a rollback needs it.
  *
  * @param scanned - Migrations found by {@link scanDirectory}.
  * @returns The migrations, in ascending version order.
+ *
+ * @public
  */
 export function readUpMigrations(scanned: ScannedMigration[]): Migration[] {
   return scanned.map(entry => {
@@ -192,13 +192,13 @@ function attachLazyDown(migration: Migration, downPath: string): void {
 }
 
 /**
- * @public
- *
  * Reads a directory of migration files and returns the migrations to apply.
  *
  * @param dirPath - Directory holding the migration files.
  * @param options - The baseline to apply, when an existing database starts from one.
  * @returns The migrations, in ascending version order.
+ *
+ * @public
  */
 export function loadMigrations(dirPath: string, options?: LoadMigrationsOptions): Migration[] {
   const scanned = scanDirectory(dirPath)

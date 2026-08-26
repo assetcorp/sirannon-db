@@ -4,9 +4,9 @@ import type { LiveHandlers, RemoteSubscription } from './types.js'
 import { RemoteError } from './types.js'
 
 /**
- * @public
- *
  * A live query running against a remote server, which keeps its rows current as the tables behind it change.
+ *
+ * @public
  */
 export class RemoteLiveQuery<T> implements LiveQuery<T> {
   private state: LiveQueryState<T> = { status: 'pending' }

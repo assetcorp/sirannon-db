@@ -4,9 +4,9 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { ExtensionError } from '../../core/errors.js'
 
 /**
- * @public
- *
  * Settings for the browser driver built on wa-sqlite.
+ *
+ * @public
  */
 export interface WaSqliteOptions {
   /**
@@ -16,12 +16,12 @@ export interface WaSqliteOptions {
 }
 
 /**
- * @public
- *
  * Builds a driver that runs SQLite in the browser through WebAssembly.
  *
  * @param driverOptions - Where the browser stores the database.
  * @returns The driver, ready to pass to a `Sirannon` registry.
+ *
+ * @public
  */
 export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
   return defineDriver({

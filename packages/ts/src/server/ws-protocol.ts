@@ -222,9 +222,28 @@ export type WSServerMessage =
  * @public
  */
 export type WSLiveOp =
-  | { op: 'insert'; index: number; row: unknown }
-  | { op: 'update'; index: number; row: unknown }
-  | { op: 'delete'; index: number }
+  | {
+      /** Which edit this is: `'insert'` for a row added, `'update'` for a row changed in place, `'delete'` for a row removed. */
+      op: 'insert'
+      /** Position in the result set the edit applies to, counted from zero. */
+      index: number
+      /** The row that now sits at that position. */
+      row: unknown
+    }
+  | {
+      /** Names this edit as a row changed in place. */
+      op: 'update'
+      /** Position of the row that changed. */
+      index: number
+      /** The row as it now reads. */
+      row: unknown
+    }
+  | {
+      /** Names this edit as a row removed. */
+      op: 'delete'
+      /** Position the removed row held. */
+      index: number
+    }
 
 /**
  * Carries a live query's new state: the edits that move it, a full replacement, or notice that a re-read has started.

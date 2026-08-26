@@ -58,8 +58,18 @@ export interface AcquireControllerLeaseInput {
  * @public
  */
 export type AcquireControllerLeaseResult =
-  | { acquired: true; lease: CoordinatorLease }
-  | { acquired: false; lease: CoordinatorLease | null }
+  | {
+      /** True where this bid won the lease. */
+      acquired: true
+      /** The lease this bid won, with its holder, term, and expiry. */
+      lease: CoordinatorLease
+    }
+  | {
+      /** False where another node already holds the lease. */
+      acquired: false
+      /** The lease its current holder owns, or null where the coordinator names no holder. */
+      lease: CoordinatorLease | null
+    }
 
 /**
  * Versions a node publishes so that the group refuses a peer it cannot work with.

@@ -81,7 +81,7 @@ Database {
 
   migrate(migrations): async -> MigrationResult
   rollback(migrations, version?): async -> RollbackResult
-  appliedMigrations(): async -> List<AppliedMigration>
+  appliedMigrations(): async -> List<AppliedMigrationRow>
 
   backup(destPath): async -> BackupFileReport
   backupTo(options): async -> BackupRunReport
@@ -374,8 +374,10 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
 | `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
+| `beforeSubscribe` | `{ databaseId, table, filter?, identity? }` | Before a served subscription starts | Yes |
+| `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
+A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe hook and a snapshot hook may each return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe or a snapshot hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 
@@ -407,6 +409,16 @@ CREATE TABLE _sirannon_migrations (
 ```
 
 An implementation mirrors the highest applied `version` into `PRAGMA user_version`.
+
+```text
+AppliedMigrationRow {
+  version:  number
+  name:     string
+  checksum: string or null
+}
+```
+
+`appliedMigrations` must return one `AppliedMigrationRow` per tracking row, in ascending version order. `checksum` is null for a function migration. The server serves `up` SQL through the migration handshake only for a row holding one (see [08-device-sync.md](08-device-sync.md)).
 
 ### Migration Definition
 

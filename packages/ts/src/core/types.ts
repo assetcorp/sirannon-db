@@ -227,6 +227,7 @@ export type {
   AfterQueryHook,
   BeforeConnectHook,
   BeforeQueryHook,
+  BeforeSnapshotHook,
   BeforeSubscribeHook,
   ConnectionHookContext,
   DatabaseCloseHook,

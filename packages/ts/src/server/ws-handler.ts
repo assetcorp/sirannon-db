@@ -25,7 +25,7 @@ import {
   handleQueryMessage,
   handleTransactionMessage,
 } from './ws-operations.js'
-import type { WSSubscribeDeps } from './ws-subscribe.js'
+import type { SubscriptionAttachment, WSSubscribeDeps } from './ws-subscribe.js'
 import { handleSubscribeMessage } from './ws-subscribe.js'
 
 export type { WSConnection, WSSendOutcome } from './ws-connection.js'
@@ -286,6 +286,9 @@ export class WSHandler<Identity = unknown> {
       cdc: this.cdc,
       maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
       socketResumeBytes: this.socketResumeBytes,
+      hasSubscribeHook: () => this.sirannon.hookRegistry.has('beforeSubscribe'),
+      attachSubscription: (conn, id, subscription) => this.attachSubscription(conn, id, subscription),
+      beforeSubscribe: ctx => this.sirannon.hookRegistry.invoke('beforeSubscribe', ctx),
       sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
         this.send(conn, {
           type: 'subscribed',
@@ -323,6 +326,14 @@ export class WSHandler<Identity = unknown> {
       return (await this.sirannon.resolve(databaseId)) ?? null
     }
     return (await this.resolveExecutionTarget(databaseId)) ?? null
+  }
+
+  private attachSubscription(conn: WSConnection, id: string, subscription: Subscription): SubscriptionAttachment {
+    const state = this.connections.get(conn)
+    if (!state) return 'disconnected'
+    if (state.subscriptions.has(id)) return 'duplicate'
+    state.subscriptions.set(id, subscription)
+    return 'attached'
   }
 
   private send(conn: WSConnection, msg: WSServerMessage): WSSendOutcome {

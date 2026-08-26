@@ -2,11 +2,13 @@ import { Database } from './database.js'
 import type { SQLiteDriver } from './driver/types.js'
 import { DatabaseAlreadyExistsError, DatabaseNotFoundError, ReadOnlyError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
+import type { HookDispose } from './hooks/types.js'
 import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
 import { RegistryMigrationSet } from './migrations/registry-set.js'
 import type { Migration } from './migrations/types.js'
 import { type OfflineOutcome, takeDatabaseOffline } from './sirannon-offline.js'
+import { closeEveryDatabase } from './sirannon-shutdown.js'
 import type {
   AfterQueryHook,
   BeforeConnectHook,
@@ -34,7 +36,7 @@ export class Sirannon {
   private _shutdown = false
 
   private readonly _driver: SQLiteDriver
-  private readonly hookRegistry: HookRegistry
+  private readonly _hookRegistry: HookRegistry
   private readonly metricsCollector: MetricsCollector | null
   private readonly lifecycleManager: LifecycleManager | null
   private readonly migrations: RegistryMigrationSet
@@ -50,7 +52,7 @@ export class Sirannon {
   constructor(options: SirannonOptions) {
     this.options = options
     this._driver = options.driver
-    this.hookRegistry = new HookRegistry(options.hooks)
+    this._hookRegistry = new HookRegistry(options.hooks)
     this.migrations = new RegistryMigrationSet(options.migrations)
     this.metricsCollector = options.metrics ? new MetricsCollector(options.metrics) : null
     this.lifecycleManager = options.lifecycle
@@ -66,6 +68,11 @@ export class Sirannon {
   /** @internal */
   get driver(): SQLiteDriver {
     return this._driver
+  }
+
+  /** @internal */
+  get hookRegistry(): HookRegistry {
+    return this._hookRegistry
   }
 
   /**
@@ -89,12 +96,12 @@ export class Sirannon {
 
     let db: Database
     try {
-      if (this.hookRegistry.has('beforeConnect')) {
-        this.hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
+      if (this._hookRegistry.has('beforeConnect')) {
+        this._hookRegistry.invokeSync('beforeConnect', { databaseId: id, path })
       }
 
       db = await Database.create(id, path, this._driver, resolvedOptions, {
-        parentHooks: this.hookRegistry,
+        parentHooks: this._hookRegistry,
         metrics: this.metricsCollector ?? undefined,
       })
     } catch (err) {
@@ -129,9 +136,9 @@ export class Sirannon {
       this.openedWith.delete(id)
       this.lifecycleManager?.untrack(id)
 
-      if (this.hookRegistry.has('databaseClose')) {
+      if (this._hookRegistry.has('databaseClose')) {
         try {
-          this.hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
+          this._hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
         } catch {}
       }
 
@@ -147,9 +154,9 @@ export class Sirannon {
     this.openedWith.set(id, resolvedOptions === undefined ? { path } : { path, options: resolvedOptions })
     this.lifecycleManager?.markActive(id)
 
-    if (this.hookRegistry.has('databaseOpen')) {
+    if (this._hookRegistry.has('databaseOpen')) {
       try {
-        this.hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
+        this._hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
       } catch {}
     }
 
@@ -324,67 +331,57 @@ export class Sirannon {
 
     this.lifecycleManager?.dispose()
 
-    const errors: unknown[] = []
-    const snapshot = [...this.dbs.values()]
-
-    for (const db of snapshot) {
-      try {
-        await db.close()
-      } catch (err) {
-        errors.push(err)
-      }
-    }
-
-    this.dbs.clear()
-
-    if (errors.length > 0) {
-      throw new SirannonError(`Shutdown completed with ${errors.length} error(s)`, 'SHUTDOWN_ERROR')
-    }
+    await closeEveryDatabase(this.dbs)
   }
 
   /**
    * Registers a hook that runs before each statement on every database in this registry. Throw from it to refuse the statement.
    *
    * @param hook - Receives the statement, its parameters, and the concerns it carries.
+   * @returns A function that removes the hook.
    */
-  onBeforeQuery(hook: BeforeQueryHook): void {
-    this.hookRegistry.register('beforeQuery', hook)
+  onBeforeQuery(hook: BeforeQueryHook): HookDispose {
+    return this._hookRegistry.register('beforeQuery', hook)
   }
 
   /**
    * Registers a hook that runs after each statement on every database in this registry.
    *
    * @param hook - Receives the statement and how long it took.
+   * @returns A function that removes the hook.
    */
-  onAfterQuery(hook: AfterQueryHook): void {
-    this.hookRegistry.register('afterQuery', hook)
+  onAfterQuery(hook: AfterQueryHook): HookDispose {
+    return this._hookRegistry.register('afterQuery', hook)
   }
 
   /**
    * Registers a hook that runs before a database connection opens.
    *
    * @param hook - Receives the database identifier and its file path.
+   * @returns A function that removes the hook.
    */
-  onBeforeConnect(hook: BeforeConnectHook): void {
-    this.hookRegistry.register('beforeConnect', hook)
+  onBeforeConnect(hook: BeforeConnectHook): HookDispose {
+    return this._hookRegistry.register('beforeConnect', hook)
   }
 
   /**
    * Registers a hook that runs once a database is open.
    *
    * @param hook - Receives the database identifier and its file path.
+   * @returns A function that removes the hook.
    */
-  onDatabaseOpen(hook: DatabaseOpenHook): void {
-    this.hookRegistry.register('databaseOpen', hook)
+  onDatabaseOpen(hook: DatabaseOpenHook): HookDispose {
+    return this._hookRegistry.register('databaseOpen', hook)
   }
 
   /**
    * Registers a hook that runs once a database is closed.
    *
    * @param hook - Receives the database identifier and its file path.
+   * @returns A function that removes the hook.
    */
-  onDatabaseClose(hook: DatabaseCloseHook): void {
-    this.hookRegistry.register('databaseClose', hook)
+  onDatabaseClose(hook: DatabaseCloseHook): HookDispose {
+    return this._hookRegistry.register('databaseClose', hook)
   }
 
   private ensureRunning(): void {

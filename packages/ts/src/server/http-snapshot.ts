@@ -4,6 +4,7 @@ import { decodeTaggedValues, encodeTaggedValues, encodeWireRowsInPlace } from '.
 import { ensureCdcEpoch } from '../core/cdc/epoch.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
+import type { SnapshotHookContext } from '../core/hooks/types.js'
 import { CHANGES_TABLE, MIGRATIONS_TABLE } from '../core/internal-tables.js'
 import type { Sirannon } from '../core/sirannon.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
@@ -53,8 +54,21 @@ async function changeLogStartSeq(conn: SQLiteConnection): Promise<bigint> {
   return selectMaxChangeSeq(conn)
 }
 
+async function refuseUngrantedTables(
+  sirannon: Sirannon,
+  databaseId: string,
+  tables: readonly string[],
+  identity: unknown,
+): Promise<void> {
+  if (!sirannon.hookRegistry.has('beforeSnapshot')) return
+  for (const table of tables) {
+    const ctx: SnapshotHookContext = { databaseId, table, identity }
+    await sirannon.hookRegistry.invoke('beforeSnapshot', ctx)
+  }
+}
+
 export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
-  return async (res, dbId, _rawBody, abort) => {
+  return async (res, dbId, _rawBody, abort, identity) => {
     const database = await resolveSnapshotDatabase(res, abort, sirannon, dbId)
     if (!database) return
 
@@ -69,6 +83,7 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
         const startSeq = await changeLogStartSeq(conn)
         const schema = await dumpSchema(conn)
         const tableNames = await tablesInFkOrder(conn)
+        await refuseUngrantedTables(sirannon, dbId, tableNames, identity)
         const tables: SnapshotManifestResponse['tables'] = []
         for (const name of tableNames) {
           tables.push({ name, rowCount: await selectCountTableRows(conn, name) })
@@ -114,7 +129,7 @@ function trimPageToByteCap(
 }
 
 export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
-  return async (res, dbId, rawBody, abort) => {
+  return async (res, dbId, rawBody, abort, identity) => {
     const body = parseBody<SnapshotPageRequest>(res, rawBody)
     if (!body) return
 
@@ -134,6 +149,8 @@ export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
           sendError(res, 404, 'TABLE_NOT_FOUND', `Table '${body.table}' not found`)
           return
         }
+
+        await refuseUngrantedTables(sirannon, dbId, [body.table], identity)
 
         const pkResolver = new PkResolver(conn)
         const pkColumns = await pkResolver.forTableOnConnection(conn, body.table)

@@ -1,3 +1,4 @@
+import { invokeCallerCallback, reportCallerFailure } from '../../core/caller-callbacks.js'
 import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { ChangeEvent } from '../../core/types.js'
 import type {
@@ -12,6 +13,7 @@ export interface ActiveSubscription {
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onError: ((error: Error) => void) | undefined
   onReset: (() => void) | undefined
   onSubscribed:
     | ((info: {
@@ -44,20 +46,20 @@ export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribe
   }
   if (msg.resync) {
     sub.lastSeq = baseline
-    try {
-      sub.onReset?.()
-    } catch {}
+    invokeCallerCallback(() => sub.onReset?.(), sub.onError)
   } else if (sub.lastSeq === undefined && baseline !== undefined) {
     sub.lastSeq = baseline
   }
-  try {
-    sub.onSubscribed?.({
-      seq: baseline,
-      epoch: sub.epoch,
-      resync: msg.resync === true,
-      maxUnacknowledgedChanges: msg.maxUnacknowledgedChanges,
-    })
-  } catch {}
+  invokeCallerCallback(
+    () =>
+      sub.onSubscribed?.({
+        seq: baseline,
+        epoch: sub.epoch,
+        resync: msg.resync === true,
+        maxUnacknowledgedChanges: msg.maxUnacknowledgedChanges,
+      }),
+    sub.onError,
+  )
 }
 
 export function deliverChangeMessage(sub: ActiveSubscription, msg: WSChangeMessage): void {
@@ -72,8 +74,9 @@ export function deliverChangesMessage(sub: ActiveSubscription, msg: WSChangesMes
 }
 
 function deliverWireEvent(sub: ActiveSubscription, wire: WSWireChangeEvent): void {
+  let event: ChangeEvent
   try {
-    const event: ChangeEvent = {
+    event = {
       type: wire.type,
       table: wire.table,
       row: decodeTaggedValues(wire.row) as Record<string, unknown>,
@@ -86,11 +89,14 @@ function deliverWireEvent(sub: ActiveSubscription, wire: WSWireChangeEvent): voi
       ...(wire.txId !== undefined ? { txId: wire.txId } : {}),
       ...(wire.txEnd === true ? { txEnd: true } : {}),
     }
-    if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
-      sub.lastSeq = event.seq
-    }
-    sub.callback(event)
-  } catch {}
+  } catch (err) {
+    reportCallerFailure(sub.onError, err)
+    return
+  }
+  if (sub.lastSeq === undefined || event.seq > sub.lastSeq) {
+    sub.lastSeq = event.seq
+  }
+  invokeCallerCallback(() => sub.callback(event), sub.onError)
 }
 
 export function buildResubscribeMessage(id: string, sub: ActiveSubscription): WSClientMessage {

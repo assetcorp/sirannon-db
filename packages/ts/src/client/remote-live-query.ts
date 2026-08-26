@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../core/caller-callbacks.js'
 import type { LiveQuery, LiveQueryState, LiveUpdate, ResultOp } from '../core/live/types.js'
 import type { LiveHandlers, RemoteSubscription } from './types.js'
 import { RemoteError } from './types.js'
@@ -14,11 +15,15 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
   private subscription: RemoteSubscription | null = null
   private closed = false
 
+  private onError: ((error: Error) => void) | undefined
+
   /** @internal */
   static async open<T>(
     subscribe: (handlers: LiveHandlers) => Promise<RemoteSubscription>,
+    onError?: (error: Error) => void,
   ): Promise<RemoteLiveQuery<T>> {
     const query = new RemoteLiveQuery<T>()
+    query.onError = onError
     try {
       query.subscription = await subscribe(query.handlers())
     } catch (err) {
@@ -116,9 +121,7 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
   private publish(next: LiveQueryState<T>, update: LiveUpdate<T>): void {
     this.state = next
     for (const listener of [...this.listeners]) {
-      try {
-        listener(update)
-      } catch {}
+      invokeCallerCallback(() => listener(update), this.onError)
     }
   }
 }

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { createServer } from '@delali/sirannon-db/server'
+import { createDeviceAuthenticator, type FieldTechnician } from './device-identity'
 import {
   DATABASE_ID,
   migrations,
@@ -54,10 +55,11 @@ if ((existing?.count ?? 0) === 0) {
   console.log(`Seeded ${SEED_WORK_ORDERS.length} work orders.`)
 }
 
-const server = createServer(sirannon, {
+const server = createServer<FieldTechnician>(sirannon, {
   host: HOST,
   port: PORT,
-  cors: { origin: APP_ORIGINS },
+  cors: { origin: APP_ORIGINS, methods: ['GET', 'POST', 'OPTIONS'], headers: ['Content-Type', 'Authorization'] },
+  authenticate: createDeviceAuthenticator(APP_ORIGINS, DATABASE_ID),
 })
 
 await server.listen()
@@ -66,6 +68,7 @@ console.log(`Field service server listening on http://${HOST}:${PORT}`)
 console.log(`Database '${DATABASE_ID}' stored at ${dataDir}${DATABASE_ID}.db`)
 console.log(`Accepting device sync from ${APP_ORIGINS.join(', ')}`)
 console.log('SQL over the network is refused; devices reach this database through the sync routes only.')
+console.log('Every request names a fleet through a bearer token or a WebSocket subprotocol.')
 
 let shuttingDown = false
 

@@ -5,6 +5,9 @@
 ```ts
 
 // @public
+export function parseClusterStatus(data: unknown, databaseId: string): ClusterStatusInfo;
+
+// @public
 export class TopologyAwareClient extends DatabaseClient implements TopologyRouting {
     constructor(options: TopologyAwareClientOptions);
     protected createTransport(databaseId: string): Transport;

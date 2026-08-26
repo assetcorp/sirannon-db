@@ -29,10 +29,13 @@ describe('http-handler status mapping and catch branches', () => {
       } as unknown as Sirannon
       const handler = handleQuery(sirannon)
 
-      await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
-        aborted: false,
-        onAbort: () => {},
-      })
+      await handler(
+        mock.res,
+        'db1',
+        Buffer.from(JSON.stringify({ sql: 'SELECT 1' })),
+        { aborted: false, onAbort: () => {} },
+        undefined,
+      )
       expect(mock.state.status).toBe(scenario.expectedStatus)
     }
   })
@@ -49,10 +52,13 @@ describe('http-handler status mapping and catch branches', () => {
     } as unknown as Sirannon
     const handler = handleQuery(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
-      aborted: false,
-      onAbort: () => {},
-    })
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'SELECT 1' })),
+      { aborted: false, onAbort: () => {} },
+      undefined,
+    )
 
     expect(mock.state.status).toBe('500')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
@@ -71,10 +77,13 @@ describe('http-handler status mapping and catch branches', () => {
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })), {
-      aborted: false,
-      onAbort: () => {},
-    })
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })),
+      { aborted: false, onAbort: () => {} },
+      undefined,
+    )
 
     expect(mock.state.status).toBe('403')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
@@ -93,10 +102,13 @@ describe('http-handler status mapping and catch branches', () => {
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })), {
-      aborted: false,
-      onAbort: () => {},
-    })
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'INSERT INTO t VALUES (1)' })),
+      { aborted: false, onAbort: () => {} },
+      undefined,
+    )
 
     expect(mock.state.status).toBe('500')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
@@ -113,7 +125,7 @@ describe('http-handler status mapping and catch branches', () => {
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} })
+    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} }, undefined)
 
     expect(mock.state.status).toBe('400')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
@@ -137,6 +149,7 @@ describe('http-handler status mapping and catch branches', () => {
       'db1',
       Buffer.from(JSON.stringify({ sql: 'SELECT 1', readConcern: { level: 'eventual' } })),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(mock.state.status).toBe('400')
@@ -163,6 +176,7 @@ describe('http-handler status mapping and catch branches', () => {
         JSON.stringify({ sql: 'INSERT INTO t VALUES (1)', writeConcern: { level: 'majority', timeoutMs: 0 } }),
       ),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(mock.state.status).toBe('400')
@@ -191,6 +205,7 @@ describe('http-handler status mapping and catch branches', () => {
         }),
       ),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(mock.state.status).toBe('500')
@@ -208,7 +223,7 @@ describe('http-handler status mapping and catch branches', () => {
     } as unknown as Sirannon
     const handler = handleTransaction(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} })
+    await handler(mock.res, 'db1', Buffer.from('not json'), { aborted: false, onAbort: () => {} }, undefined)
 
     expect(mock.state.status).toBe('400')
     const body = JSON.parse(mock.state.body ?? '{}') as { error?: { code?: string } }
@@ -233,10 +248,13 @@ describe('http-handler execution target routing', () => {
     } as unknown as Sirannon
     const handler = handleQuery(sirannon, () => target)
 
-    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
-      aborted: false,
-      onAbort: () => {},
-    })
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'SELECT 1' })),
+      { aborted: false, onAbort: () => {} },
+      undefined,
+    )
 
     expect(query).toHaveBeenCalledWith('SELECT 1', undefined, undefined)
     expect(mock.state.status).toBe('200 OK')
@@ -269,6 +287,7 @@ describe('http-handler execution target routing', () => {
         }),
       ),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(target.execute).toHaveBeenCalledWith('INSERT INTO users (name) VALUES (?)', ['Alice'], {
@@ -306,6 +325,7 @@ describe('http-handler execution target routing', () => {
         }),
       ),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(target.transaction).toHaveBeenCalledWith(expect.any(Function), { writeConcern: { level: 'majority' } })
@@ -340,6 +360,7 @@ describe('http-handler execution target routing', () => {
         }),
       ),
       { aborted: false, onAbort: () => {} },
+      undefined,
     )
 
     expect(target.executeTransaction).toHaveBeenCalledWith(
@@ -364,10 +385,13 @@ describe('http-handler execution target routing', () => {
     } as unknown as Sirannon
     const handler = handleExecute(sirannon)
 
-    await handler(mock.res, 'db1', Buffer.from(JSON.stringify({ sql: 'SELECT 1' })), {
-      aborted: true,
-      onAbort: () => {},
-    })
+    await handler(
+      mock.res,
+      'db1',
+      Buffer.from(JSON.stringify({ sql: 'SELECT 1' })),
+      { aborted: true, onAbort: () => {} },
+      undefined,
+    )
 
     expect(mock.state.status).toBeUndefined()
     expect(mock.state.body).toBeUndefined()

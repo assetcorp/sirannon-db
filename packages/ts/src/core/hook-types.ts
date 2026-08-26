@@ -57,9 +57,26 @@ export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<v
  * @public
  */
 export type BeforeSubscribeHook = (ctx: {
+  /** Identifier of the database the subscription reads. */
   databaseId: string
+  /** Table the subscription watches. */
   table: string
+  /** Column values a change must carry to reach the subscriber. */
   filter?: Record<string, unknown>
+  /** Whoever the `authenticate` hook returned for the connection, and undefined where that connection carries no identity. */
+  identity?: unknown
+}) => void | Promise<void>
+
+/** Hook invoked before a served snapshot reads a table. Throw to deny.
+ * @public
+ */
+export type BeforeSnapshotHook = (ctx: {
+  /** Identifier of the database the snapshot copies. */
+  databaseId: string
+  /** Table the snapshot is about to read. */
+  table: string
+  /** Whoever the `authenticate` hook returned for the request, and undefined where that request carries no identity. */
+  identity?: unknown
 }) => void | Promise<void>
 
 /** Aggregated hook configuration.
@@ -78,4 +95,6 @@ export interface HookConfig {
   onDatabaseClose?: DatabaseCloseHook | DatabaseCloseHook[]
   /** Runs before a change subscription starts. Throw to refuse it. */
   onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[]
+  /** Runs before a served snapshot reads a table. Throw to refuse the snapshot. */
+  onBeforeSnapshot?: BeforeSnapshotHook | BeforeSnapshotHook[]
 }

@@ -336,7 +336,7 @@ With `supportsStreamVerification`, the source sends `batchDigest`: a chained SHA
 
 ## DDL Safety
 
-DDL received through replication or first sync is validated against an allowlist. Allowed statements begin with `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, or `DROP INDEX`. A statement is rejected when it contains `;`, contains `AS SELECT`, or references `load_extension`, `ATTACH`, `randomblob`, `zeroblob`, `writefile`, `readfile`, or `fts3_tokenizer`. A DDL statement that fails validation fails with `BATCH_VALIDATION_ERROR`.
+DDL received through replication or first sync is validated against an allowlist. Allowed statements begin with `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, or `DROP INDEX`. A statement is rejected when it targets a table or index under the reserved `_sirannon` or `sqlite_` prefix, contains `;`, contains `AS SELECT`, or references `load_extension`, `ATTACH`, `randomblob`, `zeroblob`, `writefile`, `readfile`, or `fts3_tokenizer`. A DDL statement that fails validation fails with `BATCH_VALIDATION_ERROR`.
 
 ---
 

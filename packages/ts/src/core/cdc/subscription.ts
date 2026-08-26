@@ -1,5 +1,6 @@
+import { invokeCallerCallback, reportCallerFailure, toError } from '../caller-callbacks.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import type { ChangeEvent, Subscription, SubscriptionBuilder } from '../types.js'
+import type { ChangeEvent, Subscription, SubscriptionBuilder, SubscriptionOptions } from '../types.js'
 import type { ChangeTracker } from './change-tracker.js'
 
 interface InternalSubscription {
@@ -7,6 +8,7 @@ interface InternalSubscription {
   table: string
   filter: Record<string, unknown> | undefined
   callback: (event: ChangeEvent) => void
+  onError: ((error: Error) => void) | undefined
 }
 
 export class SubscriptionManager {
@@ -19,9 +21,10 @@ export class SubscriptionManager {
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
+    options?: SubscriptionOptions,
   ): Subscription {
     const id = this.nextId++
-    this.subscriptions.set(id, { id, table, filter, callback })
+    this.subscriptions.set(id, { id, table, filter, callback, onError: options?.onError })
 
     let tableSet = this.byTable.get(table)
     if (!tableSet) {
@@ -54,10 +57,14 @@ export class SubscriptionManager {
         if (!sub) continue
         const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)
         if (delivered === null) continue
-        try {
-          sub.callback(delivered)
-        } catch {}
+        invokeCallerCallback(() => sub.callback(delivered), sub.onError)
       }
+    }
+  }
+
+  reportError(error: Error): void {
+    for (const sub of this.subscriptions.values()) {
+      reportCallerFailure(sub.onError, error)
     }
   }
 
@@ -70,9 +77,7 @@ export class SubscriptionManager {
 
   endBatch(atTxBoundary: boolean): void {
     for (const listener of this.batchEndListeners) {
-      try {
-        listener(atTxBoundary)
-      } catch {}
+      invokeCallerCallback(() => listener(atTxBoundary))
     }
   }
 
@@ -98,8 +103,11 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
     return this
   }
 
-  subscribe(callback: (event: ChangeEvent) => void): Subscription {
-    return this.manager.subscribe(this.table, this.conditions, callback)
+  subscribe<T = Record<string, unknown>>(
+    callback: (event: ChangeEvent<T>) => void,
+    options?: SubscriptionOptions,
+  ): Subscription {
+    return this.manager.subscribe(this.table, this.conditions, callback as (event: ChangeEvent) => void, options)
   }
 }
 
@@ -139,11 +147,13 @@ export function startPolling(
       }
     } catch (err) {
       consecutiveErrors++
+      const failure = toError(err)
       if (onError) {
-        onError(err instanceof Error ? err : new Error(String(err)))
+        onError(failure)
       }
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         stop()
+        manager.reportError(failure)
       }
     } finally {
       polling = false

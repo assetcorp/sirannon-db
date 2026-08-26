@@ -1,4 +1,4 @@
-import type { LiveQuery } from '../core/live/types.js'
+import type { LiveQuery, LiveQueryOptions } from '../core/live/types.js'
 import type { OperationArguments, OperationRef } from '../core/operation-registry.js'
 import type {
   BulkLoadDurability,
@@ -142,24 +142,37 @@ export class RemoteDatabase {
    *
    * @param name - Name of the registered read.
    * @param args - Arguments the read takes.
+   * @param options - Carries `onError`, which receives a failure of any listener on this query.
    * @returns The live query, already subscribed.
    */
-  async live<T = Record<string, unknown>>(name: string, args?: OperationArguments): Promise<LiveQuery<T>>
+  async live<T = Record<string, unknown>>(
+    name: string,
+    args?: OperationArguments,
+    options?: LiveQueryOptions,
+  ): Promise<LiveQuery<T>>
   /**
    * Opens a live query on a registered read, which keeps its rows current as the tables behind it change.
    *
    * @param operation - Reference to the registered read, which carries its argument and row types.
    * @param args - Arguments the read takes.
+   * @param options - Carries `onError`, which receives a failure of any listener on this query.
    * @returns The live query, already subscribed.
    */
-  async live<Args, Row>(operation: OperationRef<Args, Row>, args: Args): Promise<LiveQuery<Row>>
+  async live<Args, Row>(
+    operation: OperationRef<Args, Row>,
+    args: Args,
+    options?: LiveQueryOptions,
+  ): Promise<LiveQuery<Row>>
   async live(
     operation: string | OperationRef<unknown, unknown>,
     args?: OperationArguments,
+    options?: LiveQueryOptions,
   ): Promise<LiveQuery<Record<string, unknown>>> {
     const name = typeof operation === 'string' ? operation : operation.name
-    return RemoteLiveQuery.open(handlers =>
-      this.transport.liveSubscribe(name, args, handlers, refresh => this.capabilities.registryDigest(refresh)),
+    return RemoteLiveQuery.open(
+      handlers =>
+        this.transport.liveSubscribe(name, args, handlers, refresh => this.capabilities.registryDigest(refresh)),
+      options?.onError,
     )
   }
 

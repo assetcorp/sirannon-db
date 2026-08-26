@@ -18,23 +18,41 @@ export interface ClusterReadEndpointInfo {
   readConcerns: ReadConcernLevel[]
 }
 
+/** Every value a node reports as its health state.
+ * @public
+ */
+export const NODE_HEALTH_STATES = [
+  'healthy',
+  'degraded',
+  'failing_over',
+  'repairing',
+  'syncing',
+  'unavailable',
+] as const
+
 /** The single word describing what a node can do right now.
  * @public
  */
-export type NodeHealthState = 'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
+export type NodeHealthState = (typeof NODE_HEALTH_STATES)[number]
 
 /** The condition that produced a {@link NodeHealthState}.
  * @public
  */
-export type NodeHealthReason =
-  | 'in-sync'
-  | 'lagging'
-  | 'coordinator-unreachable'
-  | 'draining'
-  | 'repairing'
-  | 'faulted'
-  | 'sync-pending'
-  | 'no-group-state'
+export type NodeHealthReason = (typeof NODE_HEALTH_REASONS)[number]
+
+/** Every value a node reports as the reason behind its health state.
+ * @public
+ */
+export const NODE_HEALTH_REASONS = [
+  'in-sync',
+  'lagging',
+  'coordinator-unreachable',
+  'draining',
+  'repairing',
+  'faulted',
+  'sync-pending',
+  'no-group-state',
+] as const
 
 /**
  * The health of one node, covering only the node that reports it.
@@ -209,6 +227,7 @@ export type {
   AfterQueryHook,
   BeforeConnectHook,
   BeforeQueryHook,
+  BeforeSnapshotHook,
   BeforeSubscribeHook,
   ConnectionHookContext,
   DatabaseCloseHook,
@@ -228,6 +247,7 @@ export type {
   ReadConcernLevel,
   Subscription,
   SubscriptionBuilder,
+  SubscriptionOptions,
   WriteConcern,
   WriteConcernLevel,
 } from './query-types.js'

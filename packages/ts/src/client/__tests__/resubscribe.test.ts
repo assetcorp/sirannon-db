@@ -7,6 +7,7 @@ function activeSubscription(overrides: Partial<ActiveSubscription>): ActiveSubsc
     table: 'notes',
     filter: undefined,
     callback: () => {},
+    onError: undefined,
     onReset: undefined,
     onSubscribed: undefined,
     deviceId: undefined,

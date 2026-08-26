@@ -1,13 +1,18 @@
-import type { ChangeEvent } from '@delali/sirannon-db'
+import { type ChangeEvent, toSubprotocolCredential } from '@delali/sirannon-db'
 import type { RemoteSubscription } from '@delali/sirannon-db/client'
 import { TopologyAwareClient } from '@delali/sirannon-db/client/topology'
-import { clusterEndpointsFromEnv, DATABASE_ID, DEFAULT_CLUSTER_TOKEN, toWebSocketAuthProtocol } from './cluster-config'
+import {
+  clusterEndpointsFromEnv,
+  DATABASE_ID,
+  DEFAULT_CLUSTER_TOKEN,
+  WEBSOCKET_AUTH_PROTOCOL_PREFIX,
+} from './cluster-config'
 
 const REPLICATED_TABLES = ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log'] as const
 
 const endpoints = clusterEndpointsFromEnv(import.meta.env.VITE_SIRANNON_CLUSTER_ENDPOINTS)
 const token = import.meta.env.VITE_SIRANNON_CLUSTER_TOKEN ?? DEFAULT_CLUSTER_TOKEN
-const authProtocol = toWebSocketAuthProtocol(token)
+const authProtocol = toSubprotocolCredential(WEBSOCKET_AUTH_PROTOCOL_PREFIX, token)
 const authHeaders = { Authorization: `Bearer ${token}` }
 
 const wsClient = new TopologyAwareClient({

@@ -72,7 +72,7 @@ ServerExecutionTarget {
   bulkLoad?(sql, paramsBatch, options?):     async -> BulkLoadResult
   queryForWire?(sql, params?, options?):     async -> List<Map<string, any>>
   applyChanges?(batch):                      async -> ApplyResult      -- see 08-device-sync.md
-  appliedMigrations?():                      async -> List<AppliedMigration>  -- see 08-device-sync.md
+  appliedMigrations?():                      async -> List<AppliedMigrationRow>  -- see 08-device-sync.md
 }
 ```
 
@@ -278,7 +278,7 @@ The server applies the `readConcern` of a `query` message to the read it runs, a
 
 Every client message carries a string `id` the server echoes to correlate the reply; for a subscription the `id` is the subscription identifier. `sinceSeq`, `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe integer range survive JSON. Change-event `row` and `oldRow` follow the value encoding, and `rowId` identifies the changed row. `hlc`, `origin`, and `txId` carry the change's timestamp, origin node, and transaction when it is stamped, and `txEnd` is true on the last change of a transaction (see [Transaction Boundaries](#transaction-boundaries)). A `changes` message carries several events in ascending `seq` order, each holding the fields of a `change` event; the server sends it only on a subscription carrying `stagedStream: true`. The `deviceId`, `schemaVersion`, `stagedStream`, and `ack` fields drive device sync, and `subscribed` carries `maxUnacknowledgedChanges` on a subscription presenting a `deviceId` (see [08-device-sync.md](08-device-sync.md)).
 
-A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` and `stagedStream` each require a `deviceId`, and `stagedStream` must be a boolean. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`.
+A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` and `stagedStream` each require a `deviceId`, and `stagedStream` must be a boolean. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`. The server must invoke the `beforeSubscribe` hook of [02-core.md](02-core.md#hooks) once per table a subscribe message names, before it opens the subscription. The hook context carries the identity the `authenticate` hook returned for the upgrade. A hook that throws refuses the whole subscription.
 
 ### Transaction Boundaries
 
@@ -295,6 +295,8 @@ A subscription naming a registered read is a live query. The server opens the li
 A `live` message carries exactly one of three fields. `ops` is a list of `{ op: 'insert' | 'update' | 'delete', index, row? }`, applied in order to the rows the client holds, and one message carries one transaction. `rows` replaces the held rows after a second read. `revalidating: true` states that a second read is running and that the held rows are the last complete answer.
 
 A live subscription carries no `table`, `tables`, `filter`, `sinceSeq`, `epoch`, `deviceId`, or `schemaVersion`; a message carrying one must fail with `INVALID_MESSAGE`. The server holds the result, so a client resumes by subscribing again rather than from a cursor. `unsubscribe` closes the live query and drops its probe table. Row values follow the value encoding.
+
+The server invokes no `beforeSubscribe` hook for a live subscription.
 
 `registryDigest` echoes `registry.digest` from `GET /capabilities`. A server whose digest differs must fail with `REGISTRY_MISMATCH`. A client must then re-read `/capabilities` once and subscribe again with the digest it returns.
 

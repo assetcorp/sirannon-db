@@ -81,7 +81,7 @@ Database {
 
   migrate(migrations): async -> MigrationResult
   rollback(migrations, version?): async -> RollbackResult
-  appliedMigrations(): async -> List<AppliedMigration>
+  appliedMigrations(): async -> List<AppliedMigrationRow>
 
   backup(destPath): async -> BackupFileReport
   backupTo(options): async -> BackupRunReport
@@ -118,7 +118,7 @@ Params        = Map<string, any> or List<any>
 ```
 
 - **query / queryOne** run a read on a reader connection and fire query hooks. `queryOne` returns the first row or null.
-- **execute** runs one write on the writer connection. A read-only database fails with `READ_ONLY`. Writes are coalesced by [group commit](#group-commit).
+- **execute** runs one write on the writer connection. A read-only database fails with `READ_ONLY`. [Group commit](#group-commit) coalesces writes.
 - **executeBatch** runs `sql` once per parameter set in one writer transaction, returning one result each; the batch is atomic.
 - **executeTransaction** runs a fixed list of statements atomically, sharing a group commit when every statement is groupable.
 - **transaction** runs `fn` inside one writer transaction, committing on success and rolling back on failure.
@@ -132,7 +132,7 @@ Params        = Map<string, any> or List<any>
 
 ## Group Commit
 
-Writes submitted concurrently are coalesced so one `fsync` commits many. The writer forms a group from the statements waiting when a commit finishes; the accumulation window is the previous commit's own duration, with no timer. Only data-modifying statements (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`) are grouped; DDL, PRAGMA, and other statements run alone. A group holds at most 1000 statements (recommended). The group runs as one transaction; a statement that fails before commit is isolated with a savepoint so only that unit fails, while a failure at commit fails every unit in the group and is not retried, because the commit may already have reached disk.
+The writer coalesces writes submitted concurrently, so one `fsync` commits many. The writer forms a group from the statements waiting when a commit finishes; the accumulation window is the previous commit's own duration, with no timer. The writer groups only data-modifying statements (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`), and runs DDL, PRAGMA, and every other statement alone. A group holds at most 1000 statements (recommended). The group runs as one transaction. A savepoint isolates a statement that fails before commit, so only that unit fails, while a failure at commit fails every unit in the group, and the writer must not retry it, because the commit may already have reached disk.
 
 ---
 
@@ -153,13 +153,13 @@ Creation rules:
 
 `acquireReader` returns the next reader by round-robin, or the writer when no readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only. `connections` returns the writer and every reader, for work that must apply to the whole pool, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
 
-Write work on the writer connection is serialised by a writer lock so grouped writes, transactions, migrations, and extension loads never overlap. A backup takes that lock to start its copy and releases it once the copy's first step completes, so writes made after that step run in the gaps between the steps that follow.
+A writer lock serialises write work on the writer connection, so grouped writes, transactions, migrations, and extension loads never overlap. A backup takes that lock to start its copy and releases it once the copy's first step completes, so writes made after that step run in the gaps between the steps that follow.
 
 ---
 
 ## Writer Worker
 
-SQLite's write path is synchronous: a commit waiting on `fsync`, a checkpoint, or a long DDL statement blocks its thread. The writer worker moves writer execution off the caller's thread. Reads are unaffected. The isolation mechanism is implementation-defined; the option shape, the queue bound, the deadline outcomes, and the error codes below are normative.
+SQLite's write path is synchronous: a commit waiting on `fsync`, a checkpoint, or a long DDL statement blocks its thread. The writer worker moves writer execution off the caller's thread, and it leaves reads on the reader connections. The isolation mechanism is implementation-defined; the option shape, the queue bound, the deadline outcomes, and the error codes below are normative.
 
 ```text
 WriterWorkerOptions {
@@ -171,8 +171,8 @@ WriterWorkerOptions {
 
 `maxPendingWrites` must be at least 1, `writeTimeoutMs` at least 0, `maxRestarts` at least 0; a value that fails validation fails with `INVALID_WRITER_WORKER`. Enabling the worker with a driver that cannot run the writer this way fails at open with `WRITER_WORKER_UNSUPPORTED`.
 
-- **Queue bound.** A write arriving while `maxPendingWrites` writes are in flight is rejected with `WRITE_OVERLOADED` before it reaches the worker. The rejection is definite (the write never started, so a retry is safe) and carries a retry-after hint (recommended 1000 ms).
-- **Deadline.** A synchronous native call cannot be interrupted, so the deadline never terminates the worker. When it expires, exactly one outcome follows: the work had not started, so it is skipped and the caller is rejected with `WRITE_OVERLOADED` (definite, retryable); or the result arrives within one further deadline (within twice `writeTimeoutMs`) and is delivered as a normal completion; or the work is still unresolved and the caller is rejected with `WRITER_WORKER_TIMEOUT` (indeterminate, so a non-idempotent write must be reconciled before retry). A deadline on open or close rejects with `WRITER_WORKER_TIMEOUT`.
+- **Queue bound.** A write that arrives while `maxPendingWrites` writes are in flight fails with `WRITE_OVERLOADED` before it reaches the worker. The rejection is definite (the write never started, so a retry is safe) and carries a retry-after hint (recommended 1000 ms).
+- **Deadline.** A synchronous native call cannot be interrupted, so the deadline never terminates the worker. When it expires, exactly one outcome follows: the work had not started, so an implementation skips it and the call fails with `WRITE_OVERLOADED` (definite, retryable); or the result arrives within one further deadline (within twice `writeTimeoutMs`) and an implementation delivers it as a normal completion; or the work is still unresolved and the call fails with `WRITER_WORKER_TIMEOUT` (indeterminate, so a non-idempotent write must be reconciled before retry). A deadline on open or close rejects with `WRITER_WORKER_TIMEOUT`.
 - **Crash and restart.** A crash or exit rejects every in-flight write with `WRITER_WORKER_EXIT` and respawns the worker; a completed write resets the fault count; past `maxRestarts` faults, writes fail with `WRITER_WORKER_FATAL`. A write with no worker available fails with `WRITER_WORKER_UNAVAILABLE`, after close with `WRITER_WORKER_CLOSED`, and a failed handoff with `WRITER_WORKER_POST_FAILED`.
 
 ---
@@ -185,7 +185,7 @@ Each connection caches prepared statements. The recommended capacity is 128 with
 
 ### Parameter Normalisation
 
-Before binding: omitted parameters become an empty list; a list passes through; a named-parameter object is wrapped in a single-element list for engines that bind named-parameter objects positionally.
+Before binding, omitted parameters become an empty list, a list passes through, and an implementation wraps a named-parameter object in a single-element list for engines that bind named-parameter objects positionally.
 
 ### Reserved Identifiers
 
@@ -195,14 +195,14 @@ The query API must reject any statement that reaches Sirannon's internal tables.
 
 ## Tagged Value Encoding (Normative)
 
-JSON cannot carry two SQLite value types without loss: integers outside the safe range -(2^53 - 1) to 2^53 - 1 lose precision as IEEE 754 doubles, and JSON has no binary type. Wherever a column value crosses the wire or is stored in the change log as JSON, these two values take tagged envelopes:
+JSON cannot carry two SQLite value types without loss: integers outside the safe range -(2^53 - 1) to 2^53 - 1 lose precision as IEEE 754 doubles, and JSON has no binary type. Wherever a column value crosses the wire, or an implementation stores it in the change log as JSON, these two values take tagged envelopes:
 
 ```text
 IntegerEnvelope { "__sirannon_int":  string }   -- exact decimal, 1 to 19 digits, optional leading '-'
 BlobEnvelope    { "__sirannon_blob": string }   -- uppercase hexadecimal, two digits per byte
 ```
 
-An integer inside the safe range is a plain JSON number; an integer outside it takes an `IntegerEnvelope`. Every BLOB takes a `BlobEnvelope`; an empty string encodes an empty BLOB. All other value types keep their natural JSON form. A consumer treats a JSON object with exactly one key, `__sirannon_int` or `__sirannon_blob` and a string value, as an envelope and decodes it; envelopes appear only where a column value is expected, so a stored TEXT value that resembles one serialises as a JSON string and cannot collide. A malformed envelope payload must be rejected rather than bound or decoded. This encoding is used by [query result rows and bind parameters](05-server.md#value-encoding), by change events, and by device-sync change batches.
+An integer inside the safe range is a plain JSON number; an integer outside it takes an `IntegerEnvelope`. Every BLOB takes a `BlobEnvelope`; an empty string encodes an empty BLOB. All other value types keep their natural JSON form. A consumer treats a JSON object with exactly one key, `__sirannon_int` or `__sirannon_blob` and a string value, as an envelope and decodes it; envelopes appear only where a column value is expected, so a stored TEXT value that resembles one serialises as a JSON string and cannot collide. An implementation must reject a malformed envelope payload, and must neither bind nor decode it. [Query result rows and bind parameters](05-server.md#value-encoding), change events, and device-sync change batches all use this encoding.
 
 ---
 
@@ -229,28 +229,28 @@ CREATE TABLE _sirannon_changes (
 )
 ```
 
-The `node_id`, `tx_id`, and `hlc` columns are always present and carry the sync metadata described in [08-device-sync.md](08-device-sync.md); an unstamped local change has all three empty. Implementations create indexes on `changed_at`, `node_id`, and `hlc`.
+`changed_at` is seconds since the Unix epoch. The `node_id`, `tx_id`, and `hlc` columns are always present and carry the sync metadata described in [08-device-sync.md](08-device-sync.md); an unstamped local change has all three empty. Implementations create indexes on `changed_at`, `node_id`, and `hlc`.
 
 ### Triggers
 
-For each watched table, three `AFTER` triggers are installed, named `_sirannon_trg_{table}_insert`, `_sirannon_trg_{table}_update`, and `_sirannon_trg_{table}_delete`. Each inserts a change row with:
+For each watched table, an implementation installs three `AFTER` triggers, named `_sirannon_trg_{table}_insert`, `_sirannon_trg_{table}_update`, and `_sirannon_trg_{table}_delete`. Each inserts a change row with:
 
 - `operation`: `'INSERT'`, `'UPDATE'`, or `'DELETE'` (stored upper case).
 - `row_id`: the affected row's primary key. With one key column it is that value; with several it is the values joined by `-`; with no primary key it is the SQLite `rowid`.
-- `new_data`, `old_data`: a JSON object of the row's column values, each value encoded by the [Tagged Value Encoding](#tagged-value-encoding-normative). The column list is fixed when the trigger is created, so a table altered with `ADD COLUMN` needs its triggers reinstalled.
-- `node_id`, `tx_id`, `hlc`: written empty; local writes are stamped afterwards (see [08-device-sync.md](08-device-sync.md)).
+- `new_data`, `old_data`: a JSON object of the row's column values, each value encoded by the [Tagged Value Encoding](#tagged-value-encoding-normative). An implementation fixes the column list when it creates the trigger, so a table altered with `ADD COLUMN` needs its triggers reinstalled.
+- `node_id`, `tx_id`, `hlc`: written empty, and each local write path stamps its own rows afterwards (see [08-device-sync.md](08-device-sync.md)).
 
-Table and column names used in trigger SQL must match `^[a-zA-Z_][a-zA-Z0-9_]*$`; names that do not match must be rejected.
+Table and column names an implementation writes into trigger SQL must match `^[a-zA-Z_][a-zA-Z0-9_]*$`, and an implementation must reject every other name.
 
 ### CDC Epoch
 
-Each database file holds a random epoch string in `_sirannon_meta` under `cdc_epoch`, minted once and stable for the file's lifetime. It identifies the file's `seq` space so a resume cursor carried from another file is recognised as foreign and forces a resync rather than replaying unrelated rows.
+Each database file holds a random epoch string in `_sirannon_meta` under `cdc_epoch`, minted once and stable for the file's lifetime. It identifies the file's `seq` space, so an implementation recognises a resume cursor carried from another file as foreign and forces a resync, and it replays no unrelated row.
 
 ### Read Positions
 
 A read position names the change-log point a read's rows already include. A reader that subscribes from that position misses no change and receives none twice. The capability is internal: a live query opens with a positioned read, and no other surface takes or returns a position.
 
-A positioned read runs the read and reads the change log's highest `seq` in one transaction, so the rows and the position come from one snapshot. Capturing the position separately is wrong: a write that commits between the two makes them disagree, and re-applying a change is unsafe for a table with no declared primary key.
+A positioned read runs the read and reads the change log's highest `seq` in one transaction, so the rows and the position come from one snapshot. An implementation must not capture the position separately, because a write that commits between the two makes them disagree, and re-applying a change is unsafe for a table with no declared primary key.
 
 The read takes a connection of its own and closes it afterwards, whether the read succeeds or fails. One pooled reader serves several concurrent reads, so a transaction opened on it would capture their statements and end their reads on commit. A driver that opens one connection per file runs the read on the writer under the writer lock instead. Minting the epoch is a write, so a read-only database serves no positioned read. `query` and `queryOne` keep their single-statement path and open no transaction.
 
@@ -260,11 +260,13 @@ The position is an opaque token holding the file's epoch and the sequence:
 position = hex(utf8("1:" + epoch + ":" + seq))
 ```
 
-A sequence means nothing in another file's sequence space, so the token carries the epoch with it. The code holding a token passes it back rather than reading it, so the encoding stays free to change. A token that fails to decode, carries another version, or holds a malformed epoch or sequence is refused rather than interpreted.
+A sequence means nothing in another file's sequence space, so the token carries the epoch with it. The code holding a token passes it back without reading it, so the encoding stays free to change. An implementation must refuse a token that fails to decode, carries another version, or holds a malformed epoch or sequence, and must not interpret it.
 
 ### Polling and Cleanup
 
-The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a recommended 1000 rows per poll at a recommended 50 ms interval, and skips the query when no subscriber is active. Old rows are pruned periodically (recommended every 100 poll ticks) by deleting rows older than the retention window (recommended 3,600,000 ms); when a prune boundary is set, deletion is also bounded by `seq` so unacknowledged changes are retained.
+The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a recommended 1000 rows per poll at a recommended 50 ms interval, and skips the query when no subscriber is active. An implementation prunes old rows periodically (recommended every 100 poll ticks) by deleting rows older than the retention window (recommended 3,600,000 ms). Where a prune boundary is set, `seq` also bounds the deletion, so the implementation retains unacknowledged changes.
+
+An implementation must stop the loop after a bounded number of consecutive poll failures (recommended 10), and it must pass the last failure to the `onError` of every active subscription.
 
 ### Change Events and Subscriptions
 
@@ -285,11 +287,17 @@ ChangeEvent<T> {
 
 SubscriptionBuilder {
   filter(conditions: Map<string, any>): SubscriptionBuilder
-  subscribe(callback: (event) -> void): Subscription
+  subscribe<T>(callback: (event: ChangeEvent<T>) -> void, options?: SubscriptionOptions): Subscription
+}
+
+SubscriptionOptions {
+  onError?: (error: Error) -> void
 }
 ```
 
-`oldRow` is present for updates and deletes. `rowId` carries the change row's `row_id` and is present on every change read from the log, so a subscriber identifies the affected row without reading a key column. When the change is stamped, `origin` carries its `node_id`, `hlc` its timestamp, and `txId` the transaction that made it. `txEnd` marks the last change of a transaction; the core subscription delivers each change as the poll reads it and leaves `txEnd` unset, while the WebSocket subscription marks it (see [05-server.md](05-server.md#transaction-boundaries)). An error thrown by one subscription callback must not stop delivery to others.
+`oldRow` is present for updates and deletes. A delete carries an empty `row`, because the change log holds no row image after a delete. `timestamp` is milliseconds since the Unix epoch, so an implementation must convert the seconds `changed_at` holds. `rowId` carries the change row's `row_id` and is present on every change read from the log, so a subscriber identifies the affected row without reading a key column. When the change is stamped, `origin` carries its `node_id`, `hlc` its timestamp, and `txId` the transaction that made it. `txEnd` marks the last change of a transaction; the core subscription delivers each change as the poll reads it and leaves `txEnd` unset, while the WebSocket subscription marks it (see [05-server.md](05-server.md#transaction-boundaries)).
+
+A subscription must not wait for what its callback returns. An error the callback throws must not stop delivery to any other subscriber, and neither must a failure of what it returns. An implementation must pass each of those to `onError` where the subscription declares one, and must drop each one otherwise. An implementation must drop an error thrown by `onError`.
 
 A filter holds key-value pairs, and a row matches when it holds the filter's value under every key. The subscription evaluates the filter against the row before the change and against the row after it. What the subscriber receives follows from the two results:
 
@@ -300,7 +308,7 @@ A filter holds key-value pairs, and a row matches when it holds the filter's val
 | no match | matches | an insert carrying the new row |
 | no match | no match | nothing |
 
-An insert has no row before the change and a delete none after, so only an update crosses the boundary; the subscription delivers an insert or a delete unchanged, or drops it. A delete built from an update carries the old row in `oldRow` and an empty `row`, and an insert built from an update carries no `oldRow`; both keep every other field of the change. A subscription carrying no filter receives every change for its table. An implementation must build a new change rather than alter the polled one, because every subscriber on a table receives the same change.
+An insert has no row before the change and a delete none after, so only an update crosses the boundary; the subscription delivers an insert or a delete unchanged, or drops it. A delete built from an update carries the old row in `oldRow` and an empty `row`, and an insert built from an update carries no `oldRow`; both keep every other field of the change. A subscription carrying no filter receives every change for its table. An implementation must build a new change and must leave the polled one unaltered, because every subscriber on a table receives the same change.
 
 ---
 
@@ -331,8 +339,11 @@ ResultOp<T> = { op: 'insert', index, row: T }
 LiveQueryOptions {
   rereadJitterMs?:        number  (default: 25 ms, recommended)
   maxTransactionChanges?: number  (default: 10_000, recommended)
+  onError?:               (error: Error) -> void
 }
 ```
+
+A live query must not wait for what its listener returns. A throw from the listener must not stop delivery to any other listener, and neither must a failure of what it returns. An implementation must pass each of those to `onError` where the query declares one, and must drop each one otherwise.
 
 `ops` carries the splices that produced the new rows, in order. `rows` follows a second read that replaced them. An implementation that maintains its own copy of the result, such as a server serving a remote live query, applies the operations in order to hold the same rows; one that only renders the result reads `getState`.
 
@@ -363,8 +374,10 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
 | `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
+| `beforeSubscribe` | `{ databaseId, table, filter?, identity? }` | Before a served subscription starts | Yes |
+| `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook; disposing more than once is a no-op.
+A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe hook and a snapshot hook may each return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe or a snapshot hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 
@@ -378,7 +391,7 @@ LifecycleConfig {
 }
 ```
 
-When `resolve(id)` finds no registered database and a resolver is configured, the resolver is called and any returned path is auto-opened and registered. When `idleTimeout` is above zero, databases idle past the window are closed on a recurring check (recommended interval `min(max(floor(timeout / 2), 100), 60000)` ms). When `maxOpen` is reached, the least-recently-used database is evicted to make room, or the open fails with `MAX_DATABASES` when nothing is evictable.
+When `resolve(id)` finds no registered database and a resolver is configured, the registry calls the resolver, then opens and registers any path it returns. When `idleTimeout` is above zero, a recurring check (recommended interval `min(max(floor(timeout / 2), 100), 60000)` ms) closes the databases idle past the window. When the registry reaches `maxOpen`, it evicts the least-recently-used database to make room, or the open fails with `MAX_DATABASES` where it can evict nothing.
 
 ---
 
@@ -395,7 +408,17 @@ CREATE TABLE _sirannon_migrations (
 )
 ```
 
-The highest applied `version` is mirrored into `PRAGMA user_version`.
+An implementation mirrors the highest applied `version` into `PRAGMA user_version`.
+
+```text
+AppliedMigrationRow {
+  version:  number
+  name:     string
+  checksum: string or null
+}
+```
+
+`appliedMigrations` must return one `AppliedMigrationRow` per tracking row, in ascending version order. `checksum` is null for a function migration. The server serves `up` SQL through the migration handshake only for a row holding one (see [08-device-sync.md](08-device-sync.md)).
 
 ### Migration Definition
 
@@ -413,21 +436,21 @@ The version cap is 2,147,483,647 because it mirrors to `PRAGMA user_version`, a 
 
 ### Checksum (Normative)
 
-A string `up` migration carries a checksum: the 64-bit FNV-1a hash of the up SQL with line endings normalised to `\n` and surrounding whitespace trimmed, rendered as 16 lowercase hexadecimal digits. A function migration has no checksum. When a migration runs, a stored checksum that differs from the recomputed value fails with `MIGRATION_CHECKSUM_MISMATCH`; a null stored checksum is backfilled. The checksum is normative because the device-sync migration handshake uses it to serve and verify `up` SQL (see [08-device-sync.md](08-device-sync.md)).
+A string `up` migration carries a checksum: the 64-bit FNV-1a hash of the up SQL with line endings normalised to `\n` and surrounding whitespace trimmed, rendered as 16 lowercase hexadecimal digits. A function migration has no checksum. When a migration runs, a stored checksum that differs from the recomputed value fails with `MIGRATION_CHECKSUM_MISMATCH`, and an implementation backfills a null stored checksum. The checksum is normative because the device-sync migration handshake uses it to serve and verify `up` SQL (see [08-device-sync.md](08-device-sync.md)).
 
 ### Execution
 
-Migrations are validated (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL), sorted ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. A concurrent attempt is retried once and otherwise fails with `MIGRATION_CONCURRENT`.
+An implementation validates migrations (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL) and sorts them ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. An implementation retries a concurrent run once and otherwise fails with `MIGRATION_CONCURRENT`.
 
 ### Baseline
 
-A migration marked `baseline: { through }` squashes history up to `through`. `through` must be at least 1 and below the migration's own version, and no non-baseline migration may fall inside `(through, version)`. On an empty history the baseline plus every migration above `through` applies; on a history already at or above `through` the baseline is skipped and only migrations above `through` apply; a history below `through` with the bridging migrations absent fails with `MIGRATION_BASELINE_GAP`.
+A migration marked `baseline: { through }` squashes history up to `through`. `through` must be at least 1 and below the migration's own version, and no non-baseline migration may fall inside `(through, version)`. On an empty history the baseline plus every migration above `through` applies; on a history already at or above `through` an implementation skips the baseline and applies only the migrations above `through`; a history below `through` with the bridging migrations absent fails with `MIGRATION_BASELINE_GAP`.
 
 ### Registry Migrations
 
 A registry may declare one migration set in `SirannonOptions.migrations`, so an operator hosting many databases (for example one file per tenant) rolls out schema changes without opening each file. The rollout is pull-based: each database applies the pending set the next time it opens, through a direct `open` or the lifecycle resolver.
 
-The set is a list or a function returning a list. The registry calls the function at most once, on the first open that needs it, and caches the result. A function that throws fails that open with its own error; a non-list result fails with `MIGRATION_SOURCE_INVALID`; either way the database is left unregistered and the next open retries. `open` applies every pending migration after creating the connections and before registering the database. A migration failure closes the database, leaves it unregistered, and rethrows the migration error unchanged; any other failure of the step throws `DATABASE_OPEN_FAILED`. A read-only open skips the set, because a read-only connection cannot create the tracking table. When no set is declared, `open` runs no migration step and creates no tracking table.
+The set is a list or a function returning a list. The registry calls the function at most once, on the first open that needs it, and caches the result. A function that throws fails that open with its own error; a non-list result fails with `MIGRATION_SOURCE_INVALID`; either way the registry leaves the database unregistered, and the next open retries. `open` applies every pending migration after creating the connections and before registering the database. A migration failure closes the database, leaves it unregistered, and rethrows the migration error unchanged; any other failure of the step throws `DATABASE_OPEN_FAILED`. A read-only open skips the set, because a read-only connection cannot create the tracking table. When no set is declared, `open` runs no migration step and creates no tracking table.
 
 ### Rollback
 
@@ -435,7 +458,7 @@ Rollback reverses applied migrations in descending version order. With no target
 
 ### File Migration Sources
 
-An implementation should provide `migrationsFromFiles(files)`, a pure function turning a map of filename to SQL text into a sorted migration list, so an application whose bundler inlines `.sql` files can build its set without run-time filesystem access. Only the final path segment is parsed, matching `<version>_<name>.up.sql` or `<version>_<name>.down.sql`. A segment that does not match, a non-string value, empty SQL, or a version with no up file fails with `MIGRATION_VALIDATION_ERROR`; a version collision fails with `MIGRATION_DUPLICATE_VERSION`. A directory loader that reads SQL from disk is also provided; it rejects control characters and `..` path segments.
+An implementation should provide `migrationsFromFiles(files)`, a pure function turning a map of filename to SQL text into a sorted migration list, so an application whose bundler inlines `.sql` files can build its set without run-time filesystem access. Only the final path segment is parsed, matching `<version>_<name>.up.sql` or `<version>_<name>.down.sql`. A segment that does not match, a non-string value, empty SQL, or a version with no up file fails with `MIGRATION_VALIDATION_ERROR`; a version collision fails with `MIGRATION_DUPLICATE_VERSION`. An implementation also provides a directory loader that reads SQL from disk, and that loader rejects control characters and `..` path segments.
 
 ---
 
@@ -450,7 +473,7 @@ BulkLoadOptions {
 BulkLoadResult { rowsLoaded: number, changes: number }
 ```
 
-`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards, retrying a few times and deferring rather than failing when a reader holds pages. A database opened with `backups` runs no checkpoint here, whatever the caller set.
+`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards; it retries at most three times (recommended) and leaves the remaining pages to a later checkpoint where a reader still holds them. A database opened with `backups` runs no checkpoint here, whatever the caller set.
 
 ---
 
@@ -460,7 +483,7 @@ A backup copies a database while writes continue. The copy runs through SQLite's
 
 ### Full copy to a path
 
-`backup(destPath)` copies the database to a local file and reports what that copy moved. Paths containing null bytes, control characters, or `..` segments, and destinations that already exist, are rejected; the parent directory is created recursively. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
+`backup(destPath)` copies the database to a local file and reports what that copy moved. An implementation rejects paths containing null bytes, control characters, or `..` segments, and destinations that already exist, and it creates the parent directory recursively. A driver with no backup engine fails with `BACKUP_UNSUPPORTED`. The recommended filename is `backup-{ISO timestamp}.db` with colons and periods replaced by hyphens.
 
 ```text
 BackupFileReport {
@@ -484,7 +507,7 @@ A copy that cannot finish fails with `BACKUP_STALLED` or `BACKUP_RESTARTED` wher
 
 ### Restarts and stalls
 
-An implementation compares the pages copied, which is `totalPages - remainingPages`, against the previous step's. A fall in that count is a restart, because SQLite has returned the copy to page one; a rise in both counters is the source growing under the copy and is not a restart. An implementation counts restarts, stops after `restartLimit` of them, and fails with `BACKUP_RESTARTED`, naming what restarts a copy and what the operator does about it. A restart is never retried silently and never retried forever.
+An implementation compares the pages copied, which is `totalPages - remainingPages`, against the previous step's. A fall in that count is a restart, because SQLite has returned the copy to page one; a rise in both counters shows the source growing under the copy, which an implementation must count as no restart. An implementation counts restarts, stops after `restartLimit` of them, and fails with `BACKUP_RESTARTED`, naming what restarts a copy and what the operator does about it.
 
 A copy restarted on every step reports the same pages copied at every step, so the count of restarts alone leaves it running for ever. An implementation therefore tracks the furthest the copy has reached and fails with `BACKUP_RESTARTED` after `noProgressStepLimit` steps that reach no further, which also catches a source growing faster than the copy moves it.
 
@@ -510,7 +533,7 @@ BackupPiece {
 
 Every piece holds `pieceBytes` bytes except the last. A destination must accept pieces in any order, because SQLite writes page one last. A destination must let a second write to the same name and index replace the piece already stored, because a run resumed after an interruption repeats its last write. A destination must return from `readPiece` what the most recent `writePiece` to that name and index stored, because an implementation reads a chain record back to confirm that no other node replaced it. `writePieceIfAbsent` stores the piece only where that name and index hold none, reports whether this call stored it, and leaves a piece already stored as it is; a destination that offers it must settle two such calls arriving at once so that exactly one reports true. A destination must hold more than one name, because a chain stores its full copy, each change piece, and its chain log under a name of its own. A run whose destination refuses an operation fails with `BACKUP_DESTINATION_ERROR`, naming the piece and the name it belongs to. A destination call that has not returned inside `destinationTimeoutMs` fails with the same code, because a pending destination call resets the stall deadline.
 
-Reassembly writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros rather than moving every later byte. Reassembly checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
+An implementation writes each piece at `index * pieceBytes`, so a gap SQLite leaves unwritten reads back as zeros and every later byte stays at its own offset. An implementation checks the pieces it finds against the run report that wrote them, and fails with `BACKUP_DESTINATION_ERROR` on a missing index, on a piece beyond the run's `pieceCount`, on a byte total other than `bytesWritten`, and on a fingerprint other than the one recorded, because a name reused by a later, smaller run leaves the earlier run's trailing pieces in place.
 
 ```text
 BackupToDestinationOptions {
@@ -533,7 +556,7 @@ An implementation that cannot deliver the copy to the destination as SQLite writ
 
 ### Reports
 
-`onProgress` is called at step resolution while the copy runs and once per piece while the pieces travel.
+An implementation calls `onProgress` at step resolution while the copy runs, and once per piece while it sends the pieces.
 
 ```text
 BackupProgress {
@@ -728,9 +751,9 @@ BackupChain {
 }
 ```
 
-The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list. An implementation appends a chain to that list past the highest index the destination lists. Where the destination offers `writePieceIfAbsent`, the implementation claims that index through it and moves to the next index wherever the claim reports false. Otherwise it writes the record, reads it back, and appends again at the next index where it finds another chain, which loses a chain where the other node's write lands between those two calls.
+The list of chains holds one record per chain under `chainName`, oldest at index zero. Each chain holds its own records under `{chainName}.{chainId}`, its full copy at index zero and each change piece at its `sequence`. A full copy's record reaches the destination before its chain joins the list. An implementation appends a chain to that list past the highest index the destination lists. Where the destination offers `writePieceIfAbsent`, the implementation claims that index through it and moves to the next index wherever the claim reports false. Otherwise it writes the record, reads it back, and appends again at the next index where it finds another chain, which loses a chain where the other node's write arrives between those two calls.
 
-An implementation records the place its chain took in that list and reads that one record to check the chain, which costs a destination a single read however many chains it holds. Anything else stored there sends it back to the whole list.
+An implementation records the place its chain took in that list and reads that one record to check the chain, which costs a destination a single read however many chains it holds. Where it finds anything else stored there, it reads the whole list again.
 
 `backupChain` returns the chains newest first, each with its own records oldest first. A chain whose full copy the destination no longer holds carries no `base`.
 
@@ -779,9 +802,9 @@ BackupCycleError {
 
 `running` is true from the start of a turn to its end. `progress` states the counters of the turn under way, and is absent between turns. `lastRun`, `lastSkip`, and `lastError` each state the most recent of their kind, and each outlives the turn that produced it. An implementation calls `onProgress` with the same counters at step resolution, during a full copy and during a change transfer.
 
-`lastError` states the failure alongside what the turn was doing when that failure arrived. `durationMs` counts from the start of the turn to the failure. `chainId` names the chain that turn was extending. Where a log restarted, that is the chain the restart broke; the chain that replaced it is never the one recorded. `progress` states how far the run had reached, and a turn that failed before its copy began states no progress at all.
+`lastError` states the failure alongside what the turn was doing when that failure arrived. `durationMs` counts from the start of the turn to the failure. `chainId` names the chain that turn was extending. Where a log restarted, `chainId` names the chain the restart broke, and not the chain that replaced it. `progress` states how far the run had reached, and a turn that failed before its copy began states no progress at all.
 
-An implementation passes each failure of a turn to `onError` exactly once. A step that reports a failure also raises it, so the code that started the turn receives that same failure a second time. An implementation therefore has to recognise the failures it has already passed on. Where a log has restarted and the replacement chain also fails to start, an implementation passes both failures to `onError` and records the second of them. It records that second failure against the chain the restart broke, because it holds no chain of its own by then and an operator has to know which one they have lost. An implementation that empties a write-ahead log grown past `maxUncapturedLogBytes` records that loss over whatever else the turn recorded, because an operator must hear that writes reached no backup before hearing what stopped the turn.
+An implementation passes each failure of a turn to `onError` exactly once. A step that reports a failure also raises it, so the code that started the turn receives that same failure a second time. An implementation must therefore recognise the failures it has already passed on. Where a log has restarted and the replacement chain also fails to start, an implementation passes both failures to `onError` and records the second of them. It records that second failure against the chain the restart broke, because it holds no chain of its own by then and an operator has to know which one they have lost. An implementation that empties a write-ahead log grown past `maxUncapturedLogBytes` records that loss over whatever else the turn recorded, because an operator must hear that writes reached no backup before hearing what stopped the turn.
 
 ### Verifying a stored backup
 
@@ -815,7 +838,7 @@ BackupChainLocation {
 
 ### Capability report
 
-`backupCapabilities()` states which backup operations the runtime supports, so a caller learns before a run rather than when one fails.
+`backupCapabilities()` states which backup operations the runtime supports, so a caller learns before a run begins.
 
 ```text
 BackupCapabilities {
@@ -827,7 +850,7 @@ BackupCapabilities {
 }
 ```
 
-A runtime that hands over whole databases only reports `fullCopy: false`, a runtime taking the staged route reports `localDiskRequired: 'equal-to-backup'`, and `schedule` follows `fullCopy`, because a scheduled run makes a full copy.
+A runtime that can deliver only a whole database reports `fullCopy: false`, a runtime taking the staged route reports `localDiskRequired: 'equal-to-backup'`, and `schedule` follows `fullCopy`, because a scheduled run makes a full copy.
 
 ### Schedule
 
@@ -843,7 +866,7 @@ BackupScheduleOptions {
 }
 ```
 
-`scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates files matching `backup-*.db` beyond `maxFiles` by modification time. The report names the database and the file the copies come from, and an implementation states whichever of the two the caller named. Where the caller names no source file, an implementation reads the file the connection has open, and it fails with `BACKUP_ERROR` where the connection has none. Where the caller names no database, an implementation takes that name from the source file. The cron expression is evaluated in `timezone` when supplied, otherwise the host zone. The scheduler checks the time on a recurring tick and does not backfill: a scheduled time skipped while the host sleeps or the clock jumps forward is not run late, and a backward clock step repeats nothing until real time passes the last completed backup. Across a daylight-saving forward transition the missing hour is skipped; across a backward transition a time in the repeated hour runs once.
+`scheduleBackup` runs on the cron schedule, backs up into `destDir`, and rotates files matching `backup-*.db` beyond `maxFiles` by modification time. The report names the database and the file the copies come from, and an implementation states whichever of the two the caller named. Where the caller names no source file, an implementation reads the file the connection has open, and it fails with `BACKUP_ERROR` where the connection has none. Where the caller names no database, an implementation takes that name from the source file. An implementation evaluates the cron expression in `timezone` where the caller supplies one, and in the host zone otherwise. The scheduler checks the time on a recurring tick and backfills nothing, so it skips a scheduled time that passes while the host sleeps or the clock jumps forward, and a backward clock step repeats nothing until real time passes the last completed backup. Across a daylight-saving forward transition the scheduler skips the missing hour, and across a backward transition it runs a time in the repeated hour once.
 
 An implementation calls `onBackup` after every copy the schedule finishes, passing the report `backup` returns, so that a caller learns which file to move somewhere durable without watching the directory. Where `onBackup` returns something the host can wait on, an implementation waits for it to finish before it rotates the files and before it takes the next copy, which holds rotation off a file the caller is still reading. An implementation rotates the files whether that call succeeded or failed, and it passes both a failed call and a failed rotation to `onError`, alongside the copies that fail. An implementation reports the copy that finished even where the rotation after it fails.
 

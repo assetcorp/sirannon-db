@@ -5,18 +5,6 @@ import type { Transaction } from '../transaction.js'
  */
 export const MIGRATION_NAME_RE = /^\w+$/
 
-/** One migration a database has already applied, as recorded in its catalogue.
- * @public
- */
-export interface AppliedMigration {
-  /** Version number of the migration. */
-  version: number
-  /** Name of the migration. */
-  name: string
-  /** Milliseconds since the Unix epoch, taken when the migration was applied. */
-  applied_at: number
-}
-
 /**
  * Marks a migration as the point an existing database starts from, so the
  * runner records every earlier version as applied without running it.

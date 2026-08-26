@@ -1,4 +1,4 @@
-import type { BeforeSubscribeHook, ConnectionHookContext, QueryHookContext } from '../types.js'
+import type { BeforeSnapshotHook, BeforeSubscribeHook, ConnectionHookContext, QueryHookContext } from '../types.js'
 
 /**
  * Names of the lifecycle points a hook can attach to.
@@ -12,6 +12,7 @@ export type HookEvent =
   | 'databaseOpen'
   | 'databaseClose'
   | 'beforeSubscribe'
+  | 'beforeSnapshot'
 
 /**
  * Context a subscribe hook receives.
@@ -19,6 +20,13 @@ export type HookEvent =
  * @internal
  */
 export type SubscribeHookContext = Parameters<BeforeSubscribeHook>[0]
+
+/**
+ * Context a snapshot hook receives.
+ *
+ * @internal
+ */
+export type SnapshotHookContext = Parameters<BeforeSnapshotHook>[0]
 
 /**
  * Maps each lifecycle point to the context its hooks receive.
@@ -32,6 +40,7 @@ export interface HookEventContextMap {
   databaseOpen: ConnectionHookContext
   databaseClose: ConnectionHookContext
   beforeSubscribe: SubscribeHookContext
+  beforeSnapshot: SnapshotHookContext
 }
 
 /**
@@ -42,8 +51,8 @@ export interface HookEventContextMap {
 export type HookHandler<E extends HookEvent> = (ctx: HookEventContextMap[E]) => void | Promise<void>
 
 /**
- * Removes a registered hook when called.
+ * Removes the hook it was returned for, and changes nothing when called again.
  *
- * @internal
+ * @public
  */
 export type HookDispose = () => void

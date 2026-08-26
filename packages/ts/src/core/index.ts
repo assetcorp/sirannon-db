@@ -75,5 +75,6 @@ export {
   toSubprotocolCredential,
 } from './request-credentials.js'
 export { Sirannon } from './sirannon.js'
+export type { AppliedMigrationRow } from './system-catalog/migrations-table.js'
 export { Transaction } from './transaction.js'
 export * from './types.js'

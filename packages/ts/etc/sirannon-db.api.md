@@ -10,14 +10,14 @@ export type AfterQueryHook = (ctx: QueryHookContext & {
 }) => void | Promise<void>;
 
 // @public
-export interface AppliedMigration {
-    applied_at: number;
+export interface AppliedMigrationEntry {
     name: string;
     version: number;
 }
 
 // @public
-export interface AppliedMigrationEntry {
+export interface AppliedMigrationRow {
+    checksum: string | null;
     name: string;
     version: number;
 }
@@ -316,10 +316,18 @@ export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<v
 export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>;
 
 // @public
+export type BeforeSnapshotHook = (ctx: {
+    databaseId: string;
+    table: string;
+    identity?: unknown;
+}) => void | Promise<void>;
+
+// @public
 export type BeforeSubscribeHook = (ctx: {
     databaseId: string;
     table: string;
     filter?: Record<string, unknown>;
+    identity?: unknown;
 }) => void | Promise<void>;
 
 // @public
@@ -533,8 +541,8 @@ export class Database extends DatabaseBackups {
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
     on(table: string): SubscriptionBuilder;
-    onAfterQuery(hook: AfterQueryHook): void;
-    onBeforeQuery(hook: BeforeQueryHook): void;
+    onAfterQuery(hook: AfterQueryHook): HookDispose;
+    onBeforeQuery(hook: BeforeQueryHook): HookDispose;
     query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
     // @internal (undocumented)
     queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>;
@@ -683,6 +691,7 @@ export interface HookConfig {
     onAfterQuery?: AfterQueryHook | AfterQueryHook[];
     onBeforeConnect?: BeforeConnectHook | BeforeConnectHook[];
     onBeforeQuery?: BeforeQueryHook | BeforeQueryHook[];
+    onBeforeSnapshot?: BeforeSnapshotHook | BeforeSnapshotHook[];
     onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[];
     onDatabaseClose?: DatabaseCloseHook | DatabaseCloseHook[];
     onDatabaseOpen?: DatabaseOpenHook | DatabaseOpenHook[];
@@ -693,11 +702,11 @@ export class HookDeniedError extends SirannonError {
     constructor(hookName: string, reason?: string);
 }
 
-// @internal
+// @public
 export type HookDispose = () => void;
 
 // @internal
-export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe';
+export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe' | 'beforeSnapshot';
 
 // @internal
 export interface HookEventContextMap {
@@ -709,6 +718,8 @@ export interface HookEventContextMap {
     beforeConnect: ConnectionHookContext;
     // (undocumented)
     beforeQuery: QueryHookContext;
+    // (undocumented)
+    beforeSnapshot: SnapshotHookContext;
     // (undocumented)
     beforeSubscribe: SubscribeHookContext;
     // (undocumented)
@@ -1162,11 +1173,13 @@ export class Sirannon {
     get driver(): SQLiteDriver;
     get(id: string): Database | undefined;
     has(id: string): boolean;
-    onAfterQuery(hook: AfterQueryHook): void;
-    onBeforeConnect(hook: BeforeConnectHook): void;
-    onBeforeQuery(hook: BeforeQueryHook): void;
-    onDatabaseClose(hook: DatabaseCloseHook): void;
-    onDatabaseOpen(hook: DatabaseOpenHook): void;
+    // @internal (undocumented)
+    get hookRegistry(): HookRegistry;
+    onAfterQuery(hook: AfterQueryHook): HookDispose;
+    onBeforeConnect(hook: BeforeConnectHook): HookDispose;
+    onBeforeQuery(hook: BeforeQueryHook): HookDispose;
+    onDatabaseClose(hook: DatabaseCloseHook): HookDispose;
+    onDatabaseOpen(hook: DatabaseOpenHook): HookDispose;
     open(id: string, path: string, options?: DatabaseOptions): Promise<Database>;
     readonly options: SirannonOptions;
     registryMigrations(): Promise<Migration[]>;
@@ -1192,6 +1205,9 @@ export interface SirannonOptions {
     migrations?: MigrationSource;
     writerWorker?: boolean | WriterWorkerOptions;
 }
+
+// @internal
+export type SnapshotHookContext = Parameters<BeforeSnapshotHook>[0];
 
 // @public
 export interface SQLiteConnection {

@@ -23,10 +23,18 @@ export interface QueryHookContext {
  */
 export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>
 
+/** Context passed to the after-query hook, which is the query context plus how long the statement took.
+ * @public
+ */
+export interface AfterQueryHookContext extends QueryHookContext {
+  /** Milliseconds the statement took, measured from the moment it was sent to the moment it returned. */
+  durationMs: number
+}
+
 /** Hook invoked after a query is executed.
  * @public
  */
-export type AfterQueryHook = (ctx: QueryHookContext & { durationMs: number }) => void | Promise<void>
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>
 
 /** Context passed to connection hooks.
  * @public

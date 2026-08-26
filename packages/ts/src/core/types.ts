@@ -225,6 +225,7 @@ export interface BackupScheduleOptions {
 
 export type {
   AfterQueryHook,
+  AfterQueryHookContext,
   BeforeConnectHook,
   BeforeQueryHook,
   BeforeSnapshotHook,

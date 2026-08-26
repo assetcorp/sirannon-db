@@ -43,4 +43,10 @@ export interface LiveQueryOptions {
   rereadJitterMs?: number
   /** Changes in one transaction above which the query re-reads instead of applying them one by one. */
   maxTransactionChanges?: number
+  /**
+   * Receives the failure of any listener this query calls. The query never waits for what a
+   * listener returns, so a throw and a rejection both arrive here, and every other listener
+   * still receives the update. Sirannon drops whatever this reporter itself throws.
+   */
+  onError?: (error: Error) => void
 }

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
+import { reportQuietly } from './cycle-callbacks.js'
 import { destinationPieceError, fingerprintStoredPieces } from './pieces.js'
 import {
   assertPieceBytes,
@@ -165,7 +166,7 @@ export async function copyToDestinationStreamed(
   let restarts = 0
   let pumpFailure: unknown = null
 
-  const emit = (progress: Omit<BackupProgress, 'runId'>) => request.onProgress?.({ runId, ...progress })
+  const emit = (progress: Omit<BackupProgress, 'runId'>) => reportQuietly(request.onProgress, { runId, ...progress })
 
   const pump = async (): Promise<void> => {
     for (;;) {

@@ -1,4 +1,10 @@
-import { decodeTaggedValues, encodeTaggedValues } from '../cdc/encoding.js'
+import { invokeCallerCallback } from '../caller-callbacks.js'
+import {
+  changedAtToEventTimestamp,
+  decodeTaggedValues,
+  encodeTaggedValues,
+  eventTimestampToChangedAt,
+} from '../cdc/encoding.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import {
   deleteStagedChangesUpToSeq,
@@ -43,7 +49,7 @@ export async function stagePulledChanges(
         event.table,
         event.type,
         event.rowId ?? '',
-        event.timestamp,
+        eventTimestampToChangedAt(event.timestamp),
         event.oldRow === undefined ? null : JSON.stringify(encodeTaggedValues(event.oldRow)),
         event.type === 'delete' ? null : JSON.stringify(encodeTaggedValues(event.row)),
         event.origin ?? '',
@@ -183,7 +189,7 @@ function rowToChangeEvent(row: StagedChangeRow): ChangeEvent {
     oldRow:
       row.old_data === null ? undefined : (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>),
     seq: BigInt(row.seq),
-    timestamp: row.changed_at,
+    timestamp: changedAtToEventTimestamp(row.changed_at),
     rowId: row.row_id,
     ...(row.node_id !== '' ? { origin: row.node_id } : {}),
     ...(row.hlc !== '' ? { hlc: row.hlc } : {}),
@@ -203,9 +209,8 @@ async function emitStagedEvents(
     if (rows.length === 0) return
     for (const row of rows) {
       cursor = BigInt(row.seq)
-      try {
-        onChange(rowToChangeEvent(row))
-      } catch {}
+      const event = rowToChangeEvent(row)
+      invokeCallerCallback(() => onChange(event))
     }
   }
 }

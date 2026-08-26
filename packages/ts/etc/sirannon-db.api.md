@@ -798,6 +798,7 @@ export interface LiveQuery<T = Record<string, unknown>> {
 // @public
 export interface LiveQueryOptions {
     maxTransactionChanges?: number;
+    onError?: (error: Error) => void;
     rereadJitterMs?: number;
 }
 
@@ -1168,9 +1169,7 @@ export class Sirannon {
     onDatabaseOpen(hook: DatabaseOpenHook): void;
     open(id: string, path: string, options?: DatabaseOptions): Promise<Database>;
     readonly options: SirannonOptions;
-    // @internal (undocumented)
     registryMigrations(): Promise<Migration[]>;
-    // @internal (undocumented)
     resolve(id: string): Promise<Database | undefined>;
     shutdown(): Promise<void>;
     // @internal
@@ -1244,7 +1243,12 @@ export interface Subscription {
 // @public
 export interface SubscriptionBuilder {
     filter(conditions: Record<string, unknown>): SubscriptionBuilder;
-    subscribe(callback: (event: ChangeEvent) => void): Subscription;
+    subscribe<T = Record<string, unknown>>(callback: (event: ChangeEvent<T>) => void, options?: SubscriptionOptions): Subscription;
+}
+
+// @public
+export interface SubscriptionOptions {
+    onError?: (error: Error) => void;
 }
 
 // @public

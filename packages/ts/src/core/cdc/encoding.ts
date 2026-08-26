@@ -5,6 +5,27 @@ export const SAFE_INT_BOUND_TEXT = '9007199254740991'
 const SAFE_INT_BOUND = 9007199254740991n
 const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
 const INT_PAYLOAD_RE = /^-?\d{1,19}$/
+const MILLISECONDS_PER_SECOND = 1000
+
+/**
+ * Converts a stored `changed_at` into the milliseconds a change event reports.
+ *
+ * @param changedAt - Seconds since the Unix epoch, as the change log and the staging table store them.
+ * @returns Whole milliseconds since the Unix epoch.
+ */
+export function changedAtToEventTimestamp(changedAt: number): number {
+  return Math.round(changedAt * MILLISECONDS_PER_SECOND)
+}
+
+/**
+ * Converts the milliseconds a change event reports into a stored `changed_at`.
+ *
+ * @param timestamp - Milliseconds since the Unix epoch.
+ * @returns Seconds since the Unix epoch, as the staging table stores them.
+ */
+export function eventTimestampToChangedAt(timestamp: number): number {
+  return timestamp / MILLISECONDS_PER_SECOND
+}
 
 export function encodeTaggedValues(value: unknown): unknown {
   if (typeof value === 'bigint' || isBinaryValue(value)) {

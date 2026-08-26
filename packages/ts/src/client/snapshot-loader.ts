@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../core/caller-callbacks.js'
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
@@ -173,13 +174,14 @@ export async function downloadDatabaseSnapshot(
           await port.loadSnapshotPage(table.name, rows)
           tableLoadedRows += rows.length
           loadedRows += rows.length
-          options.onProgress?.({
+          const progress = {
             table: table.name,
             tableLoadedRows,
             tableTotalRows: table.rowCount,
             loadedRows,
             totalRows,
-          })
+          }
+          invokeCallerCallback(() => options.onProgress?.(progress))
         }
 
         if (page.done) break

@@ -1,6 +1,7 @@
 import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
+import type { SubscribeHookContext } from '../core/hooks/types.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
-import type { ChangeEvent } from '../core/types.js'
+import type { ChangeEvent, Subscription } from '../core/types.js'
 import type { AckResponse } from './protocol.js'
 import { decodeBoundParams } from './protocol.js'
 import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from './sync-protocol.js'
@@ -12,10 +13,16 @@ import type { ConnectionState } from './ws-handler.js'
 
 const MAX_SUBSCRIBED_TABLES = 500
 
+export type SubscriptionAttachment = 'attached' | 'duplicate' | 'disconnected'
+
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
   maxUnacknowledgedChanges: number
   socketResumeBytes: number
+  hasSubscribeHook(): boolean
+  beforeSubscribe(ctx: SubscribeHookContext): Promise<void>
+  attachSubscription(conn: WSConnection, id: string, subscription: Subscription): SubscriptionAttachment
+  detachSubscription(conn: WSConnection, id: string, subscription: Subscription): void
   sendSubscribed(
     conn: WSConnection,
     id: string,
@@ -104,15 +111,36 @@ export async function handleSubscribeMessage(
     deviceId = msg.deviceId
   }
 
-  if (deviceId !== undefined) {
-    if (msg.schemaVersion !== undefined && !isValidSchemaVersion(msg.schemaVersion)) {
+  if (msg.stagedStream !== undefined && typeof msg.stagedStream !== 'boolean') {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" must be a boolean')
+    return
+  }
+
+  let schemaVersion = 0
+  if (deviceId !== undefined && msg.schemaVersion !== undefined) {
+    if (!isValidSchemaVersion(msg.schemaVersion)) {
       deps.sendError(conn, id, 'INVALID_MESSAGE', '"schemaVersion" must be a non-negative integer')
       return
     }
+    schemaVersion = msg.schemaVersion
+  }
+
+  if (deps.hasSubscribeHook()) {
+    for (const table of tables) {
+      try {
+        await deps.beforeSubscribe({ databaseId: state.databaseId, table, filter, identity: state.identity })
+      } catch (err) {
+        deps.sendSirannonError(conn, id, err)
+        return
+      }
+    }
+  }
+
+  if (deviceId !== undefined) {
     let refusal: ReturnType<typeof schemaVersionGateRefusal>
     try {
       const serverVersion = highestMigrationVersion(await state.database.appliedMigrations())
-      refusal = schemaVersionGateRefusal(msg.schemaVersion ?? 0, serverVersion)
+      refusal = schemaVersionGateRefusal(schemaVersion, serverVersion)
     } catch (err) {
       deps.sendSirannonError(conn, id, err)
       return
@@ -121,11 +149,6 @@ export async function handleSubscribeMessage(
       deps.sendError(conn, id, refusal.code, refusal.message)
       return
     }
-  }
-
-  if (msg.stagedStream !== undefined && typeof msg.stagedStream !== 'boolean') {
-    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" must be a boolean')
-    return
   }
 
   if (deviceId !== undefined) {
@@ -160,6 +183,21 @@ export async function handleSubscribeMessage(
   await subscribeResuming(deps, conn, state, id, table, filter, sinceSeq, clientEpoch)
 }
 
+export function releaseUnattached(
+  deps: WSSubscribeDeps,
+  conn: WSConnection,
+  state: ConnectionState,
+  id: string,
+  subscription: Subscription,
+  attachment: SubscriptionAttachment,
+): void {
+  subscription.unsubscribe()
+  deps.cdc.maybeCleanup(state.databaseId)
+  if (attachment === 'duplicate') {
+    deps.sendError(conn, id, 'DUPLICATE_SUBSCRIPTION', `Subscription '${id}' already exists on this connection`)
+  }
+}
+
 function readTableSet(msg: Record<string, unknown>): string[] | string {
   if (msg.tables !== undefined) {
     if (!Array.isArray(msg.tables) || msg.tables.length === 0) {
@@ -190,6 +228,7 @@ async function subscribeLive(
   table: string,
   filter: Record<string, unknown> | undefined,
 ): Promise<void> {
+  let subscription: Subscription | null = null
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
@@ -204,14 +243,20 @@ async function subscribeLive(
       grouper.flush(atTxBoundary)
     })
 
-    state.subscriptions.set(id, {
+    subscription = {
       unsubscribe: () => {
         removeBatchEnd()
         sub.unsubscribe()
       },
-    })
+    }
+    const attachment = deps.attachSubscription(conn, id, subscription)
+    if (attachment !== 'attached') {
+      releaseUnattached(deps, conn, state, id, subscription, attachment)
+      return
+    }
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, false)
   } catch (err) {
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
   }
@@ -232,6 +277,7 @@ async function subscribeResuming(
   let boundary: bigint
   let resync: boolean
   let goLive: () => void
+  let subscription: Subscription | null = null
   try {
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await ctx.tracker.watch(ctx.cdcConn, table)
@@ -254,19 +300,25 @@ async function subscribeResuming(
         grouper.flush(atTxBoundary)
       })
     }
-    state.subscriptions.set(id, {
+    subscription = {
       unsubscribe: () => {
         cancelled = true
         removeBatchEnd()
         sub.unsubscribe()
       },
-    })
+    }
+    const attachment = deps.attachSubscription(conn, id, subscription)
+    if (attachment !== 'attached') {
+      releaseUnattached(deps, conn, state, id, subscription, attachment)
+      return
+    }
 
     const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
     const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
     resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, resync)
   } catch (err) {
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
     return

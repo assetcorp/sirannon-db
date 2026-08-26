@@ -68,6 +68,13 @@ export { migrationsFromFiles } from './migrations/from-files.js'
 export { MigrationRunner } from './migrations/runner.js'
 export * from './migrations/types.js'
 export { execute, executeBatch, query, queryOne } from './query-executor.js'
+export {
+  readBearerToken,
+  readHeader,
+  readSubprotocolCredential,
+  toSubprotocolCredential,
+} from './request-credentials.js'
 export { Sirannon } from './sirannon.js'
+export type { AppliedMigrationRow } from './system-catalog/migrations-table.js'
 export { Transaction } from './transaction.js'
 export * from './types.js'

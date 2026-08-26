@@ -4,8 +4,8 @@ import { Card, CardContent } from '@delali/sirannon-example-shared/ui/card'
 import { Input } from '@delali/sirannon-example-shared/ui/input'
 import { CircleCheck, RotateCcw, UserRound } from 'lucide-react'
 import { type ChangeEvent, type FormEvent, useCallback, useState } from 'react'
-
 import type { WorkOrder } from '../../../schema'
+import { MAX_NOTE_LENGTH } from '../../../schema'
 
 function formatUpdatedAt(iso: string): string {
   const date = new Date(iso)
@@ -82,6 +82,7 @@ export function OrderCard({
         {order.status === 'in_progress' ? (
           <form className="flex gap-2" onSubmit={handleComplete}>
             <Input
+              maxLength={MAX_NOTE_LENGTH}
               value={note}
               onChange={handleNoteChange}
               placeholder="Closing note"

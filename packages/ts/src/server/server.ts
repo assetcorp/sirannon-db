@@ -277,7 +277,7 @@ export class SirannonServer<Identity = unknown> {
           .then(async rawBody => {
             if (!abort.claim()) return
             try {
-              await handler(res, dbId, rawBody, abort)
+              await handler(res, dbId, rawBody, abort, undefined)
             } catch {
               if (!abort.aborted) {
                 sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
@@ -308,7 +308,7 @@ export class SirannonServer<Identity = unknown> {
         .then(async ([rawBody, authenticated]) => {
           if (!authenticated.ok || !abort.claim()) return
           try {
-            await handler(res, dbId, rawBody, abort)
+            await handler(res, dbId, rawBody, abort, authenticated.identity)
           } catch {
             if (!abort.aborted) {
               sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')

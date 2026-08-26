@@ -84,6 +84,7 @@ function buildSource<T>(
     rereadJitterMs: options?.rereadJitterMs ?? DEFAULT_REREAD_JITTER_MS,
     maxTransactionChanges: options?.maxTransactionChanges ?? DEFAULT_MAX_TRANSACTION_CHANGES,
     maxTransactionBytes: MAX_TRANSACTION_BYTES,
+    onError: options?.onError,
     wait: ms => new Promise<void>(resolve => setTimeout(resolve, ms)),
     read: () => readAtPosition<T>(deps.cdc, plan, params),
     start: (handlers, sinceSeq) => delivery.start(handlers, sinceSeq),

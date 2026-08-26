@@ -1,6 +1,6 @@
 # Sirannon Client Specification
 
-The client SDK provides a remote database proxy over HTTP and WebSocket. It covers the client API, remote operations, subscriptions, and topology-aware routing. An implementation that ships a client module should follow these contracts. These transports connect an application to a server and are separate from the replication transport (see [04-transport.md](04-transport.md)).
+The client SDK provides a remote database proxy over HTTP and WebSocket. It covers the client API, remote operations, subscriptions, and topology-aware routing. An implementation that publishes a client module should follow these contracts. These transports connect an application to a server and are separate from the replication transport (see [04-transport.md](04-transport.md)).
 
 ---
 
@@ -70,9 +70,9 @@ RemoteDatabase {
 OperationRef<Args, Row> { name: string }
 ```
 
-This is a subset of the local Database API adapted for remote use: `transaction` takes a statement list rather than a callback, and `queryOne`/`executeBatch` are absent. Each method maps to the HTTP route or WebSocket message of the same name (see [05-server.md](05-server.md)). `execute` returns `lastInsertRowId` as a JSON number or a decimal string, undecoded. `loadAll` batches an iterable of parameter sets (recommended batch size 1000), sending only the final batch with `checkpoint: true`; a non-positive `batchSize` fails with `INVALID_ARGUMENT`.
+This is a subset of the local Database API adapted for remote use. `transaction` takes a statement list, and `queryOne` and `executeBatch` are absent. Each method maps to the HTTP route or WebSocket message of the same name (see [05-server.md](05-server.md)). `execute` returns `lastInsertRowId` as a JSON number or a decimal string, undecoded. `loadAll` batches an iterable of parameter sets (recommended batch size 1000), sending only the final batch with `checkpoint: true`; a non-positive `batchSize` fails with `INVALID_ARGUMENT`.
 
-A first argument that names a registered operation rather than a statement runs that operation: `query` returns its rows, and `execute` returns one result per statement of the write. An operation reference holds the name at run time, and the argument and row types of that operation at compile time, so an argument or a column the server does not serve fails to compile. An implementation without a type system passes the name as a string.
+A first argument that names a registered operation runs that operation. `query` returns its rows, and `execute` returns one result per statement of the write. An operation reference holds the name at run time, and the argument and row types of that operation at compile time, so an argument or a column the server does not serve fails to compile. An implementation without a type system passes the name as a string.
 
 ### Refusing SQL Before It Is Sent
 
@@ -82,7 +82,7 @@ A client must read `GET /capabilities` before it sends a statement and must fail
 
 `live` returns the [`LiveQuery`](02-core.md#live-queries) of the local API over a registered read. The server holds the result and sends the operations that maintain it; the client applies them in order to the rows it holds. An operation with an index outside those rows must fail the query with `INVALID_RESPONSE`.
 
-The client echoes the registry digest from `GET /capabilities` on subscribe. After `REGISTRY_MISMATCH` it re-reads the digest and subscribes once more, and fails the query if that attempt is refused. While the connection is down the query holds its rows with `revalidating` set; the transport subscribes again on reconnection, and the server sends the rows afresh. A live query requires the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP.
+The client echoes the registry digest from `GET /capabilities` on subscribe. After `REGISTRY_MISMATCH` it re-reads the digest and subscribes once more, and fails the query where the server refuses that subscription. While the connection is down the query holds its rows with `revalidating` set; the transport subscribes again on reconnection, and the server sends the rows afresh. A live query requires the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP.
 
 ### Generated Operation References
 
@@ -104,7 +104,7 @@ The base URL is the server URL with trailing slashes removed; requests are `appl
 
 ### WebSocket Transport
 
-The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. Automatic reconnection runs only while the transport has active subscriptions or live queries; a failed request of any other kind does not trigger reconnection. On reconnection every active subscription is re-established and every live query subscribes again. A live query the server refuses is dropped with that error; one whose server is unreachable stays registered for the next attempt.
+The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. The transport reconnects automatically only while it holds active subscriptions or live queries, and a failed request of any other kind triggers no reconnection. On reconnection the transport re-establishes every active subscription, and every live query subscribes again. The transport drops a live query the server refuses, carrying that error, and it keeps one whose server is unreachable registered for the next reconnection.
 
 A close code of 4401, 4403, or any code in the 4000-4099 range reports a refused connection. The transport must fail pending and later requests with `UNAUTHORIZED` for 4401 and `FORBIDDEN` for 4403, carry the close reason as the message, and must not reconnect. Every other close code fails pending requests with `CONNECTION_ERROR` and reconnects while subscriptions remain.
 
@@ -115,12 +115,20 @@ A close code of 4401, 4403, or any code in the 4000-4099 range reports a refused
 ```text
 RemoteSubscriptionBuilder {
   filter(conditions: Map<string, any>): RemoteSubscriptionBuilder
-  subscribe(callback: (event: ChangeEvent) -> void): async -> RemoteSubscription
+  subscribe(callback: (event: ChangeEvent) -> void, options?: SubscribeOptions): async -> RemoteSubscription
 }
 RemoteSubscription { unsubscribe(): void }
+
+SubscribeOptions {
+  onError?: (error: Error) -> void
+}
 ```
 
-Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` and `changes` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. A subscription that fails to restore is removed and not retried. When routing metadata changes in topology mode, active subscriptions are re-established on the new endpoint; a migrated subscription restarts live from the new endpoint rather than resuming from its prior cursor.
+Device sync adds further fields to `SubscribeOptions` (see [08-device-sync.md](08-device-sync.md)).
+
+Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` and `changes` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. The client removes a subscription that fails to restore and does not subscribe again for it. When routing metadata changes in topology mode, the client re-establishes active subscriptions on the new endpoint; a migrated subscription restarts live from the new endpoint, and it does not resume from its prior cursor.
+
+A subscription must not wait for what its callback returns. An error the callback throws must not stop delivery to any other subscriber, and neither must a failure of what it returns. A client must pass each of those to `onError` where the subscription declares one, and must drop each one otherwise. A client must also pass the error raised by a change message it cannot decode to that same `onError`, and must go on delivering the messages that follow. A client must drop an error thrown by `onError`.
 
 ---
 
@@ -130,7 +138,7 @@ Writes (`execute`, `transaction`, `batch`, `load`) always route to the primary. 
 
 ### Static Mode
 
-The configured `primary` and `replicas` are used directly.
+The client uses the configured `primary` and `replicas` directly.
 
 | Preference | Read routing |
 |------------|--------------|
@@ -138,7 +146,7 @@ The configured `primary` and `replicas` are used directly.
 | `replica` | A randomly chosen replica, or the primary when none is available. |
 | `nearest` | The endpoint with the lowest measured round-trip latency, or the primary. |
 
-For `nearest`, the client measures latency with `GET {endpoint}/health` (timeout 5,000 ms, cached 60,000 ms), treating an unreachable endpoint as unusable. A read that fails at the transport against a non-primary endpoint marks that replica removed and retries on a fallback endpoint.
+For `nearest`, the client measures latency with `GET {endpoint}/health` (timeout 5,000 ms, cached 60,000 ms), and it treats an unreachable endpoint as unusable. A read that fails at the transport against a non-primary endpoint marks that replica removed and retries on a fallback endpoint.
 
 ### Coordinator Mode
 
@@ -146,7 +154,7 @@ The configured endpoints are a starter list. Before the first operation for a da
 
 Writes go to `currentPrimary`, or fail with `NO_SAFE_PRIMARY` when none is known. The effective read concern is the per-query value, then the client-level value, then `majority`. A `linearizable` read routes to the current primary. Other reads select among readable endpoints advertising the concern: `replica` picks one at random and `nearest` picks the first readable endpoint, both falling back to the current primary and then to any endpoint advertising `local`, or failing with `ROUTING_ERROR`.
 
-The client tracks a fingerprint of the routing metadata. A write or read that fails with `STALE_PRIMARY`, `AUTHORITY_LOST`, `COORDINATOR_UNAVAILABLE`, `NO_SAFE_PRIMARY`, or `CONNECTION_ERROR` refreshes routing; a read then retries once on the refreshed route, while a write clears its cached transport and re-raises without an automatic retry, so a non-idempotent write is never resent without the caller re-issuing it. When routing changes, active subscriptions migrate to a valid endpoint or surface a clear error.
+The client tracks a fingerprint of the routing metadata. A write or read that fails with `STALE_PRIMARY`, `AUTHORITY_LOST`, `COORDINATOR_UNAVAILABLE`, `NO_SAFE_PRIMARY`, or `CONNECTION_ERROR` refreshes routing. A read then retries once on the refreshed route. A write clears its cached transport and re-raises the error, and the caller re-issues it, so a non-idempotent write reaches the server twice only where the caller sends it twice. When routing changes, the client migrates active subscriptions to a valid endpoint, or fails them with an error naming the cause.
 
 ---
 

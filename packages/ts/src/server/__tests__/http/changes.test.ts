@@ -114,6 +114,32 @@ describe('POST /db/:id/changes', () => {
     expect(body.error.code).toBe('BATCH_VALIDATION_ERROR')
   })
 
+  it('rejects a change naming a reserved internal table', async () => {
+    const changes = deviceChanges()
+    changes[0] = {
+      ...changes[0],
+      table: '_sirannon_changes',
+      rowId: '999999',
+      primaryKey: { seq: 999999 },
+      newData: {
+        seq: 999999,
+        table_name: 'notes',
+        operation: 'delete',
+        row_id: '10',
+        old_data: null,
+        new_data: null,
+        node_id: DEVICE,
+        tx_id: 'device-tx-1',
+        hlc: changes[0].hlc,
+      },
+    }
+
+    const res = await postChanges({ batch: wireBatch(changes) })
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('BATCH_VALIDATION_ERROR')
+  })
+
   it('rejects changes whose nodeId differs from the source', async () => {
     const changes = deviceChanges()
     changes[0] = { ...changes[0], nodeId: 'eeee0000eeee0000eeee0000eeee0000' }

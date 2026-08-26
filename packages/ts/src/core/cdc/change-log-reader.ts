@@ -1,7 +1,7 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { selectChangesAfterSeqSql, selectTablesChangesInRangeSql } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
-import { decodeTaggedValues } from './encoding.js'
+import { changedAtToEventTimestamp, decodeTaggedValues } from './encoding.js'
 import type { StatementCache } from './statement-cache.js'
 import type { ChangeRow } from './types.js'
 
@@ -20,7 +20,7 @@ export function rowToEvent(row: ChangeRow): ChangeEvent {
     row: row.new_data ? (decodeTaggedValues(JSON.parse(row.new_data)) as Record<string, unknown>) : {},
     oldRow: row.old_data ? (decodeTaggedValues(JSON.parse(row.old_data)) as Record<string, unknown>) : undefined,
     seq: BigInt(row.seq),
-    timestamp: row.changed_at,
+    timestamp: changedAtToEventTimestamp(row.changed_at),
     rowId: String(row.row_id),
     ...(row.node_id ? { origin: row.node_id } : {}),
     ...(row.hlc ? { hlc: row.hlc } : {}),

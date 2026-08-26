@@ -97,8 +97,8 @@ export class RemoteDatabase {
     execute(sql: string, params?: Params): Promise<ExecuteResponse>;
     execute<Args>(operation: OperationRef<Args, unknown>, args: Args, writeConcern?: WriteConcern): Promise<ExecuteResponse[]>;
     readonly id: string;
-    live<T = Record<string, unknown>>(name: string, args?: OperationArguments): Promise<LiveQuery<T>>;
-    live<Args, Row>(operation: OperationRef<Args, Row>, args: Args): Promise<LiveQuery<Row>>;
+    live<T = Record<string, unknown>>(name: string, args?: OperationArguments, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
+    live<Args, Row>(operation: OperationRef<Args, Row>, args: Args, options?: LiveQueryOptions): Promise<LiveQuery<Row>>;
     load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<BulkLoadResult>;
     loadAll(sql: string, rows: Iterable<Params> | AsyncIterable<Params>, options?: LoadAllOptions): Promise<BulkLoadResult>;
     on(table: string): RemoteSubscriptionBuilder;
@@ -121,7 +121,7 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
     close(): Promise<void>;
     getState(): LiveQueryState<T>;
     // @internal (undocumented)
-    static open<T>(subscribe: (handlers: LiveHandlers) => Promise<RemoteSubscription>): Promise<RemoteLiveQuery<T>>;
+    static open<T>(subscribe: (handlers: LiveHandlers) => Promise<RemoteSubscription>, onError?: (error: Error) => void): Promise<RemoteLiveQuery<T>>;
     subscribe(listener: (update: LiveUpdate<T>) => void): () => void;
 }
 
@@ -133,7 +133,7 @@ export interface RemoteSubscription {
 // @public
 export interface RemoteSubscriptionBuilder {
     filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder;
-    subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
+    subscribe<T = Record<string, unknown>>(callback: (event: ChangeEvent<T>) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
 }
 
 // @internal
@@ -142,7 +142,7 @@ export class RemoteSubscriptionBuilderImpl implements RemoteSubscriptionBuilder 
     // (undocumented)
     filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder;
     // (undocumented)
-    subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
+    subscribe<T = Record<string, unknown>>(callback: (event: ChangeEvent<T>) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
 }
 
 // @internal
@@ -218,6 +218,25 @@ export interface SnapshotProgress {
 
 // @internal
 export const SQL_REFUSED_MESSAGE = "This server does not accept SQL over the network. Call a registered operation by name, or start the server with acceptSql: true.";
+
+// @public
+export interface SubscribeOptions {
+    deviceId?: string;
+    epoch?: string;
+    getResumeSeq?: () => bigint | undefined;
+    onError?: (error: Error) => void;
+    onReset?: () => void;
+    onSubscribed?: (info: {
+        seq: bigint | undefined;
+        epoch: string | undefined;
+        resync: boolean;
+        maxUnacknowledgedChanges: number | undefined;
+    }) => void;
+    schemaVersion?: number;
+    sinceSeq?: bigint;
+    stagedStream?: boolean;
+    tables?: readonly string[];
+}
 
 // @public
 export class SyncController {

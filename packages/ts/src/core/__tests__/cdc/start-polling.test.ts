@@ -110,6 +110,24 @@ describe('startPolling', () => {
     stop()
   })
 
+  it('reports the failure that stops the loop to each subscription onError', async () => {
+    const reported: string[] = []
+    manager.subscribe('users', undefined, () => {}, { onError: error => reported.push(error.message) })
+
+    tracker.poll = async () => {
+      throw new Error('persistent failure')
+    }
+
+    const stop = startPolling(conn, tracker, manager, 20)
+
+    for (let i = 0; i < 15; i++) {
+      await vi.advanceTimersByTimeAsync(20)
+    }
+
+    expect(reported).toEqual(['persistent failure'])
+    stop()
+  })
+
   it('does not call onError when no error callback is provided', async () => {
     manager.subscribe('users', undefined, () => {})
     tracker.poll = async () => {

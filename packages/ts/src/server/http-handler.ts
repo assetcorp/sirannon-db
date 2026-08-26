@@ -63,7 +63,13 @@ function decodeBatchParams(
 export type { ResponseAbort } from './http-common.js'
 export { initAbortHandler, readBody, sendError } from './http-common.js'
 
-export type DbRouteHandler = (res: HttpResponse, dbId: string, rawBody: Buffer, abort: ResponseAbort) => Promise<void>
+export type DbRouteHandler = (
+  res: HttpResponse,
+  dbId: string,
+  rawBody: Buffer,
+  abort: ResponseAbort,
+  identity: unknown,
+) => Promise<void>
 
 export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionTargetResolver): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {

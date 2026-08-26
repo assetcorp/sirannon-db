@@ -31,9 +31,9 @@ export type {
 } from './sync-controller-types.js'
 
 /**
- * @public
- *
  * Keeps one device's local database in step with a server: it pushes local changes, pulls the server's, and downloads a fresh snapshot when the device falls too far behind.
+ *
+ * @public
  */
 export class SyncController {
   private readonly baseUrl: string

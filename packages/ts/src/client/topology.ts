@@ -12,9 +12,9 @@ import { TopologyAwareTransport } from './topology-transport.js'
 import { RemoteError, type Transport } from './types.js'
 
 /**
- * @public
- *
  * Which nodes the client holds, how it finds the rest, and where it sends each read.
+ *
+ * @public
  */
 export interface TopologyAwareClientOptions extends ClientOptions {
   /**
@@ -54,9 +54,9 @@ const LATENCY_TTL_MS = 60_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 
 /**
- * @public
- *
  * Connects to a replication group rather than one server: it routes each read to a node that meets its read concern, and each write to the primary.
+ *
+ * @public
  */
 export class TopologyAwareClient extends DatabaseClient implements TopologyRouting {
   private readonly baseUrl: string

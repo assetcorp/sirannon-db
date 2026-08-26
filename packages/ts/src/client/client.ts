@@ -18,9 +18,9 @@ function normaliseClientUrl(url: string): string {
 }
 
 /**
- * @public
- *
  * Connects to one sirannon-db server and hands out a {@link RemoteDatabase} per database.
+ *
+ * @public
  */
 export class SirannonClient extends DatabaseClient {
   private readonly baseUrl: string

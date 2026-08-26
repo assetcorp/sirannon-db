@@ -4,16 +4,16 @@ import type { OperationRegistry, ReadOperation, WriteOperation } from '../core/o
 import { operationRegistryDigest } from '../server/operation-lookup.js'
 
 /**
- * @public
- *
  * Version of the manifest format the generator writes.
+ *
+ * @public
  */
 export const OPERATION_MANIFEST_VERSION = 1
 
 /**
- * @public
- *
  * The arguments and columns of one registered operation, as code generation reads them.
+ *
+ * @public
  */
 export interface OperationShape {
   /**
@@ -31,9 +31,9 @@ export interface OperationShape {
 }
 
 /**
- * @public
- *
  * The reads and writes one database exposes by name.
+ *
+ * @public
  */
 export interface DatabaseManifest {
   /**
@@ -47,9 +47,9 @@ export interface DatabaseManifest {
 }
 
 /**
- * @public
- *
  * Every database's registered operations, in the form code generation reads.
+ *
+ * @public
  */
 export interface OperationManifest {
   /**
@@ -67,12 +67,12 @@ export interface OperationManifest {
 }
 
 /**
- * @public
- *
  * Reads a registry and describes each operation's arguments and columns.
  *
  * @param registry - The registered operations to describe.
  * @returns The manifest code generation renders types from.
+ *
+ * @public
  */
 export function buildOperationManifest<I>(registry: OperationRegistry<I>): OperationManifest {
   const databases: Record<string, DatabaseManifest> = {}
@@ -119,12 +119,12 @@ function statementColumns<I>(operation: ReadOperation<I>, args: string[], identi
 }
 
 /**
- * @public
- *
  * Reads the column names a SELECT statement produces.
  *
  * @param sql - The statement to inspect.
  * @returns The column names, or null when the statement's columns cannot be read from its text.
+ *
+ * @public
  */
 export function selectColumns(sql: string): string[] | null {
   const tokens = withoutTrailingSemicolon(tokenizeSql(sql))

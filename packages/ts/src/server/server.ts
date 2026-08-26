@@ -56,11 +56,11 @@ function refuseSql(res: uWS.HttpResponse): void {
 }
 
 /**
- * @public
- *
  * Serves a `Sirannon` database registry over HTTP and WebSocket.
  *
  * Build one with {@link createServer}, then call {@link SirannonServer.listen}.
+ *
+ * @public
  */
 export class SirannonServer<Identity = unknown> {
   private app: uWS.TemplatedApp
@@ -374,13 +374,13 @@ export class SirannonServer<Identity = unknown> {
 }
 
 /**
- * @public
- *
  * Builds a server over a database registry.
  *
  * @param sirannon - The registry whose databases the server exposes.
  * @param options - Address, cross-origin rules, size limits, authentication, registered operations, and whether the server accepts SQL.
  * @returns The server, ready to listen.
+ *
+ * @public
  */
 export function createServer<Identity = unknown>(
   sirannon: Sirannon,

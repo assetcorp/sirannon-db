@@ -48,9 +48,9 @@ import { startServer } from './server-streams.js'
 import { writeWithBackpressure } from './stream-util.js'
 
 /**
- * @public
- *
  * Replicates between nodes over gRPC with mutual TLS, which is the transport production clusters use.
+ *
+ * @public
  */
 export class GrpcReplicationTransport implements ReplicationTransport {
   /** @internal */

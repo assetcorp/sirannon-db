@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { OperationRegistry } from '@delali/sirannon-db'
+import { SEED_CUSTOMERS } from './cluster-node-schema'
 import {
   CUSTOMER_STATUSES,
   MAX_API_QUOTA,
@@ -33,8 +34,6 @@ import {
   INSERT_ENTITLEMENT_SQL,
   INSERT_USAGE_AUDIT_SQL,
   INSERT_USAGE_EVENT_SQL,
-  RESET_SEQUENCE_SQL,
-  SEED_CUSTOMERS,
   UPDATE_CUSTOMER_FROM_BILLING_SQL,
   UPDATE_ENTITLEMENT_FROM_BILLING_SQL,
   USAGE_EVENTS_SQL,
@@ -44,7 +43,7 @@ export interface ControlPlaneOperator {
   actor: string
 }
 
-const SEQUENCE_TABLES = ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log']
+const NEW_CUSTOMER_BILLING_VERSION = 1
 
 export const operations = {
   entitlements: {
@@ -102,7 +101,10 @@ export const operations = {
 
           return [
             { sql: INSERT_CUSTOMER_SQL, params: [externalId, name, plan, 'active'] },
-            { sql: INSERT_ENTITLEMENT_SQL, params: [seats, apiQuota, supportTier, externalId] },
+            {
+              sql: INSERT_ENTITLEMENT_SQL,
+              params: [seats, apiQuota, supportTier, NEW_CUSTOMER_BILLING_VERSION, externalId],
+            },
             {
               sql: INSERT_AUDIT_SQL,
               params: [actor, 'customer_created', externalId, `Created ${name} with ${plan} entitlements`],
@@ -204,7 +206,6 @@ export const operations = {
             { sql: DELETE_AUDIT_LOG_SQL },
             { sql: DELETE_ENTITLEMENTS_SQL },
             { sql: DELETE_CUSTOMERS_SQL },
-            { sql: RESET_SEQUENCE_SQL, params: SEQUENCE_TABLES },
             ...SEED_CUSTOMERS.flatMap(customer => [
               {
                 sql: INSERT_CUSTOMER_SQL,
@@ -212,7 +213,13 @@ export const operations = {
               },
               {
                 sql: INSERT_ENTITLEMENT_SQL,
-                params: [customer.seats, customer.apiQuota, customer.supportTier, customer.externalId],
+                params: [
+                  customer.seats,
+                  customer.apiQuota,
+                  customer.supportTier,
+                  customer.version,
+                  customer.externalId,
+                ],
               },
             ]),
             {

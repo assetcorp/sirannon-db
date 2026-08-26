@@ -1,3 +1,5 @@
+import type { SQLiteConnection } from '@delali/sirannon-db'
+
 export const REPLICATED_TABLES = ['customers', 'entitlements', 'usage_events', 'billing_events', 'audit_log'] as const
 
 export const SCHEMA = `
@@ -52,22 +54,67 @@ export const SCHEMA = `
   );
 `
 
-export const SEED_SQL = `
-  INSERT OR IGNORE INTO customers (external_id, name, plan, status) VALUES
-    ('cus_nova_forge', 'Nova Forge', 'scale', 'active'),
-    ('cus_helios_labs', 'Helios Labs', 'growth', 'active'),
-    ('cus_riverline_ai', 'Riverline AI', 'enterprise', 'active');
+export const SEED_CUSTOMERS = [
+  {
+    externalId: 'cus_nova_forge',
+    name: 'Nova Forge',
+    plan: 'scale',
+    status: 'active',
+    seats: 48,
+    apiQuota: 250000,
+    supportTier: 'priority',
+    version: 8,
+  },
+  {
+    externalId: 'cus_helios_labs',
+    name: 'Helios Labs',
+    plan: 'growth',
+    status: 'active',
+    seats: 18,
+    apiQuota: 75000,
+    supportTier: 'standard',
+    version: 4,
+  },
+  {
+    externalId: 'cus_riverline_ai',
+    name: 'Riverline AI',
+    plan: 'enterprise',
+    status: 'active',
+    seats: 120,
+    apiQuota: 900000,
+    supportTier: 'named',
+    version: 12,
+  },
+] as const
 
+const SEED_CUSTOMER_SQL = 'INSERT OR IGNORE INTO customers (external_id, name, plan, status) VALUES (?, ?, ?, ?)'
+
+const SEED_ENTITLEMENT_SQL = `
   INSERT OR IGNORE INTO entitlements (customer_id, seats, api_quota, support_tier, active, version)
-  SELECT id, 48, 250000, 'priority', 1, 8 FROM customers WHERE external_id = 'cus_nova_forge';
+  SELECT id, ?, ?, ?, 1, ? FROM customers WHERE external_id = ?
+`
 
-  INSERT OR IGNORE INTO entitlements (customer_id, seats, api_quota, support_tier, active, version)
-  SELECT id, 18, 75000, 'standard', 1, 4 FROM customers WHERE external_id = 'cus_helios_labs';
-
-  INSERT OR IGNORE INTO entitlements (customer_id, seats, api_quota, support_tier, active, version)
-  SELECT id, 120, 900000, 'named', 1, 12 FROM customers WHERE external_id = 'cus_riverline_ai';
-
+const SEED_AUDIT_SQL = `
   INSERT INTO audit_log (actor, action, target, detail)
   SELECT 'seed', 'seeded', 'control-plane', 'Loaded production-style entitlement records'
-  WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE actor = 'seed' AND action = 'seeded');
+  WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE actor = 'seed' AND action = 'seeded')
 `
+
+export async function seedControlPlane(conn: SQLiteConnection): Promise<void> {
+  const insertCustomer = await conn.prepare(SEED_CUSTOMER_SQL)
+  const insertEntitlement = await conn.prepare(SEED_ENTITLEMENT_SQL)
+
+  for (const customer of SEED_CUSTOMERS) {
+    await insertCustomer.run(customer.externalId, customer.name, customer.plan, customer.status)
+    await insertEntitlement.run(
+      customer.seats,
+      customer.apiQuota,
+      customer.supportTier,
+      customer.version,
+      customer.externalId,
+    )
+  }
+
+  const insertAudit = await conn.prepare(SEED_AUDIT_SQL)
+  await insertAudit.run()
+}

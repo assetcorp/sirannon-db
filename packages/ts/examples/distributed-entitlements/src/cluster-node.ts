@@ -26,7 +26,7 @@ import {
   requirePort,
   requireRole,
 } from './cluster-node-env'
-import { REPLICATED_TABLES, SCHEMA, SEED_SQL } from './cluster-node-schema'
+import { REPLICATED_TABLES, SCHEMA, seedControlPlane } from './cluster-node-schema'
 import { WEBSOCKET_AUTH_PROTOCOL_PREFIX } from './lib/cluster-config'
 import { type ControlPlaneOperator, operations } from './operations'
 
@@ -62,7 +62,7 @@ await conn.exec('PRAGMA journal_mode = WAL')
 const tracker = new ChangeTracker()
 if (seedSchema) {
   await conn.exec(SCHEMA)
-  await conn.exec(SEED_SQL)
+  await seedControlPlane(conn)
 }
 
 const replicatedTablePlaceholders = REPLICATED_TABLES.map(() => '?').join(', ')

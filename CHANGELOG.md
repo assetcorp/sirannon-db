@@ -1,3 +1,13 @@
+## 0.3.3 (2026-08-26)
+
+### 🩹 Fixes
+
+- **ts:** add missing TSDoc comments ([7e3b642](https://github.com/assetcorp/sirannon-db/commit/7e3b642))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.2 (2026-08-26)
 
 ### 🩹 Fixes

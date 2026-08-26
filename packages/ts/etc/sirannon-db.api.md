@@ -5,9 +5,12 @@
 ```ts
 
 // @public
-export type AfterQueryHook = (ctx: QueryHookContext & {
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>;
+
+// @public
+export interface AfterQueryHookContext extends QueryHookContext {
     durationMs: number;
-}) => void | Promise<void>;
+}
 
 // @public
 export interface AppliedMigrationEntry {

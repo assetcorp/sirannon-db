@@ -18,7 +18,7 @@ Read the [documentation](https://sirannon.sondelali.com/docs), or run the [distr
 | --- | --- | --- |
 | Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server serves registered operations and accepts no SQL until you turn it on. |
-| Device sync (`@delali/sirannon-db/client`) | Experimental | Offline-first two-way sync between a device's local database and a server, with push, live pull, snapshot resync, and a migration handshake. It is new and not yet proven in production. |
+| Device sync (`@delali/sirannon-db/client`) | Experimental | Offline-first two-way sync between a device's local database and a server, with push, live pull, snapshot resync, and a migration handshake. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
 | Coordinator-backed failover (`/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
 | Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers run today but carry no TypeScript declarations yet. |

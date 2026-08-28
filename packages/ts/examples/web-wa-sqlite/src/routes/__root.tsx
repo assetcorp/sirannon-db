@@ -1,9 +1,14 @@
 import { THEME_BOOT_SCRIPT } from '@delali/sirannon-example-shared/theme'
 import { TooltipProvider } from '@delali/sirannon-example-shared/ui/tooltip'
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
+import { browserOnly } from '../lib/app-mode'
 import '../styles.css'
 
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`
+
+const PAGE_DESCRIPTION = browserOnly
+  ? 'A work order app backed by a real SQLite database in the browser, which needs no server behind it and keeps every order on your own machine between visits.'
+  : 'A work order app backed by a real SQLite database in the browser, which keeps working offline and syncs local writes back to the server.'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -11,11 +16,7 @@ export const Route = createRootRoute({
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Sirannon · Field Service' },
-      {
-        name: 'description',
-        content:
-          'A work order app backed by a real SQLite database in the browser, which keeps working offline and syncs local writes back to the server.',
-      },
+      { name: 'description', content: PAGE_DESCRIPTION },
       { name: 'theme-color', content: '#0d9488' },
     ],
     links: [

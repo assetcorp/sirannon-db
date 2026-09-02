@@ -25,9 +25,27 @@ When set to `yes`, PRs run through the same labels and states as issues, using t
 
 GitHub shares one number space across issues and PRs, so a bare `#42` may be either. Resolve it with `gh pr view 42`, and fall back to `gh issue view 42`.
 
+## Project board
+
+Every issue also appears on the user project 'Feature release' at `https://github.com/users/assetcorp/projects/2`, and each item there carries four fields. Set all four when you create the issue, set the type label on the issue itself, and move Status as the work moves. Read the project id, the field ids, and the option ids with `gh project field-list 2 --owner assetcorp --format json`, and read an item's id with `gh project item-list 2 --owner assetcorp --format json`. Add an issue to the board with `gh project item-add 2 --owner assetcorp --url <issue-url>`.
+
+**Status** is a project field with five options. Backlog holds an issue that is created and not yet specified, or specified with an open blocker. Ready holds an issue that is specified and whose every blocker is closed. In progress holds an issue with an assignee and a branch. In review holds an issue with an open pull request. Done holds the closed issue. Set it with `gh project item-edit --project-id <project-id> --id <item-id> --field-id <status-field-id> --single-select-option-id <option-id>`.
+
+**Type** is one of three labels on the issue, because a user account carries no organisation issue types. `bug` is behaviour that contradicts a promise the code or a contract makes. `enhancement` is new behaviour a caller can see. `task` is everything else, such as a benchmark change, a refactor, or a document.
+
+**Priority** is a project field with three options. P0 loses data, breaks the on-disk format or the wire protocol, or blocks the next release. P1 must close before its train closes. P2 waits for the next free window.
+
+**Size** is a project field that measures the change's reach. XS is one file. S is one directory in one package. M is several directories in one package with their tests. L crosses packages. XL changes the on-disk format, the wire protocol, or a contract document.
+
+**Estimate** is a project number field from 0 to 5 that measures how many things must be true at once, independent of size. 0 is a document only. 1 closes in one fresh window. 2 needs tests against the built engine or a live container. 3 needs several windows. 4 changes the engine and a benchmark suite in one train. 5 needs a design ruling before it starts.
+
+The project also carries an Iteration field and two date fields, which the owner sets by hand, so leave them unset.
+
+**Labels stay separate.** The triage labels say who does the work, the type label says what kind of work it is, and Status says where the work is.
+
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue.
+Create a GitHub issue, set its type label, add it to the project board, and set its Status, Priority, Size, and Estimate there.
 
 ## When a skill says "fetch the relevant ticket"
 

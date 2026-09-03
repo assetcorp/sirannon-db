@@ -59,9 +59,17 @@ function encodeTaggedLeaf(value: unknown): unknown {
   return value
 }
 
-// Never call this on the CDC path. Every subscriber receives the same
-// ChangeEvent object, so mutating its rows corrupts what the other subscribers
-// read. This is for rows materialised for a single response.
+/**
+ * Encodes the bigint and binary cells of rows materialised for one response,
+ * writing into the rows themselves.
+ *
+ * Use it on rows that one response owns. Every change subscriber receives the
+ * same change event, so encoding its rows in place would corrupt what the
+ * other subscribers read.
+ *
+ * @param rows - The rows to encode, which this function changes.
+ * @returns The same rows, with each bigint and binary cell encoded.
+ */
 export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]

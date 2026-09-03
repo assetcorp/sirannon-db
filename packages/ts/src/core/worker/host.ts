@@ -176,10 +176,6 @@ export class WriterWorker {
     )
   }
 
-  // On the deadline the host cancels the operation, which drops work the
-  // worker has not started, then allows one further timeout as a grace window.
-  // An operation still running when that window closes is rejected as
-  // indeterminate, because the write may or may not have reached the disk.
   private onDeadline(id: number): void {
     const entry = this.pending.get(id)
     if (!entry) return

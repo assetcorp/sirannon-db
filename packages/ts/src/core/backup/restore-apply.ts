@@ -119,19 +119,6 @@ export async function countDatabasePages(driver: SQLiteDriver, destPath: string)
   }
 }
 
-/**
- * Opens the rebuilt database so SQLite replays the log beside it, checks that
- * it reached the size the last frame commits to, and folds the log back into
- * the file.
- *
- * The size check is what turns a log SQLite quietly ignored into an error. A
- * checkpoint reports success over a log it never read, and the count of pages
- * is the only evidence that SQLite replayed the frames.
- *
- * @param driver - Driver to open the database through.
- * @param destPath - Path of the rebuilt database.
- * @param databasePages - Pages the last frame of the batch commits to.
- */
 async function foldLogIntoDatabase(driver: SQLiteDriver, destPath: string, databasePages: number): Promise<void> {
   const conn = await driver.open(destPath, { walMode: false, walAutoCheckpoint: 0 })
   try {

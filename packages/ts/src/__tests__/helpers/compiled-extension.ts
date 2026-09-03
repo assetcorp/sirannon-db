@@ -35,11 +35,6 @@ function sqliteHeaderDirectory(): string {
 
 let built: string | null | undefined
 
-/**
- * Compiles a loadable SQLite extension registering one function, and returns its
- * path. Returns null where the host has no C compiler, so a caller can skip the
- * test rather than fail it.
- */
 export function compiledExtensionPath(): string | null {
   if (built !== undefined) return built
   const directory = mkdtempSync(join(tmpdir(), 'sirannon-extension-'))

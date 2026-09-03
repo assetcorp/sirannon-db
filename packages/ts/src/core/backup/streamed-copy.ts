@@ -39,16 +39,6 @@ function destinationUri(streamId: number): string {
   return `file:sirannon-stream-${streamId}?vfs=${VFS_NAME}`
 }
 
-/**
- * Sizes one step and the queue behind it so that a step never fills the queue.
- * A step that filled it would wait for pieces no caller can take until that
- * step returns, and the run would never finish.
- *
- * @param requestedPagesPerStep - Pages the caller asked SQLite to move in one step.
- * @param pieceBytes - Bytes one whole piece holds.
- * @param pageSize - Bytes one page holds.
- * @returns The pages one step moves and the pieces the extension holds.
- */
 function sizeTheSteps(
   requestedPagesPerStep: number,
   pieceBytes: number,

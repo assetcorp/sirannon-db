@@ -23,9 +23,7 @@ import type { GrpcReplicationTransport } from './transport.js'
 function cancelQuietly(stream: Pick<ClientDuplexStream<never, never>, 'cancel'>): void {
   try {
     stream.cancel()
-  } catch {
-    /* The stream is already finished */
-  }
+  } catch {}
 }
 
 export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string): void {

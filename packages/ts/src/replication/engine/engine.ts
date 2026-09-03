@@ -358,9 +358,7 @@ export class ReplicationEngine extends EventEmitter {
     if (this.listenerCount('replication-error') > 0) {
       try {
         this.emit('replication-error', event)
-      } catch {
-        /* Listener failures must not disrupt engine operation */
-      }
+      } catch {}
     }
   }
 

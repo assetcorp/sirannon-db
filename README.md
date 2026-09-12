@@ -6,7 +6,7 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, Sirannon nodes replicate primary-owned changes over gRPC, and end-user devices sync a whole local database offline-first through the same server.
+Sirannon lets you keep real SQLite underneath your application as it grows, so the queries you write against a file on your laptop work unchanged against an HTTP and WebSocket server and against a primary replicating to its read replicas. A language-agnostic specification under [`packages/spec`](packages/spec/) sets out the wire formats, the value encodings, and the replication invariants that every implementation follows, including the TypeScript package in this repository, which is its reference implementation.
 
 Read the [documentation](https://sirannon.sondelali.com/docs), or run the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) to watch a three-node cluster serve through a primary failure on your own machine.
 
@@ -120,10 +120,14 @@ The [specification](packages/spec/) defines the wire formats, value encodings, a
 | [`web-client`](packages/ts/examples/web-client/) | Browser and Node.js | Live queries and the React hooks over registered operations, with no SQL on the wire |
 | [`distributed-entitlements`](packages/ts/examples/distributed-entitlements/) | Node.js and browser | Three-node coordinator-backed replication with etcd, gRPC, mTLS, and Toxiproxy failure controls |
 
+Every example works against the built package, so build it from the repository root before you start one. The commands below bring up the three-node cluster and its dashboard, for which you will need Docker with Compose and Node.js 22 or newer.
+
 ```bash
 pnpm install && pnpm --filter @delali/sirannon-db build
-cd packages/ts/examples/node && pnpm start
+cd packages/ts/examples/distributed-entitlements && pnpm run dev
 ```
+
+You can start the single-node example on Node.js alone: build the package as above, then `cd packages/ts/examples/node && pnpm start`.
 
 ## Architecture
 
@@ -145,6 +149,10 @@ Application clients reach the primary and read replicas over HTTP and WebSocket.
 ## Benchmarks
 
 The suite measures Sirannon and Postgres 17 on the same OLTP workloads: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over its SDK's WebSocket transport into the real server and Postgres over node-postgres on its binary socket protocol, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and the write-up generator rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from the latest committed run.
+
+<!-- BENCH:headline START -->
+On point-select at 10,000,000 rows, with both engines fsyncing every commit, Sirannon sustained 64.0K operations a second against PostgreSQL's 16.0K. Postgres held the lower tail latency at those operating points, 2.378 ms against Sirannon's 6.177 ms. That pattern holds on 7 of the 8 workloads at this durability level, so read the rate and the latency together. The harness recorded both engines in run `20260804T221053Z` on 2026-08-04, on GCP c3-standard-8-lssd, us-central1-b. You will find every workload, both durability levels, and the full method in [`BENCHMARKS.md`](BENCHMARKS.md).
+<!-- BENCH:headline END -->
 
 ## Development
 

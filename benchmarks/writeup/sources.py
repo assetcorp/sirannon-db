@@ -25,6 +25,10 @@ def benchmarks_page() -> Path:
     return _REPO_ROOT / "BENCHMARKS.md"
 
 
+def readme_page() -> Path:
+    return _REPO_ROOT / "README.md"
+
+
 def comparison_path(run_id: str) -> Path:
     return _RUNS_ROOT / run_id / "comparison.md"
 

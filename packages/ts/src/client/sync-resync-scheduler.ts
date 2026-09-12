@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../core/caller-callbacks.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { unrefTimer } from './http-json.js'
 import type { SnapshotOutcome } from './sync-controller-types.js'
@@ -49,9 +50,7 @@ export class ResyncScheduler {
       .port()
       ?.setResyncRequired(true)
       .catch(err => this.hooks.recordError(err))
-    try {
-      this.config.onResyncRequired?.()
-    } catch {}
+    invokeCallerCallback(() => this.config.onResyncRequired?.())
   }
 
   schedule(): void {
@@ -85,9 +84,7 @@ export class ResyncScheduler {
   }
 
   complete(outcome: SnapshotOutcome): void {
-    try {
-      this.config.onSnapshotComplete?.(outcome)
-    } catch {}
+    invokeCallerCallback(() => this.config.onSnapshotComplete?.(outcome))
   }
 
   private async attempt(): Promise<void> {

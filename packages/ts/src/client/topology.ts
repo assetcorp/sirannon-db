@@ -3,15 +3,18 @@ import type { ClusterStatusResponse } from '../server/protocol.js'
 import { createEndpointTransport, DatabaseClient } from './client-base.js'
 import type { ClusterRoutingState, TopologyRouting } from './cluster-routing.js'
 import { clusterRoutingChanged, parseClusterRouting } from './cluster-routing.js'
+
+export { parseClusterStatus } from './cluster-status.js'
+
 import { toBaseUrl, toServerBaseUrl } from './endpoint-urls.js'
 import { unrefTimer } from './http-json.js'
 import { TopologyAwareTransport } from './topology-transport.js'
 import { RemoteError, type Transport } from './types.js'
 
 /**
- * @public
- *
  * Which nodes the client holds, how it finds the rest, and where it sends each read.
+ *
+ * @public
  */
 export interface TopologyAwareClientOptions extends ClientOptions {
   /**
@@ -51,9 +54,9 @@ const LATENCY_TTL_MS = 60_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 
 /**
- * @public
- *
  * Connects to a replication group rather than one server: it routes each read to a node that meets its read concern, and each write to the primary.
+ *
+ * @public
  */
 export class TopologyAwareClient extends DatabaseClient implements TopologyRouting {
   private readonly baseUrl: string

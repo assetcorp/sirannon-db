@@ -1,11 +1,11 @@
 import { needsResync } from '../core/cdc/primed-subscription.js'
 import { filteredChange } from '../core/cdc/subscription.js'
-import type { ChangeEvent } from '../core/types.js'
+import type { ChangeEvent, Subscription } from '../core/types.js'
 import type { WSConnection } from './ws-connection.js'
 import { DeviceFramePacker } from './ws-device-frames.js'
 import { DeviceChangeStream } from './ws-device-stream.js'
 import type { ConnectionState } from './ws-handler.js'
-import type { WSSubscribeDeps } from './ws-subscribe.js'
+import { releaseUnattached, type WSSubscribeDeps } from './ws-subscribe.js'
 
 export interface DeviceSubscribeRequest {
   id: string
@@ -29,6 +29,7 @@ export async function subscribeDevice(
   let boundary: bigint
   let resync: boolean
   let epoch: string
+  let subscription: Subscription | null = null
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     for (const table of tables) {
@@ -82,18 +83,24 @@ export async function subscribeDevice(
     )
     const removeBatchEnd = ctx.manager.addBatchEndListener(atTxBoundary => stream.onBatchEnd(atTxBoundary))
 
-    state.subscriptions.set(id, {
+    subscription = {
       unsubscribe: () => {
         removeBatchEnd()
         stream.stop()
         state.deviceStreams.delete(id)
-        for (const subscription of subscriptions) {
-          subscription.unsubscribe()
+        for (const tableSubscription of subscriptions) {
+          tableSubscription.unsubscribe()
         }
       },
-    })
+    }
+    const attachment = deps.attachSubscription(conn, id, subscription)
+    if (attachment !== 'attached') {
+      releaseUnattached(deps, conn, state, id, subscription, attachment)
+      return
+    }
     state.deviceStreams.set(id, stream)
   } catch (err) {
+    if (subscription) deps.detachSubscription(conn, id, subscription)
     deps.cdc.maybeCleanup(state.databaseId)
     deps.sendSirannonError(conn, id, err)
     return

@@ -5,6 +5,27 @@ export const SAFE_INT_BOUND_TEXT = '9007199254740991'
 const SAFE_INT_BOUND = 9007199254740991n
 const HEX_BYTES_RE = /^[0-9a-fA-F]*$/
 const INT_PAYLOAD_RE = /^-?\d{1,19}$/
+const MILLISECONDS_PER_SECOND = 1000
+
+/**
+ * Converts a stored `changed_at` into the milliseconds a change event reports.
+ *
+ * @param changedAt - Seconds since the Unix epoch, as the change log and the staging table store them.
+ * @returns Whole milliseconds since the Unix epoch.
+ */
+export function changedAtToEventTimestamp(changedAt: number): number {
+  return Math.round(changedAt * MILLISECONDS_PER_SECOND)
+}
+
+/**
+ * Converts the milliseconds a change event reports into a stored `changed_at`.
+ *
+ * @param timestamp - Milliseconds since the Unix epoch.
+ * @returns Seconds since the Unix epoch, as the staging table stores them.
+ */
+export function eventTimestampToChangedAt(timestamp: number): number {
+  return timestamp / MILLISECONDS_PER_SECOND
+}
 
 export function encodeTaggedValues(value: unknown): unknown {
   if (typeof value === 'bigint' || isBinaryValue(value)) {
@@ -38,9 +59,17 @@ function encodeTaggedLeaf(value: unknown): unknown {
   return value
 }
 
-// Never call this on the CDC path. Every subscriber receives the same
-// ChangeEvent object, so mutating its rows corrupts what the other subscribers
-// read. This is for rows materialised for a single response.
+/**
+ * Encodes the bigint and binary cells of rows materialised for one response,
+ * writing into the rows themselves.
+ *
+ * Use it on rows that one response owns. Every change subscriber receives the
+ * same change event, so encoding its rows in place would corrupt what the
+ * other subscribers read.
+ *
+ * @param rows - The rows to encode, which this function changes.
+ * @returns The same rows, with each bigint and binary cell encoded.
+ */
 export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]

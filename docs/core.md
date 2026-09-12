@@ -122,7 +122,7 @@ const withMetrics = new Sirannon({
 })
 ```
 
-Global hooks: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, `onDatabaseClose`. Register `onBeforeSubscribe` through the `hooks` constructor option. Substring matching is no SQL firewall, so pair hooks with an allow-list of known statements.
+Global hooks: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, `onDatabaseClose`. Register `onBeforeSubscribe` and `onBeforeSnapshot` through the `hooks` constructor option. The server calls the first once per table a client subscribes to and the second once per table a snapshot reads, each with the identity the `authenticate` hook returned, and a throw refuses the request. Substring matching is no SQL firewall, so pair hooks with an allow-list of known statements.
 
 ## Multi-tenant lifecycle
 

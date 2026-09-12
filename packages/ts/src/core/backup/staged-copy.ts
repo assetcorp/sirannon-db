@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
 import { randomHex } from '../random-hex.js'
+import { reportQuietly } from './cycle-callbacks.js'
 import { sendFileInPieces } from './pieces.js'
 import {
   assertPieceBytes,
@@ -42,7 +43,7 @@ export async function copyToDestinationStaged(
   let firstStepSeen = false
   let copyLeftRunning: Promise<unknown> | null = null
 
-  const emit = (progress: Omit<BackupProgress, 'runId'>) => request.onProgress?.({ runId, ...progress })
+  const emit = (progress: Omit<BackupProgress, 'runId'>) => reportQuietly(request.onProgress, { runId, ...progress })
 
   try {
     const pageSize = await readPageSize(conn)

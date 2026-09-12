@@ -1,9 +1,11 @@
+import type { SyncController } from '@delali/sirannon-db/client'
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { browserOnly } from '../../lib/app-mode'
 import { acquireDeviceTabLock, rememberDevice } from '../../lib/device-registry'
 import { closeFieldDevice, type FieldDevice, openFieldDevice } from '../../lib/field-device'
 import { createSyncStore, type DeviceSyncView, getInitialSyncView, type SyncStore } from '../../lib/sync-store'
 
-const SERVER_URL: string = import.meta.env.VITE_SIRANNON_URL ?? 'http://127.0.0.1:9876'
+const SERVER_URL: string | null = browserOnly ? null : (import.meta.env.VITE_SIRANNON_URL ?? 'http://127.0.0.1:9876')
 const START_RETRY_INTERVAL_MS = 5_000
 
 export type DevicePhase = 'opening' | 'locked' | 'ready' | 'failed'
@@ -25,7 +27,7 @@ function noopSubscribe(): () => void {
   return () => {}
 }
 
-function watchForFirstSnapshot(store: SyncStore, device: FieldDevice): void {
+function watchForFirstSnapshot(store: SyncStore, sync: SyncController): void {
   let stopWatching: (() => void) | null = null
   let started = false
   stopWatching = store.subscribe(() => {
@@ -37,7 +39,7 @@ function watchForFirstSnapshot(store: SyncStore, device: FieldDevice): void {
     started = true
     stopWatching?.()
     store.patch({ snapshotting: true })
-    void device.sync.downloadSnapshot().catch(() => undefined)
+    void sync.downloadSnapshot().catch(() => undefined)
   })
 }
 
@@ -96,13 +98,16 @@ export function useFieldDevice(name: string) {
       }
 
       rememberDevice(name)
-      if (device.neverSynced) {
-        watchForFirstSnapshot(store, device)
+      const sync = device.sync
+      if (sync !== null && device.neverSynced) {
+        watchForFirstSnapshot(store, sync)
       }
       setState({ phase: 'ready', device, store, openError: null })
 
+      if (sync === null) return
+
       try {
-        await device.sync.start()
+        await sync.start()
       } catch (err) {
         store.patch({ bannerError: errorMessage(err) })
       }
@@ -130,19 +135,21 @@ export function useFieldDevice(name: string) {
   const setSyncEnabled = useCallback(
     (enabled: boolean) => {
       if (device === null || store === null) return
+      const sync = device.sync
+      if (sync === null) return
       setWantsOnline(enabled)
       const run = async () => {
         try {
           if (enabled) {
             const syncState = store.getSnapshot().status?.state
             if (syncState === 'paused') {
-              await device.sync.resume()
+              await sync.resume()
             } else if (syncState === 'stopped' || syncState === undefined) {
-              await device.sync.start()
+              await sync.start()
             }
             store.patch({ bannerError: null })
           } else {
-            device.sync.pause()
+            sync.pause()
           }
         } catch (err) {
           store.patch({ bannerError: errorMessage(err) })
@@ -155,9 +162,11 @@ export function useFieldDevice(name: string) {
 
   useEffect(() => {
     if (!wantsOnline || device === null || store === null) return
+    const sync = device.sync
+    if (sync === null) return
     const id = window.setInterval(() => {
       if (store.getSnapshot().status?.state !== 'stopped') return
-      void device.sync
+      void sync
         .start()
         .then(() => store.patch({ bannerError: null }))
         .catch(() => undefined)

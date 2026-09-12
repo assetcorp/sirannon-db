@@ -6,6 +6,7 @@ import type { BackupChainChange } from './chain.js'
 import { DEFAULT_CHAIN_NAME, readBackupChains } from './chain.js'
 import { planBackupRestore } from './chain-queries.js'
 import { checkpointLog } from './checkpoint.js'
+import { reportQuietly } from './cycle-callbacks.js'
 import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
 import { applyChangeBatch, assertChangePiecesRunOn, countDatabasePages } from './restore-apply.js'
 import { readDatabaseHeader } from './restore-log.js'
@@ -131,7 +132,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
   let framesApplied = 0
   const batches = batchesOf(plan.changes, batchSize)
   const reportProgress = (phase: BackupRestoreProgress['phase']): void =>
-    options.onProgress?.({
+    reportQuietly(options.onProgress, {
       phase,
       piecesFetched,
       bytesFetched,

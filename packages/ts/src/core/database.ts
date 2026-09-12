@@ -3,6 +3,7 @@ import { createDatabaseRuntime, type DatabaseInternals } from './database-create
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
+import type { HookDispose } from './hooks/types.js'
 import { openLiveQuery } from './live/database-live.js'
 import type { LiveQuery, LiveQueryOptions } from './live/types.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
@@ -289,17 +290,19 @@ export class Database extends DatabaseBackups {
    * Registers a hook that runs before each statement on this database. Throw from it to refuse the statement.
    *
    * @param hook - Receives the statement, its parameters, and the concerns it carries.
+   * @returns A function that removes the hook.
    */
-  onBeforeQuery(hook: BeforeQueryHook): void {
-    this.runtime.hookRegistry.register('beforeQuery', hook)
+  onBeforeQuery(hook: BeforeQueryHook): HookDispose {
+    return this.runtime.hookRegistry.register('beforeQuery', hook)
   }
 
   /**
    * Registers a hook that runs after each statement on this database.
    *
    * @param hook - Receives the statement and how long it took.
+   * @returns A function that removes the hook.
    */
-  onAfterQuery(hook: AfterQueryHook): void {
-    this.runtime.hookRegistry.register('afterQuery', hook)
+  onAfterQuery(hook: AfterQueryHook): HookDispose {
+    return this.runtime.hookRegistry.register('afterQuery', hook)
   }
 }

@@ -57,7 +57,7 @@ export const INSERT_CUSTOMER_SQL = 'INSERT INTO customers (external_id, name, pl
 
 export const INSERT_ENTITLEMENT_SQL = `
   INSERT INTO entitlements (customer_id, seats, api_quota, support_tier, active, version)
-  SELECT id, ?, ?, ?, 1, 1 FROM customers WHERE external_id = ?
+  SELECT id, ?, ?, ?, 1, ? FROM customers WHERE external_id = ?
 `
 
 export const INSERT_AUDIT_SQL = 'INSERT INTO audit_log (actor, action, target, detail) VALUES (?, ?, ?, ?)'
@@ -140,34 +140,3 @@ export const DELETE_USAGE_EVENTS_SQL = 'DELETE FROM usage_events'
 export const DELETE_AUDIT_LOG_SQL = 'DELETE FROM audit_log'
 export const DELETE_ENTITLEMENTS_SQL = 'DELETE FROM entitlements'
 export const DELETE_CUSTOMERS_SQL = 'DELETE FROM customers'
-export const RESET_SEQUENCE_SQL = 'DELETE FROM sqlite_sequence WHERE name IN (?, ?, ?, ?, ?)'
-
-export const SEED_CUSTOMERS = [
-  {
-    externalId: 'cus_nova_forge',
-    name: 'Nova Forge',
-    plan: 'scale',
-    status: 'active',
-    seats: 48,
-    apiQuota: 250000,
-    supportTier: 'priority',
-  },
-  {
-    externalId: 'cus_helios_labs',
-    name: 'Helios Labs',
-    plan: 'growth',
-    status: 'active',
-    seats: 18,
-    apiQuota: 75000,
-    supportTier: 'standard',
-  },
-  {
-    externalId: 'cus_riverline_ai',
-    name: 'Riverline AI',
-    plan: 'enterprise',
-    status: 'active',
-    seats: 120,
-    apiQuota: 900000,
-    supportTier: 'named',
-  },
-] as const

@@ -98,6 +98,37 @@ describe('Database.applyChanges', () => {
     await expect(db.applyChanges({ ...batch, checksum: 'tampered' })).rejects.toThrow('Checksum mismatch')
   })
 
+  it('rejects a batch whose change names a reserved internal table', async () => {
+    db = await openWatched('internal-table.db')
+    const forged = deviceChange({
+      table: CHANGES_TABLE,
+      rowId: '999999',
+      primaryKey: { seq: 999999 },
+      newData: {
+        seq: 999999,
+        table_name: 'notes',
+        operation: 'delete',
+        row_id: '10',
+        old_data: null,
+        new_data: null,
+        node_id: DEVICE,
+        tx_id: 'device-tx-1',
+        hlc: new HLC(DEVICE).now(),
+      },
+    })
+
+    await expect(db.applyChanges(buildBatch([forged]))).rejects.toThrow(`Invalid table name: ${CHANGES_TABLE}`)
+    await db.close()
+    db = undefined
+
+    const inspect = await testDriver.open(join(tempDir, 'internal-table.db'))
+    const stmt = await inspect.prepare(`SELECT seq FROM ${CHANGES_TABLE} WHERE seq = 999999`)
+    const forgedRow = await stmt.get()
+    await inspect.close()
+
+    expect(forgedRow).toBeUndefined()
+  })
+
   it('resolves conflicting updates by newest HLC by default', async () => {
     db = await openWatched('conflict.db')
     await db.execute("INSERT INTO notes (id, body) VALUES (10, 'local original')")

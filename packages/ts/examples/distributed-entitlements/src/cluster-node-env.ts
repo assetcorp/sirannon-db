@@ -1,6 +1,6 @@
-export const NODE_IDS = ['node-a', 'node-b', 'node-c'] as const
+import type { TopologyRole } from '@delali/sirannon-db/replication'
 
-export type NodeRole = 'primary' | 'replica'
+export const NODE_IDS = ['node-a', 'node-b', 'node-c'] as const
 
 export function requireNodeId(): (typeof NODE_IDS)[number] {
   const value = requireEnv('NODE_ID')
@@ -10,7 +10,7 @@ export function requireNodeId(): (typeof NODE_IDS)[number] {
   throw new Error(`NODE_ID must be one of ${NODE_IDS.join(', ')}`)
 }
 
-export function requireRole(): NodeRole {
+export function requireRole(): TopologyRole {
   const value = requireEnv('INITIAL_ROLE')
   if (value === 'primary' || value === 'replica') return value
   throw new Error('INITIAL_ROLE must be primary or replica')

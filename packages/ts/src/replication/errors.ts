@@ -43,9 +43,9 @@ export class WriteConcernError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a node cannot prove a read is as current as the caller required.
+ *
+ * @public
  */
 export class ReadConcernError extends ReplicationError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -65,9 +65,9 @@ export class TopologyError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a node cannot reach its cluster coordinator.
+ *
+ * @public
  */
 export class CoordinatorError extends ReplicationError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -77,9 +77,9 @@ export class CoordinatorError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a node cannot prove it holds write authority for the current term.
+ *
+ * @public
  */
 export class AuthorityError extends ReplicationError {
   constructor(message: string, code: string = 'AUTHORITY_LOST', details?: Record<string, unknown>) {
@@ -89,9 +89,9 @@ export class AuthorityError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a node believing itself primary finds the group has moved to a later term.
+ *
+ * @public
  */
 export class StalePrimaryError extends AuthorityError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -101,9 +101,9 @@ export class StalePrimaryError extends AuthorityError {
 }
 
 /**
- * @public
- *
  * Thrown when failover cannot complete safely.
+ *
+ * @public
  */
 export class FailoverError extends ReplicationError {
   constructor(message: string, code: string = 'NO_SAFE_PRIMARY', details?: Record<string, unknown>) {
@@ -113,9 +113,9 @@ export class FailoverError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when no replica is in sync enough to take over as primary, so writes stay unavailable rather than risking loss.
+ *
+ * @public
  */
 export class NoSafePrimaryError extends FailoverError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -125,9 +125,9 @@ export class NoSafePrimaryError extends FailoverError {
 }
 
 /**
- * @public
- *
  * Thrown when a node cannot meet a read concern because the group does not count it as in sync.
+ *
+ * @public
  */
 export class NodeNotInSyncError extends ReplicationError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -137,9 +137,9 @@ export class NodeNotInSyncError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a node is being taken out of service and refuses new work.
+ *
+ * @public
  */
 export class NodeDrainingError extends ReplicationError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -149,9 +149,9 @@ export class NodeDrainingError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when a peer speaks a replication protocol version this node cannot work with.
+ *
+ * @public
  */
 export class ProtocolVersionMismatchError extends ReplicationError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -161,9 +161,9 @@ export class ProtocolVersionMismatchError extends ReplicationError {
 }
 
 /**
- * @public
- *
  * Thrown when recovery would lose acknowledged writes, so an operator must rebuild or restore the node first.
+ *
+ * @public
  */
 export class UnsafeRecoveryRequiredError extends FailoverError {
   constructor(message: string, details?: Record<string, unknown>) {

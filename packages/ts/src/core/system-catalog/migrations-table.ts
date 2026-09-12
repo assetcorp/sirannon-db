@@ -13,9 +13,17 @@ const CREATE_MIGRATIONS_TABLE = `
 
 type PreparedStatement = Awaited<ReturnType<SQLiteConnection['prepare']>>
 
+/**
+ * One migration a database has already applied, as its catalogue records it.
+ *
+ * @public
+ */
 export interface AppliedMigrationRow {
+  /** Version number the migration carries. */
   version: number
+  /** Name the migration carries. */
   name: string
+  /** Hash of the SQL that applied it, and null where a function applied it or the database predates checksums. */
   checksum: string | null
 }
 

@@ -10,6 +10,7 @@ import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
 import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
 import { heldSql, releaseHeldWrite, sleepingDriver } from './fixtures/sleeping-driver.js'
+import { COPY_STALL_MS, stallingCopyDriver } from './fixtures/stalling-copy-driver.js'
 
 const WRITE_DEADLINE_MS = 2_000
 const WORKER_RESTART_DEADLINE_MS = 10_000
@@ -87,6 +88,28 @@ describe('writer worker offload', () => {
       n: 20000 + writesDuringCopy,
     })
   })
+
+  it('finishes a copy that reports no step for longer than the write deadline', async () => {
+    const registry = new Sirannon({ driver: stallingCopyDriver() })
+    try {
+      const stalling = await registry.open('stalling-copy', join(dir, 'stalling-copy.db'), {
+        writerWorker: { writeTimeoutMs: WRITE_DEADLINE_MS },
+      })
+      await stalling.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)')
+      await stalling.execute("INSERT INTO items (name) VALUES ('widget')")
+
+      const report = await stalling.backupTo({
+        destination: memoryDestination(),
+        pagesPerStep: 1,
+        stagingDir: dir,
+        stallTimeoutMs: COPY_STALL_MS * 5,
+      })
+
+      expect(report.pageCount).toBeGreaterThan(0)
+    } finally {
+      await registry.shutdown().catch(() => {})
+    }
+  }, 30_000)
 
   it('runs a batch atomically and returns a result per row', async () => {
     await openOffloaded()

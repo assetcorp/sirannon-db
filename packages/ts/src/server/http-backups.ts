@@ -57,19 +57,6 @@ export async function resolveBackupDatabase(
   return database
 }
 
-/**
- * Gives a turn one tick of the event loop in which to refuse, and reports what
- * it refused with.
- *
- * A turn continues long past any response, so the route answers without waiting
- * for it. The guards in front of that turn refuse on the first tick, however,
- * and a caller told the turn had started when a closed database or a snapshot
- * load had already refused it would then poll a progress route that reports
- * nothing wrong.
- *
- * @param turn - The turn the route asked for.
- * @returns What the turn refused with, or undefined where it is still under way.
- */
 function refusedOnTheFirstTick(turn: Promise<unknown>): Promise<unknown> {
   const settled = turn.then(
     () => undefined,

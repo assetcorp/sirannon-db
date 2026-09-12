@@ -10,6 +10,7 @@ const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
   onDatabaseOpen: 'databaseOpen',
   onDatabaseClose: 'databaseClose',
   onBeforeSubscribe: 'beforeSubscribe',
+  onBeforeSnapshot: 'beforeSnapshot',
 }
 
 /**

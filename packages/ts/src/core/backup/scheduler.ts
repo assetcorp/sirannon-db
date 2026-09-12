@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
+import { invokeCallerCallback } from '../caller-callbacks.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { BackupError, SirannonError } from '../errors.js'
 import { BackupManager } from './backup.js'
@@ -103,9 +104,9 @@ function runDirect(op: () => Promise<void>): Promise<void> {
 }
 
 /**
- * @public
- *
  * Repeats a database backup on a cron schedule and keeps a bounded number of files.
+ *
+ * @public
  */
 export class BackupScheduler {
   private readonly manager: BackupManager
@@ -229,9 +230,7 @@ export class BackupScheduler {
 
     const announce = (err: unknown): void => {
       if (!onError) return
-      try {
-        onError(toError(err))
-      } catch {}
+      invokeCallerCallback(() => onError(toError(err)))
     }
 
     let source: BackupSource | null = null

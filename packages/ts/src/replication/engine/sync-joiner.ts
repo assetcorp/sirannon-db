@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { isReservedIdentifier } from '../../core/internal-tables.js'
 import { prepareInsertAppliedChange, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
@@ -157,7 +158,7 @@ export class SyncJoiner {
         return
       }
 
-      if (!IDENTIFIER_RE.test(batch.table)) {
+      if (!IDENTIFIER_RE.test(batch.table) || isReservedIdentifier(batch.table)) {
         throw new SyncError(`Invalid table name in sync batch: ${batch.table}`)
       }
 

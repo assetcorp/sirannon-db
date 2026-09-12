@@ -2,9 +2,9 @@ import type { IOptions } from 'etcd3'
 import { assertNonEmpty } from './group-rules.js'
 
 /**
- * @public
- *
  * Where the etcd coordinator connects, under which key prefix it stores group state, and how it authenticates.
+ *
+ * @public
  */
 export interface EtcdClusterCoordinatorOptions {
   /**

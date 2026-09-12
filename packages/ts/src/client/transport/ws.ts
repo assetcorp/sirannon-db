@@ -205,6 +205,7 @@ export class WebSocketTransport implements Transport {
       table,
       filter,
       callback,
+      onError: options?.onError,
       onReset: options?.onReset,
       onSubscribed: options?.onSubscribed,
       deviceId: options?.deviceId,

@@ -22,8 +22,11 @@ export class RemoteSubscriptionBuilderImpl implements RemoteSubscriptionBuilder 
     return this
   }
 
-  subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription> {
+  subscribe<T = Record<string, unknown>>(
+    callback: (event: ChangeEvent<T>) => void,
+    options?: SubscribeOptions,
+  ): Promise<RemoteSubscription> {
     const filter = Object.keys(this.conditions).length > 0 ? this.conditions : undefined
-    return this.transport.subscribe(this.table, filter, callback, options)
+    return this.transport.subscribe(this.table, filter, callback as (event: ChangeEvent) => void, options)
   }
 }

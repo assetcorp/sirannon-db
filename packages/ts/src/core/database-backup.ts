@@ -13,6 +13,7 @@ import type { BackupDestination } from './backup/destination.js'
 import type { BackupFileReport, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import { startCopyWithoutHoldingWriter } from './backup/start-guard.js'
 import type { BackupVerifyResult } from './backup/verify.js'
+import { invokeCallerCallback } from './caller-callbacks.js'
 import type { BackupEngine, DriverCapabilities, SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { SirannonError } from './errors.js'
 import type { BackupScheduleOptions } from './types.js'
@@ -157,10 +158,9 @@ export class DatabaseBackupController {
       fullCopy: copyOptions => this.backupTo(copyOptions),
     })
     this.cycleStarted = this.cycle.start().catch(err => {
-      if (!options.onError) return
-      try {
-        options.onError(err instanceof Error ? err : new SirannonError(String(err), 'BACKUP_ERROR'))
-      } catch {}
+      const onError = options.onError
+      if (!onError) return
+      invokeCallerCallback(() => onError(err instanceof Error ? err : new SirannonError(String(err), 'BACKUP_ERROR')))
     })
   }
 

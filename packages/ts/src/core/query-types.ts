@@ -64,7 +64,7 @@ export interface ChangeEvent<T = Record<string, unknown>> {
   type: ChangeOperation
   /** Table the row belongs to. */
   table: string
-  /** The row as it stands after the change. A delete carries the row as it was. */
+  /** The row as it stands after the change. A delete carries an empty object here and the previous row in {@link ChangeEvent.oldRow}. */
   row: T
   /** The row as it stood before an update or a delete. */
   oldRow?: T
@@ -99,8 +99,35 @@ export interface SubscriptionBuilder {
    * delete, so read `type` as the row's arrival or departure from the filter.
    */
   filter(conditions: Record<string, unknown>): SubscriptionBuilder
-  /** Starts the subscription and calls back on each change. */
-  subscribe(callback: (event: ChangeEvent) => void): Subscription
+  /**
+   * Starts the subscription and calls back on each change.
+   *
+   * The subscription never waits for what your callback returns, so two calls to an
+   * asynchronous callback can overlap. Chain the work onto one promise where each change
+   * has to finish before the next one starts. A throw, and a rejection of what the callback
+   * returns, both arrive at `options.onError`, and every other subscriber on this table
+   * still receives the change.
+   *
+   * @typeParam T - Shape of the rows this table holds, which types `row` and `oldRow`.
+   * @param callback - Receives each change this subscription matches.
+   * @param options - Carries `onError`, which receives a failure of the callback or of the change-log poll.
+   * @returns A handle whose `unsubscribe` ends the subscription.
+   */
+  subscribe<T = Record<string, unknown>>(
+    callback: (event: ChangeEvent<T>) => void,
+    options?: SubscriptionOptions,
+  ): Subscription
+}
+
+/** Reporters a change subscription attaches when it starts.
+ * @public
+ */
+export interface SubscriptionOptions {
+  /**
+   * Receives the failure of a change callback, and the failure that stops the change-log
+   * poll after repeated errors. Sirannon drops whatever this reporter itself throws.
+   */
+  onError?: (error: Error) => void
 }
 
 /** Handle for an active subscription.

@@ -1,3 +1,5 @@
+import { isReservedIdentifier } from '../internal-tables.js'
+
 export const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 export const SEQ_STRING_RE = /^\d{1,19}$/
@@ -11,7 +13,36 @@ export function validateIdentifier(name: string): boolean {
   return IDENTIFIER_RE.test(name)
 }
 
+const CREATE_INDEX_TARGETS_RE =
+  /^\s*CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)["`\]]?\s+ON\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i
+
+const DDL_TARGET_RE =
+  /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|DROP\s+INDEX(?:\s+IF\s+EXISTS)?)\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i
+
+/**
+ * Reports whether a DDL statement names a table or index the engine reserves for itself.
+ *
+ * The check reads the object the statement targets, so a user column keeping a
+ * reserved prefix still passes while a statement reaching `_sirannon_changes` or
+ * the `sqlite_` catalogue does not.
+ *
+ * @param sql - The DDL statement to read.
+ * @returns True where the statement targets a reserved table or index.
+ */
+export function ddlTargetsReservedIdentifier(sql: string): boolean {
+  const indexTargets = CREATE_INDEX_TARGETS_RE.exec(sql)
+  if (indexTargets !== null) {
+    return isReservedIdentifier(indexTargets[1]) || isReservedIdentifier(indexTargets[2])
+  }
+
+  const target = DDL_TARGET_RE.exec(sql)
+  if (target !== null) return isReservedIdentifier(target[1])
+
+  return false
+}
+
 export function validateDdlSafety(sql: string): boolean {
+  if (ddlTargetsReservedIdentifier(sql)) return false
   if (!SAFE_DDL_RE.test(sql)) return false
   if (sql.includes(';')) return false
   if (/\bAS\s+SELECT\b/i.test(sql)) return false

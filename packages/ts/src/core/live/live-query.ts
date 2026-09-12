@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../caller-callbacks.js'
 import type { ChangeEvent } from '../types.js'
 import { type HeldRow, LiveResult, type RowChange } from './live-result.js'
 import type { LivePlan } from './query-plan.js'
@@ -20,6 +21,7 @@ export interface LiveQuerySource<T> {
   maxTransactionChanges: number
   maxTransactionBytes: number
   wait(ms: number): Promise<void>
+  onError?: (error: Error) => void
 }
 
 export class MaintainedLiveQuery<T> implements LiveQuery<T> {
@@ -264,9 +266,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
   private publish(next: LiveQueryState<T>, update: LiveUpdate<T>): void {
     this.state = next
     for (const listener of [...this.listeners]) {
-      try {
-        listener(update)
-      } catch {}
+      invokeCallerCallback(() => listener(update), this.source.onError)
     }
   }
 }

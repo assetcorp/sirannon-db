@@ -6,9 +6,9 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, Sirannon nodes replicate primary-owned changes over gRPC, and end-user devices sync a whole local database offline-first through the same server.
+Sirannon lets you keep real SQLite underneath your application as it grows, so the queries you write against a file on your laptop work unchanged against an HTTP and WebSocket server and against a primary replicating to its read replicas. A language-agnostic specification under [`packages/spec`](packages/spec/) sets out the wire formats, the value encodings, and the replication invariants that every implementation follows, including the TypeScript package in this repository, which is its reference implementation.
 
-Read the [documentation](https://sirannon.sondelali.com/docs), or run the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) to watch a three-node cluster serve through a primary failure on your own machine.
+Read the [documentation](https://sirannon.sondelali.com/docs), or start the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) to watch a three-node cluster serve through a primary failure on your own machine.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
@@ -18,12 +18,12 @@ Read the [documentation](https://sirannon.sondelali.com/docs), or run the [distr
 | --- | --- | --- |
 | Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle, covered by more than 130 test files on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `/client`) | Stable | HTTP and WebSocket access with reconnection and subscription restore. The server serves registered operations and accepts no SQL until you turn it on. |
-| Device sync (`@delali/sirannon-db/client`) | Experimental | Offline-first two-way sync between a device's local database and a server, with push, live pull, snapshot resync, and a migration handshake. It is new and not yet proven in production. |
+| Device sync (`@delali/sirannon-db/client`) | Experimental | Offline-first two-way sync between a device's local database and a server, with push, live pull, snapshot resync, and a migration handshake. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | Hybrid Logical Clock stamping, conflict resolvers, first sync, write concerns, and a gRPC transport with mutual TLS. |
-| Coordinator-backed failover (`/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection. It is new and not yet proven in production. |
-| Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers run today but carry no TypeScript declarations yet. |
+| Coordinator-backed failover (`/replication/coordinator/etcd`) | Experimental | etcd authority, primary terms, and in-sync sets, verified by a Docker conformance run under fault injection, which is the whole of its evidence so far. |
+| Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The Bun and Expo drivers work today, and their TypeScript declarations are still outstanding. |
 
-Durability follows SQLite's WAL mode with `synchronous=NORMAL` by default, and you can raise it. The [roadmap](ROADMAP.md) sets out what comes next.
+Sirannon defaults to SQLite's WAL mode with `synchronous=NORMAL`, which you can raise. The [roadmap](ROADMAP.md) sets out what comes next.
 
 ## Install
 
@@ -79,19 +79,19 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 
 ## Features
 
-- **Queries and transactions.** Reads, writes, batches, and transactions run with full ACID guarantees over one write connection and a pool of read connections, with WAL mode on by default.
+- **Queries and transactions.** Sirannon gives reads, writes, batches, and transactions full ACID guarantees over one write connection and a pool of read connections, with WAL mode on by default.
 - **Change data capture.** Watch a table for insert, update, and delete events in real time through SQLite triggers and configurable polling.
 - **Live queries.** `db.live` keeps a query result current by applying each change to the rows it already holds, and `@delali/sirannon-db/react` renders one through `useLiveQuery`.
-- **Registered operations.** The server runs statements you registered under a name and accepts no SQL from the network by default. `sirannon-codegen` turns that registry into typed client references.
-- **Migrations.** File-based or programmatic migrations apply once each with content checksums, mirror `PRAGMA user_version`, roll back to any version, squash into a baseline, and survive two processes migrating at once. A set declared on the registry covers every database it opens, tenants included.
-- **Bulk load.** A large import runs in one transaction under relaxed durability, then Sirannon restores the configured level, so the import pays one durability barrier rather than one per row.
-- **Backups.** `backup()` copies a database to a file while it stays open for reads and writes, because SQLite moves the pages in steps and a write runs in the gap between two of them. `scheduleBackup()` repeats that copy on a cron expression, and `backupTo()` puts it in storage you supply instead of on local disk. The `backups` option follows a first full copy with only what changed since the previous run, and `restoreBackup()` rebuilds the database from any moment that chain reaches.
+- **Registered operations.** The server executes only the statements you registered under a name, and `sirannon-codegen` turns that registry into typed client references.
+- **Migrations.** File-based or programmatic migrations apply once each with content checksums, mirror `PRAGMA user_version`, roll back to any version, and squash into a baseline. Two processes migrating at once still end with one applied set, and a set declared on the registry covers every database it opens, tenants included.
+- **Bulk load.** A large import works inside one transaction under relaxed durability, and Sirannon then restores the configured level, so the whole import crosses one durability barrier.
+- **Backups.** `backup()` copies a database to a file while it stays open for reads and writes, because SQLite moves the pages in steps and a write happens in the gap between two of them. `scheduleBackup()` repeats that copy on a cron expression, and `backupTo()` puts it in storage you supply. The `backups` option follows a first full copy with only what changed since the previous run, and `restoreBackup()` rebuilds the database from any moment that chain reaches.
 - **Hooks and metrics.** Before and after hooks cover queries, connections, and subscriptions, and throwing from a before-hook denies the operation. Metrics callbacks collect query timing, connection events, and CDC activity.
-- **Multi-tenant lifecycle.** Databases open on first access, close on an idle timeout, and evict least-recently-used past a cap.
+- **Multi-tenant lifecycle.** Sirannon opens a database on first access, closes it on an idle timeout, and evicts the least recently used one once the count passes a cap.
 - **Server and client SDK.** Expose a registry over HTTP and WebSocket with one call, and reach it through a client that mirrors the core interface, reconnects, and restores its subscriptions.
 - **Device sync.** An end-user device keeps its whole local database in step with a server, offline-first and both ways, with snapshot resync, a migration handshake, and capability negotiation.
 - **Distributed replication.** A primary stamps each change with a Hybrid Logical Clock and replicates checksummed batches to read replicas over gRPC with mutual TLS.
-- **Coordinator-backed failover.** etcd authority, primary terms, in-sync sets, and write concerns keep write ownership clear, and a minority partition fails closed.
+- **Coordinator-backed failover.** etcd authority, primary terms, in-sync sets, and write concerns keep write ownership clear, while a minority partition fails closed.
 - **Conflict resolution.** Choose LWW, PrimaryWins, FieldMerge, or your own resolver for an incoming change that targets an existing row.
 
 ## Documentation
@@ -109,7 +109,7 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 | [Configuration reference](docs/configuration.md) | Every option table, from `SirannonOptions` to `GrpcReplicationOptions` |
 | [Errors](docs/errors.md) | Every code, when it happens, whether the call is safe to retry, and its HTTP status |
 
-The [specification](packages/spec/) defines the wire formats, value encodings, and replication invariants every implementation follows, and [`docs/adr/`](docs/adr/) holds the decision records behind the replication design.
+You will find the wire formats, the value encodings, and the replication invariants in the [specification](packages/spec/), and the decision records behind the replication design in [`docs/adr/`](docs/adr/).
 
 ## Examples
 
@@ -120,10 +120,14 @@ The [specification](packages/spec/) defines the wire formats, value encodings, a
 | [`web-client`](packages/ts/examples/web-client/) | Browser and Node.js | Live queries and the React hooks over registered operations, with no SQL on the wire |
 | [`distributed-entitlements`](packages/ts/examples/distributed-entitlements/) | Node.js and browser | Three-node coordinator-backed replication with etcd, gRPC, mTLS, and Toxiproxy failure controls |
 
+Every example works against the built package, so build it from the repository root before you start one. The commands below bring up the three-node cluster and its dashboard, for which you will need Docker with Compose and Node.js 22 or newer.
+
 ```bash
 pnpm install && pnpm --filter @delali/sirannon-db build
-cd packages/ts/examples/node && pnpm start
+cd packages/ts/examples/distributed-entitlements && pnpm run dev
 ```
+
+You can start the single-node example on Node.js alone: build the package as above, then `cd packages/ts/examples/node && pnpm start`.
 
 ## Architecture
 
@@ -135,16 +139,20 @@ Application clients reach the current primary and eligible read replicas over HT
 
 ## Security
 
-- The server serves [registered operations](docs/operations.md) and accepts no SQL from the network until you set `acceptSql: true`. Authenticate every request either way through the `authenticate` hook, and check the `Origin` header on the WebSocket upgrade.
-- A Node client sends its `headers` on the WebSocket upgrade, so the hook reads `headers.authorization` on both transports. A browser sends no handshake header, so a browser client carries a short-lived ticket in `webSocketProtocols`; the server selects the plain `sirannon.v1` identifier and never echoes the ticket. A refused upgrade closes with 4401 or 4403; the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
+- The server serves only the [registered operations](docs/operations.md) until you set `acceptSql: true`. Authenticate every request either way through the `authenticate` hook, and check the `Origin` header on the WebSocket upgrade.
+- A Node client sends its `headers` on the WebSocket upgrade, so the hook reads `headers.authorization` on both transports. A browser sends no handshake header, so a browser client puts a short-lived ticket in `webSocketProtocols`; the server selects the plain `sirannon.v1` identifier and never echoes the ticket. A refused upgrade closes with 4401 or 4403; the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 - Every statement binds its parameters through the driver, so user input never reaches the SQL text.
 - Sirannon validates CDC table and column names against `/^[a-zA-Z_][a-zA-Z0-9_]*$/`, and rejects null bytes, `..` segments, and control characters in migration and backup paths.
-- HTTP bodies and WebSocket messages are capped at 1 MB, which `maxBodyBytes` raises or lowers.
+- Sirannon caps HTTP bodies and WebSocket messages at 1 MB, and `maxBodyBytes` raises or lowers that ceiling.
 - The built-in server binds plain HTTP and WebSocket. Terminate TLS upstream with a reverse proxy such as nginx or Caddy, or a cloud load balancer, before you carry traffic outside a trusted network.
 
 ## Benchmarks
 
 The suite measures Sirannon and Postgres 17 on the same OLTP workloads: point-select, single-row-insert, single-row-update, YCSB A/B/C/F, and a TPC-C-shaped mix. It drives Sirannon over its SDK's WebSocket transport into the real server and Postgres over node-postgres on its binary socket protocol, both as native processes on pinned cores under a hard memory ceiling at matched durability, under an open-loop load generator that corrects for coordinated omission. It also records change-feed latency, cold start, and connection scaling for Sirannon alone. The harness is a Python project under [`benchmarks/server`](benchmarks/server), and the write-up generator rewrites [`BENCHMARKS.md`](BENCHMARKS.md) from the latest committed run.
+
+<!-- BENCH:headline START -->
+On point-select at 10,000,000 rows, with both engines fsyncing every commit, Sirannon sustained 64.0K operations a second against PostgreSQL's 16.0K. Postgres held the lower tail latency at those operating points, 2.378 ms against Sirannon's 6.177 ms. That pattern holds on 7 of the 8 workloads at this durability level, so read the rate and the latency together. The harness recorded both engines in run `20260804T221053Z` on 2026-08-04, on GCP c3-standard-8-lssd, us-central1-b. You will find every workload, both durability levels, and the full method in [`BENCHMARKS.md`](BENCHMARKS.md).
+<!-- BENCH:headline END -->
 
 ## Development
 

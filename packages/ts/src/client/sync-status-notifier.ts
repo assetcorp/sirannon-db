@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../core/caller-callbacks.js'
 import { unrefTimer } from './http-json.js'
 import type { SyncStatus } from './sync-controller-types.js'
 
@@ -55,9 +56,7 @@ export class SyncStatusNotifier {
     while (this.queued.length > 0) {
       const status = this.queued.shift()
       if (status === undefined) return
-      try {
-        listener(status)
-      } catch {}
+      invokeCallerCallback(() => listener(status))
     }
   }
 

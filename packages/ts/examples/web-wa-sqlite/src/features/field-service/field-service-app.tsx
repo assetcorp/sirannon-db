@@ -2,7 +2,8 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from '@delali/sirann
 import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { useNavigate } from '@tanstack/react-router'
 import { LoaderCircle, TriangleAlert, X } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
+import { browserOnly } from '../../lib/app-mode'
 import { isValidDeviceName, normaliseDeviceName } from '../../lib/device-registry'
 import { claimWorkOrder, completeWorkOrder, createWorkOrder, reopenWorkOrder } from '../../lib/field-device'
 import { AppHeader } from './components/app-header'
@@ -10,8 +11,12 @@ import { LockedScreen } from './components/locked-screen'
 import { OnboardingScreen } from './components/onboarding-screen'
 import { OrderBoard } from './components/order-board'
 import { SnapshotPanel } from './components/snapshot-panel'
+import { SqlConsole } from './components/sql-console'
 import { SyncStatusBar } from './components/sync-status-bar'
+import { useConsoleHeight } from './use-console-height'
 import { useFieldDevice } from './use-field-device'
+
+const CONSOLE_CLEARANCE_PX = 16
 
 export function FieldServiceApp({ deviceName }: { deviceName: string | undefined }) {
   if (deviceName === undefined) {
@@ -28,6 +33,16 @@ function DeviceWorkspace({ name }: { name: string }) {
   const { phase, device, view, wantsOnline, setSyncEnabled, dismissBanner, reportError, openError } =
     useFieldDevice(name)
   const navigate = useNavigate()
+  const consoleHeight = useConsoleHeight()
+  const [consoleOpen, setConsoleOpen] = useState(false)
+
+  const handleConsoleToggle = useCallback(() => {
+    setConsoleOpen(open => !open)
+  }, [])
+
+  const handleConsoleClose = useCallback(() => {
+    setConsoleOpen(false)
+  }, [])
 
   const handleCreate = useCallback(
     (site: string, task: string) => {
@@ -103,10 +118,19 @@ function DeviceWorkspace({ name }: { name: string }) {
 
   return (
     <div className="min-h-dvh">
-      <AppHeader deviceName={name} wantsOnline={wantsOnline} onSyncEnabledChange={setSyncEnabled} />
-      <main className="mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6">
-        <SyncStatusBar status={view.status} changesReceived={view.changesReceived} />
-        {bannerError !== null ? (
+      <AppHeader
+        deviceName={name}
+        wantsOnline={wantsOnline}
+        onSyncEnabledChange={setSyncEnabled}
+        consoleOpen={consoleOpen}
+        onConsoleToggle={handleConsoleToggle}
+      />
+      <main
+        className="mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6"
+        style={consoleOpen ? { paddingBottom: consoleHeight.height + CONSOLE_CLEARANCE_PX } : undefined}
+      >
+        {browserOnly ? null : <SyncStatusBar status={view.status} changesReceived={view.changesReceived} />}
+        {browserOnly || bannerError === null ? null : (
           <Alert variant="destructive" className="mt-4">
             <TriangleAlert aria-hidden="true" />
             <AlertTitle>Sync is failing</AlertTitle>
@@ -117,8 +141,8 @@ function DeviceWorkspace({ name }: { name: string }) {
               </Button>
             </AlertAction>
           </Alert>
-        ) : null}
-        {view.snapshotting ? (
+        )}
+        {!browserOnly && view.snapshotting ? (
           <SnapshotPanel progress={view.snapshotProgress} />
         ) : (
           <OrderBoard
@@ -130,6 +154,7 @@ function DeviceWorkspace({ name }: { name: string }) {
           />
         )}
       </main>
+      <SqlConsole device={device} open={consoleOpen} onClose={handleConsoleClose} consoleHeight={consoleHeight} />
     </div>
   )
 }

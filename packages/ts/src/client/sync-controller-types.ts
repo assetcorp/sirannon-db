@@ -58,8 +58,26 @@ export interface SyncControllerOptions {
  * @public
  */
 export type SnapshotOutcome =
-  | { ok: true; error: null; databaseUsable: true; retrying: false }
-  | { ok: false; error: { code: string; message: string }; databaseUsable: boolean; retrying: boolean }
+  | {
+      /** True where the download finished and its rows are in place. */
+      ok: true
+      /** Null on a download that finished. */
+      error: null
+      /** True, because a finished download leaves the local database ready to read. */
+      databaseUsable: true
+      /** False, because a finished download needs no further attempt. */
+      retrying: false
+    }
+  | {
+      /** False where the download failed. */
+      ok: false
+      /** The code and message of what stopped the download. */
+      error: { code: string; message: string }
+      /** Whether the local database still answers reads after the failure. */
+      databaseUsable: boolean
+      /** True while the controller is making another attempt. */
+      retrying: boolean
+    }
 
 /**
  * What a sync controller is doing right now.

@@ -8,19 +8,33 @@ import type {
   TransactionResponse,
 } from '../server/protocol.js'
 
-/** Optional behaviours for a CDC subscription. */
+/** Optional behaviours for a CDC subscription.
+ * @public
+ */
 export interface SubscribeOptions {
+  /**
+   * Receives the failure of a change callback, and the error raised by a change frame the
+   * client cannot decode. The subscription never waits for what the callback returns, so a
+   * throw and a rejection both arrive here. Sirannon drops whatever this reporter itself throws.
+   */
+  onError?: (error: Error) => void
   /**
    * Invoked when a reconnect cannot replay missed changes because they fell
    * outside the server's retained history. The subscription continues live
    * from the current moment; treat any prior state as stale and re-read.
    */
   onReset?: () => void
+  /** Identity of the device this subscription belongs to, which the server uses to withhold that device's own writes. */
   deviceId?: string
+  /** Tables one subscription covers, so a transaction spanning them arrives as one ascending stream. */
   tables?: readonly string[]
+  /** Highest migration version this device has applied, which the server gates the subscription on. */
   schemaVersion?: number
+  /** Returns the sequence to resume from, read afresh on each reconnect so a durable cursor stays current. */
   getResumeSeq?: () => bigint | undefined
+  /** Sequence to resume after on the first subscribe. Where it is absent, the subscription starts live from now. */
   sinceSeq?: bigint
+  /** Change-log epoch the resume cursor belongs to, so a cursor from another database file forces a resync. */
   epoch?: string
   /**
    * Declares that this device stages pulled changes durably and
@@ -29,6 +43,7 @@ export interface SubscribeOptions {
    * server that announces the `sync.staged-stream` capability.
    */
   stagedStream?: boolean
+  /** Receives what the server confirmed on subscribe: the baseline sequence, the epoch, whether a resync is due, and the delivery window. */
   onSubscribed?: (info: {
     seq: bigint | undefined
     epoch: string | undefined
@@ -129,10 +144,29 @@ export interface RemoteSubscriptionBuilder {
    * leaves the row in the set arrives unchanged, and one that never touches the set
    * is not delivered. A synthesised event is indistinguishable from a real insert or
    * delete, so read `type` as the row's arrival or departure from the filter.
+   *
+   * The subscriber chooses this filter, so it decides how much the server delivers,
+   * and an operator who needs to bound what a caller may read does that in the
+   * `authenticate` hook.
    */
   filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
-  /** Starts the subscription and calls back on each change. */
-  subscribe(callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>
+  /**
+   * Starts the subscription and calls back on each change.
+   *
+   * The subscription never waits for what your callback returns, so two calls to an
+   * asynchronous callback can overlap. Chain the work onto one promise where each change
+   * has to finish before the next one starts. A throw, and a rejection of what the callback
+   * returns, both reach `options.onError`.
+   *
+   * @typeParam T - Shape of the rows this table holds, which types `row` and `oldRow`.
+   * @param callback - Receives each change this subscription matches.
+   * @param options - Carries `onError` and the device-sync fields.
+   * @returns A handle whose `unsubscribe` ends the subscription.
+   */
+  subscribe<T = Record<string, unknown>>(
+    callback: (event: ChangeEvent<T>) => void,
+    options?: SubscribeOptions,
+  ): Promise<RemoteSubscription>
 }
 
 /**

@@ -133,9 +133,9 @@ export type ServerExecutionTargetResolver = (
  * @public
  */
 export interface ServerOptions<Identity = unknown> {
-  /** Address the server binds to. Default: '0.0.0.0'. */
+  /** Address the server binds to. Default: '127.0.0.1'. */
   host?: string
-  /** Port the server binds to. Default: 3000. */
+  /** Port the server binds to. Default: 9876. */
   port?: number
   /** Cross-origin rules the server answers browser requests with. */
   cors?: boolean | CorsOptions

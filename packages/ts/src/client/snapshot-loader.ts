@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../core/caller-callbacks.js'
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
@@ -121,13 +122,13 @@ function validatePage(raw: unknown): SnapshotPageResponse {
 }
 
 /**
- * @public
- *
  * Copies a database from a server into a local one, replacing what the local database holds.
  *
  * @param port - The local database the snapshot is written into.
  * @param options - Where the snapshot comes from and how it is read.
  * @returns The change-log position and sequence space to resume from, the tables copied, and the rows written.
+ *
+ * @public
  */
 export async function downloadDatabaseSnapshot(
   port: DeviceSyncPort,
@@ -173,13 +174,14 @@ export async function downloadDatabaseSnapshot(
           await port.loadSnapshotPage(table.name, rows)
           tableLoadedRows += rows.length
           loadedRows += rows.length
-          options.onProgress?.({
+          const progress = {
             table: table.name,
             tableLoadedRows,
             tableTotalRows: table.rowCount,
             loadedRows,
             totalRows,
-          })
+          }
+          invokeCallerCallback(() => options.onProgress?.(progress))
         }
 
         if (page.done) break

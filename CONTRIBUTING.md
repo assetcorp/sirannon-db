@@ -49,7 +49,6 @@ The benchmark suite runs from `benchmarks/server`. See [`benchmarks/server/READM
 
 - Let Biome format the code. Do not hand-format around it.
 - Install dependencies at an exact version with `pnpm add -E`, so the lockfile stays deterministic.
-- Write a comment only for a reason a reader cannot infer from the code.
 - Anything that changes a wire format, a protocol, or a replication invariant starts from [`packages/spec`](packages/spec), because the specification is a cross-language contract. A change there affects every future implementation.
 
 ## Ways to help

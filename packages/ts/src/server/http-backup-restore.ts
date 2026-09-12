@@ -22,31 +22,6 @@ interface RestoreRequest {
   batchSize?: number
 }
 
-/**
- * Rebuilds one database from its own backups, at the path it already occupies.
- *
- * The database closes first, since no connection may be open on the file while
- * Sirannon replaces its bytes, and it opens again at the end with the settings
- * it had before.
- *
- * Sirannon discards the cycle's record of where it had reached before the
- * rebuild, and that order is what makes this path safe. A process that died
- * between a finished rebuild and a later cleanup would leave the new file
- * beside a state file naming the old chain, and the next capture would then
- * append a piece cut from the restored timeline onto that chain. No check
- * downstream would catch it, since the piece starts at frame one under a fresh
- * log sequence, which is what an ordinary log restart also produces, and both
- * its digest and its byte count would match. A restore of that chain would then
- * rebuild a database missing the writes the earlier restore had rolled back,
- * and report success.
- *
- * Discarding first means a fresh full copy where the rebuild then fails, since
- * the reopened cycle starts a new chain. It loses no data, because a staged
- * capture stores frames SQLite has already folded into the database file, and
- * that fresh full copy includes them.
- *
- * @param request - The registry, the restore record, and what to rebuild from.
- */
 async function rebuildDatabase(request: RestoreRequest): Promise<void> {
   const { sirannon, runs, databaseId, location } = request
   try {

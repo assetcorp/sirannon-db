@@ -7,8 +7,10 @@
   "scripts": {
     "server": "tsx src/data-server.ts",
     "app:dev": "vite",
+    "app:dev:browser": "vite --mode browser-only",
     "dev": "concurrently -c blue,magenta \"pnpm run server\" \"pnpm run app:dev\"",
     "build": "vite build",
+    "build:browser": "vite build --mode browser-only",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -11,9 +11,9 @@ import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeW
 import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
- * @public
- *
  * Settings for the driver built on Node's own SQLite module.
+ *
+ * @public
  */
 export interface NodeSqliteOptions {
   /**
@@ -44,12 +44,12 @@ function carriesSteppedBackupCall(): boolean {
 }
 
 /**
- * @public
- *
  * Builds a driver on Node's own SQLite module, which needs no native dependency.
  *
  * @param driverOptions - How long a statement waits for the write lock.
  * @returns The driver, ready to pass to a `Sirannon` registry.
+ *
+ * @public
  */
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }

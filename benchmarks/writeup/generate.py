@@ -3,20 +3,21 @@ from __future__ import annotations
 import re
 import sys
 
+from headline_section import readme_blocks
 from server_section import blocks, comparison_document
-from sources import Source, benchmarks_page, comparison_path, load_source, repo_root
+from sources import Source, benchmarks_page, comparison_path, load_source, readme_page, repo_root
 
 _IMAGE_SOURCE = re.compile(r'<img src="([^"]+)"')
 
 
-def _inject(text: str, regions: dict[str, str]) -> str:
+def _inject(text: str, regions: dict[str, str], page_name: str) -> str:
     for block_id, content in regions.items():
         start = f"<!-- BENCH:{block_id} START -->"
         end = f"<!-- BENCH:{block_id} END -->"
         start_at = text.find(start)
         end_at = text.find(end)
         if start_at == -1 or end_at == -1 or end_at < start_at:
-            raise SystemExit(f"benchmark writeup: markers for '{block_id}' are missing or malformed in BENCHMARKS.md")
+            raise SystemExit(f"benchmark writeup: markers for '{block_id}' are missing or malformed in {page_name}")
         head = text[: start_at + len(start)]
         tail = text[end_at:]
         text = f"{head}\n{content}\n{tail}"
@@ -32,8 +33,11 @@ def main(argv: list[str]) -> int:
     check = "--check" in argv
     page = benchmarks_page()
     current = page.read_text(encoding="utf-8")
+    readme = readme_page()
+    readme_current = readme.read_text(encoding="utf-8")
     source = load_source()
-    updated = _inject(current, blocks(source))
+    updated = _inject(current, blocks(source), "BENCHMARKS.md")
+    readme_updated = _inject(readme_current, readme_blocks(source), "README.md")
 
     fresh_comparison = comparison_document(source) if source is not None else None
     comparison_file = comparison_path(source.run_id) if source is not None else None
@@ -42,6 +46,8 @@ def main(argv: list[str]) -> int:
         stale: list[str] = []
         if updated != current:
             stale.append("BENCHMARKS.md")
+        if readme_updated != readme_current:
+            stale.append("README.md")
         if fresh_comparison is not None and comparison_file is not None:
             existing = comparison_file.read_text(encoding="utf-8") if comparison_file.is_file() else None
             if existing != fresh_comparison:
@@ -66,6 +72,9 @@ def main(argv: list[str]) -> int:
     if updated != current:
         page.write_text(updated, encoding="utf-8")
         wrote.append("BENCHMARKS.md")
+    if readme_updated != readme_current:
+        readme.write_text(readme_updated, encoding="utf-8")
+        wrote.append("README.md")
     if fresh_comparison is not None and comparison_file is not None:
         existing = comparison_file.read_text(encoding="utf-8") if comparison_file.is_file() else None
         if existing != fresh_comparison:

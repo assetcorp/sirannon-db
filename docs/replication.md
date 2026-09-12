@@ -1,7 +1,7 @@
 # Distributed replication
 
 <p align="center">
-  <img src="assets/replication-topology.svg" alt="Sirannon replication topology: application clients reach the primary and read replicas, the primary replicates to replicas over gRPC with mutual TLS, and an etcd coordinator tracks authority, leases, and the in-sync set." width="820">
+  <img src="assets/replication-topology.svg" alt="Sirannon coordinator-backed replication topology: clients write to the current primary and read from eligible nodes, the primary replicates to replicas over gRPC with mutual TLS, and a Sirannon controller uses leases and atomic term updates stored in etcd to perform safe failover." width="820">
 </p>
 
 One primary accepts writes and pushes changes to read replicas, which serve reads and forward writes when `writeForwarding` is on. Each node has its own SQLite file; Sirannon moves checksummed batches of changes over the replication transport and never shares one file over a network filesystem.

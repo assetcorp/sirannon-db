@@ -6,9 +6,9 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, and Sirannon nodes replicate primary-owned changes over gRPC.
+Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while a primary replicates its changes to other Sirannon nodes over gRPC.
 
-**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** This page gets you running, and the [guides](#documentation) hold the reference depth. The suite that measures Sirannon against Postgres 17 is a Python project under [`benchmarks/server`](../../benchmarks/server), and the write-up generator rewrites [BENCHMARKS.md](../../BENCHMARKS.md) from the latest committed run.
+**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** Use this page to get started, and turn to the [guides](#documentation) for the detail. The benchmark harness that measures Sirannon against Postgres 17 is under [`benchmarks/server`](https://github.com/assetcorp/sirannon-db/tree/main/benchmarks/server), where a Node load generator drives both engines and a Python step joins their results. The write-up generator rewrites [BENCHMARKS.md](https://github.com/assetcorp/sirannon-db/blob/main/BENCHMARKS.md) from the latest committed run.
 
 The core engine, server, client, and primary-replica replication are stable. Coordinator-backed failover, device sync, and the Bun and Expo drivers are experimental.
 
@@ -25,12 +25,20 @@ Then add the SQLite driver for your runtime:
 | Driver | Import | Runtime | Install |
 | --- | --- | --- | --- |
 | better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add -E better-sqlite3` |
-| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (flag-free from 22.13.0 and 23.4.0) |
+| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (no flag needed from 22.13.0 and 23.4.0) |
 | wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser (IndexedDB) | `pnpm add -E wa-sqlite` |
-| Bun | `@delali/sirannon-db/driver/bun` | Bun | None (uses `bun:sqlite`) |
+| Bun | `@delali/sirannon-db/driver/bun` | Bun | None (built on `bun:sqlite`) |
 | Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add -E expo-sqlite` |
 
 Write a custom driver by passing `capabilities` and an `open` function to `defineDriver`.
+
+To serve a registry over HTTP and WebSocket through `@delali/sirannon-db/server`, add uWebSockets.js as well. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version in Sirannon's own development dependencies:
+
+```bash
+pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
+```
+
+When uWebSockets.js is absent, Node.js fails `import '@delali/sirannon-db/server'` with `ERR_MODULE_NOT_FOUND`.
 
 ## Quick start
 
@@ -47,7 +55,7 @@ await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@e
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-In the browser, open the database directly and use one read connection, because the `Sirannon` registry is built for server-side use:
+In the browser, open the database directly with one read connection, because the `Sirannon` registry is for server-side code:
 
 ```ts
 import { Database } from '@delali/sirannon-db'
@@ -57,26 +65,26 @@ const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
 const db = await Database.create('app', '/app.db', driver, { readPoolSize: 1, walMode: false })
 ```
 
-React Native uses the same shape through `expoSqlite()` with `readPoolSize: 1`.
+On React Native, open the database the same way with `expoSqlite()` and `readPoolSize: 1`.
 
 ## Package exports
 
 | Import | What you get |
 | --- | --- |
-| `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, lifecycle |
-| `@delali/sirannon-db/driver/*` | SQLite driver adapters (see the table above) |
-| `@delali/sirannon-db/file-migrations` | Load `.up.sql` and `.down.sql` files from a directory |
+| `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, and lifecycle |
+| `@delali/sirannon-db/driver/*` | SQLite driver adapters, listed in the table above |
+| `@delali/sirannon-db/file-migrations` | A loader for `.up.sql` and `.down.sql` files in a directory |
 | `@delali/sirannon-db/backup` | Backup destination types, chain records, and `restoreBackup` |
-| `@delali/sirannon-db/backup-scheduler` | Cron-scheduled backup runner with file rotation |
-| `@delali/sirannon-db/server` | HTTP and WebSocket server powered by uWebSockets.js |
-| `@delali/sirannon-db/client` | Client SDK with auto-reconnect, subscription restore, and device sync |
-| `@delali/sirannon-db/client/topology` | Topology-aware client that routes across a replication group |
-| `@delali/sirannon-db/react` | `useLiveQuery` and `useCommand` hooks |
+| `@delali/sirannon-db/backup-scheduler` | A cron-scheduled backup runner with file rotation |
+| `@delali/sirannon-db/server` | An HTTP and WebSocket server built on uWebSockets.js |
+| `@delali/sirannon-db/client` | A client SDK with automatic reconnection, subscription restore, and device sync |
+| `@delali/sirannon-db/client/topology` | A topology-aware client that routes across a replication group |
+| `@delali/sirannon-db/react` | The `useLiveQuery` and `useCommand` hooks |
 | `@delali/sirannon-db/codegen` | Typed operation references generated from your server's registry |
-| `@delali/sirannon-db/replication` | Replication engine, conflict resolvers, topologies, HLC |
-| `@delali/sirannon-db/replication/coordinator/etcd` | etcd-backed coordinator for primary authority and failover |
-| `@delali/sirannon-db/transport/grpc` | gRPC replication transport with TLS support |
-| `@delali/sirannon-db/transport/memory` | In-memory transport for testing |
+| `@delali/sirannon-db/replication` | The replication engine, conflict resolvers, topologies, and HLC |
+| `@delali/sirannon-db/replication/coordinator/etcd` | An etcd-backed coordinator for primary authority and failover |
+| `@delali/sirannon-db/transport/grpc` | A gRPC replication transport with TLS support |
+| `@delali/sirannon-db/transport/memory` | An in-memory transport for tests |
 
 ## Queries and transactions
 
@@ -94,11 +102,11 @@ const balance = await db.transaction(async tx => {
 })
 ```
 
-A large import runs faster through `bulkLoad`, which trades durability for speed inside one transaction and restores the configured level afterwards. The [core engine guide](../../docs/core.md) covers it, along with migrations, hooks, metrics, and the multi-tenant lifecycle. Backups have a [guide of their own](../../docs/backups.md).
+`bulkLoad` finishes a large import faster by relaxing durability inside one transaction, before it restores the configured level. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [guide of their own](https://sirannon.sondelali.com/docs/backups).
 
 ## Change data capture and live queries
 
-A subscription reports the rows that changed:
+Subscribe to a table to receive each row that changes:
 
 ```ts
 await db.watch('orders')
@@ -109,9 +117,9 @@ const subscription = db
   .subscribe(event => console.log(event.type, event.table, event.row, event.oldRow, event.seq))
 ```
 
-A filter reports membership of the set it describes. An order whose `status` changes from `pending` to `shipped` arrives as an insert, because the row enters the filter, and one that changes away from `shipped` arrives as a delete carrying the old row. Read `event.type` as the row's arrival or departure, since a real insert and a row entering the filter look the same.
+With a filter, you receive each change in a row's membership of the set that the filter matches. When an order's `status` changes from `pending` to `shipped`, the handler receives an insert, because the row joins the set. When an order's `status` changes away from `shipped`, the handler receives a delete with the previous row in `oldRow`. Read `event.type` as the row joining or leaving the set, because the handler receives the same event for a real insert and for a row that joins the set.
 
-A live query reports the current answer, updating the rows it holds from those same events:
+A live query holds the current result of a query and updates its rows from those same events:
 
 ```ts
 const pending = await db.live<{ id: number; total: number }>(
@@ -122,11 +130,11 @@ const pending = await db.live<{ id: number; total: number }>(
 pending.subscribe(() => render(pending.getState()))
 ```
 
-The [live queries guide](../../docs/live-queries.md) covers the update kinds, the statements a live query maintains, and the React hooks.
+Read the [live queries guide](https://sirannon.sondelali.com/docs/live-queries) for the kinds of update, the statements that a live query can maintain, and the React hooks.
 
 ## Serve it over the network
 
-A server accepts no SQL from the network by default. Register the reads and writes it runs, and callers invoke them by name:
+A server refuses SQL from the network by default. Callers invoke the reads and writes that you register on it, by name:
 
 ```ts
 import { createServer } from '@delali/sirannon-db/server'
@@ -167,13 +175,13 @@ const users = await db.query(activeUsers, {})
 const sub = await db.on('users').subscribe(event => console.log('User changed:', event))
 ```
 
-Run `sirannon-codegen` to generate those references from the registry instead of writing them by hand, and set `acceptSql: true` when you want the server to run statements a client sends. The [registered operations guide](../../docs/operations.md) covers both, the [server guide](../../docs/server.md) lists the routes and messages, and the [client guide](../../docs/client.md) covers the transports.
+The `sirannon-codegen` command generates those references from the registry, so you can skip writing them by hand. Set `acceptSql: true` when you want the server to execute the statements that a client sends. Read the [registered operations guide](https://sirannon.sondelali.com/docs/registered-operations) and the [code generation guide](https://sirannon.sondelali.com/docs/code-generation) for operations and their references, the [server guide](https://sirannon.sondelali.com/docs/server) for `acceptSql`, the routes, and the messages, and the [client guide](https://sirannon.sondelali.com/docs/client-sdk) for the transports.
 
 ## Security
 
-Registered operations keep SQL on the server, so a caller reaches only the reads and writes you defined. Turning on `acceptSql` gives every client the run of the database, so put such a server behind an application layer, a private network boundary, or a `resolveExecutionTarget` that allows only known statements.
+With registered operations, your SQL stays on the server, so a caller of a registered read or write supplies only the arguments that you declared for it. With `acceptSql: true`, the server executes the statements that an admitted caller sends, so put that server behind an application layer or a private network boundary, or give it a `resolveExecutionTarget` that accepts only the statements that you know.
 
-Authenticate every request through the `authenticate` hook. Return the caller's identity, which registered operations read through `fromIdentity`, and throw to refuse:
+Authenticate every request through the `authenticate` hook. Return the caller's identity from the hook so that the server can fill each `fromIdentity` argument of a registered operation, and throw to refuse the request:
 
 ```ts
 import { RequestDeniedError } from '@delali/sirannon-db'
@@ -200,7 +208,7 @@ const client = new SirannonClient('https://api.example.com', {
 })
 ```
 
-A browser attaches no header to `new WebSocket(...)`, so a browser client carries a short-lived ticket in `webSocketProtocols` instead. A browser client built with `headers` alone on the WebSocket transport fails at construction with `INVALID_ARGUMENT`, because that credential would never reach the server:
+A browser attaches no header to `new WebSocket(...)`, so a browser client puts a short-lived ticket in `webSocketProtocols`:
 
 ```ts
 const client = new SirannonClient('https://api.example.com', {
@@ -208,45 +216,48 @@ const client = new SirannonClient('https://api.example.com', {
 })
 ```
 
-Pass both options when a browser client needs each of them, as the [entitlements example](examples/distributed-entitlements) does: the topology client sends `headers` on its coordinator discovery request to `GET /db/{id}/cluster` and the ticket on the socket handshake.
+When you construct a browser client on the WebSocket transport with `headers` alone, the constructor throws `INVALID_ARGUMENT`, because the browser would leave that credential out of the handshake. Pass both options when a browser client needs each of them, as the [entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements) does. Its topology client sends `headers` with the discovery request to `GET /db/{id}/cluster`, while it sends the ticket with the socket handshake.
 
-The client offers the plain `sirannon.v1` identifier ahead of your values and the server selects that identifier, so the ticket never comes back in the handshake response. Check the `Origin` header in the same hook. When the hook refuses an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
+Because the client offers the plain `sirannon.v1` identifier ahead of your values and the server selects it, the ticket stays out of the handshake response. Check the `Origin` header in the same hook. When the hook refuses an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 
 - Bind to `127.0.0.1` or a private interface unless a proxy enforces TLS and access control.
-- Use HTTPS and WSS for non-local traffic, because the built-in server binds plain HTTP.
+- Use HTTPS and WSS for traffic beyond the local machine, because the built-in server listens on plain HTTP.
 - Authenticate every HTTP database route and every WebSocket upgrade, and check `Origin` against an allowlist.
-- Keep user input in parameters, which the driver binds rather than splicing into the SQL text.
-- Restrict CORS to known origins; `cors: true` allows every origin and belongs in local development.
+- Keep user input in parameters, which the driver binds separately from the SQL text.
+- Restrict CORS to known origins, since `cors: true` allows every origin and is for local development only.
 - Keep long-lived secrets out of browser-visible configuration, and redact credentials from access logs.
 - Add rate limits, audit logs, and abuse monitoring at the application or edge layer.
 
-The [security guide](https://sirannon.sondelali.com/docs) covers each of these in full.
+Read the [security guide](https://sirannon.sondelali.com/docs/security) for each of these in full.
 
 ## Documentation
 
-| Guide | What it covers |
+| Guide | Topics |
 | --- | --- |
-| [Core engine](../../docs/core.md) | Bulk load, live queries, migrations, hooks, metrics, and the multi-tenant lifecycle |
-| [Backups](../../docs/backups.md) | Copies to a file or to storage you supply, the chain of changes after one, and restoring from a moment you name |
-| [Server](../../docs/server.md) | HTTP routes, WebSocket messages, authentication, write shapes, the writer worker, and value encoding |
-| [Registered operations](../../docs/operations.md) | Naming the statements a server runs, identity-filled arguments, capabilities, and code generation |
-| [Live queries](../../docs/live-queries.md) | Maintained query results locally, over the network, and in React |
-| [Client SDK](../../docs/client.md) | Transports, subscriptions, topology-aware routing, and read concern |
-| [Device sync](../../docs/device-sync.md) | Offline-first two-way sync between a device's local database and a server |
-| [Distributed replication](../../docs/replication.md) | Replication, first sync, write and read concerns, coordinator failover, resolvers, and transports |
-| [Configuration reference](../../docs/configuration.md) | Every option table, from `SirannonOptions` to `GrpcReplicationOptions` |
-| [Errors](../../docs/errors.md) | Every code, when it happens, whether the call is safe to retry, and its HTTP status |
+| [Queries and transactions](https://sirannon.sondelali.com/docs/queries-and-transactions) | Parameterised SQL, batches, transactions, and the connection pool |
+| [Bulk load](https://sirannon.sondelali.com/docs/bulk-load) | One-transaction imports under relaxed durability, over the server, and through the client SDK |
+| [Migrations](https://sirannon.sondelali.com/docs/migrations) | File-based, programmatic, and bundled migrations, rollback, checksums, baselines, concurrency, and registry migrations |
+| [Hooks, metrics, and lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) | Before and after hooks, metrics callbacks, and the multi-tenant lifecycle |
+| [Backups](https://sirannon.sondelali.com/docs/backups) | Copies of an open database to a file and on a schedule, followed by the guides on [destinations](https://sirannon.sondelali.com/docs/backup-destinations), [continuous backups](https://sirannon.sondelali.com/docs/backup-chains), and [restores](https://sirannon.sondelali.com/docs/backup-restore) |
+| [Server](https://sirannon.sondelali.com/docs/server) | Registered operations on the server, caller identity, size limits, write shapes, `acceptSql`, the backup routes, HTTP routes, and the WebSocket protocol |
+| [Registered operations](https://sirannon.sondelali.com/docs/registered-operations) | Named reads and writes, identity-filled arguments, calls over HTTP and WebSocket, capabilities, and refusals |
+| [Live queries](https://sirannon.sondelali.com/docs/live-queries) | Maintained query results locally, over the network, and in React |
+| [Client SDK](https://sirannon.sondelali.com/docs/client-sdk) | Reads, writes, subscriptions, live queries, bulk imports, read concern, refused credentials, and client options |
+| [Device sync](https://sirannon.sondelali.com/docs/device-sync) | Offline-first two-way sync between a device's local database and a server |
+| [Distributed replication](https://sirannon.sondelali.com/docs/distributed-replication) | Certificates, first sync, write and read concerns, conflict resolution, coordinator failover, and schema changes |
+| [Configuration reference](https://sirannon.sondelali.com/docs/configuration) | Every option for the registry, a database, backups, the server, the client, device sync, and replication |
+| [Error codes](https://sirannon.sondelali.com/docs/error-codes) | Every error code, whether a retry is safe, its HTTP status, and the WebSocket close codes |
 
-The [specification](../spec/) defines the wire formats, value encodings, and replication invariants every implementation follows.
+The wire formats, the value encodings, and the replication invariants that every implementation follows are in the [specification](https://github.com/assetcorp/sirannon-db/tree/main/packages/spec).
 
 ## Example projects
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
-| [`node`](examples/node/) | Node.js >= 22 | Schema, migrations, CRUD, transactions, CDC, live queries, pools, metrics, multi-tenant lifecycle, hooks, backup, shutdown |
-| [`web-wa-sqlite`](examples/web-wa-sqlite/) | Browser and Node.js | Offline-first device sync: a local database in the browser, snapshot load, offline writes, conflict resolution, and a local live query |
-| [`web-client`](examples/web-client/) | Browser and Node.js | Registered operations, code generation, remote live queries, and the React hooks |
-| [`distributed-entitlements`](examples/distributed-entitlements/) | Node.js and browser | Three-node coordinator-backed replication over gRPC with etcd authority, mTLS, and Toxiproxy failure controls |
+| [`node`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/node) | Node.js >= 22 | Schema, migrations, CRUD, transactions, CDC, live queries, pools, metrics, multi-tenant lifecycle, hooks, backup, and shutdown |
+| [`web-wa-sqlite`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/web-wa-sqlite) | Browser and Node.js | Offline-first device sync with a local database in the browser, snapshot load, offline writes, conflict resolution, and a local live query |
+| [`web-client`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/web-client) | Browser and Node.js | Registered operations, code generation, remote live queries, and the React hooks |
+| [`distributed-entitlements`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements) | Node.js and browser | Three-node coordinator-backed replication over gRPC with etcd authority, mTLS, and Toxiproxy failure controls |
 
 ```bash
 pnpm install && pnpm --filter @delali/sirannon-db build

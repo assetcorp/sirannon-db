@@ -123,13 +123,19 @@ With `initialSync` on, which is the default, a new node copies the whole databas
 
 ## Write concerns
 
-Pass a write concern to `engine.execute` in `primary.ts` to set how many replicas must acknowledge the write. Start `replica.ts` first, because a majority write on a primary with no connected replica fails with `WRITE_CONCERN_ERROR` once `timeoutMs` passes:
+Pass a write concern to `engine.execute` in `primary.ts` to set how many replicas must acknowledge the write. A majority write on a primary with no connected replica fails with `WRITE_CONCERN_ERROR` once `timeoutMs` passes, so wait until a replica connects before you send one:
 
 ```ts
+while (!engine.status().peers.some(peer => peer.connected)) {
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
+
 await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999], {
   writeConcern: { level: 'majority', timeoutMs: 5000 },
 })
 ```
+
+Start `primary.ts` before `replica.ts`, and start `replica.ts` again whenever you restart the primary, because the replica process exits when its connection to the primary closes.
 
 In static mode, a write without `writeConcern` returns after the local commit, while in coordinator mode it waits for `'majority'`. In coordinator mode, the engine counts the configured voting nodes towards `'majority'`, including the primary's own durable commit, so a majority write is still present after an automatic failover that loses only the primary.
 

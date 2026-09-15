@@ -170,6 +170,16 @@ Every class above is exported from `@delali/sirannon-db/replication`, and `Failo
 | `INVALID_ARGUMENT` | A client argument failed validation, such as a per-call read concern on the topology transport |
 | `UNKNOWN_ERROR` | An error response carried no recognisable code |
 
+## Optional packages
+
+Sirannon raises these codes in your own process when it starts a server, a transport, or a coordinator. The message names the missing package and the command that installs it.
+
+| Code | When |
+| --- | --- |
+| `SERVER_DEPENDENCY_MISSING` | `server.listen()` could not load uWebSockets.js |
+| `TRANSPORT_DEPENDENCY_MISSING` | The gRPC transport could not load `@grpc/grpc-js`, `@bufbuild/protobuf`, or `grpc-health-check` when the engine started |
+| `COORDINATOR_DEPENDENCY_MISSING` | The etcd coordinator could not load `etcd3` when the engine first called it |
+
 ## Retrying
 
 `WRITE_OVERLOADED` is definite load shedding: the write never ran, the response carries `Retry-After`, and the same request is safe to send again. `WRITER_WORKER_TIMEOUT` is indeterminate, so reconcile the state before you retry anything that is not idempotent.

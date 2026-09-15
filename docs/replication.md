@@ -16,6 +16,8 @@ Install the core package, a driver, and the three packages that the gRPC transpo
 pnpm add -E @delali/sirannon-db better-sqlite3 @grpc/grpc-js @bufbuild/protobuf grpc-health-check
 ```
 
+When the process cannot load one of those three packages, `engine.start()` fails with code `TRANSPORT_DEPENDENCY_MISSING` and a message that names the package.
+
 ## Create the certificates
 
 The nodes authenticate each other over mutual TLS, so each node needs a key, a certificate, and the certificate of the authority that signed every node certificate. Set each certificate's common name to the node's `nodeId`, because a node closes the stream from a peer whose certificate common name differs from the `nodeId` in that peer's handshake. The subject alternative name must match the host name that the other node dials.
@@ -166,6 +168,8 @@ In coordinator mode, a `ClusterCoordinator` stores the primary's authority, the 
 ```bash
 pnpm add -E etcd3
 ```
+
+When the process cannot load `etcd3`, the first call that the engine makes to the coordinator fails with code `COORDINATOR_DEPENDENCY_MISSING`.
 
 Build each coordinator-mode node in the shape of `primary.ts`, and add a coordinator to its engine configuration. This `node-a.ts` is the first of three voting nodes, and its certificate has the common name `orders-node-a`:
 

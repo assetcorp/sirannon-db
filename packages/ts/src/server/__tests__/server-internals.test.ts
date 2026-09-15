@@ -121,7 +121,7 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, { acceptSql: true, port: 0 })
+    await module.createServer(sirannon as never, { acceptSql: true, port: 0 }).listen()
     const wsConfig = state.wsConfig
     expect(wsConfig).toBeTruthy()
 
@@ -155,7 +155,7 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, { acceptSql: true, port: 0 })
+    await module.createServer(sirannon as never, { acceptSql: true, port: 0 }).listen()
     const wsConfig = state.wsConfig
     expect(wsConfig).toBeTruthy()
 
@@ -176,7 +176,7 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, { acceptSql: true, port: 0 })
+    await module.createServer(sirannon as never, { acceptSql: true, port: 0 }).listen()
 
     const postQuery = state.posts['/db/:id/query']
     expect(postQuery).toBeTruthy()
@@ -202,7 +202,7 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, { acceptSql: true, port: 0 })
+    await module.createServer(sirannon as never, { acceptSql: true, port: 0 }).listen()
 
     const postQuery = state.posts['/db/:id/query']
     const req = {
@@ -225,7 +225,7 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, { acceptSql: true, port: 0, authenticate: () => undefined })
+    await module.createServer(sirannon as never, { acceptSql: true, port: 0, authenticate: () => undefined }).listen()
 
     const postQuery = state.posts['/db/:id/query']
     const req = {
@@ -250,13 +250,15 @@ describe('server internals', () => {
       databases: () => new Map(),
       get: () => undefined,
     }
-    module.createServer(sirannon as never, {
-      acceptSql: true,
-      port: 0,
-      authenticate: () => {
-        throw new Error('hook failed')
-      },
-    })
+    await module
+      .createServer(sirannon as never, {
+        acceptSql: true,
+        port: 0,
+        authenticate: () => {
+          throw new Error('hook failed')
+        },
+      })
+      .listen()
     const wsConfig = state.wsConfig
     expect(wsConfig).toBeTruthy()
 

@@ -1,4 +1,4 @@
-import { Etcd3, type Namespace, type Watcher } from 'etcd3'
+import type { Etcd3, Namespace, Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import {
   parseLease,
@@ -19,6 +19,7 @@ import {
 } from './etcd-connection.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
 import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
+import { loadEtcd3Module } from './etcd-loader.js'
 import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -41,29 +42,32 @@ import type {
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 
+interface EtcdConnection {
+  client: Etcd3
+  namespace: Namespace
+  groups: EtcdGroupStore
+}
+
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
  *
- * Build one with {@link createEtcdCoordinator}.
+ * Build one with {@link createEtcdCoordinator}. The coordinator loads the `etcd3` package the first time that you call one of its methods. When this process cannot load that package, the call fails with a `SirannonError` carrying code `COORDINATOR_DEPENDENCY_MISSING`.
  *
  * @public
  */
 export class EtcdClusterCoordinator implements ClusterCoordinator {
-  private readonly client: Etcd3
-  private readonly namespace: Namespace
+  private readonly options: EtcdClusterCoordinatorOptions
+  private connection: Promise<EtcdConnection> | null = null
   private readonly onWatcherError: ((error: Error) => void) | undefined
   private readonly leases: EtcdLeaseRegistry
   private readonly grantedNodeSessionLeaseIds = new Map<string, string>()
   private readonly watchers = new Set<Watcher>()
-  private readonly groups: EtcdGroupStore
 
   constructor(options: EtcdClusterCoordinatorOptions) {
     assertEtcdOptions(options)
-    this.client = new Etcd3(toEtcdOptions(options))
-    this.namespace = this.client.namespace(normaliseKeyPrefix(options.keyPrefix))
+    this.options = options
     this.onWatcherError = options.onWatcherError
     this.leases = new EtcdLeaseRegistry(this.onWatcherError)
-    this.groups = new EtcdGroupStore(this.namespace, this.watchers, this.onWatcherError)
   }
 
   /** Bids for the controller lease, and reports who holds it. */
@@ -72,8 +76,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.holderId, 'holderId')
     assertPositiveTtl(input.ttlMs)
 
+    const { namespace } = await this.connect()
     const key = controllerLeaseKey(input.clusterId)
-    const lease = this.namespace.lease(ttlMsToSeconds(input.ttlMs))
+    const lease = namespace.lease(ttlMsToSeconds(input.ttlMs))
     const leaseId = await lease.grant()
     const grantedAtMs = Date.now()
     const value = serializeLease({
@@ -87,14 +92,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       metadata: cloneMetadata(input.metadata),
     })
 
-    const result = await this.namespace
+    const result = await namespace
       .if(key, 'Create', '==', 0)
-      .then(this.namespace.put(key).value(value).lease(leaseId))
+      .then(namespace.put(key).value(value).lease(leaseId))
       .commit()
 
     if (!result.succeeded) {
       await revokeLeaseQuietly(lease)
-      const current = await this.getLeaseFromKey(key)
+      const current = await this.getLeaseFromKey(namespace, key)
       return { acquired: false, lease: current }
     }
 
@@ -145,11 +150,12 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
         ? JSON.stringify({ ...entry.nodeSession, lease: leaseValue })
         : serializeLease(leaseValue)
 
+    const { namespace } = await this.connect()
     let refreshed: boolean
     try {
-      const result = await this.namespace
+      const result = await namespace
         .if(entry.key, 'Lease', '==', leaseId)
-        .then(this.namespace.put(entry.key).value(value).ignoreLease())
+        .then(namespace.put(entry.key).value(value).ignoreLease())
         .commit()
       refreshed = result.succeeded === true
     } catch {
@@ -174,13 +180,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     }
 
     this.leases.forget(leaseId)
-    const currentValue = await this.namespace.get(entry.key).string()
+    const { namespace } = await this.connect()
+    const currentValue = await namespace.get(entry.key).string()
     const currentLeaseId = currentValue ? parseLeaseIdForEntry(entry.kind, currentValue) : null
     let released = false
     if (currentLeaseId === leaseId && currentValue) {
-      const result = await this.namespace
+      const result = await namespace
         .if(entry.key, 'Value', '==', currentValue)
-        .then(this.namespace.delete().key(entry.key))
+        .then(namespace.delete().key(entry.key))
         .commit()
       released = result.succeeded === true
     }
@@ -194,8 +201,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.nodeId, 'nodeId')
     assertPositiveTtl(input.ttlMs)
 
+    const { namespace } = await this.connect()
     const key = nodeSessionKey(input.clusterId, input.nodeId)
-    const existingRawSession = await this.namespace.get(key).string()
+    const existingRawSession = await namespace.get(key).string()
     if (existingRawSession) {
       const existingSession = parseNodeSession(existingRawSession)
       const supersedesOwnSession = this.grantedNodeSessionLeaseIds.get(key) === existingSession.lease.id
@@ -204,7 +212,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       }
     }
 
-    const lease = this.namespace.lease(ttlMsToSeconds(input.ttlMs))
+    const lease = namespace.lease(ttlMsToSeconds(input.ttlMs))
     const leaseId = await lease.grant()
     const grantedAtMs = Date.now()
     const session: SerializedNodeSession = {
@@ -230,9 +238,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     const rawSession = JSON.stringify(session)
     const transaction = existingRawSession
-      ? this.namespace.if(key, 'Value', '==', existingRawSession)
-      : this.namespace.if(key, 'Create', '==', 0)
-    const result = await transaction.then(this.namespace.put(key).value(rawSession).lease(leaseId)).commit()
+      ? namespace.if(key, 'Value', '==', existingRawSession)
+      : namespace.if(key, 'Create', '==', 0)
+    const result = await transaction.then(namespace.put(key).value(rawSession).lease(leaseId)).commit()
     if (!result.succeeded) {
       await revokeLeaseQuietly(lease)
       throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
@@ -268,7 +276,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   async getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
-    const value = await this.namespace.get(nodeSessionKey(clusterId, nodeId)).string()
+    const { namespace } = await this.connect()
+    const value = await namespace.get(nodeSessionKey(clusterId, nodeId)).string()
     return value ? parseNodeSession(value) : null
   }
 
@@ -282,47 +291,57 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   }
 
   /** Writes the group's state, which seeds a new group or replaces an existing one. */
-  setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
-    return this.groups.setReplicationGroupState(input)
+  async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
+    const { groups } = await this.connect()
+    return groups.setReplicationGroupState(input)
   }
 
   /** Reads the group's state, and returns null when the group is absent. */
-  getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
-    return this.groups.getReplicationGroupState(clusterId, groupId)
+  async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
+    const { groups } = await this.connect()
+    return groups.getReplicationGroupState(clusterId, groupId)
   }
 
   /** Calls back on each change to the group's state, and returns a function that stops the watch. */
-  watchReplicationGroup(
+  async watchReplicationGroup(
     clusterId: string,
     groupId: string,
     watcher: ReplicationGroupWatcher,
   ): Promise<CoordinatorWatchDisposer> {
-    return this.groups.watchReplicationGroup(clusterId, groupId, watcher)
+    const { groups } = await this.connect()
+    return groups.watchReplicationGroup(clusterId, groupId, watcher)
   }
 
   /** Promotes a node only while the group is still at the term the caller read. */
-  compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult> {
-    return this.groups.compareAndAdvancePrimaryTerm(input)
+  async compareAndAdvancePrimaryTerm(
+    input: CompareAndAdvancePrimaryTermInput,
+  ): Promise<CompareAndAdvancePrimaryTermResult> {
+    const { groups } = await this.connect()
+    return groups.compareAndAdvancePrimaryTerm(input)
   }
 
   /** Replaces the group's in-sync set, and optionally moves its durability point. */
-  updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null> {
-    return this.groups.updateInSyncSet(input)
+  async updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null> {
+    const { groups } = await this.connect()
+    return groups.updateInSyncSet(input)
   }
 
   /** Adds one caught-up node to the in-sync set. */
-  admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
-    return this.groups.admitNodeToInSyncSet(input)
+  async admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
+    const { groups } = await this.connect()
+    return groups.admitNodeToInSyncSet(input)
   }
 
   /** Marks one node as being taken out of service, rebuilt, or quarantined. */
-  updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
-    return this.groups.updateNodeMaintenance(input)
+  async updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
+    const { groups } = await this.connect()
+    return groups.updateNodeMaintenance(input)
   }
 
   /** Promotes whichever in-sync replica is safe to write. */
-  promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
-    return this.groups.promoteEligibleReplica(input)
+  async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
+    const { groups } = await this.connect()
+    return groups.promoteEligibleReplica(input)
   }
 
   /** Closes the etcd client and stops every watch. */
@@ -336,11 +355,32 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     this.grantedNodeSessionLeaseIds.clear()
     await this.leases.revokeAll()
-    this.client.close()
+    const connection = this.connection
+    if (!connection) return
+    const opened = await connection.catch(() => null)
+    opened?.client.close()
   }
 
-  private async getLeaseFromKey(key: string): Promise<CoordinatorLease | null> {
-    const value = await this.namespace.get(key).string()
+  private connect(): Promise<EtcdConnection> {
+    if (!this.connection) {
+      this.connection = loadEtcd3Module().then(
+        ({ Etcd3 }) => {
+          const client = new Etcd3(toEtcdOptions(this.options))
+          const namespace = client.namespace(normaliseKeyPrefix(this.options.keyPrefix))
+          const groups = new EtcdGroupStore(namespace, this.watchers, this.onWatcherError)
+          return { client, namespace, groups }
+        },
+        (err: unknown) => {
+          this.connection = null
+          throw err
+        },
+      )
+    }
+    return this.connection
+  }
+
+  private async getLeaseFromKey(namespace: Namespace, key: string): Promise<CoordinatorLease | null> {
+    const value = await namespace.get(key).string()
     return value ? parseLease(value) : null
   }
 }

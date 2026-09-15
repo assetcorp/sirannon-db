@@ -16,7 +16,6 @@ import type {
   TransportConfig,
 } from '../../replication/types.js'
 import { stopEndpointDialling } from './client-reconnect.js'
-import { connectToEndpoint } from './client-streams.js'
 import {
   toAckPayload,
   toBatchPayload,
@@ -25,8 +24,8 @@ import {
   toSyncCompletePayload,
   toSyncRequestPayload,
 } from './codec.js'
-import { forwardOverRpc } from './forward-rpc.js'
 import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
+import { type GrpcRuntime, loadGrpcRuntime } from './loader.js'
 import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
 import {
   type AckHandler,
@@ -44,7 +43,6 @@ import {
   type SyncRequestHandler,
   syncWriteStream,
 } from './peer-streams.js'
-import { startServer } from './server-streams.js'
 import { writeWithBackpressure } from './stream-util.js'
 
 /**
@@ -100,6 +98,8 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   /** @internal */
   syncAckHandler: SyncAckHandler | null = null
 
+  private runtime: GrpcRuntime | null = null
+
   constructor(options: GrpcReplicationOptions = {}) {
     this.options = options
   }
@@ -109,8 +109,13 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return this.boundPort
   }
 
-  /** Connects to the configured peers and announces this node. */
+  /**
+   * Loads the gRPC packages, connects to the configured peers, and announces this node.
+   *
+   * @throws A `SirannonError` with code `TRANSPORT_DEPENDENCY_MISSING` when this process cannot load `@grpc/grpc-js`, `@bufbuild/protobuf`, or `grpc-health-check`.
+   */
   async connect(localNodeId: string, config: TransportConfig): Promise<void> {
+    const runtime = await loadGrpcRuntime()
     if (this.connected) {
       throw new TransportError('Transport is already connected')
     }
@@ -118,6 +123,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
       throw new TransportError('localNodeId must be a non-empty string')
     }
 
+    this.runtime = runtime
     this.localNodeId = localNodeId
     this.localRole = config.localRole ?? 'replica'
     this.localGroupId = config.groupId
@@ -126,12 +132,12 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     this.connected = true
 
     if (this.localRole === 'primary' || config.groupId) {
-      await startServer(this)
+      await runtime.startServer(this)
     }
 
     if (config.endpoints && config.endpoints.length > 0) {
       for (const endpoint of config.endpoints) {
-        connectToEndpoint(this, endpoint)
+        runtime.connectToEndpoint(this, endpoint)
       }
     }
   }
@@ -223,10 +229,14 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   async forward(peerId: string, request: ForwardedTransaction): Promise<ForwardedTransactionResult> {
     this.ensureConnected()
     const clientEntry = this.clientPeerStreams.get(peerId)
-    if (!clientEntry) {
+    if (!clientEntry || !this.runtime) {
       throw new TransportError(`Peer '${peerId}' is not connected`)
     }
-    return forwardOverRpc(clientEntry, request, this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS)
+    return this.runtime.forwardOverRpc(
+      clientEntry,
+      request,
+      this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS,
+    )
   }
 
   /** Asks a peer to stream a full copy of the database. */

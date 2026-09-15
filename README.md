@@ -39,7 +39,7 @@ To serve databases over HTTP and WebSocket through `@delali/sirannon-db/server`,
 pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
 ```
 
-When uWebSockets.js is absent, Node.js fails `import '@delali/sirannon-db/server'` with `ERR_MODULE_NOT_FOUND`.
+When the process cannot load uWebSockets.js, `server.listen()` fails with code `SERVER_DEPENDENCY_MISSING` and a message that gives this install command.
 
 ## Quick start
 

@@ -2,13 +2,13 @@
 
 `@delali/sirannon-db/server` exposes a `Sirannon` registry over HTTP and WebSocket, powered by uWebSockets.js.
 
-Install uWebSockets.js alongside the package before you import the server. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version in Sirannon's own development dependencies:
+Install uWebSockets.js alongside the package before you start the server. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version in Sirannon's own development dependencies:
 
 ```bash
 pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
 ```
 
-When uWebSockets.js is absent, Node.js fails `import '@delali/sirannon-db/server'` with `ERR_MODULE_NOT_FOUND`.
+When the process cannot load uWebSockets.js, `server.listen()` fails with code `SERVER_DEPENDENCY_MISSING` and a message that gives this install command.
 
 ```ts
 import { createServer } from '@delali/sirannon-db/server'

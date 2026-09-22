@@ -128,7 +128,13 @@ export async function handleSubscribeMessage(
   if (deps.hasSubscribeHook()) {
     for (const table of tables) {
       try {
-        await deps.beforeSubscribe({ databaseId: state.databaseId, table, filter, identity: state.identity })
+        await deps.beforeSubscribe({
+          databaseId: state.databaseId,
+          table,
+          filter,
+          identity: state.identity,
+          deviceId,
+        })
       } catch (err) {
         deps.sendSirannonError(conn, id, err)
         return

@@ -12,11 +12,18 @@ import {
   cloneReplicationGroupState,
   isEligiblePromotionSession,
   MIN_AUTOMATIC_FAILOVER_VOTERS,
-  markDisplacedPrimaryForRepair,
   nextAdmittedInSyncState,
   nextInSyncSetState,
   nextMaintenanceState,
 } from './group-rules.js'
+import {
+  cloneLease,
+  cloneNodeSession,
+  movePrimary,
+  NodeSessionWatchers,
+  nodeSessionKey,
+  replicationGroupKey,
+} from './in-memory-helpers.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
@@ -26,6 +33,7 @@ import type {
   CompareAndAdvancePrimaryTermResult,
   CoordinatorLease,
   CoordinatorNodeSession,
+  NodeSessionWatcher,
   PromoteEligibleReplicaInput,
   RegisterNodeSessionInput,
   ReplicationGroupState,
@@ -49,6 +57,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   private readonly nodeSessions = new Map<string, CoordinatorNodeSession>()
   private readonly replicationGroups = new Map<string, ReplicationGroupState>()
   private readonly replicationGroupWatchers = new Map<string, Set<ReplicationGroupWatcher>>()
+  private readonly nodeSessionWatchers = new NodeSessionWatchers()
 
   constructor(options: InMemoryClusterCoordinatorOptions = {}) {
     this.now = options.now ?? Date.now
@@ -145,6 +154,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     }
 
     this.nodeSessions.set(nodeSessionKey(input.clusterId, input.nodeId), session)
+    this.notifyNodeSessionWatchers(input.clusterId)
     return cloneNodeSession(session)
   }
 
@@ -163,6 +173,23 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
     this.nodeSessions.delete(nodeSessionKey(clusterId, nodeId))
+    this.notifyNodeSessionWatchers(clusterId)
+  }
+
+  /**
+   * Calls back with the nodes holding a live session, on this call and on every registration or deregistration that follows.
+   *
+   * This coordinator keeps no timer, so a lease that lapses on its own reaches the watcher at the next such change.
+   *
+   * @param clusterId - Cluster whose sessions the watcher follows.
+   * @param watcher - Receives the live node set.
+   * @returns A function that stops the watch.
+   */
+  watchNodeSessions(clusterId: string, watcher: NodeSessionWatcher): () => void {
+    assertNonEmpty(clusterId, 'clusterId')
+    const stop = this.nodeSessionWatchers.add(clusterId, watcher)
+    watcher(this.liveNodeIds(clusterId))
+    return stop
   }
 
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
@@ -327,6 +354,20 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     return lease.expiresAtMs > this.now()
   }
 
+  private liveNodeIds(clusterId: string): string[] {
+    const live: string[] = []
+    for (const session of this.nodeSessions.values()) {
+      if (session.clusterId === clusterId && this.isLeaseLive(session.lease)) {
+        live.push(session.nodeId)
+      }
+    }
+    return live
+  }
+
+  private notifyNodeSessionWatchers(clusterId: string): void {
+    this.nodeSessionWatchers.notify(clusterId, this.liveNodeIds(clusterId), this.onWatcherError)
+  }
+
   private notifyReplicationGroupWatchers(state: ReplicationGroupState): void {
     const watchers = this.replicationGroupWatchers.get(replicationGroupKey(state.clusterId, state.groupId))
     if (!watchers) return
@@ -351,36 +392,4 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     }
     return isEligiblePromotionSession(state, nodeId, session)
   }
-}
-
-function cloneNodeSession(session: CoordinatorNodeSession): CoordinatorNodeSession {
-  return {
-    ...session,
-    lease: cloneLease(session.lease),
-    groupIds: [...session.groupIds],
-    compatibility: cloneCompatibility(session.compatibility),
-    metadata: cloneMetadata(session.metadata),
-  }
-}
-
-function cloneLease(lease: CoordinatorLease): CoordinatorLease {
-  return {
-    ...lease,
-    metadata: cloneMetadata(lease.metadata),
-  }
-}
-
-function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {
-  const displacedPrimaryId = state.currentPrimary?.nodeId
-  state.primaryTerm += 1n
-  state.currentPrimary = { ...nextPrimary }
-  markDisplacedPrimaryForRepair(state, displacedPrimaryId, nextPrimary.nodeId)
-}
-
-function nodeSessionKey(clusterId: string, nodeId: string): string {
-  return `${clusterId}\0${nodeId}`
-}
-
-function replicationGroupKey(clusterId: string, groupId: string): string {
-  return `${clusterId}\0${groupId}`
 }

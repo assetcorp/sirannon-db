@@ -288,6 +288,8 @@ export interface CoordinatorRuntimeStatus {
   faultedNodeIds: string[]
   /** Nodes that count towards majority. */
   votingDataBearingNodeIds: string[]
+  /** These are the nodes that hold a live session with the coordinator, and this field is present only while the reporting node can see those sessions. */
+  liveNodeIds?: string[]
   /** Whether this node holds write authority for the current term. */
   authority: boolean
   /** Whether this node reaches the coordinator. */

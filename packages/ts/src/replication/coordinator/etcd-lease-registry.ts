@@ -1,6 +1,12 @@
-import type { Lease } from 'etcd3'
+import type { Lease, Namespace } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
-import type { SerializedNodeSession } from './etcd-codec.js'
+import { parseLease, type SerializedNodeSession } from './etcd-codec.js'
+import type { CoordinatorLease } from './types.js'
+
+export async function readLeaseAt(namespace: Namespace, key: string): Promise<CoordinatorLease | null> {
+  const value = await namespace.get(key).string()
+  return value ? parseLease(value) : null
+}
 
 export interface LocalLeaseEntry {
   lease: Lease

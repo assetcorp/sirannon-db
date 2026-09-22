@@ -21,9 +21,9 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     _getWriteEndpoint(databaseId?: string): Promise<string>;
     // @internal (undocumented)
     _refreshClusterRouting(databaseId: string): Promise<void>;
-    // @internal (undocumented)
-    _removeReplica(url: string): void;
     protected resolveServerUrl(databaseId: string): Promise<string>;
+    // @internal (undocumented)
+    _setEndpointAside(url: string): void;
     // @internal (undocumented)
     _usesCoordinatorDiscovery(): boolean;
 }

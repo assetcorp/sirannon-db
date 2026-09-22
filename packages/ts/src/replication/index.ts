@@ -22,6 +22,7 @@ export type {
   CoordinatorNodeSession,
   CoordinatorPrimary,
   CoordinatorWatchDisposer,
+  NodeSessionWatcher,
   PromoteEligibleReplicaInput,
   RegisterNodeSessionInput,
   ReplicationGroupState,

@@ -317,6 +317,13 @@ export interface PromoteEligibleReplicaInput {
 export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void
 
 /**
+ * Receives every node holding a live session, each time one node joins or its session lapses.
+ *
+ * @public
+ */
+export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void
+
+/**
  * Stores primary authority, node sessions, group state, and the in-sync set
  * outside the database nodes so that failover has a source of truth no single node
  * owns. The package includes an etcd adapter; build your own to store this
@@ -337,6 +344,11 @@ export interface ClusterCoordinator {
   getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>
   /** Ends one node's membership at once. */
   deregisterNodeSession(clusterId: string, nodeId: string): Promise<void>
+  /** Calls back with every node holding a live session, and returns a function that stops the watch. A coordinator that serves no such watch leaves this out, and a node then reads from the group's membership alone. */
+  watchNodeSessions?(
+    clusterId: string,
+    watcher: NodeSessionWatcher,
+  ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
   /** Writes the group's state, which seeds a new group or replaces an existing one. */
   setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState>
   /** Reads the group's state, and returns null when the group is absent. */

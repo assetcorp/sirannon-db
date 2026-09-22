@@ -1,7 +1,7 @@
 import { loadPersistedHlc } from '../../core/sync/hlc-store.js'
-import { selectMaxAppliedSourceSeqByNode } from '../../core/system-catalog/index.js'
+import { selectMaxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
-import { startCoordinatorMode } from './coordinator-lifecycle.js'
+import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { wireTransportHandlers } from './transport-wiring.js'
@@ -117,4 +117,29 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   }
 
   engine.senderLoop.start()
+}
+
+export async function stopEngine(engine: ReplicationEngine): Promise<void> {
+  if (!engine.running) return
+  engine.running = false
+  stopCoordinatorTimers(engine)
+
+  engine.syncJoiner.stopTimers()
+  engine.syncServer.abortAll()
+
+  if (engine.syncState.phase === 'syncing') {
+    try {
+      await setForeignKeysEnabled(engine.writerConn, true)
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })
+    }
+  }
+
+  engine.senderLoop.stop()
+  if (engine.tracker) {
+    engine.tracker.clearPruneBoundary('replication')
+  }
+  await stopCoordinatorMode(engine)
+  await engine.config.transport.disconnect()
 }

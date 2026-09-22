@@ -238,6 +238,8 @@ This canonical form is distinct from the [tagged value encoding](02-core.md#tagg
 
 Static mode generates a `nodeId` when none is given; coordinator mode requires a stable persisted `nodeId` and rejects a configuration without one. The `snapshotThreshold` field is reserved and has no run-time effect.
 
+When a start fails, an implementation must leave the engine stopped, release whatever that start took, and report the failure to its caller, so that a later start opens the transport afresh.
+
 ### Sender Loop
 
 Every `batchIntervalMs`, for each peer the topology replicates to (in coordinator mode, every peer while the node holds authority), the sender expires in-flight batches older than `ackTimeoutMs`, skips the peer while `pendingBatches` reaches `maxPendingBatches`, reads one batch from the peer's `lastSentSeq`, and sends it. An expired batch rewinds `lastSentSeq` to retransmit from the lost batch.
@@ -345,6 +347,8 @@ DDL received through replication or first sync is validated against an allowlist
 Coordinator mode uses a linearisable coordinator to store authority metadata and provide watches. The first production backend is etcd; an in-memory backend is allowed for tests and local development. The coordinator stores only authority metadata (controller lease, node session leases, group configuration, current primary, primary term, in-sync set, and compact progress markers) and never user rows or the replication log.
 
 The coordinator must provide, at least: acquiring and renewing a controller lease; registering, reading, and deregistering node session leases; reading, writing, and watching replication-group state; comparing and advancing the primary term atomically; and admitting a node to the in-sync set only against a proven durability point.
+
+A coordinator may also provide a watch over the node sessions of a cluster, which calls back with every node holding a live session on each registration and each lapse. A node holding that watch serves reads only from the nodes the watch names (see [05-server.md](05-server.md#get-dbidcluster)), and a node whose coordinator provides no such watch, or that reaches no coordinator, reads from the group's membership alone.
 
 ### Replication Group and Node Identity
 

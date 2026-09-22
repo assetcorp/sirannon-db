@@ -22,13 +22,22 @@ export async function handleAckMessage(
   }
 
   const deviceId = msg.deviceId
+  const streams = [...state.deviceStreams.values()].filter(stream => stream.deviceId === deviceId)
+  if (streams.length === 0) {
+    deps.sendError(
+      conn,
+      id,
+      'DEVICE_NOT_SUBSCRIBED',
+      'An acknowledgement names a device this connection holds no subscription for',
+    )
+    return
+  }
+
   const seq = BigInt(msg.seq)
   try {
     await state.database.runCdcMaintenance(writer => upsertDeviceAck(writer, deviceId, seq))
-    for (const stream of state.deviceStreams.values()) {
-      if (stream.deviceId === deviceId) {
-        stream.onAck(seq)
-      }
+    for (const stream of streams) {
+      stream.onAck(seq)
     }
     deps.sendResult(conn, id, { acked: true, seq: seq.toString() })
   } catch (err) {

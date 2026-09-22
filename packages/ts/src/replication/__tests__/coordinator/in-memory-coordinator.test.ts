@@ -339,6 +339,27 @@ describe('InMemoryClusterCoordinator', () => {
     expect(promoted.currentPrimary).toEqual({ nodeId: 'node-c', endpoint: 'https://node-c.example.com' })
   })
 
+  it('reports the live node set on each session change', async () => {
+    let nowMs = 1_000
+    const coordinator = new InMemoryClusterCoordinator({ now: () => nowMs })
+    const seen: string[][] = []
+
+    const stop = await coordinator.watchNodeSessions('cluster-a', live => seen.push([...live]))
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-a', ttlMs: 500 })
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-b', ttlMs: 500 })
+    await coordinator.deregisterNodeSession('cluster-a', 'node-a')
+
+    expect(seen).toEqual([[], ['node-a'], ['node-a', 'node-b'], ['node-b']])
+
+    nowMs = 2_000
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-c', ttlMs: 500 })
+    expect(seen[seen.length - 1]).toEqual(['node-c'])
+
+    await stop()
+    await coordinator.deregisterNodeSession('cluster-a', 'node-c')
+    expect(seen).toHaveLength(5)
+  })
+
   it('removes nodes from the safe set when maintenance state starts', async () => {
     const coordinator = new InMemoryClusterCoordinator({ now: () => 8_000 })
     await coordinator.setReplicationGroupState({

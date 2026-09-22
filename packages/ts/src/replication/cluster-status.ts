@@ -72,10 +72,11 @@ export function toClusterStatusInfo(status: ReplicationStatus, options: ClusterS
  * Lists every node a client can read from, with the read concerns each one serves.
  *
  * A node counts towards majority and is neither quarantined, being taken out of
- * service, nor being rebuilt to appear at all. A node the group counts as in
- * sync serves both `local` and `majority`; one that has fallen behind serves
- * `local` alone, because the engine answers a `local` read without any in-sync
- * check.
+ * service, nor being rebuilt to appear at all. Where this node can see which
+ * coordinator sessions are live, it lists only the nodes that hold one. A node
+ * the group counts as in sync serves both `local` and `majority`; one that has
+ * fallen behind serves `local` alone, because the engine answers a `local` read
+ * without any in-sync check.
  *
  * @param coordinator - Group state this node last read from the coordinator.
  * @param endpoints - Address a client reaches each node on, keyed by node id.
@@ -87,12 +88,14 @@ export function toClusterReadEndpoints(
   coordinator: CoordinatorRuntimeStatus,
   endpoints: Readonly<Record<string, string>>,
 ): ClusterReadEndpointInfo[] {
+  const live = coordinator.liveNodeIds
   return coordinator.votingDataBearingNodeIds
     .filter(
       nodeId =>
         !coordinator.faultedNodeIds.includes(nodeId) &&
         !coordinator.drainingNodeIds.includes(nodeId) &&
-        !coordinator.repairingNodeIds.includes(nodeId),
+        !coordinator.repairingNodeIds.includes(nodeId) &&
+        (live === undefined || live.includes(nodeId)),
     )
     .map(nodeId => ({
       nodeId,

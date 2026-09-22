@@ -146,7 +146,7 @@ The client uses the configured `primary` and `replicas` directly.
 | `replica` | A randomly chosen replica, or the primary when none is available. |
 | `nearest` | The endpoint with the lowest measured round-trip latency, or the primary. |
 
-For `nearest`, the client measures latency with `GET {endpoint}/health` (timeout 5,000 ms, cached 60,000 ms), and it treats an unreachable endpoint as unusable. A read that fails at the transport against a non-primary endpoint marks that replica removed and retries on a fallback endpoint.
+For `nearest`, the client measures latency with `GET {endpoint}/health` (timeout 5,000 ms, cached 60,000 ms), and it treats an unreachable endpoint as unusable. A read that fails at the transport against a non-primary endpoint sets that replica aside for 5,000 ms and retries on a fallback endpoint, and selection uses that replica again once the 5,000 ms pass.
 
 ### Coordinator Mode
 
@@ -154,7 +154,7 @@ The configured endpoints are a starter list. Before the first operation for a da
 
 Writes go to `currentPrimary`, or fail with `NO_SAFE_PRIMARY` when none is known. The effective read concern is the per-query value, then the client-level value, then `majority`. A `linearizable` read routes to the current primary. Other reads select among readable endpoints advertising the concern: `replica` picks one at random and `nearest` picks the first readable endpoint, both falling back to the current primary and then to any endpoint advertising `local`, or failing with `ROUTING_ERROR`.
 
-The client tracks a fingerprint of the routing metadata. A write or read that fails with `STALE_PRIMARY`, `AUTHORITY_LOST`, `COORDINATOR_UNAVAILABLE`, `NO_SAFE_PRIMARY`, or `CONNECTION_ERROR` refreshes routing. A read then retries once on the refreshed route. A write clears its cached transport and re-raises the error, and the caller re-issues it, so a non-idempotent write reaches the server twice only where the caller sends it twice. When routing changes, the client migrates active subscriptions to a valid endpoint, or fails them with an error naming the cause.
+The client tracks a fingerprint of the routing metadata. A write or read that fails with `STALE_PRIMARY`, `AUTHORITY_LOST`, `COORDINATOR_UNAVAILABLE`, `NO_SAFE_PRIMARY`, or `CONNECTION_ERROR` refreshes routing. A read then retries once on the refreshed route, whether it carries a statement or the name of a registered operation. A client that cannot reach the endpoint of a read also sets that endpoint aside for 5,000 ms, and its selection passes over an endpoint set aside, falling back as above. A write clears its cached transport and re-raises the error, and the caller re-issues it, so a non-idempotent write reaches the server twice only where the caller sends it twice. When routing changes, the client migrates active subscriptions to a valid endpoint, or fails them with an error naming the cause.
 
 ---
 

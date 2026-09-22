@@ -69,6 +69,12 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
     handleCoordinatorStateUpdate(engine, next)
   })
 
+  if (coordinator.watchNodeSessions) {
+    engine.nodeSessionWatchDisposer = await coordinator.watchNodeSessions(config.clusterId, liveNodeIds => {
+      engine.liveNodeIds = [...liveNodeIds]
+    })
+  }
+
   startCoordinatorLeaseRenewal(engine)
   startInSyncReconcileLoop(engine)
   startControllerLoop(engine)
@@ -294,6 +300,11 @@ export async function stopCoordinatorMode(engine: ReplicationEngine): Promise<vo
     await engine.coordinatorWatchDisposer()
     engine.coordinatorWatchDisposer = null
   }
+  if (engine.nodeSessionWatchDisposer) {
+    await engine.nodeSessionWatchDisposer()
+    engine.nodeSessionWatchDisposer = null
+  }
+  engine.liveNodeIds = null
   if (engine.controllerLeaseId) {
     const leaseId = engine.controllerLeaseId
     engine.controllerLeaseId = null

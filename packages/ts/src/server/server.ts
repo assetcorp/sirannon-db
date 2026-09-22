@@ -109,6 +109,7 @@ export class SirannonServer<Identity = unknown> {
       maxBackpressureBytes: this.maxWsBackpressureBytes,
       cdcRetentionMs: options?.cdcRetentionMs,
       deviceCursorRetentionMs: options?.deviceCursorRetentionMs,
+      maxChangesHeldForDevice: options?.maxChangesHeldForDevice,
       maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,
       acceptSql: this.acceptSql,
       operations: options?.operations,

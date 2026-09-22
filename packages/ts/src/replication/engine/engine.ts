@@ -5,7 +5,6 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
-import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
@@ -48,14 +47,13 @@ import {
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
 } from './coordinator-authority.js'
-import { stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { computeNodeHealth } from './node-health.js'
 import { SenderLoop } from './sender-loop.js'
-import { startEngine } from './startup.js'
+import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
@@ -147,6 +145,10 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
+  nodeSessionWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  liveNodeIds: string[] | null = null
+  /** @internal */
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
   /** @internal */
   controllerTimer: ReturnType<typeof setInterval> | null = null
@@ -223,36 +225,20 @@ export class ReplicationEngine extends EventEmitter {
   /**
    * Connects the transport, pulls a full copy when this node needs one, and starts replicating.
    */
-  start(): Promise<void> {
-    return startEngine(this)
+  async start(): Promise<void> {
+    try {
+      await startEngine(this)
+    } catch (err) {
+      await this.stop().catch(() => {})
+      throw err
+    }
   }
 
   /**
    * Stops replicating, abandons any sync in flight, and disconnects the transport.
    */
   async stop(): Promise<void> {
-    if (!this.running) return
-    this.running = false
-    stopCoordinatorTimers(this)
-
-    this.syncJoiner.stopTimers()
-    this.syncServer.abortAll()
-
-    if (this.syncState.phase === 'syncing') {
-      try {
-        await setForeignKeysEnabled(this.writerConn, true)
-      } catch (err: unknown) {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        this.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })
-      }
-    }
-
-    this.senderLoop.stop()
-    if (this.tracker) {
-      this.tracker.clearPruneBoundary()
-    }
-    await stopCoordinatorMode(this)
-    await this.config.transport.disconnect()
+    await stopEngine(this)
   }
 
   /**

@@ -1,4 +1,4 @@
-import type { Etcd3, Namespace, Watcher } from 'etcd3'
+import type { Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import {
   parseLease,
@@ -12,14 +12,16 @@ import {
   assertEtcdOptions,
   controllerLeaseKey,
   type EtcdClusterCoordinatorOptions,
+  type EtcdConnection,
   nodeSessionKey,
   normaliseKeyPrefix,
   toEtcdOptions,
   ttlMsToSeconds,
 } from './etcd-connection.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
-import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
+import { EtcdLeaseRegistry, readLeaseAt, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { loadEtcd3Module } from './etcd-loader.js'
+import { watchEtcdNodeSessions } from './etcd-session-watch.js'
 import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -28,9 +30,9 @@ import type {
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
-  CoordinatorLease,
   CoordinatorNodeSession,
   CoordinatorWatchDisposer,
+  NodeSessionWatcher,
   PromoteEligibleReplicaInput,
   RegisterNodeSessionInput,
   ReplicationGroupState,
@@ -41,12 +43,6 @@ import type {
 } from './types.js'
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
-
-interface EtcdConnection {
-  client: Etcd3
-  namespace: Namespace
-  groups: EtcdGroupStore
-}
 
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
@@ -99,7 +95,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     if (!result.succeeded) {
       await revokeLeaseQuietly(lease)
-      const current = await this.getLeaseFromKey(namespace, key)
+      const current = await readLeaseAt(namespace, key)
       return { acquired: false, lease: current }
     }
 
@@ -281,6 +277,13 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return value ? parseNodeSession(value) : null
   }
 
+  /** Calls back with every node holding a live session, and returns a function that stops the watch. */
+  async watchNodeSessions(clusterId: string, watcher: NodeSessionWatcher): Promise<CoordinatorWatchDisposer> {
+    assertNonEmpty(clusterId, 'clusterId')
+    const { namespace } = await this.connect()
+    return watchEtcdNodeSessions(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
+  }
+
   /** Ends one node's membership at once. */
   async deregisterNodeSession(clusterId: string, nodeId: string): Promise<void> {
     assertNonEmpty(clusterId, 'clusterId')
@@ -377,11 +380,6 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
       )
     }
     return this.connection
-  }
-
-  private async getLeaseFromKey(namespace: Namespace, key: string): Promise<CoordinatorLease | null> {
-    const value = await namespace.get(key).string()
-    return value ? parseLease(value) : null
   }
 }
 

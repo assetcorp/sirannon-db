@@ -129,6 +129,20 @@ export interface DatabaseOptions {
   /** CDC retention period in milliseconds. Default: 3_600_000 (1 hour). */
   cdcRetention?: number
   /**
+   * This sets how long, in milliseconds, a quiet device holds changes back from
+   * deletion. Sirannon drops that device's cursor once the oldest change it
+   * still needs reaches this age, so the age of that change is what decides.
+   * Default: 2_592_000_000 (30 days).
+   */
+  deviceCursorRetention?: number
+  /**
+   * This limits how many changes one device's cursor may hold back from
+   * deletion. Sirannon drops the cursor of a device that falls further behind
+   * than this, and that device downloads the database again when it returns.
+   * 0 sets no limit. Default: 0.
+   */
+  maxChangesHeldForDevice?: number
+  /**
    * Run writes on a dedicated worker thread so disk flushes never block the
    * thread serving connections; reads stay on the calling thread. Requires a
    * driver with a worker entry (the `better-sqlite3` and `node` drivers have
@@ -175,6 +189,12 @@ export interface SirannonOptions {
   migrations?: MigrationSource
   /** Default writer-worker setting for the databases this registry opens. */
   writerWorker?: boolean | WriterWorkerOptions
+  /** Default change-log retention, in milliseconds, for the databases this registry opens. */
+  cdcRetention?: number
+  /** Default device-cursor retention, in milliseconds, for the databases this registry opens. */
+  deviceCursorRetention?: number
+  /** Default limit on the changes one device's cursor holds back, for the databases this registry opens. */
+  maxChangesHeldForDevice?: number
 }
 
 /** Options for scheduled backups.

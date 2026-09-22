@@ -150,6 +150,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `SCHEMA_AHEAD` | The device schema version is ahead of the server; the server must migrate first. |
 | `SNAPSHOT_UNSUPPORTED` | A snapshot was requested for an in-memory database. |
 | `SNAPSHOT_CHECKSUM_MISMATCH` | A downloaded snapshot page failed checksum verification. |
+| `DEVICE_NOT_SUBSCRIBED` | An acknowledgement names a device the connection holds no subscription for. |
 
 ---
 

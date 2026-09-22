@@ -1,3 +1,5 @@
+![Sirannon, an open source SQLite database library](https://raw.githubusercontent.com/assetcorp/sirannon-db/main/assets/banner.png)
+
 # sirannon-db
 
 [![CI](https://github.com/assetcorp/sirannon-db/actions/workflows/ci.yml/badge.svg)](https://github.com/assetcorp/sirannon-db/actions/workflows/ci.yml)

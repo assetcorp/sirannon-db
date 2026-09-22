@@ -1,3 +1,4 @@
+import type { ChangeRetentionOptions } from './cdc/device-retention.js'
 import { closeDatabaseRuntime, type DatabaseRuntime } from './database-create.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import type { DatabaseOptions } from './types.js'
@@ -21,6 +22,13 @@ export class DatabaseLifecycle {
   readonly readOnly: boolean
 
   /**
+   * These are the retention settings that this database was opened with, and the object is empty where the caller set none.
+   *
+   * @internal
+   */
+  readonly changeRetention: ChangeRetentionOptions
+
+  /**
    * Pool, locks, and controllers this database runs its work through.
    *
    * @internal
@@ -39,6 +47,13 @@ export class DatabaseLifecycle {
     this.path = path
     this.runtime = runtime
     this.readOnly = options?.readOnly ?? false
+    this.changeRetention = {
+      ...(options?.cdcRetention === undefined ? {} : { cdcRetention: options.cdcRetention }),
+      ...(options?.deviceCursorRetention === undefined ? {} : { deviceCursorRetention: options.deviceCursorRetention }),
+      ...(options?.maxChangesHeldForDevice === undefined
+        ? {}
+        : { maxChangesHeldForDevice: options.maxChangesHeldForDevice }),
+    }
   }
 
   /**

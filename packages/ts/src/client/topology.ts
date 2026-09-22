@@ -51,6 +51,7 @@ interface EndpointLatency {
 
 const CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS = 2_000
 const LATENCY_TTL_MS = 60_000
+const UNREACHABLE_ENDPOINT_TTL_MS = 5_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 
 /**
@@ -71,7 +72,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   private latencies: EndpointLatency[] = []
   private latencyMeasuredAt = 0
   private latencyMeasuring: Promise<void> | null = null
-  private readonly removedReplicas = new Set<string>()
+  private readonly endpointsSetAside = new Map<string, number>()
 
   constructor(options: TopologyAwareClientOptions) {
     super(options)
@@ -123,7 +124,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
       return this.primaryUrl ?? this.baseUrl
     }
 
-    const availableReplicas = this.replicaUrls.filter(url => !this.removedReplicas.has(url))
+    const availableReplicas = this.replicaUrls.filter(url => this.isReachable(url))
 
     if (this.readPreference === 'replica') {
       if (availableReplicas.length === 0) {
@@ -133,7 +134,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     }
 
     await this.ensureLatencyMeasured()
-    const reachable = this.latencies.filter(entry => entry.reachable && !this.removedReplicas.has(entry.url))
+    const reachable = this.latencies.filter(entry => entry.reachable && this.isReachable(entry.url))
     if (reachable.length === 0) {
       return this.primaryUrl ?? this.baseUrl
     }
@@ -149,7 +150,9 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
       throw new RemoteError('NO_SAFE_PRIMARY', 'No current primary is available for linearizable reads')
     }
 
-    const readable = routing.readEndpoints.filter(endpoint => endpoint.readConcerns.includes(concern))
+    const readable = routing.readEndpoints.filter(
+      endpoint => endpoint.readConcerns.includes(concern) && this.isReachable(endpoint.url),
+    )
     const preferredReadable =
       this.readPreference === 'replica' && routing.currentPrimary
         ? readable.filter(endpoint => endpoint.url !== routing.currentPrimary)
@@ -190,8 +193,16 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   }
 
   /** @internal */
-  _removeReplica(url: string): void {
-    this.removedReplicas.add(url)
+  _setEndpointAside(url: string): void {
+    this.endpointsSetAside.set(url, Date.now() + UNREACHABLE_ENDPOINT_TTL_MS)
+  }
+
+  private isReachable(url: string): boolean {
+    const usableFrom = this.endpointsSetAside.get(url)
+    if (usableFrom === undefined) return true
+    if (Date.now() < usableFrom) return false
+    this.endpointsSetAside.delete(url)
+    return true
   }
 
   /** @internal */

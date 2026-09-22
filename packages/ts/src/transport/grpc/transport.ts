@@ -43,6 +43,7 @@ import {
   type SyncRequestHandler,
   syncWriteStream,
 } from './peer-streams.js'
+import { shutdownGrpcServer } from './server-shutdown.js'
 import { writeWithBackpressure } from './stream-util.js'
 
 /**
@@ -172,19 +173,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
 
     if (this.server) {
-      await new Promise<void>(resolve => {
-        const srv = this.server
-        if (!srv) {
-          resolve()
-          return
-        }
-        srv.tryShutdown(err => {
-          if (err) {
-            srv.forceShutdown()
-          }
-          resolve()
-        })
-      })
+      await shutdownGrpcServer(this.server)
       this.server = null
     }
   }

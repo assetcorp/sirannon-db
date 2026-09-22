@@ -44,9 +44,9 @@ export class SenderLoop {
     if (!engine.tracker) return
     const minAcked = await engine.log.getMinAckedSeq()
     if (minAcked === null) {
-      engine.tracker.clearPruneBoundary()
+      engine.tracker.clearPruneBoundary('replication')
     } else {
-      engine.tracker.setPruneBoundary(minAcked)
+      engine.tracker.setPruneBoundary('replication', minAcked)
     }
   }
 

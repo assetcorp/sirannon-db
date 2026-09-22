@@ -165,8 +165,18 @@ export interface ServerOptions<Identity = unknown> {
    * (one hour).
    */
   cdcRetentionMs?: number
-  /** How long, in milliseconds, a device's sync cursor is kept after its last contact. */
+  /**
+   * How long, in milliseconds, a device's sync cursor holds changes back from
+   * deletion. A database opened with `deviceCursorRetention` overrides this for
+   * itself. Default: 2_592_000_000 (30 days).
+   */
   deviceCursorRetentionMs?: number
+  /**
+   * Most changes one device's cursor holds back from deletion. A database
+   * opened with `maxChangesHeldForDevice` overrides this for itself. 0 sets no
+   * limit. Default: 0.
+   */
+  maxChangesHeldForDevice?: number
   /** Changes a device may leave unacknowledged before the server stops sending more. */
   maxUnacknowledgedChanges?: number
   /** Runs before every database route and every WebSocket upgrade, and names the caller. */
@@ -254,6 +264,7 @@ export interface WSHandlerOptions<Identity = unknown> {
   /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
+  maxChangesHeldForDevice?: number
   maxUnacknowledgedChanges?: number
   acceptSql?: boolean
   operations?: OperationRegistry<Identity>

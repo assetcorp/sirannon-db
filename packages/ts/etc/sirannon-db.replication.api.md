@@ -66,6 +66,7 @@ export interface ClusterCoordinator {
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;
     updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>;
     updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>;
+    watchNodeSessions?(clusterId: string, watcher: NodeSessionWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
     watchReplicationGroup(clusterId: string, groupId: string, watcher: ReplicationGroupWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
 }
 
@@ -258,6 +259,9 @@ export interface NodeInfo {
 export class NodeNotInSyncError extends ReplicationError {
     constructor(message: string, details?: Record<string, unknown>);
 }
+
+// @public
+export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void;
 
 // @public
 export class NoSafePrimaryError extends FailoverError {
@@ -496,6 +500,8 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     lastSentSeq: bigint;
     // @internal (undocumented)
+    liveNodeIds: string[] | null;
+    // @internal (undocumented)
     readonly localExecutor: LocalExecutor;
     // @internal (undocumented)
     readonly log: ReplicationLog;
@@ -516,6 +522,8 @@ export class ReplicationEngine extends EventEmitter {
     readonly nodeId: string;
     // @internal (undocumented)
     nodeSessionLeaseId: string | null;
+    // @internal (undocumented)
+    nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;

@@ -178,6 +178,28 @@ describe('TopologyAwareClientOptions', () => {
     client.close()
   })
 
+  it('reads from a static replica again once its five seconds have passed', async () => {
+    const replicaUrl = 'http://127.0.0.1:1'
+    const client = new TopologyAwareClient({
+      primary: harness.baseUrl,
+      replicas: [replicaUrl],
+      readPreference: 'replica',
+      transport: 'http',
+    })
+
+    client._setEndpointAside(replicaUrl)
+    expect(await client._getReadEndpoint()).toBe(harness.baseUrl)
+
+    const realNow = Date.now
+    Date.now = () => realNow() + 5_001
+    try {
+      expect(await client._getReadEndpoint()).toBe(replicaUrl)
+    } finally {
+      Date.now = realNow
+    }
+    client.close()
+  })
+
   it('defaults to primary readPreference when omitted', async () => {
     const client = new TopologyAwareClient({
       primary: harness.baseUrl,

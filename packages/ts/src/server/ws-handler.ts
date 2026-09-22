@@ -7,7 +7,7 @@ import type { OperationSource } from './operation-lookup.js'
 import { createOperationSource } from './operation-lookup.js'
 import type { WSLiveMessage, WSServerMessage } from './protocol.js'
 import { handleAckMessage } from './ws-ack.js'
-import { CdcContextRegistry } from './ws-cdc.js'
+import { CdcContextRegistry, toChangeRetentionOptions } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import { wireChangeEvent } from './ws-device-frames.js'
@@ -73,7 +73,7 @@ export class WSHandler<Identity = unknown> {
     this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
     this.socketResumeBytes = Math.ceil((options?.maxBackpressureBytes ?? DEFAULT_MAX_BACKPRESSURE_BYTES) / 2)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
-    this.cdc = new CdcContextRegistry(sirannon, options?.cdcRetentionMs, options?.deviceCursorRetentionMs)
+    this.cdc = new CdcContextRegistry(sirannon, toChangeRetentionOptions(options))
   }
 
   async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {

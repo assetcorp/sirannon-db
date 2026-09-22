@@ -13,6 +13,7 @@ import {
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
 import { pollChanges, readSinceTables } from './change-log-reader.js'
+import { PruneBoundaries, type PruneBoundarySource, seqBoundFor } from './prune-boundaries.js'
 import { StatementCache } from './statement-cache.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
@@ -38,7 +39,7 @@ export class ChangeTracker {
   private changesTableEnsured = false
   private watchedTablesCache: ReadonlySet<string> | null = null
   private readonly stmtCache = new StatementCache()
-  private pruneBoundary: bigint | null = null
+  private readonly pruneBoundaries = new PruneBoundaries()
   private lastPollAtTxBoundary = true
 
   constructor(options?: ChangeTrackerOptions) {
@@ -322,13 +323,18 @@ export class ChangeTracker {
   }
 
   /** @internal */
-  setPruneBoundary(seq: bigint): void {
-    this.pruneBoundary = seq
+  setPruneBoundary(source: PruneBoundarySource, seq: bigint): void {
+    this.pruneBoundaries.set(source, seq)
   }
 
   /** @internal */
-  clearPruneBoundary(): void {
-    this.pruneBoundary = null
+  clearPruneBoundary(source: PruneBoundarySource): void {
+    this.pruneBoundaries.clear(source)
+  }
+
+  /** @internal */
+  get changeLogTable(): string {
+    return this.changesTable
   }
 
   /** @internal */
@@ -340,21 +346,7 @@ export class ChangeTracker {
   }
 
   private computeSeqBound(): bigint | null {
-    const boundary = this.pruneBoundary
-
-    if (this.lastSeq > 0n && boundary !== null) {
-      return this.lastSeq < boundary ? this.lastSeq : boundary
-    }
-
-    if (boundary !== null) {
-      return boundary
-    }
-
-    if (this.lastSeq > 0n) {
-      return this.lastSeq
-    }
-
-    return null
+    return seqBoundFor(this.pruneBoundaries.lowest(), this.lastSeq)
   }
 
   private assertIdentifier(name: string, label: string): void {

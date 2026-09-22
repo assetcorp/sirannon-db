@@ -74,7 +74,7 @@ CREATE TABLE _sirannon_device_cursors (
 )
 ```
 
-An acknowledgement upserts the cursor and moves `acked_seq` forward only (`max(current, incoming)`). An implementation bounds change-log retention so a device can still resume: the prune boundary is the minimum, across live devices, of the sequence immediately before each device's next unacknowledged foreign change (a change whose `node_id` differs from the device), or the current maximum sequence when the device has no foreign change ahead of its cursor. A device that only writes, and has acknowledged no foreign change, therefore pins retention no lower than its own writes. The server evicts a cursor idle past the retention window (default 2,592,000,000 ms, 30 days), and that device must then resync from a snapshot.
+An acknowledgement upserts the cursor and moves `acked_seq` forward only (`max(current, incoming)`). An implementation bounds change-log retention so a device can still resume: the prune boundary is the minimum, across live devices, of the sequence immediately before each device's next unacknowledged foreign change (a change whose `node_id` differs from the device), or the current maximum sequence when the device has no foreign change ahead of its cursor. A device that only writes, and has acknowledged no foreign change, therefore pins retention no lower than its own writes. Every deletion of old changes applies that boundary, whichever part of an implementation starts it. The server deletes a device's cursor on any of three conditions: that device's last acknowledgement is older than the device-cursor retention window (default 2,592,000,000 ms, 30 days), the oldest change the cursor holds back is older than that window, or the changes the cursor holds back outnumber the configured maximum (default unlimited). A device whose cursor the server deleted must resync from a snapshot. A database's own options carry both limits, and each one falls back to the server-wide value (see [02-core.md](02-core.md#database) and [05-server.md](05-server.md#server-configuration)).
 
 ---
 
@@ -99,6 +99,8 @@ The device acknowledges what it holds durably so that the server advances the de
 ```
 
 `seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
+
+A server accepts an acknowledgement only for a device the same connection holds a subscription for, and must fail every other acknowledgement with `DEVICE_NOT_SUBSCRIBED`. A device must hold its acknowledgements until the server confirms the subscription on the connection that carries it, and must send a refused acknowledgement again once it subscribes afresh.
 
 The server holds delivery to a device once the highest sequence sent stands more than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's acknowledged cursor, and resumes on the next acknowledgement. The server measures the window per transaction, so it still delivers a transaction larger than the window whole. On a subscription carrying `stagedStream`, the server measures the window per change and may pause delivery within a transaction. Held changes remain in the change log, and the server delivers them in order. The server reports the window on `subscribed` as `maxUnacknowledgedChanges`, and a device acknowledges immediately once it holds more than half of it.
 
@@ -205,7 +207,7 @@ Before syncing, a client fetches `/capabilities`. A `404` (the server predates d
 
 ---
 
-## Client Sync Controller
+## Device Sync Controller
 
 The controller drives a device's sync loop.
 

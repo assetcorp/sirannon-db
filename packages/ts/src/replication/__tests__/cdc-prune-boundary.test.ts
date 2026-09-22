@@ -54,7 +54,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(1n)
+    tracker.setPruneBoundary('replication', 1n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(1)
@@ -68,7 +68,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(2n)
+    tracker.setPruneBoundary('replication', 2n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(2)
@@ -81,7 +81,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(100n)
+    tracker.setPruneBoundary('replication', 100n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(2)
@@ -91,7 +91,7 @@ describe('ChangeTracker prune boundary', () => {
   it('preserves fresh rows even when boundary is high', async () => {
     await insertUser(conn, 'Alice')
 
-    tracker.setPruneBoundary(100n)
+    tracker.setPruneBoundary('replication', 100n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(0)
@@ -122,11 +122,29 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(2n)
+    tracker.setPruneBoundary('replication', 2n)
     const deleted = await tracker.cleanup(conn)
 
     expect(deleted).toBe(2)
     expect(await changeCount(conn)).toBe(3)
+  })
+
+  it('keeps the lowest boundary while two parts of Sirannon hold changes back', async () => {
+    await insertUser(conn, 'Alice')
+    await insertUser(conn, 'Bob')
+    await insertUser(conn, 'Carol')
+
+    await makeRowsStale(conn)
+
+    tracker.setPruneBoundary('device-sync', 1n)
+    tracker.setPruneBoundary('device-cursors', 3n)
+    expect(await tracker.cleanup(conn)).toBe(1)
+
+    tracker.clearPruneBoundary('device-cursors')
+    expect(await tracker.cleanup(conn)).toBe(0)
+
+    tracker.clearPruneBoundary('device-sync')
+    expect(await tracker.cleanup(conn)).toBe(2)
   })
 
   it('resumes time-only cleanup after clearPruneBoundary', async () => {
@@ -135,12 +153,12 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(1n)
+    tracker.setPruneBoundary('replication', 1n)
     const firstDelete = await tracker.cleanup(conn)
     expect(firstDelete).toBe(1)
     expect(await changeCount(conn)).toBe(1)
 
-    tracker.clearPruneBoundary()
+    tracker.clearPruneBoundary('replication')
     const secondDelete = await tracker.cleanup(conn)
     expect(secondDelete).toBe(1)
     expect(await changeCount(conn)).toBe(0)
@@ -153,7 +171,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(2n)
+    tracker.setPruneBoundary('replication', 2n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(2)
@@ -175,7 +193,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(100n)
+    tracker.setPruneBoundary('replication', 100n)
 
     const deleted = await tracker.cleanup(conn)
 
@@ -195,7 +213,7 @@ describe('ChangeTracker prune boundary', () => {
 
     await makeRowsStale(conn)
 
-    tracker.setPruneBoundary(3n)
+    tracker.setPruneBoundary('replication', 3n)
 
     const deleted = await tracker.cleanup(conn)
     expect(deleted).toBe(3)

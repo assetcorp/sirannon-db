@@ -1,4 +1,5 @@
-import type { IOptions } from 'etcd3'
+import type { Etcd3, IOptions, Namespace } from 'etcd3'
+import type { EtcdGroupStore } from './etcd-group-store.js'
 import { assertNonEmpty } from './group-rules.js'
 
 /**
@@ -80,6 +81,12 @@ export function toEtcdOptions(options: EtcdClusterCoordinatorOptions): IOptions 
   }
 }
 
+export interface EtcdConnection {
+  client: Etcd3
+  namespace: Namespace
+  groups: EtcdGroupStore
+}
+
 export function normaliseKeyPrefix(prefix: string): string {
   const trimmed = prefix.replace(/^\/+/, '').replace(/\/+$/, '')
   if (trimmed.length === 0) {
@@ -93,7 +100,11 @@ export function controllerLeaseKey(clusterId: string): string {
 }
 
 export function nodeSessionKey(clusterId: string, nodeId: string): string {
-  return `clusters/${encodeKey(clusterId)}/nodes/${encodeKey(nodeId)}`
+  return `${nodeSessionPrefix(clusterId)}${encodeKey(nodeId)}`
+}
+
+export function nodeSessionPrefix(clusterId: string): string {
+  return `clusters/${encodeKey(clusterId)}/nodes/`
 }
 
 export function replicationGroupKey(clusterId: string, groupId: string): string {

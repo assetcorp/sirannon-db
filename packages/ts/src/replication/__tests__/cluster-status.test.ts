@@ -40,6 +40,18 @@ function engineStatus(overrides: Partial<ReplicationStatus> = {}): ReplicationSt
 }
 
 describe('the nodes a client can read from', () => {
+  it('leaves out a node whose coordinator session has lapsed', () => {
+    const endpoints = toClusterReadEndpoints(coordinatorStatus({ liveNodeIds: ['node-a', 'node-b'] }), ENDPOINTS)
+
+    expect(endpoints.map(endpoint => endpoint.nodeId)).toEqual(['node-a', 'node-b'])
+  })
+
+  it('lists every node while this one cannot see which sessions are live', () => {
+    const endpoints = toClusterReadEndpoints(coordinatorStatus({ liveNodeIds: undefined }), ENDPOINTS)
+
+    expect(endpoints.map(endpoint => endpoint.nodeId)).toEqual(['node-a', 'node-b', 'node-c'])
+  })
+
   it('serves majority reads from an in-sync node and local reads from one that fell behind', () => {
     const endpoints = toClusterReadEndpoints(coordinatorStatus(), ENDPOINTS)
 

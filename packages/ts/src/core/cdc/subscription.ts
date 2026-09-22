@@ -2,6 +2,11 @@ import { invokeCallerCallback, reportCallerFailure, toError } from '../caller-ca
 import type { SQLiteConnection } from '../driver/types.js'
 import type { ChangeEvent, Subscription, SubscriptionBuilder, SubscriptionOptions } from '../types.js'
 import type { ChangeTracker } from './change-tracker.js'
+import {
+  applyDeviceCursorBoundary,
+  DEFAULT_DEVICE_CURSOR_RETENTION_MS,
+  type DeviceRetentionPolicy,
+} from './device-retention.js'
 
 interface InternalSubscription {
   id: number
@@ -111,6 +116,20 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
   }
 }
 
+/**
+ * Polls the change log on an interval and hands each change to the subscriptions watching its table.
+ *
+ * @param conn - Connection the poll and the deletion of old changes run on.
+ * @param tracker - Change tracker this loop polls and prunes.
+ * @param manager - Subscriptions each change reaches.
+ * @param intervalMs - Milliseconds between polls.
+ * @param onError - Called with every failure a tick raises.
+ * @param runExclusive - Wraps each poll when the caller serialises writes.
+ * @param deviceRetention - Limits on how long a device's cursor holds changes back.
+ * @returns A function that stops the loop.
+ *
+ * @internal
+ */
 export function startPolling(
   conn: SQLiteConnection,
   tracker: ChangeTracker,
@@ -118,6 +137,10 @@ export function startPolling(
   intervalMs: number,
   onError?: (err: Error) => void,
   runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>,
+  deviceRetention: DeviceRetentionPolicy = {
+    cursorRetentionMs: DEFAULT_DEVICE_CURSOR_RETENTION_MS,
+    maxChangesHeldForDevice: 0,
+  },
 ): () => void {
   let consecutiveErrors = 0
   let tickCount = 0
@@ -143,7 +166,10 @@ export function startPolling(
       tickCount++
       if (tickCount >= CLEANUP_INTERVAL_TICKS) {
         tickCount = 0
-        await exclusive(() => tracker.cleanup(conn))
+        await exclusive(async () => {
+          await applyDeviceCursorBoundary(conn, tracker, deviceRetention)
+          await tracker.cleanup(conn)
+        })
       }
     } catch (err) {
       consecutiveErrors++

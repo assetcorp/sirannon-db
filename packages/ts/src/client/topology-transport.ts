@@ -12,6 +12,10 @@ import { TopologySubscriptionSet } from './topology-subscriptions.js'
 import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from './types.js'
 import { RemoteError } from './types.js'
 
+function isEndpointUnreachable(err: unknown): boolean {
+  return err instanceof Error && (err.name !== 'RemoteError' || (err as { code?: string }).code === 'CONNECTION_ERROR')
+}
+
 export class TopologyAwareTransport implements Transport {
   private closed = false
   private readTransport: Transport | null = null
@@ -31,33 +35,44 @@ export class TopologyAwareTransport implements Transport {
   }
 
   async query(sql: string, params?: Params): Promise<QueryResponse> {
+    return this.onReadTransport((transport, level) => transport.query(sql, params, level ? { level } : undefined))
+  }
+
+  private async onReadTransport<T>(
+    read: (transport: Transport, readConcern: ReadConcernLevel | undefined) => Promise<T>,
+  ): Promise<T> {
     const readConcern = this.routing._getReadConcern()
     const transport = await this.getReadTransport(readConcern)
     const endpointUsed = this.currentReadUrl
     try {
-      return await transport.query(sql, params, readConcern ? { level: readConcern } : undefined)
+      return await read(transport, readConcern)
     } catch (err) {
+      const unreachable = isEndpointUnreachable(err)
       if (this.routing._usesCoordinatorDiscovery() && shouldRefreshRouting(err)) {
+        if (unreachable && endpointUsed) {
+          this.routing._setEndpointAside(endpointUsed)
+        }
         await this.routing._refreshClusterRouting(this.databaseId)
-        this.readTransport = null
-        this.currentReadUrl = ''
+        this.clearReadTransport()
         const refreshed = await this.getReadTransport(readConcern)
-        return refreshed.query(sql, params, readConcern ? { level: readConcern } : undefined)
+        return read(refreshed, readConcern)
       }
-      const isTransportError =
-        err instanceof Error && (err.name !== 'RemoteError' || (err as { code?: string }).code === 'CONNECTION_ERROR')
       const writeEndpoint = await this.routing._getWriteEndpoint(this.databaseId)
-      if (isTransportError && endpointUsed && endpointUsed !== writeEndpoint) {
-        this.routing._removeReplica(endpointUsed)
+      if (unreachable && endpointUsed && endpointUsed !== writeEndpoint) {
+        this.routing._setEndpointAside(endpointUsed)
         if (this.currentReadUrl === endpointUsed) {
-          this.readTransport = null
-          this.currentReadUrl = ''
+          this.clearReadTransport()
         }
         const fallback = await this.getReadTransport()
-        return fallback.query(sql, params)
+        return read(fallback, undefined)
       }
       throw err
     }
+  }
+
+  private clearReadTransport(): void {
+    this.readTransport = null
+    this.currentReadUrl = ''
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResponse> {
@@ -96,9 +111,7 @@ export class TopologyAwareTransport implements Transport {
   }
 
   async queryNamed(name: string, args?: Record<string, unknown>): Promise<QueryResponse> {
-    const readConcern = this.routing._getReadConcern()
-    const transport = await this.getReadTransport(readConcern)
-    return transport.queryNamed(name, args, readConcern ? { level: readConcern } : undefined)
+    return this.onReadTransport((transport, level) => transport.queryNamed(name, args, level ? { level } : undefined))
   }
 
   async executeNamed(

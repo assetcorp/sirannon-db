@@ -73,6 +73,8 @@ export type BeforeSubscribeHook = (ctx: {
   filter?: Record<string, unknown>
   /** Whoever the `authenticate` hook returned for the connection, and undefined where that connection carries no identity. */
   identity?: unknown
+  /** This names the device the subscription syncs, and it stays undefined for a subscription that carries no device. */
+  deviceId?: string
 }) => void | Promise<void>
 
 /** Hook invoked before a served snapshot reads a table. Throw to deny.

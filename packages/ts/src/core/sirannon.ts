@@ -7,6 +7,7 @@ import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
 import { RegistryMigrationSet } from './migrations/registry-set.js'
 import type { Migration } from './migrations/types.js'
+import { withRegistryDefaults } from './registry-defaults.js'
 import { type OfflineOutcome, takeDatabaseOffline } from './sirannon-offline.js'
 import { closeEveryDatabase } from './sirannon-shutdown.js'
 import type {
@@ -41,13 +42,13 @@ export class Sirannon {
   private readonly lifecycleManager: LifecycleManager | null
   private readonly migrations: RegistryMigrationSet
 
-  /** The driver, hooks, metrics, lifecycle, migrations, and writer-worker default this registry was built with. */
+  /** These are the driver, hooks, metrics, lifecycle, migrations, and the writer-worker and retention defaults this registry was built with. */
   readonly options: SirannonOptions
 
   /**
    * Builds a registry.
    *
-   * @param options - Driver, hooks, metrics, lifecycle, migrations, and the writer-worker default.
+   * @param options - Driver, hooks, metrics, lifecycle, migrations, and the defaults every database it opens starts from.
    */
   constructor(options: SirannonOptions) {
     this.options = options
@@ -92,7 +93,7 @@ export class Sirannon {
 
     this.opening.add(id)
 
-    const resolvedOptions = this.withRegistryDefaults(options)
+    const resolvedOptions = withRegistryDefaults(this.options, options)
 
     let db: Database
     try {
@@ -168,12 +169,6 @@ export class Sirannon {
     })
 
     return db
-  }
-
-  private withRegistryDefaults(options?: DatabaseOptions): DatabaseOptions | undefined {
-    const fallback = this.options.writerWorker
-    if (fallback === undefined || options?.writerWorker !== undefined) return options
-    return { ...options, writerWorker: fallback }
   }
 
   /**

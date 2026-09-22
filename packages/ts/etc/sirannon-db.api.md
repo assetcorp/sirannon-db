@@ -331,6 +331,7 @@ export type BeforeSubscribeHook = (ctx: {
     table: string;
     filter?: Record<string, unknown>;
     identity?: unknown;
+    deviceId?: string;
 }) => void | Promise<void>;
 
 // @public
@@ -385,9 +386,11 @@ export class ChangeTracker {
     // @internal (undocumented)
     advanceToLatest(conn: SQLiteConnection): Promise<void>;
     // @internal (undocumented)
+    get changeLogTable(): string;
+    // @internal (undocumented)
     cleanup(conn: SQLiteConnection): Promise<number>;
     // @internal (undocumented)
-    clearPruneBoundary(): void;
+    clearPruneBoundary(source: PruneBoundarySource): void;
     // @internal
     get cursor(): bigint;
     // @internal
@@ -403,7 +406,7 @@ export class ChangeTracker {
     // @internal
     refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void>;
     // @internal (undocumented)
-    setPruneBoundary(seq: bigint): void;
+    setPruneBoundary(source: PruneBoundarySource, seq: bigint): void;
     unwatch(conn: SQLiteConnection, table: string): Promise<void>;
     watch(conn: SQLiteConnection, table: string): Promise<void>;
     // @internal (undocumented)
@@ -600,6 +603,8 @@ export class DatabaseLifecycle {
     protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions);
     // @internal
     addCloseListener(fn: () => void | Promise<void>): void;
+    // @internal
+    readonly changeRetention: ChangeRetentionOptions;
     close(): Promise<void>;
     get closed(): boolean;
     // @internal
@@ -637,6 +642,8 @@ export interface DatabaseOptions {
     backups?: BackupCycleOptions;
     cdcPollInterval?: number;
     cdcRetention?: number;
+    deviceCursorRetention?: number;
+    maxChangesHeldForDevice?: number;
     readOnly?: boolean;
     readPoolSize?: number;
     synchronous?: SynchronousLevel;
@@ -1160,6 +1167,7 @@ export interface ServerOptions<Identity = unknown> {
     getReplicationStatus?: () => ReplicationStatusInfo | null;
     host?: string;
     maxBodyBytes?: number;
+    maxChangesHeldForDevice?: number;
     maxUnacknowledgedChanges?: number;
     maxWebSocketBackpressureBytes?: number;
     operations?: OperationRegistry<Identity>;
@@ -1201,9 +1209,12 @@ export class SirannonError extends Error {
 
 // @public
 export interface SirannonOptions {
+    cdcRetention?: number;
+    deviceCursorRetention?: number;
     driver: SQLiteDriver;
     hooks?: HookConfig;
     lifecycle?: LifecycleConfig;
+    maxChangesHeldForDevice?: number;
     metrics?: MetricsConfig;
     migrations?: MigrationSource;
     writerWorker?: boolean | WriterWorkerOptions;
@@ -1345,6 +1356,8 @@ export interface WSHandlerOptions<Identity = unknown> {
     // (undocumented)
     deviceCursorRetentionMs?: number;
     maxBackpressureBytes?: number;
+    // (undocumented)
+    maxChangesHeldForDevice?: number;
     maxPayloadLength?: number;
     // (undocumented)
     maxUnacknowledgedChanges?: number;

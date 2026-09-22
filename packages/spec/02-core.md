@@ -35,10 +35,13 @@ SirannonOptions {
   lifecycle?:    LifecycleConfig
   migrations?:   List<Migration> or (() -> List<Migration>, sync or async)
   writerWorker?: boolean or WriterWorkerOptions
+  cdcRetention?:            number
+  deviceCursorRetention?:   number
+  maxChangesHeldForDevice?: number
 }
 ```
 
-A `writerWorker` on the registry is the default for every database it opens; a `writerWorker` in `DatabaseOptions` overrides it for that database.
+A `writerWorker`, `cdcRetention`, `deviceCursorRetention`, or `maxChangesHeldForDevice` on the registry is the default for every database it opens; the same field in `DatabaseOptions` overrides it for that database, whether a caller passes those options to `open` or a lifecycle resolver returns them per database.
 
 - **open** opens the file at `path` and registers it under `id`. A duplicate `id` (registered or opening) fails with `DATABASE_ALREADY_EXISTS`; a shut-down registry fails with `SHUTDOWN`. `open` creates the connection pool, fires `beforeConnect` then `databaseOpen`, and, when a registry `migrations` set is declared, applies every pending migration before registering the database (see [Registry Migrations](#registry-migrations)). No caller may observe a database through `get`, `resolve`, or `databases()` before its migrations complete.
 - **close** closes the database under `id` and fires `databaseClose`. An unknown `id` fails with `DATABASE_NOT_FOUND`.
@@ -109,6 +112,8 @@ DatabaseOptions {
   synchronous?:     SynchronousLevel (default: 'normal')
   cdcPollInterval?: number           (default: 50 ms, recommended)
   cdcRetention?:    number           (default: 3_600_000 ms, recommended)
+  deviceCursorRetention?:   number   (default: 2_592_000_000 ms)  -- see 08-device-sync.md
+  maxChangesHeldForDevice?: number   (default: 0, unlimited)      -- see 08-device-sync.md
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
   backups?:         BackupCycleOptions (default: off)
 }
@@ -374,7 +379,7 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
 | `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
-| `beforeSubscribe` | `{ databaseId, table, filter?, identity? }` | Before a served subscription starts | Yes |
+| `beforeSubscribe` | `{ databaseId, table, filter?, identity?, deviceId? }` | Before a served subscription starts | Yes |
 | `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
 
 A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe hook and a snapshot hook may each return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe or a snapshot hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.

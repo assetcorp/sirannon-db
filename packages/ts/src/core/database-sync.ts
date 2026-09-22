@@ -225,7 +225,7 @@ export class DatabaseSyncController {
 
   private applyLocalPruneBoundary(): void {
     if (this.localPruneBoundary !== null) {
-      this.cdc.changeTracker?.setPruneBoundary(this.localPruneBoundary)
+      this.cdc.changeTracker?.setPruneBoundary('device-sync', this.localPruneBoundary)
     }
   }
 

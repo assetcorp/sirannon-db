@@ -1,5 +1,6 @@
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
+import type { DeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ensureCdcEpoch } from './cdc/epoch.js'
 import { readAtPosition } from './cdc/read-position.js'
 import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
@@ -25,6 +26,7 @@ export class DatabaseCdcController {
     private readonly pollInterval: number,
     private readonly retention: number,
     private readonly openSnapshotConnection: (() => Promise<SQLiteConnection>) | null,
+    private readonly deviceRetention: DeviceRetentionPolicy,
   ) {}
 
   ensureEpoch(): Promise<string> {
@@ -172,6 +174,7 @@ export class DatabaseCdcController {
       this.pollInterval,
       undefined,
       this.runExclusive,
+      this.deviceRetention,
     )
   }
 }

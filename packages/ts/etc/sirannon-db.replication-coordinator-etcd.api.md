@@ -26,6 +26,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;
     updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>;
     updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>;
+    watchNodeSessions(clusterId: string, watcher: NodeSessionWatcher): Promise<CoordinatorWatchDisposer>;
     watchReplicationGroup(clusterId: string, groupId: string, watcher: ReplicationGroupWatcher): Promise<CoordinatorWatchDisposer>;
 }
 

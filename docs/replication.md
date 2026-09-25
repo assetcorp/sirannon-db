@@ -137,7 +137,7 @@ await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999], 
 })
 ```
 
-Start `primary.ts` before `replica.ts`, and start `replica.ts` again whenever you restart the primary, because the replica process exits when its connection to the primary closes.
+Start `primary.ts` before `replica.ts`. A replica whose primary stops, keeps a reconnection timer pending, so its process stays up while that primary is away. Its transport dials the primary again after 250 ms, doubling the wait after each failed attempt to a maximum of 5,000 ms.
 
 In static mode, a write without `writeConcern` returns after the local commit, while in coordinator mode it waits for `'majority'`. In coordinator mode, the engine counts the configured voting nodes towards `'majority'`, including the primary's own durable commit, so a majority write is still present after an automatic failover that loses only the primary.
 

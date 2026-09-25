@@ -1,7 +1,6 @@
 import type { Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import {
-  parseLease,
   parseLeaseIdForEntry,
   parseNodeSession,
   type SerializedLease,
@@ -10,7 +9,6 @@ import {
 } from './etcd-codec.js'
 import {
   assertEtcdOptions,
-  controllerLeaseKey,
   type EtcdClusterCoordinatorOptions,
   type EtcdConnection,
   nodeSessionKey,
@@ -18,8 +16,9 @@ import {
   toEtcdOptions,
   ttlMsToSeconds,
 } from './etcd-connection.js'
+import { acquireEtcdControllerLease, watchEtcdControllerLease } from './etcd-controller-lease.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
-import { EtcdLeaseRegistry, readLeaseAt, revokeLeaseQuietly } from './etcd-lease-registry.js'
+import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { loadEtcd3Module } from './etcd-loader.js'
 import { watchEtcdNodeSessions } from './etcd-session-watch.js'
 import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
@@ -30,6 +29,7 @@ import type {
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
+  ControllerLeaseWatcher,
   CoordinatorNodeSession,
   CoordinatorWatchDisposer,
   NodeSessionWatcher,
@@ -73,45 +73,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     assertPositiveTtl(input.ttlMs)
 
     const { namespace } = await this.connect()
-    const key = controllerLeaseKey(input.clusterId)
-    const lease = namespace.lease(ttlMsToSeconds(input.ttlMs))
-    const leaseId = await lease.grant()
-    const grantedAtMs = Date.now()
-    const value = serializeLease({
-      id: leaseId,
-      kind: 'controller',
-      clusterId: input.clusterId,
-      holderId: input.holderId,
-      ttlMs: input.ttlMs,
-      grantedAtMs,
-      expiresAtMs: grantedAtMs + input.ttlMs,
-      metadata: cloneMetadata(input.metadata),
-    })
+    return acquireEtcdControllerLease(namespace, this.leases, input)
+  }
 
-    const result = await namespace
-      .if(key, 'Create', '==', 0)
-      .then(namespace.put(key).value(value).lease(leaseId))
-      .commit()
-
-    if (!result.succeeded) {
-      await revokeLeaseQuietly(lease)
-      const current = await readLeaseAt(namespace, key)
-      return { acquired: false, lease: current }
-    }
-
-    this.leases.track(lease, {
-      leaseId,
-      key,
-      ttlMs: input.ttlMs,
-      ttlSeconds: ttlMsToSeconds(input.ttlMs),
-      kind: 'controller',
-      clusterId: input.clusterId,
-      holderId: input.holderId,
-      metadata: cloneMetadata(input.metadata),
-    })
-
-    const parsed = parseLease(value)
-    return { acquired: true, lease: parsed }
+  /** Calls back with the node holding the controller lease, and returns a function that stops the watch. */
+  async watchControllerLease(clusterId: string, watcher: ControllerLeaseWatcher): Promise<CoordinatorWatchDisposer> {
+    assertNonEmpty(clusterId, 'clusterId')
+    const { namespace } = await this.connect()
+    return watchEtcdControllerLease(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
   }
 
   /** Extends a lease, and reports false once it has already lapsed. */

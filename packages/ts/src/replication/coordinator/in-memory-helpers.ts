@@ -1,39 +1,92 @@
-import { cloneCompatibility, cloneMetadata, markDisplacedPrimaryForRepair } from './group-rules.js'
-import type { CoordinatorLease, CoordinatorNodeSession, NodeSessionWatcher, ReplicationGroupState } from './types.js'
+import {
+  cloneCompatibility,
+  cloneMetadata,
+  cloneReplicationGroupState,
+  markDisplacedPrimaryForRepair,
+} from './group-rules.js'
+import type { CoordinatorLease, CoordinatorNodeSession, ReplicationGroupState } from './types.js'
 
-export class NodeSessionWatchers {
-  private readonly byCluster = new Map<string, Set<NodeSessionWatcher>>()
+class ClusterWatchers<T> {
+  private readonly byKey = new Map<string, Set<(value: T) => void>>()
 
-  add(clusterId: string, watcher: NodeSessionWatcher): () => void {
-    let watchers = this.byCluster.get(clusterId)
+  constructor(private readonly copy: (value: T) => T) {}
+
+  add(key: string, watcher: (value: T) => void): () => void {
+    let watchers = this.byKey.get(key)
     if (!watchers) {
       watchers = new Set()
-      this.byCluster.set(clusterId, watchers)
+      this.byKey.set(key, watchers)
     }
     watchers.add(watcher)
 
     return () => {
-      const current = this.byCluster.get(clusterId)
+      const current = this.byKey.get(key)
       if (!current) return
       current.delete(watcher)
       if (current.size === 0) {
-        this.byCluster.delete(clusterId)
+        this.byKey.delete(key)
       }
     }
   }
 
-  notify(clusterId: string, liveNodeIds: readonly string[], onError?: (error: Error) => void): void {
-    const watchers = this.byCluster.get(clusterId)
+  notify(key: string, value: T, onError?: (error: Error) => void): void {
+    const watchers = this.byKey.get(key)
     if (!watchers) return
 
     for (const watcher of watchers) {
       try {
-        watcher([...liveNodeIds])
+        watcher(this.copy(value))
       } catch (err: unknown) {
         onError?.(err instanceof Error ? err : new Error(String(err)))
       }
     }
   }
+}
+
+export class NodeSessionWatchers extends ClusterWatchers<readonly string[]> {
+  constructor() {
+    super(liveNodeIds => [...liveNodeIds])
+  }
+}
+
+export class ControllerLeaseWatchers extends ClusterWatchers<CoordinatorLease | null> {
+  constructor() {
+    super(lease => (lease === null ? null : cloneLease(lease)))
+  }
+}
+
+export class ReplicationGroupWatchers extends ClusterWatchers<ReplicationGroupState> {
+  constructor() {
+    super(cloneReplicationGroupState)
+  }
+}
+
+export function findLeaseIn(
+  controllerLeases: Iterable<CoordinatorLease>,
+  sessions: Iterable<CoordinatorNodeSession>,
+  leaseId: string,
+): CoordinatorLease | null {
+  for (const lease of controllerLeases) {
+    if (lease.id === leaseId) {
+      return lease
+    }
+  }
+  for (const session of sessions) {
+    if (session.lease.id === leaseId) {
+      return session.lease
+    }
+  }
+  return null
+}
+
+export function liveNodeIdsIn(sessions: Iterable<CoordinatorNodeSession>, clusterId: string, nowMs: number): string[] {
+  const live: string[] = []
+  for (const session of sessions) {
+    if (session.clusterId === clusterId && session.lease.expiresAtMs > nowMs) {
+      live.push(session.nodeId)
+    }
+  }
+  return live
 }
 
 export function cloneNodeSession(session: CoordinatorNodeSession): CoordinatorNodeSession {

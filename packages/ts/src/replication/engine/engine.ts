@@ -7,7 +7,7 @@ import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
-import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
+import type { CoordinatorLease, CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError } from '../errors.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
@@ -146,6 +146,12 @@ export class ReplicationEngine extends EventEmitter {
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
   nodeSessionWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  observedControllerLease: CoordinatorLease | null = null
+  /** @internal */
+  controllerBidding = false
   /** @internal */
   liveNodeIds: string[] | null = null
   /** @internal */

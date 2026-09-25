@@ -116,20 +116,6 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
   }
 }
 
-/**
- * Polls the change log on an interval and hands each change to the subscriptions watching its table.
- *
- * @param conn - Connection the poll and the deletion of old changes run on.
- * @param tracker - Change tracker this loop polls and prunes.
- * @param manager - Subscriptions each change reaches.
- * @param intervalMs - Milliseconds between polls.
- * @param onError - Called with every failure a tick raises.
- * @param runExclusive - Wraps each poll when the caller serialises writes.
- * @param deviceRetention - Limits on how long a device's cursor holds changes back.
- * @returns A function that stops the loop.
- *
- * @internal
- */
 export function startPolling(
   conn: SQLiteConnection,
   tracker: ChangeTracker,

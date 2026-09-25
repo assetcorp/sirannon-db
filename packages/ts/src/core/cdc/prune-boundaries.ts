@@ -1,8 +1,3 @@
-/**
- * Names the part of Sirannon that holds changes back from deletion, so that one part never lifts another's floor.
- *
- * @public
- */
 export type PruneBoundarySource = 'device-sync' | 'replication' | 'device-cursors'
 
 export class PruneBoundaries {

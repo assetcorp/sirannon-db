@@ -324,6 +324,13 @@ export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void
 export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void
 
 /**
+ * Receives the lease on the controller role each time it changes hands, and null once no node holds it.
+ *
+ * @public
+ */
+export type ControllerLeaseWatcher = (lease: CoordinatorLease | null) => void
+
+/**
  * Stores primary authority, node sessions, group state, and the in-sync set
  * outside the database nodes so that failover has a source of truth no single node
  * owns. The package includes an etcd adapter; build your own to store this
@@ -334,6 +341,11 @@ export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void
 export interface ClusterCoordinator {
   /** Bids for the controller lease, and reports who holds it. */
   tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>
+  /** Calls back with the node holding the controller lease, and returns a function that stops the watch. A coordinator that serves no such watch leaves this out, and every node then bids for that lease on its own timer. */
+  watchControllerLease?(
+    clusterId: string,
+    watcher: ControllerLeaseWatcher,
+  ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
   /** Extends a lease, and reports false once it has already lapsed. */
   renewLease(leaseId: string, ttlMs: number): Promise<boolean>
   /** Gives up a lease at once instead of waiting for it to lapse. */

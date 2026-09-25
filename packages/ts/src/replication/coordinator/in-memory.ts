@@ -17,11 +17,15 @@ import {
   nextMaintenanceState,
 } from './group-rules.js'
 import {
+  ControllerLeaseWatchers,
   cloneLease,
   cloneNodeSession,
+  findLeaseIn,
+  liveNodeIdsIn,
   movePrimary,
   NodeSessionWatchers,
   nodeSessionKey,
+  ReplicationGroupWatchers,
   replicationGroupKey,
 } from './in-memory-helpers.js'
 import type {
@@ -31,6 +35,7 @@ import type {
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
+  ControllerLeaseWatcher,
   CoordinatorLease,
   CoordinatorNodeSession,
   NodeSessionWatcher,
@@ -56,8 +61,9 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   private readonly controllerLeases = new Map<string, CoordinatorLease>()
   private readonly nodeSessions = new Map<string, CoordinatorNodeSession>()
   private readonly replicationGroups = new Map<string, ReplicationGroupState>()
-  private readonly replicationGroupWatchers = new Map<string, Set<ReplicationGroupWatcher>>()
+  private readonly replicationGroupWatchers = new ReplicationGroupWatchers()
   private readonly nodeSessionWatchers = new NodeSessionWatchers()
+  private readonly controllerLeaseWatchers = new ControllerLeaseWatchers()
 
   constructor(options: InMemoryClusterCoordinatorOptions = {}) {
     this.now = options.now ?? Date.now
@@ -87,15 +93,24 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
       metadata: cloneMetadata(input.metadata),
     }
     this.controllerLeases.set(input.clusterId, lease)
+    this.notifyControllerLeaseWatchers(input.clusterId)
 
     return { acquired: true, lease: cloneLease(lease) }
+  }
+
+  watchControllerLease(clusterId: string, watcher: ControllerLeaseWatcher): () => void {
+    assertNonEmpty(clusterId, 'clusterId')
+    const stop = this.controllerLeaseWatchers.add(clusterId, watcher)
+    const held = this.liveControllerLease(clusterId)
+    watcher(held === null ? null : cloneLease(held))
+    return stop
   }
 
   async renewLease(leaseId: string, ttlMs: number): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     assertPositiveTtl(ttlMs)
 
-    const lease = this.findLease(leaseId)
+    const lease = findLeaseIn(this.controllerLeases.values(), this.nodeSessions.values(), leaseId)
     if (!lease || !this.isLeaseLive(lease)) {
       return false
     }
@@ -111,6 +126,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     for (const [clusterId, lease] of this.controllerLeases) {
       if (lease.id === leaseId) {
         this.controllerLeases.delete(clusterId)
+        this.notifyControllerLeaseWatchers(clusterId)
         return true
       }
     }
@@ -176,15 +192,6 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     this.notifyNodeSessionWatchers(clusterId)
   }
 
-  /**
-   * Calls back with the nodes holding a live session, on this call and on every registration or deregistration that follows.
-   *
-   * This coordinator keeps no timer, so a lease that lapses on its own reaches the watcher at the next such change.
-   *
-   * @param clusterId - Cluster whose sessions the watcher follows.
-   * @param watcher - Receives the live node set.
-   * @returns A function that stops the watch.
-   */
   watchNodeSessions(clusterId: string, watcher: NodeSessionWatcher): () => void {
     assertNonEmpty(clusterId, 'clusterId')
     const stop = this.nodeSessionWatchers.add(clusterId, watcher)
@@ -209,22 +216,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   watchReplicationGroup(clusterId: string, groupId: string, watcher: ReplicationGroupWatcher): () => void {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(groupId, 'groupId')
-    const key = replicationGroupKey(clusterId, groupId)
-    let watchers = this.replicationGroupWatchers.get(key)
-    if (!watchers) {
-      watchers = new Set()
-      this.replicationGroupWatchers.set(key, watchers)
-    }
-    watchers.add(watcher)
-
-    return () => {
-      const currentWatchers = this.replicationGroupWatchers.get(key)
-      if (!currentWatchers) return
-      currentWatchers.delete(watcher)
-      if (currentWatchers.size === 0) {
-        this.replicationGroupWatchers.delete(key)
-      }
-    }
+    return this.replicationGroupWatchers.add(replicationGroupKey(clusterId, groupId), watcher)
   }
 
   async compareAndAdvancePrimaryTerm(
@@ -336,50 +328,33 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     return cloneReplicationGroupState(next)
   }
 
-  private findLease(leaseId: string): CoordinatorLease | null {
-    for (const lease of this.controllerLeases.values()) {
-      if (lease.id === leaseId) {
-        return lease
-      }
-    }
-    for (const session of this.nodeSessions.values()) {
-      if (session.lease.id === leaseId) {
-        return session.lease
-      }
-    }
-    return null
-  }
-
   private isLeaseLive(lease: CoordinatorLease): boolean {
     return lease.expiresAtMs > this.now()
   }
 
   private liveNodeIds(clusterId: string): string[] {
-    const live: string[] = []
-    for (const session of this.nodeSessions.values()) {
-      if (session.clusterId === clusterId && this.isLeaseLive(session.lease)) {
-        live.push(session.nodeId)
-      }
-    }
-    return live
+    return liveNodeIdsIn(this.nodeSessions.values(), clusterId, this.now())
+  }
+
+  private liveControllerLease(clusterId: string): CoordinatorLease | null {
+    const lease = this.controllerLeases.get(clusterId)
+    return lease && this.isLeaseLive(lease) ? lease : null
   }
 
   private notifyNodeSessionWatchers(clusterId: string): void {
     this.nodeSessionWatchers.notify(clusterId, this.liveNodeIds(clusterId), this.onWatcherError)
   }
 
-  private notifyReplicationGroupWatchers(state: ReplicationGroupState): void {
-    const watchers = this.replicationGroupWatchers.get(replicationGroupKey(state.clusterId, state.groupId))
-    if (!watchers) return
+  private notifyControllerLeaseWatchers(clusterId: string): void {
+    this.controllerLeaseWatchers.notify(clusterId, this.liveControllerLease(clusterId), this.onWatcherError)
+  }
 
-    for (const watcher of watchers) {
-      try {
-        watcher(cloneReplicationGroupState(state))
-      } catch (err: unknown) {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        this.onWatcherError?.(wrappedErr)
-      }
-    }
+  private notifyReplicationGroupWatchers(state: ReplicationGroupState): void {
+    this.replicationGroupWatchers.notify(
+      replicationGroupKey(state.clusterId, state.groupId),
+      state,
+      this.onWatcherError,
+    )
   }
 
   private isPromotable(

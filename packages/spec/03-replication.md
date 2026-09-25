@@ -350,6 +350,8 @@ The coordinator must provide, at least: acquiring and renewing a controller leas
 
 A coordinator may also provide a watch over the node sessions of a cluster, which calls back with every node holding a live session on each registration and each lapse. A node holding that watch serves reads only from the nodes the watch names (see [05-server.md](05-server.md#get-dbidcluster)), and a node whose coordinator provides no such watch, or that reaches no coordinator, reads from the group's membership alone.
 
+A coordinator may also provide a watch over the controller lease, which calls back with the lease on each change of holder and with none once no node holds it. A standby controller holding that watch bids for the lease only while the watch reports no live holder, while a standby whose coordinator provides no such watch bids once every `tickIntervalMs`.
+
 ### Replication Group and Node Identity
 
 A replication group is the set of nodes holding copies of one database and sharing one primary authority; a process may host several groups, with no process-wide global primary. Each data-bearing node has a stable persisted identity tied to its durable database copy: a restarted process reusing that copy reuses its identity, while a new empty node receives a new identity and must sync before serving safe reads or becoming promotable. Session leases represent a running session and do not replace stable identity. A backup cycle on any node of the group resolves its preferred backup node from the group's membership (see [02-core.md](02-core.md#preferred-backup-node)).

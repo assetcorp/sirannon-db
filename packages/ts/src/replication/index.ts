@@ -17,6 +17,7 @@ export type {
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
+  ControllerLeaseWatcher,
   CoordinatorCompatibilityMetadata,
   CoordinatorLease,
   CoordinatorNodeSession,

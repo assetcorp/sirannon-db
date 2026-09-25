@@ -66,6 +66,7 @@ export interface ClusterCoordinator {
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;
     updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>;
     updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>;
+    watchControllerLease?(clusterId: string, watcher: ControllerLeaseWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
     watchNodeSessions?(clusterId: string, watcher: NodeSessionWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
     watchReplicationGroup(clusterId: string, groupId: string, watcher: ReplicationGroupWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
 }
@@ -119,6 +120,9 @@ export interface ConflictResolution {
 export interface ConflictResolver {
     resolve(ctx: ConflictContext): ConflictResolution | Promise<ConflictResolution>;
 }
+
+// @public
+export type ControllerLeaseWatcher = (lease: CoordinatorLease | null) => void;
 
 // @public
 export function coordinatorBackupGroup(options: CoordinatorBackupGroupOptions): BackupGroupSource;
@@ -444,7 +448,11 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly config: ReplicationConfig;
     // @internal (undocumented)
+    controllerBidding: boolean;
+    // @internal (undocumented)
     controllerLeaseId: string | null;
+    // @internal (undocumented)
+    controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
     controllerState: 'disabled' | 'standby' | 'active' | 'lost';
     // @internal (undocumented)
@@ -524,6 +532,8 @@ export class ReplicationEngine extends EventEmitter {
     nodeSessionLeaseId: string | null;
     // @internal (undocumented)
     nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
+    // @internal (undocumented)
+    observedControllerLease: CoordinatorLease | null;
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;

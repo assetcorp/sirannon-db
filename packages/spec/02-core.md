@@ -375,7 +375,7 @@ Hooks registered on the registry apply to every database and run before database
 | Event | Context | When | Can deny |
 |-------|---------|------|----------|
 | `beforeQuery` | `{ databaseId, sql, params?, writeConcern?, readConcern? }` | Before a query | Yes |
-| `afterQuery` | `{ databaseId, sql, params?, durationMs }` | After a query | No |
+| `afterQuery` | `{ databaseId, sql, params?, durationMs, error? }` | After a query | No |
 | `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
 | `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
@@ -383,7 +383,7 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
 | `beforePush` | `{ databaseId, table, deviceId, identity? }` | Before a server writes a pushed device batch, once per table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A failure of an `afterQuery`, `databaseOpen`, or `databaseClose` hook, whether a throw or a returned promise, leaves the operation and the other hooks for that event unaffected, and a rejection of that promise must not surface as an unhandled rejection. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
+A before-hook that throws aborts the operation, and its error propagates to the caller. An `afterQuery` context must hold in `error` the error that the caller receives when the statement fails, which for every statement of a failed transaction is that transaction's error, and must omit `error` when the statement succeeds. Query and connection hooks run synchronously; a hook that returns a promise fails. A failure of an `afterQuery`, `databaseOpen`, or `databaseClose` hook, whether a throw or a returned promise, leaves the operation and the other hooks for that event unaffected, and a rejection of that promise must not surface as an unhandled rejection. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 

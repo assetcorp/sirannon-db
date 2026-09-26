@@ -40,6 +40,16 @@ pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
 
 When the process cannot load uWebSockets.js, `server.listen()` fails with code `SERVER_DEPENDENCY_MISSING` and a message that gives this install command.
 
+## Add Sirannon with a coding agent
+
+The [Sirannon skill](https://github.com/assetcorp/sirannon-db/tree/main/skills/sirannon) tells a coding agent which driver suits the app's runtime, which packages to install alongside it, and which server settings keep the data safe. Install the skill into the coding agents on your machine with the skills CLI:
+
+```bash
+npx skills add assetcorp/sirannon-db
+```
+
+The skill has the agent read the Sirannon version that your project installs, and it sends the agent to that version's types and documentation.
+
 ## Quick start
 
 ```ts

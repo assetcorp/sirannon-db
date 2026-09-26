@@ -103,7 +103,7 @@ The [backups guide](backups.md) covers the cron schedule, sending a copy to stor
 
 ## Hooks and metrics
 
-A before-hook refuses the operation by throwing.
+A before-hook refuses the operation by throwing. Sirannon calls an after-query hook whether the statement succeeds or fails, and when it fails, `ctx.error` holds the error that the caller receives.
 
 ```ts
 sirannon.onBeforeQuery(ctx => {

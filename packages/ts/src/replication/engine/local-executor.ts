@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
+import { execute } from '../../core/query-executor.js'
 import { insertDdlChange } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions, WriteConcern } from '../../core/types.js'
@@ -46,9 +47,7 @@ export class LocalExecutor {
     const result = await runWriterTransaction(engine.writerConn, async tx => {
       const seqBefore = await engine.log.getLocalSeq()
 
-      const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
-      const stmt = await tx.prepare(sql)
-      const r = await stmt.run(...bindValues)
+      const r = await execute(tx, sql, params)
 
       if (isDdl) {
         await insertDdlChange(tx, CHANGES_TABLE, {
@@ -145,9 +144,7 @@ export class LocalExecutor {
           throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
         }
 
-        const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
-        const stmt = await tx.prepare(sql)
-        const r = await stmt.run(...bindValues)
+        const r = await execute(tx, sql, params)
         results.push({ changes: r.changes, lastInsertRowId: r.lastInsertRowId })
 
         if (isDdl) {

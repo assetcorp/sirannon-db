@@ -5,10 +5,10 @@
 ```ts
 
 // @public
-export function buildOperationManifest<I>(registry: OperationRegistry<I>): OperationManifest;
+export function buildOperationManifest<I>(registry: OperationRegistry<I>, shared?: DatabaseOperations<I>): OperationManifest;
 
 // @public
-export const CODEGEN_USAGE = "sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--package <name>]\n\nReads the operation registry a server is built from and writes the typed\nreferences a client calls it through. The registry module is imported, so run\nit under a loader that reads your source format when it is not JavaScript.";
+export const CODEGEN_USAGE = "sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--shared-export <name>] [--package <name>]\n\nReads the operations that you register with a server and writes the typed\nreferences through which a client calls them. The generator takes the\nper-database registry from the 'operations' export, or from the default\nexport, and the operations for every database from the 'sharedOperations'\nexport. The generator imports the registry module, so run it under a loader\nthat reads your source format when that format is not JavaScript.";
 
 // @public
 export interface DatabaseManifest {
@@ -23,6 +23,7 @@ export const OPERATION_MANIFEST_VERSION = 1;
 export interface OperationManifest {
     databases: Record<string, DatabaseManifest>;
     digest: string | undefined;
+    shared?: DatabaseManifest;
     version: number;
 }
 

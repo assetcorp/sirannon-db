@@ -19,6 +19,7 @@ ServerOptions {
   maxUnacknowledgedChanges?:      number   (default: 1_000)           -- see 08-device-sync.md
   authenticate?:                  AuthenticateHook
   operations?:                    OperationRegistry
+  sharedOperations?:              DatabaseOperations
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
   acceptDeviceSync?:              boolean  (default: false)           -- see 08-device-sync.md
@@ -49,21 +50,24 @@ On the WebSocket upgrade the server must complete the handshake and close immedi
 ### Registered Operations
 
 ```text
-OperationRegistry = Map<databaseId, {
+OperationRegistry  = Map<databaseId, DatabaseOperations>
+DatabaseOperations = {
   reads?:  Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        columns?: List<string>, statement: (args) -> Statement }>
   writes?: Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        statements: (args) -> Statement or List<Statement> }>
-}>
+}
 
 Statement { sql: string, params?: Params }
 ```
 
 A caller invokes a registered operation by name, and the request carries no SQL. The registry is server-side code, keyed by database identifier. `args` declares the argument names a caller may supply. `fromIdentity` maps an argument name to a field of the identity `authenticate` returned, and the server must supply that argument itself. A request supplying an argument named in `fromIdentity` must fail with `ARGUMENT_NOT_ALLOWED`; the server must not override the supplied value instead. An implementation must constrain `fromIdentity` values to the fields of the identity type, so that a wrong field name fails to compile.
 
+`sharedOperations` is one set of reads and writes that the server serves for every database identifier, including a database that the registry opens after the server starts. The server must resolve a name against the database's own entry in `operations` first and against `sharedOperations` second.
+
 A read contains exactly one statement and an optional `columns` list of what that statement returns. A write contains one or more statements, and the server must run them in a single transaction. The server passes the resolved arguments to both. It serves them over HTTP at `POST /db/{id}/query/{name}` and `POST /db/{id}/execute/{name}`, over WebSocket through a `query` or an `execute` message carrying `name`, and opens a live query over a read when a `subscribe` message names one.
 
-A server configured with a registry must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
+A server configured with `operations` or `sharedOperations` must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. An implementation must hash each shared operation under a kind of its own, so that moving an operation between `operations` and `sharedOperations` changes the digest. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
 
 ### Execution Target
 
@@ -131,7 +135,7 @@ POST /db/{id}/query/{name}   { args?, readConcern? }   -> { rows: List<Map> }
 POST /db/{id}/execute/{name} { args?, writeConcern? }  -> { results: List<Execute> }
 ```
 
-`acceptSql` governs the five statement routes and the five statement WebSocket messages, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`, and it serves its other routes as their own options allow: registered operations, subscriptions, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
+`acceptSql` governs the five statement routes, the five statement WebSocket messages, and table subscriptions, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`. It must also fail a `subscribe` message carrying `table` or `tables` and no `deviceId` with `SQL_NOT_ACCEPTED`, unless the registry has a `beforeSubscribe` hook. It serves its other routes as their own options allow: registered operations, live queries, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
 
 `acceptDeviceSync` governs device sync and defaults to false. With it false, a server must fail `POST /db/{id}/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, a `subscribe` message carrying `deviceId`, and an `ack` message with `403 DEVICE_SYNC_NOT_ACCEPTED`. It must also omit every `sync.` capability from `GET /capabilities`, so that a device can distinguish such a server from one that predates device sync. A server configured with `acceptDeviceSync` true and no `authenticate` hook refuses to start, with `INVALID_DEVICE_SYNC`.
 

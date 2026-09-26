@@ -171,7 +171,7 @@ Connect to `ws://host:port/db/{id}`. Every message has a `type` and an `id` that
 | `unsubscribe` | - | `{ type: 'unsubscribed' }` |
 | `ack` | `deviceId`, `seq` | `{ type: 'result', data: { acked, seq } }` |
 
-A `query` or `execute` message with `name` invokes the registered operation of that name and holds no SQL, so the server accepts it whether or not you set `acceptSql`. A `subscribe` with `deviceId` and an `ack` need `acceptDeviceSync: true`, and the server refuses both with `DEVICE_SYNC_NOT_ACCEPTED` until you set it.
+A `query` or `execute` message with `name` invokes the registered operation of that name and holds no SQL, so the server accepts it whether or not you set `acceptSql`. Through a `subscribe` with `table` or `tables`, a caller reads every change to those tables, the same rows that a `SELECT *` returns. The server therefore refuses it with `SQL_NOT_ACCEPTED` unless you set `acceptSql: true` or register an `onBeforeSubscribe` hook, which then admits or refuses each table. A `subscribe` with `deviceId` and an `ack` need `acceptDeviceSync: true`, and the server refuses both with `DEVICE_SYNC_NOT_ACCEPTED` until you set it.
 
 | Outbound `type` | Contents |
 | --- | --- |

@@ -10,6 +10,7 @@ export type AfterQueryHook = (ctx: AfterQueryHookContext) => void;
 // @public
 export interface AfterQueryHookContext extends QueryHookContext {
     durationMs: number;
+    error?: unknown;
 }
 
 // @public
@@ -1192,6 +1193,7 @@ export interface ServerOptions<Identity = unknown> {
     operations?: OperationRegistry<Identity>;
     port?: number;
     resolveExecutionTarget?: ServerExecutionTargetResolver;
+    sharedOperations?: DatabaseOperations<Identity>;
 }
 
 // @public
@@ -1388,6 +1390,8 @@ export interface WSHandlerOptions<Identity = unknown> {
     operations?: OperationRegistry<Identity>;
     // (undocumented)
     resolveExecutionTarget?: ServerExecutionTargetResolver;
+    // (undocumented)
+    sharedOperations?: DatabaseOperations<Identity>;
 }
 
 // (No @packageDocumentation comment for this package)

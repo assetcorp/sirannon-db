@@ -84,6 +84,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `maxUnacknowledgedChanges` | `number` | `1_000` | How far past its acknowledged sequence a device may get before delivery pauses; the server still delivers a larger transaction whole |
 | `authenticate` | `AuthenticateHook<Identity>` | - | Runs before every database route and WebSocket upgrade; returns the caller identity, throws `RequestDeniedError` to refuse |
 | `operations` | `OperationRegistry<Identity>` | - | Reads and writes that this server serves by name, keyed by database ID |
+| `sharedOperations` | `DatabaseOperations<Identity>` | - | Reads and writes that this server serves by name on every database, including a database that the registry opens after the server starts; for a name in both sets, the server uses the database's own entry in `operations` |
 | `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
 | `acceptBackupRestore` | `boolean` | `false` | Whether the server rebuilds a database from its backups over the network |
 | `acceptDeviceSync` | `boolean` | `false` | Whether the server serves device sync; with it on, the server refuses to start unless you also set `authenticate` |

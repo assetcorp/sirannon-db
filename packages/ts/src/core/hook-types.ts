@@ -23,12 +23,14 @@ export interface QueryHookContext {
  */
 export type BeforeQueryHook = (ctx: QueryHookContext) => void
 
-/** The context that Sirannon passes to each after-query hook, which adds the statement's duration to the query context.
+/** The context that Sirannon passes to each after-query hook, which adds the statement's duration and outcome to the query context.
  * @public
  */
 export interface AfterQueryHookContext extends QueryHookContext {
   /** The number of milliseconds from the start of the statement to its return, including any time that it waited for the writer. */
   durationMs: number
+  /** The error that the statement threw, which the caller also receives, or undefined when the statement succeeded. Every statement of a failed transaction receives that transaction's error. */
+  error?: unknown
 }
 
 /** A hook that Sirannon calls synchronously after each statement returns or throws. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
@@ -61,7 +63,7 @@ export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void
  */
 export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void
 
-/** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription.
+/** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription. A server with `acceptSql` off serves a table subscription only when the registry has this hook.
  * @public
  */
 export type BeforeSubscribeHook = (ctx: {

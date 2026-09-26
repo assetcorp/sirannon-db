@@ -40,6 +40,16 @@ pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
 
 When the process cannot load uWebSockets.js, `server.listen()` fails with code `SERVER_DEPENDENCY_MISSING` and a message that gives this install command.
 
+## Add Sirannon with a coding agent
+
+The [Sirannon skill](https://github.com/assetcorp/sirannon-db/tree/main/skills/sirannon) tells a coding agent which driver suits the app's runtime, which packages to install alongside it, and which server settings keep the data safe. Install the skill into the coding agents on your machine with the skills CLI:
+
+```bash
+npx skills add assetcorp/sirannon-db
+```
+
+The skill has the agent read the Sirannon version that your project installs, and it sends the agent to that version's types and documentation.
+
 ## Quick start
 
 ```ts
@@ -55,17 +65,17 @@ await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@e
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
 ```
 
-In the browser, open the database directly with one read connection, because the `Sirannon` registry is for server-side code:
+In the browser, open the database through the same registry with the browser driver:
 
 ```ts
-import { Database } from '@delali/sirannon-db'
+import { Sirannon } from '@delali/sirannon-db'
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 
-const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
-const db = await Database.create('app', '/app.db', driver, { readPoolSize: 1, walMode: false })
+const sirannon = new Sirannon({ driver: waSqlite({ vfs: 'IDBBatchAtomicVFS' }) })
+const db = await sirannon.open('app', '/app.db', { walMode: false })
 ```
 
-On React Native, open the database the same way with `expoSqlite()` and `readPoolSize: 1`.
+On React Native, open the database the same way with `expoSqlite()`.
 
 ## Package exports
 
@@ -172,10 +182,10 @@ const client = new SirannonClient('http://localhost:9876', { transport: 'websock
 const db = client.database('app')
 
 const users = await db.query(activeUsers, {})
-const sub = await db.on('users').subscribe(event => console.log('User changed:', event))
+const liveUsers = await db.live(activeUsers, {})
 ```
 
-The `sirannon-codegen` command generates those references from the registry, so you can skip writing them by hand. Set `acceptSql: true` when you want the server to execute the statements that a client sends. Read the [registered operations guide](https://sirannon.sondelali.com/docs/registered-operations) and the [code generation guide](https://sirannon.sondelali.com/docs/code-generation) for operations and their references, the [server guide](https://sirannon.sondelali.com/docs/server) for `acceptSql`, the routes, and the messages, and the [client guide](https://sirannon.sondelali.com/docs/client-sdk) for the transports.
+The `sirannon-codegen` command generates those references from the registry, so you can skip writing them by hand. Set `acceptSql: true` when you want the server to execute the statements that a client sends. A client streams a table's changes through `db.on(table).subscribe` only from a server with `acceptSql: true` or an `onBeforeSubscribe` hook, which admits or refuses each table. Read the [registered operations guide](https://sirannon.sondelali.com/docs/registered-operations) and the [code generation guide](https://sirannon.sondelali.com/docs/code-generation) for operations and their references, the [server guide](https://sirannon.sondelali.com/docs/server) for `acceptSql`, the routes, and the messages, and the [client guide](https://sirannon.sondelali.com/docs/client-sdk) for the transports.
 
 ## Security
 

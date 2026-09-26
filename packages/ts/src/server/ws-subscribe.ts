@@ -2,7 +2,7 @@ import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
 import type { SubscribeHookContext } from '../core/hooks/types.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
-import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE, TABLE_SUBSCRIPTION_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { AckResponse } from './protocol.js'
 import { decodeBoundParams } from './protocol.js'
 import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from './sync-protocol.js'
@@ -18,6 +18,7 @@ export type SubscriptionAttachment = 'attached' | 'duplicate' | 'disconnected'
 
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
+  acceptSql: boolean
   acceptDeviceSync: boolean
   maxUnacknowledgedChanges: number
   socketResumeBytes: number
@@ -51,6 +52,11 @@ export async function handleSubscribeMessage(
 ): Promise<void> {
   if (msg.deviceId !== undefined && !deps.acceptDeviceSync) {
     deps.sendError(conn, id, 'DEVICE_SYNC_NOT_ACCEPTED', DEVICE_SYNC_NOT_ACCEPTED_MESSAGE)
+    return
+  }
+
+  if (msg.deviceId === undefined && !deps.acceptSql && !deps.hasSubscribeHook()) {
+    deps.sendError(conn, id, 'SQL_NOT_ACCEPTED', TABLE_SUBSCRIPTION_NOT_ACCEPTED_MESSAGE)
     return
   }
 

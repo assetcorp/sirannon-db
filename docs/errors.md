@@ -129,7 +129,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | --- | --- | --- |
 | `ReplicationError` | `REPLICATION_ERROR` | Base class for replication failures |
 | `SyncError` | `SYNC_ERROR` | First sync fails, because the node is not ready, the transfer times out, or a manifest or batch order does not match |
-| `ConflictError` | `CONFLICT_ERROR` | A conflict resolver throws on a replicated change, and the error names the table and row |
+| `ConflictError` | `CONFLICT_ERROR` | A conflict resolver throws on a replicated change; `table` and `rowId` identify the row |
 | `TransportError` | `TRANSPORT_ERROR` | A peer is unreachable, or a send fails |
 | `BatchValidationError` | `BATCH_VALIDATION_ERROR` | A batch fails its checksum, breaks the schema allowlist, exceeds `maxClockDriftMs`, or contains unsafe DDL |
 | `WriteConcernError` | `WRITE_CONCERN_ERROR` | The replicas do not meet the write concern within the timeout |

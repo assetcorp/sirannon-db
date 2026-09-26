@@ -153,8 +153,7 @@ export async function executeGroup(conn: SQLiteConnection, units: readonly Group
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  await rollbackQuietly(conn)
-  return outcomes.map(() => ({ ok: false, error: failure }))
+  return settleRefusedCommit(conn, units, outcomes, failure)
 }
 
 async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<ExecuteResult[]> {
@@ -201,8 +200,28 @@ async function executeGroupIsolated(conn: SQLiteConnection, units: readonly Grou
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  await rollbackQuietly(conn)
-  return outcomes.map(outcome => (outcome.ok ? { ok: false, error: failure } : outcome))
+  return settleRefusedCommit(conn, units, outcomes, failure)
+}
+
+async function settleRefusedCommit(
+  conn: SQLiteConnection,
+  units: readonly GroupUnit[],
+  outcomes: GroupOutcome[],
+  failure: Error,
+): Promise<GroupOutcome[]> {
+  const transactionStillOpen = (await execControl(conn, 'ROLLBACK')) === null
+  const rerunEachAlone = transactionStillOpen && succeededUnitCount(outcomes) > 1
+  for (let i = 0; i < units.length; i++) {
+    if (!outcomes[i].ok) continue
+    outcomes[i] = rerunEachAlone ? await runUnitAlone(conn, units[i]) : { ok: false, error: failure }
+  }
+  return outcomes
+}
+
+function succeededUnitCount(outcomes: readonly GroupOutcome[]): number {
+  let count = 0
+  for (const outcome of outcomes) if (outcome.ok) count++
+  return count
 }
 
 async function runIsolatedUnit(conn: SQLiteConnection, unit: GroupUnit, savepoint: string): Promise<UnitAttempt> {

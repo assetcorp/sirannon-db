@@ -19,11 +19,8 @@ let conn: MockWSConnection
 
 const driver = betterSqlite3()
 
-async function openHandler(maxUnacknowledgedChanges?: number): Promise<void> {
-  handler = createWSHandler(sirannon, {
-    acceptDeviceSync: true,
-    ...(maxUnacknowledgedChanges === undefined ? {} : { maxUnacknowledgedChanges }),
-  })
+async function openHandler(options: { maxUnacknowledgedChanges?: number; acceptSql?: boolean } = {}): Promise<void> {
+  handler = createWSHandler(sirannon, { acceptDeviceSync: true, ...options })
   conn = createMockConnection()
   await handler.handleOpen(conn, 'mydb')
 }
@@ -58,7 +55,7 @@ function messagesOfType(type: string): Record<string, unknown>[] {
 describe('device subscription', () => {
   it('reports the delivery window so a device can acknowledge before it fills', async () => {
     await handler.close()
-    await openHandler(7)
+    await openHandler({ maxUnacknowledgedChanges: 7 })
 
     handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', tables: ['notes'], deviceId: DEVICE }))
     await until(() => messagesOfType('subscribed').length === 1)
@@ -67,6 +64,9 @@ describe('device subscription', () => {
   })
 
   it('does not report a window to a plain subscriber', async () => {
+    await handler.close()
+    await openHandler({ acceptSql: true })
+
     handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', table: 'notes' }))
     await until(() => messagesOfType('subscribed').length === 1)
 

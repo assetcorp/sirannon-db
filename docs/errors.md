@@ -120,7 +120,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `ARGUMENT_NOT_ALLOWED` | The caller supplies an undeclared argument, or one that the server fills from identity |
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request has none |
 | `REGISTRY_MISMATCH` | A live query echoes a registry digest that this server does not serve |
-| `SQL_NOT_ACCEPTED` | The server accepts no SQL over the network |
+| `SQL_NOT_ACCEPTED` | The server accepts no SQL over the network, or a table subscription reaches a server with `acceptSql` off and no `onBeforeSubscribe` hook |
 | `UNSUPPORTED_SUBPROTOCOL` | A WebSocket upgrade offers no subprotocol that the server supports |
 
 ## Replication

@@ -1,7 +1,9 @@
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { unrefTimer } from './http-json.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
+import type { NetworkSignal } from './network-signal.js'
 import { pushSyncBatch } from './sync-push.js'
+import { jitteredBackoff } from './sync-reconnect.js'
 import { RemoteError } from './types.js'
 
 export interface PushLoopConfig {
@@ -12,6 +14,7 @@ export interface PushLoopConfig {
   batchSize: number
   intervalMs: number
   maxRetryDelayMs: number
+  network: NetworkSignal
 }
 
 export interface PushLoopHooks {
@@ -27,7 +30,8 @@ export interface PushLoopHooks {
  * Pushes the changes in this device's outbox that come after the durable push cursor.
  *
  * After each failure, the loop doubles its wait before the next try, up to the
- * configured cap. When the server refuses a push with `MIGRATION_REQUIRED`, the
+ * configured cap, and it makes no try while the device reports no network. When
+ * the server refuses a push with `MIGRATION_REQUIRED`, the
  * loop reconciles migrations and resets the wait once the schemas match, so that a
  * device whose schema is behind the server's recovers automatically.
  */
@@ -80,10 +84,16 @@ export class PushLoop {
     }
   }
 
+  retryNow(): void {
+    this.consecutiveFailures = 0
+    this.nextAttemptAt = 0
+    void this.drain()
+  }
+
   async drain(): Promise<void> {
     const port = this.hooks.port()
     if (this.pushing || !this.hooks.isRunning() || port === null) return
-    if (Date.now() < this.nextAttemptAt) return
+    if (Date.now() < this.nextAttemptAt || this.config.network.reportsOffline()) return
     this.pushing = true
     try {
       while (this.hooks.isRunning()) {
@@ -103,7 +113,7 @@ export class PushLoop {
   private async handleFailure(err: unknown): Promise<void> {
     this.hooks.recordError(err)
     this.consecutiveFailures += 1
-    const delay = Math.min(this.config.intervalMs * 2 ** this.consecutiveFailures, this.config.maxRetryDelayMs)
+    const delay = jitteredBackoff(this.config.intervalMs, this.consecutiveFailures, this.config.maxRetryDelayMs)
     this.nextAttemptAt = Date.now() + delay
     if (!(err instanceof RemoteError) || err.code !== 'MIGRATION_REQUIRED' || !this.hooks.isRunning()) return
     try {

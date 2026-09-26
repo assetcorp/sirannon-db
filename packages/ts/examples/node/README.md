@@ -50,7 +50,7 @@ The `--driver` flag accepts `better-sqlite3`, `better`, `node`, and `node-native
 ## Features Demonstrated
 
 - The example selects either `better-sqlite3` or Node's native SQLite driver.
-- It creates a database with `Database.create()`.
+- It opens each database through a `Sirannon` registry with `registry.open()`.
 - It creates the schema with `db.execute()`.
 - It applies file-based migrations with `loadMigrations()` and `db.migrate()`.
 - It inserts data with `db.execute()`.

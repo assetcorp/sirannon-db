@@ -122,6 +122,24 @@ function validatePage(raw: unknown): SnapshotPageResponse {
 }
 
 /**
+ * Returns whether the local database accepts reads and writes after a snapshot download fails. A failure before the
+ * wipe begins leaves the database intact, while a failure after it leaves every statement failing with
+ * `SNAPSHOT_IN_PROGRESS` until a later download succeeds.
+ *
+ * @param port - The local database that the download wrote into.
+ * @returns True when the database accepts statements.
+ *
+ * @internal
+ */
+export async function snapshotGateOpen(port: DeviceSyncPort): Promise<boolean> {
+  try {
+    return !(await port.snapshotLoadPending())
+  } catch {
+    return false
+  }
+}
+
+/**
  * Copies a database from a server into a local database, and replaces every local table that the snapshot contains.
  *
  * @param port - The local database to write the snapshot into.

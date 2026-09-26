@@ -1,4 +1,4 @@
-import { Database } from '@delali/sirannon-db'
+import { type Database, Sirannon } from '@delali/sirannon-db'
 import type { SyncController } from '@delali/sirannon-db/client'
 import { waSqlite } from '@delali/sirannon-db/driver/wa-sqlite'
 import type { LiveDatabase } from '@delali/sirannon-db/react'
@@ -21,6 +21,7 @@ FROM ${WORK_ORDERS_TABLE} ORDER BY site, task`
 
 export interface FieldDevice {
   readonly name: string
+  readonly sirannon: Sirannon
   readonly db: Database
   readonly liveDb: LiveDatabase
   readonly sync: SyncController | null
@@ -32,8 +33,8 @@ export async function openFieldDevice(
   serverUrl: string | null,
   hooks: DeviceSessionHooks,
 ): Promise<FieldDevice> {
-  const driver = waSqlite({ vfs: 'IDBBatchAtomicVFS' })
-  const db = await Database.create(DATABASE_ID, `/${DATABASE_ID}-${name}.db`, driver, {
+  const sirannon = new Sirannon({ driver: waSqlite({ vfs: 'IDBBatchAtomicVFS' }) })
+  const db = await sirannon.open(DATABASE_ID, `/${DATABASE_ID}-${name}.db`, {
     readPoolSize: 1,
     walMode: false,
   })
@@ -53,14 +54,12 @@ export async function openFieldDevice(
   }
 
   const liveDb: LiveDatabase = db
-  return { name, db, liveDb, sync, neverSynced }
+  return { name, sirannon, db, liveDb, sync, neverSynced }
 }
 
 export async function closeFieldDevice(device: FieldDevice): Promise<void> {
   await device.sync?.stop().catch(() => undefined)
-  if (!device.db.closed) {
-    await device.db.close().catch(() => undefined)
-  }
+  await device.sirannon.shutdown().catch(() => undefined)
 }
 
 function assertWithin(value: string, limit: number, field: string): void {

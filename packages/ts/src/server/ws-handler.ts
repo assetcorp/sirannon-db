@@ -286,6 +286,7 @@ export class WSHandler<Identity = unknown> {
   private subscribeDeps(): WSSubscribeDeps {
     return {
       cdc: this.cdc,
+      acceptSql: this.acceptSql,
       acceptDeviceSync: this.acceptDeviceSync,
       maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
       socketResumeBytes: this.socketResumeBytes,

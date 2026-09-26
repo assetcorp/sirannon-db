@@ -95,7 +95,7 @@ pnpm run codegen
 
 That command writes [`src/generated/operations.ts`](src/generated/operations.ts), which the repository tracks. Every write declares `fromIdentity`, so the server fills the `audit_log.actor` column from the authenticated caller's identity. Each write also validates its arguments before it produces a statement.
 
-The dashboard reads all four as ordinary reads and refreshes them whenever a CDC table subscription reports a change. Two of them, `customerEntitlements` and `usageEvents`, join tables, and a live query maintains only a single-table result. Each subscription passes `onReset`, so when a reconnect falls outside the retained change history, the dashboard reads the control plane again and its rows stay current. The [web-client example](../web-client/) shows the live-query form.
+The dashboard reads all four as ordinary reads and refreshes them whenever a CDC table subscription reports a change. Two of them, `customerEntitlements` and `usageEvents`, join tables, and a live query maintains only a single-table result. A node with `acceptSql` off streams a table's changes only through an `onBeforeSubscribe` hook, so each node registers one that admits the five replicated tables and refuses every other table. Each subscription passes `onReset`, so when a reconnect falls outside the retained change history, the dashboard reads the control plane again and its rows stay current. The [web-client example](../web-client/) shows the live-query form.
 
 ## Read routing
 

@@ -36,7 +36,7 @@ async function until(predicate: () => boolean, timeout = 3000): Promise<void> {
 it('reports each change event that the server delivers to a WebSocket subscriber', async () => {
   const db = await sirannon.open('mydb', join(tempDir, 'cdc-metrics.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
-  handler = createWSHandler(sirannon, {})
+  handler = createWSHandler(sirannon, { acceptSql: true })
   const conn = createMockConnection()
   await handler.handleOpen(conn, 'mydb')
   handler.handleMessage(conn, JSON.stringify({ id: 'notes-feed', type: 'subscribe', table: 'notes' }))

@@ -83,7 +83,22 @@ for (const table of REPLICATED_TABLES) {
   }
 }
 
-const sirannon = new Sirannon({ driver })
+const STREAMED_TABLES: ReadonlySet<string> = new Set(REPLICATED_TABLES)
+
+const sirannon = new Sirannon({
+  driver,
+  hooks: {
+    onBeforeSubscribe: ({ table }) => {
+      if (!STREAMED_TABLES.has(table)) {
+        throw new RequestDeniedError(
+          403,
+          'FORBIDDEN',
+          `Change streams cover the control-plane tables only, so '${table}' has none`,
+        )
+      }
+    },
+  },
+})
 const db = await sirannon.open(DATABASE_ID, dbPath)
 const transport = new GrpcReplicationTransport({
   host: grpcHost,

@@ -303,7 +303,7 @@ export class ReplicationEngine extends EventEmitter {
    *
    * @param sql - The statement to execute.
    * @param params - The values to bind to the statement, named or positional.
-   * @param options - The write concern for this statement, which applies only when this node executes the write itself.
+   * @param options - The write concern for this statement, which the primary also applies to a forwarded write before it answers.
    * @returns The number of rows that changed and the ID of the last inserted row.
    */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
@@ -311,12 +311,12 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
-   * Executes one statement once for each parameter set. On this node, each execution commits in its own transaction;
-   * when this node forwards the batch, the primary executes every set in one transaction.
+   * Executes one statement once for each parameter set and commits every set in one transaction, on this node or, when
+   * this node forwards the batch, on the primary.
    *
    * @param sql - The statement to execute for each parameter set.
    * @param paramsBatch - One parameter set per execution.
-   * @param options - The write concern that each local execution waits for, which a forwarded batch ignores.
+   * @param options - The write concern for the batch, which the primary also applies to a forwarded batch before it answers.
    * @returns One result per parameter set, in order.
    */
   executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
@@ -340,7 +340,7 @@ export class ReplicationEngine extends EventEmitter {
    * When this node is the primary, it executes them here in the same way.
    *
    * @param statements - The statements to execute, in order, each with its own parameters.
-   * @param options - The engine ignores this argument.
+   * @param options - The write concern that the primary applies to the statements before it answers.
    * @returns The result of each statement, in order, and the request ID.
    */
   forwardStatements(

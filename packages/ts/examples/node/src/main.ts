@@ -2,14 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
-import {
-  createTenantResolver,
-  Database,
-  Sirannon,
-  type SQLiteDriver,
-  sanitizeTenantId,
-  tenantPath,
-} from '@delali/sirannon-db'
+import { createTenantResolver, Sirannon, type SQLiteDriver, sanitizeTenantId, tenantPath } from '@delali/sirannon-db'
 import { loadMigrations } from '@delali/sirannon-db/file-migrations'
 
 type NodeDriverName = 'better-sqlite3' | 'node'
@@ -102,14 +95,15 @@ async function main() {
 
   console.log(`=== Sirannon DB: Node.js ${label} driver example ===\n`)
 
-  console.log('1. Creating database with Database.create()...')
+  console.log('1. Opening a database through a Sirannon registry...')
+  const registry = new Sirannon({ driver })
   const dbPath = join(tempDir, 'example.db')
-  const db = await Database.create('main', dbPath, driver, {
+  const db = await registry.open('main', dbPath, {
     readPoolSize: 4,
     walMode: true,
     cdcPollInterval: 10,
   })
-  console.log(`   Database created at: ${dbPath}\n`)
+  console.log(`   Database file: ${dbPath}\n`)
 
   console.log('2. Creating schema via db.execute()...')
   await db.execute(`
@@ -214,7 +208,7 @@ async function main() {
 
   console.log('9. Connection pool with custom readPoolSize...')
   const db2Path = join(tempDir, 'pool-example.db')
-  const db2 = await Database.create('pool-demo', db2Path, driver, {
+  const db2 = await registry.open('pool-demo', db2Path, {
     readPoolSize: 8,
     walMode: true,
   })
@@ -316,14 +310,14 @@ async function main() {
   await db.backup(backupPath)
   console.log(`   Backup created at: ${backupPath}`)
 
-  const backupDb = await Database.create('backup-verify', backupPath, driver, { readOnly: true })
+  const backupDb = await registry.open('backup-verify', backupPath, { readOnly: true })
   const backupUsers = await backupDb.query<User>('SELECT * FROM users')
   console.log(`   Backup contains ${backupUsers.length} users.`)
   await backupDb.close()
   console.log()
 
   console.log('14. Graceful shutdown...')
-  await db.close()
+  await registry.shutdown()
   console.log('   Main database closed.')
   console.log('   Cleaning up temp directory...')
   cleanupTempDir()

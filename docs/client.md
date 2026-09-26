@@ -15,13 +15,13 @@ const db = client.database('app')
 const orders = await db.query(ordersByStatus, { status: 'pending' })
 await db.execute(placeOrder, { total: 4999 })
 
-const sub = await db.on('orders').subscribe(event => console.log('Order changed:', event))
+const pending = await db.live(ordersByStatus, { status: 'pending' })
 
-sub.unsubscribe()
+await pending.close()
 client.close()
 ```
 
-Both calls above name a [registered operation](operations.md), which is what a server serves by default. Send a statement instead once the server sets `acceptSql: true`:
+Every call above names a [registered operation](operations.md), which is what a server serves by default. Send a statement once the server sets `acceptSql: true`, and subscribe to a table's changes with `db.on(table).subscribe` once the server sets `acceptSql: true` or registers an `onBeforeSubscribe` hook:
 
 ```ts
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users WHERE active = ?', [1])

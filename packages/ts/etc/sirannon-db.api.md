@@ -10,6 +10,7 @@ export type AfterQueryHook = (ctx: AfterQueryHookContext) => void;
 // @public
 export interface AfterQueryHookContext extends QueryHookContext {
     durationMs: number;
+    error?: unknown;
 }
 
 // @public

@@ -30,41 +30,73 @@ export function renderOperationTypes(manifest: OperationManifest, options?: Rend
     `export const registryDigest = ${JSON.stringify(manifest.digest ?? null)}`,
   ]
 
-  const declared = new Map<string, string>()
+  const declared = new Map<string, Claimant>()
   for (const databaseId of Object.keys(manifest.databases).sort()) {
     const database = manifest.databases[databaseId]
-    lines.push('', ...renderDatabase(databaseId, database, declared))
+    const names = {
+      constant: identifier(databaseId),
+      rowPrefix: pascalCase(databaseId),
+      claimant: { owner: `database/${databaseId}`, label: databaseId },
+    }
+    lines.push('', ...renderOperations(names, database, declared))
+  }
+  if (manifest.shared !== undefined) {
+    const names = { constant: SHARED_CONSTANT, rowPrefix: SHARED_ROW_PREFIX, claimant: SHARED_CLAIMANT }
+    lines.push('', ...renderOperations(names, manifest.shared, declared))
   }
 
   return `${lines.join('\n')}\n`
 }
 
-function claim(declared: Map<string, string>, generated: string, source: string): string {
+const SHARED_CONSTANT = 'sharedOperations'
+const SHARED_ROW_PREFIX = 'Shared'
+
+interface Claimant {
+  owner: string
+  label: string
+}
+
+const SHARED_CLAIMANT: Claimant = { owner: 'shared', label: SHARED_CONSTANT }
+
+interface OperationsNames {
+  constant: string
+  rowPrefix: string
+  claimant: Claimant
+}
+
+function claim(declared: Map<string, Claimant>, generated: string, claimant: Claimant): string {
   const taken = declared.get(generated)
-  if (taken !== undefined && taken !== source) {
+  if (taken !== undefined && taken.owner !== claimant.owner) {
     throw new Error(
-      `'${source}' and '${taken}' both generate the identifier '${generated}'. Rename one of them so the generated file declares each name once.`,
+      `'${claimant.label}' and '${taken.label}' both generate the identifier '${generated}'. Rename one of them so the generated file declares each name once.`,
     )
   }
-  declared.set(generated, source)
+  declared.set(generated, claimant)
   return generated
 }
 
-function renderDatabase(databaseId: string, database: DatabaseManifest, declared: Map<string, string>): string[] {
-  const prefix = pascalCase(databaseId)
+function readClaimant(claimant: Claimant, name: string): Claimant {
+  return { owner: `${claimant.owner}/reads/${name}`, label: `${claimant.label}.reads.${name}` }
+}
+
+function renderOperations(
+  names: OperationsNames,
+  database: DatabaseManifest,
+  declared: Map<string, Claimant>,
+): string[] {
   const rowTypes = new Map<string, string>()
   const lines: string[] = []
 
   for (const [name, shape] of Object.entries(database.reads)) {
     if (shape.columns === null) continue
-    const rowType = claim(declared, `${prefix}${pascalCase(name)}Row`, `${databaseId}.reads.${name}`)
+    const rowType = claim(declared, `${names.rowPrefix}${pascalCase(name)}Row`, readClaimant(names.claimant, name))
     rowTypes.set(name, rowType)
     lines.push(`export interface ${rowType} {`)
     for (const column of shape.columns) lines.push(`  ${propertyKey(column)}: unknown`)
     lines.push('}', '')
   }
 
-  lines.push(`export const ${claim(declared, identifier(databaseId), databaseId)} = {`, '  reads: {')
+  lines.push(`export const ${claim(declared, names.constant, names.claimant)} = {`, '  reads: {')
   for (const [name, shape] of Object.entries(database.reads)) {
     const row = rowTypes.get(name) ?? 'Record<string, unknown>'
     lines.push(

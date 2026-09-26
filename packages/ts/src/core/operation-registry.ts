@@ -46,7 +46,7 @@ export interface WriteOperation<Identity = unknown> {
   statements(args: OperationArguments): OperationStatement | readonly OperationStatement[]
 }
 
-/** The reads and writes that one database exposes by name.
+/** The reads and writes that callers may invoke by name on a database.
  * @public
  */
 export interface DatabaseOperations<Identity = unknown> {

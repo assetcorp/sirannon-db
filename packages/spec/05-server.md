@@ -19,6 +19,7 @@ ServerOptions {
   maxUnacknowledgedChanges?:      number   (default: 1_000)           -- see 08-device-sync.md
   authenticate?:                  AuthenticateHook
   operations?:                    OperationRegistry
+  sharedOperations?:              DatabaseOperations
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
   acceptDeviceSync?:              boolean  (default: false)           -- see 08-device-sync.md
@@ -49,21 +50,24 @@ On the WebSocket upgrade the server must complete the handshake and close immedi
 ### Registered Operations
 
 ```text
-OperationRegistry = Map<databaseId, {
+OperationRegistry  = Map<databaseId, DatabaseOperations>
+DatabaseOperations = {
   reads?:  Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        columns?: List<string>, statement: (args) -> Statement }>
   writes?: Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        statements: (args) -> Statement or List<Statement> }>
-}>
+}
 
 Statement { sql: string, params?: Params }
 ```
 
 A caller invokes a registered operation by name, and the request carries no SQL. The registry is server-side code, keyed by database identifier. `args` declares the argument names a caller may supply. `fromIdentity` maps an argument name to a field of the identity `authenticate` returned, and the server must supply that argument itself. A request supplying an argument named in `fromIdentity` must fail with `ARGUMENT_NOT_ALLOWED`; the server must not override the supplied value instead. An implementation must constrain `fromIdentity` values to the fields of the identity type, so that a wrong field name fails to compile.
 
+`sharedOperations` is one set of reads and writes that the server serves for every database identifier, including a database that the registry opens after the server starts. The server must resolve a name against the database's own entry in `operations` first and against `sharedOperations` second.
+
 A read contains exactly one statement and an optional `columns` list of what that statement returns. A write contains one or more statements, and the server must run them in a single transaction. The server passes the resolved arguments to both. It serves them over HTTP at `POST /db/{id}/query/{name}` and `POST /db/{id}/execute/{name}`, over WebSocket through a `query` or an `execute` message carrying `name`, and opens a live query over a read when a `subscribe` message names one.
 
-A server configured with a registry must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
+A server configured with `operations` or `sharedOperations` must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. An implementation must hash each shared operation under a kind of its own, so that moving an operation between `operations` and `sharedOperations` changes the digest. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
 
 ### Execution Target
 

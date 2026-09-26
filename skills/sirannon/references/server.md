@@ -31,13 +31,13 @@ const server = createServer<{ tenant: string }>(sirannon, {
     if (!identity || identity.tenant !== ctx.databaseId) throw new RequestDeniedError(403, 'FORBIDDEN', 'Not your database')
     return identity
   },
-  operations,
+  sharedOperations,
 })
 
 await server.listen()
 ```
 
-`operations` maps each database identifier to its `reads` and `writes`, and the server matches that identifier exactly. With a database per tenant, build the object with one entry per tenant identifier that the server may serve. Take the shape of each entry from `ReadOperation` and `WriteOperation` in the installed types, and read `registered-operations.md` in the versioned documentation.
+When each tenant has its own database, put the tenants' `reads` and `writes` in `sharedOperations`, because the server serves that set on every database, including one that the registry opens after the server starts. `operations` maps one database identifier to operations for that database alone, and the server looks a name up there before it looks in `sharedOperations`. A 0.3.3 server has no `sharedOperations`, so on that release, build `operations` with one entry per tenant identifier and restart the server whenever a tenant joins. Take the shape of each operation from `ReadOperation` and `WriteOperation` in the installed types, and read `registered-operations.md` in the versioned documentation.
 
 ## 3. Keep it safe
 
@@ -57,7 +57,7 @@ From JavaScript or TypeScript, use `SirannonClient` from `@delali/sirannon-db/cl
 pnpm exec sirannon-codegen --registry ./src/operations.ts --out ./src/generated/operations.ts
 ```
 
-Keep the registry in a module with no side effects, because the command imports it. A `.ts` registry needs Node.js 24, or a loader such as `tsx` on older releases.
+Keep the registry in a module with no side effects, because the command imports it, and export the shared set from it as `sharedOperations`. A `.ts` registry needs Node.js 24, or a loader such as `tsx` on older releases.
 
 In a browser, pass a short-lived ticket in `webSocketProtocols`, built with `toSubprotocolCredential(prefix, ticket)`, and read it in `authenticate` with `readSubprotocolCredential(ctx, prefix)`. A browser client with `headers` alone throws `INVALID_ARGUMENT`, because a browser sends no header on a WebSocket handshake.
 

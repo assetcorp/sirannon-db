@@ -1193,6 +1193,7 @@ export interface ServerOptions<Identity = unknown> {
     operations?: OperationRegistry<Identity>;
     port?: number;
     resolveExecutionTarget?: ServerExecutionTargetResolver;
+    sharedOperations?: DatabaseOperations<Identity>;
 }
 
 // @public
@@ -1389,6 +1390,8 @@ export interface WSHandlerOptions<Identity = unknown> {
     operations?: OperationRegistry<Identity>;
     // (undocumented)
     resolveExecutionTarget?: ServerExecutionTargetResolver;
+    // (undocumented)
+    sharedOperations?: DatabaseOperations<Identity>;
 }
 
 // (No @packageDocumentation comment for this package)

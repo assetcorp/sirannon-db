@@ -1,6 +1,7 @@
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { toWsUrl } from './endpoint-urls.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
+import type { NetworkSignal } from './network-signal.js'
 import type { SyncControllerOptions, SyncState } from './sync-controller-types.js'
 import { PullStream } from './sync-pull-stream.js'
 import { PushLoop } from './sync-push-loop.js'
@@ -41,6 +42,7 @@ export function createSyncCollaborators(
   baseUrl: string,
   options: SyncControllerOptions,
   host: SyncControllerHost,
+  network: NetworkSignal,
 ): SyncCollaborators {
   const isRunning = (): boolean => host.state() === 'running'
 
@@ -53,6 +55,7 @@ export function createSyncCollaborators(
       batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
       intervalMs: options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS,
       maxRetryDelayMs: options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS,
+      network,
     },
     {
       isRunning,

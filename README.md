@@ -159,7 +159,7 @@ Application clients reach the current primary and the eligible read replicas ove
 
 ## Security
 
-- The server rejects SQL from the network until you set `acceptSql: true`, so give callers their reads and writes through [registered operations](docs/operations.md). Authenticate every request through the `authenticate` hook, and check the `Origin` header in that hook on each WebSocket upgrade.
+- The server rejects SQL from the network until you set `acceptSql: true`, and it rejects table change streams until you set that option or register an `onBeforeSubscribe` hook, so give callers their reads and writes through [registered operations](docs/operations.md). Authenticate every request through the `authenticate` hook, and check the `Origin` header in that hook on each WebSocket upgrade.
 - A Node client sends its `headers` on the WebSocket upgrade, so your hook can read `headers.authorization` on both transports. A browser sets no header on the handshake, so give a browser client a short-lived ticket in `webSocketProtocols`. The server selects the plain `sirannon.v1` identifier, so the ticket stays out of the handshake response.
 - When the hook rejects an upgrade, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 - The driver binds each parameter separately from the SQL text, so SQLite treats a value that you pass as a parameter as data.

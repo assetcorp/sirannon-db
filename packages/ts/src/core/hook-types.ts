@@ -63,7 +63,7 @@ export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void
  */
 export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void
 
-/** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription.
+/** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription. A server with `acceptSql` off serves a table subscription only when the registry has this hook.
  * @public
  */
 export type BeforeSubscribeHook = (ctx: {

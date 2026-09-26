@@ -8,6 +8,9 @@ import { validateReadConcern, validateWriteConcern } from './protocol.js'
 export const SQL_NOT_ACCEPTED_MESSAGE =
   'This server does not accept SQL statements over the wire; call a registered operation by name'
 
+export const TABLE_SUBSCRIPTION_NOT_ACCEPTED_MESSAGE =
+  'This server keeps table subscriptions off; subscribe to a registered read by name, or give the server acceptSql: true or an onBeforeSubscribe hook'
+
 export const DEVICE_SYNC_NOT_ACCEPTED_MESSAGE =
   'This server keeps device sync off; the server has to set acceptDeviceSync before a device can sync'
 

@@ -185,7 +185,7 @@ export interface ServerOptions<Identity = unknown> {
   authenticate?: AuthenticateHook<Identity>
   /** The statements that callers may invoke by name; with none registered, only the SQL routes serve reads and writes. */
   operations?: OperationRegistry<Identity>
-  /** Enables the five statement routes and their WebSocket messages; the default is false. */
+  /** Enables the five statement routes and their WebSocket messages, and WebSocket subscriptions to a table's changes on a registry without an `onBeforeSubscribe` hook; the default is false. */
   acceptSql?: boolean
   /**
    * Enables the route that rebuilds a database from its backups; the default is

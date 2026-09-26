@@ -29,7 +29,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `READ_ONLY` | A write was attempted on a read-only database. |
 | `QUERY_ERROR` | SQLite failed to prepare or execute a statement. |
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, or used `ATTACH`, `DETACH`, or `PRAGMA writable_schema`. |
-| `TRANSACTION_ERROR` | A transaction could not be committed or was rolled back. |
+| `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `HOOK_DENIED` | A hook rejected the operation. |
 | `CDC_ERROR` | The change-data-capture pipeline hit an unrecoverable error. |
 | `BACKUP_ERROR` | A backup operation failed. |
@@ -124,6 +124,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is true and the server has no `authenticate` hook. |
+| `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is true and the server has no `authenticate` hook. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |
 | `UNKNOWN_QUERY` | No operation of that name is registered for the database. |
 | `MISSING_ARGUMENT` | A declared argument was absent from the request. |
@@ -131,6 +132,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none. |
 | `REGISTRY_MISMATCH` | A subscription echoed a registry digest this server does not serve. |
 | `SQL_NOT_ACCEPTED` | The server does not accept SQL statements over the wire. |
+| `DEVICE_SYNC_NOT_ACCEPTED` | The server keeps device sync off, because `acceptDeviceSync` is false. |
 | `UNSUPPORTED_SUBPROTOCOL` | A WebSocket upgrade offered no subprotocol the server supports. |
 | `SYNC_UNSUPPORTED` | The execution target provides no change application, or the server predates device sync. |
 | `INVALID_MESSAGE` | A WebSocket message is missing required fields or has wrong types. |
@@ -150,6 +152,8 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `SCHEMA_AHEAD` | The device schema version is ahead of the server; the server must migrate first. |
 | `SNAPSHOT_UNSUPPORTED` | A snapshot was requested for an in-memory database. |
 | `SNAPSHOT_CHECKSUM_MISMATCH` | A downloaded snapshot page failed checksum verification. |
+| `DEVICE_NOT_SUBSCRIBED` | An acknowledgement names a device for which the connection holds no subscription. |
+| `DEVICE_CLOCK_AHEAD` | A pushed change carries an HLC wall time more than 300,000 ms ahead of the server clock. |
 
 ---
 

@@ -1,57 +1,58 @@
 import type { Params } from './types.js'
 
-/** One statement a registered operation runs, with its parameters bound.
+/** One statement that a registered operation executes, with its parameters.
  * @public
  */
 export interface OperationStatement {
-  /** The statement to run. */
+  /** The statement to execute. */
   sql: string
-  /** Parameters bound to that statement. */
+  /** The parameters to bind to that statement. */
   params?: Params
 }
 
-/** Values a caller passes when it invokes a registered operation by name.
+/** The values that a caller passes when it invokes a registered operation by name.
  * @public
  */
 export type OperationArguments = Record<string, unknown>
 
-/** A read a caller invokes by name, so the server accepts no SQL from the network.
+/** A read that a caller invokes by name, so that the caller sends no SQL over the network.
  * @public
  */
 export interface ReadOperation<Identity = unknown> {
-  /** Argument names this operation accepts from the caller. */
+  /** The argument names that this operation accepts from the caller. */
   args?: readonly string[]
-  /** Arguments the server fills from the authenticated identity, so a caller cannot supply them. */
+  /** The arguments that the server fills from the authenticated identity; a request that supplies one of them fails with `ARGUMENT_NOT_ALLOWED`. */
   fromIdentity?: Readonly<Record<string, keyof Identity & string>>
   /**
-   * The columns every row of this read carries. Code generation emits a typed
-   * row from it, and reads the columns from the statement only when the
-   * operation takes no arguments, because arguments choose the statement.
+   * The column names of each row that this read returns. Code generation builds
+   * a typed row from this list, and when the list is absent, it takes the
+   * columns from the statement text, but only for an operation that takes no
+   * arguments, because the statement text can change with the arguments.
    */
   columns?: readonly string[]
-  /** Builds the statement this read runs for a given set of arguments. */
+  /** Builds the statement that this read executes for a given set of arguments. */
   statement(args: OperationArguments): OperationStatement
 }
 
-/** A write a caller invokes by name. The server runs every statement it returns in one transaction.
+/** A write that a caller invokes by name; the server executes every statement that it returns in one transaction.
  * @public
  */
 export interface WriteOperation<Identity = unknown> {
-  /** Argument names this operation accepts from the caller. */
+  /** The argument names that this operation accepts from the caller. */
   args?: readonly string[]
-  /** Arguments the server fills from the authenticated identity, so a caller cannot supply them. */
+  /** The arguments that the server fills from the authenticated identity; a request that supplies one of them fails with `ARGUMENT_NOT_ALLOWED`. */
   fromIdentity?: Readonly<Record<string, keyof Identity & string>>
-  /** Builds the statements this write runs for a given set of arguments. */
+  /** Builds the statements that this write executes for a given set of arguments. */
   statements(args: OperationArguments): OperationStatement | readonly OperationStatement[]
 }
 
-/** The reads and writes one database exposes by name.
+/** The reads and writes that one database exposes by name.
  * @public
  */
 export interface DatabaseOperations<Identity = unknown> {
-  /** Reads callers may invoke, keyed by operation name. */
+  /** The reads that callers may invoke, keyed by operation name. */
   reads?: Readonly<Record<string, ReadOperation<Identity>>>
-  /** Writes callers may invoke, keyed by operation name. */
+  /** The writes that callers may invoke, keyed by operation name. */
   writes?: Readonly<Record<string, WriteOperation<Identity>>>
 }
 
@@ -61,26 +62,27 @@ export interface DatabaseOperations<Identity = unknown> {
 export type OperationRegistry<Identity = unknown> = Readonly<Record<string, DatabaseOperations<Identity>>>
 
 /**
- * A named operation a remote caller invokes, carrying the argument and row
- * types of the registered operation. Only `name` exists at runtime; `types`
- * is never assigned and is present so both type parameters are inferable at
- * the call site. Code generation emits one reference per registered operation.
+ * A named operation that a remote caller invokes, typed with the argument and
+ * row types of the registered operation. Only `name` exists at runtime, and
+ * `types` stays unassigned so that the compiler can infer both type parameters
+ * at the call site. Code generation emits one reference per registered
+ * operation.
  *
  * @public
  */
 export interface OperationRef<Args = OperationArguments, Row = Record<string, unknown>> {
-  /** Name the server registered this operation under. */
+  /** The name that the server registered this operation under. */
   readonly name: string
-  /** Present for type inference only, and never assigned at runtime. */
+  /** A field for type inference only, which stays unassigned at runtime. */
   readonly types?: { args: Args; row: Row }
 }
 
 /**
- * Builds a typed reference to a registered operation so that a call site infers its
+ * Builds a typed reference to a registered operation, so that a call site infers its
  * argument and row types from the name alone.
  *
- * @param name - Name the server registered the operation under.
- * @returns A reference carrying that name and the two inferred types.
+ * @param name - The name that the server registered the operation under.
+ * @returns A reference with that name and the two inferred types.
  *
  * @public
  */
@@ -91,7 +93,7 @@ export function operationRef<Args = OperationArguments, Row = Record<string, unk
 }
 
 /**
- * Reads the operation name out of either a plain string or a typed reference.
+ * Returns the operation name from either a plain string or a typed reference.
  *
  * @param operation - The name itself, or a reference built by {@link operationRef}.
  * @returns The registered operation name.

@@ -3,10 +3,8 @@ import type { GrpcReplicationTransport } from './transport.js'
 export const RECONNECT_MIN_DELAY_MS = 250
 export const RECONNECT_MAX_DELAY_MS = 5_000
 
-type UnreffableTimeout = ReturnType<typeof setTimeout> & { unref?: () => void }
-
 interface EndpointState {
-  timers: Map<string, UnreffableTimeout>
+  timers: Map<string, ReturnType<typeof setTimeout>>
   delays: Map<string, number>
   dialled: Map<string, () => void>
 }
@@ -58,8 +56,7 @@ export function scheduleEndpointRedial(
     state.timers.delete(endpoint)
     if (!transport.connected) return
     redial()
-  }, delayMs) as UnreffableTimeout
-  timer.unref?.()
+  }, delayMs)
   state.timers.set(endpoint, timer)
 }
 

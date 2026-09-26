@@ -3,28 +3,28 @@ import type { BackupDestination } from './destination.js'
 import type { BackupGroupSource, BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './report.js'
 
-/** How long the cycle waits between captures when nobody sets an interval.
+/** The interval between captures, in milliseconds, when the operator sets none.
  * @internal
  */
 export const DEFAULT_CAPTURE_INTERVAL_MS = 60_000
 
-/** How long a chain runs before a fresh full copy starts a new one, when nobody sets a limit.
+/** The age of a chain, in milliseconds, at which a new full copy starts a new chain, when the operator sets none.
  * @internal
  */
 export const DEFAULT_FULL_COPY_INTERVAL_MS = 24 * 60 * 60 * 1000
 
-/** What the backups are named after at the destination, when nobody sets a prefix.
+/** The prefix of backup names at the destination, when the operator sets none.
  * @internal
  */
 export const DEFAULT_BACKUP_NAME_PREFIX = 'sirannon-backup'
 
 /**
- * Works out where a database stages its captures when the operator names no
- * directory. It goes beside the database file, so a capture that has yet to
- * reach the destination is still there after a restart.
+ * Returns the directory that holds staged captures when the operator names
+ * none. The directory is next to the database file, so that a capture that
+ * Sirannon has yet to send stays on disk across a restart.
  *
- * @param sourcePath - Path of the database file.
- * @returns Path of that directory.
+ * @param sourcePath - The path of the database file.
+ * @returns The path of that directory.
  *
  * @internal
  */
@@ -33,115 +33,117 @@ export function defaultStagingDir(sourcePath: string): string {
 }
 
 /**
- * How Sirannon runs the cycle that captures a database's change log and then
- * checkpoints it.
+ * The settings for the cycle that captures the write-ahead log of a database
+ * and then checkpoints it.
  *
- * A database given these options takes checkpointing away from SQLite. It has
- * to: a checkpoint lets SQLite overwrite log frames nothing has captured yet,
- * and it reports success either way.
+ * When a database has these options, Sirannon turns off the automatic
+ * checkpoints of SQLite, because a checkpoint lets SQLite overwrite log frames
+ * that Sirannon has yet to capture, and SQLite reports success either way.
  *
  * @public
  */
 export interface BackupCycleOptions {
-  /** Where the full copy, the change pieces, and the chain records go. */
+  /** The destination that stores the full copy, the change pieces, and the chain records. */
   destination: BackupDestination
   /**
-   * How long to wait between captures, in milliseconds. Defaults to 60000. The
-   * shorter this is, the smaller the log grows and the fewer writes an unclean
-   * stop leaves uncaptured. At zero the cycle runs only when you ask it to.
+   * The interval between captures, in milliseconds. Defaults to 60000. A
+   * shorter interval keeps the log smaller and leaves fewer writes outside any
+   * backup after an unclean stop. At zero, the cycle takes a turn only when you
+   * call `runOnce`.
    */
   intervalMs?: number
   /**
-   * How long a chain runs before a fresh full copy starts a new one, in
-   * milliseconds. Defaults to 24 hours. Restoring means replaying every piece
-   * since the full copy, so this is what bounds how long that takes.
+   * The age of a chain, in milliseconds, at which a new full copy starts a new
+   * chain. Defaults to 24 hours. A restore applies every change piece since the
+   * full copy, so this interval sets the upper limit on the time that a restore
+   * takes.
    */
   fullCopyIntervalMs?: number
-  /** Name to store the list of chains under. Defaults to `sirannon-backup-chain`. */
+  /** The name to store the list of chains under. Defaults to `sirannon-backup-chain`. */
   chainName?: string
-  /** What to name the backups after at the destination. Defaults to `sirannon-backup`. */
+  /** The prefix of backup names at the destination. Defaults to `sirannon-backup`. */
   namePrefix?: string
-  /** Size of one whole piece, in bytes. Defaults to 16 MiB. */
+  /** The size of one whole piece, in bytes. Defaults to 16 MiB. */
   pieceBytes?: number
-  /** Whether to fingerprint each backup. Defaults to true. */
+  /** Whether to compute the SHA-256 of each backup. Defaults to true. */
   fingerprint?: boolean
   /**
-   * Where to stage a capture before it goes out, and where the full copy writes
-   * its own local file. Defaults to a directory beside the database file, so a
-   * capture that has yet to go out is still there after a restart.
+   * The directory that holds a capture before Sirannon sends it. Defaults to a
+   * directory next to the database file, so that a capture that Sirannon has
+   * yet to send stays on disk across a restart. When you set it, the staged
+   * full copy also writes its local file here.
    */
   stagingDir?: string
-  /** How many pages SQLite moves in one step of the full copy. */
+  /** The number of pages that SQLite copies in one step of the full copy. */
   pagesPerStep?: number
-  /** How many restarts the full copy tolerates before it gives up. */
+  /** The number of restarts from page one that Sirannon allows before it fails the full copy. */
   restartLimit?: number
-  /** How long the full copy may move no pages at all, in milliseconds, before it gives up. */
+  /** The number of milliseconds that can pass without a completed step before Sirannon fails the full copy. */
   stallTimeoutMs?: number
-  /** How long one call to the destination may take, in milliseconds, before the cycle gives up on it. Defaults to 10 minutes, and zero leaves the calls unbounded. */
+  /** The number of milliseconds that one call to the destination can take before Sirannon fails it. Defaults to 10 minutes, and zero removes the deadline. */
   destinationTimeoutMs?: number
   /**
-   * How large the write-ahead log may grow while the cycle captures nothing, in
-   * bytes. It is unlimited by default, which keeps the chain whole and lets the
-   * log grow for as long as the stall lasts.
+   * The largest size in bytes that the write-ahead log can reach while the
+   * cycle captures nothing. By default there is no limit, which keeps the chain
+   * whole and lets the log grow for as long as the captures stop.
    *
-   * Set it where the disk matters more than the chain. Sirannon measures the
-   * log after any turn that captured nothing. Past this figure it empties that
-   * log and reports `BACKUP_CHAIN_BROKEN`, so the writes the log held reach no
-   * backup and the next turn that can run starts a fresh chain with a full
-   * copy.
+   * Set it where free disk space matters more than an unbroken chain. Sirannon
+   * measures the log after any turn that captures nothing. Once the log passes
+   * this size, Sirannon empties it and reports `BACKUP_CHAIN_BROKEN`, so no
+   * backup holds the writes from that log, and the next turn that the node takes
+   * starts a new chain with a full copy.
    */
   maxUncapturedLogBytes?: number
-  /** How many steps the full copy may take without reaching a page it had not already copied. */
+  /** The number of steps that can pass without SQLite copying a new page before Sirannon fails the full copy. */
   noProgressStepLimit?: number
   /**
-   * Where this node reads its own identity and its replication group's
-   * membership. Every node of a group carries the same cycle, and this is what
-   * one turn asks before it copies anything. Leave it out on a single-node
-   * deployment, where every turn belongs to the only node there is.
+   * The source of the identity of this node and the membership of its
+   * replication group. Every node of a group has the same cycle, and each turn
+   * reads this source before it copies anything. Leave it out on a single-node
+   * deployment, where that one node takes every turn.
    */
   replicationGroup?: BackupGroupSource
   /**
-   * Which node of that group takes its backups. Defaults to `'replica'`, so
-   * the node serving writes keeps serving them. A group with no other node
-   * falls back to its primary.
+   * The node of that group that takes its backups. Defaults to `'replica'`, so
+   * that the primary keeps its capacity for writes. When the group has no
+   * eligible replica, Sirannon picks the primary.
    */
   preferredNode?: BackupNodePreference
-  /** Called with the report of every backup the cycle finishes. */
+  /** Called with the report of every backup that the cycle finishes. */
   onRun?: (report: BackupRunReport) => void
   /**
-   * Called at step resolution while a turn proceeds, with the counters that
-   * turn has reached. A caller sending a large full copy to remote storage
-   * drives its own reporting from these. The cycle also records the latest
-   * figures as they arrive, so take this callback where you want every step,
-   * and read the cycle's status where you want the figure as it stands.
+   * Called after each step of the copy and after each stored piece, with the
+   * counters of the turn in progress. The cycle also records the latest
+   * counters in its status, so use this callback when you want every step, and
+   * read the status when you want the current figure.
    */
   onProgress?: (progress: BackupProgress) => void
   /**
-   * Called with every turn the cycle passed over, and what it passed it over
-   * for. A node that takes none of its group's backups reports one of these
-   * each turn.
+   * Called with every turn that the cycle skips, and the reason for the skip. A
+   * node that takes none of the backups of its group reports a skip on every
+   * turn.
    */
   onSkip?: (skip: BackupSkip) => void
   /**
-   * Called when a capture, a transfer, or a checkpoint fails. Set this one. A
-   * cycle that stops running while writes carry on lets the log grow without
-   * bound, and without a callback here nothing reports that.
+   * Called when a capture, a transfer, or a checkpoint fails. Set this
+   * callback, because when turns keep failing while writes continue, the log
+   * grows without limit, and this callback reports each failure as it happens.
    */
   onError?: (error: Error) => void
 }
 
-/** What the cycle needs beyond the operator's own options.
+/** The settings of the operator, plus the database details and callbacks that the cycle needs.
  * @internal
  */
 export interface BackupCycleRequest extends BackupCycleOptions {
-  /** Identifier of the database to capture from. */
+  /** The identifier of the database to capture from. */
   databaseId: string
-  /** Path of its file. */
+  /** The path of its file. */
   sourcePath: string
-  /** Runs an operation with nothing else holding the writer. */
+  /** Runs an operation while no other operation holds the writer. */
   runExclusive: (op: () => Promise<void>) => Promise<void>
-  /** Hands back the connection that writes. No other connection may checkpoint. */
+  /** Returns the writer connection, which is the only connection that may checkpoint. */
   acquireWriter: () => SQLiteConnection
-  /** Copies the whole database to the destination. Every chain starts with one of these. */
+  /** Copies the whole database to the destination as the full copy that starts each chain. */
   fullCopy: (options: BackupToDestinationOptions) => Promise<BackupRunReport>
 }

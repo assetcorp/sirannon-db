@@ -4,20 +4,20 @@ import type { BackupDestination } from './destination.js'
 export const DEFAULT_DESTINATION_TIMEOUT_MS = 600_000
 
 /**
- * The longest deadline a timer can hold. Node counts a delay in a signed
- * 32-bit integer and fires anything above this straight away, so a deadline
- * past it would abort every call at once.
+ * The longest deadline, in milliseconds, that a Node timer accepts. Node stores
+ * a delay as a signed 32-bit integer and fires any longer delay after one
+ * millisecond, so a longer deadline would abort every call at once.
  *
  * @internal
  */
 export const LONGEST_DEADLINE_MS = 2_147_483_647
 
 /**
- * Refuses a deadline no timer could hold.
+ * Throws for a deadline that a timer cannot accept.
  *
- * @param timeoutMs - Milliseconds the caller asked for.
- * @param subject - What the deadline is called, which the error names.
- * @throws A `BACKUP_ERROR` where the deadline is negative, is not a number, or is longer than a timer can hold.
+ * @param timeoutMs - The deadline that the caller asks for, in milliseconds.
+ * @param subject - The name of the deadline, which the error message quotes.
+ * @throws A `BACKUP_ERROR` where the deadline is negative, is not a finite number, or is longer than {@link LONGEST_DEADLINE_MS}.
  *
  * @internal
  */
@@ -37,14 +37,15 @@ export function assertDeadline(timeoutMs: number, subject: string): void {
 }
 
 /**
- * Fails an operation that has not settled by its deadline. A caller's own code
- * can wait on a socket that never answers, and Sirannon counts that wait as
- * work in progress, so an operation without a deadline would never end.
+ * Rejects with the error from `timedOut` when an operation has not settled by
+ * its deadline. Code that the caller supplies can wait forever on a socket that
+ * receives no reply, and Sirannon treats that wait as work in progress, so an
+ * operation without a deadline could hang indefinitely.
  *
- * @param operation - What to wait on.
- * @param timeoutMs - Milliseconds it may take.
- * @param timedOut - Builds the error to fail with once that many milliseconds pass.
- * @returns What the operation produced.
+ * @param operation - The operation to wait on.
+ * @param timeoutMs - The number of milliseconds that the operation may take.
+ * @param timedOut - Builds the error to reject with once that many milliseconds pass.
+ * @returns The result of the operation.
  *
  * @internal
  */
@@ -77,15 +78,16 @@ function destinationWithin<T>(operation: Promise<T>, action: string, timeoutMs: 
 }
 
 /**
- * Wraps a caller's destination so every call to it fails once it passes the
- * deadline. A storage client can leave a write or a read pending forever, and
- * the copy's own stall deadline counts that wait as work in progress. A run
- * without this deadline would therefore never end.
+ * Wraps the destination of a caller so that every call to it fails with
+ * `BACKUP_DESTINATION_ERROR` once it passes the deadline. A storage client can
+ * leave a write or a read pending forever, and the stall deadline of the copy
+ * treats that wait as work in progress, so a backup without this deadline could
+ * hang indefinitely.
  *
- * @param destination - Destination the caller supplied.
- * @param timeoutMs - Milliseconds one call may take. Zero leaves the calls unbounded.
- * @returns The same destination with a deadline on every call it answers.
- * @throws A `BACKUP_ERROR` where the deadline is negative or is not a number.
+ * @param destination - The destination that the caller supplies.
+ * @param timeoutMs - The number of milliseconds that one call may take. Zero leaves the calls without a deadline.
+ * @returns The destination with a deadline on every call, or the same destination where `timeoutMs` is zero.
+ * @throws A `BACKUP_ERROR` where the deadline is negative, is not a finite number, or is longer than {@link LONGEST_DEADLINE_MS}.
  *
  * @internal
  */

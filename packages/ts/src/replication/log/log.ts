@@ -12,13 +12,15 @@ import { SchemaOps } from './schema.js'
 import { StateOps } from './state.js'
 
 /**
- * Persistent change log that bridges CDC events and the replication protocol.
+ * Gives the replication engine one object for every read and write that it
+ * makes against the change log and the sync state that this node stores in
+ * SQLite.
  *
- * Composes specialised helpers: BatchReader (outbound batches), BatchApplier
- * (inbound batches and conflict resolution), DumpOps (table dumps and
- * manifests), SchemaOps (replication-table bootstrap, schema dump, wipe),
- * StateOps (sequence and sync metadata), and PkResolver (cached primary-key
- * lookups).
+ * Each method passes the call to one helper: BatchReader for outbound batches,
+ * BatchApplier for inbound batches and conflict resolution, StampOps for
+ * stamping local changes, DumpOps for table dumps and manifests, SchemaOps for
+ * the replication tables, the schema dump, and table wipes, StateOps for
+ * sequence and sync metadata, and PkResolver for cached primary-key lookups.
  *
  * @internal
  */

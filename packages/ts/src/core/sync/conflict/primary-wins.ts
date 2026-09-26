@@ -2,14 +2,13 @@ import type { ConflictContext, ConflictResolution, ConflictResolver } from '../t
 import { LWWResolver } from './lww.js'
 
 /**
- * Conflict resolver that unconditionally favors the designated primary node.
+ * Resolves a conflict in favour of the node that you name as primary.
  *
- * If the remote change originated from the primary, it is accepted. If the
- * local change originated from the primary, the remote is rejected. When
- * neither side is the primary (e.g., two replicas syncing through a relay),
- * the decision falls back to LWW ordering. This resolver is designed for
- * primary-replica topologies where the primary is the authoritative source of
- * truth and replica-side writes should never override it.
+ * The resolver accepts a remote change that the primary wrote, and it keeps a
+ * local change that the primary wrote. When neither change comes from the
+ * primary, as with two replicas that sync through a relay, the resolver falls
+ * back to {@link LWWResolver}. Use it in a primary-replica topology where the
+ * primary's write always wins over a replica's.
  *
  * @public
  */
@@ -22,7 +21,7 @@ export class PrimaryWinsResolver implements ConflictResolver {
   }
 
   /**
-   * Takes the version authored by the configured primary node, and falls back to last-writer-wins otherwise.
+   * Returns the version that the primary node wrote, or the last-writer-wins result when neither version comes from the primary.
    *
    * @param ctx - The local and incoming versions of one row.
    * @returns Which version to write.

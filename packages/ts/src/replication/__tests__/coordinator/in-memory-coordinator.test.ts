@@ -339,6 +339,59 @@ describe('InMemoryClusterCoordinator', () => {
     expect(promoted.currentPrimary).toEqual({ nodeId: 'node-c', endpoint: 'https://node-c.example.com' })
   })
 
+  it('reports the live node set on each session change', async () => {
+    let nowMs = 1_000
+    const coordinator = new InMemoryClusterCoordinator({ now: () => nowMs })
+    const seen: string[][] = []
+
+    const stop = await coordinator.watchNodeSessions('cluster-a', live => seen.push([...live]))
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-a', ttlMs: 500 })
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-b', ttlMs: 500 })
+    await coordinator.deregisterNodeSession('cluster-a', 'node-a')
+
+    expect(seen).toEqual([[], ['node-a'], ['node-a', 'node-b'], ['node-b']])
+
+    nowMs = 2_000
+    await coordinator.registerNodeSession({ clusterId: 'cluster-a', nodeId: 'node-c', ttlMs: 500 })
+    expect(seen[seen.length - 1]).toEqual(['node-c'])
+
+    await stop()
+    await coordinator.deregisterNodeSession('cluster-a', 'node-c')
+    expect(seen).toHaveLength(5)
+  })
+
+  it('reports the controller lease on every change of holder', async () => {
+    const coordinator = new InMemoryClusterCoordinator({ now: () => 1_000 })
+    const seen: (string | null)[] = []
+
+    const stop = await coordinator.watchControllerLease('cluster-a', lease => seen.push(lease?.holderId ?? null))
+    const held = await coordinator.tryAcquireControllerLease({
+      clusterId: 'cluster-a',
+      holderId: 'node-a',
+      ttlMs: 500,
+    })
+    if (!held.acquired) throw new Error('the bid for the controller lease lost it')
+    await coordinator.releaseLease(held.lease.id)
+
+    expect(seen).toEqual([null, 'node-a', null])
+
+    await stop()
+    await coordinator.tryAcquireControllerLease({ clusterId: 'cluster-a', holderId: 'node-b', ttlMs: 500 })
+    expect(seen).toHaveLength(3)
+  })
+
+  it('reports no holder to a watcher that starts after the lease lapses', async () => {
+    let nowMs = 1_000
+    const coordinator = new InMemoryClusterCoordinator({ now: () => nowMs })
+    await coordinator.tryAcquireControllerLease({ clusterId: 'cluster-a', holderId: 'node-a', ttlMs: 500 })
+    nowMs = 2_000
+    const seen: (string | null)[] = []
+
+    await coordinator.watchControllerLease('cluster-a', lease => seen.push(lease?.holderId ?? null))
+
+    expect(seen).toEqual([null])
+  })
+
   it('removes nodes from the safe set when maintenance state starts', async () => {
     const coordinator = new InMemoryClusterCoordinator({ now: () => 8_000 })
     await coordinator.setReplicationGroupState({

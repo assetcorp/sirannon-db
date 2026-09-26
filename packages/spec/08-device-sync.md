@@ -58,7 +58,11 @@ POST /db/{id}/changes
 
 Sequences are decimal strings (`^\d{1,19}$`) and `fromSeq` must not exceed `toSeq`. `batchId` is a non-empty string of at most 128 characters. A batch holds 1 to 1000 changes. `sourceNodeId` and every change's `nodeId` are 32-hex device ids and must be equal. Each `operation` is `insert`, `update`, or `delete`; the server rejects a DDL change, because the migration handshake is the only path for a schema change. Values inside `primaryKey`, `newData`, and `oldData` use the tagged value encoding. The server responds `400 INVALID_REQUEST` to any structural failure.
 
-The server applies the decoded batch through the execution target's `applyChanges`. A target without `applyChanges` responds `501 SYNC_UNSUPPORTED`. The schema gate runs first (see [Migration Handshake](#migration-handshake)).
+A server serves this route only while `acceptDeviceSync` is true (see [05-server.md](05-server.md#http-endpoints-normative)). Before it writes any row, the server must invoke the `beforePush` hook of [02-core.md](02-core.md#hooks) once for each table that the batch names, with `sourceNodeId` as the `deviceId` and the identity that the `authenticate` hook returned. The hook is where an implementation ties a device to the caller that owns it. A hook that throws refuses the whole batch with `403 HOOK_DENIED`.
+
+The server must refuse a batch holding a change whose HLC wall time exceeds the server clock by more than 300,000 ms, with `400 DEVICE_CLOCK_AHEAD`, and must write none of that batch. A change stamped behind the server clock passes this check. An `hlc` that decodes to no wall time fails with `400 INVALID_REQUEST`.
+
+After the hook, the clock check, and the schema gate (see [Migration Handshake](#migration-handshake)), the server applies the decoded batch through the execution target's `applyChanges`. A target without `applyChanges` responds `501 SYNC_UNSUPPORTED`.
 
 ---
 
@@ -74,7 +78,7 @@ CREATE TABLE _sirannon_device_cursors (
 )
 ```
 
-An acknowledgement upserts the cursor and moves `acked_seq` forward only (`max(current, incoming)`). An implementation bounds change-log retention so a device can still resume: the prune boundary is the minimum, across live devices, of the sequence immediately before each device's next unacknowledged foreign change (a change whose `node_id` differs from the device), or the current maximum sequence when the device has no foreign change ahead of its cursor. A device that only writes, and has acknowledged no foreign change, therefore pins retention no lower than its own writes. The server evicts a cursor idle past the retention window (default 2,592,000,000 ms, 30 days), and that device must then resync from a snapshot.
+An acknowledgement upserts the cursor and moves `acked_seq` forward only (`max(current, incoming)`). An implementation bounds change-log retention so a device can still resume: the prune boundary is the minimum, across live devices, of the sequence immediately before each device's next unacknowledged foreign change (a change whose `node_id` differs from the device), or the current maximum sequence when the device has no foreign change ahead of its cursor. A device that only writes, and has acknowledged no foreign change, therefore pins retention no lower than its own writes. Every deletion of old changes applies that boundary, whichever part of an implementation starts it. The server deletes a device's cursor on any of three conditions: that device's last acknowledgement is older than the device-cursor retention window (default 2,592,000,000 ms, 30 days), the oldest change the cursor holds back is older than that window, or the changes the cursor holds back outnumber the configured maximum (default unlimited). A device whose cursor the server deleted must resync from a snapshot. A database's own options carry both limits, and each one falls back to the server-wide value (see [02-core.md](02-core.md#database) and [05-server.md](05-server.md#server-configuration)).
 
 ---
 
@@ -99,6 +103,8 @@ The device acknowledges what it holds durably so that the server advances the de
 ```
 
 `seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
+
+A server accepts an acknowledgement only for a device for which the same connection holds a subscription, and must fail every other acknowledgement with `DEVICE_NOT_SUBSCRIBED`. A device must hold its acknowledgements until the server confirms the subscription on the connection that carries it, and must send a refused acknowledgement again once it subscribes afresh.
 
 The server holds delivery to a device once the highest sequence sent stands more than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's acknowledged cursor, and resumes on the next acknowledgement. The server measures the window per transaction, so it still delivers a transaction larger than the window whole. On a subscription carrying `stagedStream`, the server measures the window per change and may pause delivery within a transaction. Held changes remain in the change log, and the server delivers them in order. The server reports the window on `subscribed` as `maxUnacknowledgedChanges`, and a device acknowledges immediately once it holds more than half of it.
 
@@ -201,11 +207,11 @@ A device-sync server announces at least these capabilities, and device sync requ
 
 `sync.stream-apply` covers the `rowId`, `txId`, and `txEnd` fields and the acknowledgement-paced delivery window. `sync.staged-stream` covers the `stagedStream` subscribe field, the `changes` message, and per-change window pacing; device sync does not require it, and a device omits `stagedStream` when a server does not announce it. A server announces further capabilities alongside these; see [05-server.md](05-server.md#registered-operations).
 
-Before syncing, a client fetches `/capabilities`. A `404` (the server predates device sync) or a missing required capability fails with `SYNC_UNSUPPORTED`, naming the gap, so the client does not sync against a server whose WebSocket ignores the device-sync fields. A connection, timeout, or malformed-response failure is indeterminate; the client records it, continues in a degraded, offline-tolerant state, and still treats the server as capable.
+Before syncing, a client fetches `/capabilities`. A `404` (the server predates device sync) or a missing required capability fails with `SYNC_UNSUPPORTED`, naming the gap, so the client does not sync against a server whose WebSocket ignores the device-sync fields. When a server announces none of the required capabilities, device sync is off on that server, so the client fails with `DEVICE_SYNC_NOT_ACCEPTED`. A connection, timeout, or malformed-response failure is indeterminate; the client records it, continues in a degraded, offline-tolerant state, and still treats the server as capable.
 
 ---
 
-## Client Sync Controller
+## Device Sync Controller
 
 The controller drives a device's sync loop.
 
@@ -246,7 +252,7 @@ SyncStatus {
 
 `webSocketProtocols` applies to the pull subscription's WebSocket upgrade. A device carries a short-lived credential in `webSocketProtocols`. A controller that configures subprotocols must offer the `sirannon.v1` identifier ahead of them (see [05-server.md](05-server.md#subprotocol-negotiation)). A controller that configures none must offer no subprotocol. Each configured subprotocol is one or more of the characters a header token allows, and no two are equal; a controller given anything else must fail at construction with `INVALID_ARGUMENT`, name `webSocketProtocols`, and leave the value out of the message.
 
-- **start** verifies server capabilities first and caches them; a `SYNC_UNSUPPORTED` result aborts the start, while the controller records an indeterminate failure and continues degraded. It then reconciles the migration handshake, falling back to the local version when offline, opens the live pull, and starts the push loop.
+- **start** verifies server capabilities first and caches them; a `SYNC_UNSUPPORTED` or `DEVICE_SYNC_NOT_ACCEPTED` result aborts the start, while the controller records an indeterminate failure and continues degraded. It then reconciles the migration handshake, falling back to the local version when offline, opens the live pull, and starts the push loop.
 - **push** drains the outbox after the durable `device_sync_pushed_seq` cursor in batches (default 100), advancing the cursor and the retention boundary per batch; the controller backs off exponentially to a cap (default 30,000 ms) after a failure. A push refused with `MIGRATION_REQUIRED` reconciles migrations and retries.
 - **pull** opens its own WebSocket subscription with echo suppression, stages each change, applies each complete transaction with `resolver` (defaulting to LWW), commits `device_sync_pull_seq` with the group, persists `device_sync_pull_epoch`, and acknowledges the highest staged sequence. `immediateAckAfterChanges` overrides the count of outstanding changes that forces an acknowledgement ahead of the debounce, defaulting to half the window the server reported and to 500 when it reported none. A server resync signal marks a resync required and calls `onResyncRequired`.
 - **auto-resync**, when enabled, schedules a snapshot download on a start with a pending load, on a server resync signal, and on a snapshot failure, backing off exponentially (the first retry immediate, then `snapshotRetryDelayMs` doubling to `maxSnapshotRetryDelayMs`).

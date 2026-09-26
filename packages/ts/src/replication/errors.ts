@@ -1,28 +1,8 @@
 import { ReplicationError } from '../core/sync/errors.js'
 
-export { BatchValidationError, ReplicationError } from '../core/sync/errors.js'
+export { BatchValidationError, ConflictError, ReplicationError } from '../core/sync/errors.js'
 
-/** Thrown when a write conflict cannot be resolved automatically.
- * @public
- */
-export class ConflictError extends ReplicationError {
-  constructor(
-    message: string,
-    /**
-     * Table the conflicting row belongs to.
-     */
-    public readonly table: string,
-    /**
-     * Primary key of the conflicting row, encoded as a string.
-     */
-    public readonly rowId: string,
-  ) {
-    super(message, 'CONFLICT_ERROR')
-    this.name = 'ConflictError'
-  }
-}
-
-/** Thrown when inter-node communication fails.
+/** Sirannon throws this error when a transport call fails, such as a send to a disconnected peer or a send of a malformed message.
  * @public
  */
 export class TransportError extends ReplicationError {
@@ -32,7 +12,7 @@ export class TransportError extends ReplicationError {
   }
 }
 
-/** Thrown when a write-concern quorum is not met within the configured timeout.
+/** Sirannon throws this error when too few peers acknowledge a write before the write-concern timeout expires, or when too few peers are connected to reach the required count.
  * @public
  */
 export class WriteConcernError extends ReplicationError {
@@ -43,7 +23,8 @@ export class WriteConcernError extends ReplicationError {
 }
 
 /**
- * Thrown when a node cannot prove a read is as current as the caller required.
+ * Sirannon throws this error when a node cannot serve a read at the requested read concern, such as a `majority` read
+ * on a draining or repairing node, or a read at an unsupported level.
  *
  * @public
  */
@@ -54,7 +35,7 @@ export class ReadConcernError extends ReplicationError {
   }
 }
 
-/** Thrown when a write or routing operation violates the configured topology rules.
+/** Sirannon throws this error when a node that cannot accept writes receives a write that it cannot forward to a primary.
  * @public
  */
 export class TopologyError extends ReplicationError {
@@ -65,7 +46,8 @@ export class TopologyError extends ReplicationError {
 }
 
 /**
- * Thrown when a node cannot reach its cluster coordinator.
+ * Sirannon throws this error when a coordinator call fails, such as when the coordinator is unreachable, holds no state
+ * for the group, or refuses an update after concurrent writes.
  *
  * @public
  */
@@ -77,7 +59,8 @@ export class CoordinatorError extends ReplicationError {
 }
 
 /**
- * Thrown when a node cannot prove it holds write authority for the current term.
+ * Sirannon throws this error when a node cannot prove that it holds write authority for the current term, such as
+ * while the node is repairing or faulted.
  *
  * @public
  */
@@ -89,7 +72,8 @@ export class AuthorityError extends ReplicationError {
 }
 
 /**
- * Thrown when a node believing itself primary finds the group has moved to a later term.
+ * Sirannon throws this error when a node other than the group's current primary receives a write or another request
+ * that only the primary serves, or when a replication message has an old term or the wrong group.
  *
  * @public
  */
@@ -101,7 +85,8 @@ export class StalePrimaryError extends AuthorityError {
 }
 
 /**
- * Thrown when failover cannot complete safely.
+ * Reports a failover that cannot complete safely, and {@link NoSafePrimaryError} and
+ * {@link UnsafeRecoveryRequiredError} extend it.
  *
  * @public
  */
@@ -113,7 +98,9 @@ export class FailoverError extends ReplicationError {
 }
 
 /**
- * Thrown when no replica is in sync enough to take over as primary, so writes stay unavailable rather than risking loss.
+ * Sirannon throws this error when no in-sync replica is eligible for promotion, or when the group has fewer than three
+ * voting nodes. In that case the coordinator promotes no node, since promoting a replica outside the in-sync set could
+ * lose acknowledged writes.
  *
  * @public
  */
@@ -125,7 +112,7 @@ export class NoSafePrimaryError extends FailoverError {
 }
 
 /**
- * Thrown when a node cannot meet a read concern because the group does not count it as in sync.
+ * Sirannon throws this error for a `majority` read on a node outside the group's in-sync set.
  *
  * @public
  */
@@ -137,7 +124,7 @@ export class NodeNotInSyncError extends ReplicationError {
 }
 
 /**
- * Thrown when a node is being taken out of service and refuses new work.
+ * Sirannon throws this error when a draining node receives a write.
  *
  * @public
  */
@@ -149,7 +136,8 @@ export class NodeDrainingError extends ReplicationError {
 }
 
 /**
- * Thrown when a peer speaks a replication protocol version this node cannot work with.
+ * Sirannon throws this error when this node's package, specification, or protocol major version differs from a version
+ * that the replication group requires.
  *
  * @public
  */
@@ -161,7 +149,7 @@ export class ProtocolVersionMismatchError extends ReplicationError {
 }
 
 /**
- * Thrown when recovery would lose acknowledged writes, so an operator must rebuild or restore the node first.
+ * Signals that recovery would lose acknowledged writes, so an operator has to rebuild or restore the node first.
  *
  * @public
  */
@@ -172,14 +160,14 @@ export class UnsafeRecoveryRequiredError extends FailoverError {
   }
 }
 
-/** Thrown for initial sync failures.
+/** Sirannon throws this error when a first sync fails, or when a node that is still syncing receives a read or a write.
  * @public
  */
 export class SyncError extends ReplicationError {
   constructor(
     message: string,
     /**
-     * Identifier of the sync that failed.
+     * Identifies the sync request that failed, when the error concerns one.
      */
     public readonly requestId?: string,
   ) {

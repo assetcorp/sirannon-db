@@ -35,10 +35,13 @@ SirannonOptions {
   lifecycle?:    LifecycleConfig
   migrations?:   List<Migration> or (() -> List<Migration>, sync or async)
   writerWorker?: boolean or WriterWorkerOptions
+  cdcRetention?:            number
+  deviceCursorRetention?:   number
+  maxChangesHeldForDevice?: number
 }
 ```
 
-A `writerWorker` on the registry is the default for every database it opens; a `writerWorker` in `DatabaseOptions` overrides it for that database.
+A `writerWorker`, `cdcRetention`, `deviceCursorRetention`, or `maxChangesHeldForDevice` on the registry is the default for every database it opens; the same field in `DatabaseOptions` overrides it for that database, whether a caller passes those options to `open` or a lifecycle resolver returns them per database.
 
 - **open** opens the file at `path` and registers it under `id`. A duplicate `id` (registered or opening) fails with `DATABASE_ALREADY_EXISTS`; a shut-down registry fails with `SHUTDOWN`. `open` creates the connection pool, fires `beforeConnect` then `databaseOpen`, and, when a registry `migrations` set is declared, applies every pending migration before registering the database (see [Registry Migrations](#registry-migrations)). No caller may observe a database through `get`, `resolve`, or `databases()` before its migrations complete.
 - **close** closes the database under `id` and fires `databaseClose`. An unknown `id` fails with `DATABASE_NOT_FOUND`.
@@ -109,6 +112,8 @@ DatabaseOptions {
   synchronous?:     SynchronousLevel (default: 'normal')
   cdcPollInterval?: number           (default: 50 ms, recommended)
   cdcRetention?:    number           (default: 3_600_000 ms, recommended)
+  deviceCursorRetention?:   number   (default: 2_592_000_000 ms)  -- see 08-device-sync.md
+  maxChangesHeldForDevice?: number   (default: 0, unlimited)      -- see 08-device-sync.md
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
   backups?:         BackupCycleOptions (default: off)
 }
@@ -132,7 +137,7 @@ Params        = Map<string, any> or List<any>
 
 ## Group Commit
 
-The writer coalesces writes submitted concurrently, so one `fsync` commits many. The writer forms a group from the statements waiting when a commit finishes; the accumulation window is the previous commit's own duration, with no timer. The writer groups only data-modifying statements (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`), and runs DDL, PRAGMA, and every other statement alone. A group holds at most 1000 statements (recommended). The group runs as one transaction. A savepoint isolates a statement that fails before commit, so only that unit fails, while a failure at commit fails every unit in the group, and the writer must not retry it, because the commit may already have reached disk.
+The writer coalesces writes submitted concurrently, so one `fsync` commits many. The writer forms a group from the statements waiting when a commit finishes; the accumulation window is the previous commit's own duration, with no timer. The writer groups only data-modifying statements (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`), and runs DDL, PRAGMA, and every other statement alone. A group holds at most 1000 statements (recommended). The group runs as one transaction, and a savepoint isolates a statement that fails before commit, so only that unit fails. When the commit fails and the transaction stays open, none of the group reaches disk, so the writer rolls the group back and reruns each unit that succeeded in a transaction of its own. When only one unit succeeded, the writer fails that unit with the commit error and reruns nothing. When the commit fails and no transaction remains open, the commit may already be on disk, so the writer fails every unit that succeeded and must retry none of them.
 
 ---
 
@@ -374,10 +379,11 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeConnect` | `{ databaseId, path }` | Before a connection opens | Yes |
 | `databaseOpen` | `{ databaseId, path }` | After a database opens | No |
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
-| `beforeSubscribe` | `{ databaseId, table, filter?, identity? }` | Before a served subscription starts | Yes |
+| `beforeSubscribe` | `{ databaseId, table, filter?, identity?, deviceId? }` | Before a served subscription starts | Yes |
 | `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
+| `beforePush` | `{ databaseId, table, deviceId, identity? }` | Before a server writes a pushed device batch, once per table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe hook and a snapshot hook may each return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe or a snapshot hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
+A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A failure of an `afterQuery`, `databaseOpen`, or `databaseClose` hook, whether a throw or a returned promise, leaves the operation and the other hooks for that event unaffected, and a rejection of that promise must not surface as an unhandled rejection. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 

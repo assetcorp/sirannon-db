@@ -1,108 +1,126 @@
 import type { Params, ReadConcern, WriteConcern } from './query-types.js'
 
-/** Context passed to query hooks.
+/** The context that Sirannon passes to each query hook.
  * @public
  */
 export interface QueryHookContext {
-  /** Identifier of the database the statement runs against. */
+  /** The identifier of the database that the statement executes against. */
   databaseId: string
-  /** The statement about to run, or the one that just ran. */
+  /** The statement that is about to execute, or the one that has finished executing. */
   sql: string
-  /** Parameters bound to the statement. */
+  /** The parameters bound to the statement. */
   params?: Params
-  /** Values a caller attached to the request for its own hooks to read. */
+  /** Values for the hooks to read. */
   metadata?: Record<string, unknown>
-  /** Acknowledgements this write waits for. */
+  /** The write concern that the caller set on the statement. */
   writeConcern?: WriteConcern
-  /** Currency this read requires. */
+  /** The read concern that the caller set on the statement. */
   readConcern?: ReadConcern
 }
 
-/** Hook invoked before a query is executed. Throw to deny.
+/** A hook that Sirannon calls synchronously before it executes each statement; throw from it to reject the statement. Sirannon also fails the statement when the hook returns a promise.
  * @public
  */
-export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>
+export type BeforeQueryHook = (ctx: QueryHookContext) => void
 
-/** Context passed to the after-query hook, which is the query context plus how long the statement took.
+/** The context that Sirannon passes to each after-query hook, which adds the statement's duration to the query context.
  * @public
  */
 export interface AfterQueryHookContext extends QueryHookContext {
-  /** Milliseconds the statement took, measured from the moment it was sent to the moment it returned. */
+  /** The number of milliseconds from the start of the statement to its return, including any time that it waited for the writer. */
   durationMs: number
 }
 
-/** Hook invoked after a query is executed.
+/** A hook that Sirannon calls synchronously after each statement returns or throws. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void
 
-/** Context passed to connection hooks.
+/** The context that Sirannon passes to each connection hook.
  * @public
  */
 export interface ConnectionHookContext {
-  /** Identifier of the database being opened or closed. */
+  /** The identifier of the database that Sirannon is opening or closing. */
   databaseId: string
-  /** File path of the SQLite database. */
+  /** The file path of the SQLite database. */
   path: string
 }
 
-/** Hook invoked before a database connection is established.
+/** A hook that Sirannon calls synchronously before it opens a database; throw from it to stop the open. Sirannon also fails the open when the hook returns a promise.
  * @public
  */
-export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type BeforeConnectHook = (ctx: ConnectionHookContext) => void
 
-/** Hook invoked when a database is opened.
+/** A hook that Sirannon calls synchronously once a database is open. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void
 
-/** Hook invoked when a database is closed.
+/** A hook that Sirannon calls synchronously once a database is closed. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void
 
-/** Hook invoked before a subscription is created. Throw to deny.
+/** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription.
  * @public
  */
 export type BeforeSubscribeHook = (ctx: {
-  /** Identifier of the database the subscription reads. */
+  /** The identifier of the database that the subscription is on. */
   databaseId: string
-  /** Table the subscription watches. */
+  /** The table that the subscription is on. */
   table: string
-  /** Column values a change must carry to reach the subscriber. */
+  /** The column values that a changed row must have for Sirannon to deliver the change to the subscriber. */
   filter?: Record<string, unknown>
-  /** Whoever the `authenticate` hook returned for the connection, and undefined where that connection carries no identity. */
+  /** The identity that the `authenticate` hook returned for the connection, or undefined when the hook returned none. */
   identity?: unknown
+  /** The identifier of the device that the subscription syncs, or undefined for a subscription without a device. */
+  deviceId?: string
 }) => void | Promise<void>
 
-/** Hook invoked before a served snapshot reads a table. Throw to deny.
+/** A hook that the server calls before it reads each table into a snapshot; throw from it to reject the snapshot.
  * @public
  */
 export type BeforeSnapshotHook = (ctx: {
-  /** Identifier of the database the snapshot copies. */
+  /** The identifier of the database that the server copies into the snapshot. */
   databaseId: string
-  /** Table the snapshot is about to read. */
+  /** The table that the server is about to read. */
   table: string
-  /** Whoever the `authenticate` hook returned for the request, and undefined where that request carries no identity. */
+  /** The identity that the `authenticate` hook returned for the request, or undefined when the hook returned none. */
   identity?: unknown
 }) => void | Promise<void>
 
-/** Aggregated hook configuration.
+/** A hook that the server calls before it writes a batch that a device pushed, once for each table in the batch; throw from it to reject the whole batch.
+ * @public
+ */
+export type BeforePushHook = (ctx: {
+  /** The identifier of the database that the server writes the batch to. */
+  databaseId: string
+  /** The table that the server writes these changes to. */
+  table: string
+  /** The identifier of the device that sent the batch. */
+  deviceId: string
+  /** The identity that the `authenticate` hook returned for the request, or undefined when the hook returned none. */
+  identity?: unknown
+}) => void | Promise<void>
+
+/** The hooks that Sirannon calls for every database in a registry, keyed by event.
  * @public
  */
 export interface HookConfig {
-  /** Runs before each statement. Throw to refuse it. */
+  /** Sirannon calls this before each statement; throw from it to reject the statement. */
   onBeforeQuery?: BeforeQueryHook | BeforeQueryHook[]
-  /** Runs after each statement, with the time it took. */
+  /** Sirannon calls this after each statement, with the statement's duration. */
   onAfterQuery?: AfterQueryHook | AfterQueryHook[]
-  /** Runs before a database connection opens. */
+  /** Sirannon calls this before it opens a database. */
   onBeforeConnect?: BeforeConnectHook | BeforeConnectHook[]
-  /** Runs once a database is open. */
+  /** Sirannon calls this once a database is open. */
   onDatabaseOpen?: DatabaseOpenHook | DatabaseOpenHook[]
-  /** Runs once a database is closed. */
+  /** Sirannon calls this once a database is closed. */
   onDatabaseClose?: DatabaseCloseHook | DatabaseCloseHook[]
-  /** Runs before a change subscription starts. Throw to refuse it. */
+  /** The server calls this before it creates a change subscription; throw from it to reject the subscription. */
   onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[]
-  /** Runs before a served snapshot reads a table. Throw to refuse the snapshot. */
+  /** The server calls this before it reads each table into a snapshot; throw from it to reject the snapshot. */
   onBeforeSnapshot?: BeforeSnapshotHook | BeforeSnapshotHook[]
+  /** The server calls this before it writes a batch that a device pushed; throw from it to reject the batch. */
+  onBeforePush?: BeforePushHook | BeforePushHook[]
 }

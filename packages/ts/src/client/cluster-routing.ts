@@ -13,7 +13,7 @@ export interface TopologyRouting {
   _getWriteEndpoint(databaseId?: string): Promise<string>
   _getReadConcern(): ReadConcernLevel | undefined
   _usesCoordinatorDiscovery(): boolean
-  _removeReplica(url: string): void
+  _setEndpointAside(url: string): void
   _refreshClusterRouting(databaseId: string): Promise<void>
   _createTransportForEndpoint(url: string, databaseId: string): Transport
 }

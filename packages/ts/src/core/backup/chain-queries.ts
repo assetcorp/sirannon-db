@@ -1,32 +1,33 @@
 import { SirannonError } from '../errors.js'
 import type { BackupChain, BackupChainBase, BackupChainChange, BackupChainRecord } from './chain.js'
 
-/** What one restore has to read, and what it will produce.
+/** The records that one restore reads, and the moment that the restored database reflects.
  * @public
  */
 export interface BackupRestorePlan {
-  /** The chain to read. */
+  /** The chain that the restore reads from. */
   chainId: string
   /** The full copy to start from. */
   base: BackupChainBase
   /** The change pieces to apply on top of it, oldest first. */
   changes: BackupChainChange[]
   /**
-   * Epoch milliseconds the restored database will reflect. This is when the
-   * last piece in the plan was captured, which is at or before the moment you
-   * asked for.
+   * The moment, in epoch milliseconds, that the restored database reflects.
+   * It is the capture time of the last change piece in the plan, or the finish
+   * time of the full copy where the plan holds no change piece, so it falls at
+   * or before the moment that you ask for.
    */
   restoresTo: number
 }
 
-/** How far back you still want to be able to restore.
+/** The earliest moment that a restore must still reach.
  * @public
  */
 export interface BackupSafeToDeleteOptions {
   /**
-   * Epoch milliseconds of the earliest moment a restore must still reach.
-   * Leave it out and the answer covers only the backups no restore could ever
-   * use.
+   * The earliest moment, in epoch milliseconds, that a restore must still
+   * reach. When you leave it out, the answer lists only the records that no
+   * restore can use.
    */
   restorableFrom?: number
 }
@@ -47,22 +48,23 @@ function withBase(chains: readonly BackupChain[]): (BackupChain & { base: Backup
 }
 
 /**
- * Works out what a restore to a given moment has to read: the newest full copy
- * finished at or before it, then every change piece captured from that copy up
- * to it.
+ * Returns what a restore to a given moment reads: the newest full copy that
+ * finished at or before that moment, and every change piece of its chain that
+ * Sirannon captured up to it.
  *
- * You get back the moment the result will actually reflect, which is when the
- * last piece was captured. One piece covers every write in the interval it was
- * taken over, so a restore arrives at a piece boundary, not at the exact
- * millisecond you named.
+ * The plan also states the moment that the restored database reflects, which
+ * is the capture time of its last piece. Each change piece holds every write
+ * from one capture interval, so a restore stops at a piece boundary, which can
+ * fall before the exact millisecond that you name.
  *
- * A gap in the chain fails the plan with `BACKUP_CHAIN_BROKEN` and names the
- * missing piece, because a plan that stopped part-way through would leave a
- * database nobody could trust.
+ * This throws `BACKUP_CHAIN_BROKEN` where no full copy finished at or before
+ * the moment. It throws the same code, naming the missing piece, where the
+ * chain has a gap before that moment, since a restore that stopped at the gap
+ * would lose every write after it.
  *
- * @param chains - The chains a destination holds, as {@link readBackupChains} returns them.
- * @param moment - Epoch milliseconds you want back.
- * @returns The full copy, the change pieces to apply, and the moment the result reflects.
+ * @param chains - The chains at a destination, as {@link readBackupChains} returns them.
+ * @param moment - The moment to restore to, in epoch milliseconds.
+ * @returns The full copy, the change pieces to apply, and the moment that the restored database reflects.
  *
  * @public
  */
@@ -101,19 +103,18 @@ export function planBackupRestore(chains: readonly BackupChain[], moment: number
 }
 
 /**
- * Tells you which backups no restore still needs, so you can delete them
- * knowing exactly what you give up.
+ * Returns the backup records that no restore needs any longer, so that you can
+ * delete them from the destination yourself.
  *
- * Two kinds are dead whatever you ask for: a chain whose full copy has gone,
- * and every change piece after a gap, since nothing can be replayed past the
- * gap. Name the earliest moment you still want to reach and the answer also
- * covers the older chains a newer full copy already spans.
+ * The list always includes the change pieces of a chain whose full copy is
+ * gone, and every change piece after a gap in a chain, since a restore can
+ * replay nothing past the gap. When you pass `restorableFrom`, the list also
+ * includes every chain whose full copy finished before the full copy that a
+ * restore to that moment would start from.
  *
- * Sirannon lists them and deletes nothing. The destination is yours.
- *
- * @param chains - The chains a destination holds, as {@link readBackupChains} returns them.
- * @param options - How far back you still want to be able to restore.
- * @returns The records you may delete, oldest first.
+ * @param chains - The chains at a destination, as {@link readBackupChains} returns them.
+ * @param options - The earliest moment that a restore must still reach.
+ * @returns The records that you can delete, oldest chain first.
  *
  * @public
  */

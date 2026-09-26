@@ -1,66 +1,67 @@
 import type { Transaction } from '../transaction.js'
 
-/** Characters a migration name may use: letters, digits, and underscores.
+/** Matches a valid migration name, which uses only letters, digits, and underscores.
  * @public
  */
 export const MIGRATION_NAME_RE = /^\w+$/
 
 /**
- * Marks a migration as the point an existing database starts from, so the
- * runner records every earlier version as applied without running it.
+ * Marks a migration as a baseline, which a new database runs in place of every
+ * version up to and including `through`. A database that already has migration
+ * history skips the baseline and applies only the versions that it lacks.
  *
  * @public
  */
 export interface MigrationBaseline {
-  /** Highest version this baseline covers. */
+  /** The highest earlier version that a new database skips in favour of the baseline. */
   through: number
 }
 
-/** One schema change, with the statements that apply it and the statements that undo it.
+/** Describes one schema change, with the statements that apply it and the statements that undo it.
  * @public
  */
 export interface Migration {
-  /** Version number. The runner applies migrations in ascending order. */
+  /** The version number, which sets the ascending order in which the runner applies migrations. */
   version: number
-  /** Name of the migration, using letters, digits, and underscores. */
+  /** The migration's name, which uses only letters, digits, and underscores. */
   name: string
-  /** SQL that applies the change, or a function that runs it inside the migration's transaction. */
+  /** The SQL that applies the change, or a function that applies it inside the migration's transaction. */
   up: string | ((tx: Transaction) => void | Promise<void>)
-  /** SQL that undoes the change, or a function that runs it. A migration without this cannot roll back. */
+  /** The SQL that undoes the change, or a function that undoes it. Rollback throws a `MIGRATION_NO_DOWN` error for a migration without it. */
   down?: string | ((tx: Transaction) => void | Promise<void>)
-  /** Marks this migration as the point an existing database starts from. */
+  /** Marks this migration as a baseline, which a new database runs in place of the earlier versions. */
   baseline?: MigrationBaseline
 }
 
-/** Migrations to apply, either as an array or as a function that produces one.
+/** The migrations to apply, as an array or as a function that returns one.
  * @public
  */
 export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>)
 
-/** One migration named in a migration or rollback result.
+/** Identifies one migration in a migration or rollback result.
  * @public
  */
 export interface AppliedMigrationEntry {
-  /** Version number of the migration. */
+  /** The migration's version number. */
   version: number
-  /** Name of the migration. */
+  /** The migration's name. */
   name: string
 }
 
-/** What one call to migrate did.
+/** Describes the outcome of one migrate call.
  * @public
  */
 export interface MigrationResult {
-  /** Migrations this call applied, in the order it applied them. */
+  /** The migrations that this call applied, in the order that it applied them. */
   applied: AppliedMigrationEntry[]
-  /** Number of migrations the database had already applied. */
+  /** The number of input migrations that this call skipped, because the database already had them or a baseline replaces them. */
   skipped: number
 }
 
-/** What one call to roll back did.
+/** Describes the outcome of one rollback call.
  * @public
  */
 export interface RollbackResult {
-  /** Migrations this call undid, newest first. */
+  /** The migrations that this call undid, newest first. */
   rolledBack: AppliedMigrationEntry[]
 }

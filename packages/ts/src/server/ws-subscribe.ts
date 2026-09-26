@@ -2,6 +2,7 @@ import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
 import type { SubscribeHookContext } from '../core/hooks/types.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
+import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { AckResponse } from './protocol.js'
 import { decodeBoundParams } from './protocol.js'
 import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from './sync-protocol.js'
@@ -17,6 +18,7 @@ export type SubscriptionAttachment = 'attached' | 'duplicate' | 'disconnected'
 
 export interface WSSubscribeDeps {
   cdc: CdcContextRegistry
+  acceptDeviceSync: boolean
   maxUnacknowledgedChanges: number
   socketResumeBytes: number
   hasSubscribeHook(): boolean
@@ -47,6 +49,11 @@ export async function handleSubscribeMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
+  if (msg.deviceId !== undefined && !deps.acceptDeviceSync) {
+    deps.sendError(conn, id, 'DEVICE_SYNC_NOT_ACCEPTED', DEVICE_SYNC_NOT_ACCEPTED_MESSAGE)
+    return
+  }
+
   const tables = readTableSet(msg)
   if (typeof tables === 'string') {
     deps.sendError(conn, id, 'INVALID_MESSAGE', tables)
@@ -128,7 +135,13 @@ export async function handleSubscribeMessage(
   if (deps.hasSubscribeHook()) {
     for (const table of tables) {
       try {
-        await deps.beforeSubscribe({ databaseId: state.databaseId, table, filter, identity: state.identity })
+        await deps.beforeSubscribe({
+          databaseId: state.databaseId,
+          table,
+          filter,
+          identity: state.identity,
+          deviceId,
+        })
       } catch (err) {
         deps.sendSirannonError(conn, id, err)
         return

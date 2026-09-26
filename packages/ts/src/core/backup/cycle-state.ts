@@ -6,56 +6,56 @@ import type { LogCursor } from './wal-log.js'
 
 const STATE_FILE_NAME = 'cycle.json'
 
-/** A capture sitting on local disk that has yet to reach the destination.
+/** A capture on local disk that Sirannon has yet to send to the destination.
  * @internal
  */
 export interface PendingCapture {
-  /** Name to store the frames under at the destination. */
+  /** The name to store the frames under at the destination. */
   name: string
-  /** Identifier the capture reports its progress under. */
+  /** The identifier that Sirannon reports the progress of this capture under. */
   runId: string
-  /** Where this piece comes in its chain, counted from one. */
+  /** The position of this piece in its chain, counted from one. */
   sequence: number
-  /** The stretch of log it covers. */
+  /** The range of log frames that this capture holds. */
   position: BackupChainPosition
-  /** Where the capture stopped. The next one starts from here. */
+  /** The point in the log where this capture stopped, which the next capture starts from. */
   cursor: LogCursor
-  /** Epoch milliseconds it started. */
+  /** The moment, in epoch milliseconds, that the capture started. */
   startedAt: number
-  /** Epoch milliseconds it finished reading the log. */
+  /** The moment, in epoch milliseconds, that Sirannon finished reading the log. */
   capturedAt: number
-  /** How long that read took, in milliseconds. */
+  /** The time that the read took, in milliseconds. */
   copyMs: number
-  /** How many frames it holds. */
+  /** The number of log frames in the capture. */
   frameCount: number
-  /** How big it is, in bytes. */
+  /** The size of the capture, in bytes. */
   byteLength: number
-  /** Size of one database page, in bytes. */
+  /** The size of one database page, in bytes. */
   pageSize: number
 }
 
-/** What the cycle remembers on local disk between one turn and the next.
+/** The state that the cycle stores on local disk between one turn and the next.
  * @internal
  */
 export interface BackupCycleState {
-  /** Name the list of chains is stored under. */
+  /** The name that Sirannon stores the list of chains under. */
   chainName: string
-  /** The chain being extended. */
+  /** The chain that the cycle extends. */
   chainId: string
-  /** Epoch milliseconds that chain started. */
+  /** The moment, in epoch milliseconds, that the chain started. */
   chainStartedAt: number
-  /** Where the chain went in the list, so a check reads that one record. */
+  /** The index of the chain in the list, so that a check can read that one record. */
   headIndex?: number
-  /** How many records the chain holds, counting its full copy. */
+  /** The number of records in the chain, including its full copy. */
   records: number
-  /** Where the last capture stopped in the log. */
+  /** The point in the log where the last capture stopped. */
   cursor: LogCursor | null
-  /** A capture still waiting to reach the destination. */
+  /** A capture that Sirannon has yet to send to the destination. */
   pending: PendingCapture | null
   /**
    * Whether the database closed with its whole log captured. SQLite deletes the
-   * log as it closes, so without this flag a fresh log after a restart would be
-   * indistinguishable from one that lost frames.
+   * log when the database closes, so this flag lets Sirannon tell a new log
+   * after a restart apart from a log that lost frames.
    */
   closedCleanly: boolean
 }
@@ -110,21 +110,21 @@ function isCycleState(value: unknown): value is BackupCycleState {
 }
 
 /**
- * Names the file the cycle keeps its state in.
+ * Returns the path of the file that the cycle stores its state in.
  *
- * @param stagingDir - Directory the cycle stages captures in.
- * @returns Path of the state file.
+ * @param stagingDir - The directory that the cycle stages captures in.
+ * @returns The path of the state file.
  */
 export function cycleStatePath(stagingDir: string): string {
   return join(stagingDir, STATE_FILE_NAME)
 }
 
 /**
- * Reads back what the cycle last recorded about the chain it was extending.
- * A database that has never run one has nothing here yet.
+ * Reads the state that the cycle last recorded for the chain that it extends.
+ * A database that has never run a cycle has no state file.
  *
- * @param stagingDir - Directory the cycle stages captures in.
- * @returns The state, or undefined where there is none.
+ * @param stagingDir - The directory that the cycle stages captures in.
+ * @returns The state, or undefined where the file is missing or invalid.
  */
 export async function readCycleState(stagingDir: string): Promise<BackupCycleState | undefined> {
   try {
@@ -137,12 +137,12 @@ export async function readCycleState(stagingDir: string): Promise<BackupCycleSta
 }
 
 /**
- * Records where the cycle has got to. The write goes to a file beside the real
- * one and is then renamed over it, so a crash half way through leaves the
- * previous state intact and readable.
+ * Stores the current state of the cycle. Sirannon writes a temporary file next
+ * to the state file and then renames it over the state file, so that a crash
+ * during the write leaves the previous state intact.
  *
- * @param stagingDir - Directory the cycle stages captures in.
- * @param state - Where the cycle has got to.
+ * @param stagingDir - The directory that the cycle stages captures in.
+ * @param state - The current state of the cycle.
  */
 export async function writeCycleState(stagingDir: string, state: BackupCycleState): Promise<void> {
   const path = cycleStatePath(stagingDir)
@@ -153,11 +153,12 @@ export async function writeCycleState(stagingDir: string, state: BackupCycleStat
 }
 
 /**
- * Forgets the chain the cycle was extending. A node that stops taking its
- * group's backups calls this, and the turn that brings them back to it starts a
- * fresh chain with a full copy.
+ * Deletes the state file, so that the cycle stops tracking the chain that it
+ * was extending. A node calls this when it stops taking the backups of its
+ * group, so that once Sirannon picks that node again, its next turn starts a
+ * new chain with a full copy.
  *
- * @param stagingDir - Directory the cycle stages captures in.
+ * @param stagingDir - The directory that the cycle stages captures in.
  */
 export async function removeCycleState(stagingDir: string): Promise<void> {
   await rm(cycleStatePath(stagingDir), { force: true })

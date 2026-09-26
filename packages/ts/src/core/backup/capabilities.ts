@@ -1,32 +1,32 @@
 import type { DriverCapabilities } from '../driver/types.js'
 
 /**
- * What one runtime supports of the backup operations, so a caller learns
- * before a run rather than at failure time. A runtime that hands over whole
- * databases only reports no full copy at all.
+ * The backup operations that one runtime supports, so that a caller can check
+ * them before it starts a backup. A runtime whose driver lacks a stepped copy
+ * reports `fullCopy` as false, along with every operation that depends on it.
  *
  * @public
  */
 export interface BackupCapabilities {
-  /** Whether this runtime copies an open database while writes continue. */
+  /** Whether this runtime can copy an open database while writes continue. */
   fullCopy: boolean
-  /** Whether a full copy reaches the destination without a local file. */
+  /** Whether this runtime can send a full copy to the destination without writing a local file. */
   streamedCopy: boolean
-  /** Whether a full copy writes a local file and sends that file on. */
+  /** Whether this runtime can write a full copy to a local file and then send that file to the destination. */
   stagedCopy: boolean
-  /** Local disk a full copy needs, which the staged route sets to the size of the backup. */
+  /** The local disk space that a full copy needs, which is `'equal-to-backup'` when only the staged route is available. */
   localDiskRequired: 'none' | 'equal-to-backup'
-  /** Whether this runtime repeats a full copy on a schedule. */
+  /** Whether this runtime can repeat a full copy on a schedule. */
   schedule: boolean
 }
 
 /**
- * Reports which backup operations a runtime supports.
+ * Returns the backup operations that a runtime supports.
  *
- * @param capabilities - What the driver declares its runtime supports.
+ * @param capabilities - The capabilities that the driver declares for its runtime.
  * @param hasEngine - Whether the driver supplies a backup engine.
- * @param streams - Whether the engine carries a full copy to the destination without a local file.
- * @returns The backup operations a caller can run on this runtime.
+ * @param streams - Whether the engine can send a full copy to the destination without writing a local file.
+ * @returns The backup operations that a caller can run on this runtime.
  */
 export function describeBackupCapabilities(
   capabilities: DriverCapabilities,

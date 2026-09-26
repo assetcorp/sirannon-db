@@ -22,6 +22,8 @@ import { SyncStatusNotifier } from './sync-status-notifier.js'
 import { assertWebSocketCredentials } from './transport/ws-headers.js'
 import { RemoteError } from './types.js'
 
+const SERVER_REFUSES_DEVICE_SYNC_CODES = new Set(['SYNC_UNSUPPORTED', 'DEVICE_SYNC_NOT_ACCEPTED'])
+
 export type {
   SnapshotOptions,
   SnapshotOutcome,
@@ -31,7 +33,7 @@ export type {
 } from './sync-controller-types.js'
 
 /**
- * Keeps one device's local database in step with a server: it pushes local changes, pulls the server's, and downloads a fresh snapshot when the device falls too far behind.
+ * Keeps one device's local database in step with a server by pushing local changes, pulling the server's changes, and downloading a fresh snapshot when the server requires a resync.
  *
  * @public
  */
@@ -147,7 +149,7 @@ export class SyncController {
   }
 
   /**
-   * Holds pushing and pulling without disconnecting.
+   * Pauses pushing and pulling and closes the pull connection until you call {@link SyncController.resume}.
    */
   pause(): void {
     if (this.state !== 'running') return
@@ -176,7 +178,7 @@ export class SyncController {
   }
 
   /**
-   * Reports where this device stands against the server.
+   * Returns this device's sync status, with the pending push count read fresh from the outbox.
    *
    * @returns The device's state, cursors, pending push count, and last failure.
    */
@@ -208,7 +210,7 @@ export class SyncController {
   }
 
   /**
-   * Pushes local changes now instead of waiting for the next interval.
+   * Pushes local changes now, ahead of the next push interval.
    */
   triggerPush(): void {
     void this.push.drain()
@@ -223,7 +225,7 @@ export class SyncController {
         requestTimeoutMs: this.options.requestTimeout,
       })
     } catch (err) {
-      if (err instanceof RemoteError && err.code === 'SYNC_UNSUPPORTED') throw err
+      if (err instanceof RemoteError && SERVER_REFUSES_DEVICE_SYNC_CODES.has(err.code)) throw err
       this.recordError(err)
     }
   }
@@ -313,10 +315,10 @@ export class SyncController {
   }
 
   /**
-   * Answers whether the local database serves reads and writes again. A failure
-   * before the wipe begins leaves it intact, while one after it leaves every
-   * statement refused with `SNAPSHOT_IN_PROGRESS` until a later copy succeeds,
-   * so the application learns which of the two it is rather than assuming.
+   * Returns whether the local database accepts reads and writes again. When a download
+   * fails before the wipe begins, the database stays intact. When it fails after, the
+   * database rejects every statement with `SNAPSHOT_IN_PROGRESS` until a later download
+   * succeeds, so the application can read the outcome's `databaseUsable` to tell them apart.
    */
   private async snapshotGateOpen(port: DeviceSyncPort): Promise<boolean> {
     try {
@@ -355,11 +357,11 @@ export class SyncController {
   }
 
   /**
-   * Opens the pull subscription, reconciling migrations when the server refuses
-   * it because this device is behind. A device that only reads never pushes, so
-   * the subscribe refusal is the sole point at which it can learn that the
-   * server has migrated; without this it would retry the same refused
-   * subscription forever and silently receive nothing.
+   * Opens the pull subscription, and reconciles migrations when the server refuses
+   * it with `MIGRATION_REQUIRED` because this device's schema is behind. A device
+   * that only reads never pushes, so the refused subscription is the only signal
+   * that the server has migrated. Without this step, the controller would retry the
+   * same refused subscription indefinitely and the device would receive no changes.
    */
   private async openPull(): Promise<void> {
     const deviceId = this.deviceId

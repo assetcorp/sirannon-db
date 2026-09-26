@@ -9,8 +9,8 @@ import { useStableValue } from './stable-value.js'
 export type { LiveQueryState } from '../core/live/types.js'
 
 /**
- * The one method these hooks need from a database, so both a local
- * `Database` and a `RemoteDatabase` satisfy it.
+ * The one database method that `useLiveQuery` calls, which both a local
+ * `Database` and a `RemoteDatabase` provide.
  *
  * @public
  */
@@ -29,20 +29,20 @@ export interface LiveDatabase {
  * @public
  */
 export interface UseLiveQueryOptions extends LiveQueryOptions {
-  /** Set false to hold the query closed, which suits a query that depends on data you do not have yet. */
+  /** Set it to `false` to keep the query closed, for example while the query's arguments depend on data that the component is still loading. */
   enabled?: boolean
 }
 
 /**
- * Subscribes a component to a registered read and re-renders it as the rows change.
+ * Returns the state of a live query for a registered read, and re-renders the component each time the rows change.
  *
- * The query closes when the component unmounts.
+ * The hook closes the query when the component unmounts.
  *
- * @param database - Database the read runs against.
- * @param operation - Name of the registered read.
- * @param args - Arguments the read takes.
- * @param options - Whether the query runs, plus the live-query settings.
- * @returns Whether the query is pending, ready with rows, or failed.
+ * @param database - The database on which Sirannon runs the read.
+ * @param operation - The name of the registered read.
+ * @param args - The arguments for the read.
+ * @param options - The `enabled` flag and the live-query settings.
+ * @returns The query state, which is pending, ready with rows, or an error.
  *
  * @public
  */
@@ -53,13 +53,13 @@ export function useLiveQuery<Row = Record<string, unknown>>(
   options?: UseLiveQueryOptions,
 ): LiveQueryState<Row>
 /**
- * Subscribes a component to a registered read and re-renders it as the rows change.
+ * Returns the state of a live query for a registered read, and re-renders the component each time the rows change.
  *
- * @param database - Database the read runs against.
- * @param operation - Reference to the registered read, which carries its argument and row types.
- * @param args - Arguments the read takes.
- * @param options - Whether the query runs, plus the live-query settings.
- * @returns Whether the query is pending, ready with rows, or failed.
+ * @param database - The database on which Sirannon runs the read.
+ * @param operation - A reference to the registered read, with its argument and row types.
+ * @param args - The arguments for the read.
+ * @param options - The `enabled` flag and the live-query settings.
+ * @returns The query state, which is pending, ready with rows, or an error.
  *
  * @public
  */
@@ -100,8 +100,8 @@ export function useLiveQuery<Row>(
 /**
  * Returns a stable callback that runs a registered write.
  *
- * @param database - Database the write runs against.
- * @param command - Reference to the registered write, which carries its argument type.
+ * @param database - The database on which Sirannon runs the write.
+ * @param command - A reference to the registered write, with its argument type.
  * @returns A callback that takes the write's arguments and resolves with its result.
  *
  * @public
@@ -113,7 +113,7 @@ export function useCommand<Args, Result>(
 /**
  * Returns a stable callback that runs a statement or a registered write by name.
  *
- * @param database - Database the write runs against.
+ * @param database - The database on which Sirannon runs the write.
  * @param command - The statement to run, or the name of a registered write.
  * @returns A callback that takes the parameters and resolves with the result.
  *

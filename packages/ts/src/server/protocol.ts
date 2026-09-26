@@ -13,24 +13,26 @@ import type {
 export type {
   WSAckMessage,
   WSBatchMessage,
-  WSChangeMessage,
-  WSChangesMessage,
   WSClientMessage,
-  WSErrorMessage,
   WSExecuteMessage,
-  WSLiveMessage,
-  WSLiveOp,
   WSLoadMessage,
   WSQueryMessage,
+  WSSubscribeMessage,
+  WSTransactionMessage,
+  WSUnsubscribeMessage,
+} from './ws-protocol.js'
+export type {
+  WSChangeMessage,
+  WSChangesMessage,
+  WSErrorMessage,
+  WSLiveMessage,
+  WSLiveOp,
   WSResultMessage,
   WSServerMessage,
   WSSubscribedMessage,
-  WSSubscribeMessage,
-  WSTransactionMessage,
   WSUnsubscribedMessage,
-  WSUnsubscribeMessage,
   WSWireChangeEvent,
-} from './ws-protocol.js'
+} from './ws-server-messages.js'
 
 /**
  * Body of `POST /db/{id}/query`.
@@ -38,11 +40,11 @@ export type {
  * @public
  */
 export interface QueryRequest {
-  /** The statement to run. */
+  /** The statement to execute. */
   sql: string
-  /** Values bound to the statement, named or positional. */
+  /** The values to bind to the statement, by name or by position. */
   params?: Record<string, unknown> | unknown[]
-  /** Currency this read requires. */
+  /** The read concern that this read requires. */
   readConcern?: ReadConcern
 }
 
@@ -52,11 +54,11 @@ export interface QueryRequest {
  * @public
  */
 export interface ExecuteRequest {
-  /** The statement to run. */
+  /** The statement to execute. */
   sql: string
-  /** Values bound to the statement, named or positional. */
+  /** The values to bind to the statement, by name or by position. */
   params?: Record<string, unknown> | unknown[]
-  /** Acknowledgements this write waits for. */
+  /** The acknowledgements that the server waits for before it confirms this write. */
   writeConcern?: WriteConcern
 }
 
@@ -66,9 +68,9 @@ export interface ExecuteRequest {
  * @public
  */
 export interface TransactionStatement {
-  /** The statement to run. */
+  /** The statement to execute. */
   sql: string
-  /** Values bound to the statement, named or positional. */
+  /** The values to bind to the statement, by name or by position. */
   params?: Record<string, unknown> | unknown[]
 }
 
@@ -78,58 +80,58 @@ export interface TransactionStatement {
  * @public
  */
 export interface TransactionRequest {
-  /** The statements to run, in order. */
+  /** The statements to execute, in order. */
   statements: TransactionStatement[]
-  /** Acknowledgements the transaction waits for. */
+  /** The acknowledgements that the server waits for before it confirms the transaction. */
   writeConcern?: WriteConcern
 }
 
-/** The whole batch commits atomically in one server-side transaction with one fsync.
+/** The body of `POST /db/{id}/batch`, which the server commits atomically in one transaction with one fsync.
  * @public
  */
 export interface BatchRequest {
-  /** The statement to run for each parameter set. */
+  /** The statement to execute for each parameter set. */
   sql: string
-  /** One parameter set per run. */
+  /** One parameter set for each execution of the statement. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
-  /** Acknowledgements the batch waits for. */
+  /** The acknowledgements that the server waits for before it confirms the batch. */
   writeConcern?: WriteConcern
 }
 
 /**
- * What a read route answers with.
+ * The body that a read route returns.
  *
  * @public
  */
 export interface QueryResponse {
-  /** The rows the statement produced, with blobs and large integers in their tagged wire form. */
+  /** The rows that the statement returned, with blobs and large integers in their tagged wire form. */
   rows: Record<string, unknown>[]
 }
 
 /**
- * What a write route answers with.
+ * The body that a write route returns.
  *
  * @public
  */
 export interface ExecuteResponse {
-  /** Number of rows the statement inserted, updated, or deleted. */
+  /** The number of rows that the statement inserted, updated, or deleted. */
   changes: number
-  /** Row id SQLite assigned to the last inserted row, as a decimal string when it exceeds the safe range. */
+  /** The row id that SQLite assigned to the last inserted row, as a decimal string when it exceeds the safe integer range. */
   lastInsertRowId: number | string
 }
 
 /**
- * What a transaction route answers with.
+ * The body that a transaction route returns.
  *
  * @public
  */
 export interface TransactionResponse {
-  /** One result per statement, in the order the transaction ran them. */
+  /** One result per statement, in the order that the transaction executed them. */
   results: ExecuteResponse[]
 }
 
 /**
- * What a batch route answers with.
+ * The body that a batch route returns.
  *
  * @public
  */
@@ -139,20 +141,21 @@ export interface BatchResponse {
 }
 
 /**
- * Loads rows with relaxed writer durability; the configured durability is
- * restored before the response is sent, and a load interrupted by a crash is
- * recovered by re-running it.
+ * The body of `POST /db/{id}/load`, which loads rows while the server relaxes the
+ * writer's durability. The server restores the configured durability before it
+ * sends the response. When the process crashes during a load, SQLite rolls back the
+ * uncommitted rows, so the client can send the load again.
  *
  * @public
  */
 export interface LoadRequest {
-  /** The statement to run for each parameter set. */
+  /** The statement to execute for each parameter set. */
   sql: string
   /** One parameter set per row. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
-  /** Durability in force while the load runs. Default: 'off'. */
+  /** The writer's durability level during the load. Defaults to 'off'. */
   durability?: BulkLoadDurability
-  /** Whether this load ends with a checkpoint. Set it false on every batch but the last of a multi-batch import. */
+  /** Whether the server checkpoints the WAL after this load. Defaults to true, so set it to false on every batch except the last of a multi-batch import. */
   checkpoint?: boolean
 }
 
@@ -169,12 +172,12 @@ export interface AckResponse {
 }
 
 /**
- * The body every failed route answers with.
+ * The body that every failed route returns.
  *
  * @public
  */
 export interface ErrorResponse {
-  /** Machine-readable code, human-readable message, and anything else the route attached. */
+  /** A machine-readable code, a human-readable message, and any details that the route adds. */
   error: {
     code: string
     message: string
@@ -187,11 +190,11 @@ export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
 }
 
 /**
- * Turns a write result into its wire form, encoding a row id beyond the safe
- * integer range as a decimal string.
+ * Converts a write result into its wire form, and encodes a row id beyond the
+ * safe integer range as a decimal string.
  *
- * @param result - What the write reported locally.
- * @returns The result as it crosses the wire.
+ * @param result - The result that the local write returns.
+ * @returns The result in its wire form.
  *
  * @public
  */

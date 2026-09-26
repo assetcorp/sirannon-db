@@ -8,23 +8,23 @@ import { fetchStoredFile, listStoredFilePieces } from './restore-fetch.js'
 import { type ExpectedLogHeader, RestoreLogWriter } from './restore-log.js'
 import { LOG_FRAME_HEADER_BYTES, LOG_HEADER_BYTES } from './wal-format.js'
 
-/** What one batch of change pieces replays into.
+/** The destination, rebuilt database, and change pieces for one batch of a restore.
  * @internal
  */
 export interface ChangeBatchRequest {
-  /** Where the pieces are read from. */
+  /** The destination that holds the pieces. */
   destination: BackupDestination
-  /** Driver the rebuilt database opens through. */
+  /** The driver that Sirannon opens the rebuilt database through. */
   driver: SQLiteDriver
-  /** Path of the rebuilt database. */
+  /** The path of the rebuilt database. */
   destPath: string
-  /** Size of one page of that database, in bytes. */
+  /** The size of one page of that database, in bytes. */
   pageSize: number
-  /** Checkpoint sequence number to record in the log this batch writes. */
+  /** The checkpoint sequence number to write into the log for this batch. */
   logSequence: number
-  /** The pieces to replay, oldest first. */
+  /** The change pieces to apply, oldest first. */
   batch: readonly BackupChainChange[]
-  /** Called with the size of every piece the batch fetches. */
+  /** Called with the size of every piece that Sirannon fetches for the batch. */
   onPiece: (byteLength: number) => void
 }
 
@@ -47,15 +47,17 @@ function expectedLogHeaderOf(change: BackupChainChange, pageSize: number): Expec
 }
 
 /**
- * Refuses a chain whose change pieces leave a hole in the log. Two pieces of
- * one run of the log must meet frame by frame, and a piece opening a fresh run
- * must start at frame one. Anything else means frames that reached no backup,
- * and replaying across the hole would mix pages from after the gap with the
- * pages the missing frames should have replaced.
+ * Throws where the change pieces of a chain leave a gap in the log. The first
+ * piece must start at frame one. Within one generation of the log, each later
+ * piece must start at the frame after the last frame of the piece before it,
+ * and a piece in a new generation must start at frame one. Any other start
+ * means that no backup holds some frames, and applying pieces across the gap
+ * would mix pages from after the gap with pages that the missing frames should
+ * have replaced.
  *
- * @param changes - The pieces a restore plans to replay, oldest first.
- * @param chainId - The chain they belong to, which the error names.
- * @throws A `BACKUP_CHAIN_BROKEN` naming the piece the frames stop short of.
+ * @param changes - The change pieces that a restore plans to apply, oldest first.
+ * @param chainId - The chain of those pieces, which the error message quotes.
+ * @throws A `BACKUP_CHAIN_BROKEN` that names the first piece after the gap.
  *
  * @internal
  */
@@ -101,12 +103,12 @@ async function readPageCount(conn: SQLiteConnection): Promise<number> {
 }
 
 /**
- * Opens the rebuilt database and reads how many pages it holds, which is the
- * cheapest proof that SQLite accepts the file.
+ * Opens the rebuilt database and reads its page count, which is the cheapest
+ * check that SQLite accepts the file.
  *
- * @param driver - Driver to open the database through.
- * @param destPath - Path of the rebuilt database.
- * @returns Pages the database holds.
+ * @param driver - The driver to open the database through.
+ * @param destPath - The path of the rebuilt database.
+ * @returns The number of pages in the database.
  *
  * @internal
  */
@@ -141,16 +143,16 @@ async function foldLogIntoDatabase(driver: SQLiteDriver, destPath: string, datab
 }
 
 /**
- * Replays one batch of change pieces onto the rebuilt database.
+ * Applies one batch of change pieces to the rebuilt database.
  *
- * Sirannon fetches each change piece one stored piece at a time and writes
- * every one of them straight into the log, so it holds a single stored piece
- * rather than the batch. Once the whole batch is written, SQLite replays it and
- * a checkpoint folds it into the database file. The log is empty again before
- * the next batch begins.
+ * Sirannon fetches each change piece one stored piece at a time and writes each
+ * stored piece straight into the log, so it holds one stored piece in memory at
+ * a time. Once the whole batch is in the log, SQLite reads the log when
+ * Sirannon opens the database, and a checkpoint then copies the frames into the
+ * database file and empties the log before the next batch begins.
  *
- * @param request - The pieces to replay, and where they go.
- * @returns How many frames the batch held.
+ * @param request - The change pieces to apply, and the database to apply them to.
+ * @returns The number of log frames in the batch.
  *
  * @internal
  */

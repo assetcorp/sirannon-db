@@ -3,7 +3,7 @@ import { ConnectionPoolError, SirannonError } from './errors.js'
 import type { WorkerHostOptions } from './worker/host.js'
 
 /**
- * Settings a connection pool opens its writer and readers with.
+ * Settings that {@link ConnectionPool.create} uses to open the writer and reader connections.
  *
  * @internal
  */
@@ -29,7 +29,7 @@ async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promi
 }
 
 /**
- * Holds one writer connection and a rotating set of reader connections for a single database file.
+ * Opens one writer connection and a set of reader connections for a single database file, and returns the readers in rotation.
  *
  * @internal
  */
@@ -109,7 +109,7 @@ export class ConnectionPool {
     return this.writer
   }
 
-  /** Returns the writer and every reader, for an operation that must apply to the whole pool. */
+  /** Returns the writer and every reader, so that the caller can apply an operation to every connection in the pool. */
   connections(): readonly SQLiteConnection[] {
     if (this.closed) {
       throw new ConnectionPoolError('Connection pool is closed')

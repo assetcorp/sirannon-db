@@ -5,10 +5,9 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
-import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
-import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
+import type { CoordinatorLease, CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError } from '../errors.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
@@ -48,14 +47,13 @@ import {
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
 } from './coordinator-authority.js'
-import { stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { computeNodeHealth } from './node-health.js'
 import { SenderLoop } from './sender-loop.js'
-import { startEngine } from './startup.js'
+import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
@@ -73,8 +71,8 @@ type CoordinatorStampedMessage =
 /**
  * Coordinates replication for a single database node.
  *
- * Its state and dependencies are readable properties so that the collaborating
- * modules in `./engine/` share one mutable engine instance.
+ * The engine exposes its state and dependencies as properties, so that the
+ * helper modules that implement it can share one mutable instance.
  *
  * @public
  */
@@ -86,7 +84,7 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   readonly config: ReplicationConfig
   /**
-   * Identifier of this node, which every change it authors carries.
+   * Identifies this node, and the engine stamps it on every change that this node writes.
    */
   readonly nodeId: string
   /** @internal */
@@ -146,6 +144,16 @@ export class ReplicationEngine extends EventEmitter {
   controllerLeaseId: string | null = null
   /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  nodeSessionWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null = null
+  /** @internal */
+  observedControllerLease: CoordinatorLease | null = null
+  /** @internal */
+  controllerBidding = false
+  /** @internal */
+  liveNodeIds: string[] | null = null
   /** @internal */
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
   /** @internal */
@@ -221,44 +229,29 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
-   * Connects the transport, pulls a full copy when this node needs one, and starts replicating.
+   * Connects the transport and starts replicating. When this node is a replica without a complete, current copy, it
+   * also requests a full copy from a source peer, and the returned promise resolves before that copy finishes.
    */
-  start(): Promise<void> {
-    return startEngine(this)
+  async start(): Promise<void> {
+    try {
+      await startEngine(this)
+    } catch (err) {
+      await this.stop().catch(() => {})
+      throw err
+    }
   }
 
   /**
-   * Stops replicating, abandons any sync in flight, and disconnects the transport.
+   * Stops replicating, aborts every first sync that this node serves, and disconnects the transport.
    */
   async stop(): Promise<void> {
-    if (!this.running) return
-    this.running = false
-    stopCoordinatorTimers(this)
-
-    this.syncJoiner.stopTimers()
-    this.syncServer.abortAll()
-
-    if (this.syncState.phase === 'syncing') {
-      try {
-        await setForeignKeysEnabled(this.writerConn, true)
-      } catch (err: unknown) {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        this.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })
-      }
-    }
-
-    this.senderLoop.stop()
-    if (this.tracker) {
-      this.tracker.clearPruneBoundary()
-    }
-    await stopCoordinatorMode(this)
-    await this.config.transport.disconnect()
+    await stopEngine(this)
   }
 
   /**
-   * Reports where this node stands.
+   * Returns this node's replication status.
    *
-   * @returns The node's role, its peers, its progress, its health, and its group state.
+   * @returns The node's role, peers, sequence position, sync state, health, and coordinator group state.
    */
   status(): ReplicationStatus {
     return {
@@ -274,54 +267,56 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
-   * Returns the highest change-log position this node has recorded locally.
+   * Returns the highest position in this node's local change log.
    *
-   * @returns That position, which a caller waits for a replica to reach.
+   * @returns That position, which a caller can wait for a replica to reach.
    */
   getCurrentSeq(): bigint {
     return this.lastLocalSeq
   }
 
   /**
-   * Returns how far this node has applied one peer's changes.
+   * Returns the highest applied position from one peer's change log.
    *
-   * @param peerId - Identifier of the peer.
-   * @returns The highest position from that peer this node has applied.
+   * @param peerId - The peer's node ID.
+   * @returns That position, or `0n` before this node applies any change from that peer.
    */
   getAppliedSeq(peerId: string): bigint {
     return this.appliedSeqByPeer.get(peerId) ?? 0n
   }
 
   /**
-   * Runs a read, refusing it when the node cannot meet the read concern.
+   * Executes a read, and throws when this node is still syncing or cannot meet the read concern.
    *
-   * @param sql - The statement to run.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Read concern for this statement.
-   * @returns The rows the statement produced.
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The read concern for this statement.
+   * @returns The rows that the statement returns.
    */
   query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     return query<T>(this, sql, params, options)
   }
 
   /**
-   * Runs one write, forwarding it to the primary when this node accepts no writes and forwarding is on.
+   * Executes one write on this node, or forwards it to the primary when this node cannot accept writes and
+   * `writeForwarding` is on.
    *
-   * @param sql - The statement to run.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Write concern for this statement.
-   * @returns How many rows changed, and the last inserted row id.
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The write concern for this statement, which applies only when this node executes the write itself.
+   * @returns The number of rows that changed and the ID of the last inserted row.
    */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     return execute(this, sql, params, options)
   }
 
   /**
-   * Runs one statement over many parameter sets in a single transaction.
+   * Executes one statement once for each parameter set. On this node, each execution commits in its own transaction;
+   * when this node forwards the batch, the primary executes every set in one transaction.
    *
-   * @param sql - The statement to run for each parameter set.
-   * @param paramsBatch - One parameter set per run.
-   * @param options - Write concern for the transaction.
+   * @param sql - The statement to execute for each parameter set.
+   * @param paramsBatch - One parameter set per execution.
+   * @param options - The write concern that each local execution waits for, which a forwarded batch ignores.
    * @returns One result per parameter set, in order.
    */
   executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
@@ -329,22 +324,24 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
-   * Runs a function inside one transaction on this node.
+   * Calls `fn` inside one transaction on this node. On a node that cannot accept writes, it throws a `TopologyError`,
+   * since the engine forwards only `execute` and `executeBatch` writes to the primary.
    *
-   * @param fn - Receives the transaction and runs statements on it.
-   * @param options - Write concern for the transaction.
-   * @returns Whatever the function returned.
+   * @param fn - The function that receives the transaction and executes statements on it.
+   * @param options - The write concern to wait for after the transaction commits.
+   * @returns The value that `fn` resolves to.
    */
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T> {
     return transaction<T>(this, fn, options)
   }
 
   /**
-   * Sends a write to the primary and waits for its result.
+   * Sends the statements to the primary, which executes them in one transaction, and returns the primary's result.
+   * When this node is the primary, it executes them here in the same way.
    *
-   * @param statements - The statements to run, in order, each with its own parameters.
-   * @param options - Write concern the primary applies.
-   * @returns What the primary reported for each statement.
+   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param options - The engine ignores this argument.
+   * @returns The result of each statement, in order, and the request ID.
    */
   forwardStatements(
     statements: Array<{ sql: string; params?: Params }>,
@@ -383,7 +380,7 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
-   * Stamps an outgoing replication message with this node's group and primary term.
+   * Returns a copy of an outgoing replication message with this node's group ID and primary term added.
    *
    * @internal
    */

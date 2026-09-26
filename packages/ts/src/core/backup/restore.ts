@@ -70,41 +70,40 @@ function batchesOf(changes: readonly BackupChainChange[], batchSize: number): Ba
 }
 
 /**
- * Rebuilds a database from the moment you name and leaves it at a path of your
- * choosing.
+ * Rebuilds a database at the moment that you name, and writes it to a path
+ * that you choose.
  *
  * Sirannon reads the chain records at your destination and takes the newest
- * full copy finished at or before that moment. It then replays every change
- * piece captured from that copy up to the same moment, fetching one stored
- * piece and applying it before it asks for the next. One stored piece is
- * therefore all a restore holds, however large the database it rebuilds.
+ * full copy that finished at or before that moment. It then applies every
+ * change piece that it captured after that copy up to the same moment,
+ * fetching one stored piece and applying it before it requests the next, so a
+ * restore holds one stored piece in memory however large the database is.
  *
- * Two kinds of gap fail the call. A chain missing a change piece fails with
- * `BACKUP_CHAIN_BROKEN` naming the piece its sequence stops at, and a
- * destination missing one of the numbered pieces a file was stored in fails
- * with `BACKUP_DESTINATION_ERROR` naming that piece. Sirannon also checks each
- * file against the byte count and the fingerprint its backup recorded, both of
- * which cover the whole file.
+ * A gap fails the call in one of two ways. A missing change piece in the chain
+ * throws `BACKUP_CHAIN_BROKEN`, naming the sequence number where the chain
+ * stops, and a missing stored piece of a file throws
+ * `BACKUP_DESTINATION_ERROR`, naming that piece. Sirannon also checks each file
+ * against the byte count and the fingerprint in its record, both of which cover
+ * the whole file.
  *
- * Sirannon assembles the rebuilt database beside the path you named and renames
- * it onto that path once the last batch is folded in. A restore that fails, or
- * one the machine kills part-way, therefore leaves that path holding whatever
- * it held before. Where a database already sits at that path, Sirannon folds its
- * write-ahead log back into it before the rename, so a machine that stops the
- * restore between those two steps leaves that database whole. Where the fold
- * cannot empty that log, because another connection holds the database or
- * SQLite cannot open the file at all, Sirannon removes that database together
- * with its log, so a machine stopping there leaves the path plainly empty
- * rather than quietly short of its last commits. A database already there stops
- * the call unless you set `replaceExisting`, because the rename leaves the
- * rebuilt database at that path and nothing of the one it replaced.
+ * Sirannon builds the database next to the path that you name, and renames it
+ * onto that path after the checkpoint of the last batch. When the restore fails
+ * or the machine stops part-way, the path therefore keeps its previous
+ * contents. Where a database already exists at that path, Sirannon checkpoints
+ * its write-ahead log into it before the rename, so that a crash between those
+ * two steps leaves that database complete. Where the checkpoint cannot empty
+ * that log, because another connection holds the database or SQLite cannot open
+ * the file, Sirannon deletes that database and its log, so that a crash at that
+ * point leaves the path empty, with no database there that lacks its last
+ * commits. A database at that path stops the call unless you set
+ * `replaceExisting`, because the rename replaces that database entirely.
  *
- * The disk this needs is the finished database, plus one stored piece, plus the
- * log Sirannon writes for one batch of change pieces. `batchSize` sets that
- * last part.
+ * The restore needs disk space for the finished database, one stored piece,
+ * and the log that Sirannon writes for one batch of change pieces, whose size
+ * `batchSize` sets.
  *
- * @param options - Where to read from, what moment to reach, and where to put the result.
- * @returns The chain it read, the moment the result reflects, and what the restore fetched and replayed.
+ * @param options - The destination to read from, the moment to restore to, and the path for the result.
+ * @returns The chain that Sirannon reads, the moment that the rebuilt database reflects, and the counts of what the restore fetches and applies.
  *
  * @public
  */

@@ -1,10 +1,10 @@
 # Live queries
 
-A live query is a query result that Sirannon keeps current from change events. Each change updates the rows the result already holds, and the statement runs a second time only in the three cases listed below. A subscription reports rows that changed; a live query reports the answer.
+A live query is a query result that Sirannon keeps current from change events. Sirannon applies each change to the rows that the result already holds, and it reads the statement a second time only in the cases listed below. A subscription reports the rows that changed, while a live query reports the whole current answer.
 
 ## Locally
 
-`db.live` takes the statement, reads once, and watches the statement's table.
+`db.live` takes the statement, reads it once, and starts watching the statement's table.
 
 ```ts
 const orders = await db.live<{ id: number; total: number }>(
@@ -21,30 +21,38 @@ stop()
 await orders.close()
 ```
 
-`getState()` returns `{ status: 'pending' }`, then `{ status: 'ready', rows, revalidating }`, or `{ status: 'error', error }`. Each update carries one of four kinds:
+`getState()` returns `{ status: 'pending' }`, then `{ status: 'ready', rows, revalidating }`, or `{ status: 'error', error }`. Each update has one of four kinds:
 
 | Kind | Meaning |
 | --- | --- |
-| `ops` | Splices that produced the new rows, in order, one message per transaction |
-| `rows` | A second read replaced the rows |
-| `revalidating` | A second read is running and the held rows are the last complete answer |
-| `error` | The query failed and `getState()` carries the error |
+| `ops` | The update lists the splices that produced the new rows, in order, with one message per transaction. |
+| `rows` | A second read has replaced the rows. |
+| `revalidating` | A second read is under way, and the rows that the query holds are the last complete answer. |
+| `error` | The query failed, and `getState()` returns the error. |
 
-Each `ResultOp` is `{ op: 'insert', index, row }`, `{ op: 'update', index, row }`, or `{ op: 'delete', index }`. Apply them in order to hold the same rows the query holds. Code that only renders the result can read `getState()` and skip the operations.
+Each `ResultOp` is `{ op: 'insert', index, row }`, `{ op: 'update', index, row }`, or `{ op: 'delete', index }`. When you apply the operations in order, your copy holds the same rows as the query. Code that only renders the result can call `getState()` and skip the operations.
 
-Each live query owns one temporary probe table whose columns match the declared types and collations of the base table. Sirannon writes the row before and after every change into that table, then runs the statement's own `WHERE` clause and select list over those rows, so affinity, collation, and `ORDER BY` match a read of the base table. Closing the query drops that table.
+Each live query has its own temporary probe table, whose columns match the declared types and collations of the base table. Sirannon writes the row as it stood before and after every change into that table, and then it evaluates the statement's own `WHERE` clause and select list over those rows, so affinity, collation, and `ORDER BY` behave as they do in a read of the base table. Closing the query drops that table.
 
 ### When the statement runs again
 
-Sirannon reads a second time when a transaction carries more changes than the result has rows, when a `LIMIT` window loses a row the held rows can't replace, or when buffered changes exceed `maxTransactionChanges` or an internal byte bound. `revalidating` is true for the duration of that read, and the previous rows stay readable. `rereadJitterMs` bounds a random delay before it starts.
+Sirannon reads the statement a second time in these cases:
+
+- A transaction produces more changes to the result than the result has rows.
+- A change leaves a `LIMIT` window short of a row that the held rows cannot supply.
+- The statement has an `OFFSET`, and a change removes a held row, touches a matching row that the window does not hold, or adds a row that sorts at or before the first held row.
+- The changes buffered for one transaction exceed `maxTransactionChanges`, which is 10,000 by default, or an internal limit of roughly 16 MiB.
+- The change feed overflows its buffer while the query is starting.
+
+`revalidating` is true for as long as that read lasts, and the previous rows stay readable. Before the read starts, Sirannon waits a random delay of up to `rereadJitterMs`, which is 25 ms by default.
 
 ### What a live query maintains
 
-A live query maintains the result of a single-table statement. `live` fails with `CDC_ERROR` for a join, an aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a common table expression, a `VALUES` clause, a window function, a subquery, or `LIMIT` without `ORDER BY`. A statement calling `random()`, `randomblob()`, `changes()`, `last_insert_rowid()`, `total_changes()`, or a clock function such as `datetime('now')` fails for the same reason, because its answer would change without a change event. An `ORDER BY` term bound positionally fails when the statement uses `?` parameters, because the sort term must name its column. `live` on a read-only database fails with `READ_ONLY`, since watching a table installs triggers.
+A live query maintains the result of a single-table statement. `live` fails with `CDC_ERROR` for a join, an aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a common table expression, a `VALUES` clause, a window function, a subquery, or `LIMIT` without `ORDER BY`. A statement that calls `random()`, `randomblob()`, `changes()`, `last_insert_rowid()`, `total_changes()`, or a clock function such as `datetime('now')` fails for the same reason, because its answer can change without any change event. When the statement binds `?` parameters, an `ORDER BY` term that holds a parameter fails, because Sirannon evaluates that term a second time to place a changed row and binds its parameter by name. `live` on a read-only database fails with `READ_ONLY`, because watching a table installs triggers.
 
 ## Over the network
 
-A remote live query runs over a [registered read](operations.md), so the statement never crosses the network. The server holds the result and sends the operations that maintain it, and the client applies them in order.
+A remote live query reads through a [registered read](operations.md), so the statement stays on the server. The server holds the result and sends the operations that keep it current, and the client applies them in order.
 
 ```ts
 import { operationRef } from '@delali/sirannon-db'
@@ -54,11 +62,11 @@ const ordersByStatus = operationRef<{ status: string }, { id: number; total: num
 const orders = await db.live(ordersByStatus, { status: 'pending' })
 ```
 
-The rows arrive with the subscription reply, so no separate read is needed and no change falls between the two messages. The client echoes the registry digest when it subscribes; after `REGISTRY_MISMATCH` it re-reads `/capabilities` once and subscribes again, and fails the query when that attempt is refused too.
+The server sends the rows in its reply to the subscription, so the client needs no separate read and misses no change between the read and the subscription. The client sends the registry digest back when it subscribes. After a `REGISTRY_MISMATCH`, it reads `/capabilities` again once and subscribes a second time, and the query fails when the server rejects that second attempt as well.
 
-A live query needs the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP. While the connection is down the query holds its rows and reports `revalidating`; the transport subscribes again on reconnection and the server sends the rows afresh. The server holds the result, so a client resumes by subscribing again rather than from a cursor.
+A live query needs the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP. While the connection is down, the query keeps its rows and reports `revalidating`. When the connection returns, the transport subscribes again and the server sends the rows afresh, because the server holds the result and the client resumes by subscribing, not from a cursor.
 
-A remote live query carries no options. The server opens the query with its own defaults, so `rereadJitterMs` and `maxTransactionChanges` apply only to a local `db.live`. A subscription against an in-memory database fails with `CDC_UNSUPPORTED`.
+A remote live query takes no options. The server opens the query with its own defaults, so `rereadJitterMs` and `maxTransactionChanges` apply only to a local `db.live`. A remote live query on an in-memory database fails with `CDC_UNSUPPORTED`.
 
 ## In React
 
@@ -84,8 +92,8 @@ function OrderList({ db }: { db: RemoteDatabase }) {
 }
 ```
 
-`useLiveQuery` returns the same `LiveQueryState` the core API returns. Pass `enabled: false` to hold a query closed until you need it. `rereadJitterMs` and `maxTransactionChanges` reach the query only when the database is a local `Database`, because a remote subscription carries no options. `useCommand` returns a stable callback that runs a registered write.
+`useLiveQuery` returns the same `LiveQueryState` as the core API. Pass `enabled: false` to keep a query closed until you need it. `rereadJitterMs` and `maxTransactionChanges` take effect only when the database is a local `Database`, because a remote subscription takes no options. `useCommand` returns a stable callback that calls a registered write.
 
-The hooks compare arguments by value, so an inline object argument re-renders without reopening the query.
+The hooks compare arguments by value, so an inline object argument re-renders the component without reopening the query.
 
 The `LiveQueryOptions` table is in the [configuration reference](configuration.md). The normative definition is in [`packages/spec/02-core.md`](../packages/spec/02-core.md#live-queries).

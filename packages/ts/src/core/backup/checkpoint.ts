@@ -9,17 +9,17 @@ interface CheckpointRow {
   checkpointed: number | bigint
 }
 
-/** What one checkpoint moved out of the write-ahead log.
+/** The frames that one checkpoint moves out of the write-ahead log, and the state of the log afterwards.
  * @internal
  */
 export interface CheckpointResult {
-  /** Whether a reader or a writer stopped it part-way. */
+  /** Whether another reader or writer kept SQLite from finishing the checkpoint. */
   busy: boolean
-  /** How many frames the log still holds. */
+  /** The number of frames that remain in the log. */
   framesInLog: number
-  /** How many frames went back into the database file. */
+  /** The number of frames that SQLite copies back into the database file. */
   framesCheckpointed: number
-  /** Whether the log is now empty. The next write starts a fresh one. */
+  /** Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the next write. */
   emptied: boolean
 }
 
@@ -28,18 +28,18 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Folds the write-ahead log back into the database file and truncates it.
+ * Copies the write-ahead log back into the database file and truncates the log.
  *
- * A reader holding pages can stop the fold part-way. That is not a failure:
- * the frames stay where they are and the next capture picks up from there, so
- * this tries a few times and then reports what happened.
+ * A reader that holds part of the log can stop the checkpoint before it
+ * finishes. The frames then stay in the log for the next capture to read, so
+ * this function tries up to three times and returns the result of the last try.
  *
- * The statement has to run on the connection that writes. SQLite sends any copy
- * in progress back to page one when a truncating checkpoint arrives on some
- * other connection.
+ * The statement must run on the writer connection, because SQLite restarts any
+ * copy in progress from page one when another connection runs a truncating
+ * checkpoint.
  *
- * @param conn - The connection that writes.
- * @returns What moved, and whether the log is now empty.
+ * @param conn - The writer connection.
+ * @returns The frames that the checkpoint moves, and whether the log is empty afterwards.
  */
 export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointResult> {
   let last: CheckpointResult = { busy: true, framesInLog: 0, framesCheckpointed: 0, emptied: false }

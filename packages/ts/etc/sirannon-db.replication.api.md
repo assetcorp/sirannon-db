@@ -66,6 +66,8 @@ export interface ClusterCoordinator {
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;
     updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>;
     updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>;
+    watchControllerLease?(clusterId: string, watcher: ControllerLeaseWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
+    watchNodeSessions?(clusterId: string, watcher: NodeSessionWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
     watchReplicationGroup(clusterId: string, groupId: string, watcher: ReplicationGroupWatcher): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>;
 }
 
@@ -103,7 +105,7 @@ export interface ConflictContext {
 export class ConflictError extends ReplicationError {
     constructor(message: string,
     table: string,
-    rowId: string);
+    rowId: string, cause?: unknown);
     readonly rowId: string;
     readonly table: string;
 }
@@ -118,6 +120,9 @@ export interface ConflictResolution {
 export interface ConflictResolver {
     resolve(ctx: ConflictContext): ConflictResolution | Promise<ConflictResolution>;
 }
+
+// @public
+export type ControllerLeaseWatcher = (lease: CoordinatorLease | null) => void;
 
 // @public
 export function coordinatorBackupGroup(options: CoordinatorBackupGroupOptions): BackupGroupSource;
@@ -196,6 +201,7 @@ export interface ForwardedTransaction {
         sql: string;
         params?: Record<string, unknown> | unknown[];
     }>;
+    writeConcern?: WriteConcern;
 }
 
 // @public
@@ -260,6 +266,9 @@ export class NodeNotInSyncError extends ReplicationError {
 }
 
 // @public
+export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void;
+
+// @public
 export class NoSafePrimaryError extends FailoverError {
     constructor(message: string, details?: Record<string, unknown>);
 }
@@ -291,6 +300,8 @@ export class PeerTracker {
     getPeerState(nodeId: string): PeerState | undefined;
     // (undocumented)
     onAckReceived(nodeId: string, ackedSeq: bigint): void;
+    // (undocumented)
+    onBatchApplied(nodeId: string, highestHlc: string): void;
     // (undocumented)
     recordInFlightBatch(nodeId: string, batch: InFlightBatch): void;
     // (undocumented)
@@ -440,7 +451,11 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly config: ReplicationConfig;
     // @internal (undocumented)
+    controllerBidding: boolean;
+    // @internal (undocumented)
     controllerLeaseId: string | null;
+    // @internal (undocumented)
+    controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
     controllerState: 'disabled' | 'standby' | 'active' | 'lost';
     // @internal (undocumented)
@@ -496,6 +511,8 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     lastSentSeq: bigint;
     // @internal (undocumented)
+    liveNodeIds: string[] | null;
+    // @internal (undocumented)
     readonly localExecutor: LocalExecutor;
     // @internal (undocumented)
     readonly log: ReplicationLog;
@@ -516,6 +533,10 @@ export class ReplicationEngine extends EventEmitter {
     readonly nodeId: string;
     // @internal (undocumented)
     nodeSessionLeaseId: string | null;
+    // @internal (undocumented)
+    nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
+    // @internal (undocumented)
+    observedControllerLease: CoordinatorLease | null;
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;

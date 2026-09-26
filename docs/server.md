@@ -1,6 +1,14 @@
 # Server
 
-`@delali/sirannon-db/server` exposes a `Sirannon` registry over HTTP and WebSocket, powered by uWebSockets.js.
+`@delali/sirannon-db/server` serves a `Sirannon` registry over HTTP and WebSocket through uWebSockets.js.
+
+Install uWebSockets.js alongside the package before you start the server. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version that Sirannon's own development dependencies use:
+
+```bash
+pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
+```
+
+When the process cannot load uWebSockets.js, `server.listen()` fails with code `SERVER_DEPENDENCY_MISSING` and a message that gives this install command.
 
 ```ts
 import { createServer } from '@delali/sirannon-db/server'
@@ -11,13 +19,13 @@ await server.listen()
 
 ## What the server accepts
 
-A server accepts no SQL from the network by default. Register the statements it may run and callers invoke them by name, as the [registered operations guide](operations.md) sets out. Set `acceptSql: true` to open the five statement routes and their WebSocket messages, and authenticate every request when you do.
+A server refuses SQL from the network by default. Register the statements that callers may invoke by name, following the [registered operations guide](operations.md). Set `acceptSql: true` to open the five statement routes and their WebSocket messages, and when you do, authenticate every request.
 
-`GET /capabilities` announces what this server supports: `query.named` and the registry digest once you configure operations, `query.sql` once you turn SQL on, and the device-sync tokens. A client reads that answer before it sends a statement and fails with `SQL_NOT_ACCEPTED` when `query.sql` is absent.
+`GET /capabilities` returns the capability tokens of this server, along with the registry digest once you configure operations. The list holds `query.named` once you configure operations, `query.sql` once you turn SQL on, and the device-sync tokens once you turn device sync on. Before a client sends a statement, it reads that list and fails the call with `SQL_NOT_ACCEPTED` when `query.sql` is missing from it.
 
 ## Authentication
 
-The `authenticate` hook runs before every database route and every WebSocket upgrade. Return the caller's identity, which registered operations then read through `fromIdentity`, and throw a `RequestDeniedError` to refuse the request with a status of your own. Health and capability endpoints skip the hook.
+The server calls the `authenticate` hook before every database route and every WebSocket upgrade. Return the caller's identity so that the server can fill each `fromIdentity` argument of a registered operation. Throw a `RequestDeniedError` to refuse the request with a status of your own. The server answers the health and capability endpoints without calling the hook.
 
 ```ts
 import { RequestDeniedError } from '@delali/sirannon-db'
@@ -34,25 +42,25 @@ const server = createServer<Identity>(sirannon, {
 })
 ```
 
-Every value the hook returns becomes the caller identity, so returning a `{ status, code, message }` object instead of throwing fails the request with `HOOK_ERROR`.
+Throw to refuse a request, because the server fails a request with `500 HOOK_ERROR` when the hook returns a `{ status, code, message }` object.
 
-A Node client attaches an `Authorization` header to the upgrade, so `ctx.headers.authorization` reads the same on an HTTP route and on a WebSocket upgrade. A browser attaches no header to `new WebSocket(...)`, so accept a short-lived value in `Sec-WebSocket-Protocol` there, which the client sends through `webSocketProtocols`. Read `method` and `path` to spot the upgrade, and check the `Origin` header against an allowlist in the same hook.
+A Node client attaches an `Authorization` header to the upgrade, so `ctx.headers.authorization` holds the same value on an HTTP route and on a WebSocket upgrade. A browser attaches no header to `new WebSocket(...)`, so for a browser, accept a short-lived ticket in `Sec-WebSocket-Protocol`, which the client sets from its `webSocketProtocols` option. Read `method` and `path` to recognise the upgrade, and check the `Origin` header against an allowlist in the same hook.
 
-The server supports one subprotocol, the plain identifier `sirannon.v1`, and selects it whenever the client offers it. An upgrade that offers subprotocols without it fails with `400 UNSUPPORTED_SUBPROTOCOL`, and an upgrade that offers none at all connects. Selecting the plain identifier keeps a credential out of the handshake response and gives a browser the selected protocol it requires.
+The server supports one subprotocol, the plain identifier `sirannon.v1`, and selects it whenever the client offers it. When a client offers only other subprotocols, the server refuses the upgrade with `400 UNSUPPORTED_SUBPROTOCOL`, while a client that offers no subprotocol at all connects. Because the server selects the plain identifier, the handshake response never echoes a credential, while a browser still receives the selected protocol that it requires.
 
-No WebSocket client can read the status of a refused handshake, so when your hook throws with status 401 or 403 the server completes the handshake and closes the connection at once with code 4401 or 4403, carrying your error code and message as the close reason. A refusal with any other status keeps its HTTP status response.
+A WebSocket client has no access to the status of a refused handshake. So when your hook throws with status 401 or 403, the server completes the handshake and then closes the connection at once with code 4401 or 4403, using your error code and message as the close reason. The server answers a refusal with any other status as an ordinary HTTP response with that status.
 
-`GET /db/{id}/cluster` reports the address of every node in the group, so it answers only a request that `authorizeClusterStatus` accepts.
+`GET /db/{id}/cluster` returns the address of every node in the group, so the server answers it only when `authorizeClusterStatus` accepts the request.
 
 ## Write shapes
 
-Writes come in three shapes on both transports: `transaction` for several different statements that must succeed or fail together, `batch` for one statement over many parameter sets, and `load` for a large import that trades durability for speed. A registered write is a fourth shape, and the server runs its statements in one transaction too.
+The server accepts writes in three shapes on both transports: `transaction` for several different statements that must succeed or fail together, `batch` for one statement over many parameter sets, and `load` for a large import that Sirannon writes at relaxed durability so that it finishes faster. A registered write is a fourth shape, whose statements the server also executes in one transaction.
 
-Each transaction, batch, and load runs server-side in one transaction and replies once. The server never holds the write lock across a round-trip, so it accepts no interactive `BEGIN` ... `COMMIT` across messages.
+The server executes each transaction, batch, and load in one transaction and replies once. The server holds the write lock only within one message, so every transaction must begin and commit inside a single message.
 
 ## Writer worker
 
-Turn on `writerWorker` to run writes, checkpoints, loads, migrations, and backups on a worker thread so a disk flush never blocks the serving thread. Full durability still holds, because a write returns only after its flush completes:
+Turn on `writerWorker` to move writes, checkpoints, loads, migrations, and backups onto a worker thread, so that a disk flush leaves the serving thread free. A write still returns only after its flush completes, so full durability stays intact:
 
 ```ts
 const db = await sirannon.open('app', './data/app.db', {
@@ -63,40 +71,40 @@ const db = await sirannon.open('app', './data/app.db', {
 
 ## HTTP routes
 
-`{id}` and `{name}` are URL-encoded. The five statement routes need `acceptSql: true`, and the server always serves the rest.
+Clients URL-encode `{id}` and `{name}`. Until you set `acceptSql: true`, the server answers the five statement routes with `403 SQL_NOT_ACCEPTED`. Until you set `acceptDeviceSync: true`, it answers the four device-sync routes, `/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, with `403 DEVICE_SYNC_NOT_ACCEPTED`. The server serves every other route in every configuration.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/db/{id}/query` | Run a SELECT, returns `{ rows }` |
-| `POST` | `/db/{id}/query/{name}` | Run a registered read, returns `{ rows }` |
-| `POST` | `/db/{id}/execute` | Run a mutation, returns `{ changes, lastInsertRowId }` |
-| `POST` | `/db/{id}/execute/{name}` | Run a registered write, returns `{ results }` |
-| `POST` | `/db/{id}/transaction` | Run many statements atomically, returns `{ results }` |
-| `POST` | `/db/{id}/batch` | Apply one statement over many parameter sets, returns `{ results }` |
-| `POST` | `/db/{id}/load` | Bulk-load rows with relaxed durability, returns `{ rowsLoaded, changes }` |
-| `POST` | `/db/{id}/changes` | Apply a device-sync change batch |
-| `POST` | `/db/{id}/migrations` | List the migrations a database has applied |
-| `POST` | `/db/{id}/snapshot` | Open a snapshot and return its manifest |
-| `POST` | `/db/{id}/snapshot/page` | Read one page of a snapshot |
-| `POST` | `/db/{id}/backup` | Run one turn of the checkpoint cycle, returns `202` |
-| `GET` | `/db/{id}/backup` | What the cycle is doing and what its recent turns produced |
-| `GET` | `/db/{id}/backup/chain` | Every chain at the backup destination, newest first |
-| `POST` | `/db/{id}/backup/verify` | Read one stored backup back and check it |
-| `POST` | `/db/{id}/backup/safe-to-delete` | The records no restore still needs |
-| `POST` | `/db/{id}/backup/restore` | Rebuild the database from a moment, returns `202` |
-| `GET` | `/db/{id}/backup/restore` | How that restore went |
-| `GET` | `/db/{id}/cluster` | Role, replication group, current primary, primary term, read endpoints, and health |
-| `GET` | `/capabilities` | Announced capabilities and the registry digest |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/health/ready` | Readiness check with per-database status |
+| `POST` | `/db/{id}/query` | Executes a SELECT and returns `{ rows }` |
+| `POST` | `/db/{id}/query/{name}` | Executes a registered read and returns `{ rows }` |
+| `POST` | `/db/{id}/execute` | Executes a mutation and returns `{ changes, lastInsertRowId }` |
+| `POST` | `/db/{id}/execute/{name}` | Executes a registered write and returns `{ results }` |
+| `POST` | `/db/{id}/transaction` | Executes many statements atomically and returns `{ results }` |
+| `POST` | `/db/{id}/batch` | Applies one statement over many parameter sets and returns `{ results }` |
+| `POST` | `/db/{id}/load` | Bulk-loads rows with relaxed durability and returns `{ rowsLoaded, changes }` |
+| `POST` | `/db/{id}/changes` | Applies a device-sync change batch |
+| `POST` | `/db/{id}/migrations` | Lists the migrations that a database has applied |
+| `POST` | `/db/{id}/snapshot` | Opens a snapshot and returns its manifest |
+| `POST` | `/db/{id}/snapshot/page` | Reads one page of a snapshot |
+| `POST` | `/db/{id}/backup` | Starts one turn of the checkpoint cycle and returns `202` |
+| `GET` | `/db/{id}/backup` | Returns what the cycle is doing and what its recent turns produced |
+| `GET` | `/db/{id}/backup/chain` | Lists every chain at the backup destination, newest first |
+| `POST` | `/db/{id}/backup/verify` | Reads one stored backup back and checks it |
+| `POST` | `/db/{id}/backup/safe-to-delete` | Lists the records that no restore still needs |
+| `POST` | `/db/{id}/backup/restore` | Rebuilds the database from a moment and returns `202` |
+| `GET` | `/db/{id}/backup/restore` | Returns the outcome of that restore |
+| `GET` | `/db/{id}/cluster` | Returns the role, replication group, current primary, primary term, read endpoints, and health |
+| `GET` | `/capabilities` | Returns the announced capabilities and the registry digest |
+| `GET` | `/health` | Answers a liveness check |
+| `GET` | `/health/ready` | Answers a readiness check with per-database status |
 
-The [device sync guide](device-sync.md) covers the four device routes. A read body carries `readConcern` and a write body carries `writeConcern`; the [replication guide](replication.md#read-concern) defines both.
+Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
 
 ## Backup routes
 
-The server serves these to an operator, and it runs your `authenticate` hook before each of them as before every other `/db/{id}` route. The [backups guide](backups.md) covers what the cycle behind them does.
+The server calls your `authenticate` hook before each backup route, as it does before every other `/db/{id}` route. Read the [backups guide](backups.md) for the checkpoint cycle behind these routes.
 
-Reserve them for an operator credential. Your hook receives `ctx.path` and `ctx.method` on every request, which is how a single hook admits your application on the data routes and refuses it here:
+Reserve them for an operator credential. Your hook receives `ctx.path` and `ctx.method` on every request, so one hook can admit your application on the data routes and refuse it on these:
 
 ```ts
 authenticate: ctx => {
@@ -108,20 +116,22 @@ authenticate: ctx => {
 }
 ```
 
-Without a check of that shape, every identity your hook accepts may call all seven backup routes, including the one that replaces the database when `acceptBackupRestore` is on.
+Without a check of that shape, every identity that your hook accepts can call all seven backup routes, including the one that replaces the database when `acceptBackupRestore` is on.
 
-The server answers a triggered backup with `202 Accepted` straight away and waits for no turn, since a full copy of a large database may continue past the deadline any proxy between you and the server allows. Read the outcome from the matching `GET`:
+The server answers a triggered backup with `202 Accepted` straight away, because a full copy of a large database can take longer than the timeout of a proxy between you and the server. Read the outcome from the matching `GET`:
 
 ```bash
 curl -XPOST -H "$AUTH" https://db.example.com/db/orders/backup
 curl -H "$AUTH" https://db.example.com/db/orders/backup
 ```
 
-That progress route answers with `running`, the `chainId` the cycle is extending, the `progress` of the turn under way, and the `lastRun`, `lastSkip`, and `lastError` it recorded. A second trigger sent while a turn is under way queues one behind it, and every trigger after that joins the queued turn, so at most one turn ever waits. A database you opened without the `backups` option answers `501 BACKUP_UNSUPPORTED` on all of these routes but `GET /db/{id}/backup/restore`, which reports on restores and reads no database. However, `POST /db/{id}/backup/restore` refuses with `403 BACKUP_RESTORE_NOT_ACCEPTED` before it looks that database up, so a server with `acceptBackupRestore` off answers 403 for a database opened without `backups` too. `POST /db/{id}/backup/verify` takes `{ name }`, which is the name any entry of the chain route states, and `POST /db/{id}/backup/safe-to-delete` takes an optional `{ restorableFrom }`.
+That progress route answers with `running`, the `chainId` that the cycle is extending, the `progress` of the turn under way, and the `lastRun`, `lastSkip`, and `lastError` that the cycle records. When you trigger a second backup during a turn, the server queues one turn behind it. The server folds every later trigger into that queued turn, so at most one turn waits at a time.
+
+For a database that you opened without the `backups` option, the server answers `501 BACKUP_UNSUPPORTED` on every one of these routes except `GET /db/{id}/backup/restore`, which reads the server's record of restores and leaves the database alone. However, the server checks `acceptBackupRestore` on `POST /db/{id}/backup/restore` before it looks the database up, so with that option off it answers `403 BACKUP_RESTORE_NOT_ACCEPTED` even for a database without `backups`. `POST /db/{id}/backup/verify` takes `{ name }`, where `name` comes from an entry in the chain route's response. `POST /db/{id}/backup/safe-to-delete` takes an optional `{ restorableFrom }`.
 
 ### Restoring over the network
 
-`POST /db/{id}/backup/restore` stays shut until you set `acceptBackupRestore: true`. A restore replaces the database that is serving your traffic, so every default configuration leaves that route closed.
+The server refuses `POST /db/{id}/backup/restore` until you set `acceptBackupRestore: true`. A restore replaces the database that serves your traffic, so the server keeps the route closed by default.
 
 ```ts
 const server = createServer(sirannon, {
@@ -130,22 +140,22 @@ const server = createServer(sirannon, {
 })
 ```
 
-That hook is required here. A server built with `acceptBackupRestore: true` and no `authenticate` refuses to start, since the hook is the only gate that names the caller of a route which destroys a database.
+Supply that hook here as well. `createServer` throws `INVALID_BACKUP_RESTORE` when you set `acceptBackupRestore: true` without an `authenticate` hook, because only that hook identifies the caller of a route that can destroy a database.
 
-Name the moment you want back, and Sirannon rebuilds the database at the path it already occupies:
+Sirannon rebuilds the database at its current path from the moment that you send:
 
 ```bash
 curl -XPOST -H "$AUTH" -d '{"moment":1755500000000}' https://db.example.com/db/orders/backup/restore
 curl -H "$AUTH" https://db.example.com/db/orders/backup/restore
 ```
 
-The server closes the database, and that close captures its log a final time. It then discards the chain the old file was extending, rebuilds the file from that database's own backups, and opens the database again under the same identifier with the settings it had. Every route answers `404 DATABASE_NOT_FOUND` for that identifier while the rebuild proceeds, which is why the status route reads the server's own record. The first turn of the cycle after the reopen copies the whole database and starts a fresh chain, since the rebuilt file's log continues none of the old one. You pay for that full copy in exchange for the safe order: Sirannon discards the chain before it replaces the file, so a process that dies part-way through a restore can never resume capturing onto a chain that restore has replaced.
+The server first closes the database, which captures its log one final time. It then discards the chain that the old file extends and rebuilds the file from that database's own backups. Finally, it opens the database again under the same identifier with the settings that it had. While the rebuild proceeds, the server answers every route for that identifier with `404 DATABASE_NOT_FOUND`, so the status route reports from the server's own record of the restore. After the reopen, the first turn of the cycle copies the whole database and starts a fresh chain, because the rebuilt file's log shares no history with the old chain. Because Sirannon discards the old chain before it replaces the file, a process that dies part-way through a restore can't go on to add captures to a chain that the restore replaced.
 
-A second restore of the same database while one is under way answers `409 BACKUP_RESTORE_IN_PROGRESS`. A rebuild that fails still opens the database again, and the status route states the code it stopped with. A close that fails leaves nothing open under that identifier, since a second runtime over a file the old connections may still be using would put two writers on one database. A reopen that fails after a successful rebuild reports `done` with the report and a separate `reopenError`, since Sirannon replaced the data either way and only the process needs restarting.
+When you request a second restore of the same database during a restore, the server answers `409 BACKUP_RESTORE_IN_PROGRESS`. When a rebuild fails, the server still opens the database again, and the status route returns the error code of that failure. When the close fails, the server leaves nothing open under that identifier, because a second runtime over a file that the old connections may still be using would put two writers on one database. When the reopen fails after a successful rebuild, the status route reports `done` with the report and a separate `reopenError`, because Sirannon has already replaced the data and a restart of the process is all that you need.
 
 ## WebSocket messages
 
-Connect to `ws://host:port/db/{id}`. Every message carries a `type` and a client-chosen `id`, and every reply echoes that `id`. Sequence numbers cross as decimal strings, so a value beyond the safe integer range survives JSON.
+Connect to `ws://host:port/db/{id}`. Every message has a `type` and an `id` that the client chooses, and the server echoes that `id` in its reply. Both sides encode sequence numbers as decimal strings, so JSON keeps a value beyond the safe integer range exact.
 
 | Inbound `type` | Fields | Reply |
 | --- | --- | --- |
@@ -161,9 +171,9 @@ Connect to `ws://host:port/db/{id}`. Every message carries a `type` and a client
 | `unsubscribe` | - | `{ type: 'unsubscribed' }` |
 | `ack` | `deviceId`, `seq` | `{ type: 'result', data: { acked, seq } }` |
 
-A `query` or an `execute` message carrying `name` runs the registered operation of that name and carries no SQL, so `acceptSql` doesn't govern it.
+A `query` or `execute` message with `name` invokes the registered operation of that name and holds no SQL, so the server accepts it whether or not you set `acceptSql`. A `subscribe` with `deviceId` and an `ack` need `acceptDeviceSync: true`, and the server refuses both with `DEVICE_SYNC_NOT_ACCEPTED` until you set it.
 
-| Outbound `type` | Carries |
+| Outbound `type` | Contents |
 | --- | --- |
 | `change` | One change event: `type`, `table`, `row`, `oldRow?`, `seq`, `timestamp`, `hlc?`, `origin?`, `rowId?`, `txId?`, `txEnd?` |
 | `changes` | Several change events in ascending `seq` order, sent only to a subscription that asked for `stagedStream` |
@@ -171,14 +181,14 @@ A `query` or an `execute` message carrying `name` runs the registered operation 
 | `result` | The reply to a query, execute, transaction, batch, load, or ack |
 | `error` | `{ code, message }` |
 
-Every subscription marks the last change of each transaction with `txEnd`, so a consumer applies a whole transaction at once and never shows a state the database never held. A subscription naming a registered read is a [live query](live-queries.md), and one carrying a `deviceId` drives [device sync](device-sync.md).
+The server marks the last change of each transaction with `txEnd` on every subscription, so a consumer can apply a whole transaction at once and show only states that the database held. The server treats a subscription with the `name` of a registered read as a [live query](live-queries.md), and a subscription with a `deviceId` as part of [device sync](device-sync.md).
 
-`sinceSeq` resumes a subscription from the highest sequence the client processed, and `epoch` names the sequence space that cursor came from. The server replays every retained change above that sequence, then sets `resync: true` when the cursor fell below the retained history or arrived with a foreign epoch.
+To resume a subscription, set `sinceSeq` to the highest sequence that the client has processed and `epoch` to the sequence space of that cursor. The server then replays every retained change above that sequence before it streams live changes. When the cursor is below the retained history or its epoch differs from the server's, the server skips the replay, sets `resync: true`, and streams live changes from that point.
 
-When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290 rather than dropping a frame, so the client reconnects and resumes from its cursor. It closes with 1013 while shutting down, with 1008 when the database is absent or closed, and with 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client leaves a connection closed after 4401 or 4403, because the same credential fails every later attempt.
+When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290, so the client reconnects and resumes from its cursor with no frame lost. The server closes a connection with 1013 while shutting down, with 1008 when the database is absent or closed, and with 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client leaves a connection closed after 4401 or 4403, because every later try with the same credential would fail too.
 
 ## Value encoding
 
-Both transports round-trip every SQLite value through JSON. A blob crosses as `{ "__sirannon_blob": "<uppercase hex>" }` and an integer beyond the safe range as `{ "__sirannon_int": "<decimal string>" }`. The client SDK encodes and decodes these for you, so `BigInt` and `Uint8Array` values need no application code. The normative definition is in [`packages/spec/05-server.md`](../packages/spec/05-server.md).
+Both transports round-trip every SQLite value through JSON. The server and client encode a blob as `{ "__sirannon_blob": "<uppercase hex>" }` and an integer beyond the safe range as `{ "__sirannon_int": "<decimal string>" }`. The client SDK encodes and decodes these for you, so your application handles `BigInt` and `Uint8Array` values with no extra code. [`packages/spec/05-server.md`](../packages/spec/05-server.md) gives the normative definition.
 
 The `ServerOptions` and `DatabaseOptions` tables are in the [configuration reference](configuration.md).

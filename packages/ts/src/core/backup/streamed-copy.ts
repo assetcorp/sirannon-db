@@ -25,13 +25,13 @@ const STILL_TAKING_REPORT_MS = 5
 const REPORTS_BEFORE_THE_EXTENSION_STOPS_WAITING = 6
 const MICROSECONDS_PER_MS = 1000
 
-/** What one runtime needs before a copy can reach a destination without a local file.
+/** What a runtime supplies so that Sirannon can send a copy to a destination without writing a local file.
  * @internal
  */
 export interface BackupStreamingSupport {
-  /** Absolute path of the compiled extension that carries the bytes. */
+  /** The absolute path of the compiled SQLite extension that queues the bytes of the copy for Sirannon to send. */
   extensionPath: string
-  /** Opens the connection the extension's statements run on. */
+  /** Opens the connection that Sirannon runs the statements of the extension on. */
   openConnection(): Promise<SQLiteConnection>
 }
 
@@ -90,15 +90,15 @@ async function recordedFailure(host: BackupStreamHost, streamId: number): Promis
 }
 
 /**
- * Copies a database to a caller-supplied destination as SQLite writes it, so
- * the run needs no local disk. Sirannon names its own virtual file system on
- * the copy, and the pieces travel to the destination while the copy is still
- * moving pages.
+ * Copies a database to a destination that the caller supplies, sending each
+ * piece as SQLite writes it, so the backup needs no local disk. Sirannon points
+ * the copy at its own virtual file system, which queues each piece for Sirannon
+ * to send to the destination while SQLite goes on copying pages.
  *
- * @param conn - Connection the copy runs on, which must be the connection that writes.
- * @param request - Destination, naming, sizing, and progress reporting for this run.
- * @param support - What this runtime needs to carry the bytes without a local file.
- * @returns What the run copied, how long each part took, and how often the copy restarted.
+ * @param conn - The writer connection, which SQLite runs the copy on.
+ * @param request - The destination, name, piece size, and progress callback for this backup.
+ * @param support - The extension and connection that this runtime supplies for sending bytes without a local file.
+ * @returns The report of the backup, with the pages that SQLite copies, the time that each phase takes, and the number of times that SQLite restarts the copy from page one.
  */
 export async function copyToDestinationStreamed(
   conn: SQLiteConnection,

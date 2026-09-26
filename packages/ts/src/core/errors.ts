@@ -1,6 +1,6 @@
 /**
- * Base class for all sirannon-db errors. Extend this class to create
- * domain-specific errors that carry a machine-readable {@link SirannonError.code}.
+ * The base class for every sirannon-db error, which has a machine-readable
+ * {@link SirannonError.code}. Extend it to define an error of your own.
  *
  * @public
  */
@@ -8,7 +8,7 @@ export class SirannonError extends Error {
   constructor(
     message: string,
     /**
-     * Machine-readable code the server maps to an HTTP status.
+     * The machine-readable code that the server maps to an HTTP status.
      */
     public readonly code: string,
   ) {
@@ -18,8 +18,8 @@ export class SirannonError extends Error {
 }
 
 /**
- * Thrown when a database ID cannot be resolved in the registry.
- * This typically means the database was never opened or has already been closed.
+ * Thrown when the registry has no open database under an identifier, because
+ * the database was never opened or is already closed.
  *
  * @public
  */
@@ -31,8 +31,8 @@ export class DatabaseNotFoundError extends SirannonError {
 }
 
 /**
- * Thrown when attempting to register a database with an ID that is already
- * in use. Each database ID must be unique within the registry.
+ * Thrown when a caller opens a database under an identifier that the registry
+ * already uses, since each identifier names one database.
  *
  * @public
  */
@@ -44,8 +44,7 @@ export class DatabaseAlreadyExistsError extends SirannonError {
 }
 
 /**
- * Thrown when a write operation is attempted on a database that was opened
- * in read-only mode.
+ * Thrown when a caller writes to a database that is open in read-only mode.
  *
  * @public
  */
@@ -57,9 +56,8 @@ export class ReadOnlyError extends SirannonError {
 }
 
 /**
- * Thrown when SQLite fails to execute a statement. The {@link QueryError.sql} property
- * holds the original SQL string that caused the failure, which is useful for
- * debugging and logging.
+ * Thrown when SQLite fails to execute a statement, with that statement in
+ * {@link QueryError.sql} for your logs.
  *
  * @public
  */
@@ -77,22 +75,23 @@ export class QueryError extends SirannonError {
 }
 
 /**
- * Thrown when a transaction cannot be committed or is forcibly rolled back.
- * Check the message for the underlying cause.
+ * Sirannon raises this error when SQLite refuses to commit a transaction whose
+ * statements all succeeded, such as on a deferred foreign key; `cause` holds
+ * SQLite's own error. The server responds to its `TRANSACTION_ERROR` code with status 400.
  *
  * @public
  */
 export class TransactionError extends SirannonError {
-  constructor(message: string) {
+  constructor(message: string, cause?: unknown) {
     super(message, 'TRANSACTION_ERROR')
     this.name = 'TransactionError'
+    if (cause !== undefined) this.cause = cause
   }
 }
 
 /**
- * Thrown when a migration step fails. The {@link MigrationError.version} property identifies
- * which schema version triggered the error so the failure can be pinpointed
- * in the migration history.
+ * Thrown when a migration fails, with the version of that migration in
+ * {@link MigrationError.version}.
  *
  * @public
  */
@@ -100,7 +99,7 @@ export class MigrationError extends SirannonError {
   constructor(
     message: string,
     /**
-     * Version of the migration that failed.
+     * The version of the migration that failed.
      */
     public readonly version: number,
     code: string = 'MIGRATION_ERROR',
@@ -111,9 +110,9 @@ export class MigrationError extends SirannonError {
 }
 
 /**
- * Thrown when a before-hook explicitly rejects an operation. The optional
- * `reason` string is surfaced in the message so callers can distinguish
- * between different hook policies.
+ * An error that a before-hook can throw to reject an operation, which the
+ * server responds to with status 403. The message includes the optional
+ * `reason`, so that a caller can tell one hook policy from another.
  *
  * @public
  */
@@ -128,13 +127,13 @@ export class HookDeniedError extends SirannonError {
 }
 
 /**
- * Refuses one request with a status of your own. Throw it from an authenticate hook or a registered operation.
+ * Rejects one request with a status of your own; throw it from an authenticate hook or a registered operation.
  *
  * @public
  */
 export class RequestDeniedError extends SirannonError {
   /**
-   * HTTP status the server answers the refused request with.
+   * The HTTP status that the server responds to the rejected request with.
    */
   readonly status: number
 
@@ -146,8 +145,10 @@ export class RequestDeniedError extends SirannonError {
 }
 
 /**
- * Thrown when the change-data-capture pipeline encounters an unrecoverable
- * error, such as a failed event dispatch or a corrupt change record.
+ * Thrown when change capture cannot proceed, for example when a caller watches
+ * a table that does not exist, when Sirannon cannot read the change-log epoch
+ * or the node identity, or when a live query uses a statement that Sirannon
+ * cannot keep current.
  *
  * @public
  */
@@ -159,10 +160,11 @@ export class CDCError extends SirannonError {
 }
 
 /**
- * Thrown when a caller reaches for a table Sirannon reserves for itself. The
- * internal bookkeeping tables and SQLite's own catalogue are off limits to the
- * query API so a caller cannot read or corrupt the change log, replication
- * ledger, or schema catalogue.
+ * Thrown when a statement through the query API names a `_sirannon` table,
+ * modifies a `sqlite_` table, contains ATTACH or DETACH, or sets
+ * `PRAGMA writable_schema`. Sirannon rejects these statements to keep its
+ * change log, its replication ledger, and SQLite's schema catalogue out of the
+ * caller's reach.
  *
  * @public
  */
@@ -174,8 +176,8 @@ export class ForbiddenSqlError extends SirannonError {
 }
 
 /**
- * Thrown when a backup operation fails, whether that is an online backup via
- * the SQLite backup API or a file-level copy.
+ * Thrown when a copy to a file or a scheduled backup fails, or when its path,
+ * cron expression, or time zone is invalid.
  *
  * @public
  */
@@ -187,8 +189,9 @@ export class BackupError extends SirannonError {
 }
 
 /**
- * Thrown when the connection pool reaches its limit or is configured with
- * invalid parameters such as a minimum size greater than the maximum.
+ * Thrown when a caller asks a closed or empty connection pool for a connection, asks a
+ * read-only pool for the writer, or closes a pool and one of its connections
+ * fails to close.
  *
  * @public
  */
@@ -200,9 +203,9 @@ export class ConnectionPoolError extends SirannonError {
 }
 
 /**
- * Thrown when opening a new database would exceed the configured cap on
- * concurrently open databases. Close an existing database before opening
- * another one.
+ * Thrown when the lifecycle resolver would open a database past `maxOpen`, and
+ * evicting the least recently used database frees no slot. Close a database
+ * before you open another one.
  *
  * @public
  */
@@ -214,19 +217,20 @@ export class MaxDatabasesError extends SirannonError {
 }
 
 /**
- * Thrown when more writes are pending than the writer-worker limit allows. It
- * signals load shedding, so the server maps it to a 503 with a Retry-After hint.
+ * Thrown when more writes are pending than the writer-worker limit allows, so
+ * that the database sheds load. The server responds to it with status 503 and
+ * a `Retry-After` header.
  *
  * @public
  */
 export class WriteOverloadError extends SirannonError {
   constructor(
     /**
-     * Number of pending writes the database accepts before it refuses more.
+     * The number of pending writes that the database accepts before it rejects more.
      */
     public readonly limit: number,
     /**
-     * Milliseconds the caller should wait before retrying.
+     * The number of milliseconds that the caller should wait before it retries.
      */
     public readonly retryAfterMs: number,
   ) {
@@ -236,9 +240,9 @@ export class WriteOverloadError extends SirannonError {
 }
 
 /**
- * Thrown when a native SQLite extension cannot be loaded. The `path` argument
- * is the filesystem path passed to `load_extension`, and the optional `cause`
- * string carries the error detail reported by SQLite.
+ * Thrown when Sirannon cannot load a compiled SQLite extension. The message
+ * names the extension path, and the optional `cause` gives the reason that
+ * SQLite or Sirannon reported.
  *
  * @public
  */

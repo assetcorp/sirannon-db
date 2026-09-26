@@ -3,7 +3,7 @@ import { MaxDatabasesError, SirannonError } from '../errors.js'
 import type { DatabaseOptions, LifecycleConfig } from '../types.js'
 
 /**
- * Operations the lifecycle manager calls back into on the owning registry.
+ * The registry supplies these functions so that the lifecycle manager can open, close, count, and look up its databases.
  *
  * @internal
  */
@@ -15,7 +15,9 @@ export interface LifecycleCallbacks {
 }
 
 /**
- * Opens databases on demand, evicts idle ones, and enforces the configured open-database limit.
+ * Opens a database through the `autoOpen` resolver when the registry asks for it, and closes each database that stays idle for `idleTimeout` or longer.
+ *
+ * When one more open database would exceed `maxOpen`, the manager first closes the least recently used database.
  *
  * @internal
  */

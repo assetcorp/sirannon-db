@@ -34,7 +34,7 @@ export async function expectStaleForwardRejectedWithoutMutation(
   rowId: number,
 ): Promise<void> {
   await expectRejectsWith(sender.sendRawForward(receiverNodeId, staleForwardedTransaction(rowId, 1n)), [
-    'TRANSPORT_ERROR',
+    'STALE_PRIMARY',
   ])
   await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
 }

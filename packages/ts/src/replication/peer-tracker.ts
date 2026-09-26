@@ -1,3 +1,4 @@
+import { HLC } from '../core/sync/hlc.js'
 import { WriteConcernError } from './errors.js'
 import type { InFlightBatch, PeerState } from './types.js'
 
@@ -12,19 +13,21 @@ interface Waiter {
 }
 
 /**
- * Maintains in-memory state for every peer the local node communicates with.
+ * Keeps in memory the replication state of every peer that this node connects to.
  *
- * For each peer, PeerTracker records the last acknowledged sequence number,
- * the last sent sequence number, pending batch count, and connection status.
- * This state drives two key mechanisms:
+ * For each peer, the tracker records the last sequence number that the peer
+ * acknowledged, the last sequence number that this node sent, the number of
+ * pending batches, the batches in flight, and whether the peer is connected.
+ * The engine uses that state in two places.
  *
- * - **Back-pressure**: the sender loop in ReplicationEngine checks
- *   `pendingBatches` against the configured max before queuing more work
- *   for a given peer.
- * - **Write concern**: callers can await `waitForMajority` or `waitForAll`
- *   with a sequence number and timeout. These methods resolve once enough
- *   peers have acknowledged that sequence, or reject with a
- *   WriteConcernError on timeout.
+ * - Back-pressure: the sender loop skips a peer whose `pendingBatches` has
+ *   reached the configured maximum.
+ * - Write concern: a caller awaits `waitForMajority`, `waitForAll`,
+ *   `waitForConfiguredMajority`, or `waitForConfiguredAll` with a sequence
+ *   number and a timeout, and the promise resolves once enough peers
+ *   acknowledge that sequence. It rejects with a `WriteConcernError` when the
+ *   timeout expires, and a `waitForMajority` or `waitForAll` promise also
+ *   rejects early when too few peers are connected to reach the count.
  *
  * @internal
  */
@@ -68,6 +71,13 @@ export class PeerTracker {
       peer.pendingBatches = Math.max(0, peer.pendingBatches - Math.max(1, ackedCount))
     }
     this.checkWaiters()
+  }
+
+  onBatchApplied(nodeId: string, highestHlc: string): void {
+    const peer = this.peers.get(nodeId)
+    if (peer && (peer.lastReceivedHlc === '' || HLC.compare(highestHlc, peer.lastReceivedHlc) > 0)) {
+      peer.lastReceivedHlc = highestHlc
+    }
   }
 
   recordInFlightBatch(nodeId: string, batch: InFlightBatch): void {

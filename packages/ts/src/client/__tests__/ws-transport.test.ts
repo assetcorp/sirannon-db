@@ -220,6 +220,40 @@ describe('WebSocketTransport', () => {
     }
   })
 
+  it('holds a device acknowledgement until the reconnect restores that subscription', async () => {
+    const { sockets, restore } = installFakeWebSockets()
+    const deviceId = 'aaaa0000aaaa0000aaaa0000aaaa0000'
+    try {
+      const transport = new WebSocketTransport('ws://localhost:1234/db/test', {
+        autoReconnect: true,
+        reconnectInterval: 10,
+        requestTimeout: 2000,
+      })
+
+      const subscribed = transport.subscribe('notes', undefined, () => {}, { deviceId })
+      await until(() => firstSubscribeFrame(sockets[0]) !== undefined)
+      const subId = String(firstSubscribeFrame(sockets[0])?.id)
+      sockets[0].deliver({ type: 'subscribed', id: subId, seq: '7' })
+      await subscribed
+
+      sockets[0].close()
+      const acked = transport.ack(deviceId, 7n)
+
+      await until(() => sockets.length >= 2 && firstSubscribeFrame(sockets[1]) !== undefined)
+      expect(firstFrameOfType(sockets[1], 'ack')).toBeUndefined()
+
+      sockets[1].deliver({ type: 'subscribed', id: subId, seq: '7' })
+      await until(() => firstFrameOfType(sockets[1], 'ack') !== undefined)
+      const ackId = String(firstFrameOfType(sockets[1], 'ack')?.id)
+      sockets[1].deliver({ type: 'result', id: ackId, data: { acked: true, seq: '7' } })
+
+      await expect(acked).resolves.toEqual({ acked: true, seq: '7' })
+      transport.close()
+    } finally {
+      restore()
+    }
+  })
+
   it('resumes from the subscribed baseline even when no change was received', async () => {
     const { sockets, restore } = installFakeWebSockets()
     try {

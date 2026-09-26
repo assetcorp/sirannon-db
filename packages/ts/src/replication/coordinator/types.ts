@@ -1,311 +1,322 @@
 /**
- * What a lease grants: the controller role, or one node's membership session.
+ * Names what a lease grants, which is either the controller role or one node's membership session.
  *
  * @public
  */
 export type CoordinatorLeaseKind = 'controller' | 'node-session'
 
 /**
- * Stops a group watch when called.
+ * Stops a coordinator watch. Every watch method returns one of these functions.
  *
  * @public
  */
 export type CoordinatorWatchDisposer = () => void | Promise<void>
 
 /**
- * A time-limited claim one node holds, which lapses unless the node renews it.
+ * Describes a time-limited claim that one node holds, which expires unless the node renews it.
  *
  * @public
  */
 export interface CoordinatorLease {
-  /** Identifier of the lease, which the holder renews and releases it by. */
+  /** Identifies the lease, and the holder passes this ID to renew or release it. */
   id: string
-  /** What the lease grants. */
+  /** Names what the lease grants. */
   kind: CoordinatorLeaseKind
-  /** Cluster the lease belongs to. */
+  /** Identifies the cluster that the lease covers. */
   clusterId: string
-  /** Identifier of the node holding it. */
+  /** Identifies the node that holds the lease. */
   holderId: string
-  /** Milliseconds the lease lasts from each renewal. */
+  /** Holds how many milliseconds the lease lasts after each renewal. */
   ttlMs: number
-  /** Milliseconds since the Unix epoch, taken when the lease was granted. */
+  /** Holds the time, in milliseconds since the Unix epoch, at which the coordinator granted or last renewed the lease. */
   grantedAtMs: number
-  /** Milliseconds since the Unix epoch, after which the lease lapses. */
+  /** Holds the time, in milliseconds since the Unix epoch, after which the lease expires. */
   expiresAtMs: number
-  /** Anything else the holder attached. */
+  /** Holds any other data that the holder attaches. */
   metadata?: Record<string, unknown>
 }
 
 /**
- * A node's bid for the controller lease.
+ * Describes a node's request for the controller lease.
  *
  * @public
  */
 export interface AcquireControllerLeaseInput {
-  /** Cluster the lease covers. */
+  /** Identifies the cluster that the lease covers. */
   clusterId: string
-  /** Identifier the node claims the lease under. */
+  /** Sets the ID that the node holds the lease under. */
   holderId: string
-  /** Milliseconds the lease should last. */
+  /** Sets how many milliseconds the lease lasts. */
   ttlMs: number
-  /** Anything else to record against the lease. */
+  /** Holds any other data to record with the lease. */
   metadata?: Record<string, unknown>
 }
 
 /**
- * Whether the bid won the controller lease, and who holds it either way.
+ * Reports whether the request acquired the controller lease, along with the current lease either way.
  *
  * @public
  */
 export type AcquireControllerLeaseResult =
   | {
-      /** True where this bid won the lease. */
+      /** Is true when this request acquired the lease. */
       acquired: true
-      /** The lease this bid won, with its holder, term, and expiry. */
+      /** Holds the lease that this request acquired, with its holder and expiry. */
       lease: CoordinatorLease
     }
   | {
-      /** False where another node already holds the lease. */
+      /** Is false when another lease on the controller role is still live. */
       acquired: false
-      /** The lease its current holder owns, or null where the coordinator names no holder. */
+      /** Holds the current holder's lease, or null when no node holds the lease. */
       lease: CoordinatorLease | null
     }
 
 /**
- * Versions a node publishes so that the group refuses a peer it cannot work with.
+ * Holds the versions that a node publishes. A node can be promoted, or accept writes as primary, only when its major
+ * versions match every version that the group requires.
  *
  * @public
  */
 export interface CoordinatorCompatibilityMetadata {
-  /** Version of the package the node runs. */
+  /** Holds the version of the package that the node has installed. */
   packageVersion?: string
-  /** Version of the specification the node implements. */
+  /** Holds the version of the specification that the node implements. */
   specVersion?: string
-  /** Version of the replication protocol the node speaks. */
+  /** Holds the version of the replication protocol that the node uses. */
   protocolVersion?: string
 }
 
 /**
- * What a node tells the coordinator about itself when it joins.
+ * Describes a node to the coordinator when the node registers its session.
  *
  * @public
  */
 export interface RegisterNodeSessionInput {
-  /** Cluster the node joins. */
+  /** Identifies the cluster that the node joins. */
   clusterId: string
-  /** Identifier of the node. */
+  /** Identifies the node. */
   nodeId: string
-  /** Milliseconds the session lasts from each renewal. */
+  /** Sets how many milliseconds the session lasts after each renewal. */
   ttlMs: number
-  /** Address clients reach this node at. */
+  /** Sets the address that clients use to reach this node. */
   endpoint?: string
-  /** Replication groups the node serves. */
+  /** Lists the replication groups that the node serves. */
   groupIds?: string[]
-  /** Whether the node holds a copy of the data. */
+  /** Is true when the node stores a copy of the data. */
   dataBearing?: boolean
-  /** Whether the node counts towards majority. */
+  /** Is true when the node counts towards the majority. */
   voting?: boolean
-  /** Versions the node publishes. */
+  /** Holds the versions that the node publishes. */
   compatibility?: CoordinatorCompatibilityMetadata
-  /** Anything else to record against the session. */
+  /** Holds any other data to record with the session. */
   metadata?: Record<string, unknown>
 }
 
 /**
- * One node's live membership of a cluster, which lapses when its lease does.
+ * Describes one node's live membership of a cluster, which ends when its lease expires.
  *
  * @public
  */
 export interface CoordinatorNodeSession {
-  /** Cluster the node belongs to. */
+  /** Identifies the cluster that the node is a member of. */
   clusterId: string
-  /** Identifier of the node. */
+  /** Identifies the node. */
   nodeId: string
-  /** Lease keeping this session alive. */
+  /** Holds the lease whose expiry ends this session. */
   lease: CoordinatorLease
-  /** Address clients reach this node at. */
+  /** Holds the address that clients use to reach this node. */
   endpoint?: string
-  /** Replication groups the node serves. */
+  /** Lists the replication groups that the node serves. */
   groupIds: string[]
-  /** Whether the node holds a copy of the data. */
+  /** Is true when the node stores a copy of the data. */
   dataBearing: boolean
-  /** Whether the node counts towards majority. */
+  /** Is true when the node counts towards the majority. */
   voting: boolean
-  /** Versions the node published. */
+  /** Holds the versions that the node publishes. */
   compatibility?: CoordinatorCompatibilityMetadata
-  /** Anything else recorded against the session. */
+  /** Holds any other data that the node records with the session. */
   metadata?: Record<string, unknown>
 }
 
 /**
- * The node a group currently names as its primary.
+ * Identifies a group's primary node and its address.
  *
  * @public
  */
 export interface CoordinatorPrimary {
-  /** Identifier of the primary. */
+  /** Identifies the primary. */
   nodeId: string
-  /** Address clients reach it at. */
+  /** Holds the address that clients use to reach the primary. */
   endpoint?: string
 }
 
 /**
- * The group's shared record of who writes, who is in sync, and how far the
- * data is durable. Failover reads and advances it.
+ * Records which node writes for the group, which nodes are in sync, and how
+ * far the data is durable. The controller reads and updates this record during
+ * failover.
  *
  * @public
  */
 export interface ReplicationGroupState {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Nodes that count towards majority. */
+  /** Lists the nodes that count towards the majority. */
   votingDataBearingNodeIds: string[]
-  /** The node currently named primary, or null when the group has none. */
+  /** Identifies the current primary, or is null when the group has none. */
   currentPrimary: CoordinatorPrimary | null
-  /** Term the current primary holds, which rises with each promotion. */
+  /** Holds the current primary's term, which rises by one with each promotion. */
   primaryTerm: bigint
-  /** Change-log position a majority of voting nodes has durably stored. */
+  /** Holds the change-log position up to which a majority of voting nodes stores the data durably. */
   durabilityPointSeq: bigint
-  /** Nodes the group counts as in sync. */
+  /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]
-  /** Nodes being taken out of service. */
+  /** Lists the draining nodes, which are leaving service. */
   drainingNodeIds: string[]
-  /** Nodes being rebuilt. */
+  /** Lists the repairing nodes, which are rebuilding their copy of the data. */
   repairingNodeIds: string[]
-  /** Nodes the group has quarantined. */
+  /** Lists the faulted nodes, which stay out of service until an `updateNodeMaintenance` call clears the flag. */
   faultedNodeIds: string[]
-  /** Versions the group requires of its members. */
+  /** Holds the versions that the group requires of its members. */
   compatibility?: CoordinatorCompatibilityMetadata
-  /** Milliseconds since the Unix epoch, taken at the last change to this state. */
+  /** Holds the time, in milliseconds since the Unix epoch, of the last change to this state. */
   updatedAtMs: number
 }
 
 /**
- * The group state to write, which seeds a new group or replaces an existing one.
+ * Describes the group state to write, which creates a new group or replaces an existing one.
  *
  * @public
  */
 export interface SetReplicationGroupStateInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Nodes that count towards majority. */
+  /** Lists the nodes that count towards the majority. */
   votingDataBearingNodeIds: string[]
-  /** The node to name primary, or null to leave the group without one. */
+  /** Identifies the node to make primary, or null to leave the group without a primary. */
   currentPrimary?: CoordinatorPrimary | null
-  /** Term to record for that primary. */
+  /** Sets the term to record for that primary, which defaults to 0. */
   primaryTerm?: bigint
-  /** Change-log position a majority has durably stored. */
+  /** Sets the change-log position up to which a majority stores the data durably. */
   durabilityPointSeq?: bigint
-  /** Nodes to record as in sync. */
+  /** Lists the nodes to record as in sync. */
   inSyncNodeIds?: string[]
-  /** Nodes to record as being taken out of service. */
+  /** Lists the nodes to record as draining. */
   drainingNodeIds?: string[]
-  /** Nodes to record as being rebuilt. */
+  /** Lists the nodes to record as repairing. */
   repairingNodeIds?: string[]
-  /** Nodes to record as quarantined. */
+  /** Lists the nodes to record as faulted. */
   faultedNodeIds?: string[]
-  /** Versions the group requires of its members. */
+  /** Sets the versions that the group requires of its members. */
   compatibility?: CoordinatorCompatibilityMetadata
 }
 
 /**
- * Promotes a node only while the group is still at the term the caller read,
- * so two candidates cannot both promote themselves.
+ * Describes a promotion that takes effect only while the group is still at the
+ * term that the caller expects, so that two candidates cannot both promote
+ * themselves.
  *
  * @public
  */
 export interface CompareAndAdvancePrimaryTermInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Term the caller last read. The promotion fails when the group has moved past it. */
+  /** Holds the term that the caller last read. The promotion fails when the group's term differs. */
   expectedPrimaryTerm: bigint
-  /** The node to promote. */
+  /** Identifies the node to promote. */
   nextPrimary: CoordinatorPrimary
 }
 
 /**
- * Whether the promotion took effect, and the group state that resulted.
+ * Reports whether the promotion took effect, along with the group state afterwards.
  *
  * @public
  */
 export interface CompareAndAdvancePrimaryTermResult {
-  /** True when the group moved to the next term under the named primary. */
+  /** Is true when the group moves to the next term under the new primary. */
   advanced: boolean
-  /** The group state as it now stands, or null when the group is absent. */
+  /** Holds the current group state, or null when the coordinator has no state for the group. */
   state: ReplicationGroupState | null
 }
 
 /**
- * Replaces the group's in-sync set, and optionally moves its durability point.
+ * Describes a new in-sync set for the group, and optionally a new durability point. To add a node, call
+ * {@link ClusterCoordinator.admitNodeToInSyncSet}, because this update throws a `RangeError` for any node outside the
+ * current set.
  *
  * @public
  */
 export interface UpdateInSyncSetInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Nodes to record as in sync. */
+  /** Lists the nodes to record as in sync. */
   inSyncNodeIds: string[]
-  /** Change-log position a majority has durably stored. */
+  /** Sets the change-log position up to which a majority stores the data durably, and the coordinator keeps the higher of this value and the current one. */
   durabilityPointSeq?: bigint
 }
 
 /**
- * Adds one caught-up node to the in-sync set, naming the progress that earned it.
+ * Describes one caught-up node to add to the in-sync set, with the progress
+ * that qualifies it. The coordinator admits the node only when `sourceNodeId`
+ * is the current primary, `appliedSeq` reaches the group's durability point,
+ * and the node is neither draining nor faulted.
  *
  * @public
  */
 export interface AdmitNodeToInSyncSetInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Node to admit. */
+  /** Identifies the node to admit. */
   nodeId: string
-  /** Node whose changes it has applied. */
+  /** Identifies the node whose changes the admitted node applied. */
   sourceNodeId: string
-  /** Change-log position it has applied up to. */
+  /** Holds the change-log position up to which the node applied those changes. */
   appliedSeq: bigint
 }
 
 /**
- * Marks one node as being taken out of service, rebuilt, or quarantined.
+ * Sets or clears one node's draining, repairing, and faulted flags. A flag left
+ * undefined keeps its current value, and when any flag turns on, the
+ * coordinator removes the node from the in-sync set.
  *
  * @public
  */
 export interface UpdateNodeMaintenanceInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Node whose state changes. */
+  /** Identifies the node to update. */
   nodeId: string
-  /** Whether the node is being taken out of service. */
+  /** Sets whether the node is draining, which takes it out of service. */
   draining?: boolean
-  /** Whether the node is being rebuilt. */
+  /** Sets whether the node is repairing, which means that it rebuilds its copy of the data. */
   repairing?: boolean
-  /** Whether the group quarantines the node. */
+  /** Sets whether the node is faulted, which keeps it out of service. */
   faulted?: boolean
 }
 
 /**
- * Asks the coordinator to promote whichever in-sync replica is safe to write.
+ * Describes a request to promote an eligible in-sync replica, which is one with
+ * a live, compatible session that is neither draining, repairing, nor faulted.
  *
  * @public
  */
 export interface PromoteEligibleReplicaInput {
-  /** Cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the group. */
+  /** Identifies the group. */
   groupId: string
-  /** Nodes to pass over, such as the primary that has just failed. */
+  /** Lists the nodes to skip, such as the primary that has just failed. */
   excludeNodeIds?: string[]
 }
 
@@ -317,46 +328,70 @@ export interface PromoteEligibleReplicaInput {
 export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void
 
 /**
+ * Receives the IDs of every node that holds a live session, when the watch starts and after each session change.
+ *
+ * @public
+ */
+export type NodeSessionWatcher = (liveNodeIds: readonly string[]) => void
+
+/**
+ * Receives the controller lease when the watch starts and after each change, or null while no node holds the lease.
+ *
+ * @public
+ */
+export type ControllerLeaseWatcher = (lease: CoordinatorLease | null) => void
+
+/**
  * Stores primary authority, node sessions, group state, and the in-sync set
- * outside the database nodes so that failover has a source of truth no single node
- * owns. The package includes an etcd adapter; build your own to store this
- * elsewhere.
+ * outside the database nodes, so that the record stays intact when any one
+ * database node fails. Sirannon includes an etcd coordinator, and you can
+ * implement this interface to store the record elsewhere.
  *
  * @public
  */
 export interface ClusterCoordinator {
-  /** Bids for the controller lease, and reports who holds it. */
+  /** Tries to acquire the controller lease, and returns whether it succeeded along with the current lease. */
   tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>
-  /** Extends a lease, and reports false once it has already lapsed. */
+  /** Calls `watcher` with the current controller lease when the watch starts and after each change, and returns a function that stops the watch. A coordinator without this watch can omit the method, and every node's controller loop then tries to acquire the lease on each tick. */
+  watchControllerLease?(
+    clusterId: string,
+    watcher: ControllerLeaseWatcher,
+  ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
+  /** Extends a lease, and returns false for a lease that is expired or unknown to this coordinator. */
   renewLease(leaseId: string, ttlMs: number): Promise<boolean>
-  /** Gives up a lease at once instead of waiting for it to lapse. */
+  /** Releases a lease at once, and returns whether the release succeeded. */
   releaseLease(leaseId: string): Promise<boolean>
   /** Records one node as a live member of the cluster. */
   registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>
-  /** Reads one node's session, and returns null once its lease has lapsed. */
+  /** Returns one node's session, or null once its lease expires. */
   getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>
-  /** Ends one node's membership at once. */
+  /** Ends one node's session at once. */
   deregisterNodeSession(clusterId: string, nodeId: string): Promise<void>
-  /** Writes the group's state, which seeds a new group or replaces an existing one. */
+  /** Calls `watcher` with the IDs of every node that holds a live session, and returns a function that stops the watch. A coordinator without this watch can omit the method, and a node then lists read endpoints from the group state alone. */
+  watchNodeSessions?(
+    clusterId: string,
+    watcher: NodeSessionWatcher,
+  ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
+  /** Writes the group's state, which creates a new group or replaces an existing one. */
   setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState>
-  /** Reads the group's state, and returns null when the group is absent. */
+  /** Returns the group's state, or null when the coordinator has no state for the group. */
   getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>
-  /** Calls back on each change to the group's state, and returns a function that stops the watch. */
+  /** Calls `watcher` with the new state after each change to the group, and returns a function that stops the watch. */
   watchReplicationGroup(
     clusterId: string,
     groupId: string,
     watcher: ReplicationGroupWatcher,
   ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
-  /** Promotes a node only while the group is still at the term the caller read. */
+  /** Makes a node primary and advances the term, but only while the group is still at the term that the caller expects. */
   compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult>
-  /** Replaces the group's in-sync set, and optionally moves its durability point. */
+  /** Replaces the group's in-sync set with a subset of it, and can advance the durability point. */
   updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>
   /** Adds one caught-up node to the in-sync set. */
   admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>
-  /** Marks one node as being taken out of service, rebuilt, or quarantined. */
+  /** Sets or clears one node's draining, repairing, and faulted flags. */
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>
-  /** Promotes whichever in-sync replica is safe to write. */
+  /** Promotes an eligible in-sync replica, and throws a `NoSafePrimaryError` when no replica qualifies. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
-  /** Releases whatever the coordinator holds open. */
+  /** Releases every connection, watch, and lease that the coordinator keeps open. */
   close?(): Promise<void>
 }

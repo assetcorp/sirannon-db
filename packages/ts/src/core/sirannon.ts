@@ -7,6 +7,7 @@ import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
 import { RegistryMigrationSet } from './migrations/registry-set.js'
 import type { Migration } from './migrations/types.js'
+import { withRegistryDefaults } from './registry-defaults.js'
 import { type OfflineOutcome, takeDatabaseOffline } from './sirannon-offline.js'
 import { closeEveryDatabase } from './sirannon-shutdown.js'
 import type {
@@ -22,7 +23,7 @@ import type {
 /**
  * A registry of open SQLite databases, keyed by identifier.
  *
- * It opens each database through one driver, applies shared hooks, metrics, and migrations, and closes idle databases when you configure a lifecycle.
+ * The registry opens every database through one driver and applies its hooks, metrics, and migrations to each one; when you configure a lifecycle, it also closes idle databases.
  *
  * @public
  */
@@ -41,13 +42,13 @@ export class Sirannon {
   private readonly lifecycleManager: LifecycleManager | null
   private readonly migrations: RegistryMigrationSet
 
-  /** The driver, hooks, metrics, lifecycle, migrations, and writer-worker default this registry was built with. */
+  /** The driver, hooks, metrics, lifecycle, migrations, and writer-worker and retention defaults that this registry was constructed with. */
   readonly options: SirannonOptions
 
   /**
-   * Builds a registry.
+   * Creates a registry.
    *
-   * @param options - Driver, hooks, metrics, lifecycle, migrations, and the writer-worker default.
+   * @param options - The driver, hooks, metrics, lifecycle, migrations, and the defaults for every database that the registry opens.
    */
   constructor(options: SirannonOptions) {
     this.options = options
@@ -75,14 +76,19 @@ export class Sirannon {
     return this._hookRegistry
   }
 
+  /** @internal */
+  get metrics(): MetricsCollector | null {
+    return this.metricsCollector
+  }
+
   /**
    * Opens a database and registers it under an identifier.
    *
-   * @param id - Identifier callers reach this database by.
-   * @param path - File path of the SQLite database.
-   * @param options - Pool size, journal mode, durability, and change-capture settings.
+   * @param id - The identifier that callers use to reach this database.
+   * @param path - The file path of the SQLite database.
+   * @param options - The pool size, journal mode, synchronous level, and change-capture settings.
    * @returns The open database.
-   * @throws When the identifier is already registered.
+   * @throws A `DatabaseAlreadyExistsError` when the identifier is already in use, or `DATABASE_OPEN_FAILED` when the open or a registry migration fails.
    */
   async open(id: string, path: string, options?: DatabaseOptions): Promise<Database> {
     this.ensureOpenAllowed(id)
@@ -92,7 +98,7 @@ export class Sirannon {
 
     this.opening.add(id)
 
-    const resolvedOptions = this.withRegistryDefaults(options)
+    const resolvedOptions = withRegistryDefaults(this.options, options)
 
     let db: Database
     try {
@@ -137,9 +143,7 @@ export class Sirannon {
       this.lifecycleManager?.untrack(id)
 
       if (this._hookRegistry.has('databaseClose')) {
-        try {
-          this._hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
-        } catch {}
+        this._hookRegistry.invokeSyncIgnoringFailures('databaseClose', { databaseId: id, path })
       }
 
       this.metricsCollector?.trackConnection({
@@ -155,9 +159,7 @@ export class Sirannon {
     this.lifecycleManager?.markActive(id)
 
     if (this._hookRegistry.has('databaseOpen')) {
-      try {
-        this._hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
-      } catch {}
+      this._hookRegistry.invokeSyncIgnoringFailures('databaseOpen', { databaseId: id, path })
     }
 
     this.metricsCollector?.trackConnection({
@@ -170,16 +172,10 @@ export class Sirannon {
     return db
   }
 
-  private withRegistryDefaults(options?: DatabaseOptions): DatabaseOptions | undefined {
-    const fallback = this.options.writerWorker
-    if (fallback === undefined || options?.writerWorker !== undefined) return options
-    return { ...options, writerWorker: fallback }
-  }
-
   /**
    * Closes one database and removes it from the registry.
    *
-   * @param id - Identifier of the database to close.
+   * @param id - The identifier of the database to close.
    */
   async close(id: string): Promise<void> {
     this.ensureRunning()
@@ -191,19 +187,18 @@ export class Sirannon {
   }
 
   /**
-   * Closes one database, calls an action against the file behind it, and then
-   * opens that database again under the same identifier with the settings it
-   * had before.
+   * Closes one database, calls an action on its file, and then opens that
+   * database again under the same identifier with its earlier settings.
    *
-   * A restore rebuilds a database at the path it already occupies, so no
-   * connection may be open on that file while Sirannon replaces its bytes. The
-   * identifier answers nothing until that database is open again, though an
-   * action that failed still leaves a database open at the end.
+   * A restore rebuilds a database at its current path, so no connection may be
+   * open on that file while Sirannon replaces its bytes. {@link Sirannon.get}
+   * returns undefined for the identifier until the database is open again, and
+   * Sirannon reopens the database even after a failed action.
    *
-   * @param id - Identifier of the database to take offline.
-   * @param action - Runs with the database closed, and receives its file path.
-   * @returns Whether the action returned, what it produced or threw, and what a failed reopen threw.
-   * @throws When no database is open under the identifier, when it refuses writes, or when the close fails.
+   * @param id - The identifier of the database to take offline.
+   * @param action - The function that Sirannon calls with the database file path once the database is closed.
+   * @returns Whether the action returned, the value that it returned or the error that it threw, and any error that the reopen threw.
+   * @throws A `DatabaseNotFoundError` when no database is open under the identifier, a `ReadOnlyError` when the database is read-only, or the close error when the close fails.
    *
    * @internal
    */
@@ -242,7 +237,7 @@ export class Sirannon {
   /**
    * Returns an already-open database.
    *
-   * @param id - Identifier of the database.
+   * @param id - The identifier of the database.
    * @returns The database, or undefined when none is open under that identifier.
    */
   get(id: string): Database | undefined {
@@ -256,15 +251,15 @@ export class Sirannon {
   }
 
   /**
-   * Returns an open database, opening it through the lifecycle resolver where it is not open yet.
+   * Returns an open database, and opens it through the lifecycle resolver when it is not open yet.
    *
-   * This is the call an in-process application makes for a database the registry opens on first
-   * use through the `lifecycle.autoOpen` resolver, such as one file per tenant. Concurrent calls
-   * for the same unopened identifier share one open, so each receives the same database or the
+   * An in-process application calls this for a database that the registry opens on first use
+   * through the `lifecycle.autoOpen` resolver, such as one file per tenant. Concurrent calls for
+   * the same unopened identifier share one open, so each call receives the same database or the
    * same error.
    *
-   * @param id - Identifier of the database.
-   * @returns The database, or undefined when none is open and the resolver names no path for it.
+   * @param id - The identifier of the database.
+   * @returns The database, or undefined when none is open and the resolver returns no path for it.
    */
   async resolve(id: string): Promise<Database | undefined> {
     const db = this.get(id)
@@ -284,31 +279,32 @@ export class Sirannon {
   }
 
   /**
-   * Returns the registry migration set every database applies as it opens.
+   * Returns the registry's migration set, which Sirannon applies to each writable database as it opens.
    *
-   * Where the set came from a function, the registry calls that function once and
-   * caches what it returned, so this reports the same list on every call.
+   * When the set comes from a function, the registry calls that function once and caches the
+   * result, so this returns the same list on every call; after a failed load, the next call
+   * tries again.
    *
-   * @returns The migrations declared in `SirannonOptions.migrations`, or an empty list where none are.
+   * @returns The migrations declared in `SirannonOptions.migrations`, or an empty list when there are none.
    */
   registryMigrations(): Promise<Migration[]> {
     return this.migrations.load()
   }
 
   /**
-   * Reports whether a database is open under an identifier.
+   * Returns whether a database is open under an identifier.
    *
-   * @param id - Identifier to check.
-   * @returns True when the registry holds an open database under it.
+   * @param id - The identifier to check.
+   * @returns True when the registry has an open database under that identifier.
    */
   has(id: string): boolean {
     return this.dbs.has(id)
   }
 
   /**
-   * Returns every database this registry currently holds open.
+   * Returns every database that this registry has open.
    *
-   * @returns The open databases, keyed by identifier.
+   * @returns A copy of the open databases, keyed by identifier.
    */
   databases(): Map<string, Database> {
     return new Map(this.dbs)
@@ -317,9 +313,9 @@ export class Sirannon {
   /**
    * Closes every open database and stops the lifecycle timers.
    *
-   * A database whose file Sirannon is replacing delays the shutdown until that
-   * work finishes, since a process that exits part-way through would leave the
-   * path with no database on it at all.
+   * When Sirannon is replacing a database's file, the shutdown waits for that
+   * work to finish, because a process that exits part-way through the
+   * replacement can leave no database at the path.
    */
   async shutdown(): Promise<void> {
     if (this._shutdown) return
@@ -335,9 +331,9 @@ export class Sirannon {
   }
 
   /**
-   * Registers a hook that runs before each statement on every database in this registry. Throw from it to refuse the statement.
+   * Registers a hook that Sirannon calls before each statement on every database in this registry; throw from the hook to reject the statement.
    *
-   * @param hook - Receives the statement, its parameters, and the concerns it carries.
+   * @param hook - The hook, which Sirannon calls with the statement, its parameters, and its read or write concern.
    * @returns A function that removes the hook.
    */
   onBeforeQuery(hook: BeforeQueryHook): HookDispose {
@@ -345,9 +341,9 @@ export class Sirannon {
   }
 
   /**
-   * Registers a hook that runs after each statement on every database in this registry.
+   * Registers a hook that Sirannon calls after each statement on every database in this registry.
    *
-   * @param hook - Receives the statement and how long it took.
+   * @param hook - The hook, which Sirannon calls with the statement and its duration.
    * @returns A function that removes the hook.
    */
   onAfterQuery(hook: AfterQueryHook): HookDispose {
@@ -355,9 +351,9 @@ export class Sirannon {
   }
 
   /**
-   * Registers a hook that runs before a database connection opens.
+   * Registers a hook that Sirannon calls before it opens a database.
    *
-   * @param hook - Receives the database identifier and its file path.
+   * @param hook - The hook, which Sirannon calls with the database identifier and file path.
    * @returns A function that removes the hook.
    */
   onBeforeConnect(hook: BeforeConnectHook): HookDispose {
@@ -365,9 +361,9 @@ export class Sirannon {
   }
 
   /**
-   * Registers a hook that runs once a database is open.
+   * Registers a hook that Sirannon calls once a database is open.
    *
-   * @param hook - Receives the database identifier and its file path.
+   * @param hook - The hook, which Sirannon calls with the database identifier and file path.
    * @returns A function that removes the hook.
    */
   onDatabaseOpen(hook: DatabaseOpenHook): HookDispose {
@@ -375,9 +371,9 @@ export class Sirannon {
   }
 
   /**
-   * Registers a hook that runs once a database is closed.
+   * Registers a hook that Sirannon calls once a database is closed.
    *
-   * @param hook - Receives the database identifier and its file path.
+   * @param hook - The hook, which Sirannon calls with the database identifier and file path.
    * @returns A function that removes the hook.
    */
   onDatabaseClose(hook: DatabaseCloseHook): HookDispose {

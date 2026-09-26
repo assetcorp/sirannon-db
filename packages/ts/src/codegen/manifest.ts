@@ -4,73 +4,73 @@ import type { OperationRegistry, ReadOperation, WriteOperation } from '../core/o
 import { operationRegistryDigest } from '../server/operation-lookup.js'
 
 /**
- * Version of the manifest format the generator writes.
+ * The version of the manifest format that the generator writes.
  *
  * @public
  */
 export const OPERATION_MANIFEST_VERSION = 1
 
 /**
- * The arguments and columns of one registered operation, as code generation reads them.
+ * Describes the arguments and result columns of one registered operation for code generation.
  *
  * @public
  */
 export interface OperationShape {
   /**
-   * Argument names the caller supplies.
+   * The names of the arguments that the caller supplies.
    */
   args: string[]
   /**
-   * Argument names the server fills from the authenticated identity.
+   * The names of the arguments that the server sets from the authenticated identity.
    */
   identityArgs: string[]
   /**
-   * Columns every row of a read carries, or null when the generator cannot tell.
+   * The column names in every row of a read, or `null` for a write and for a read whose columns the generator cannot derive.
    */
   columns: string[] | null
 }
 
 /**
- * The reads and writes one database exposes by name.
+ * Describes the named reads and writes that the registry holds for one database.
  *
  * @public
  */
 export interface DatabaseManifest {
   /**
-   * Registered reads, keyed by operation name.
+   * The registered reads, keyed by operation name.
    */
   reads: Record<string, OperationShape>
   /**
-   * Registered writes, keyed by operation name.
+   * The registered writes, keyed by operation name.
    */
   writes: Record<string, OperationShape>
 }
 
 /**
- * Every database's registered operations, in the form code generation reads.
+ * Describes every database's registered operations for code generation.
  *
  * @public
  */
 export interface OperationManifest {
   /**
-   * Version of the manifest format.
+   * The version of the manifest format.
    */
   version: number
   /**
-   * Digest of the registry, which a client compares against the server's.
+   * The registry digest, which a client can compare with the digest that the server announces.
    */
   digest: string | undefined
   /**
-   * One manifest per database, keyed by database identifier.
+   * One manifest for each database, keyed by database ID.
    */
   databases: Record<string, DatabaseManifest>
 }
 
 /**
- * Reads a registry and describes each operation's arguments and columns.
+ * Returns a manifest that describes the arguments and result columns of every operation in a registry.
  *
  * @param registry - The registered operations to describe.
- * @returns The manifest code generation renders types from.
+ * @returns The manifest from which code generation renders types.
  *
  * @public
  */
@@ -119,10 +119,10 @@ function statementColumns<I>(operation: ReadOperation<I>, args: string[], identi
 }
 
 /**
- * Reads the column names a SELECT statement produces.
+ * Returns the column names that a `SELECT` statement produces.
  *
  * @param sql - The statement to inspect.
- * @returns The column names, or null when the statement's columns cannot be read from its text.
+ * @returns The column names, or `null` when the parser cannot derive every column name from the statement's text.
  *
  * @public
  */

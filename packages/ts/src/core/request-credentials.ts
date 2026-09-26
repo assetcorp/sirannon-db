@@ -26,15 +26,16 @@ function fromBase64Url(value: string): string | undefined {
 }
 
 /**
- * Packs a credential into one WebSocket subprotocol a handshake can offer.
+ * Encodes a credential as one WebSocket subprotocol that a handshake can offer.
  *
- * A browser sends no header on a WebSocket upgrade, so a credential travels as a
- * subprotocol instead, and a subprotocol accepts only the characters a header
- * token allows. This encodes the credential so that any text survives the trip,
- * and {@link readSubprotocolCredential} reads it back on the server.
+ * A browser sends no custom header on a WebSocket upgrade, so the client sends
+ * the credential as a subprotocol, which may contain only the characters that a
+ * header token allows. This function encodes the credential in base64url so
+ * that any text fits, and {@link readSubprotocolCredential} decodes it on the
+ * server.
  *
- * @param prefix - Text naming the scheme, which the server matches on.
- * @param credential - The credential to carry.
+ * @param prefix - The text that names the scheme, which the server matches on.
+ * @param credential - The credential to encode.
  * @returns The subprotocol to pass as `webSocketProtocols`.
  *
  * @public
@@ -44,11 +45,11 @@ export function toSubprotocolCredential(prefix: string, credential: string): str
 }
 
 /**
- * Reads a header from a request, whatever casing the runtime reported it under.
+ * Returns a header from a request, whatever the casing of the header name that the runtime reported.
  *
- * @param ctx - The request the `authenticate` hook received.
- * @param name - Name of the header to read.
- * @returns The header value, or undefined where the request carries none.
+ * @param ctx - The request that Sirannon passed to the `authenticate` hook.
+ * @param name - The name of the header to return.
+ * @returns The header value, or undefined when the request has no such header.
  *
  * @public
  */
@@ -65,10 +66,10 @@ export function readHeader(ctx: RequestContext, name: string): string | undefine
 }
 
 /**
- * Reads the token from a request's `Authorization: Bearer` header.
+ * Returns the token from a request's `Authorization: Bearer` header.
  *
- * @param ctx - The request the `authenticate` hook received.
- * @returns The token, or undefined where the request carries another scheme or none.
+ * @param ctx - The request that Sirannon passed to the `authenticate` hook.
+ * @returns The token, or undefined when the request has no `Authorization` header, uses another scheme, or sends an empty token.
  *
  * @public
  */
@@ -81,15 +82,16 @@ export function readBearerToken(ctx: RequestContext): string | undefined {
 }
 
 /**
- * Reads the credential a WebSocket upgrade offered under a prefix.
+ * Returns the credential that a WebSocket upgrade offered under a prefix.
  *
- * The upgrade carries the whole offer, including the `sirannon.v1` identifier the
- * client sends ahead of its own entries, so this picks the first entry under the
- * prefix and unpacks what {@link toSubprotocolCredential} put there.
+ * The upgrade request lists every offered subprotocol, including the
+ * `sirannon.v1` identifier that the client sends ahead of its own entries, so
+ * this function takes the first entry that starts with the prefix and decodes
+ * what {@link toSubprotocolCredential} encoded there.
  *
- * @param ctx - The request the `authenticate` hook received.
- * @param prefix - The same text passed to {@link toSubprotocolCredential}.
- * @returns The credential, or undefined where the offer carries none under that prefix.
+ * @param ctx - The request that Sirannon passed to the `authenticate` hook.
+ * @param prefix - The same text that you passed to {@link toSubprotocolCredential}.
+ * @returns The credential, or undefined when no offered subprotocol starts with that prefix or its value fails to decode.
  *
  * @public
  */

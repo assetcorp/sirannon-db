@@ -28,7 +28,7 @@ async function open(hooks: HookConfig): Promise<void> {
   await db.execute('CREATE TABLE ledger (id INTEGER PRIMARY KEY, amount INTEGER)')
   await db.watch('notes')
   await db.watch('ledger')
-  handler = createWSHandler(sirannon, { acceptSql: true })
+  handler = createWSHandler(sirannon, { acceptSql: true, acceptDeviceSync: true })
   conn = createMockConnection()
   await handler.handleOpen(conn, 'mydb', IDENTITY)
 }
@@ -64,6 +64,18 @@ describe('beforeSubscribe hook', () => {
     await until(() => messagesOfType('subscribed').length === 1)
 
     expect(seen).toEqual([{ databaseId: 'mydb', table: 'notes', filter: { id: 1 }, identity: IDENTITY }])
+  })
+
+  it('receives the device id a device subscribes with, and none for a plain subscription', async () => {
+    const seen: (string | undefined)[] = []
+    await open({ onBeforeSubscribe: ctx => void seen.push(ctx.deviceId) })
+
+    handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's1', table: 'notes', deviceId: DEVICE }))
+    await until(() => messagesOfType('subscribed').length === 1)
+    handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: 's2', table: 'notes' }))
+    await until(() => messagesOfType('subscribed').length === 2)
+
+    expect(seen).toEqual([DEVICE, undefined])
   })
 
   it('refuses the subscription the hook denies and delivers no change from that table', async () => {

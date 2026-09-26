@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { insertDdlChange } from '../../core/system-catalog/index.js'
 import type { Transaction } from '../../core/transaction.js'
-import type { Params, QueryOptions } from '../../core/types.js'
+import type { ExecuteResult, Params, QueryOptions, WriteConcern } from '../../core/types.js'
+import { runWriterTransaction } from '../../core/writer-transaction.js'
 import { ReplicationError } from '../errors.js'
 import type { ForwardedTransactionResult } from '../types.js'
 import { DDL_PREFIX_RE, extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
@@ -12,23 +13,22 @@ import { ReplicationTransaction, type ReplicationTransactionHooks } from './repl
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
 /**
- * Runs a statement on the local node and records the resulting changes in the replication log.
+ * Executes a write on this node and stamps the changes that it makes into the replication log inside the same SQLite
+ * transaction.
  *
  * @internal
  */
 export class LocalExecutor {
   /**
-   * Serialises every `executeTransactionLocally` call against itself.
+   * Makes each `executeTransactionLocally` call wait until the previous one finishes.
    *
-   * Reason: SQLite only allows one active transaction per connection; the
-   * writer pool exposes a single writer connection (see `ConnectionPool`).
-   * Two parallel `engine.transaction(fn)` callers therefore both reach
-   * `await conn.exec('BEGIN')` on the same connection, and the second
-   * `BEGIN` errors with "cannot start a transaction within a transaction".
-   * Chaining onto this promise turns the second caller into a strict
-   * follow-on without changing the public API. A rejection is swallowed at
-   * the chain level so a failed transaction never poisons the queue; the
-   * original error still surfaces to the caller that initiated it.
+   * The engine writes through the single connection `engine.writerConn`,
+   * which SQLite limits to one open transaction. Without this queue, two
+   * concurrent `engine.transaction(fn)` calls would both send `BEGIN` on that
+   * connection, so SQLite would reject the second with 'cannot start a
+   * transaction within a transaction'. The queue catches each rejection so
+   * that a later transaction still starts after an earlier one fails, while
+   * the caller that started the failed transaction still receives its error.
    */
   private transactionQueue: Promise<unknown> = Promise.resolve()
 
@@ -43,7 +43,7 @@ export class LocalExecutor {
     const txId = randomUUID()
     const droppedTable = isDdl ? extractDroppedTable(sql) : null
 
-    const result = await engine.writerConn.transaction(async tx => {
+    const result = await runWriterTransaction(engine.writerConn, async tx => {
       const seqBefore = await engine.log.getLocalSeq()
 
       const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
@@ -85,14 +85,17 @@ export class LocalExecutor {
     return result
   }
 
+  async executeBatchLocally(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
+    const { results, newSeq } = await this.executeInOneTransaction(paramsBatch.map(params => ({ sql, params })))
+    await this.waitForWriteConcernOf(newSeq, options?.writeConcern)
+    return results
+  }
+
   async executeForwardedLocally(
     statements: Array<{ sql: string; params?: Params }>,
+    statedWriteConcern?: WriteConcern,
   ): Promise<ForwardedTransactionResult> {
-    const engine = this.engine
-    const requestId = randomUUID()
-    const results: Array<{ changes: number; lastInsertRowId: number | string }> = []
-    const txId = randomUUID()
-    const hook = engine.config.onBeforeForwardedQuery
+    const hook = this.engine.config.onBeforeForwardedQuery
 
     for (const { sql } of statements) {
       if (!SAFE_SQL_PREFIX_RE.test(sql)) {
@@ -106,10 +109,34 @@ export class LocalExecutor {
       }
     }
 
+    const { results, newSeq } = await this.executeInOneTransaction(statements)
+    await this.waitForWriteConcernOf(newSeq, statedWriteConcern)
+    return {
+      results: results.map(r => ({
+        changes: r.changes,
+        lastInsertRowId: typeof r.lastInsertRowId === 'bigint' ? r.lastInsertRowId.toString() : r.lastInsertRowId,
+      })),
+      requestId: randomUUID(),
+    }
+  }
+
+  private async waitForWriteConcernOf(seq: bigint, stated: WriteConcern | undefined): Promise<void> {
+    const writeConcern = resolveWriteConcern(this.engine, stated)
+    if (writeConcern) {
+      await waitForWriteConcern(this.engine, seq, writeConcern)
+    }
+  }
+
+  private async executeInOneTransaction(
+    statements: Array<{ sql: string; params?: Params }>,
+  ): Promise<{ results: ExecuteResult[]; newSeq: bigint }> {
+    const engine = this.engine
+    const results: ExecuteResult[] = []
+    const txId = randomUUID()
     let sawDdl = false
     const droppedTables: string[] = []
 
-    await engine.writerConn.transaction(async tx => {
+    await runWriterTransaction(engine.writerConn, async tx => {
       const seqBefore = await engine.log.getLocalSeq()
 
       for (const { sql, params } of statements) {
@@ -121,10 +148,7 @@ export class LocalExecutor {
         const bindValues = params ? (Array.isArray(params) ? params : [params]) : []
         const stmt = await tx.prepare(sql)
         const r = await stmt.run(...bindValues)
-        results.push({
-          changes: r.changes,
-          lastInsertRowId: typeof r.lastInsertRowId === 'bigint' ? r.lastInsertRowId.toString() : r.lastInsertRowId,
-        })
+        results.push({ changes: r.changes, lastInsertRowId: r.lastInsertRowId })
 
         if (isDdl) {
           sawDdl = true
@@ -160,7 +184,7 @@ export class LocalExecutor {
       await refreshTriggersAfterDdl(engine)
     }
 
-    return { results, requestId }
+    return { results, newSeq }
   }
 
   async executeTransactionLocally<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T> {
@@ -184,7 +208,7 @@ export class LocalExecutor {
       },
     }
 
-    const userResult = await engine.writerConn.transaction(async tx => {
+    const userResult = await runWriterTransaction(engine.writerConn, async tx => {
       const seqBefore = await engine.log.getLocalSeq()
 
       hooks.onDdl = async (sql: string) => {

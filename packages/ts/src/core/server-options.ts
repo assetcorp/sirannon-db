@@ -4,26 +4,27 @@ import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
 import type { ClusterStatusInfo, ExecuteResult, NodeHealth, Params, QueryOptions } from './types.js'
 
-/** Context passed to the authenticate hook.
+/** The request details that the server passes to the authenticate hook.
  * @public
  */
 export interface RequestContext {
-  /** Request headers, with every name lower-cased. */
+  /** The request headers, with every name in lower case. */
   headers: Record<string, string>
-  /** HTTP method of the request, or the method of a WebSocket upgrade. */
+  /** The HTTP method of the request, or of the WebSocket upgrade request. */
   method: string
-  /** Path the request arrived on. */
+  /** The URL path of the request. */
   path: string
-  /** Identifier of the database the route addresses. */
+  /** The identifier of the database that the route names. */
   databaseId?: string
-  /** Address the request came from. */
+  /** The network address of the client that sent the request. */
   remoteAddress: string
 }
 
 /**
- * Identifies the caller behind a request. Return the identity registered
- * operations then read, and throw a {@link RequestDeniedError} to refuse the
- * request with a status of your own.
+ * Identifies the caller behind a request. Return the identity, which the
+ * server passes to the other hooks and uses to fill the `fromIdentity`
+ * arguments of registered operations, or throw a {@link RequestDeniedError} to
+ * reject the request with a status of your own.
  *
  * @public
  */
@@ -31,97 +32,99 @@ export type AuthenticateHook<Identity = unknown> = (
   ctx: RequestContext,
 ) => Identity | undefined | Promise<Identity | undefined>
 
-/** Reports whether a caller may read the addresses of every node in the group.
+/** Returns whether a caller may read the addresses of every node in the group.
  * @public
  */
 export type ClusterStatusAuthorizer = (ctx: RequestContext) => boolean | Promise<boolean>
 
 /**
- * Durability level in force while a bulk load runs. SQLite sanctions 'off' for
- * a from-scratch load that the operator can re-run after a power loss; 'off'
- * gives up corruption safety, so it fits only a load that starts from nothing.
- * 'normal' keeps WAL-mode corruption safety and suits loads into a database
- * that already holds data the operator cannot afford to lose.
+ * The synchronous level during a bulk load. At 'off', SQLite documents that a
+ * power loss or an operating-system crash can corrupt the database, so 'off'
+ * suits only a load that the operator can re-run from scratch. At 'normal', a
+ * WAL-mode database stays safe from corruption, which suits a load into a
+ * database whose existing data the operator must keep.
  *
  * @public
  */
 export type BulkLoadDurability = 'off' | 'normal'
 
-/** Settings for one bulk load.
+/** The settings for one bulk load.
  * @public
  */
 export interface BulkLoadOptions {
-  /** Durability during the load. Default: 'off'. */
+  /** The synchronous level during the load; the default is 'off'. */
   durability?: BulkLoadDurability
   /**
-   * Whether this load ends with a WAL checkpoint. Default: true. Set it false
-   * on every load but the last of a multi-batch import so the one fsyncing
-   * checkpoint is paid once at the end instead of once per batch; the
-   * configured durability is still restored after each batch regardless, so an
-   * abandoned import never leaves the writer at the relaxed level.
+   * Whether this load ends with a WAL checkpoint; the default is true. Set it
+   * to false on every load except the last of a multi-batch import, so that the
+   * import pays for one fsyncing checkpoint at the end. Sirannon still restores
+   * the configured level after each load, so an abandoned import leaves the
+   * writer at that level.
    */
   checkpoint?: boolean
 }
 
-/** Aggregate outcome of a bulk load. Summed rather than per-row so a
- * million-row load never holds a million result objects in memory.
+/** The totals for a bulk load, which Sirannon sums across rows so that a large load keeps no per-row results in memory.
  * @public
  */
 export interface BulkLoadResult {
-  /** Number of parameter sets the load applied. */
+  /** The number of parameter sets that the load applied. */
   rowsLoaded: number
-  /** Number of rows the load inserted, updated, or deleted. */
+  /** The number of rows that the load inserted, updated, or deleted. */
   changes: number
 }
 
 /**
- * What the server runs statements against for one database. A local
- * `Database` satisfies it, and so does a proxy that forwards to another node.
+ * The object that the server executes one database's statements against. A
+ * local `Database` fits this interface, and so does a proxy that forwards
+ * statements to another node.
  *
  * @public
  */
 export interface ServerExecutionTarget {
-  /** Runs a read and returns the rows. */
+  /** Executes a read and returns the rows. */
   query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
   /**
-   * Optional single-pass read that returns rows already encoded for the wire
-   * (safe-range integers as plain numbers, larger integers and BLOBs as tagged
-   * envelopes). When present the server uses it instead of {@link ServerExecutionTarget.query}
-   * followed by a separate tag-encoding walk. A target that omits it stays
-   * correct: the server falls back to encoding {@link ServerExecutionTarget.query} rows itself.
+   * Executes a read and returns rows already encoded for the wire, with
+   * safe-range integers as plain numbers and larger integers and BLOBs as
+   * tagged envelopes. When the target has this method, the server calls it and
+   * encodes nothing itself; otherwise the server calls
+   * {@link ServerExecutionTarget.query} and encodes the rows in a second pass.
    */
   queryForWire?(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>
-  /** Runs one write and returns the change count and last inserted row id. */
+  /** Executes one write and returns the change count and the row id of the last inserted row. */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
-  /** Runs a function inside one transaction. */
+  /** Calls a function inside one transaction. */
   transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>
   /**
-   * Optional entry point for a transaction whose statements are all known
-   * before it starts, which lets concurrent transactions share one commit. A
-   * target that omits it stays correct: the server falls back to
-   * {@link ServerExecutionTarget.transaction} and runs the statements one at a time.
+   * Executes a transaction whose statements are all known before it starts,
+   * which lets concurrent transactions share one commit. When the target has no
+   * such method, the server calls {@link ServerExecutionTarget.transaction} and
+   * executes the statements one at a time.
    */
   executeTransaction?(
     statements: readonly { sql: string; params?: Params }[],
     options?: QueryOptions,
   ): Promise<ExecuteResult[]>
   /**
-   * Optional bulk-load entry point. Targets that proxy to a remote primary
-   * may omit it; the server rejects load requests for such targets instead
-   * of silently degrading to per-statement writes.
+   * Executes a bulk load. A target that proxies to a remote primary can omit
+   * this method, and the server then rejects bulk-load requests for that target
+   * with `BULK_LOAD_UNSUPPORTED`.
    */
   bulkLoad?(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult>
-  /** Optional device-sync entry point that applies a batch of changes a device pushed. */
+  /** Applies a batch of changes that a device pushed; when the target has no such method, the server rejects device pushes with `SYNC_UNSUPPORTED`. */
   applyChanges?(
     batch: ReplicationBatch,
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult>
-  /** Optional listing of the migrations this database has applied. */
+  /** Lists the migrations that this database has applied. */
   appliedMigrations?(): Promise<AppliedMigrationRow[]>
 }
 
 /**
- * Finds what the server should run a database's statements against.
+ * Returns the target that the server executes a database's statements
+ * against, or null or undefined, to which the server responds with
+ * `DATABASE_NOT_FOUND`.
  *
  * @public
  */
@@ -129,168 +132,182 @@ export type ServerExecutionTargetResolver = (
   databaseId: string,
 ) => ServerExecutionTarget | null | undefined | Promise<ServerExecutionTarget | null | undefined>
 
-/** Options for the standalone HTTP + WS server.
+/** The options for the standalone HTTP and WebSocket server.
  * @public
  */
 export interface ServerOptions<Identity = unknown> {
-  /** Address the server binds to. Default: '127.0.0.1'. */
+  /** The address that the server binds to; the default is '127.0.0.1'. */
   host?: string
-  /** Port the server binds to. Default: 9876. */
+  /** The port that the server binds to; the default is 9876. */
   port?: number
-  /** Cross-origin rules the server answers browser requests with. */
+  /** The cross-origin rules that the server applies to browser requests. */
   cors?: boolean | CorsOptions
   /**
-   * Maximum HTTP request body and WebSocket message size in bytes. Applied
-   * identically to both transports. Must be a positive, finite integer no
-   * larger than 4_294_967_295 (the unsigned 32-bit ceiling uWebSockets.js can
-   * store; larger values would silently wrap modulo 2^32).
-   * Default: 1_048_576 (1 MB), matching the general web default and acting as
-   * a denial-of-service guard on a memory-limited server.
+   * The largest HTTP request body and WebSocket message, in bytes, which the
+   * server applies to both transports. The value must be a positive integer no
+   * larger than 4_294_967_295, the largest limit that uWebSockets.js stores in
+   * its unsigned 32-bit field; the server throws `INVALID_MAX_BODY_BYTES` for
+   * any other value. The default is 1_048_576 (1 MB), which caps the
+   * memory that the server spends on one request.
    */
   maxBodyBytes?: number
   /**
-   * Maximum bytes buffered per WebSocket connection before the server stops
-   * absorbing backpressure. A single frame can be as large as `maxBodyBytes`,
-   * so this must hold several of them; the resolved value is raised to at
-   * least `maxBodyBytes` and, like `maxBodyBytes`, must not exceed
-   * 4_294_967_295. When the buffer is exceeded the server closes the
-   * connection so the client reconnects rather than losing a frame silently.
-   * Default: the larger of 16 MB and `maxBodyBytes`.
+   * The most bytes that the server buffers for one WebSocket connection before
+   * it closes the connection, so that the client learns of the overflow and
+   * reconnects. The value must lie between `maxBodyBytes`, so that one frame
+   * fits, and 4_294_967_295; the server throws `INVALID_WS_BACKPRESSURE` for
+   * any other value. The default is the larger of 16 MB and `maxBodyBytes`.
    */
   maxWebSocketBackpressureBytes?: number
   /**
-   * How long, in milliseconds, change events are retained for WebSocket CDC
-   * subscriptions. Retention bounds both on-disk growth of the change log and
-   * how far back a reconnecting subscriber can resume. Default: 3_600_000
-   * (one hour).
+   * How long, in milliseconds, Sirannon keeps change events for WebSocket change
+   * subscriptions. The retention limits both the size of the change log on disk
+   * and how far back a reconnecting subscriber can resume. The default is
+   * 3_600_000, one hour.
    */
   cdcRetentionMs?: number
-  /** How long, in milliseconds, a device's sync cursor is kept after its last contact. */
+  /**
+   * How long, in milliseconds, Sirannon keeps the changes that a device's sync
+   * cursor still needs before it drops the cursor; a database opened with its
+   * own `deviceCursorRetention` uses that value. The default is 2_592_000_000,
+   * 30 days.
+   */
   deviceCursorRetentionMs?: number
-  /** Changes a device may leave unacknowledged before the server stops sending more. */
+  /**
+   * The most changes that Sirannon keeps for one device's cursor before it
+   * drops the cursor; a database opened with its own `maxChangesHeldForDevice`
+   * uses that value. 0 sets no limit, and the default is 0.
+   */
+  maxChangesHeldForDevice?: number
+  /** The number of changes that a device may leave unacknowledged before the server pauses sending more; the default is 1_000. */
   maxUnacknowledgedChanges?: number
-  /** Runs before every database route and every WebSocket upgrade, and names the caller. */
+  /** The server calls this before every database route and every WebSocket upgrade, to identify the caller. */
   authenticate?: AuthenticateHook<Identity>
-  /** Statements callers may invoke by name. Without these, only SQL routes serve reads and writes. */
+  /** The statements that callers may invoke by name; with none registered, only the SQL routes serve reads and writes. */
   operations?: OperationRegistry<Identity>
-  /** Opens the five statement routes and their WebSocket messages. Default: false. */
+  /** Enables the five statement routes and their WebSocket messages; the default is false. */
   acceptSql?: boolean
   /**
-   * Opens the route that rebuilds a database from its backups. A restore
-   * replaces the database that is serving traffic, so the route stays shut
-   * until you open it here, and a server that opens it without an
-   * `authenticate` hook refuses to start. Default: false.
+   * Enables the route that rebuilds a database from its backups; the default is
+   * false. A restore replaces a database that is serving traffic, so the server
+   * keeps the route closed until you enable it here, and the server constructor
+   * throws `INVALID_BACKUP_RESTORE` when you enable it without an `authenticate`
+   * hook.
    */
   acceptBackupRestore?: boolean
-  /** Finds what the server runs a database's statements against. */
+  /** Enables device sync, which covers the push, snapshot, and migration-list routes, device subscriptions, and acknowledgements; the default is false. The server constructor throws `INVALID_DEVICE_SYNC` when you enable it without an `authenticate` hook. */
+  acceptDeviceSync?: boolean
+  /** Returns the target that the server executes a database's statements against; without it, the server uses the databases in its own registry. */
   resolveExecutionTarget?: ServerExecutionTargetResolver
-  /** Supplies the replication figures the readiness endpoint reports. */
+  /** Returns the replication figures that the readiness endpoint reports. */
   getReplicationStatus?: () => ReplicationStatusInfo | null
-  /** Supplies what `GET /db/{id}/cluster` reports for one database. */
+  /** Returns the status that `GET /db/{id}/cluster` reports for one database. */
   getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null
-  /** Reports whether a caller may read the addresses of every node in the group. */
+  /** Returns whether a caller may read the addresses of every node in the group. */
   authorizeClusterStatus?: ClusterStatusAuthorizer
 }
 
-/** Replication figures one node reports through its readiness endpoint.
+/** The replication figures that one node reports through its readiness endpoint.
  * @public
  */
 export interface ReplicationStatusInfo {
-  /** Whether this node accepts writes or serves reads. */
+  /** The node's role in the replication group, which sets whether it accepts writes or serves reads. */
   role: string
   /** Whether this node forwards writes to the primary. */
   writeForwarding: boolean
-  /** Number of peers the node is connected to. */
+  /** The number of peers that the node is connected to. */
   peers: number
-  /** Highest change-log position this node has recorded locally. */
+  /** The highest change-log position that this node has recorded locally. */
   localSeq: bigint
-  /** What the node can do right now, and the condition behind it. */
+  /** What the node can do now, and the reason for that state. */
   health: NodeHealth
-  /** Identifier of the replication group the node belongs to. */
+  /** The identifier of the node's replication group. */
   replicationGroupId?: string
-  /** The primary term this node reports as current. */
+  /** The primary term that this node reports as current. */
   primaryTerm?: bigint
-  /** Identifier of the primary this node reports as current. */
+  /** The identifier of the primary that this node reports as current. */
   currentPrimary?: string
-  /** Whether the node reaches its cluster coordinator, and whether it holds write authority. */
+  /** Whether the node is connected to its cluster coordinator, and whether it holds write authority. */
   coordinator?: {
     connected: boolean
     authority: boolean
   }
-  /** Whether this node runs the group's controller loop. */
+  /** The state of this node's controller loop for the group. */
   controller?: {
     state: 'disabled' | 'standby' | 'active' | 'lost'
   }
-  /** Identifiers of the replicas the group counts as in sync. */
+  /** The identifiers of the replicas that the group counts as in sync. */
   inSyncReplicas?: string[]
-  /** Identifiers of the replicas that have fallen behind. */
+  /** The identifiers of the replicas that are behind the primary. */
   laggingReplicas?: string[]
-  /** Where this node stands in first sync. */
+  /** The node's progress through its first sync. */
   syncState?: string
 }
 
-/** CORS configuration.
+/** The cross-origin (CORS) settings for the server.
  * @public
  */
 export interface CorsOptions {
-  /** Origins the server allows. */
+  /** The origins that the server allows. */
   origin?: string | string[]
-  /** Methods the server allows. */
+  /** The methods that the server allows. */
   methods?: string[]
-  /** Request headers the server allows. */
+  /** The request headers that the server allows. */
   headers?: string[]
 }
 
 /**
- * Options for the mountable WebSocket handler.
+ * The options for the mountable WebSocket handler.
  *
  * @internal
  */
 export interface WSHandlerOptions<Identity = unknown> {
-  /** Maximum message size in bytes. Default: 1_048_576 (1 MB). */
+  /** The largest message, in bytes; the default is 1_048_576 (1 MB). */
   maxPayloadLength?: number
-  /** Outbound bytes a socket may hold before a device stream pauses itself. Default: 16 MB. */
+  /** The outbound bytes that a socket may buffer before the server pauses a device stream; the default is 16 MB. */
   maxBackpressureBytes?: number
-  /** Change-log retention for CDC subscriptions in milliseconds. Default: 3_600_000. */
+  /** The change-log retention for change subscriptions, in milliseconds; the default is 3_600_000. */
   cdcRetentionMs?: number
   deviceCursorRetentionMs?: number
+  maxChangesHeldForDevice?: number
   maxUnacknowledgedChanges?: number
   acceptSql?: boolean
+  acceptDeviceSync?: boolean
   operations?: OperationRegistry<Identity>
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 
-/** Options for the client SDK.
+/** The options for the client SDK.
  * @public
  */
 export interface ClientOptions {
-  /** Transport to use. Default: 'websocket'. */
+  /** The transport to use; the default is 'websocket'. */
   transport?: 'websocket' | 'http'
   /**
    * Custom headers for HTTP requests, and for the WebSocket upgrade in a
-   * runtime whose WebSocket carries a handshake header, which Node and Bun do
-   * and a browser does not. Constructing a WebSocket-transport client with
-   * headers and no {@link ClientOptions.webSocketProtocols} in a runtime that
-   * carries none fails with `INVALID_ARGUMENT`. Pass both when a browser client
-   * needs each one, and the headers still reach every HTTP request.
+   * runtime whose WebSocket client can send handshake headers, as Node and Bun
+   * can and a browser cannot. In a runtime without that ability, constructing a
+   * WebSocket-transport client with headers and no
+   * {@link ClientOptions.webSocketProtocols} fails with `INVALID_ARGUMENT`. A
+   * browser client can pass both, and the client still sends the headers on
+   * every HTTP request.
    */
   headers?: Record<string, string>
   /**
-   * WebSocket subprotocols offered during the handshake, which is how a browser
-   * carries a short-lived credential. The client offers the `sirannon.v1`
-   * identifier alongside them and the server selects that identifier, so the
-   * credential never comes back in the handshake response.
+   * The WebSocket subprotocols that the client offers during the handshake,
+   * which let a browser send a short-lived credential. The client also offers
+   * the `sirannon.v1` identifier, and the server selects that identifier, so the
+   * handshake response names `sirannon.v1` and leaves the credential out.
    */
   webSocketProtocols?: string | string[]
-  /** Reconnect on WebSocket disconnect. Default: true. */
+  /** Whether the client reconnects when the WebSocket disconnects; the default is true. */
   autoReconnect?: boolean
-  /** Reconnect interval in ms. Default: 1000. */
+  /** The delay before each reconnection attempt, in milliseconds; the default is 1000. */
   reconnectInterval?: number
   /**
-   * Per-request timeout in milliseconds for the WebSocket transport. A bulk
-   * load or batch of tens of millions of rows can legitimately run longer than
-   * the default, so raise this for large writes. Set to 0 to wait indefinitely.
-   * Default: 30000.
+   * The timeout for each request on the WebSocket transport, in milliseconds;
+   * the default is 30000, and 0 waits with no limit. Raise it for a bulk load or
+   * a batch large enough to take longer than the timeout.
    */
   requestTimeout?: number
 }

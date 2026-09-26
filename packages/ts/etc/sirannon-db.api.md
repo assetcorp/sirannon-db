@@ -5,7 +5,7 @@
 ```ts
 
 // @public
-export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>;
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void;
 
 // @public
 export interface AfterQueryHookContext extends QueryHookContext {
@@ -313,10 +313,18 @@ export interface BatchSummary {
 }
 
 // @public
-export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type BeforeConnectHook = (ctx: ConnectionHookContext) => void;
 
 // @public
-export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>;
+export type BeforePushHook = (ctx: {
+    databaseId: string;
+    table: string;
+    deviceId: string;
+    identity?: unknown;
+}) => void | Promise<void>;
+
+// @public
+export type BeforeQueryHook = (ctx: QueryHookContext) => void;
 
 // @public
 export type BeforeSnapshotHook = (ctx: {
@@ -331,6 +339,7 @@ export type BeforeSubscribeHook = (ctx: {
     table: string;
     filter?: Record<string, unknown>;
     identity?: unknown;
+    deviceId?: string;
 }) => void | Promise<void>;
 
 // @public
@@ -385,9 +394,11 @@ export class ChangeTracker {
     // @internal (undocumented)
     advanceToLatest(conn: SQLiteConnection): Promise<void>;
     // @internal (undocumented)
+    get changeLogTable(): string;
+    // @internal (undocumented)
     cleanup(conn: SQLiteConnection): Promise<number>;
     // @internal (undocumented)
-    clearPruneBoundary(): void;
+    clearPruneBoundary(source: PruneBoundarySource): void;
     // @internal
     get cursor(): bigint;
     // @internal
@@ -403,7 +414,7 @@ export class ChangeTracker {
     // @internal
     refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void>;
     // @internal (undocumented)
-    setPruneBoundary(seq: bigint): void;
+    setPruneBoundary(source: PruneBoundarySource, seq: bigint): void;
     unwatch(conn: SQLiteConnection, table: string): Promise<void>;
     watch(conn: SQLiteConnection, table: string): Promise<void>;
     // @internal (undocumented)
@@ -579,7 +590,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
 }
 
 // @public
-export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void;
 
 // @public
 export interface DatabaseCopyRequest {
@@ -600,6 +611,8 @@ export class DatabaseLifecycle {
     protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions);
     // @internal
     addCloseListener(fn: () => void | Promise<void>): void;
+    // @internal
+    readonly changeRetention: ChangeRetentionOptions;
     close(): Promise<void>;
     get closed(): boolean;
     // @internal
@@ -624,7 +637,7 @@ export class DatabaseNotFoundError extends SirannonError {
 }
 
 // @public
-export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void;
 
 // @public
 export interface DatabaseOperations<Identity = unknown> {
@@ -637,6 +650,8 @@ export interface DatabaseOptions {
     backups?: BackupCycleOptions;
     cdcPollInterval?: number;
     cdcRetention?: number;
+    deviceCursorRetention?: number;
+    maxChangesHeldForDevice?: number;
     readOnly?: boolean;
     readPoolSize?: number;
     synchronous?: SynchronousLevel;
@@ -693,6 +708,7 @@ export class ForbiddenSqlError extends SirannonError {
 export interface HookConfig {
     onAfterQuery?: AfterQueryHook | AfterQueryHook[];
     onBeforeConnect?: BeforeConnectHook | BeforeConnectHook[];
+    onBeforePush?: BeforePushHook | BeforePushHook[];
     onBeforeQuery?: BeforeQueryHook | BeforeQueryHook[];
     onBeforeSnapshot?: BeforeSnapshotHook | BeforeSnapshotHook[];
     onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[];
@@ -709,7 +725,7 @@ export class HookDeniedError extends SirannonError {
 export type HookDispose = () => void;
 
 // @internal
-export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe' | 'beforeSnapshot';
+export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe' | 'beforeSnapshot' | 'beforePush';
 
 // @internal
 export interface HookEventContextMap {
@@ -719,6 +735,8 @@ export interface HookEventContextMap {
     };
     // (undocumented)
     beforeConnect: ConnectionHookContext;
+    // (undocumented)
+    beforePush: PushHookContext;
     // (undocumented)
     beforeQuery: QueryHookContext;
     // (undocumented)
@@ -747,6 +765,8 @@ export class HookRegistry {
     invoke<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): Promise<void>;
     // (undocumented)
     invokeSync<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void;
+    // (undocumented)
+    invokeSyncIgnoringFailures<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void;
     // (undocumented)
     register<E extends HookEvent>(event: E, hook: HookHandler<E>): HookDispose;
 }
@@ -851,11 +871,13 @@ export class MetricsCollector {
     // (undocumented)
     get active(): boolean;
     // (undocumented)
+    observeDispatch(databaseId: string): ChangeDispatchObserver | undefined;
+    // (undocumented)
     trackCDCEvent(metrics: CDCMetrics): void;
     // (undocumented)
     trackConnection(metrics: ConnectionMetrics): void;
     // (undocumented)
-    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>): Promise<T>;
+    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>): Promise<T>;
 }
 
 // @public
@@ -988,6 +1010,9 @@ export function parseMigrationFilename(filename: string): ParsedMigrationFilenam
 
 // @public
 export function planBackupRestore(chains: readonly BackupChain[], moment: number): BackupRestorePlan;
+
+// @internal
+export type PushHookContext = Parameters<BeforePushHook>[0];
 
 // @internal
 export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T[]>;
@@ -1150,6 +1175,7 @@ export type ServerExecutionTargetResolver = (databaseId: string) => ServerExecut
 // @public
 export interface ServerOptions<Identity = unknown> {
     acceptBackupRestore?: boolean;
+    acceptDeviceSync?: boolean;
     acceptSql?: boolean;
     authenticate?: AuthenticateHook<Identity>;
     authorizeClusterStatus?: ClusterStatusAuthorizer;
@@ -1160,6 +1186,7 @@ export interface ServerOptions<Identity = unknown> {
     getReplicationStatus?: () => ReplicationStatusInfo | null;
     host?: string;
     maxBodyBytes?: number;
+    maxChangesHeldForDevice?: number;
     maxUnacknowledgedChanges?: number;
     maxWebSocketBackpressureBytes?: number;
     operations?: OperationRegistry<Identity>;
@@ -1178,6 +1205,8 @@ export class Sirannon {
     has(id: string): boolean;
     // @internal (undocumented)
     get hookRegistry(): HookRegistry;
+    // @internal (undocumented)
+    get metrics(): MetricsCollector | null;
     onAfterQuery(hook: AfterQueryHook): HookDispose;
     onBeforeConnect(hook: BeforeConnectHook): HookDispose;
     onBeforeQuery(hook: BeforeQueryHook): HookDispose;
@@ -1201,9 +1230,12 @@ export class SirannonError extends Error {
 
 // @public
 export interface SirannonOptions {
+    cdcRetention?: number;
+    deviceCursorRetention?: number;
     driver: SQLiteDriver;
     hooks?: HookConfig;
     lifecycle?: LifecycleConfig;
+    maxChangesHeldForDevice?: number;
     metrics?: MetricsConfig;
     migrations?: MigrationSource;
     writerWorker?: boolean | WriterWorkerOptions;
@@ -1302,7 +1334,7 @@ export class Transaction {
 
 // @public
 export class TransactionError extends SirannonError {
-    constructor(message: string);
+    constructor(message: string, cause?: unknown);
 }
 
 // @public
@@ -1340,11 +1372,15 @@ export interface WriterWorkerOptions {
 // @internal
 export interface WSHandlerOptions<Identity = unknown> {
     // (undocumented)
+    acceptDeviceSync?: boolean;
+    // (undocumented)
     acceptSql?: boolean;
     cdcRetentionMs?: number;
     // (undocumented)
     deviceCursorRetentionMs?: number;
     maxBackpressureBytes?: number;
+    // (undocumented)
+    maxChangesHeldForDevice?: number;
     maxPayloadLength?: number;
     // (undocumented)
     maxUnacknowledgedChanges?: number;

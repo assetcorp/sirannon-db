@@ -1,3 +1,4 @@
+import { HLC } from '../core/sync/hlc.js'
 import { WriteConcernError } from './errors.js'
 import type { InFlightBatch, PeerState } from './types.js'
 
@@ -70,6 +71,13 @@ export class PeerTracker {
       peer.pendingBatches = Math.max(0, peer.pendingBatches - Math.max(1, ackedCount))
     }
     this.checkWaiters()
+  }
+
+  onBatchApplied(nodeId: string, highestHlc: string): void {
+    const peer = this.peers.get(nodeId)
+    if (peer && (peer.lastReceivedHlc === '' || HLC.compare(highestHlc, peer.lastReceivedHlc) > 0)) {
+      peer.lastReceivedHlc = highestHlc
+    }
   }
 
   recordInFlightBatch(nodeId: string, batch: InFlightBatch): void {

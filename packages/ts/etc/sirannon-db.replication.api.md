@@ -105,7 +105,7 @@ export interface ConflictContext {
 export class ConflictError extends ReplicationError {
     constructor(message: string,
     table: string,
-    rowId: string);
+    rowId: string, cause?: unknown);
     readonly rowId: string;
     readonly table: string;
 }
@@ -201,6 +201,7 @@ export interface ForwardedTransaction {
         sql: string;
         params?: Record<string, unknown> | unknown[];
     }>;
+    writeConcern?: WriteConcern;
 }
 
 // @public
@@ -299,6 +300,8 @@ export class PeerTracker {
     getPeerState(nodeId: string): PeerState | undefined;
     // (undocumented)
     onAckReceived(nodeId: string, ackedSeq: bigint): void;
+    // (undocumented)
+    onBatchApplied(nodeId: string, highestHlc: string): void;
     // (undocumented)
     recordInFlightBatch(nodeId: string, batch: InFlightBatch): void;
     // (undocumented)

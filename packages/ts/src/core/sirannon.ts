@@ -76,6 +76,11 @@ export class Sirannon {
     return this._hookRegistry
   }
 
+  /** @internal */
+  get metrics(): MetricsCollector | null {
+    return this.metricsCollector
+  }
+
   /**
    * Opens a database and registers it under an identifier.
    *
@@ -138,9 +143,7 @@ export class Sirannon {
       this.lifecycleManager?.untrack(id)
 
       if (this._hookRegistry.has('databaseClose')) {
-        try {
-          this._hookRegistry.invokeSync('databaseClose', { databaseId: id, path })
-        } catch {}
+        this._hookRegistry.invokeSyncIgnoringFailures('databaseClose', { databaseId: id, path })
       }
 
       this.metricsCollector?.trackConnection({
@@ -156,9 +159,7 @@ export class Sirannon {
     this.lifecycleManager?.markActive(id)
 
     if (this._hookRegistry.has('databaseOpen')) {
-      try {
-        this._hookRegistry.invokeSync('databaseOpen', { databaseId: id, path })
-      } catch {}
+      this._hookRegistry.invokeSyncIgnoringFailures('databaseOpen', { databaseId: id, path })
     }
 
     this.metricsCollector?.trackConnection({

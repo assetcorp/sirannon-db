@@ -14,6 +14,13 @@ const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
   onBeforePush: 'beforePush',
 }
 
+function callSynchronously<E extends HookEvent>(event: E, hook: HookHandler<E>, ctx: HookEventContextMap[E]): void {
+  const result: unknown = hook(ctx)
+  if (result == null || typeof (result as { then?: unknown }).then !== 'function') return
+  ;(result as PromiseLike<unknown>).then(undefined, () => {})
+  throw new Error(`Hook for '${event}' returned a Promise. Use invoke() for async hooks.`)
+}
+
 /**
  * Stores the lifecycle hooks for a database or registry and calls each event's hooks in the order that the caller registered them.
  *
@@ -59,10 +66,19 @@ export class HookRegistry {
 
     const snapshot = list.slice() as HookHandler<E>[]
     for (const hook of snapshot) {
-      const result = hook(ctx)
-      if (result != null && typeof (result as { then?: unknown }).then === 'function') {
-        throw new Error(`Hook for '${event}' returned a Promise. Use invoke() for async hooks.`)
-      }
+      callSynchronously(event, hook, ctx)
+    }
+  }
+
+  invokeSyncIgnoringFailures<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void {
+    const list = this.hooks.get(event)
+    if (!list || list.length === 0) return
+
+    const snapshot = list.slice() as HookHandler<E>[]
+    for (const hook of snapshot) {
+      try {
+        callSynchronously(event, hook, ctx)
+      } catch {}
     }
   }
 

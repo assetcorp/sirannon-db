@@ -75,15 +75,17 @@ export class QueryError extends SirannonError {
 }
 
 /**
- * Reports a transaction that failed to commit or rolled back, with the cause in
- * the message. The server responds to its `TRANSACTION_ERROR` code with status 400.
+ * Sirannon raises this error when SQLite refuses to commit a transaction whose
+ * statements all succeeded, such as on a deferred foreign key; `cause` holds
+ * SQLite's own error. The server responds to its `TRANSACTION_ERROR` code with status 400.
  *
  * @public
  */
 export class TransactionError extends SirannonError {
-  constructor(message: string) {
+  constructor(message: string, cause?: unknown) {
     super(message, 'TRANSACTION_ERROR')
     this.name = 'TransactionError'
+    if (cause !== undefined) this.cause = cause
   }
 }
 

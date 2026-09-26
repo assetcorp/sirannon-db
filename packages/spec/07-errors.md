@@ -29,7 +29,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `READ_ONLY` | A write was attempted on a read-only database. |
 | `QUERY_ERROR` | SQLite failed to prepare or execute a statement. |
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, or used `ATTACH`, `DETACH`, or `PRAGMA writable_schema`. |
-| `TRANSACTION_ERROR` | A transaction could not be committed or was rolled back. |
+| `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `HOOK_DENIED` | A hook rejected the operation. |
 | `CDC_ERROR` | The change-data-capture pipeline hit an unrecoverable error. |
 | `BACKUP_ERROR` | A backup operation failed. |

@@ -1,26 +1,6 @@
 import { ReplicationError } from '../core/sync/errors.js'
 
-export { BatchValidationError, ReplicationError } from '../core/sync/errors.js'
-
-/** Signals a write conflict that no resolver can settle automatically.
- * @public
- */
-export class ConflictError extends ReplicationError {
-  constructor(
-    message: string,
-    /**
-     * Names the table that contains the conflicting row.
-     */
-    public readonly table: string,
-    /**
-     * Holds the primary key of the conflicting row, encoded as a string.
-     */
-    public readonly rowId: string,
-  ) {
-    super(message, 'CONFLICT_ERROR')
-    this.name = 'ConflictError'
-  }
-}
+export { BatchValidationError, ConflictError, ReplicationError } from '../core/sync/errors.js'
 
 /** Sirannon throws this error when a transport call fails, such as a send to a disconnected peer or a send of a malformed message.
  * @public

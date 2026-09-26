@@ -1,5 +1,6 @@
 import { Server, type ServerDuplexStream, status } from '@grpc/grpc-js'
 import { HealthImplementation } from 'grpc-health-check'
+import { SirannonError } from '../../core/errors.js'
 import { TransportError } from '../../replication/errors.js'
 import type { TopologyRole } from '../../replication/types.js'
 import {
@@ -272,7 +273,16 @@ export function handleForwardCall(
     return
   }
 
-  const appReq = fromForwardRequest(call.request)
+  let appReq: ReturnType<typeof fromForwardRequest>
+  try {
+    appReq = fromForwardRequest(call.request)
+  } catch (err: unknown) {
+    callback({
+      code: status.INVALID_ARGUMENT,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return
+  }
   t.forwardHandler(appReq, peerId)
     .then(result => {
       callback(null, {
@@ -282,6 +292,7 @@ export function handleForwardCall(
           lastInsertRowId: BigInt(typeof r.lastInsertRowId === 'string' ? r.lastInsertRowId : r.lastInsertRowId),
         })),
         error: '',
+        errorCode: '',
         groupId: result.groupId ?? '',
         primaryTerm: result.primaryTerm ?? 0n,
       })
@@ -291,6 +302,7 @@ export function handleForwardCall(
         requestId: call.request.requestId,
         results: [],
         error: err.message,
+        errorCode: err instanceof SirannonError ? err.code : '',
         groupId: call.request.groupId ?? '',
         primaryTerm: call.request.primaryTerm ?? 0n,
       })

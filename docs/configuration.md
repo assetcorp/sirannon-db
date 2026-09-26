@@ -8,7 +8,7 @@ This page lists every option that the registry, the databases that it opens, the
 | --- | --- | --- | --- |
 | `driver` | `SQLiteDriver` | Yes | The SQLite driver adapter to use |
 | `hooks` | `HookConfig` | No | Hooks that Sirannon calls around queries and connections, and before a subscription, a snapshot, or a device push |
-| `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
+| `metrics` | `MetricsConfig` | No | Callbacks for query timing with the rows that each statement returns or changes, for database open and close, and for each change event that reaches subscribers |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
 | `migrations` | `MigrationSource` | No | Migration set, or a function returning it, applied to every writable database before it registers |
 | `writerWorker` | `boolean \| WriterWorkerOptions` | No | Default writer-worker setting for every database this registry opens |

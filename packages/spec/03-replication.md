@@ -117,7 +117,7 @@ shouldAcceptFrom(peer):     role == 'replica' and peer.role == 'primary'
 
 ## Conflict Resolution
 
-A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier invokes it during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
+A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier invokes it during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. A resolver that throws fails the batch with `CONFLICT_ERROR`, which carries the change's `table` and `rowId` and keeps the resolver's error as its cause. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
 
 ```text
 ConflictContext { table, rowId, localChange or null, remoteChange, localHlc or null, remoteHlc }
@@ -272,10 +272,10 @@ A read concern that cannot be met fails rather than returning a weaker result.
 
 ## Write Forwarding
 
-When `writeForwarding` is enabled on a replica, `execute` and `executeBatch` forward to the primary instead of being rejected; `transaction` is never forwarded and fails with `TOPOLOGY_ERROR` on a non-writable node. The forwarder targets the connected primary (in coordinator mode, the current primary for the group) and sends the statements under the current `groupId` and `primaryTerm`; a receiver that no longer holds the term rejects with `STALE_PRIMARY`. With no primary reachable, forwarding fails with `TOPOLOGY_ERROR`.
+When `writeForwarding` is enabled on a replica, `execute` and `executeBatch` forward to the primary instead of being rejected; `transaction` is never forwarded and fails with `TOPOLOGY_ERROR` on a non-writable node. The forwarder targets the connected primary (in coordinator mode, the current primary for the group) and sends the statements under the current `groupId` and `primaryTerm`; a receiver that no longer holds the term rejects with `STALE_PRIMARY`. With no primary reachable, forwarding fails with `TOPOLOGY_ERROR`. The forwarder sends the caller's write concern with the statements, and the primary waits for that concern, or for its own default when the caller states none, before it replies (see [Write Concern](#write-concern)).
 
 ```text
-ForwardedTransaction       { statements: List<{ sql, params? }>, requestId, groupId?, primaryTerm? }
+ForwardedTransaction       { statements: List<{ sql, params? }>, requestId, groupId?, primaryTerm?, writeConcern? }
 ForwardedTransactionResult { results: List<{ changes, lastInsertRowId }>, requestId, groupId?, primaryTerm? }
 ```
 
@@ -295,7 +295,7 @@ PeerState {
 }
 ```
 
-An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the acked sequence, and decrements `pendingBatches`. An in-flight batch older than `ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so retransmission resumes there.
+An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the acked sequence, and decrements `pendingBatches`. Applying a batch from a peer raises that peer's `lastReceivedHlc` to the batch's `hlcRange.max`. An in-flight batch older than `ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so retransmission resumes there.
 
 On connecting to the node it replicates from, a node that is `ready` or `catching-up` sends its applied sequence for that node's stream as a `ReplicationAck` with an empty `batchId`.
 

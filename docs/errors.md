@@ -31,7 +31,7 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `ReadOnlyError` | `READ_ONLY` | A caller writes to a read-only database or calls `live` on one |
 | `QueryError` | `QUERY_ERROR` | SQLite fails to prepare or execute a statement |
 | `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, or uses `ATTACH`, `DETACH`, or `PRAGMA writable_schema` |
-| `TransactionError` | `TRANSACTION_ERROR` | A transaction cannot commit, or it rolls back |
+| `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | `HookDeniedError` | `HOOK_DENIED` | A before-hook throws to refuse the operation |
 | `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code of your own |
 | `CDCError` | `CDC_ERROR` | Change data capture fails, or Sirannon cannot maintain a live query for the statement |
@@ -129,7 +129,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | --- | --- | --- |
 | `ReplicationError` | `REPLICATION_ERROR` | Base class for replication failures |
 | `SyncError` | `SYNC_ERROR` | First sync fails, because the node is not ready, the transfer times out, or a manifest or batch order does not match |
-| `ConflictError` | `CONFLICT_ERROR` | Conflict resolution fails for a table and row |
+| `ConflictError` | `CONFLICT_ERROR` | A conflict resolver throws on a replicated change, and the error names the table and row |
 | `TransportError` | `TRANSPORT_ERROR` | A peer is unreachable, or a send fails |
 | `BatchValidationError` | `BATCH_VALIDATION_ERROR` | A batch fails its checksum, breaks the schema allowlist, exceeds `maxClockDriftMs`, or contains unsafe DDL |
 | `WriteConcernError` | `WRITE_CONCERN_ERROR` | The replicas do not meet the write concern within the timeout |

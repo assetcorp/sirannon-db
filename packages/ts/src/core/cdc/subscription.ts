@@ -16,7 +16,13 @@ interface InternalSubscription {
   onError: ((error: Error) => void) | undefined
 }
 
+export type ChangeDispatchObserver = (event: ChangeEvent, subscriberCount: number) => void
+
+const NO_SUBSCRIBERS: ReadonlySet<number> = new Set()
+
 export class SubscriptionManager {
+  constructor(private readonly onDispatched?: ChangeDispatchObserver) {}
+
   private nextId = 1
   private readonly subscriptions = new Map<number, InternalSubscription>()
   private readonly byTable = new Map<string, Set<number>>()
@@ -54,16 +60,17 @@ export class SubscriptionManager {
 
   dispatch(events: ChangeEvent[]): void {
     for (const event of events) {
-      const ids = this.byTable.get(event.table)
-      if (!ids) continue
-
+      const ids = this.byTable.get(event.table) ?? NO_SUBSCRIBERS
+      let deliveredTo = 0
       for (const id of ids) {
         const sub = this.subscriptions.get(id)
         if (!sub) continue
         const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)
         if (delivered === null) continue
+        deliveredTo++
         invokeCallerCallback(() => sub.callback(delivered), sub.onError)
       }
+      this.onDispatched?.(event, deliveredTo)
     }
   }
 

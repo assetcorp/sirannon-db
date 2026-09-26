@@ -5,11 +5,23 @@ import type { DatabaseCdcController } from './database-cdc.js'
 import type { DatabaseObserver } from './database-observability.js'
 import type { SQLiteConnection, SynchronousLevel } from './driver/types.js'
 import { canGroupTransaction, type GroupCommitter } from './group-committer.js'
+import type { QueryOutcomeMeasure } from './metrics/collector.js'
 import { executeBatch, executeBatchSummary } from './query-executor.js'
 import type { Transaction } from './transaction.js'
 import type { BulkLoadOptions, BulkLoadResult, ExecuteResult, Params, QueryOptions } from './types.js'
 import type { WriteGate } from './worker/gate.js'
 import type { WriterLock } from './writer-lock.js'
+import { runWriterTransaction } from './writer-transaction.js'
+
+function changesOf(result: { changes: number }): { changes: number } {
+  return { changes: result.changes }
+}
+
+function totalChanges(results: readonly ExecuteResult[]): { changes: number } {
+  let changes = 0
+  for (const result of results) changes += result.changes
+  return { changes }
+}
 
 export interface DatabaseWriteDeps {
   pool: ConnectionPool
@@ -30,8 +42,10 @@ export class DatabaseWriteController {
     const { observer, writeGate, writerLock, groupCommitter } = this.deps
     return observer.withQueryHooks(sql, params, options, () =>
       writeGate.run(() =>
-        observer.track(sql, () =>
-          writerLock.isHeld() ? groupCommitter.runUngrouped(sql, params) : groupCommitter.submit(sql, params),
+        observer.track(
+          sql,
+          () => (writerLock.isHeld() ? groupCommitter.runUngrouped(sql, params) : groupCommitter.submit(sql, params)),
+          changesOf,
         ),
       ),
     )
@@ -42,7 +56,12 @@ export class DatabaseWriteController {
     return observer.withQueryHooks(sql, undefined, options, () =>
       writeGate.run(() =>
         writerLock.run(() =>
-          this.runInTransaction(pool.acquireWriter(), sql, txConn => executeBatch(txConn, sql, paramsBatch)),
+          this.runInTransaction(
+            pool.acquireWriter(),
+            sql,
+            txConn => executeBatch(txConn, sql, paramsBatch),
+            totalChanges,
+          ),
         ),
       ),
     )
@@ -61,7 +80,8 @@ export class DatabaseWriteController {
             durability: options?.durability,
             checkpoint: options?.checkpoint ?? true,
             capturesChangeLog,
-            loadRows: () => this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch)),
+            loadRows: () =>
+              this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch), changesOf),
           })
         }),
       ),
@@ -102,14 +122,18 @@ export class DatabaseWriteController {
     writer: SQLiteConnection,
     sql: string,
     run: (txConn: SQLiteConnection) => Promise<T>,
+    measure: QueryOutcomeMeasure<T>,
   ): Promise<T> {
     const { observer, cdc } = this.deps
-    const result = await observer.track(sql, () =>
-      writer.transaction(async txConn => {
-        const value = await run(txConn)
-        await cdc.applyStamps(txConn)
-        return value
-      }),
+    const result = await observer.track(
+      sql,
+      () =>
+        runWriterTransaction(writer, async txConn => {
+          const value = await run(txConn)
+          await cdc.applyStamps(txConn)
+          return value
+        }),
+      measure,
     )
     await applyDdlSideEffectsIfRelevant(cdc.changeTracker, writer, sql)
     return result

@@ -5,7 +5,7 @@
 ```ts
 
 // @public
-export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>;
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void;
 
 // @public
 export interface AfterQueryHookContext extends QueryHookContext {
@@ -313,7 +313,7 @@ export interface BatchSummary {
 }
 
 // @public
-export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type BeforeConnectHook = (ctx: ConnectionHookContext) => void;
 
 // @public
 export type BeforePushHook = (ctx: {
@@ -324,7 +324,7 @@ export type BeforePushHook = (ctx: {
 }) => void | Promise<void>;
 
 // @public
-export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>;
+export type BeforeQueryHook = (ctx: QueryHookContext) => void;
 
 // @public
 export type BeforeSnapshotHook = (ctx: {
@@ -590,7 +590,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
 }
 
 // @public
-export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void;
 
 // @public
 export interface DatabaseCopyRequest {
@@ -637,7 +637,7 @@ export class DatabaseNotFoundError extends SirannonError {
 }
 
 // @public
-export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void | Promise<void>;
+export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void;
 
 // @public
 export interface DatabaseOperations<Identity = unknown> {
@@ -766,6 +766,8 @@ export class HookRegistry {
     // (undocumented)
     invokeSync<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void;
     // (undocumented)
+    invokeSyncIgnoringFailures<E extends HookEvent>(event: E, ctx: HookEventContextMap[E]): void;
+    // (undocumented)
     register<E extends HookEvent>(event: E, hook: HookHandler<E>): HookDispose;
 }
 
@@ -869,11 +871,13 @@ export class MetricsCollector {
     // (undocumented)
     get active(): boolean;
     // (undocumented)
+    observeDispatch(databaseId: string): ChangeDispatchObserver | undefined;
+    // (undocumented)
     trackCDCEvent(metrics: CDCMetrics): void;
     // (undocumented)
     trackConnection(metrics: ConnectionMetrics): void;
     // (undocumented)
-    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>): Promise<T>;
+    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>): Promise<T>;
 }
 
 // @public
@@ -1201,6 +1205,8 @@ export class Sirannon {
     has(id: string): boolean;
     // @internal (undocumented)
     get hookRegistry(): HookRegistry;
+    // @internal (undocumented)
+    get metrics(): MetricsCollector | null;
     onAfterQuery(hook: AfterQueryHook): HookDispose;
     onBeforeConnect(hook: BeforeConnectHook): HookDispose;
     onBeforeQuery(hook: BeforeQueryHook): HookDispose;
@@ -1328,7 +1334,7 @@ export class Transaction {
 
 // @public
 export class TransactionError extends SirannonError {
-    constructor(message: string);
+    constructor(message: string, cause?: unknown);
 }
 
 // @public

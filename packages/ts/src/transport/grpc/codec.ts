@@ -1,3 +1,5 @@
+import type { WriteConcern } from '../../core/query-types.js'
+import { TransportError } from '../../replication/errors.js'
 import type {
   ReplicationChange as AppReplicationChange,
   ForwardedTransaction,
@@ -23,6 +25,8 @@ import type {
   SyncCompletePayload,
   SyncRequestPayload,
 } from './generated/replication.js'
+
+const PROTO_UINT32_MAX = 4_294_967_295
 
 /**
  * Encodes one SQLite value into the gRPC column representation.
@@ -297,7 +301,29 @@ export function toForwardRequest(req: ForwardedTransaction): ProtoForwardRequest
     }
     return { sql: s.sql, namedParams, positionalParams }
   })
-  return { requestId: req.requestId, statements, groupId: req.groupId ?? '', primaryTerm: req.primaryTerm ?? 0n }
+  const writeConcernTimeoutMs = req.writeConcern?.timeoutMs ?? 0
+  if (writeConcernTimeoutMs > PROTO_UINT32_MAX) {
+    throw new TransportError(
+      `Write concern timeoutMs ${writeConcernTimeoutMs} exceeds the ${PROTO_UINT32_MAX} ms that a forwarded write can carry`,
+    )
+  }
+  return {
+    requestId: req.requestId,
+    statements,
+    groupId: req.groupId ?? '',
+    primaryTerm: req.primaryTerm ?? 0n,
+    writeConcernLevel: req.writeConcern?.level ?? '',
+    writeConcernTimeoutMs,
+  }
+}
+
+function fromForwardWriteConcern(proto: ProtoForwardRequest): WriteConcern | undefined {
+  const level = proto.writeConcernLevel
+  if (level === '') return undefined
+  if (level !== 'local' && level !== 'majority' && level !== 'all') {
+    throw new TransportError(`Forward request states an unknown write concern level '${level}'`)
+  }
+  return proto.writeConcernTimeoutMs > 0 ? { level, timeoutMs: proto.writeConcernTimeoutMs } : { level }
 }
 
 export function fromForwardRequest(proto: ProtoForwardRequest): ForwardedTransaction {
@@ -316,10 +342,12 @@ export function fromForwardRequest(proto: ProtoForwardRequest): ForwardedTransac
     }
     return { sql: s.sql, params }
   })
+  const writeConcern = fromForwardWriteConcern(proto)
   return {
     requestId: proto.requestId,
     statements,
     groupId: proto.groupId || undefined,
     primaryTerm: proto.primaryTerm === 0n ? undefined : proto.primaryTerm,
+    ...(writeConcern === undefined ? {} : { writeConcern }),
   }
 }

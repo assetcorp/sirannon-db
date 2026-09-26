@@ -37,10 +37,6 @@ export function fireAfterQueryHooks(
   if (!hasParent && !hasLocal) return
 
   const ctx = { databaseId, sql, params, durationMs }
-  try {
-    parentHooks?.invokeSync('afterQuery', ctx)
-  } catch {}
-  try {
-    localHooks.invokeSync('afterQuery', ctx)
-  } catch {}
+  parentHooks?.invokeSyncIgnoringFailures('afterQuery', ctx)
+  localHooks.invokeSyncIgnoringFailures('afterQuery', ctx)
 }

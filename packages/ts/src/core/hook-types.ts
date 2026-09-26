@@ -18,10 +18,10 @@ export interface QueryHookContext {
   readConcern?: ReadConcern
 }
 
-/** A hook that Sirannon calls before it executes each statement; throw from it to reject the statement. Sirannon calls it synchronously and fails the statement when it returns a promise.
+/** A hook that Sirannon calls synchronously before it executes each statement; throw from it to reject the statement. Sirannon also fails the statement when the hook returns a promise.
  * @public
  */
-export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>
+export type BeforeQueryHook = (ctx: QueryHookContext) => void
 
 /** The context that Sirannon passes to each after-query hook, which adds the statement's duration to the query context.
  * @public
@@ -31,10 +31,10 @@ export interface AfterQueryHookContext extends QueryHookContext {
   durationMs: number
 }
 
-/** A hook that Sirannon calls synchronously after each statement returns or throws. Sirannon ignores an error from it, and when it returns a promise, Sirannon skips the hooks registered after it.
+/** A hook that Sirannon calls synchronously after each statement returns or throws. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type AfterQueryHook = (ctx: AfterQueryHookContext) => void | Promise<void>
+export type AfterQueryHook = (ctx: AfterQueryHookContext) => void
 
 /** The context that Sirannon passes to each connection hook.
  * @public
@@ -46,20 +46,20 @@ export interface ConnectionHookContext {
   path: string
 }
 
-/** A hook that Sirannon calls synchronously before it opens a database; throw from it to stop the open. Sirannon fails the open when it returns a promise.
+/** A hook that Sirannon calls synchronously before it opens a database; throw from it to stop the open. Sirannon also fails the open when the hook returns a promise.
  * @public
  */
-export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type BeforeConnectHook = (ctx: ConnectionHookContext) => void
 
-/** A hook that Sirannon calls synchronously once a database is open. Sirannon ignores an error from it, and when it returns a promise, Sirannon skips the hooks registered after it.
+/** A hook that Sirannon calls synchronously once a database is open. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type DatabaseOpenHook = (ctx: ConnectionHookContext) => void
 
-/** A hook that Sirannon calls synchronously once a database is closed. Sirannon ignores an error from it, and when it returns a promise, Sirannon skips the hooks registered after it.
+/** A hook that Sirannon calls synchronously once a database is closed. Sirannon ignores an error that the hook throws and a promise that it returns, and calls the next hook either way.
  * @public
  */
-export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void | Promise<void>
+export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void
 
 /** A hook that the server calls before it creates a change subscription; throw from it to reject the subscription.
  * @public

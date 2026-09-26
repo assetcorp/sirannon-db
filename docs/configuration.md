@@ -1,17 +1,20 @@
 # Configuration reference
 
-Every option accepted by the registry, the databases it opens, the server, the client, the device sync controller, and the replication engine.
+This page lists every option that the registry, the databases that it opens, the server, the client, the device sync controller, and the replication engine accept.
 
 ## `SirannonOptions`
 
 | Option | Type | Required | Description |
 | --- | --- | --- | --- |
 | `driver` | `SQLiteDriver` | Yes | The SQLite driver adapter to use |
-| `hooks` | `HookConfig` | No | Before/after hooks for queries, connections, subscriptions |
+| `hooks` | `HookConfig` | No | Hooks that Sirannon calls around queries and connections, and before a subscription, a snapshot, or a device push |
 | `metrics` | `MetricsConfig` | No | Callbacks for query timing, connection events, CDC activity |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
 | `migrations` | `MigrationSource` | No | Migration set, or a function returning it, applied to every writable database before it registers |
 | `writerWorker` | `boolean \| WriterWorkerOptions` | No | Default writer-worker setting for every database this registry opens |
+| `cdcRetention` | `number` | No | Default change-log retention in ms for every database this registry opens |
+| `deviceCursorRetention` | `number` | No | Default device-cursor retention in ms for every database this registry opens |
+| `maxChangesHeldForDevice` | `number` | No | Default limit on the changes that one device's cursor holds back, for every database this registry opens |
 
 ## `LifecycleConfig`
 
@@ -21,7 +24,7 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `idleTimeout` | `number` | `0` | Milliseconds before an idle database closes; `0` disables the timer |
 | `maxOpen` | `number` | `0` | Maximum databases open at once, evicting least-recently-used; `0` means unlimited |
 
-`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` applied to every tenant it opens.
+`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` that it applies to every tenant that it opens.
 
 ## `DatabaseOptions`
 
@@ -33,24 +36,26 @@ Every option accepted by the registry, the databases it opens, the server, the c
 | `synchronous` | `'off' \| 'normal' \| 'full' \| 'extra'` | `'normal'` | Writer durability (`PRAGMA synchronous`); a bulk load restores this level when it finishes |
 | `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms |
-| `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so disk flushes never block the serving thread |
+| `deviceCursorRetention` | `number` | `2_592_000_000` | How long, in ms, a device's cursor may hold changes back; Sirannon deletes the cursor once the device's last acknowledgement, or the oldest change that the cursor holds back, is older than this |
+| `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back; a device further behind resyncs from a snapshot, and `0` sets no limit |
+| `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so that a disk flush never blocks the serving thread |
 
 `WriterWorkerOptions` accepts `maxPendingWrites` (in-flight writes before the server sheds load), `writeTimeoutMs` (per-operation deadline), and `maxRestarts` (respawns allowed after the worker crashes).
 
 ## `QueryOptions`
 
-Passed per call to `query`, `execute`, `executeBatch`, and a registered operation.
+You pass these options per call to `query`, `execute`, `executeBatch`, and a registered operation.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `readConcern` | `{ level: 'local' \| 'majority' \| 'linearizable' }` | - | How current the read must be; coordinator mode enforces it and static mode ignores it |
+| `readConcern` | `{ level: 'local' \| 'majority' \| 'linearizable' }` | - | How current the read must be; the replication engine enforces it in coordinator mode and ignores it in static mode |
 | `writeConcern` | `{ level, timeoutMs? }` | local commit in static mode, `'majority'` in coordinator mode | How many nodes must acknowledge the write; `timeoutMs` defaults to `5_000` |
 
 ## `BulkLoadOptions`
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `durability` | `'off' \| 'normal'` | `'off'` | Durability in force while the load runs; `'off'` suits a load starting from nothing, `'normal'` keeps WAL corruption safety |
+| `durability` | `'off' \| 'normal'` | `'off'` | Durability in force during the load; `'off'` suits a load starting from nothing, `'normal'` keeps WAL corruption safety |
 | `checkpoint` | `boolean` | `true` | Whether the load ends with a WAL checkpoint; set it false on every batch but the last of a multi-batch import |
 
 ## `LiveQueryOptions`
@@ -58,11 +63,11 @@ Passed per call to `query`, `execute`, `executeBatch`, and a registered operatio
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `rereadJitterMs` | `number` | `25` | Upper bound on the random delay before a second read starts |
-| `maxTransactionChanges` | `number` | `10_000` | Buffered changes in one transaction before the query reads a second time instead of applying them |
+| `maxTransactionChanges` | `number` | `10_000` | Buffered changes in one transaction before the query stops applying them and reads a second time |
 
-Both options reach a local `db.live` only. A remote subscription carries no options, so the server opens the query with these defaults.
+Both options apply only to a local `db.live`. A remote subscription has no options, so the server opens the query with these defaults.
 
-`UseLiveQueryOptions` in the React entry adds `enabled`, which holds a query closed while it is `false`.
+`UseLiveQueryOptions` in the React entry adds `enabled`, which keeps the query closed while it is `false`.
 
 ## `ServerOptions`
 
@@ -72,15 +77,17 @@ Both options reach a local `db.live` only. A remote subscription carries no opti
 | `port` | `number` | `9876` | Listen port |
 | `cors` | `boolean \| CorsOptions` | `false` | CORS configuration |
 | `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP body and WebSocket message size; a positive integer no larger than `4_294_967_295` |
-| `maxWebSocketBackpressureBytes` | `number` | larger of `16_777_216` and `maxBodyBytes` | Bytes buffered per connection before the server closes it so the client reconnects instead of losing a frame |
-| `cdcRetentionMs` | `number` | `3_600_000` | How long change events are retained, bounding change-log growth and how far back `sinceSeq` can resume |
-| `deviceCursorRetentionMs` | `number` | `2_592_000_000` | How long a device cursor is retained before eviction, 30 days by default; an evicted device resyncs from a snapshot |
-| `maxUnacknowledgedChanges` | `number` | `1_000` | How far a device may run past its acknowledged sequence before delivery pauses; a larger transaction still arrives whole |
+| `maxWebSocketBackpressureBytes` | `number` | larger of `16_777_216` and `maxBodyBytes` | Bytes buffered per connection before the server closes it, so that the client reconnects and resumes with no frame lost |
+| `cdcRetentionMs` | `number` | `3_600_000` | How long the server keeps change events, which bounds change-log growth and how far back `sinceSeq` can resume |
+| `deviceCursorRetentionMs` | `number` | `2_592_000_000` | How long, 30 days by default, a device's cursor may hold changes back before the server deletes it; that device then resyncs from a snapshot, and a database's own `deviceCursorRetention` overrides this |
+| `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back before the server drops it; `0` sets no limit, and a database's own option overrides this |
+| `maxUnacknowledgedChanges` | `number` | `1_000` | How far past its acknowledged sequence a device may get before delivery pauses; the server still delivers a larger transaction whole |
 | `authenticate` | `AuthenticateHook<Identity>` | - | Runs before every database route and WebSocket upgrade; returns the caller identity, throws `RequestDeniedError` to refuse |
-| `operations` | `OperationRegistry<Identity>` | - | Reads and writes this server serves by name, keyed by database ID |
+| `operations` | `OperationRegistry<Identity>` | - | Reads and writes that this server serves by name, keyed by database ID |
 | `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
 | `acceptBackupRestore` | `boolean` | `false` | Whether the server rebuilds a database from its backups over the network |
-| `resolveExecutionTarget` | `ServerExecutionTargetResolver` | - | Resolves the target each database runs against, which is how replication enforces authority |
+| `acceptDeviceSync` | `boolean` | `false` | Whether the server serves device sync; with it on, the server refuses to start unless you also set `authenticate` |
+| `resolveExecutionTarget` | `ServerExecutionTargetResolver` | - | Resolves the target that executes each database's statements, which is how replication enforces authority |
 | `getReplicationStatus` | `() => ReplicationStatusInfo \| null` | - | Feeds `GET /health/ready` with replication state |
 | `getClusterStatus` | `(databaseId: string) => ClusterStatusInfo \| null` | - | Feeds `GET /db/{id}/cluster` with routing metadata |
 | `authorizeClusterStatus` | `ClusterStatusAuthorizer` | - | Your check for whether a request may read cluster status, which names every node address |
@@ -91,14 +98,14 @@ Both options reach a local `db.live` only. A remote subscription carries no opti
 | --- | --- | --- | --- |
 | `transport` | `'websocket' \| 'http'` | `'websocket'` | Transport protocol |
 | `headers` | `Record<string, string>` | - | Custom headers for HTTP requests, and for the WebSocket upgrade under Node and Bun; a browser client that sets it without `webSocketProtocols` on the WebSocket transport fails with `INVALID_ARGUMENT` |
-| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered during the upgrade, which is how a browser carries a credential; the client offers `sirannon.v1` ahead of them and the server selects that identifier |
+| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered during the upgrade, which is how a browser sends a credential; the client offers `sirannon.v1` ahead of them and the server selects that identifier |
 | `autoReconnect` | `boolean` | `true` | Reconnect on WebSocket disconnect |
 | `reconnectInterval` | `number` | `1000` | Reconnect delay in ms |
-| `requestTimeout` | `number` | `30_000` | Per-request timeout in ms on the WebSocket transport; raise it for very large writes, or set `0` to wait indefinitely |
+| `requestTimeout` | `number` | `30_000` | Per-request timeout in ms on the WebSocket transport; raise it for large writes, or set `0` to wait indefinitely |
 
 ## `TopologyAwareClientOptions`
 
-Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, alongside every `ClientOptions` field. `SirannonClient` refuses each of these with `INVALID_ARGUMENT`.
+`TopologyAwareClient` from `@delali/sirannon-db/client/topology` accepts these options alongside every `ClientOptions` field. `SirannonClient` refuses each of these with `INVALID_ARGUMENT`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -122,12 +129,12 @@ Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, al
 | --- | --- | --- | --- |
 | `url` | `string` | required | Server base URL |
 | `databaseId` | `string` | required | Database to sync against |
-| `tables` | `readonly string[]` | required | Tables the device syncs |
+| `tables` | `readonly string[]` | required | Tables that the device syncs |
 | `headers` | `Record<string, string>` | - | Headers sent on push, snapshot, and migration requests, and on the pull upgrade under Node and Bun; a browser device that sets it without `webSocketProtocols` fails with `INVALID_ARGUMENT` |
-| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered on the pull upgrade, which is how a browser device carries a credential; the controller offers `sirannon.v1` ahead of them |
+| `webSocketProtocols` | `string \| string[]` | - | Subprotocols offered on the pull upgrade, which is how a browser device sends a credential; the controller offers `sirannon.v1` ahead of them |
 | `batchSize` | `number` | `100` | Changes per push request |
 | `pushIntervalMs` | `number` | `1_000` | Push loop interval, also the base for retry backoff |
-| `ackIntervalMs` | `number` | `2_000` | How often the device acknowledges applied changes |
+| `ackIntervalMs` | `number` | `2_000` | Interval at which the device acknowledges applied changes |
 | `maxPushRetryDelayMs` | `number` | `30_000` | Ceiling for push and pull retry backoff |
 | `requestTimeout` | `number` | `30_000` | HTTP request timeout in ms |
 | `autoResync` | `boolean` | `true` | Download a snapshot on start, on a server resync signal, and after a failed download |
@@ -140,11 +147,11 @@ Accepted by `TopologyAwareClient` from `@delali/sirannon-db/client/topology`, al
 | `onStatusChange` | `(status: SyncStatus) => void` | - | Called with the device's status on a state change, a push, an applied pull batch, a required resync, and an error recorded or cleared; `pendingPushCount` can lag the rest of the status |
 | `onResyncRequired` | `() => void` | - | Called before a snapshot replaces local data |
 | `onSnapshotProgress` | `(progress: SnapshotProgress) => void` | - | Table and row progress during a snapshot |
-| `onSnapshotComplete` | `(outcome: SnapshotOutcome) => void` | - | Called once a snapshot load ends, carrying whether the local database is usable again |
+| `onSnapshotComplete` | `(outcome: SnapshotOutcome) => void` | - | Called once a snapshot load ends, with whether the local database is usable again |
 
 ## `SnapshotDownloadOptions`
 
-Accepted by `downloadDatabaseSnapshot(db.deviceSync(), options)`, which copies a server database into a local one outside a `SyncController`.
+`downloadDatabaseSnapshot(db.deviceSync(), options)` accepts these options and copies a server database into a local one outside a `SyncController`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -168,7 +175,7 @@ Accepted by `downloadDatabaseSnapshot(db.deviceSync(), options)`, which copies a
 | `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
 | `batchSize` | `number` | `100` | Changes per replication batch |
 | `batchIntervalMs` | `number` | `100` | Sender loop interval in ms |
-| `maxClockDriftMs` | `number` | `60000` | Largest HLC gap between two nodes this node accepts before it rejects a batch |
+| `maxClockDriftMs` | `number` | `60000` | Largest HLC gap between two nodes that this node accepts before it rejects a batch |
 | `maxPendingBatches` | `number` | `10` | In-flight batches per peer before backpressure |
 | `maxBatchChanges` | `number` | `1000` | Maximum accepted changes in one inbound batch |
 | `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |
@@ -183,7 +190,7 @@ Accepted by `downloadDatabaseSnapshot(db.deviceSync(), options)`, which copies a
 | `snapshotConnectionFactory` | `() => Promise<SQLiteConnection>` | - | Factory for read-only connections used during sync serving |
 | `changeTracker` | `ChangeTracker` | - | CDC trigger manager, required for first sync |
 | `flowControl` | `{ maxLagSeconds?, onLagExceeded? }` | - | Replication lag monitoring callbacks |
-| `onBeforeForwardedQuery` | `(sql, params?) => void` | - | Validation hook called before the primary runs each forwarded statement |
+| `onBeforeForwardedQuery` | `(sql, params?) => void` | - | Validation hook called before the primary executes each forwarded statement |
 | `coordinator` | `CoordinatorModeConfig` | - | Enables coordinator-backed authority and failover |
 
 ## `CoordinatorModeConfig`
@@ -203,18 +210,18 @@ Accepted by `downloadDatabaseSnapshot(db.deviceSync(), options)`, which copies a
 
 ## `EtcdClusterCoordinatorOptions`
 
-Accepted by `createEtcdCoordinator` from `@delali/sirannon-db/replication/coordinator/etcd`.
+`createEtcdCoordinator` from `@delali/sirannon-db/replication/coordinator/etcd` accepts these options.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `hosts` | `string \| string[]` | required | etcd endpoints; each must use `https` unless you set `allowInsecure` |
-| `keyPrefix` | `string` | required | Key namespace this cluster writes under |
+| `keyPrefix` | `string` | required | Key namespace that this cluster writes under |
 | `credentials` | etcd credentials | - | Root certificate, private key, and certificate chain for mutual TLS |
 | `auth` | etcd auth | - | Username and password authentication |
 | `grpcOptions` | `Record<string, unknown>` | - | Options passed through to the etcd gRPC channel |
 | `dialTimeoutMs` | `number` | the etcd client's own default | Connection timeout in ms |
 | `defaultCallTimeoutMs` | `number` | - | Deadline applied to each coordinator call in ms |
-| `allowInsecure` | `boolean` | `false` | Allows plain-`http` endpoints, which belongs in tests |
+| `allowInsecure` | `boolean` | `false` | Allows plain-`http` endpoints; use it in tests only |
 | `onWatcherError` | `(error: Error) => void` | - | Called when a coordinator watcher fails |
 
 ## `TransportConfig`
@@ -232,7 +239,7 @@ Accepted by `createEtcdCoordinator` from `@delali/sirannon-db/replication/coordi
 
 ## `GrpcReplicationOptions`
 
-Accepted by `GrpcReplicationTransport` from `@delali/sirannon-db/transport/grpc`.
+`GrpcReplicationTransport` from `@delali/sirannon-db/transport/grpc` accepts these options.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -241,5 +248,5 @@ Accepted by `GrpcReplicationTransport` from `@delali/sirannon-db/transport/grpc`
 | `tlsCert` | `string` | - | Path to this node's certificate |
 | `tlsKey` | `string` | - | Path to this node's private key |
 | `tlsCaCert` | `string` | - | Path to the certificate authority that signs every peer |
-| `insecure` | `boolean` | `false` | Runs without TLS, which belongs in local development |
+| `insecure` | `boolean` | `false` | Runs without TLS; use it in local development only |
 | `forwardDeadlineMs` | `number` | `30_000` | Deadline in ms for a write forwarded to the primary |

@@ -20,15 +20,15 @@ export interface ResyncSchedulerHooks {
 }
 
 /**
- * Owns when a device replaces its database from a server snapshot and what it
- * tells the application about it.
+ * Schedules the snapshot download that replaces a device's database, and calls
+ * the application's callbacks around it.
  *
- * A failed load leaves the local database refusing reads and writes, so the two
- * callbacks bracket the window in which the application cannot use it:
- * `onResyncRequired` opens it and `onSnapshotComplete` closes it only once a
- * load has succeeded. A failure reports whether another try is already
- * scheduled, because an application the scheduler has given up on has to
- * request the copy itself.
+ * After a failed load, the local database rejects reads and writes, so the two
+ * callbacks mark the period in which the application cannot use it. The
+ * scheduler calls `onResyncRequired` when that period starts, and calls
+ * `onSnapshotComplete` with a successful outcome once a load succeeds. A failed
+ * outcome reports whether the scheduler has another try scheduled, because when
+ * it has none, the application has to request the snapshot itself.
  */
 export class ResyncScheduler {
   required = false

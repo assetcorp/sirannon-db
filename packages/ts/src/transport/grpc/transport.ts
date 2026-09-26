@@ -47,7 +47,8 @@ import { shutdownGrpcServer } from './server-shutdown.js'
 import { writeWithBackpressure } from './stream-util.js'
 
 /**
- * Replicates between nodes over gRPC with mutual TLS, which is the transport production clusters use.
+ * Sends replication messages between nodes over gRPC. Unless you set `insecure`, it requires `tlsCert` and `tlsKey`,
+ * and when you also set `tlsCaCert`, each side of a connection verifies the other's certificate against it.
  *
  * @public
  */
@@ -105,13 +106,17 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     this.options = options
   }
 
-  /** Returns the port the gRPC server bound to, which is the resolved port when you asked for 0. */
+  /**
+   * Returns the port that the gRPC server listens on, including the port that the operating system picks when `port`
+   * is 0, and 0 while no server is listening.
+   */
   getPort(): number {
     return this.boundPort
   }
 
   /**
-   * Loads the gRPC packages, connects to the configured peers, and announces this node.
+   * Loads the gRPC packages, starts the gRPC server when this node is the primary or has a group ID, and dials every
+   * configured endpoint.
    *
    * @throws A `SirannonError` with code `TRANSPORT_DEPENDENCY_MISSING` when this process cannot load `@grpc/grpc-js`, `@bufbuild/protobuf`, or `grpc-health-check`.
    */
@@ -143,7 +148,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     }
   }
 
-  /** Closes every peer connection. */
+  /** Closes every peer connection and shuts down the gRPC server. */
   async disconnect(): Promise<void> {
     if (!this.connected) return
     this.connected = false
@@ -250,7 +255,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
-  /** Tells a joining node that first sync has finished, and sends the manifests to verify it. */
+  /** Tells a joining node that first sync is complete, and sends the manifests that the node checks its copy against. */
   async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -261,7 +266,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     await writeWithBackpressure(stream, msg)
   }
 
-  /** Confirms to the source that a joining node stored one first-sync page. */
+  /** Tells the source whether this joining node stored one first-sync page. */
   async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     this.ensureConnected()
     const stream = this.getSyncWriteStream(peerId)
@@ -282,7 +287,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     this.ackHandler = handler
   }
 
-  /** Registers the handler that runs a write a replica forwarded. */
+  /** Registers the handler that executes a write that a replica forwards. */
   onForwardReceived(handler: ForwardHandler): void {
     this.forwardHandler = handler
   }
@@ -307,17 +312,17 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     this.syncAckHandler = handler
   }
 
-  /** Registers the handler that runs when a peer connects. */
+  /** Registers the handler that the transport calls when a peer connects. */
   onPeerConnected(handler: PeerConnectedHandler): void {
     this.peerConnectedHandler = handler
   }
 
-  /** Registers the handler that runs when a peer disconnects. */
+  /** Registers the handler that the transport calls when a peer disconnects. */
   onPeerDisconnected(handler: PeerDisconnectedHandler): void {
     this.peerDisconnectedHandler = handler
   }
 
-  /** Returns every connected peer, keyed by identifier. */
+  /** Returns every connected peer, keyed by node ID. */
   peers(): ReadonlyMap<string, NodeInfo> {
     return this.connectedPeers
   }

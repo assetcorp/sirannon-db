@@ -1,66 +1,65 @@
 import type { Database } from './database.js'
 
-/** What one database taken out of service produced.
+/** The outcome of taking one database offline.
  * @internal
  */
 export type OfflineOutcome<T> =
   | {
-      /** True where the action returned. */
+      /** True when the action returned. */
       ok: true
-      /** What the action produced. */
+      /** The value that the action returned. */
       value: T
-      /** What the reopen threw, where it threw. The action's own result still stands. */
+      /** The error that the reopen threw, when it threw; the action's result is still valid. */
       reopenFailure?: unknown
     }
   | {
-      /** False where the action threw. */
+      /** False when the action threw. */
       ok: false
-      /** What the action threw. */
+      /** The error that the action threw. */
       failure: unknown
-      /** What the reopen threw, where it threw. */
+      /** The error that the reopen threw, when it threw. */
       reopenFailure?: unknown
     }
 
-/** One database taken out of service while Sirannon replaces its file.
+/** One database that Sirannon takes offline while it replaces the database file.
  * @internal
  */
 export interface DatabaseOffline<T> {
   /** The open database to close. */
   database: Database
-  /** File it was opened from, which the action works against. */
+  /** The file that the database was opened from, which the action works on. */
   path: string
-  /** Called with the database closed and no connection open on its file. */
+  /** The function that Sirannon calls once the database is closed and no connection is open on its file. */
   action: (path: string) => Promise<T>
-  /** Opens it again under the same identifier, with the settings it had before. */
+  /** The function that opens the database again under the same identifier, with its earlier settings. */
   reopen: () => Promise<unknown>
 }
 
 /**
- * Closes one database, calls an action against the file behind it, and then
- * opens that database again.
+ * Closes one database, calls an action on its file, and then opens that
+ * database again.
  *
- * A restore rebuilds a database at the path it already occupies, and no
- * connection may be open on that file while Sirannon replaces its bytes, which
- * is why the close comes first. The action then has the path to itself. The
- * database opens again whether that action succeeded or failed, so an action
- * that failed still leaves the caller with a database it can query, and the
- * caller receives the error the action threw.
+ * A restore rebuilds a database at its current path, and no connection may be
+ * open on that file while Sirannon replaces its bytes, so this function closes
+ * the database first. Sirannon reopens the database whether the action
+ * succeeded or failed, so that after a failed action the caller still has a
+ * database to query, along with the error that the action threw.
  *
- * A close that fails is a different case. The old connections may still be open
- * on the file, and a second runtime over the same file would put two writers on
- * one database, so that failure passes straight to the caller and the registry
- * has nothing open under the identifier.
+ * When the close itself fails, this function throws that error and opens
+ * nothing, because the old connections may still be open on the file, and a
+ * second runtime over the same file would put two writers on one database. The
+ * registry then has no database open under the identifier.
  *
- * The `ok` field separates an action that returned from one that threw, since
- * an action producing `undefined`, `null`, `0`, or `false` has still succeeded.
+ * The `ok` field is true only for an action that returned, because an action
+ * that returns `undefined`, `null`, `0`, or `false` has still succeeded.
  *
- * The action's result and the reopen's failure are both reported. A restore
- * that replaced the data and then failed to open the database again has done
- * both of those things, and a caller shown only the second would believe its
- * data untouched.
+ * The outcome includes both the action's result and any reopen failure, because
+ * a restore that replaced the data and then failed to reopen the database has
+ * done both, and a caller that saw only the reopen failure would believe that
+ * its data was untouched.
  *
- * @param offline - The database, its path, the action, and how to open it again.
- * @returns Whether the action returned, what it produced or threw, and what the reopen threw.
+ * @param offline - The database, its path, the action, and the function that reopens the database.
+ * @returns Whether the action returned, the value that it returned or the error that it threw, and any error that the reopen threw.
  *
  * @internal
  */

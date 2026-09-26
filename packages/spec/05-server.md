@@ -21,6 +21,7 @@ ServerOptions {
   operations?:                    OperationRegistry
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
+  acceptDeviceSync?:              boolean  (default: false)           -- see 08-device-sync.md
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
   getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
@@ -130,7 +131,9 @@ POST /db/{id}/query/{name}   { args?, readConcern? }   -> { rows: List<Map> }
 POST /db/{id}/execute/{name} { args?, writeConcern? }  -> { results: List<Execute> }
 ```
 
-`acceptSql` governs the five statement routes and the five statement WebSocket messages, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`, and it serves its other routes as their own options allow: registered operations, subscriptions, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, and `onBeforeSnapshot` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
+`acceptSql` governs the five statement routes and the five statement WebSocket messages, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`, and it serves its other routes as their own options allow: registered operations, subscriptions, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
+
+`acceptDeviceSync` governs device sync and defaults to false. With it false, a server must fail `POST /db/{id}/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, a `subscribe` message carrying `deviceId`, and an `ack` message with `403 DEVICE_SYNC_NOT_ACCEPTED`. It must also omit every `sync.` capability from `GET /capabilities`, so that a device can distinguish such a server from one that predates device sync. A server configured with `acceptDeviceSync` true and no `authenticate` hook refuses to start, with `INVALID_DEVICE_SYNC`.
 
 `{name}` is URL-encoded, and the server must decode it before matching. `args` follows the value encoding, and an operation declaring no argument accepts an empty body. A name registered as neither a read nor a write must fail with `UNKNOWN_QUERY` on both routes, and the write route must not resolve a read name. `execute/{name}` returns one result per statement.
 
@@ -224,9 +227,9 @@ BackupRestoreStatus {
 
 | Status | Codes |
 |--------|-------|
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
 | 413 | `PAYLOAD_TOO_LARGE` |

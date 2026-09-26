@@ -62,12 +62,14 @@ export class WSHandler<Identity = unknown> {
   private readonly maxUnacknowledgedChanges: number
   private readonly socketResumeBytes: number
   private readonly acceptSql: boolean
+  private readonly acceptDeviceSync: boolean
   private readonly operations: OperationSource
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>) {
     this.sirannon = sirannon
     this.acceptSql = options?.acceptSql === true
+    this.acceptDeviceSync = options?.acceptDeviceSync === true
     this.operations = createOperationSource<Identity>(options?.operations)
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
@@ -122,9 +124,9 @@ export class WSHandler<Identity = unknown> {
   }
 
   /**
-   * Tears down a connection whose outbound buffer overflowed. Closing lets the
-   * client reject in-flight requests and reconnect; guarding on `overloaded`
-   * keeps a burst of dropped frames from repeatedly re-closing the socket.
+   * Closes a connection after the server drops a frame on it at the backpressure limit,
+   * so the client can reject its pending requests and reconnect. The `overloaded` flag
+   * makes the handler close the socket once, however many frames the server drops in a burst.
    */
   handleOverload(conn: WSConnection): void {
     const state = this.connections.get(conn)
@@ -284,6 +286,7 @@ export class WSHandler<Identity = unknown> {
   private subscribeDeps(): WSSubscribeDeps {
     return {
       cdc: this.cdc,
+      acceptDeviceSync: this.acceptDeviceSync,
       maxUnacknowledgedChanges: this.maxUnacknowledgedChanges,
       socketResumeBytes: this.socketResumeBytes,
       hasSubscribeHook: () => this.sirannon.hookRegistry.has('beforeSubscribe'),
@@ -382,7 +385,7 @@ export class WSHandler<Identity = unknown> {
 }
 
 /**
- * Builds the WebSocket handler a server routes its upgrades and messages through.
+ * Builds the handler that processes a server's WebSocket connections and messages.
  *
  * @internal
  */

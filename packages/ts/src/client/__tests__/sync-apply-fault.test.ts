@@ -106,7 +106,12 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  server = createServer(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
+    port: 0,
+  })
   await server.listen()
 
   controller = new SyncController(deviceDb, {

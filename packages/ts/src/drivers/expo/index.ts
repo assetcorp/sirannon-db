@@ -4,13 +4,12 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { ExtensionError } from '../../core/errors.js'
 
 /**
- * Builds a driver that runs SQLite on a device through `expo-sqlite`.
+ * Returns a driver that opens SQLite databases on a device through `expo-sqlite`.
  *
- * Expo opens one connection per database, so this driver reports no support
- * for multiple connections and Sirannon serves every read and write over that
- * single connection.
+ * The driver sets `multipleConnections` to `false`, so Sirannon opens no reader
+ * pool and sends every read and write for a database through one connection.
  *
- * @returns The driver, ready to pass to a `Sirannon` registry in a React Native app.
+ * @returns The driver, which you can pass to a `Sirannon` registry in a React Native app.
  *
  * @public
  */

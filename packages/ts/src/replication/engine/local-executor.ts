@@ -12,23 +12,22 @@ import { ReplicationTransaction, type ReplicationTransactionHooks } from './repl
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
 /**
- * Runs a statement on the local node and records the resulting changes in the replication log.
+ * Executes a write on this node and stamps the changes that it makes into the replication log inside the same SQLite
+ * transaction.
  *
  * @internal
  */
 export class LocalExecutor {
   /**
-   * Serialises every `executeTransactionLocally` call against itself.
+   * Makes each `executeTransactionLocally` call wait until the previous one finishes.
    *
-   * Reason: SQLite only allows one active transaction per connection; the
-   * writer pool exposes a single writer connection (see `ConnectionPool`).
-   * Two parallel `engine.transaction(fn)` callers therefore both reach
-   * `await conn.exec('BEGIN')` on the same connection, and the second
-   * `BEGIN` errors with "cannot start a transaction within a transaction".
-   * Chaining onto this promise turns the second caller into a strict
-   * follow-on without changing the public API. A rejection is swallowed at
-   * the chain level so a failed transaction never poisons the queue; the
-   * original error still surfaces to the caller that initiated it.
+   * The engine writes through the single connection `engine.writerConn`,
+   * which SQLite limits to one open transaction. Without this queue, two
+   * concurrent `engine.transaction(fn)` calls would both send `BEGIN` on that
+   * connection, so SQLite would reject the second with 'cannot start a
+   * transaction within a transaction'. The queue catches each rejection so
+   * that a later transaction still starts after an earlier one fails, while
+   * the caller that started the failed transaction still receives its error.
    */
   private transactionQueue: Promise<unknown> = Promise.resolve()
 

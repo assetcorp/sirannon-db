@@ -1,116 +1,117 @@
-/** Query parameter types: named (object) or positional (array).
+/** The values to bind to a statement, as an object for named parameters or an array for positional ones.
  * @public
  */
 export type Params = Record<string, unknown> | unknown[]
 
-/** How many nodes must acknowledge a write before it returns.
+/** Which nodes must acknowledge a write before the call returns.
  * @public
  */
 export type WriteConcernLevel = 'local' | 'majority' | 'all'
 
-/** How many nodes must acknowledge a write, and how long the caller waits for them.
+/** Which nodes must acknowledge a write, and how long the caller waits for their acknowledgements.
  * @public
  */
 export interface WriteConcern {
-  /** Number of acknowledgements the write waits for. */
+  /** Which nodes must acknowledge the write before the call returns. */
   level: WriteConcernLevel
-  /** Milliseconds to wait for those acknowledgements before the write fails. */
+  /** The number of milliseconds to wait for those acknowledgements before the call fails. */
   timeoutMs?: number
 }
 
-/** How current a read has to be before the node will serve it.
+/** How current the data must be before a node serves a read.
  * @public
  */
 export type ReadConcernLevel = 'local' | 'majority' | 'linearizable'
 
-/** How current a read has to be before the node will serve it.
+/** How current the data must be before a node serves a read.
  * @public
  */
 export interface ReadConcern {
-  /** Currency the node must prove before it answers. */
+  /** The level that the node must confirm before it responds. */
   level: ReadConcernLevel
 }
 
-/** Per-statement settings you pass alongside the SQL and its parameters.
+/** Per-statement settings that you pass with the SQL and its parameters.
  * @public
  */
 export interface QueryOptions {
-  /** Acknowledgements a write waits for. Coordinator mode applies 'majority' when you omit it. */
+  /** The acknowledgements that a write waits for; in coordinator mode, the replication engine applies 'majority' when you omit it. */
   writeConcern?: WriteConcern
-  /** Currency a read requires. Coordinator mode enforces it and static mode ignores it. */
+  /** How current the data must be for a read; in coordinator mode, the replication engine enforces it and applies 'majority' when you omit it, while in static mode the engine ignores the setting. */
   readConcern?: ReadConcern
 }
 
-/** Result returned by mutation statements (INSERT, UPDATE, DELETE).
+/** The result of a write statement such as INSERT, UPDATE, or DELETE.
  * @public
  */
 export interface ExecuteResult {
-  /** Number of rows the statement inserted, updated, or deleted. */
+  /** The number of rows that the statement inserted, updated, or deleted. */
   changes: number
-  /** Row id SQLite assigned to the last inserted row. */
+  /** The row id that SQLite assigned to the last inserted row. */
   lastInsertRowId: number | bigint
 }
 
-/** CDC operation type.
+/** The kind of change that a change event records.
  * @public
  */
 export type ChangeOperation = 'insert' | 'update' | 'delete'
 
-/** Event emitted when a watched table row changes.
+/** The event that Sirannon delivers when a row in a watched table changes.
  * @public
  */
 export interface ChangeEvent<T = Record<string, unknown>> {
-  /** Whether the row was inserted, updated, or deleted. */
+  /** Whether the change inserted, updated, or deleted the row. */
   type: ChangeOperation
-  /** Table the row belongs to. */
+  /** The table that contains the row. */
   table: string
-  /** The row as it stands after the change. A delete carries an empty object here and the previous row in {@link ChangeEvent.oldRow}. */
+  /** The row after the change; for a delete, this is an empty object and {@link ChangeEvent.oldRow} contains the previous row. */
   row: T
-  /** The row as it stood before an update or a delete. */
+  /** The row before an update or a delete. */
   oldRow?: T
-  /** Position of this change in the database's change log. Subscribers resume from it. */
+  /** The position of this change in the database's change log, which a subscriber resumes from. */
   seq: bigint
-  /** Milliseconds since the Unix epoch, taken when the change was recorded. */
+  /** The time when Sirannon recorded the change, in milliseconds since the Unix epoch. */
   timestamp: number
-  /** Hybrid logical clock stamp the writing node gave this change. */
+  /** The hybrid logical clock stamp that the writing node gave this change. */
   hlc?: string
-  /** Identifier of the node that authored the change. */
+  /** The identifier of the node that wrote the change. */
   origin?: string
-  /** Primary key of the changed row, encoded as a string. */
+  /** The primary key of the changed row, encoded as a string. */
   rowId?: string
-  /** Identifier of the transaction that produced this change. */
+  /** The identifier of the transaction that made this change. */
   txId?: string
-  /** Set on the last change of a transaction, so a consumer applies the whole transaction at once. */
+  /** True on the last change of a transaction, so that a consumer can apply the whole transaction at once. */
   txEnd?: boolean
 }
 
-/** Builder for creating CDC subscriptions with optional filters.
+/** Builds a change subscription with an optional filter.
  * @public
  */
 export interface SubscriptionBuilder {
   /**
    * Narrows the subscription to rows whose columns equal the given values.
    *
-   * The filter reports membership of the matching set, so an update that moves a row
-   * into the set arrives as an insert carrying no `oldRow`, and one that moves a row
-   * out arrives as a delete carrying the old row and an empty `row`. An update that
-   * leaves the row in the set arrives unchanged, and one that never touches the set
-   * is not delivered. A synthesised event is indistinguishable from a real insert or
-   * delete, so read `type` as the row's arrival or departure from the filter.
+   * Sirannon delivers an update that moves a row into the matching set as an
+   * insert with no `oldRow`, and an update that moves a row out of the set as a
+   * delete with the old row and an empty `row`. It delivers an update that keeps
+   * the row in the set unchanged, and no event for an update whose row is
+   * outside the set both before and after. A synthesised event looks the same as
+   * a real insert or delete, so read `type` as the row entering or leaving the
+   * filter.
    */
   filter(conditions: Record<string, unknown>): SubscriptionBuilder
   /**
-   * Starts the subscription and calls back on each change.
+   * Starts the subscription and calls the callback for each matching change.
    *
-   * The subscription never waits for what your callback returns, so two calls to an
-   * asynchronous callback can overlap. Chain the work onto one promise where each change
-   * has to finish before the next one starts. A throw, and a rejection of what the callback
-   * returns, both arrive at `options.onError`, and every other subscriber on this table
-   * still receives the change.
+   * Sirannon never awaits the promise that your callback returns, so two calls to
+   * an asynchronous callback can overlap; chain the work onto one promise when
+   * each change has to finish before the next one starts. Sirannon passes a throw
+   * or a rejection from the callback to `options.onError`, and still delivers the
+   * change to every other subscriber on this table.
    *
-   * @typeParam T - Shape of the rows this table holds, which types `row` and `oldRow`.
-   * @param callback - Receives each change this subscription matches.
-   * @param options - Carries `onError`, which receives a failure of the callback or of the change-log poll.
+   * @typeParam T - The shape of the table's rows, which types `row` and `oldRow`.
+   * @param callback - The function that Sirannon calls with each change that this subscription matches.
+   * @param options - The subscription options, including `onError`, which Sirannon calls with a failure of the callback or of the change-log poll.
    * @returns A handle whose `unsubscribe` ends the subscription.
    */
   subscribe<T = Record<string, unknown>>(
@@ -119,21 +120,22 @@ export interface SubscriptionBuilder {
   ): Subscription
 }
 
-/** Reporters a change subscription attaches when it starts.
+/** The failure reporter for a change subscription.
  * @public
  */
 export interface SubscriptionOptions {
   /**
-   * Receives the failure of a change callback, and the failure that stops the change-log
-   * poll after repeated errors. Sirannon drops whatever this reporter itself throws.
+   * Sirannon calls this with the failure of a change callback, and with the
+   * failure that stops the change-log poll after ten consecutive errors.
+   * Sirannon discards anything that this reporter throws.
    */
   onError?: (error: Error) => void
 }
 
-/** Handle for an active subscription.
+/** The handle of an active subscription.
  * @public
  */
 export interface Subscription {
-  /** Ends the subscription, so the callback receives no further events. */
+  /** Ends the subscription, after which Sirannon delivers no further events to the callback. */
   unsubscribe(): void
 }

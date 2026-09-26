@@ -5,20 +5,18 @@ import { ReplicationError } from '../errors.js'
 import { DDL_PREFIX_RE } from './constants.js'
 
 /**
- * Per-statement hook surface exposed to a replication-aware transaction.
+ * Holds the DDL callback and the DDL record that {@link ReplicationTransaction} shares with `LocalExecutor` for one
+ * transaction.
  *
- * `onDdl` is invoked synchronously after a DDL statement has been applied
- * inside the transaction so that the engine can record a synthetic `__ddl__`
- * CDC row on the same transactional connection (the row must be visible
- * for `stampChanges`/`updateColumnVersions` and must roll back atomically
- * if the user callback later throws).
+ * After each DDL statement succeeds, `execute` sets `sawDdl` and awaits
+ * `onDdl`, which writes a synthetic `__ddl__` CDC row on the transaction's own
+ * connection. `onDdl` writes that row inside the open transaction, so that
+ * `stampChanges` and `updateColumnVersions` include it and SQLite rolls it back
+ * if the caller's callback throws.
  *
- * `droppedTables` accumulates the table names of every `DROP TABLE`
- * statement executed inside the transaction. The list is read by the
- * executor after the outer transaction commits to prune watched-tracker
- * entries that point at tables SQLite has just removed; if the
- * transaction rolls back the list is discarded by the executor without
- * touching the tracker.
+ * `droppedTables` lists every table that a `DROP TABLE` statement in the
+ * transaction removes. The executor prunes those tables from the change
+ * tracker only after the transaction commits.
  */
 export interface ReplicationTransactionHooks {
   sawDdl: boolean
@@ -27,19 +25,17 @@ export interface ReplicationTransactionHooks {
 }
 
 /**
- * `Transaction` subclass that intercepts writes performed inside
- * `ReplicationEngine.transaction(fn)`.
+ * Gives the callback of `ReplicationEngine.transaction(fn)` a {@link Transaction} that records DDL for replication.
  *
- * Behaviour relative to the core `Transaction`:
- * - `query` and `executeBatch` are inherited unchanged.
- * - `execute` adds DDL guardrails: statements with embedded semicolons are
- *   rejected, and any DDL statement that completes successfully triggers a
- *   replication-side bookkeeping hook so the engine can emit the synthetic
- *   `__ddl__` CDC row inside the same transaction.
+ * `query` behaves as it does on the base class. `execute` throws a
+ * `ReplicationError` for a DDL statement that contains a semicolon, and after a
+ * DDL statement succeeds it awaits the `onDdl` hook, so that the executor
+ * writes the synthetic `__ddl__` CDC row inside the same transaction.
+ * `executeBatch` throws a `ReplicationError` for any DDL statement.
  *
- * Inheriting `Transaction` means the public surface (including the private
- * `_lastInsertRowId` field that TypeScript checks structurally) stays
- * compatible with user callbacks typed as `(tx: Transaction) => Promise<T>`.
+ * Because the class extends `Transaction`, it keeps the private
+ * `_lastInsertRowId` field that TypeScript compares structurally, so a
+ * callback typed as `(tx: Transaction) => Promise<T>` accepts it.
  */
 export class ReplicationTransaction extends Transaction {
   constructor(

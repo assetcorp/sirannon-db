@@ -183,10 +183,10 @@ export class BatchApplier {
   }
 
   /**
-   * Applies one pulled transaction whose changes are read from disk in
-   * batches so that a transaction of any size is applied with bounded memory.
-   * The whole group runs in one local transaction: the batches, the echo
-   * stamping, and `withinTx` commit together or not at all.
+   * Applies one staged transaction, reading its changes from `source` one batch
+   * at a time so that memory use stays bounded for a transaction of any size.
+   * The method writes every batch, the echo stamps, and the `withinTx` work
+   * inside one local transaction, so a failure at any step rolls all of it back.
    */
   async applyStagedGroup(options: ApplyStagedGroupOptions): Promise<StagedGroupResult> {
     const { source, resolver, withinTx } = options

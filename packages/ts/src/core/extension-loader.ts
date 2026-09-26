@@ -23,22 +23,22 @@ function isAbsolutePath(candidate: string): boolean {
 }
 
 /**
- * Loads a compiled SQLite extension into every connection given, so both reads
- * and writes can call the extension's functions. Each runtime loads through its
- * own call rather than the SQL `load_extension` function, which both Node
- * drivers refuse as unauthorised.
+ * Loads a compiled SQLite extension into every connection that the caller
+ * passes, so that reads and writes can both call the extension's functions.
+ * Each driver loads the extension through its runtime's own call, because both
+ * Node drivers reject the SQL `load_extension` function as unauthorised.
  *
- * A runtime that cannot load an extension refuses through its own connection,
- * so the error names that runtime.
+ * A driver whose runtime has no loading call throws its own error from the
+ * connection, and that error names the runtime.
  *
- * SQLite has no call that unloads an extension, so where one connection in the
+ * SQLite has no call that unloads an extension, so when one connection in the
  * set fails, the connections loaded before it keep the extension and this
- * function reports the failure.
+ * function throws the failure.
  *
- * @param driver - Driver that reports extension support and resolves the path.
+ * @param driver - The driver, which declares extension support and resolves the path.
  * @param connections - Every connection that must be able to call the extension's functions.
- * @param extensionPath - Path to the compiled extension.
- * @returns The absolute path the driver resolved, which a connection opened later loads.
+ * @param extensionPath - The path to the compiled extension.
+ * @returns The absolute path that the driver resolved, which Sirannon loads into each connection that it opens later.
  */
 export async function loadExtension(
   driver: SQLiteDriver,

@@ -47,7 +47,7 @@ export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
  *
- * Build one with {@link createEtcdCoordinator}. The coordinator loads the `etcd3` package the first time that you call one of its methods. When this process cannot load that package, the call fails with a `SirannonError` carrying code `COORDINATOR_DEPENDENCY_MISSING`.
+ * Build one with {@link createEtcdCoordinator}. The coordinator loads the `etcd3` package the first time that one of its methods connects to etcd. When this process cannot load that package, the call fails with a `SirannonError` whose code is `COORDINATOR_DEPENDENCY_MISSING`.
  *
  * @public
  */
@@ -66,7 +66,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.leases = new EtcdLeaseRegistry(this.onWatcherError)
   }
 
-  /** Bids for the controller lease, and reports who holds it. */
+  /** Tries to acquire the controller lease, and returns whether it succeeded along with the current lease. */
   async tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.holderId, 'holderId')
@@ -76,14 +76,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return acquireEtcdControllerLease(namespace, this.leases, input)
   }
 
-  /** Calls back with the node holding the controller lease, and returns a function that stops the watch. */
+  /** Calls `watcher` with the current controller lease when the watch starts and after each change, and returns a function that stops the watch. */
   async watchControllerLease(clusterId: string, watcher: ControllerLeaseWatcher): Promise<CoordinatorWatchDisposer> {
     assertNonEmpty(clusterId, 'clusterId')
     const { namespace } = await this.connect()
     return watchEtcdControllerLease(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
   }
 
-  /** Extends a lease, and reports false once it has already lapsed. */
+  /** Extends a lease, and returns false for a lease that is expired or unknown to this coordinator. */
   async renewLease(leaseId: string, ttlMs: number): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     assertPositiveTtl(ttlMs)
@@ -136,7 +136,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return true
   }
 
-  /** Gives up a lease at once instead of waiting for it to lapse. */
+  /** Deletes a lease's key if the key still refers to that lease, then revokes the lease, and returns whether the delete succeeded. */
   async releaseLease(leaseId: string): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     const entry = this.leases.get(leaseId)
@@ -237,7 +237,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return parseNodeSession(rawSession)
   }
 
-  /** Reads one node's session, and returns null once its lease has lapsed. */
+  /** Returns one node's session, or null once its lease expires. */
   async getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
@@ -246,14 +246,14 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return value ? parseNodeSession(value) : null
   }
 
-  /** Calls back with every node holding a live session, and returns a function that stops the watch. */
+  /** Calls `watcher` with the IDs of every node that holds a live session, and returns a function that stops the watch. */
   async watchNodeSessions(clusterId: string, watcher: NodeSessionWatcher): Promise<CoordinatorWatchDisposer> {
     assertNonEmpty(clusterId, 'clusterId')
     const { namespace } = await this.connect()
     return watchEtcdNodeSessions(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
   }
 
-  /** Ends one node's membership at once. */
+  /** Ends one node's session at once by releasing its leases. */
   async deregisterNodeSession(clusterId: string, nodeId: string): Promise<void> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(nodeId, 'nodeId')
@@ -262,19 +262,19 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     }
   }
 
-  /** Writes the group's state, which seeds a new group or replaces an existing one. */
+  /** Writes the group's state, which creates a new group or replaces an existing one. */
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
     const { groups } = await this.connect()
     return groups.setReplicationGroupState(input)
   }
 
-  /** Reads the group's state, and returns null when the group is absent. */
+  /** Returns the group's state, or null when etcd has no state for the group. */
   async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
     const { groups } = await this.connect()
     return groups.getReplicationGroupState(clusterId, groupId)
   }
 
-  /** Calls back on each change to the group's state, and returns a function that stops the watch. */
+  /** Calls `watcher` with the new state after each change to the group, and returns a function that stops the watch. */
   async watchReplicationGroup(
     clusterId: string,
     groupId: string,
@@ -284,7 +284,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return groups.watchReplicationGroup(clusterId, groupId, watcher)
   }
 
-  /** Promotes a node only while the group is still at the term the caller read. */
+  /** Makes a node primary and advances the term, but only while the group is still at the term that the caller expects. */
   async compareAndAdvancePrimaryTerm(
     input: CompareAndAdvancePrimaryTermInput,
   ): Promise<CompareAndAdvancePrimaryTermResult> {
@@ -292,7 +292,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return groups.compareAndAdvancePrimaryTerm(input)
   }
 
-  /** Replaces the group's in-sync set, and optionally moves its durability point. */
+  /** Replaces the group's in-sync set with a subset of it, and can advance the durability point. */
   async updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null> {
     const { groups } = await this.connect()
     return groups.updateInSyncSet(input)
@@ -304,19 +304,19 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return groups.admitNodeToInSyncSet(input)
   }
 
-  /** Marks one node as being taken out of service, rebuilt, or quarantined. */
+  /** Sets or clears one node's draining, repairing, and faulted flags. */
   async updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
     const { groups } = await this.connect()
     return groups.updateNodeMaintenance(input)
   }
 
-  /** Promotes whichever in-sync replica is safe to write. */
+  /** Promotes an eligible in-sync replica, and throws a `NoSafePrimaryError` when no replica qualifies. */
   async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
     const { groups } = await this.connect()
     return groups.promoteEligibleReplica(input)
   }
 
-  /** Closes the etcd client and stops every watch. */
+  /** Stops every watch, revokes every lease that this coordinator granted, and closes the etcd client. */
   async close(): Promise<void> {
     const watcherCancels: Promise<void>[] = []
     for (const watcher of this.watchers) {
@@ -353,9 +353,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 }
 
 /**
- * Builds a coordinator backed by etcd.
+ * Returns a new coordinator that stores its state in etcd.
  *
- * @param options - etcd endpoints, key prefix, credentials, and timeouts.
+ * @param options - The etcd endpoints, key prefix, credentials, and timeouts.
  * @returns The coordinator, ready to pass to a replication engine.
  *
  * @public

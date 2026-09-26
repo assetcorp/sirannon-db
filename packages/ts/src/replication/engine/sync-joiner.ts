@@ -11,7 +11,8 @@ import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js
 import { delayAckIfConfigured } from './test-hooks.js'
 
 /**
- * Drives a joining node through first sync and the catch-up that follows it.
+ * Copies a source node's tables onto a joining node through a first sync, then marks the node ready once its catch-up
+ * lag falls within the configured limit or the catch-up deadline passes.
  *
  * @internal
  */

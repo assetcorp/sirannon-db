@@ -27,15 +27,14 @@ import { type BackupVerifyResult, verifyBackupRecord } from './verify.js'
 import { logPathFor } from './wal-log.js'
 
 /**
- * Captures a database's write-ahead log and then checkpoints it, in that order,
- * on the interval the operator sets.
+ * Captures the write-ahead log of a database and then checkpoints it, on the
+ * interval that the operator sets.
  *
- * The order is the whole point. A checkpoint lets SQLite overwrite frames
- * nothing has captured yet, and it reports success either way. That is why a
- * capture that fails also stops the checkpoint behind it.
+ * The capture must come first, because a checkpoint lets SQLite overwrite
+ * frames that Sirannon has yet to capture, and SQLite reports success either
+ * way. A failed capture therefore also skips the checkpoint after it.
  *
- * A database opens its cycle through the `backups` option. Nobody builds one
- * of these by hand.
+ * Sirannon creates the cycle for a database from its `backups` option.
  *
  * @public
  */
@@ -80,10 +79,10 @@ export class BackupCycle {
   }
 
   /**
-   * Picks a chain up where the previous run left it, or starts a new one with a
-   * full copy, and then repeats on the interval. A chain picked up takes an
-   * ordinary turn, so the frames written while this node was down reach the
-   * destination rather than waiting for the first interval.
+   * Resumes the chain that the state file records, or starts a new chain with a
+   * full copy, and then repeats the turn on the interval. On a resumed chain,
+   * Sirannon takes an ordinary turn straight away, so it sends the frames written
+   * while this node was down to the destination before the first interval ends.
    */
   async start(): Promise<void> {
     await mkdir(this.stagingDir, { recursive: true })
@@ -103,19 +102,19 @@ export class BackupCycle {
   }
 
   /**
-   * Takes one turn now. A turn sends any capture still waiting, reads the
+   * Takes one turn now. In a turn, Sirannon sends any staged capture, reads the
    * frames written since the previous turn, and then checkpoints the log.
    *
-   * One turn waits at a time. A call made while a turn is under way queues one
-   * behind it, and every call after that joins the queued turn, which reads the
-   * log once it begins and so covers their writes as well. Without that bound,
-   * a caller asking repeatedly during a long full copy would build a queue of
-   * turns with nothing left for any of them to capture.
+   * At most one turn waits in the queue. A call during a turn in progress
+   * queues one turn after it, and every later call returns that queued turn,
+   * which reads the log when it begins and so captures the writes of every one
+   * of those callers. Without that limit, repeated calls during a long full
+   * copy would build a queue of turns with nothing left to capture.
    *
-   * A turn on a node whose group backs up from somewhere else writes nothing
-   * and reports a skip.
+   * On a node whose replication group takes its backups from another node, a
+   * turn writes nothing and reports a skip.
    *
-   * @returns What the turn wrote, or undefined where it wrote nothing.
+   * @returns The report of what the turn writes, or undefined where it writes nothing.
    */
   runOnce(): Promise<BackupRunReport | undefined> {
     const queued = this.queued
@@ -131,9 +130,8 @@ export class BackupCycle {
   }
 
   /**
-   * Stops the cycle. It captures the log one final time first, so the writes
-   * made since the previous turn reach the destination before the database
-   * closes behind it.
+   * Stops the cycle after one final turn, so that Sirannon sends the writes
+   * made since the previous turn to the destination before the database closes.
    */
   async stop(): Promise<void> {
     if (this.stopped) return
@@ -153,7 +151,7 @@ export class BackupCycle {
   }
 
   /**
-   * Lists what the destination holds.
+   * Returns every chain at the destination.
    *
    * @returns Every chain, newest first, each with its full copy and its change pieces.
    */
@@ -162,36 +160,35 @@ export class BackupCycle {
   }
 
   /**
-   * Reads what the cycle is doing at this moment, and what its recent turns
-   * produced.
+   * Returns what the cycle is doing now and the outcome of its recent turns.
    *
-   * A caller following a long full copy reads this without having to wait on
-   * the turn, and it answers between turns as well.
+   * It returns straight away, both during a long full copy and between turns.
    *
-   * @returns Whether a turn is under way, how far it has got, and the last run, skip, and failure.
+   * @returns Whether a turn is in progress, the progress of that turn, and the last run, skip, and failure.
    */
   status(): BackupCycleStatus {
     return this.turnLog.read(this.state?.chainId)
   }
 
   /**
-   * Reads one of this chain's backups back out of the destination and compares
-   * it against the record the backup that wrote it left behind.
+   * Reads one backup from the destination and checks it against its record in
+   * the chains at that destination.
    *
-   * @param name - Name the backup is stored under.
-   * @returns The pieces read, the bytes they add up to, and the digest where the backup recorded one.
+   * @param name - The name that Sirannon stores the backup under.
+   * @returns The number of pieces read, their total size in bytes, and the fingerprint where the record holds one.
    */
   async verify(name: string): Promise<BackupVerifyResult> {
     return verifyBackupRecord(this.request.destination, await this.chains(), name)
   }
 
   /**
-   * Runs one turn and passes whatever broke it to the operator. A deeper step
-   * announces some failures itself and then raises them, so this announces a
-   * failure only where no step has announced it already. The operator therefore
-   * hears each failure exactly once. Sirannon empties a log the turn has
-   * outgrown once all of that is done, and the report of writes reaching no
-   * backup replaces whatever failure the turn recorded.
+   * Runs one turn and reports to the operator any error that stops it. Some
+   * deeper steps report a failure themselves before they throw it, so this
+   * reports an error only where no step has reported it already, and the
+   * operator receives each failure once. When the turn captures nothing and the
+   * log has grown past the limit, Sirannon then empties the log, and the
+   * resulting report of the writes that no backup holds replaces any failure
+   * that the turn recorded.
    */
   private runTurn<T>(op: () => Promise<T>): Promise<T> {
     return this.turns.run(async () => {
@@ -212,7 +209,7 @@ export class BackupCycle {
     })
   }
 
-  /** What the stand-down path needs of this cycle to let go of its chain. */
+  /** The callbacks and paths that the stand-down code uses to release the chain of this cycle. */
   private get standDownRequest(): StandDownRequest {
     return {
       request: this.request,
@@ -228,7 +225,7 @@ export class BackupCycle {
     }
   }
 
-  /** Empties a log this turn captured nothing from, past the operator's limit. */
+  /** Empties the log when this turn captures nothing from it and it has grown past the limit that the operator sets. */
   private async releaseLogPastLimit(): Promise<void> {
     if (this.stopped) return
     try {
@@ -239,10 +236,11 @@ export class BackupCycle {
   }
 
   /**
-   * Asks whether this node takes the turn it is starting. A node the group
-   * backs up from somewhere else stands down from its chain and empties its
-   * log instead. A node that could not read its group holds everything where
-   * it is, because the frames it has yet to capture are still in no backup.
+   * Returns whether this node takes the turn that it is starting. Where the
+   * replication group takes its backups from another node, this node stands
+   * down from its chain and empties its log. Where Sirannon cannot read the
+   * group, this node keeps its chain and its log as they are, because no backup
+   * holds the frames that it has yet to capture.
    */
   private async takesTheTurn(): Promise<boolean> {
     const decision = await decideBackupTurn(this.request.replicationGroup, this.preferredNode)
@@ -258,7 +256,7 @@ export class BackupCycle {
     return false
   }
 
-  /** Passes a skipped turn on, where the cycle has a reason to give for it. */
+  /** Reports a skipped turn when the decision carries a reason for it. */
   private async reportSkip(skip: BackupSkip | undefined): Promise<void> {
     if (skip) await this.turnLog.skipped(skip)
   }
@@ -290,13 +288,12 @@ export class BackupCycle {
   }
 
   /**
-   * Runs one turn. A log that restarted before the capture reached it leaves a
-   * chain nothing can extend, so this starts a fresh one. The caller still gets
-   * the error: those writes are in no backup, and an operator has to hear that.
-   * Where the replacement chain also fails to start, Sirannon records that
-   * second failure against the chain the restart broke, because the cycle holds
-   * no chain of its own by then and an operator reading the status has to know
-   * which one they have lost.
+   * Runs one turn. When the turn fails with `BACKUP_LOG_REWOUND` or
+   * `BACKUP_CHAIN_BROKEN`, no later piece can extend the chain, so this starts a
+   * new chain. The caller still receives the error, because no backup holds the
+   * lost writes. Where the new chain also fails to start, Sirannon records that
+   * second failure against the broken chain, because the cycle holds no chain by
+   * then and the operator needs the status to name the chain that they lost.
    */
   private async turnOrStartOver(): Promise<BackupRunReport | undefined> {
     try {
@@ -329,16 +326,16 @@ export class BackupCycle {
   }
 
   /**
-   * Passes a failure to the operator and records it as the turn's outcome.
+   * Reports a failure to the operator and records it as the outcome of the
+   * turn, against the chain that the cycle holds now.
    *
-   * @param err - What the turn failed with.
-   * @param chainId - The chain to record it against, which defaults to the one the cycle holds now.
+   * @param err - The error that stops the turn.
    */
   private report(err: unknown): void {
     this.turnLog.failed(err, this.state?.chainId)
   }
 
-  /** Records a failure against a chain the cycle may already have let go of. */
+  /** Records a failure against a chain that the cycle may already have released. */
   private reportAgainstChain(err: unknown, chainId: string | undefined): void {
     this.turnLog.failed(err, chainId)
   }
@@ -377,10 +374,10 @@ export class BackupCycle {
   }
 
   /**
-   * Sends the capture staged against the chain this cycle holds. A turn offers
-   * a capture the destination has already refused no second time, because that
-   * second offer waits out the destination deadline again and delays every turn
-   * behind it.
+   * Sends the capture staged against the chain that this cycle holds. Once the
+   * destination refuses a capture, Sirannon skips the send for the rest of the
+   * turn, because a second try would wait out the destination deadline again
+   * and delay every turn queued after it.
    */
   private async sendWaitingCapture(): Promise<BackupRunReport | undefined> {
     if (this.sendRefused) return undefined

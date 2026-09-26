@@ -9,7 +9,7 @@ export interface CapabilityCheckOptions {
   requestTimeoutMs?: number
 }
 
-/** What a server announces: the capability tokens and the operation registry it serves. */
+/** The capability tokens that a server announces, with the digest of the operation registry that it serves. */
 export interface CapabilityReport {
   capabilities: string[]
   registryDigest: string | undefined
@@ -56,6 +56,12 @@ export async function verifyDeviceSyncCapabilities(options: CapabilityCheckOptio
 
   const announced = new Set(capabilities)
   const missing = REQUIRED_DEVICE_SYNC_CAPABILITIES.filter(name => !announced.has(name))
+  if (missing.length === REQUIRED_DEVICE_SYNC_CAPABILITIES.length) {
+    throw new RemoteError(
+      'DEVICE_SYNC_NOT_ACCEPTED',
+      'The server keeps device sync off; the server has to set acceptDeviceSync before a device can sync.',
+    )
+  }
   if (missing.length > 0) {
     throw new RemoteError(
       'SYNC_UNSUPPORTED',

@@ -1,17 +1,9 @@
 import type { BulkLoadDurability, ReadConcern, WriteConcern } from '../core/types.js'
-import type {
-  AckResponse,
-  BatchResponse,
-  ExecuteResponse,
-  LoadResponse,
-  QueryResponse,
-  TransactionResponse,
-  TransactionStatement,
-} from './protocol.js'
+import type { TransactionStatement } from './protocol.js'
 
 /**
- * Every message a client sends over the WebSocket. Each carries a `type` and a
- * client-chosen `id` the reply echoes.
+ * Every message that a client sends over the WebSocket. Each message has a `type`
+ * and an `id` that the client chooses and the server repeats in its reply.
  *
  * @public
  */
@@ -26,380 +18,180 @@ export type WSClientMessage =
   | WSLoadMessage
 
 /**
- * Opens a change subscription on one or more tables, or a live query on a registered read.
+ * A request to open a change subscription on one or more tables, or a live query on a registered read.
  *
  * @public
  */
 export interface WSSubscribeMessage {
-  /** Names this message as a subscribe. */
+  /** The message type for a subscribe. */
   type: 'subscribe'
-  /** Client-chosen identifier the replies and change events echo. */
+  /** The identifier that the client chooses, which the server repeats in its replies and change events. */
   id: string
-  /** Table to subscribe to. */
+  /** The table to subscribe to. */
   table?: string
   /** Several tables to subscribe to at once. */
   tables?: string[]
   /** Narrows the subscription to rows whose columns equal these values. */
   filter?: Record<string, unknown>
-  /** Name of a registered read, which opens a live query instead of a change subscription. */
+  /** The name of a registered read, so that the server opens a live query on that read. */
   name?: string
-  /** Arguments that registered read takes. */
+  /** The arguments that the registered read takes. */
   args?: Record<string, unknown>
-  /** Digest of the operation registry the client built its live query against. */
+  /** The digest of the operation registry that the client built its live query against. */
   registryDigest?: string
   /**
-   * Highest `seq` the client has already processed. When present, the server
-   * replays every retained change with a greater seq before delivering live
-   * events so that a reconnecting subscriber does not miss changes. Sent as a
-   * decimal string to preserve values beyond `Number.MAX_SAFE_INTEGER`.
+   * The highest `seq` that the client has processed. When it is present, the server
+   * replays every retained change with a greater seq before it sends live events, so
+   * that a reconnecting subscriber receives the changes that it missed. When the server
+   * answers with `resync: true`, it skips the replay. The client sends the value as a
+   * decimal string, so that a value beyond `Number.MAX_SAFE_INTEGER` stays exact.
    */
   sinceSeq?: string
   /**
-   * The `epoch` the server reported when this cursor was issued. A `sinceSeq`
-   * only means something within the sequence space that produced it, so a
-   * mismatch tells the server the cursor came from another database and it must
-   * resync rather than replay foreign rows against it.
+   * The `epoch` that the server reported with this cursor. A `sinceSeq` is valid
+   * only within the sequence space that produced it, so when this epoch differs
+   * from the server's own, the server answers with `resync: true` and skips the
+   * replay.
    */
   epoch?: string
-  /** Identifies the device, which turns this into a device-sync subscription. */
+  /** The device's identifier, which makes this a device-sync subscription. */
   deviceId?: string
-  /** Schema version the device's local database is at, which the server gates the stream on. */
+  /** The schema version of the device's local database, which the server checks before it opens the stream. */
   schemaVersion?: number
   /**
-   * Declares that this device stages pulled changes durably and
+   * Set to true when this device stages pulled changes durably and
    * acknowledges staged sequences. The server then packs several events
-   * into each `changes` frame and paces the delivery window continuously
-   * instead of per transaction. Meaningful only with `deviceId`.
+   * into each `changes` frame and can pause the stream at any event. The
+   * server accepts it only with `deviceId`.
    */
   stagedStream?: boolean
 }
 
 /**
- * Ends a subscription.
+ * A request to end a subscription.
  *
  * @public
  */
 export interface WSUnsubscribeMessage {
-  /** Names this message as an unsubscribe. */
+  /** The message type for an unsubscribe. */
   type: 'unsubscribe'
-  /** Identifier of the subscription to end. */
+  /** The identifier of the subscription to end. */
   id: string
 }
 
 /**
- * Acknowledges every change a device has stored up to a sequence.
+ * A device's acknowledgement of every change that it has stored up to a sequence.
  *
  * @public
  */
 export interface WSAckMessage {
-  /** Names this message as an acknowledgement. */
+  /** The message type for an acknowledgement. */
   type: 'ack'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** Identifies the device acknowledging. */
+  /** The identifier of the device that sends the acknowledgement. */
   deviceId: string
-  /** Highest sequence the device has stored, as a decimal string. */
+  /** The highest sequence that the device has stored, as a decimal string. */
   seq: string
 }
 
 /**
- * Runs a read, either as SQL or by the name of a registered read.
+ * A request to execute a read, either as SQL or by the name of a registered read.
  *
  * @public
  */
 export interface WSQueryMessage {
-  /** Names this message as a read. */
+  /** The message type for a read. */
   type: 'query'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** The statement to run. The server refuses it unless it accepts SQL. */
+  /** The statement to execute, which the server executes only when it accepts SQL. */
   sql?: string
-  /** Values bound to that statement, named or positional. */
+  /** The values to bind to that statement, by name or by position. */
   params?: Record<string, unknown> | unknown[]
-  /** Name of a registered read to run instead, which carries no SQL. */
+  /** The name of a registered read to execute in place of `sql`. */
   name?: string
-  /** Arguments that registered read takes. */
+  /** The arguments that the registered read takes. */
   args?: Record<string, unknown>
-  /** Currency this read requires. */
+  /** The read concern that this read requires. */
   readConcern?: ReadConcern
 }
 
 /**
- * Runs a write, either as SQL or by the name of a registered write.
+ * A request to execute a write, either as SQL or by the name of a registered write.
  *
  * @public
  */
 export interface WSExecuteMessage {
-  /** Names this message as a write. */
+  /** The message type for a write. */
   type: 'execute'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** The statement to run. The server refuses it unless it accepts SQL. */
+  /** The statement to execute, which the server executes only when it accepts SQL. */
   sql?: string
-  /** Values bound to that statement, named or positional. */
+  /** The values to bind to that statement, by name or by position. */
   params?: Record<string, unknown> | unknown[]
-  /** Name of a registered write to run instead, which carries no SQL. */
+  /** The name of a registered write to execute in place of `sql`. */
   name?: string
-  /** Arguments that registered write takes. */
+  /** The arguments that the registered write takes. */
   args?: Record<string, unknown>
-  /** Acknowledgements this write waits for. */
+  /** The acknowledgements that the server waits for before it confirms this write. */
   writeConcern?: WriteConcern
 }
 
 /**
- * Runs every statement in one server-side transaction and replies once with
- * all results. The client is never in the loop between statements, so the
- * single writer lock is held only for the duration of local execution.
+ * A request to execute every statement in one server-side transaction, to which the
+ * server replies once with all the results. The server makes no round trip to the
+ * client between statements, so it holds the single writer lock only while the
+ * statements execute.
  *
  * @public
  */
 export interface WSTransactionMessage {
-  /** Names this message as a transaction. */
+  /** The message type for a transaction. */
   type: 'transaction'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** The statements to run, in order. */
+  /** The statements to execute, in order. */
   statements: TransactionStatement[]
-  /** Acknowledgements the transaction waits for. */
+  /** The acknowledgements that the server waits for before it confirms the transaction. */
   writeConcern?: WriteConcern
 }
 
 /**
- * Applies one statement over many parameter sets in a single server-side transaction.
+ * A request to execute one statement with many parameter sets in a single server-side transaction.
  *
  * @public
  */
 export interface WSBatchMessage {
-  /** Names this message as a batch. */
+  /** The message type for a batch. */
   type: 'batch'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** The statement to run for each parameter set. */
+  /** The statement to execute for each parameter set. */
   sql: string
-  /** One parameter set per run. */
+  /** One parameter set for each execution of the statement. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
-  /** Acknowledgements the batch waits for. */
+  /** The acknowledgements that the server waits for before it confirms the batch. */
   writeConcern?: WriteConcern
 }
 
 /**
- * Imports many rows at relaxed durability, which the server restores before it replies.
+ * A request to import many rows at relaxed durability, which the server restores before it replies.
  *
  * @public
  */
 export interface WSLoadMessage {
-  /** Names this message as a load. */
+  /** The message type for a load. */
   type: 'load'
-  /** Client-chosen identifier the reply echoes. */
+  /** The identifier that the client chooses, which the server repeats in its reply. */
   id: string
-  /** The statement to run for each parameter set. */
+  /** The statement to execute for each parameter set. */
   sql: string
   /** One parameter set per row. */
   paramsBatch: (Record<string, unknown> | unknown[])[]
-  /** Durability in force while the load runs. Default: 'off'. */
+  /** The writer's durability level during the load. Defaults to 'off'. */
   durability?: BulkLoadDurability
-  /** Whether this load ends with a checkpoint. */
+  /** Whether the server checkpoints the WAL after this load. Defaults to true. */
   checkpoint?: boolean
-}
-
-/**
- * Every message the server sends over the WebSocket.
- *
- * @public
- */
-export type WSServerMessage =
-  | WSSubscribedMessage
-  | WSUnsubscribedMessage
-  | WSChangeMessage
-  | WSChangesMessage
-  | WSLiveMessage
-  | WSResultMessage
-  | WSErrorMessage
-
-/**
- * One edit to a live query's result set, as a position and the row at it.
- *
- * @public
- */
-export type WSLiveOp =
-  | {
-      /** Which edit this is: `'insert'` for a row added, `'update'` for a row changed in place, `'delete'` for a row removed. */
-      op: 'insert'
-      /** Position in the result set the edit applies to, counted from zero. */
-      index: number
-      /** The row that now sits at that position. */
-      row: unknown
-    }
-  | {
-      /** Names this edit as a row changed in place. */
-      op: 'update'
-      /** Position of the row that changed. */
-      index: number
-      /** The row as it now reads. */
-      row: unknown
-    }
-  | {
-      /** Names this edit as a row removed. */
-      op: 'delete'
-      /** Position the removed row held. */
-      index: number
-    }
-
-/**
- * Carries a live query's new state: the edits that move it, a full replacement, or notice that a re-read has started.
- *
- * @public
- */
-export interface WSLiveMessage {
-  /** Names this message as a live-query update. */
-  type: 'live'
-  /** Identifier of the subscription this update belongs to. */
-  id: string
-  /** The edits that move the result set to its new state. */
-  ops?: WSLiveOp[]
-  /** A complete replacement result set. */
-  rows?: unknown[]
-  /** Set while the server re-reads the query. */
-  revalidating?: boolean
-}
-
-/**
- * Confirms a subscription opened, and states the cursor and sequence space it streams from.
- *
- * @public
- */
-export interface WSSubscribedMessage {
-  /** Names this message as a subscription confirmation. */
-  type: 'subscribed'
-  /** Identifier of the subscription that opened. */
-  id: string
-  /**
-   * How far a device may run ahead of its acknowledged cursor before the
-   * server holds delivery. Present only for a device subscription.
-   */
-  maxUnacknowledgedChanges?: number
-  /**
-   * The seq the subscription is live from. A client that has not yet seen any
-   * change adopts this as its resume cursor so that a reconnect during an idle
-   * spell still replays what it missed instead of silently skipping it.
-   */
-  seq?: string
-  /**
-   * Set when a requested `sinceSeq` fell below the retained history, so the
-   * gap cannot be replayed. The subscription still starts live from now; the
-   * client must treat its prior state as stale and re-read.
-   */
-  resync?: boolean
-  /**
-   * Identifies the sequence space this subscription streams from. The client
-   * stores it and echoes it when resuming so that a cursor carried to a different
-   * database forces a resync instead of a silent replay of unrelated rows.
-   */
-  epoch?: string
-  /** First result set of a live query, sent when the subscription named a registered read. */
-  rows?: unknown[]
-}
-
-/**
- * Confirms a subscription ended.
- *
- * @public
- */
-export interface WSUnsubscribedMessage {
-  /** Names this message as an unsubscribe confirmation. */
-  type: 'unsubscribed'
-  /** Identifier of the subscription that ended. */
-  id: string
-}
-
-/**
- * One change event as it crosses the wire, with sequences as decimal strings
- * so a value beyond the safe integer range survives JSON.
- *
- * @public
- */
-export interface WSWireChangeEvent {
-  /** Whether the row was inserted, updated, or deleted. */
-  type: 'insert' | 'update' | 'delete'
-  /** Table the row belongs to. */
-  table: string
-  /** The row as it stands after the change. */
-  row: Record<string, unknown>
-  /** The row as it stood before an update or a delete. */
-  oldRow?: Record<string, unknown>
-  /** Position of this change in the database's change log, as a decimal string. */
-  seq: string
-  /** Milliseconds since the Unix epoch, taken when the change was recorded. */
-  timestamp: number
-  /** Hybrid logical clock stamp the writing node gave this change. */
-  hlc?: string
-  /** Identifier of the node that authored the change. */
-  origin?: string
-  /** Primary key of the changed row, encoded as a string. */
-  rowId?: string
-  /** Identifier of the transaction that produced this change. */
-  txId?: string
-  /** Set on the last change of a transaction. */
-  txEnd?: boolean
-}
-
-/**
- * Carries one change event to a subscriber.
- *
- * @public
- */
-export interface WSChangeMessage {
-  /** Names this message as a single change event. */
-  type: 'change'
-  /** Identifier of the subscription this change belongs to. */
-  id: string
-  /** The change itself. */
-  event: WSWireChangeEvent
-}
-
-/**
- * Several change events in one frame, in ascending seq order. Sent only on
- * a device subscription that requested `stagedStream`; the events carry the
- * same fields as a `change` frame's event.
- *
- * @public
- */
-export interface WSChangesMessage {
-  /** Names this message as a run of change events. */
-  type: 'changes'
-  /** Identifier of the subscription these changes belong to. */
-  id: string
-  /** The changes, in ascending sequence order. */
-  events: WSWireChangeEvent[]
-}
-
-/**
- * Replies to a read, write, transaction, batch, load, or acknowledgement.
- *
- * @public
- */
-export interface WSResultMessage {
-  /** Names this message as a reply to a read, write, transaction, batch, load, or acknowledgement. */
-  type: 'result'
-  /** Identifier the request carried. */
-  id: string
-  /** The reply body, whose shape follows the request that produced it. */
-  data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse | AckResponse
-}
-
-/**
- * Reports that a request failed.
- *
- * @public
- */
-export interface WSErrorMessage {
-  /** Names this message as a failure. */
-  type: 'error'
-  /** Identifier the request carried. */
-  id: string
-  /** Machine-readable code and human-readable message. */
-  error: {
-    code: string
-    message: string
-  }
 }

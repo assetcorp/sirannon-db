@@ -2,11 +2,11 @@ import type { Database } from './database.js'
 import { SirannonError } from './errors.js'
 
 /**
- * Closes every database in a registry and empties it, keeping what each close
- * threw so that one failure still leaves the rest closed.
+ * Closes every database in a registry and empties it, collecting each close
+ * error so that one failure still leaves the rest closed.
  *
- * @param databases - The registry's open databases, emptied once every close has returned.
- * @throws When one or more closes threw, reporting how many.
+ * @param databases - The registry's open databases, which this function empties once every close returns.
+ * @throws A `SHUTDOWN_ERROR` that gives the number of failed closes, when one or more closes threw.
  *
  * @internal
  */

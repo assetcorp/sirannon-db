@@ -316,6 +316,14 @@ export interface BatchSummary {
 export type BeforeConnectHook = (ctx: ConnectionHookContext) => void | Promise<void>;
 
 // @public
+export type BeforePushHook = (ctx: {
+    databaseId: string;
+    table: string;
+    deviceId: string;
+    identity?: unknown;
+}) => void | Promise<void>;
+
+// @public
 export type BeforeQueryHook = (ctx: QueryHookContext) => void | Promise<void>;
 
 // @public
@@ -700,6 +708,7 @@ export class ForbiddenSqlError extends SirannonError {
 export interface HookConfig {
     onAfterQuery?: AfterQueryHook | AfterQueryHook[];
     onBeforeConnect?: BeforeConnectHook | BeforeConnectHook[];
+    onBeforePush?: BeforePushHook | BeforePushHook[];
     onBeforeQuery?: BeforeQueryHook | BeforeQueryHook[];
     onBeforeSnapshot?: BeforeSnapshotHook | BeforeSnapshotHook[];
     onBeforeSubscribe?: BeforeSubscribeHook | BeforeSubscribeHook[];
@@ -716,7 +725,7 @@ export class HookDeniedError extends SirannonError {
 export type HookDispose = () => void;
 
 // @internal
-export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe' | 'beforeSnapshot';
+export type HookEvent = 'beforeQuery' | 'afterQuery' | 'beforeConnect' | 'databaseOpen' | 'databaseClose' | 'beforeSubscribe' | 'beforeSnapshot' | 'beforePush';
 
 // @internal
 export interface HookEventContextMap {
@@ -726,6 +735,8 @@ export interface HookEventContextMap {
     };
     // (undocumented)
     beforeConnect: ConnectionHookContext;
+    // (undocumented)
+    beforePush: PushHookContext;
     // (undocumented)
     beforeQuery: QueryHookContext;
     // (undocumented)
@@ -997,6 +1008,9 @@ export function parseMigrationFilename(filename: string): ParsedMigrationFilenam
 export function planBackupRestore(chains: readonly BackupChain[], moment: number): BackupRestorePlan;
 
 // @internal
+export type PushHookContext = Parameters<BeforePushHook>[0];
+
+// @internal
 export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T[]>;
 
 // @public
@@ -1157,6 +1171,7 @@ export type ServerExecutionTargetResolver = (databaseId: string) => ServerExecut
 // @public
 export interface ServerOptions<Identity = unknown> {
     acceptBackupRestore?: boolean;
+    acceptDeviceSync?: boolean;
     acceptSql?: boolean;
     authenticate?: AuthenticateHook<Identity>;
     authorizeClusterStatus?: ClusterStatusAuthorizer;
@@ -1350,6 +1365,8 @@ export interface WriterWorkerOptions {
 
 // @internal
 export interface WSHandlerOptions<Identity = unknown> {
+    // (undocumented)
+    acceptDeviceSync?: boolean;
     // (undocumented)
     acceptSql?: boolean;
     cdcRetentionMs?: number;

@@ -10,16 +10,16 @@ import { ExtensionError } from '../../core/errors.js'
  */
 export interface WaSqliteOptions {
   /**
-   * Where the browser stores the database. Default: 'IDBBatchAtomicVFS'.
+   * The virtual file system that stores the database in the browser, which defaults to `IDBBatchAtomicVFS`.
    */
   vfs?: 'IDBBatchAtomicVFS' | 'AccessHandlePoolVFS'
 }
 
 /**
- * Builds a driver that runs SQLite in the browser through WebAssembly.
+ * Returns a driver that opens SQLite databases in the browser through the wa-sqlite WebAssembly build.
  *
- * @param driverOptions - Where the browser stores the database.
- * @returns The driver, ready to pass to a `Sirannon` registry.
+ * @param driverOptions - The virtual file system that stores the database.
+ * @returns The driver, which you can pass to a `Sirannon` registry.
  *
  * @public
  */

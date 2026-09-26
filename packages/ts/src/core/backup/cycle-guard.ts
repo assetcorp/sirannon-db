@@ -11,13 +11,13 @@ import {
   preferredBackupNode,
 } from './preferred-node.js'
 
-/** What one node decided about the turn it was about to take.
+/** Whether one node takes the turn that it is about to start, and the reason where it skips.
  * @internal
  */
 export interface BackupTurnDecision {
   /** Whether this node takes the backup. */
   runs: boolean
-  /** What it skipped for, where it took none. */
+  /** The reason for the skip, where the node takes no backup. */
   skip?: BackupSkip
 }
 
@@ -26,11 +26,11 @@ const TAKES_THE_TURN: BackupTurnDecision = { runs: true }
 const STARTS_A_FRESH_CHAIN = ['BACKUP_LOG_REWOUND', 'BACKUP_CHAIN_BROKEN']
 
 /**
- * Says whether a failed turn leaves a chain nothing can extend, which is what
- * sends the cycle back to a full copy.
+ * Returns whether an error leaves a chain that no later piece can extend, in
+ * which case the cycle starts a new chain with a full copy.
  *
- * @param err - What the turn failed with.
- * @returns Whether the next turn has to start a fresh chain.
+ * @param err - The error that stops the turn.
+ * @returns Whether the error is a `BACKUP_LOG_REWOUND` or a `BACKUP_CHAIN_BROKEN`.
  *
  * @internal
  */
@@ -39,10 +39,11 @@ export function startsAFreshChain(err: unknown): boolean {
 }
 
 /**
- * Turns whatever a turn threw into the error an operator reads.
+ * Returns an Error for any value that a turn throws, so that the operator
+ * always receives an Error.
  *
- * @param value - What the turn threw.
- * @returns That error, or one naming the cycle where it was no error at all.
+ * @param value - The value that the turn throws.
+ * @returns The value itself when it is an Error, or otherwise a `BACKUP_ERROR` whose message is the value where it is a string, or a general message where it is not.
  *
  * @internal
  */
@@ -57,9 +58,10 @@ function causeOf(err: unknown): string {
 }
 
 /**
- * Describes the turn a cycle drops because its previous turn is still going.
+ * Returns the skip for a turn that the cycle drops because its previous turn is
+ * still in progress.
  *
- * @returns The skip, ready for the cycle's own callback.
+ * @returns The skip to pass to the callback of the cycle.
  *
  * @internal
  */
@@ -71,15 +73,15 @@ export function previousRunStillActive(): BackupSkip {
 }
 
 /**
- * Works out whether this node is the one its replication group backs up from
- * right now, which a scheduled turn settles before it copies anything.
+ * Returns whether this node is the one that its replication group takes
+ * backups from at this moment, which a turn checks before it copies anything.
  *
- * A database with no group source answers yes every time, so a single-node
- * deployment runs the same cycle as a replicated one.
+ * Without a group source, this always returns that the node takes the turn, so
+ * a single-node deployment runs the same cycle as a replicated one.
  *
- * @param group - Where this node reads its identity and its group's membership.
- * @param preference - Which node the operator wants the backups taken on.
- * @returns Whether this node takes the turn, and what it skipped for otherwise.
+ * @param group - The source of the identity of this node and the membership of its group.
+ * @param preference - The node that the operator wants the backups taken on.
+ * @returns Whether this node takes the turn, and the reason for the skip where it takes none.
  *
  * @internal
  */
@@ -139,14 +141,14 @@ function decide(nodeId: string, preferredNodeId: string | null): BackupTurnDecis
 }
 
 /**
- * Folds the write-ahead log back into the database file on a node that takes
- * none of its group's backups.
+ * Checkpoints the write-ahead log into the database file on a node that takes
+ * none of the backups of its group.
  *
- * Sirannon turns SQLite's own checkpointing off in every database it backs up,
- * so a node capturing nothing still has to empty its log. Left alone, that log
- * would grow for as long as the process runs.
+ * Sirannon turns off the automatic checkpoints of SQLite in every database that
+ * it backs up, so a node that captures nothing must still empty its log, or the
+ * log would grow for as long as the process runs.
  *
- * @param request - The writer lock this runs inside, and the connection that writes.
+ * @param request - The function that holds the writer lock, and the function that returns the writer connection.
  *
  * @internal
  */
@@ -160,23 +162,25 @@ export async function checkpointWithoutCapturing(request: {
 }
 
 /**
- * Looks for a chain in the list its destination holds, and reports the loss
- * where the list no longer names it.
+ * Looks for a chain in the list of chains at its destination, and returns a
+ * `BACKUP_CHAIN_BROKEN` error where the list no longer names it.
  *
- * Another node writing its own chain at the same moment can replace the record
- * that lists this one, and a record appended under a chain no listing names is
- * a record no restore reaches.
+ * Another node that writes its own chain at the same moment can replace the
+ * entry for this chain, which puts every record under this chain out of reach
+ * of a restore.
  *
- * A cycle that remembers the place its chain took reads that one record, which
- * costs the destination a single read however many chains it holds. Anything
- * else it finds there sends it back to the whole list.
+ * Where the cycle recorded the index of its chain, this reads that one entry,
+ * so the check takes a single read however many chains the list holds. Where
+ * that entry names another chain, this reports the chain as lost. Where the
+ * read fails or the record there is not a valid entry, this reads the whole
+ * list.
  *
- * @param destination - Where the list of chains is stored.
- * @param chainName - Name that list is stored under.
- * @param chainId - Identifier of the chain to look for.
- * @param databaseId - Identifier the report names the database by.
- * @param headIndex - The place that chain took, where the cycle recorded one.
- * @returns The error to report, or null while the list still holds the chain.
+ * @param destination - The destination that holds the list of chains.
+ * @param chainName - The name that Sirannon stores that list under.
+ * @param chainId - The identifier of the chain to look for.
+ * @param databaseId - The identifier of the database, which the error message quotes.
+ * @param headIndex - The index of the chain in the list, where the cycle recorded one.
+ * @returns The error to report, or null while the list still names the chain.
  *
  * @internal
  */
@@ -207,13 +211,14 @@ function chainLost(chainName: string, chainId: string, databaseId: string): Sira
 }
 
 /**
- * Tells an operator whose nodes share a destination that cannot claim a place
- * in the list of chains, which is the one arrangement where two nodes starting
- * a chain at the same moment lose one between them.
+ * Returns a `BACKUP_DESTINATION_ERROR` for a replication group whose
+ * destination lacks `writePieceIfAbsent`, since that is the one arrangement
+ * where two nodes that start a chain at the same moment can lose one of the two
+ * chains.
  *
- * @param request - The operator's settings, plus the database the cycle runs against.
- * @param chainName - Name the list of chains is stored under.
- * @returns The error to report, or null where the arrangement is sound.
+ * @param request - The settings of the operator, and the database that the cycle backs up.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @returns The error to report, or null where the database has no replication group or the destination implements `writePieceIfAbsent`.
  *
  * @internal
  */
@@ -232,11 +237,11 @@ export function unclaimableChainList(
 }
 
 /**
- * Measures the write-ahead log a node is holding, for the report it gives an
- * operator each turn it backs nothing up.
+ * Returns the size of the write-ahead log on a node, which the skip report
+ * states on each turn that backs nothing up.
  *
- * @param logPath - Path of the write-ahead log.
- * @returns How many bytes it holds, or undefined where the filesystem answers none.
+ * @param logPath - The path of the write-ahead log.
+ * @returns The size of the log in bytes, or undefined where Sirannon cannot read the size of the file.
  *
  * @internal
  */
@@ -249,17 +254,18 @@ export async function uncapturedLogBytes(logPath: string): Promise<number | unde
 }
 
 /**
- * Measures the write-ahead log of a database whose cycle captured nothing this
- * turn, and reports the loss where that log has grown past the operator's limit.
+ * Measures the write-ahead log of a database whose cycle captures nothing this
+ * turn, and returns a `BACKUP_CHAIN_BROKEN` error where that log has grown past
+ * the limit that the operator sets.
  *
- * Sirannon empties the log on the strength of this report. PostgreSQL bounds a
- * replication slot the same way through `max_slot_wal_keep_size`, and both
- * default to leaving the log alone.
+ * Sirannon empties the log when this returns an error. PostgreSQL limits a
+ * replication slot the same way through `max_slot_wal_keep_size`, and neither
+ * sets a limit by default.
  *
- * @param logPath - Path of the write-ahead log.
- * @param maxBytes - How large the operator lets it grow, or undefined for no limit.
- * @param databaseId - Identifier the report names the database by.
- * @returns The error to report, or null while the log is inside the limit.
+ * @param logPath - The path of the write-ahead log.
+ * @param maxBytes - The largest size in bytes that the operator allows, or undefined for no limit.
+ * @param databaseId - The identifier of the database, which the error message quotes.
+ * @returns The error to report, or null while the log is within the limit or absent.
  *
  * @internal
  */
@@ -287,13 +293,13 @@ export async function logGrownPastLimit(
 }
 
 /**
- * Asks whether the destination still lists the chain the cycle's state file
- * names.
+ * Checks whether the list of chains at the destination still names the chain
+ * in the state file of the cycle.
  *
- * @param request - Destination and database the cycle backs up.
- * @param chainName - Name the list of chains is stored under.
- * @param state - The chain the cycle is extending, and its place in that list.
- * @returns The error where the chain is absent, or null where it is still listed.
+ * @param request - The destination, and the database that the cycle backs up.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param state - The chain that the cycle extends, and its index in that list.
+ * @returns The error where the list omits the chain, or null where the list still names it.
  *
  * @internal
  */

@@ -1,12 +1,12 @@
 # Backups
 
-Sirannon copies a database while it stays open for reads and writes. It writes that copy to a file on local disk, or to storage you supply. On a database too large to copy in full every night, the `backups` option follows the first copy with only what changed since the run before it. `restoreBackup()` reads those files back and rebuilds the database from a moment you name.
+Sirannon can copy a database while your application keeps reading from it and writing to it. It writes that copy to a file on local disk, or to storage that you supply. For a database that is too large to copy in full every night, the `backups` option copies the whole database once and then sends only the changes made since the previous capture. `restoreBackup()` fetches those files and rebuilds the database as it stood at a moment that you name.
 
-The [core engine guide](core.md) covers migrations, live queries, bulk load, hooks, metrics, and the multi-tenant lifecycle.
+Migrations, live queries, bulk load, hooks, metrics, and the multi-tenant lifecycle are in the [core engine guide](core.md).
 
 ## Taking a copy
 
-`backup()` writes a copy to a local file. The database stays open for reads and writes throughout, because SQLite moves the pages in steps and a write runs in the gap between two of them.
+`backup()` writes a copy to a local file. The database stays open for reads and writes throughout, because SQLite copies the pages in steps and lets a write proceed between two steps.
 
 ```ts
 const report = await db.backup('./backups/snapshot.db')
@@ -17,7 +17,7 @@ report.pageCount    // the pages SQLite moved
 report.durationMs   // the milliseconds the copy took
 ```
 
-`scheduleBackup()` repeats that on a cron schedule and keeps a bounded number of files. `onBackup` receives the same report after every copy the schedule finishes, so you learn which file to move somewhere durable without watching the directory:
+`scheduleBackup()` repeats that copy on a cron schedule and keeps the number of files that `maxFiles` sets. Sirannon passes the same report to `onBackup` after each scheduled copy, so your callback receives the path of every new file without having to watch the directory:
 
 ```ts
 db.scheduleBackup({
@@ -30,9 +30,9 @@ db.scheduleBackup({
 })
 ```
 
-Sirannon waits for `onBackup` before it clears the older files and before it takes the next copy, so it deletes no copy your upload is still reading. `onBackupTimeoutMs` bounds that wait and defaults to ten minutes, and zero leaves it unbounded. Past the deadline Sirannon reports the timeout through `onError` and goes on with the schedule. Your callback keeps running while Sirannon counts that copy among the files it may delete, so set the deadline longer than your slowest upload takes.
+Sirannon waits for `onBackup` to return before it deletes the older files and before it starts the next copy, so a file that your upload is still reading stays on disk until the callback returns. `onBackupTimeoutMs` limits that wait to ten minutes by default, and a value of zero removes the limit. Once the deadline passes, Sirannon reports a `BACKUP_ERROR` through `onError` and continues with the schedule. However, your callback may still be uploading that copy while Sirannon treats it as a file that it can delete, so set the deadline longer than your slowest upload takes.
 
-Both of those write to local disk. `backupTo()` sends the copy to storage you supply instead:
+`backup()` and `scheduleBackup()` both write to local disk, while `backupTo()` sends the copy to storage that you supply:
 
 ```ts
 const report = await db.backupTo({ destination: s3Destination })
@@ -44,7 +44,7 @@ report.durationMs
 
 ## Supplying a destination
 
-Sirannon carries no storage client, so you write three functions and it calls them. A fourth is optional, and you should write it wherever more than one node backs up to the same storage. Sirannon splits every backup into fixed-size pieces, 16 MiB by default, and numbers them:
+Sirannon includes no storage client, so you write three functions that Sirannon calls to store, read, and list the pieces of a backup. A fourth function, `writePieceIfAbsent`, is optional; write it whenever more than one node backs up to the same storage. Sirannon splits every backup into numbered pieces of a fixed size, which is 16 MiB by default:
 
 ```ts
 import type { BackupDestination } from '@delali/sirannon-db'
@@ -79,35 +79,35 @@ const s3Destination: BackupDestination = {
 }
 ```
 
-Sirannon relies on three properties here. Pieces arrive in any order, since SQLite writes page one last, so nothing in your code may assume piece 0 comes first. A second write to the same name and index has to replace the piece already there, because a run that stops part-way through repeats its last write when it resumes. And `listPieces` answers for the one name it receives, returning an empty list where you hold nothing under that name. S3 sends at most a thousand keys in one response, which is why the example pages through them; a listing that stopped at the first response would hide every piece past the thousandth from a restore.
+Sirannon depends on three properties of these functions. Sirannon can send the pieces in any order, because SQLite writes page one last, so your code must never assume that piece 0 comes first. A second write to the same name and index has to replace the piece that is already stored there, because Sirannon repeats the last write when it resumes a backup that stopped part-way. `listPieces` has to return the pieces stored under the one name that it receives, and an empty list when your storage holds nothing under that name. S3 returns at most a thousand keys in one response, so the example pages through them; if your listing stopped at the first response, a restore would never reach the pieces beyond the thousandth.
 
-`writePieceIfAbsent` is the fourth function, and it stores a piece only where that name and index hold none, reporting whether this call is the one that stored it. Sirannon keeps its list of chains under a single name, one record per chain, so two nodes that start a chain at the same moment can pick the same index for it. Where each node claims its index through this function, the storage settles which one gets it and both chains stay in the list. Where you leave the function out, Sirannon writes the record and reads it back instead, which catches the other node's write unless that write lands between those two calls, and the chain it misses drops out of the list.
+`writePieceIfAbsent` stores a piece only when nothing is stored yet under that name and index, and it returns `true` when this call is the one that stored it. Sirannon stores its list of chains under a single name with one record per chain, so two nodes that start a chain at the same moment can choose the same index for their records. When each node claims its index through this function, your storage accepts one claim and rejects the other, and Sirannon moves the rejected record to the next index, so both chains stay in the list. Without the function, Sirannon writes the record and then reads it back. That check detects the other node's write unless the other write happens between those two calls, in which case the list loses one of the two chains.
 
-Write it against whichever store you keep the backups in: S3 and R2 take `IfNoneMatch: '*'` and answer 412 where the key exists, Google Cloud Storage takes `ifGenerationMatch: 0`, Azure Blob Storage takes `If-None-Match: *`, and a local filesystem opens the file with the `wx` flag.
+Each store has its own conditional write: S3 and R2 take `IfNoneMatch: '*'` and return status 412 when the key exists, Google Cloud Storage takes `ifGenerationMatch: 0`, Azure Blob Storage takes `If-None-Match: *`, and on a local filesystem you open the file with the `wx` flag.
 
-Sirannon gives every call to your destination ten minutes to return and then fails the run with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot leave a backup running forever. Pass `destinationTimeoutMs` to set a different deadline, which a restore over the server's route applies as well.
+Sirannon allows every call to your destination ten minutes to return, and after that it stops the backup with `BACKUP_DESTINATION_ERROR`, so a storage client that hangs cannot stall a backup indefinitely. Pass `destinationTimeoutMs` to set a different deadline, or zero to remove it. When you set it in the `backups` option, the server's restore route uses the same deadline.
 
 ## How the bytes travel
 
-Sirannon takes one of two routes. `backupCapabilities()` reports which one this process would take:
+Sirannon sends a full copy by one of two routes, and `backupCapabilities()` reports which route this process can use:
 
 ```ts
 const { streamedCopy, localDiskRequired } = db.backupCapabilities()
 ```
 
-The streamed route passes each piece to your destination as SQLite writes it, so a backup needs no local disk. That route uses a compiled SQLite extension that Sirannon publishes as one small package per platform, and your install step fetches only the package for the platform you are on. On a platform with no published binary, Sirannon writes one local file and sends that file on. `localDiskRequired` reads `equal-to-backup` when it does.
+On the streamed route, Sirannon passes each piece to your destination as SQLite writes it, so the backup needs no local disk. That route depends on a compiled SQLite extension, which Sirannon publishes as a separate package for each platform, and the install fetches only the package that matches your platform. On a platform that has no published binary, Sirannon writes a local copy first and then sends that file to your destination in pieces, which is the staged route. `localDiskRequired` is `'equal-to-backup'` on that route, because the local file is the size of the backup.
 
-Node's own SQLite streams from version 23 upwards, and version 22 takes the staged route. better-sqlite3 streams once the operator sets `SQLITE_USE_URI=1` before the module loads:
+With Node's built-in SQLite, Sirannon streams on Node 23 and later, and it takes the staged route on Node 22. With better-sqlite3, Sirannon streams only when you set `SQLITE_USE_URI=1` before the module loads:
 
 ```bash
 SQLITE_USE_URI=1 node server.js
 ```
 
-That variable turns on URI parsing for every file name the process opens. SQLite would then read a database path containing a question mark as a URI, so check the paths your application opens before you set it. Without the variable, `streamedCopy` reads `false` and every run takes the staged route.
+That variable turns on URI parsing for every file name that the process opens. SQLite then reads any database path that begins with `file:` as a URI, so check that none of the paths that your application opens begins with `file:` before you set it. Without the variable, `streamedCopy` is `false`, and every full copy takes the staged route.
 
-One process loads the extension into a single SQLite build, so a streamed run through a second driver fails with an error that says so. The fingerprint costs a read of every piece back from your destination, and `fingerprint: false` skips it.
+A process can load the extension into only one SQLite build, so a streamed backup through a second driver in the same process fails with an error. On the streamed route, Sirannon computes the fingerprint by reading every piece back from your destination, which adds a download of the whole backup, and `fingerprint: false` skips that read.
 
-To stream on a platform Sirannon publishes no binary for, compile the extension yourself and name it:
+To stream on a platform that has no published binary, compile the extension yourself and pass its path to the driver:
 
 ```ts
 const driver = betterSqlite3({ vfsExtensionPath: '/opt/sirannon/sirannonvfs.so' })
@@ -115,9 +115,9 @@ const driver = betterSqlite3({ vfsExtensionPath: '/opt/sirannon/sirannonvfs.so' 
 
 ## Incremental backups
 
-Every backup above copies the whole database, however little of it changed since the last run. On a large database, the cost of that mounts quickly.
+Every backup above copies the whole database, however little of it has changed, so on a large database each copy transfers every byte again.
 
-The `backups` option copies the whole database once, then sends only what changed since the previous run. A 1 TB database that changed by 200 MB in a day uploads 200 MB.
+The `backups` option copies the whole database once and then, on each interval, sends only the changes made since the previous capture. Between two full copies, Sirannon uploads only the pages that your writes changed, so a 1 TB database that writes 200 MB to its log in an hour uploads about 200 MB for that hour.
 
 ```ts
 const db = await sirannon.open('main', './data/main.db', {
@@ -130,29 +130,29 @@ const db = await sirannon.open('main', './data/main.db', {
 })
 ```
 
-`destination` is the same object `backupTo` takes, so a destination you have already written works here unchanged. See [Supplying a destination](#supplying-a-destination).
+`destination` takes the same object as `backupTo`, so a destination that you have already written works here unchanged, as [Supplying a destination](#supplying-a-destination) describes.
 
-Set `intervalMs` to how much work you can afford to lose, in milliseconds. At the default of one minute, a machine you lose takes up to a minute of writes with it.
+Set `intervalMs`, in milliseconds, to the span of writes that you can afford to lose. At the default of one minute, if you lose the machine, you can lose up to a minute of writes with it.
 
 ### What gets stored
 
-Sirannon writes one full copy, then a small file per interval holding the changes after it. Those files belong together: to rebuild the database as of some moment, you need the full copy plus every change file up to that moment, applied in order. That set is a **chain**. Sirannon records which files make up each one, so you never have to work it out from filenames.
+Sirannon writes one full copy and then, on each interval, a change file that holds the writes made since the previous file. To rebuild the database as it stood at some moment, you need the full copy and every change file up to that moment, applied in order. Sirannon calls that set of files a **chain**, and it records which files make up each chain, so you never have to work that out from file names.
 
-Sirannon starts a new chain on a schedule, once a day by default, which `fullCopyIntervalMs` sets. Without that, a chain would grow all year and a restore would have to replay every file in it.
+Sirannon starts a new chain with a fresh full copy once a day by default, and `fullCopyIntervalMs` sets that interval. Without a new chain, one chain would keep growing, and a restore would have to replay every file in it.
 
-Every report states where its file comes in the chain. A change file states the stretch of log it holds in `position`, and a full copy states in `logPosition` where the log had reached when that copy finished. Both carry the two salts SQLite stamps on a log, which identify one run of that log.
+Every report records where its file comes in the chain. For a change file, `position` gives the stretch of the log that the file holds, and for a full copy, `logPosition` gives the point that the log had reached when the copy finished. Both include the two salts that SQLite writes into the log, and SQLite changes that pair each time it restarts the log, so the salts identify one generation of the log.
 
-Sirannon checkpoints the log after each capture, and no checkpoint falls between a full copy and the first change file that extends its chain, so those two come from one run of the log and report the same salts. A checkpoint that empties the log starts a fresh run of it, and the change file taken after that checkpoint reports the later salts. A reader can keep a checkpoint from emptying the log, which leaves the log on the run it was already on, so two consecutive change files may report the same salts. A restore reads the chain by position and needs none of this, so read the salts only where you want to know which run of the log a file came from.
+Sirannon checkpoints the log after each capture, but no checkpoint happens between a full copy and the first change file in its chain, so those two files come from the same generation of the log and report the same salts. A checkpoint that empties the log restarts it, so the change file that Sirannon captures after that checkpoint reports the new salts. An open read can stop a checkpoint from emptying the log, in which case the log stays in the same generation, so two consecutive change files can report the same salts. A restore orders the files by position and ignores the salts, so you need them only when you want to know which generation of the log a file came from.
 
 ### Before you turn it on
 
-While this option is on, Sirannon takes over one piece of SQLite housekeeping: trimming the log file SQLite keeps beside your database. Sirannon trims it immediately after each capture instead, which keeps it small.
+While this option is on, Sirannon turns off SQLite's automatic checkpoint, which empties the write-ahead log file beside your database, and it checkpoints that log itself immediately after each capture, so the log stays small while the cycle keeps up.
 
-Plan for what that costs when it stops. A cycle that fails while your app keeps writing lets the log grow until it fills the disk. A destination that stops accepting writes does that, and so do credentials that expire overnight. `onError` is your only warning, so treat anything arriving there as urgent.
+Plan for the case where the cycle stops. If the cycle keeps failing while your application keeps writing, the log grows until it fills the disk. A destination that starts rejecting writes can cause that, and so can credentials that expire. `onError` delivers each failure as it happens, so treat every error that it receives as urgent.
 
-`maxUncapturedLogBytes` bounds that growth in bytes. Past the figure you set, Sirannon empties the log, reports `BACKUP_CHAIN_BROKEN` through `onError`, and starts a fresh chain with a full copy on the next turn it runs. The writes that log held reach no backup, which is why it defaults to unset. PostgreSQL gives the same choice over the log a replication slot pins, through `max_slot_wal_keep_size`, and it defaults to unlimited too.
+`maxUncapturedLogBytes` sets a limit, in bytes, on that growth. Once the log grows past that limit, Sirannon empties it and reports `BACKUP_CHAIN_BROKEN` through `onError`, and the next turn that can proceed starts a fresh chain with a full copy. The writes that the log held are then in no backup, which is why the option has no default limit. PostgreSQL offers the same choice through `max_slot_wal_keep_size`, which limits the log that a replication slot retains, and its default is unlimited as well.
 
-Sirannon also stages each capture beside your database file before sending it, so leave a little headroom on that volume. `stagingDir` moves it elsewhere.
+Sirannon also stages each capture in a directory beside your database file before it sends the capture, so leave free space on that volume for a capture, or set `stagingDir` to put the staging directory on another volume.
 
 ### Checking on the cycle
 
@@ -162,13 +162,13 @@ await db.backupChain()            // every chain at the destination, newest firs
 db.backupStatus()                 // what the cycle is doing at this moment
 ```
 
-`backupStatus()` answers whenever you ask, so you can read it without having to catch a callback as it fires. It tells you whether a turn is under way, and while one is, its `progress` states the pages the copy has left to move and the bytes that have reached the destination. Once the copy has finished and the pieces are going out, `phase` reads `transfer` and `remainingPages` is zero, so read `bytesWritten` from that point onward. Between turns the status reports `lastRun`, `lastSkip`, and `lastError`, each of them the most recent of its kind. Take the `onProgress` callback in the `backups` option where you want every step, and read this member where you want the figure as it stands.
+You can call `backupStatus()` at any time, so you can check the cycle without having to catch each callback as it fires. Its `running` field shows whether a turn is under way, and during a turn, `progress` gives the pages that the copy still has to move and the bytes that Sirannon has stored at the destination so far. On the staged route, `phase` changes to `'transfer'` once the copy finishes and `remainingPages` stays at zero from then on, so follow `bytesWritten` from that point. On the streamed route, Sirannon sends pieces while the copy is still moving pages, so `'copy'` and `'transfer'` reports alternate, and a `'transfer'` report can still give pages left to move. The status also includes `lastRun`, `lastSkip`, and `lastError`, which hold the most recent turn that wrote something, the most recent skipped turn, and the most recent failure. Pass an `onProgress` callback in the `backups` option when you want every step, and call `backupStatus()` when you want the latest figures.
 
-A failed run records its code, its message, and what the turn was doing. `lastError.chainId` names the chain that turn was extending. `lastError.durationMs` gives the milliseconds from the start of the turn to the failure. `lastError.progress` states the run identifier, along with the pieces and bytes that had already reached your destination before it stopped. That last figure separates a destination that refused the first piece from one that refused the last.
+When a turn fails, `lastError` records the error code, the message, and how far the turn had got. `lastError.chainId` identifies the chain that the turn was extending, and `lastError.durationMs` gives the milliseconds from the start of the turn to the failure. `lastError.progress` gives the run identifier and the number of pieces and bytes that Sirannon had stored at your destination before the failure. From that last figure, you can tell a destination that rejected the first piece from one that rejected the last.
 
 ### Checking a backup is still readable
 
-You would discover that a piece is damaged only once a restore had already begun. Reading the backup back beforehand reports that same damage while your database is still whole:
+Without a check, you would discover a damaged piece only after a restore had begun. `verifyBackup()` reads the backup back ahead of time, so it reports the same damage while your database is still intact:
 
 ```ts
 const chains = await db.backupChain()
@@ -179,13 +179,13 @@ if (fullCopy) {
 }
 ```
 
-Sirannon fetches every piece in order and folds a SHA-256 over the bytes as they arrive, and it then compares that digest and the byte count against the record the backup that wrote them left behind. Only one piece is in memory at any moment, so a check over a terabyte needs no local storage of its own. A missing piece, a byte count that differs from the recorded one, and a digest that differs from the recorded one will each throw `BACKUP_DESTINATION_ERROR`. Where you turned fingerprinting off, the piece listing and the byte count are the whole comparison, and the result reports no digest.
+Sirannon fetches every piece in order and computes a SHA-256 digest over the bytes as it receives them. It then compares that digest and the byte count with the ones that the backup recorded when it wrote the pieces. Sirannon holds one piece in memory at a time and writes none of them to disk, so checking even a terabyte backup needs no local storage. The call fails with `BACKUP_DESTINATION_ERROR` when a piece is missing, when the byte count differs from the recorded one, or when the digest differs from the recorded one. If you turned fingerprinting off, Sirannon compares only the piece listing and the byte count, and the result includes no fingerprint.
 
 ### Backups in a replication group
 
-Every node of a group opens with the same `backups` option. Before a turn of the cycle copies anything, Sirannon works out which node of the group takes its backups. One node finds its own identifier in that answer, while the rest stand down. A failover changes which node answers yes, but it changes no schedule.
+Open every node of a group with the same `backups` option. At the start of each turn, before it copies anything, Sirannon works out which node of the group takes the backups. Every node computes that answer from the same group membership, so one node takes the turn while the others skip it. A failover can change which node takes the backups, but the schedule stays the same.
 
-Give it the coordinator your nodes already fail over through:
+Pass the same coordinator that your nodes use for failover:
 
 ```ts
 import { coordinatorBackupGroup } from '@delali/sirannon-db/replication'
@@ -205,21 +205,21 @@ const db = await sirannon.open('main', './data/main.db', {
 })
 ```
 
-The backups go to a replica by default, which leaves the primary serving writes. `preferredNode: 'primary'` puts them on the primary instead, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to one node you name. A node matching itself against a name it was given asks the coordinator nothing, so a pinned deployment keeps backing up through a coordinator outage.
+By default, a replica takes the backups and leaves the primary to serve writes, and a group with no replica falls back to its primary. `preferredNode: 'primary'` puts the backups on the primary, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to the node that you name. With a pinned node, each node compares its own identifier with that name and makes no call to the coordinator, so a pinned deployment keeps backing up during a coordinator outage.
 
-A node that takes none of the backups keeps no chain of its own, though it still trims its log every turn as though it were capturing. It sends whatever capture it had staged before it lets that chain go, and where the destination refuses that capture it holds the chain, the staged frames, and the log until a later turn can send them. Once a failover brings the backups to it, its first turn copies the whole database and starts a fresh chain. That full copy is unavoidable, because two nodes hold the same rows in physically different files and a chain of change files from one node continues on no other.
+A node that takes none of the backups keeps no chain of its own, although it still checkpoints its log every turn. Before it gives up a chain, it sends any capture that it had staged. If the destination rejects that capture, the node keeps the chain, the staged capture, and the log until a later turn can send them. When a failover moves the backups to this node, its first turn copies the whole database and starts a new chain. Sirannon needs that full copy because each node stores the same rows in a physically different file, so change files captured on one node cannot extend a chain from another.
 
-A node that cannot reach its coordinator holds everything where it is. It captures nothing, trims nothing, and reports the skip, since the frames it has yet to capture are in no backup and a trim would lose them. Watch for those skips: a node partitioned for hours will grow its log for the whole partition. Set `maxUncapturedLogBytes` to bound how far that log grows.
+A node that cannot read its group's membership from the coordinator leaves its chain and its log as they are. It skips the turn without capturing or checkpointing, because the frames that it has yet to capture are in no backup and a checkpoint would discard them. Alert on those skips, because a node that stays cut off from the coordinator keeps growing its log for as long as the partition lasts. Set `maxUncapturedLogBytes` to limit that growth.
 
-`onSkip` receives one report for each turn this node skips. Its `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence you can log as it stands. Each report also carries `uncapturedLogBytes`, the size of the write-ahead log as the node skipped, so alerting on that figure tells you a node is holding its log long before any limit ends its chain. Where a turn fails, Sirannon reports that failure through `onError`. A skipped turn still sends any capture it had staged before it stood down, so the destination can receive a piece on a skipped turn.
+Sirannon calls `onSkip` once for each turn that this node skips. The report's `reason` is `not-preferred`, `group-unavailable`, or `previous-run-active`, and its `message` is a sentence that you can log as it is. The report also gives `uncapturedLogBytes`, the size of the write-ahead log when the node skipped the turn, so an alert on that figure can warn you that a node is holding its log well before `maxUncapturedLogBytes` ends the chain. Sirannon reports a failed turn through `onError`, not through `onSkip`. On a `not-preferred` skip, the node still sends any capture that it had staged before it gives up the chain, so your destination can receive a piece during a skipped turn.
 
-Sirannon reports through `onError` as the cycle starts where you give it a `replicationGroup` and a destination with no `writePieceIfAbsent`, because two of those nodes starting a chain at the same moment would lose one between them. Add the function, or give each node a `chainName` of its own.
+When you give the cycle a `replicationGroup` and a destination without `writePieceIfAbsent`, Sirannon reports a `BACKUP_DESTINATION_ERROR` through `onError` as the cycle starts, because two nodes that start a chain at the same moment could lose one of the two chains. Add the function, or give each node a `chainName` of its own.
 
-A database opened without `replicationGroup` takes every turn, which is the answer a single-node deployment wants. Set one on every node of a group. Two nodes backing up at once write two chains into the same destination, so a restore then has to choose between them.
+A database that you open without `replicationGroup` takes every turn, which suits a single-node deployment. In a group, set it on every node, because otherwise two nodes can back up at once and write two chains to the same destination, and a restore then takes whichever chain has the newest full copy before your moment.
 
 ## Restoring to a moment
 
-Name the moment you want back, and Sirannon rebuilds the database at a path you choose:
+`restoreBackup()` rebuilds the database as it stood at the moment that you name, and it writes the result to a path that you choose:
 
 ```ts
 import { restoreBackup } from '@delali/sirannon-db/backup'
@@ -236,15 +236,15 @@ report.restoresTo      // the moment the rebuilt file reflects
 report.changesApplied  // change files replayed over the full copy
 ```
 
-Sirannon reads the chain records at your destination and takes the newest full copy finished at or before that moment. It then replays every change file captured from that copy up to the same moment, fetching one piece and applying it before it asks for the next. One piece is therefore all a restore holds, whether the database is a gigabyte or a terabyte.
+Sirannon reads the chain records at your destination and takes the newest full copy that finished at or before that moment. It then replays every change file captured after that copy up to the same moment, and it applies each piece before it fetches the next. A restore therefore holds one piece in memory at a time, whatever the size of the database.
 
-Leave `moment` out to reach the newest backup you hold. This call opens no database of its own and needs no registry, which is what lets you run it on a machine that has never seen this database.
+Leave out `moment` to restore to the newest backup at your destination. The call needs no registry and no open database, so you can call it on a machine that has never opened this database.
 
-Sirannon checks each file it fetches against the byte count and the fingerprint its backup recorded. Two kinds of gap fail the call. A chain missing a change file fails with `BACKUP_CHAIN_BROKEN` naming that file, and storage missing one of the numbered pieces a file was stored in fails with `BACKUP_DESTINATION_ERROR` naming that piece.
+Sirannon checks each file that it fetches against the byte count and the fingerprint that its backup recorded. The call also fails on two kinds of gap. When a chain lacks a change file, the call fails with `BACKUP_CHAIN_BROKEN` and names that file, and when your storage lacks one of a file's numbered pieces, it fails with `BACKUP_DESTINATION_ERROR` and names that piece.
 
-Sirannon assembles the rebuilt database beside the path you named and renames it onto that path once the last batch is folded in. A restore that fails, or one the machine kills part-way, therefore leaves that path holding whatever it held before. Where a database already sits at that path, Sirannon folds its write-ahead log back into it before the rename, so a machine that stops the restore between the two steps still leaves that database whole. Where the fold cannot empty that log, because another connection holds the database or SQLite cannot open the file at all, Sirannon removes that database along with its log, so a machine stopping there leaves the path plainly empty rather than quietly short of its last commits.
+Sirannon builds the database in a file beside the path that you named, and it renames that file onto your path once it has applied the last batch. If the restore fails, or the machine stops part-way, your path therefore still holds whatever it held before. If a database already exists at that path, Sirannon checkpoints its write-ahead log into it before the rename, so that database stays whole if the machine stops between the two steps. If the checkpoint cannot empty that log, because another connection has the database open or SQLite cannot open the file at all, Sirannon deletes that database and its log. A machine that stops at that point leaves the path empty, which shows plainly that the restore did not finish.
 
-A database already at that path stops the call, because the rename leaves the rebuilt database there and nothing of the one it replaced. Say `replaceExisting: true` where you mean to restore over a database you no longer want:
+By default, the call fails when a database already exists at that path, because the rename replaces that database completely. Pass `replaceExisting: true` when you mean to restore over a database that you no longer need:
 
 ```ts
 await restoreBackup({
@@ -257,22 +257,22 @@ await restoreBackup({
 
 ### How much disk a restore needs
 
-Work this out before the day you need it:
+Work this figure out before you need to restore:
 
 ```text
 free disk = the finished database + one piece + one batch of change files
 ```
 
-- **The finished database** is the full copy plus everything the change files add to it.
-- **One piece** is the `pieceBytes` the backup used, 16 MiB by default.
-- **One batch** is `batchSize` change files, 16 by default. Sirannon writes one batch into the log beside the database and folds it in with a checkpoint. The log is empty again before the next batch begins, so the length of the chain never enters this figure.
-- **The database you are replacing** counts as well where you pass `replaceExisting`, because Sirannon keeps it where it is until the rebuilt file is renamed over it.
+- **The finished database** is the full copy plus everything that the change files add to it.
+- **One piece** is the `pieceBytes` value that the backup used, which is 16 MiB by default.
+- **One batch** is `batchSize` change files, which is 16 by default. Sirannon writes one batch into the log beside the database and then checkpoints it into the database. The log is empty again before the next batch starts, so the length of the chain has no effect on this figure.
+- **The database that you are replacing** counts as well when you pass `replaceExisting`, because Sirannon leaves it in place until it renames the rebuilt file over it.
 
-Suppose a 200 GB database, backed up in 16 MiB pieces, capturing 40 MB of changes a minute. At the default batch size the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Restoring over the running copy of that same database would need roughly 400.7 GB, since both files sit on the disk until the rename. Lower `batchSize` where disk is tight, and raise it where a long chain spends too long checkpointing. It accepts up to 4096, which at the default capture interval covers close to three days of change pieces, longer than the day a chain lasts before a fresh full copy replaces it.
+Suppose that you back up a 200 GB database in 16 MiB pieces and that Sirannon captures 40 MB of changes from it every minute. At the default batch size, the restore would need 200 GB, plus 16 MiB, plus 640 MB of change files, which comes to roughly 200.7 GB. Restoring over the live copy of that same database would need roughly 400.7 GB, since both files are on the disk until the rename. Lower `batchSize` when disk space is tight, and raise it when a long chain spends too long on checkpoints. The largest value is 4096, which at the default one-minute interval covers close to three days of change files, longer than the one day that a chain lasts by default before a fresh full copy replaces it.
 
 ### Working out what a restore needs
 
-`restoreBackup` selects the files itself, and this call shows you the same selection without fetching anything:
+`restoreBackup` selects the files itself, and `backupRestorePlan()` shows you the same selection without fetching any backup piece:
 
 ```ts
 const plan = await db.backupRestorePlan(Date.parse('2026-08-18T09:00:00Z'))
@@ -282,11 +282,11 @@ plan.changes      // the change files to apply, in order
 plan.restoresTo   // the moment you would actually reach
 ```
 
-`restoresTo` is the last capture at or before the time you asked for, so at a one-minute interval you reach within a minute of it. A moment older than every full copy you still hold fails the call, rather than handing back a plan that could not work.
+`restoresTo` is the time of the last capture at or before the moment that you asked for, so at a one-minute interval the restore reaches a point within a minute of that moment. A moment older than every full copy at your destination fails the call with `BACKUP_CHAIN_BROKEN`, and the error message gives the earliest moment that you can restore.
 
 ## Deleting old backups safely
 
-The newest full copy is not enough on its own, because restoring to any moment after it also needs the change files in between. So ask rather than working it out by hand:
+A restore to a moment after the newest full copy also needs the change files that follow that copy, so ask Sirannon which files are safe to delete:
 
 ```ts
 const stale = await db.backupPiecesSafeToDelete({
@@ -296,14 +296,14 @@ const stale = await db.backupPiecesSafeToDelete({
 for (const record of stale) await myStorage.deleteEveryPieceOf(record.name)
 ```
 
-That call asks for a 30 day window, and returns everything no restore inside it needs. With no argument you get only what is already useless: a chain whose full copy someone removed, and change files stranded after a missing one.
+That call asks to keep a 30-day window, and it returns every record that no restore inside the window needs. Without an argument, it returns only the records that no restore can ever use: the change files of a chain whose full copy is gone, and the change files that follow a gap in a chain.
 
-Each record names one file. Your destination holds that file as the numbered pieces you stored under its name, so deleting a record means deleting every one of them.
+Each record names one file. Your destination stores that file as numbered pieces under its name, so to delete a record, delete every one of those pieces.
 
-Sirannon deletes nothing from your destination; it only tells you what is safe to remove.
+Sirannon lists these records and leaves the deletion to you.
 
-Every `BACKUP_*` code, and the error class it arrives as, is in the [errors guide](errors.md). The normative definition is in [`packages/spec/02-core.md`](../packages/spec/02-core.md#backups).
+The [errors guide](errors.md) lists every `BACKUP_*` code with its error class. The normative definition is in [`packages/spec/02-core.md`](../packages/spec/02-core.md#backups).
 
 ## Reaching backups over the server
 
-An operator can trigger a backup, read its progress, list what the destination stores, check one stored backup, and ask what is safe to delete, all over the routes your server already authenticates. Sirannon also restores a database over those routes, behind a flag that stays off until you turn it on. The [server guide](server.md#backup-routes) lists the routes and what each one answers with.
+An operator can start a backup, read its progress, list the backups at the destination, check one stored backup, and ask which files are safe to delete, all through server routes that your server authenticates like any other route. The server can also restore a database through a route that stays closed until you set `acceptBackupRestore`. The [server guide](server.md#backup-routes) lists the routes and the response from each one.

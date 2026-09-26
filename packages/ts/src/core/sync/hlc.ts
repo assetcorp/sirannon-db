@@ -4,19 +4,16 @@ import type { HLCTimestamp } from './types.js'
 const MAX_LOGICAL = 0xffff
 
 /**
- * Hybrid Logical Clock (HLC) for causal ordering of events across nodes.
+ * Generates hybrid logical clock (HLC) timestamps that order events across nodes.
  *
- * Each timestamp is encoded as `{wallMs hex}-{logical hex}-{nodeId}`, which
- * is directly comparable with string comparison while preserving both
- * wall-clock proximity and causal ordering guarantees. The wall-clock
- * component tracks real time (milliseconds since epoch), the logical counter
- * disambiguates events that occur within the same millisecond, and the nodeId
- * ties the timestamp to its origin.
+ * Each timestamp has the form `{wallMs hex}-{logical hex}-{nodeId}`, so a plain
+ * string comparison orders two timestamps by wall-clock time, then by logical
+ * counter, then by node ID. The wall-clock part holds milliseconds since the
+ * Unix epoch, and the logical counter orders events within one millisecond.
  *
- * Call `now()` before persisting a local write to generate a monotonically
- * increasing timestamp. Call `receive(remote)` when processing a remote
- * change to merge the remote clock into the local state, ensuring the local
- * clock is never behind any observed timestamp.
+ * Call `now()` to stamp a local write with a timestamp higher than every
+ * earlier one from this clock. Call `receive(remote)` for each remote change,
+ * so that the clock moves ahead of every timestamp that it receives.
  *
  * @public
  */
@@ -32,7 +29,7 @@ export class HLC {
   }
 
   /**
-   * Generate a new HLC timestamp, advancing the clock.
+   * Returns a new timestamp and advances the clock.
    *
    * @internal
    */
@@ -53,7 +50,7 @@ export class HLC {
   }
 
   /**
-   * Merge a remote HLC timestamp into the local clock and return the updated value.
+   * Merges a remote timestamp into the clock and returns the new local timestamp.
    *
    * @internal
    */
@@ -80,14 +77,14 @@ export class HLC {
     return HLC.encode(this.wallMs, this.logical, this.nodeId)
   }
 
-  /** Lexicographic comparison of two encoded HLC strings. Returns -1, 0, or 1. */
+  /** Compares two encoded timestamps as strings and returns -1, 0, or 1. */
   static compare(a: string, b: string): number {
     if (a < b) return -1
     if (a > b) return 1
     return 0
   }
 
-  /** Parse an encoded HLC string into its wall-clock, logical, and nodeId components. */
+  /** Parses an encoded timestamp into its wall-clock, logical, and node ID parts. */
   static decode(hlc: string): HLCTimestamp {
     const parts = hlc.split('-')
     if (parts.length < 3) {
@@ -101,11 +98,11 @@ export class HLC {
   }
 
   /**
-   * Builds the string form of a clock reading, which sorts in the same order as the reading itself.
+   * Returns the string form of a clock reading, padded so that string order matches clock order.
    *
-   * @param wallMs - Wall-clock milliseconds since the Unix epoch.
-   * @param logical - Counter that orders events sharing one millisecond.
-   * @param nodeId - Identifier of the node taking the reading.
+   * @param wallMs - The wall-clock milliseconds since the Unix epoch.
+   * @param logical - The counter that orders events within one millisecond.
+   * @param nodeId - The ID of the node that takes the reading.
    * @returns The encoded stamp.
    */
   static encode(wallMs: number, logical: number, nodeId: string): string {

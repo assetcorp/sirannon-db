@@ -6,19 +6,19 @@ export const DEFAULT_RESTART_LIMIT = 3
 export const DEFAULT_STALL_TIMEOUT_MS = 30_000
 export const DEFAULT_NO_PROGRESS_STEP_LIMIT = 256
 
-/** How far a stepped copy has moved, reported after every step.
+/** The progress of a stepped copy, which Sirannon reports after every step.
  * @public
  */
 export interface SteppedCopyProgress {
-  /** Pages the copy has to move in total. */
+  /** The total number of pages to copy. */
   totalPages: number
-  /** Pages the copy has yet to move. */
+  /** The number of pages left to copy. */
   remainingPages: number
-  /** Times the copy has returned to page one. */
+  /** The number of times so far that SQLite restarts the copy from page one. */
   restarts: number
 }
 
-/** How Sirannon runs one stepped copy.
+/** The settings for one stepped copy.
  * @internal
  */
 export interface SteppedCopyOptions {
@@ -32,7 +32,7 @@ export interface SteppedCopyOptions {
   onCopyLeftRunning?: (copy: Promise<unknown>) => void
 }
 
-/** What one finished stepped copy moved.
+/** The page count and restarts of one finished stepped copy.
  * @internal
  */
 export interface SteppedCopyResult {
@@ -76,13 +76,15 @@ function hasRestarted(step: DatabaseCopyStep, previous: DatabaseCopyStep | null)
 }
 
 /**
- * Copies the database behind a connection to a file, one step at a time, and
- * stops when SQLite has returned the copy to page one more often than the
- * limit allows.
+ * Copies the database that a connection has open to a file, one step at a
+ * time. It fails with `BACKUP_RESTARTED` when SQLite restarts the copy from
+ * page one more times than the limit allows, or when too many steps pass
+ * without SQLite copying a new page. It fails with `BACKUP_STALLED` when no
+ * step completes before the stall deadline.
  *
- * @param conn - Connection the copy runs on, which must be the connection that writes.
- * @param options - Destination path, step size, restart limit, and the progress callback.
- * @returns The pages the copy moved and the number of restarts it survived.
+ * @param conn - The writer connection, which SQLite runs the copy on.
+ * @param options - The destination path, step size, limits, and progress callback.
+ * @returns The number of pages that SQLite copies, and the number of times that it restarts the copy from page one.
  */
 export async function copyDatabaseStepwise(
   conn: SQLiteConnection,

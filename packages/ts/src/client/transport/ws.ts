@@ -32,14 +32,13 @@ import { buildResubscribeMessage } from './ws-subscription-state.js'
 const DEFAULT_REQUEST_TIMEOUT = 30_000
 
 /**
- * WebSocket transport for sirannon-db. Connects to
- * `ws(s)://host:port/db/{id}` and supports query, execute, transaction,
- * batch, load, and real-time CDC subscriptions over a single persistent
- * connection.
+ * Sends queries, writes, transactions, batches, bulk loads, and change
+ * subscriptions to sirannon-db over one WebSocket connection to
+ * `ws(s)://host:port/db/{id}`.
  *
- * Connections are established lazily on first use and will
- * auto-reconnect (with subscription restoration) when
- * `autoReconnect` is enabled.
+ * The transport opens the connection on first use. When `autoReconnect` is on
+ * and a subscription or live query is open, it reconnects after a disconnect
+ * and subscribes again; otherwise it reconnects on the next request.
  *
  * @public
  */
@@ -101,19 +100,19 @@ export class WebSocketTransport implements Transport {
     return this.request<ExecuteResponse>(executeFrame(this.nextId(), sql, params))
   }
 
-  /** Sends several statements the server runs in one transaction. */
+  /** Sends several statements that the server executes in one transaction. */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     await this.ensureConnected()
     return this.request<TransactionResponse>(transactionFrame(this.nextId(), statements))
   }
 
-  /** Sends one statement over many parameter sets, which the server runs in one transaction. */
+  /** Sends one statement with many parameter sets, which the server executes in one transaction. */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
     await this.ensureConnected()
     return this.request<BatchResponse>(batchFrame(this.nextId(), sql, paramsBatch, writeConcern))
   }
 
-  /** Sends a bulk load, which the server runs at relaxed durability. */
+  /** Sends a bulk load, which the server executes at relaxed durability. */
   async load(
     sql: string,
     paramsBatch: Params[],
@@ -124,14 +123,14 @@ export class WebSocketTransport implements Transport {
     return this.request<LoadResponse>(loadFrame(this.nextId(), sql, paramsBatch, durability, checkpoint))
   }
 
-  /** Runs a registered read by name and returns its rows. */
+  /** Executes a registered read by name and returns its rows. */
   async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const response = await this.request<QueryResponse>(namedQueryFrame(this.nextId(), name, args, readConcern))
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
-  /** Runs a registered write by name. */
+  /** Executes a registered write by name. */
   async executeNamed(
     name: string,
     args?: Record<string, unknown>,
@@ -141,7 +140,7 @@ export class WebSocketTransport implements Transport {
     return this.request<TransactionResponse>(namedExecuteFrame(this.nextId(), name, args, writeConcern))
   }
 
-  /** Opens a live query on a registered read and delivers its updates to the handlers. */
+  /** Opens a live query on a registered read and passes its updates to the handlers. */
   async liveSubscribe(
     name: string,
     args: Record<string, unknown> | undefined,
@@ -152,7 +151,7 @@ export class WebSocketTransport implements Transport {
     return this.liveQueries.open(this.nextId(), name, args, handlers, registryDigest)
   }
 
-  /** Opens a change subscription on a watched table. */
+  /** Opens a change subscription on a table. */
   async subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
@@ -219,7 +218,7 @@ export class WebSocketTransport implements Transport {
     return this.request<AckResponse>({ type: 'ack', id, deviceId, seq: seq.toString() })
   }
 
-  /** Closes the transport and every subscription running on it. */
+  /** Closes the transport and ends every subscription on it. */
   close(): void {
     this.closed = true
     this.cancelReconnect()

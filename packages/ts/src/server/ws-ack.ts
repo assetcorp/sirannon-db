@@ -1,5 +1,6 @@
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
 import { upsertDeviceAck } from './device-cursors.js'
+import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import { isValidDeviceId } from './sync-protocol.js'
 import type { WSConnection } from './ws-connection.js'
 import type { ConnectionState } from './ws-handler.js'
@@ -12,6 +13,10 @@ export async function handleAckMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
+  if (!deps.acceptDeviceSync) {
+    deps.sendError(conn, id, 'DEVICE_SYNC_NOT_ACCEPTED', DEVICE_SYNC_NOT_ACCEPTED_MESSAGE)
+    return
+  }
   if (!isValidDeviceId(msg.deviceId)) {
     deps.sendError(conn, id, 'INVALID_MESSAGE', '"deviceId" must be a 32-hex device id')
     return

@@ -1,103 +1,104 @@
 import type { SQLiteDriver } from '../driver/types.js'
 import type { BackupDestination } from './destination.js'
 
-/** How many change pieces one batch replays when nobody sets a number.
+/** The number of change pieces in one batch when the caller sets none.
  * @internal
  */
 export const DEFAULT_RESTORE_BATCH_SIZE = 16
 
 /**
- * The most change pieces one batch may replay.
+ * The largest number of change pieces in one batch.
  *
- * A batch is what bounds the log a restore writes beside the database, so an
- * unbounded batch size would put a whole chain into one log and the working
- * space would then scale with the size of the database. At the default capture
- * interval of one minute, this figure covers close to three days of change
- * pieces, which is longer than the day a chain lasts before a fresh full copy
- * replaces it.
+ * The batch size sets the upper limit on the log that a restore writes next to
+ * the database, so without a maximum a whole chain could go into one log, and
+ * the working space would then grow with the size of the database. At the
+ * default capture interval of one minute, this number covers close to three
+ * days of change pieces, which is longer than the one day that a chain lasts
+ * before a new full copy replaces it.
  *
  * @internal
  */
 export const MAX_RESTORE_BATCH_SIZE = 4096
 
-/** How far one restore has got, reported after every piece it fetches.
+/** The progress of one restore, which Sirannon reports after every piece that it fetches and after every batch.
  * @public
  */
 export interface BackupRestoreProgress {
-  /** Whether the restore is fetching the full copy or replaying the change pieces on top of it. */
+  /** Whether Sirannon is fetching the full copy or applying the change pieces on top of it. */
   phase: 'full-copy' | 'changes'
-  /** Pieces the restore has fetched. */
+  /** The number of pieces fetched so far. */
   piecesFetched: number
-  /** Bytes it has fetched. */
+  /** The number of bytes fetched so far. */
   bytesFetched: number
-  /** Change pieces it has replayed. */
+  /** The number of change pieces applied so far. */
   changesApplied: number
-  /** Change pieces the plan holds altogether. */
+  /** The total number of change pieces in the plan. */
   changesTotal: number
 }
 
 /**
- * How Sirannon rebuilds a database from a moment you name.
+ * The settings for rebuilding a database at a moment that you name.
  *
  * @public
  */
 export interface BackupRestoreOptions {
-  /** Where the backups and their records are stored. */
+  /** The destination that holds the backups and their records. */
   destination: BackupDestination
-  /** Driver the restore opens the rebuilt database through, so it can fold each batch of changes in. */
+  /** The driver that Sirannon opens the rebuilt database through, so that it can checkpoint each batch of changes into the file. */
   driver: SQLiteDriver
-  /** Path Sirannon writes the rebuilt database to. A file already there stops the restore unless you set {@link BackupRestoreOptions.replaceExisting}. */
+  /** The path that Sirannon writes the rebuilt database to. A file at that path stops the restore unless you set {@link BackupRestoreOptions.replaceExisting}. */
   destPath: string
   /**
-   * Whether to replace a database already at that path. It defaults to false,
-   * because a restore removes the write-ahead log beside the path it writes to
-   * and any commit that log still held would go with it. Set this where you
-   * mean to restore over a database you no longer want.
+   * Whether to replace a database that already exists at that path. Defaults to
+   * false, because a restore can delete the write-ahead log next to that path,
+   * and with it any commit that the log still holds. Set this when you intend
+   * to restore over a database that you no longer need.
    */
   replaceExisting?: boolean
-  /** Epoch milliseconds you want back. Defaults to now, which reaches the newest backup the destination holds. */
+  /** The moment to restore to, in epoch milliseconds. Defaults to now, which restores the newest backup at the destination. */
   moment?: number
-  /** Name the list of chains is stored under. Defaults to `sirannon-backup-chain`. */
+  /** The name that Sirannon stores the list of chains under. Defaults to `sirannon-backup-chain`. */
   chainName?: string
   /**
-   * How many change pieces to replay between one checkpoint and the next.
-   * Defaults to 16, and 4096 is the most it accepts. This is what bounds the
-   * log the restore writes beside the database, so lower it where disk is tight
-   * and raise it where a long chain takes too many checkpoints.
+   * The number of change pieces to apply between one checkpoint and the next.
+   * Defaults to 16, with a maximum of 4096. This number sets the upper limit on
+   * the log that the restore writes next to the database, so lower it where
+   * disk space is short, and raise it where a long chain needs too many
+   * checkpoints.
    */
   batchSize?: number
-  /** Milliseconds one call to the destination may take before the restore stops with an error. Defaults to 10 minutes, and zero leaves the calls unbounded. */
+  /** The number of milliseconds that one call to the destination can take before Sirannon fails the restore. Defaults to 10 minutes, and zero removes the deadline. */
   destinationTimeoutMs?: number
-  /** Called after every piece the restore fetches. */
+  /** Called after every piece that Sirannon fetches, and after every batch. */
   onProgress?: (progress: BackupRestoreProgress) => void
 }
 
-/** What one finished restore produced.
+/** The report of one finished restore.
  * @public
  */
 export interface BackupRestoreReport {
-  /** The chain the restore read. */
+  /** The chain that Sirannon restores from. */
   chainId: string
-  /** Path of the rebuilt database. */
+  /** The path of the rebuilt database. */
   destPath: string
-  /** Name the full copy underneath it is stored under. */
+  /** The name that Sirannon stores the full copy of the chain under. */
   baseName: string
-  /** Epoch milliseconds the rebuilt database reflects, which is when the last piece replayed was captured. */
+  /** The moment, in epoch milliseconds, that the rebuilt database reflects, which is the capture time of the last change piece applied, or the finish time of the full copy where Sirannon applies none. */
   restoresTo: number
-  /** Pieces the restore fetched, counting the full copy and every change piece. */
+  /** The number of stored pieces that Sirannon fetches, for the full copy and every change piece. */
   pieceCount: number
-  /** Bytes it fetched. */
+  /** The number of bytes that Sirannon fetches. */
   bytesFetched: number
-  /** Change pieces it replayed. */
+  /** The number of change pieces that Sirannon applies. */
   changesApplied: number
-  /** Log frames those pieces held. */
+  /** The number of log frames in those pieces. */
   framesApplied: number
-  /** Batches it replayed them in, each one folded into the database by a checkpoint of its own. */
+  /** The number of batches that Sirannon applies the change pieces in, each with a checkpoint of its own. */
   batchCount: number
-  /** Epoch milliseconds the restore started. */
+  /** The moment, in epoch milliseconds, that the restore started. */
   startedAt: number
-  /** Epoch milliseconds it finished. */
+  /** The moment, in epoch milliseconds, that the restore finished. */
   finishedAt: number
-  /** Milliseconds it took. */
+  /** The length of the restore, in milliseconds. */
   durationMs: number
 }

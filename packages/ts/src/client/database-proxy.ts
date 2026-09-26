@@ -25,12 +25,12 @@ export const READ_CONCERN_UNSUPPORTED_MESSAGE =
  */
 export interface LoadAllOptions {
   /**
-   * Rows per batch sent to the server. Each batch is one request, so it must
-   * fit under the server's `maxBodyBytes`; widen that cap or lower this for
-   * wide rows. Default: 1000.
+   * The number of rows in each batch that the client sends to the server. Each
+   * batch is one request that must fit under the server's `maxBodyBytes`, so for
+   * wide rows, raise that limit or lower this value. Defaults to 1000.
    */
   batchSize?: number
-  /** Durability during the load. Default: 'off'. */
+  /** The writer's durability level during the load. Defaults to 'off'. */
   durability?: BulkLoadDurability
 }
 
@@ -39,16 +39,16 @@ function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is Asy
 }
 
 /**
- * Proxy for a remote sirannon-db database. Mirrors the core
- * `Database` query interface with async methods that send
- * requests to the server via the configured transport.
+ * A handle to one database on a sirannon-db server. Its async methods match
+ * the core `Database` query methods and send each request through the
+ * configured transport.
  *
  * @public
  */
 export class RemoteDatabase {
   constructor(
     /**
-     * Identifier of the database on the server.
+     * The identifier of the database on the server.
      */
     readonly id: string,
     private readonly transport: Transport,
@@ -59,19 +59,19 @@ export class RemoteDatabase {
   /**
    * Sends a read to the server and returns its rows.
    *
-   * @param sql - The statement to run. The server refuses it unless it accepts SQL.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Read concern for this statement.
-   * @returns The rows the server returned.
+   * @param sql - The statement to execute, which the client sends only to a server that accepts SQL.
+   * @param params - The values to bind to the statement, by name or by position.
+   * @param options - The read concern for this statement.
+   * @returns The rows that the server returns.
    */
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>
   /**
-   * Runs a registered read by name and returns its rows.
+   * Executes a registered read by name and returns its rows.
    *
-   * @param operation - Reference to the registered read, which carries its argument and row types.
-   * @param args - Arguments the read takes.
-   * @param options - Read concern for this statement.
-   * @returns The rows the server returned.
+   * @param operation - A reference to the registered read, typed with its arguments and rows.
+   * @param args - The arguments that the read takes.
+   * @param options - The read concern for this statement.
+   * @returns The rows that the server returns.
    */
   async query<Args, Row>(operation: OperationRef<Args, Row>, args: Args, options?: QueryOptions): Promise<Row[]>
   async query(
@@ -102,18 +102,18 @@ export class RemoteDatabase {
   /**
    * Sends one write to the server.
    *
-   * @param sql - The statement to run. The server refuses it unless it accepts SQL.
-   * @param params - Values bound to the statement, named or positional.
+   * @param sql - The statement to execute, which the client sends only to a server that accepts SQL.
+   * @param params - The values to bind to the statement, by name or by position.
    * @returns How many rows changed, and the last inserted row id.
    */
   async execute(sql: string, params?: Params): Promise<ExecuteResponse>
   /**
-   * Runs a registered write by name.
+   * Executes a registered write by name.
    *
-   * @param operation - Reference to the registered write, which carries its argument type.
-   * @param args - Arguments the write takes.
-   * @param writeConcern - Acknowledgements the write waits for.
-   * @returns One result per statement the operation ran.
+   * @param operation - A reference to the registered write, typed with its arguments.
+   * @param args - The arguments that the write takes.
+   * @param writeConcern - The acknowledgements that the server waits for before it confirms the write.
+   * @returns One result for each statement that the operation executes.
    */
   async execute<Args>(
     operation: OperationRef<Args, unknown>,
@@ -138,12 +138,12 @@ export class RemoteDatabase {
   }
 
   /**
-   * Opens a live query on a registered read, which keeps its rows current as the tables behind it change.
+   * Opens a live query on a registered read, and keeps its rows current as rows change in the tables that the read selects from.
    *
-   * @param name - Name of the registered read.
-   * @param args - Arguments the read takes.
-   * @param options - Carries `onError`, which receives a failure of any listener on this query.
-   * @returns The live query, already subscribed.
+   * @param name - The name of the registered read.
+   * @param args - The arguments that the read takes.
+   * @param options - Options with `onError`, which receives the error when any listener on this query fails.
+   * @returns The live query, which is already subscribed.
    */
   async live<T = Record<string, unknown>>(
     name: string,
@@ -151,12 +151,12 @@ export class RemoteDatabase {
     options?: LiveQueryOptions,
   ): Promise<LiveQuery<T>>
   /**
-   * Opens a live query on a registered read, which keeps its rows current as the tables behind it change.
+   * Opens a live query on a registered read, and keeps its rows current as rows change in the tables that the read selects from.
    *
-   * @param operation - Reference to the registered read, which carries its argument and row types.
-   * @param args - Arguments the read takes.
-   * @param options - Carries `onError`, which receives a failure of any listener on this query.
-   * @returns The live query, already subscribed.
+   * @param operation - A reference to the registered read, typed with its arguments and rows.
+   * @param args - The arguments that the read takes.
+   * @param options - Options with `onError`, which receives the error when any listener on this query fails.
+   * @returns The live query, which is already subscribed.
    */
   async live<Args, Row>(
     operation: OperationRef<Args, Row>,
@@ -177,11 +177,11 @@ export class RemoteDatabase {
   }
 
   /**
-   * Execute multiple statements as a single atomic transaction.
-   * Returns an array of results, one per statement.
+   * Executes several statements as one atomic transaction and returns one result
+   * per statement.
    *
-   * The whole list is sent in one request and commits or rolls back as a
-   * unit, so the client is never in the loop between statements.
+   * The client sends the whole list in one request, and the server commits or
+   * rolls it back as a unit, with no round trip between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
     await this.capabilities.assertSqlAccepted()
@@ -190,10 +190,10 @@ export class RemoteDatabase {
   }
 
   /**
-   * Run the same statement once per parameter set as a single atomic
-   * transaction that commits with one fsync. Returns one result per
-   * parameter set, in order. Use this for a burst of same-shape writes
-   * (an import, a bulk insert) that must all commit or all roll back.
+   * Executes the same statement once for each parameter set, in one atomic
+   * transaction that commits with one fsync, and returns one result per
+   * parameter set, in order. Use it for a burst of writes with the same shape,
+   * such as an import or a bulk insert, that must all commit or all roll back.
    */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<ExecuteResponse[]> {
     await this.capabilities.assertSqlAccepted()
@@ -202,16 +202,16 @@ export class RemoteDatabase {
   }
 
   /**
-   * Load a whole dataset through the same statement, batching it into requests
-   * for you and paying the one fsyncing WAL checkpoint once, after the final
-   * batch. The configured durability is restored after every batch, so an
-   * import that stops partway never leaves the writer at the relaxed level.
-   * Prefer this over {@link RemoteDatabase.load} for anything larger than a single request:
-   * it finalises the load itself, so there is no checkpoint flag to forget.
+   * Loads a whole dataset through one statement in requests of `batchSize` rows,
+   * and asks the server to perform the fsyncing WAL checkpoint once, after the final
+   * batch. The server restores the configured durability after every batch, so an
+   * import that stops partway leaves the writer at its configured level. Use this
+   * in place of {@link RemoteDatabase.load} for anything larger than one request,
+   * because it sets the `checkpoint` flag itself.
    *
-   * Accepts a synchronous or asynchronous iterable of parameter sets so that rows
-   * can stream from a file or the network without being held in memory at
-   * once. Returns the total rows loaded and changes applied.
+   * It accepts a synchronous or asynchronous iterable of parameter sets, so rows can
+   * stream from a file or the network while the client holds at most two batches in
+   * memory. It returns the total number of rows loaded and changes applied.
    *
    * ```ts
    * const summary = await db.loadAll(
@@ -271,16 +271,15 @@ export class RemoteDatabase {
   }
 
   /**
-   * Load one batch of rows through the same statement with writer durability
-   * relaxed for the duration, then restored before this resolves. This is the
-   * low-level primitive; prefer {@link RemoteDatabase.loadAll} for a dataset that spans more
-   * than one request, since it finalises the load itself rather than relying on
-   * a `checkpoint` flag.
+   * Loads one batch of rows through one statement, while the server relaxes the
+   * writer's durability for this call and restores it before the call resolves.
+   * For a dataset that spans more than one request, use {@link RemoteDatabase.loadAll},
+   * which sets the `checkpoint` flag itself.
    *
-   * Returns the total rows loaded and changes applied. When splitting a dataset
-   * across many `load` calls by hand, pass `checkpoint: false` on every call
-   * but the last so the one fsyncing WAL checkpoint runs once at the end; the
-   * configured durability is restored after each call regardless.
+   * It returns the total number of rows loaded and changes applied. When you split
+   * a dataset across many `load` calls yourself, pass `checkpoint: false` on every
+   * call except the last, so that the server performs the fsyncing WAL checkpoint once
+   * at the end. The server restores the configured durability after each call.
    */
   async load(
     sql: string,
@@ -293,9 +292,9 @@ export class RemoteDatabase {
   }
 
   /**
-   * Start building a CDC subscription for the given table.
+   * Returns a builder for a change subscription on one table.
    * Chain `.filter()` to narrow the events, then call `.subscribe()`
-   * with a callback to begin receiving real-time change events.
+   * with a callback to start receiving change events.
    *
    * ```ts
    * const sub = await db
@@ -307,18 +306,16 @@ export class RemoteDatabase {
    * sub.unsubscribe()
    * ```
    *
-   * Begins a change subscription on a watched table.
-   *
-   * @param table - Name of the watched table.
-   * @returns A builder you narrow with a filter and then subscribe to.
+   * @param table - The name of the table.
+   * @returns A builder that you narrow with a filter and then subscribe to.
    */
   on(table: string): RemoteSubscriptionBuilder {
     return new RemoteSubscriptionBuilderImpl(table, this.transport)
   }
 
   /**
-   * Close the transport for this database. After calling `close()`,
-   * all pending requests are rejected and new calls will throw.
+   * Closes the transport for this database, so every later call throws.
+   * With the WebSocket transport, it also rejects every pending request.
    */
   close(): void {
     this.transport.close()

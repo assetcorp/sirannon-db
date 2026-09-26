@@ -38,54 +38,54 @@ export type {
 export type { SyncAck, SyncBatch, SyncComplete, SyncPhase, SyncRequest, SyncState } from './sync-types.js'
 
 /**
- * Whether a node accepts writes or serves reads.
+ * Names a node's role: 'primary' accepts writes, and 'replica' serves reads.
  *
  * @public
  */
 export type TopologyRole = 'primary' | 'replica'
 
 /**
- * Which nodes a change flows between, and whether this node writes.
+ * Sets the rules for which peers exchange changes with this node, and whether this node writes.
  *
  * @public
  */
 export interface Topology {
-  /** Whether this node accepts writes or serves reads. */
+  /** Records whether this node is the primary or a replica. */
   role: TopologyRole
-  /** Reports whether this node accepts writes right now. */
+  /** Reports whether this node accepts writes. */
   canWrite(): boolean
   /** Reports whether this node sends its changes to a given peer. */
   shouldReplicateTo(peerId: string, peerRole: TopologyRole): boolean
-  /** Reports whether this node applies changes arriving from a given peer. */
+  /** Reports whether this node applies the changes that a given peer sends. */
   shouldAcceptFrom(peerId: string, peerRole: TopologyRole): boolean
-  /** Reports whether incoming changes can meet a local row and need a resolver. */
+  /** Reports whether an incoming change can conflict with a local write, so that the engine has to resolve it. */
   requiresConflictResolution(): boolean
 }
 
 /**
- * What a transport announces about this node when it connects, and where it dials.
+ * Sets what the transport announces about this node when it connects, and the endpoints that it dials.
  *
  * @public
  */
 export interface TransportConfig {
-  /** Addresses of the peers this node dials. */
+  /** Lists the addresses of the peers that this node dials. */
   endpoints?: string[]
-  /** Role this node announces. A replication engine fills it in on start. */
+  /** Sets the role that this node announces. The replication engine fills it in when it starts. */
   localRole?: TopologyRole
-  /** Replication group this node announces. */
+  /** Sets the replication group that this node announces. */
   groupId?: string
-  /** Primary term this node announces. */
+  /** Sets the primary term that this node announces. */
   primaryTerm?: bigint
-  /** Replication protocol version this node announces. */
+  /** Sets the replication protocol version that this node announces. */
   protocolVersion?: string
-  /** Anything else the transport should announce about this node. */
+  /** Holds any other data for the transport to announce about this node. The bundled transports ignore it. */
   metadata?: Record<string, unknown>
 }
 
 /**
- * Carries change batches, acknowledgements, forwarded writes, and first sync
- * between nodes. Build your own to replicate over something the package does
- * not already speak.
+ * Sends change batches, acknowledgements, forwarded writes, and first-sync
+ * messages between nodes. Implement this interface to replicate over a
+ * protocol other than the bundled gRPC and in-memory transports.
  *
  * @public
  */
@@ -106,15 +106,15 @@ export interface ReplicationTransport {
   requestSync(peerId: string, request: SyncRequest): Promise<void>
   /** Sends one page of first-sync table data. */
   sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void>
-  /** Tells a joining node that first sync has finished, and sends the manifests to verify it. */
+  /** Tells a joining node that first sync is complete, and sends the manifests that the node checks its copy against. */
   sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void>
-  /** Confirms to the source that a joining node stored one first-sync page. */
+  /** Tells the source whether this joining node stored one first-sync page. */
   sendSyncAck(peerId: string, ack: SyncAck): Promise<void>
   /** Registers the handler that applies incoming change batches. */
   onBatchReceived(handler: (batch: ReplicationBatch, fromPeerId: string) => Promise<void>): void
   /** Registers the handler that records incoming acknowledgements. */
   onAckReceived(handler: (ack: ReplicationAck, fromPeerId: string) => void): void
-  /** Registers the handler that runs a write a replica forwarded. */
+  /** Registers the handler that executes a write that a replica forwards. */
   onForwardReceived(
     handler: (request: ForwardedTransaction, fromPeerId: string) => Promise<ForwardedTransactionResult>,
   ): void
@@ -126,190 +126,191 @@ export interface ReplicationTransport {
   onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void
   /** Registers the handler that records first-sync page acknowledgements. */
   onSyncAckReceived(handler: (ack: SyncAck, fromPeerId: string) => void): void
-  /** Registers the handler that runs when a peer connects. */
+  /** Registers the handler that the transport calls when a peer connects. */
   onPeerConnected(handler: (peer: NodeInfo) => void): void
-  /** Registers the handler that runs when a peer disconnects. */
+  /** Registers the handler that the transport calls when a peer disconnects. */
   onPeerDisconnected(handler: (peerId: string) => void): void
-  /** Returns every connected peer, keyed by identifier. */
+  /** Returns every connected peer, keyed by node ID. */
   peers(): ReadonlyMap<string, NodeInfo>
 }
 
 /**
- * Whether this node runs the group's controller loop, and how it holds the lease that grants it.
+ * Configures this node's part in the group's controller loop and the lease that makes a node the controller.
  *
  * @public
  */
 export interface CoordinatorControllerConfig {
-  /** Whether this node stands for the controller lease. */
+  /** Is true when this node competes for the controller lease, which it does by default. */
   enabled?: boolean
-  /** Identifier this node claims the lease under. Defaults to the node identifier. */
+  /** Sets the ID that this node holds the lease under. Defaults to the node ID. */
   holderId?: string
-  /** Milliseconds the lease lasts before it must be renewed. */
+  /** Sets how many milliseconds the lease lasts before the holder has to renew it. */
   leaseTtlMs?: number
-  /** Milliseconds between controller passes. */
+  /** Sets how many milliseconds pass between controller loop ticks. */
   tickIntervalMs?: number
 }
 
 /**
- * Coordinator-backed failover: where group state is stored, which nodes vote, and how this node registers.
+ * Configures coordinator-backed failover: the coordinator that stores group state, the nodes that vote, and how this
+ * node registers.
  *
  * @public
  */
 export interface CoordinatorModeConfig {
-  /** Identifier of the cluster this group belongs to. */
+  /** Identifies the cluster that contains this group. */
   clusterId: string
-  /** Identifier of the replication group. */
+  /** Identifies the replication group. */
   groupId: string
-  /** Address clients reach this node at, which the group publishes to readers. */
+  /** Sets the address that clients use to reach this node, which the coordinator stores with the node's session. */
   endpoint?: string
-  /** Identifiers of the nodes that count towards majority. Automatic failover needs at least three. */
+  /** Lists the nodes that count towards the majority, which the engine uses to create the group when the coordinator has no state for it. Automatic failover requires at least three. */
   votingDataBearingNodeIds?: string[]
-  /** Where primary authority, node sessions, group state, and the in-sync set are stored. */
+  /** Holds the coordinator that stores primary authority, node sessions, group state, and the in-sync set. */
   coordinator: ClusterCoordinator
-  /** Milliseconds this node's session lasts before it must be renewed. */
+  /** Sets how many milliseconds this node's session lasts before the node has to renew it. */
   sessionTtlMs?: number
-  /** Whether this node runs the group's controller loop. */
+  /** Turns this node's controller loop on or off, or configures it. The loop is on by default. */
   controller?: boolean | CoordinatorControllerConfig
-  /** Package and specification versions this node publishes, so the group refuses an incompatible peer. */
+  /** Sets the versions that this node publishes, which the engine also records as the group's requirement when it creates the group. */
   compatibility?: CoordinatorCompatibilityMetadata
 }
 
 /**
- * How one node replicates: its identity, topology, transport, batching, first
- * sync, and coordinator-backed failover.
+ * Configures how one node replicates: its identity, topology, transport,
+ * batching, first sync, and coordinator-backed failover.
  *
  * @public
  */
 export interface ReplicationConfig {
-  /** Identifier of this node. Coordinator mode requires a stable, persisted value. */
+  /** Identifies this node, and defaults to a random ID. Coordinator mode requires one, so keep it the same across restarts. */
   nodeId?: string
-  /** Which nodes a change flows between, and whether this node writes. */
+  /** Sets which peers exchange changes with this node, and whether this node writes. */
   topology: Topology
-  /** Carries batches, acknowledgements, forwarded writes, and first sync between nodes. */
+  /** Sends batches, acknowledgements, forwarded writes, and first-sync messages between nodes. */
   transport: ReplicationTransport
-  /** What the transport announces about this node, and where it dials. */
+  /** Sets what the transport announces about this node, and the endpoints that it dials. */
   transportConfig?: TransportConfig
-  /** Sends a write this node cannot serve to the primary instead of refusing it. */
+  /** Makes a node that cannot accept writes forward `execute` and `executeBatch` calls to the primary. */
   writeForwarding?: boolean
-  /** Resolvers to use for named tables, which override the default. */
+  /** Maps table names to the resolvers that replace the default for those tables. */
   conflictResolvers?: Record<string, ConflictResolver>
-  /** Resolver for every table without one of its own. Default: last-writer-wins. */
+  /** Sets the resolver for every table that has no resolver of its own. Defaults to last-writer-wins. */
   defaultConflictResolver?: ConflictResolver
-  /** Changes sent in one batch. */
+  /** Sets the most changes that one outgoing batch holds. */
   batchSize?: number
-  /** Milliseconds between batches. */
+  /** Sets how many milliseconds the sender loop waits between passes. */
   batchIntervalMs?: number
-  /** Batches allowed in flight to one peer before this node stops sending. */
+  /** Sets how many unacknowledged batches one peer can have before this node pauses sending to it. */
   maxPendingBatches?: number
-  /** Change-log distance beyond which a joining node takes a full copy instead of catching up. */
+  /** Sets the change-log distance beyond which a joining node would take a full copy in place of catching up. The engine ignores this field. */
   snapshotThreshold?: number
-  /** Clock difference, in milliseconds, beyond which this node reports a peer's stamps as suspect. */
+  /** Sets the largest difference, in milliseconds, between this node's clock and the newest timestamp in an incoming batch. This node rejects a batch that exceeds it. */
   maxClockDriftMs?: number
-  /** Changes allowed in one batch, whatever the byte size. */
+  /** Sets the most changes that this node accepts in one incoming batch. This node rejects a larger batch. */
   maxBatchChanges?: number
-  /** Milliseconds this node waits for a batch acknowledgement before it retries. */
+  /** Sets how many milliseconds this node waits for a batch acknowledgement before it resends the batch. */
   ackTimeoutMs?: number
-  /** Runs on the primary before it executes a write a replica forwarded. Throw to refuse it. */
+  /** Receives each forwarded statement on the primary before the primary executes it. Throw to refuse the whole forwarded write. */
   onBeforeForwardedQuery?: (sql: string, params?: unknown[] | Record<string, unknown>) => void
-  /** How far a peer may fall behind before this node reports it. */
+  /** Sets how far a peer can fall behind before this node calls `onLagExceeded`. */
   flowControl?: {
     maxLagSeconds?: number
     onLagExceeded?: (peerId: string, lagMs: number) => void
   }
-  /** Pulls a full copy of the database before serving reads. Default: true. */
+  /** Makes a replica copy the full database from a source peer before it serves reads. Defaults to true. */
   initialSync?: boolean
-  /** Rows sent per first-sync page. */
+  /** Sets how many rows the source sends in each first-sync page. */
   syncBatchSize?: number
-  /** First syncs this node serves at once. */
+  /** Sets how many first syncs this node serves at once. */
   maxConcurrentSyncs?: number
-  /** Milliseconds a first sync may run before this node abandons it. */
+  /** Sets how many milliseconds this node waits for the joiner to acknowledge each first-sync page before it aborts the sync. */
   maxSyncDurationMs?: number
-  /** Change-log distance a joining node may still be behind by and be declared ready. */
+  /** Sets how many change-log positions a joining node can trail its source by when the node marks itself ready. */
   maxSyncLagBeforeReady?: number
-  /** Milliseconds the source waits for a first-sync page acknowledgement. */
+  /** Sets how many milliseconds the source waits for the acknowledgement of one first-sync page. */
   syncAckTimeoutMs?: number
-  /** Milliseconds a joining node may spend catching up before it gives up. */
+  /** Sets how many milliseconds a joining node spends catching up before it marks itself ready anyway. */
   catchUpDeadlineMs?: number
-  /** Change-log position to start from, for a node seeded by copying the database file. */
+  /** Sets the change-log position to start from, for a node that you seed by copying the database file. The engine uses it only when `initialSync` is false. */
   resumeFromSeq?: bigint
-  /** Opens the read-only connection this node streams first-sync data from, so serving a joiner never blocks writes. */
+  /** Opens the read-only connection that this node streams first-sync data from, so that writes continue while the node serves a joiner. */
   snapshotConnectionFactory?: () => Promise<SQLiteConnection>
-  /** Records the local changes this node replicates. */
+  /** Records the local changes that this node replicates. */
   changeTracker?: ChangeTracker
-  /** Turns on coordinator-backed failover and names where group state is stored. */
+  /** Turns on coordinator-backed failover and names the coordinator that stores the group state. */
   coordinator?: CoordinatorModeConfig
 }
 
 /**
- * Where one node stands: its role, its peers, its progress, and its health.
+ * Reports one node's role, peers, progress, and health.
  *
  * @public
  */
 export interface ReplicationStatus {
-  /** Identifier of this node. */
+  /** Identifies this node. */
   nodeId: string
-  /** Whether this node accepts writes or serves reads. */
+  /** Records whether this node is the primary or a replica. */
   role: TopologyRole
-  /** Where each peer stands from this node's point of view. */
+  /** Describes each peer's progress, as this node tracks it. */
   peers: PeerState[]
-  /** Highest change-log position this node has sent. */
+  /** Holds this node's local change-log position as of the sender loop's last pass. */
   localSeq: bigint
-  /** Whether the engine is running. */
+  /** Is true between the engine's `start` and `stop` calls. */
   replicating: boolean
-  /** What this node can do right now, and the condition behind it. */
+  /** Reports what this node can do at the moment, and the reason. */
   health: NodeHealth
-  /** Where this node stands in first sync. */
+  /** Describes this node's progress through first sync. */
   syncState?: SyncState
-  /** Group state as this node last read it from the coordinator. */
+  /** Holds the group state that this node last read from the coordinator. */
   coordinator?: CoordinatorRuntimeStatus
 }
 
 /**
- * Group state as one node last read it from the cluster coordinator.
+ * Holds the group state that one node last read from the cluster coordinator.
  *
  * @public
  */
 export interface CoordinatorRuntimeStatus {
-  /** Identifier of the cluster. */
+  /** Identifies the cluster. */
   clusterId: string
-  /** Identifier of the replication group. */
+  /** Identifies the replication group. */
   groupId: string
-  /** The primary the group currently names. */
+  /** Identifies the group's current primary. */
   currentPrimary: ReplicationGroupState['currentPrimary']
-  /** Term that primary holds. */
+  /** Holds the current primary's term. */
   primaryTerm: bigint
-  /** Nodes the group counts as in sync. */
+  /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]
-  /** Nodes being taken out of service. */
+  /** Lists the draining nodes, which are leaving service. */
   drainingNodeIds: string[]
-  /** Nodes being rebuilt. */
+  /** Lists the repairing nodes, which are rebuilding their copy of the data. */
   repairingNodeIds: string[]
-  /** Nodes the group has quarantined. */
+  /** Lists the faulted nodes, which stay out of service until an `updateNodeMaintenance` call clears the flag. */
   faultedNodeIds: string[]
-  /** Nodes that count towards majority. */
+  /** Lists the nodes that count towards the majority. */
   votingDataBearingNodeIds: string[]
-  /** These are the nodes that hold a live session with the coordinator, and this field is present only while the reporting node can see those sessions. */
+  /** Lists the nodes that hold a live session with the coordinator. The field is present only while this node is connected to the coordinator and the coordinator supports session watches. */
   liveNodeIds?: string[]
-  /** Whether this node holds write authority for the current term. */
+  /** Is true when the group state names this node as the current primary. */
   authority: boolean
-  /** Whether this node reaches the coordinator. */
+  /** Is true when this node heard from the coordinator within the last session TTL. */
   connected: boolean
-  /** Whether this node runs the group's controller loop. */
+  /** Names the state of this node's controller loop: 'disabled', 'standby' while it waits for the lease, 'active' while it holds the lease, or 'lost' after a failed renewal or a controller failure. */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost'
 }
 
 /**
- * A replication failure, delivered to listeners of the engine's `replication-error` event.
+ * Describes a replication failure, which the engine emits as its `replication-error` event.
  *
  * @public
  */
 export interface ReplicationErrorEvent {
-  /** The failure itself. */
+  /** Holds the error. */
   error: Error
-  /** What the engine was doing when it failed. */
+  /** Names the operation that failed. */
   operation: string
-  /** Peer the operation involved, when it involved one. */
+  /** Identifies the peer that the operation involved, if any. */
   peerId?: string
-  /** Whether the engine carries on after this failure. */
+  /** Is true when the engine keeps working after this failure. */
   recoverable: boolean
 }

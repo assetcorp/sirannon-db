@@ -13,37 +13,40 @@ import type {
  */
 export interface SubscribeOptions {
   /**
-   * Receives the failure of a change callback, and the error raised by a change frame the
-   * client cannot decode. The subscription never waits for what the callback returns, so a
-   * throw and a rejection both arrive here. Sirannon drops whatever this reporter itself throws.
+   * Receives the error when the change callback, `onReset`, or `onSubscribed` throws or
+   * rejects, and the error for a change frame that the client cannot decode. The subscription
+   * does not await a callback, so this handler receives both a throw and a rejection.
+   * Sirannon discards any error that this handler throws itself.
    */
   onError?: (error: Error) => void
   /**
-   * Invoked when a reconnect cannot replay missed changes because they fell
-   * outside the server's retained history. The subscription continues live
-   * from the current moment; treat any prior state as stale and re-read.
+   * Called when the server answers a subscribe with `resync: true` and skips the replay,
+   * because the changes after the resume point are older than the history that it
+   * retains, the resume cursor comes from another change-log epoch, or its replay fails.
+   * The subscription continues from the server's current position, so treat any earlier
+   * state as stale and read it again.
    */
   onReset?: () => void
-  /** Identity of the device this subscription belongs to, which the server uses to withhold that device's own writes. */
+  /** The identifier of the device that opens this subscription, so that the server can leave that device's own writes out of the stream. */
   deviceId?: string
-  /** Tables one subscription covers, so a transaction spanning them arrives as one ascending stream. */
+  /** The tables that one subscription covers, so the client receives a transaction that spans them as one stream in ascending order. */
   tables?: readonly string[]
-  /** Highest migration version this device has applied, which the server gates the subscription on. */
+  /** The highest migration version in the device's local database, which the server checks before it accepts the subscription. */
   schemaVersion?: number
-  /** Returns the sequence to resume from, read afresh on each reconnect so a durable cursor stays current. */
+  /** Returns the sequence to resume from; the transport calls it again on each reconnect, so that the resume point matches the durable cursor. */
   getResumeSeq?: () => bigint | undefined
-  /** Sequence to resume after on the first subscribe. Where it is absent, the subscription starts live from now. */
+  /** The sequence after which the first subscribe resumes. When it is absent, the subscription starts from the server's current position. */
   sinceSeq?: bigint
-  /** Change-log epoch the resume cursor belongs to, so a cursor from another database file forces a resync. */
+  /** The change-log epoch of the resume cursor, so that the server answers with a resync when the cursor comes from another database file. */
   epoch?: string
   /**
-   * Declares that this device stages pulled changes durably and
-   * acknowledges staged sequences so that the server may pack several events
-   * per frame and pace the delivery window continuously. Send only to a
-   * server that announces the `sync.staged-stream` capability.
+   * Set to true when this device stages pulled changes durably and
+   * acknowledges staged sequences, so that the server can pack several events
+   * into each frame and pace the delivery window continuously. Set it only for
+   * a server that announces the `sync.staged-stream` capability.
    */
   stagedStream?: boolean
-  /** Receives what the server confirmed on subscribe: the baseline sequence, the epoch, whether a resync is due, and the delivery window. */
+  /** Receives the values that the server confirms on subscribe, which are the baseline sequence, the epoch, whether a resync is due, and the delivery window. */
   onSubscribed?: (info: {
     seq: bigint | undefined
     epoch: string | undefined
@@ -53,7 +56,7 @@ export interface SubscribeOptions {
 }
 
 /**
- * Callbacks a transport delivers a live query's updates through.
+ * The callbacks through which a transport passes a live query's updates.
  *
  * @public
  */
@@ -69,57 +72,57 @@ export interface LiveHandlers<T = Record<string, unknown>> {
 }
 
 /**
- * Reads the digest of the server's operation registry so that a client notices when
- * the registered operations behind a live query change.
+ * Returns the digest of the server's operation registry, so that the client can detect
+ * a change to the registered operations that a live query uses.
  *
  * @public
  */
 export type RegistryDigestSource = (refresh: boolean) => Promise<string | undefined>
 
 /**
- * Transport layer for communicating with a sirannon-db server.
- * Each transport instance is bound to a specific database.
+ * The connection through which a client sends requests to a sirannon-db server.
+ * Each transport sends requests for one database.
  *
  * @public
  */
 export interface Transport {
   /**
-   * Whether a read concern passed to {@link Transport.query} or
-   * {@link Transport.queryNamed} reaches the server. Topology routing applies
-   * the client-wide setting when it chooses a node, so it leaves this unset and
-   * a caller asking for a per-read concern is refused rather than served a read
-   * at another level.
+   * Whether the transport sends a read concern passed to {@link Transport.query} or
+   * {@link Transport.queryNamed} to the server. Topology routing applies the
+   * client-wide setting when it chooses a node, so it leaves this unset, and the
+   * client throws for a per-read concern, so that it sends a read only at the
+   * level that the caller asked for.
    */
   readonly carriesReadConcern?: boolean
   /** Sends a read and returns its rows. */
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
   /** Sends one write. */
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
-  /** Sends several statements the server runs in one transaction. */
+  /** Sends several statements that the server executes in one transaction. */
   transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse>
-  /** Sends one statement over many parameter sets, which the server runs in one transaction. */
+  /** Sends one statement with many parameter sets, which the server executes in one transaction. */
   batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
-  /** Sends a bulk load, which the server runs at relaxed durability. */
+  /** Sends a bulk load, which the server executes at relaxed durability. */
   load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>
-  /** Runs a registered read by name and returns its rows. */
+  /** Executes a registered read by name and returns its rows. */
   queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>
-  /** Runs a registered write by name. */
+  /** Executes a registered write by name. */
   executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>
-  /** Opens a live query on a registered read and delivers its updates to the handlers. */
+  /** Opens a live query on a registered read and passes its updates to the handlers. */
   liveSubscribe(
     name: string,
     args: Record<string, unknown> | undefined,
     handlers: LiveHandlers,
     registryDigest?: RegistryDigestSource,
   ): Promise<RemoteSubscription>
-  /** Opens a change subscription on a watched table. */
+  /** Opens a change subscription on a table. */
   subscribe(
     table: string,
     filter: Record<string, unknown> | undefined,
     callback: (event: ChangeEvent) => void,
     options?: SubscribeOptions,
   ): Promise<RemoteSubscription>
-  /** Closes the transport and every subscription running on it. */
+  /** Closes the transport and ends every subscription on it. */
   close(): void
 }
 
@@ -138,29 +141,29 @@ export interface RemoteSubscriptionBuilder {
   /**
    * Narrows the subscription to rows whose columns equal the given values.
    *
-   * The filter reports membership of the matching set, so an update that moves a row
-   * into the set arrives as an insert carrying no `oldRow`, and one that moves a row
-   * out arrives as a delete carrying the old row and an empty `row`. An update that
-   * leaves the row in the set arrives unchanged, and one that never touches the set
-   * is not delivered. A synthesised event is indistinguishable from a real insert or
-   * delete, so read `type` as the row's arrival or departure from the filter.
+   * The subscription reports changes to the set of matching rows. When an update moves
+   * a row into the set, your callback receives an insert with no `oldRow`, and when an
+   * update moves a row out, it receives a delete with the old row in `oldRow` and an
+   * empty `row`. It receives an update that keeps the row in the set as an ordinary
+   * update, and nothing for an update outside the set. These insert and delete events look the
+   * same as real ones, so read `type` as the row entering or leaving the set.
    *
-   * The subscriber chooses this filter, so it decides how much the server delivers,
-   * and an operator who needs to bound what a caller may read does that in the
-   * `authenticate` hook.
+   * The subscriber sets this filter, so the subscriber controls which changes the server sends. An
+   * operator who needs to limit which rows a caller can subscribe to checks the table
+   * and the filter in an `onBeforeSubscribe` hook.
    */
   filter(conditions: Record<string, unknown>): RemoteSubscriptionBuilder
   /**
-   * Starts the subscription and calls back on each change.
+   * Starts the subscription and calls your callback with each change.
    *
-   * The subscription never waits for what your callback returns, so two calls to an
-   * asynchronous callback can overlap. Chain the work onto one promise where each change
-   * has to finish before the next one starts. A throw, and a rejection of what the callback
-   * returns, both reach `options.onError`.
+   * The subscription does not await your callback, so two calls to an asynchronous
+   * callback can overlap. When each change has to finish before the next one starts,
+   * chain the work onto one promise. `options.onError` receives both a throw and a
+   * rejection from the callback.
    *
-   * @typeParam T - Shape of the rows this table holds, which types `row` and `oldRow`.
-   * @param callback - Receives each change this subscription matches.
-   * @param options - Carries `onError` and the device-sync fields.
+   * @typeParam T - The shape of this table's rows, which sets the type of `row` and `oldRow`.
+   * @param callback - Receives each change that matches this subscription.
+   * @param options - The `onError` handler and the device-sync fields.
    * @returns A handle whose `unsubscribe` ends the subscription.
    */
   subscribe<T = Record<string, unknown>>(
@@ -170,13 +173,14 @@ export interface RemoteSubscriptionBuilder {
 }
 
 /**
- * Error originating from a remote sirannon-db server.
- * Carries the machine-readable error code from the server's error response.
+ * An error from a sirannon-db server, or from the client when it cannot complete a request.
+ * Its `code` holds the machine-readable code from the server's error response, or a code
+ * that the client sets, such as `TIMEOUT` or `CONNECTION_ERROR`.
  *
  * @public
  */
 export class RemoteError extends Error {
-  /** Machine-readable code the server sent with the error. */
+  /** The machine-readable error code, from the server's error response or from the client. */
   readonly code: string
 
   constructor(code: string, message: string) {

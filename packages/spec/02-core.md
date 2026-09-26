@@ -381,8 +381,9 @@ Hooks registered on the registry apply to every database and run before database
 | `databaseClose` | `{ databaseId, path }` | After a database closes | No |
 | `beforeSubscribe` | `{ databaseId, table, filter?, identity?, deviceId? }` | Before a served subscription starts | Yes |
 | `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
+| `beforePush` | `{ databaseId, table, deviceId, identity? }` | Before a server writes a pushed device batch, once per table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe hook and a snapshot hook may each return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe or a snapshot hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
+A before-hook that throws aborts the operation, and its error propagates to the caller. Query and connection hooks run synchronously; a hook that returns a promise fails. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 

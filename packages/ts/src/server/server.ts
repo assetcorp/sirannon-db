@@ -23,11 +23,11 @@ import {
   handleBackupTrigger,
   handleBackupVerify,
 } from './http-backups.js'
-import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import { handleChanges } from './http-changes.js'
+import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE, SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import {
   handleBatch,
-  handleChanges,
   handleClusterStatus,
   handleExecute,
   handleLoad,
@@ -39,7 +39,12 @@ import { handleMigrationList } from './http-migrations.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { handleOperationExecute, handleOperationQuery } from './http-operations.js'
 import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
-import { assertBackupRestoreAuthenticated, resolveMaxBodyBytes, resolveWsBackpressure } from './limits.js'
+import {
+  assertBackupRestoreAuthenticated,
+  assertDeviceSyncAuthenticated,
+  resolveMaxBodyBytes,
+  resolveWsBackpressure,
+} from './limits.js'
 import { operationRegistryDigest } from './operation-lookup.js'
 import { type OperationRouteDeps, wrapOperationRoute } from './operation-route.js'
 import { loadUWebSockets, type UWebSockets } from './uws-loader.js'
@@ -53,8 +58,19 @@ interface ServerRuntime {
   app: TemplatedApp
 }
 
+const DEVICE_SYNC_ROUTES = [
+  '/db/:id/changes',
+  '/db/:id/migrations',
+  '/db/:id/snapshot',
+  '/db/:id/snapshot/page',
+] as const
+
 function refuseSql(res: HttpResponse): void {
   sendError(res, 403, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
+}
+
+function refuseDeviceSync(res: HttpResponse): void {
+  sendError(res, 403, 'DEVICE_SYNC_NOT_ACCEPTED', DEVICE_SYNC_NOT_ACCEPTED_MESSAGE)
 }
 
 /**
@@ -74,6 +90,7 @@ export class SirannonServer<Identity = unknown> {
   private readonly authenticateHook: AuthenticateHook<Identity> | undefined
   private readonly acceptSql: boolean
   private readonly acceptBackupRestore: boolean
+  private readonly acceptDeviceSync: boolean
   private readonly restoreRuns = new BackupRestoreRuns()
   private readonly operations: OperationRegistry<Identity> | undefined
   private readonly registryDigest: string | undefined
@@ -95,6 +112,8 @@ export class SirannonServer<Identity = unknown> {
     this.acceptSql = options?.acceptSql === true
     this.acceptBackupRestore = options?.acceptBackupRestore === true
     assertBackupRestoreAuthenticated(this.acceptBackupRestore, this.authenticateHook !== undefined)
+    this.acceptDeviceSync = options?.acceptDeviceSync === true
+    assertDeviceSyncAuthenticated(this.acceptDeviceSync, this.authenticateHook !== undefined)
     this.operations = options?.operations
     this.registryDigest = operationRegistryDigest(options?.operations)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
@@ -112,15 +131,16 @@ export class SirannonServer<Identity = unknown> {
       maxChangesHeldForDevice: options?.maxChangesHeldForDevice,
       maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,
       acceptSql: this.acceptSql,
+      acceptDeviceSync: this.acceptDeviceSync,
       operations: options?.operations,
     })
   }
 
   /**
-   * Loads uWebSockets.js, binds the configured host and port, and starts serving.
+   * Loads uWebSockets.js and starts serving on the configured host and port.
    *
    * @throws A `SirannonError` with code `SERVER_DEPENDENCY_MISSING` when this process cannot load uWebSockets.js.
-   * @throws When the port is already in use.
+   * @throws An `Error` when uWebSockets.js cannot listen on the host and port, for example because the port is already in use.
    */
   async listen(): Promise<void> {
     const { app } = await this.loadRuntime()
@@ -137,7 +157,7 @@ export class SirannonServer<Identity = unknown> {
   }
 
   /**
-   * Stops serving and closes every open connection.
+   * Stops listening for new connections and closes every open WebSocket connection.
    */
   async close(): Promise<void> {
     try {
@@ -151,7 +171,7 @@ export class SirannonServer<Identity = unknown> {
   }
 
   /**
-   * Port the server bound to, which is the resolved port when you asked for 0.
+   * The port that the server listens on, which the operating system chooses when you set `port` to 0, or -1 while the server is not listening.
    */
   get listeningPort(): number {
     if (!this.listenSocket || !this.runtime) return -1
@@ -196,7 +216,13 @@ export class SirannonServer<Identity = unknown> {
 
     app.get(
       '/capabilities',
-      this.withCors(handleCapabilities({ registryDigest: this.registryDigest, acceptSql: this.acceptSql })),
+      this.withCors(
+        handleCapabilities({
+          registryDigest: this.registryDigest,
+          acceptSql: this.acceptSql,
+          acceptDeviceSync: this.acceptDeviceSync,
+        }),
+      ),
     )
     app.get('/health', this.withCors(handleLiveness()))
     app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
@@ -228,10 +254,16 @@ export class SirannonServer<Identity = unknown> {
 
     this.registerBackupRoutes(app)
 
-    app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
-    app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
-    app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
-    app.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
+    if (this.acceptDeviceSync) {
+      app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
+      app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
+      app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
+      app.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
+    } else {
+      for (const route of DEVICE_SYNC_ROUTES) {
+        app.post(route, this.withCors(refuseDeviceSync))
+      }
+    }
 
     registerWebSocketRoute({
       app,
@@ -293,11 +325,11 @@ export class SirannonServer<Identity = unknown> {
 }
 
 /**
- * Builds a server over a database registry.
+ * Builds a server that exposes the databases of one registry.
  *
  * @param sirannon - The registry whose databases the server exposes.
  * @param options - Address, cross-origin rules, size limits, authentication, registered operations, and whether the server accepts SQL.
- * @returns The server, ready to listen.
+ * @returns The server, which starts serving when you call {@link SirannonServer.listen}.
  *
  * @public
  */

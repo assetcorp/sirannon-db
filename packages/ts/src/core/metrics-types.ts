@@ -1,61 +1,61 @@
 import type { ChangeOperation } from './query-types.js'
 
-/** Metrics emitted after a query completes.
+/** The metrics that Sirannon reports after each statement finishes.
  * @public
  */
 export interface QueryMetrics {
-  /** Identifier of the database the statement ran against. */
+  /** The identifier of the database that the statement executed against. */
   databaseId: string
-  /** The statement that ran. */
+  /** The statement that executed. */
   sql: string
-  /** How long the statement took, in milliseconds. */
+  /** The statement's duration, in milliseconds. */
   durationMs: number
-  /** Number of rows a read returned. */
+  /** The number of rows that a read returned. */
   rowsReturned?: number
-  /** Number of rows a write changed. */
+  /** The number of rows that a write changed. */
   changes?: number
-  /** Set when the statement threw. */
+  /** True when the statement threw. */
   error?: boolean
 }
 
-/** Metrics emitted when a connection opens or closes.
+/** The metrics that Sirannon reports when the registry opens or closes a database.
  * @public
  */
 export interface ConnectionMetrics {
-  /** Identifier of the database whose connection opened or closed. */
+  /** The identifier of the database that the registry opened or closed. */
   databaseId: string
-  /** File path of the SQLite database. */
+  /** The file path of the SQLite database. */
   path: string
-  /** Number of read connections the pool holds. */
+  /** The number of read connections in the database's pool, which is 0 on close. */
   readerCount: number
-  /** Whether the connection opened or closed. */
+  /** Whether the registry opened or closed the database. */
   event: 'open' | 'close'
 }
 
-/** Metrics emitted when a CDC event is dispatched.
+/** The metrics for one change event and its delivery to subscribers.
  * @public
  */
 export interface CDCMetrics {
-  /** Identifier of the database the change came from. */
+  /** The identifier of the database that the change comes from. */
   databaseId: string
-  /** Table the changed row belongs to. */
+  /** The table that contains the changed row. */
   table: string
-  /** Whether the row was inserted, updated, or deleted. */
+  /** Whether the change inserted, updated, or deleted the row. */
   operation: ChangeOperation
-  /** Number of subscribers the event reached. */
+  /** The number of subscribers that Sirannon delivered the event to. */
   subscriberCount: number
 }
 
-/** Callbacks for metrics collection.
+/** The callbacks that receive Sirannon's metrics.
  * @public
  */
 export interface MetricsConfig {
-  /** Called once each statement finishes, whether it succeeded or threw. */
+  /** Sirannon calls this once each statement finishes, whether the statement succeeded or threw. */
   onQueryComplete?: (metrics: QueryMetrics) => void
-  /** Called when a database connection opens. */
+  /** Sirannon calls this when the registry opens a database. */
   onConnectionOpen?: (metrics: ConnectionMetrics) => void
-  /** Called when a database connection closes. */
+  /** Sirannon calls this when the registry closes a database. */
   onConnectionClose?: (metrics: ConnectionMetrics) => void
-  /** Called each time a change event reaches its subscribers. */
+  /** The callback for each change event that Sirannon delivers to subscribers. */
   onCDCEvent?: (metrics: CDCMetrics) => void
 }

@@ -1,8 +1,8 @@
 /**
- * The interval on which one backup cycle takes its turns.
+ * The timer that starts each turn of one backup cycle.
  *
- * The timer unreferences its handle where the runtime allows that, so a
- * repeating cycle never keeps a process alive on its own.
+ * The timer unreferences its handle where the runtime supports that, so that a
+ * process can exit while the timer is still set.
  *
  * @internal
  */
@@ -10,10 +10,10 @@ export class BackupCycleTimer {
   private handle: ReturnType<typeof setInterval> | null = null
 
   /**
-   * Starts repeating. At an interval of zero or less the cycle takes a turn
-   * only when somebody asks it to.
+   * Starts the timer. At an interval of zero or less, the timer stays off and
+   * the cycle takes a turn only when a caller requests one.
    *
-   * @param intervalMs - Milliseconds between one turn and the next.
+   * @param intervalMs - The number of milliseconds between one turn and the next.
    * @param tick - Called on every interval.
    */
   arm(intervalMs: number, tick: () => void): void {
@@ -23,7 +23,7 @@ export class BackupCycleTimer {
     this.handle.unref?.()
   }
 
-  /** Stops repeating. */
+  /** Stops the timer. */
   disarm(): void {
     if (!this.handle) return
     clearInterval(this.handle)
@@ -32,11 +32,12 @@ export class BackupCycleTimer {
 }
 
 /**
- * Takes one turn at a time, in the order the callers asked for them.
+ * Runs one turn at a time, in the order that callers request them.
  *
- * A turn acquires the writer, reads the log, and then checkpoints it. Two turns
- * overlapping would let one of them checkpoint frames the other had yet to
- * read, so every entry point into a cycle passes through here.
+ * In a turn, Sirannon acquires the writer, reads the log, and then checkpoints
+ * it. If two turns overlapped, one of them could checkpoint frames that the
+ * other had yet to read, so every entry point into a cycle goes through this
+ * queue.
  *
  * @internal
  */
@@ -44,10 +45,10 @@ export class SerialTurns {
   private inFlight: Promise<unknown> = Promise.resolve()
 
   /**
-   * Starts an operation once every turn asked for before it has settled.
+   * Starts an operation once every turn requested before it settles.
    *
    * @param op - The turn to take.
-   * @returns Whatever that turn produced.
+   * @returns The result of that turn.
    */
   run<T>(op: () => Promise<T>): Promise<T> {
     const turn = this.inFlight.then(op, op)

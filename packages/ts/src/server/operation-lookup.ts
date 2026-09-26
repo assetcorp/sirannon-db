@@ -18,6 +18,11 @@ export interface OperationRefusal {
 
 export type ArgumentResolution = { ok: true; value: OperationArguments } | { ok: false; refusal: OperationRefusal }
 
+export interface OperationSets<I> {
+  registry: OperationRegistry<I> | undefined
+  shared: DatabaseOperations<I> | undefined
+}
+
 function unknownOperation(name: string, databaseId: string): OperationRefusal {
   return {
     status: 404,
@@ -32,20 +37,20 @@ function ownEntry<T>(group: Readonly<Record<string, T>> | undefined, key: string
 }
 
 export function findRead<I>(
-  registry: OperationRegistry<I> | undefined,
+  sets: OperationSets<I>,
   databaseId: string,
   name: string,
 ): ReadOperation<I> | OperationRefusal {
-  const operation = ownEntry(ownEntry(registry, databaseId)?.reads, name)
+  const operation = ownEntry(ownEntry(sets.registry, databaseId)?.reads, name) ?? ownEntry(sets.shared?.reads, name)
   return operation ?? unknownOperation(name, databaseId)
 }
 
 export function findWrite<I>(
-  registry: OperationRegistry<I> | undefined,
+  sets: OperationSets<I>,
   databaseId: string,
   name: string,
 ): WriteOperation<I> | OperationRefusal {
-  const operation = ownEntry(ownEntry(registry, databaseId)?.writes, name)
+  const operation = ownEntry(ownEntry(sets.registry, databaseId)?.writes, name) ?? ownEntry(sets.shared?.writes, name)
   return operation ?? unknownOperation(name, databaseId)
 }
 
@@ -131,11 +136,15 @@ export interface OperationSource {
   ): ResolvedOperation
 }
 
-export function createOperationSource<I>(registry: OperationRegistry<I> | undefined): OperationSource {
+export function createOperationSource<I>(
+  registry: OperationRegistry<I> | undefined,
+  shared: DatabaseOperations<I> | undefined,
+): OperationSource {
+  const sets: OperationSets<I> = { registry, shared }
   return {
-    digest: operationRegistryDigest(registry),
+    digest: operationRegistryDigest(sets.registry, sets.shared),
     resolve: (kind, databaseId, name, supplied, identity) => {
-      const operation = kind === 'read' ? findRead(registry, databaseId, name) : findWrite(registry, databaseId, name)
+      const operation = kind === 'read' ? findRead(sets, databaseId, name) : findWrite(sets, databaseId, name)
       if (isRefusal(operation)) return { ok: false, refusal: operation }
 
       const args = resolveArguments<I>(operation, supplied, identity as I | undefined)
@@ -166,20 +175,31 @@ function operationLine(databaseId: string, kind: string, name: string, operation
   return [databaseId, kind, name, declared.join(','), identityFields.join(',')].join(DIGEST_FIELD_SEPARATOR)
 }
 
-export function operationRegistryDigest<I>(registry: OperationRegistry<I> | undefined): string | undefined {
-  if (registry === undefined) return undefined
+function databaseLines<I>(databaseId: string, operations: DatabaseOperations<I>, kindPrefix: string): string[] {
+  const lines: string[] = []
+  for (const name of Object.keys(operations.reads ?? {}).sort()) {
+    const read = operations.reads?.[name]
+    if (read) lines.push(operationLine(databaseId, `${kindPrefix}read`, name, read))
+  }
+  for (const name of Object.keys(operations.writes ?? {}).sort()) {
+    const write = operations.writes?.[name]
+    if (write) lines.push(operationLine(databaseId, `${kindPrefix}write`, name, write))
+  }
+  return lines
+}
+
+const SHARED_KIND_PREFIX = 'shared-'
+
+export function operationRegistryDigest<I>(
+  registry: OperationRegistry<I> | undefined,
+  shared?: DatabaseOperations<I>,
+): string | undefined {
+  if (registry === undefined && shared === undefined) return undefined
 
   const lines: string[] = []
-  for (const databaseId of Object.keys(registry).sort()) {
-    const operations: DatabaseOperations<I> = registry[databaseId] ?? {}
-    for (const name of Object.keys(operations.reads ?? {}).sort()) {
-      const read = operations.reads?.[name]
-      if (read) lines.push(operationLine(databaseId, 'read', name, read))
-    }
-    for (const name of Object.keys(operations.writes ?? {}).sort()) {
-      const write = operations.writes?.[name]
-      if (write) lines.push(operationLine(databaseId, 'write', name, write))
-    }
+  for (const databaseId of Object.keys(registry ?? {}).sort()) {
+    lines.push(...databaseLines(databaseId, registry?.[databaseId] ?? {}, ''))
   }
+  if (shared !== undefined) lines.push(...databaseLines('', shared, SHARED_KIND_PREFIX))
   return sha256Hex(lines.join('\n'))
 }

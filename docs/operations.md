@@ -41,6 +41,33 @@ await server.listen()
 
 `args` names every argument that a caller may supply. A request that supplies an argument that you didn't declare fails with `ARGUMENT_NOT_ALLOWED`, and a request that leaves out a declared argument fails with `MISSING_ARGUMENT`. `columns` names the columns that a read returns, and code generation turns that list into a row type.
 
+## Serve the same operations on every database
+
+When each customer has a database of its own, register their operations once in `sharedOperations`. The server serves that set on every database, including a database that the registry opens after the server starts, so a customer who signs up needs no change to your code and no server restart.
+
+```ts
+import { RequestDeniedError } from '@delali/sirannon-db'
+
+const server = createServer<{ tenant: string }>(sirannon, {
+  port: 9876,
+  authenticate: ctx => {
+    const identity = verifyBearerToken(ctx.headers.authorization)
+    if (identity.tenant !== ctx.databaseId) throw new RequestDeniedError(403, 'FORBIDDEN', 'Not your database')
+    return identity
+  },
+  sharedOperations: {
+    reads: {
+      openInvoices: {
+        columns: ['id', 'total'],
+        statement: () => ({ sql: 'SELECT id, total FROM invoices WHERE paid = 0 ORDER BY id' }),
+      },
+    },
+  },
+})
+```
+
+The server executes a shared operation against the database in the request path, so refuse in `authenticate` every caller that may not use `ctx.databaseId`, as the hook above does. The server looks a name up in the database's own entry in `operations` first and in `sharedOperations` second, so an entry for one database can add operations for that database or replace a shared one there.
+
 ## Fill an argument from the caller's identity
 
 `fromIdentity` maps an argument to a field of the identity that your `authenticate` hook returned, and the server fills that argument itself. A request that supplies such an argument fails with `ARGUMENT_NOT_ALLOWED`, so a caller can't overwrite the value that the server filled in.
@@ -105,7 +132,7 @@ Over WebSocket, a `query` or an `execute` message that includes `name` and `args
 { "capabilities": ["query.named", "query.sql", "sync.push", "sync.ack"], "registry": { "digest": "9f2c..." } }
 ```
 
-The digest is a hash over every registered database identifier, operation kind, operation name, declared argument name, and identity-filled argument name. It changes when you add, remove, or rename an operation, or change its arguments, which is how a client detects a rolling deploy. A live query sends the digest when it subscribes, and a server with a different digest rejects the subscription with `REGISTRY_MISMATCH`. The hash covers no statement text, no `columns` list, and no identity field that `fromIdentity` maps an argument to, so a changed row shape leaves the digest as it was; regenerate the client types when you change what a read returns.
+The digest is a hash over every registered database identifier, operation kind, operation name, declared argument name, and identity-filled argument name. It changes when you add, remove, or rename an operation, or change its arguments, which is how a client detects a rolling deploy. The server hashes each shared operation under its own kind, so moving an operation into or out of `sharedOperations` also changes the digest. A live query sends the digest when it subscribes, and a server with a different digest rejects the subscription with `REGISTRY_MISMATCH`. The hash covers no statement text, no `columns` list, and no identity field that `fromIdentity` maps an argument to, so a changed row shape leaves the digest as it was; regenerate the client types when you change what a read returns.
 
 `query.sql` tells a client that this server accepts statements. The client fetches `/capabilities` once, caches the response, and fails a statement with `SQL_NOT_ACCEPTED` before sending it when the token is absent. The server rejects the statement independently as well, because a hand-written client can skip that check.
 
@@ -127,13 +154,14 @@ The `sirannon-codegen` binary imports the registry that your server is built fro
 pnpm exec sirannon-codegen --registry ./src/operations.ts --out ./src/generated/operations.ts
 ```
 
-The generator imports the registry module, so when that module is not JavaScript, start the generator under a loader for your source format. It uses an export named `operations` or a default export; pass `--export <name>` for any other name, and `--manifest <file>` to write the manifest as JSON alongside the types.
+The generator imports the registry module, so when that module is not JavaScript, start the generator under a loader for your source format. It uses an export named `operations` or a default export; pass `--export <name>` for any other name, and `--manifest <file>` to write the manifest as JSON alongside the types. It reads the shared set from an export named `sharedOperations`, or from the export that `--shared-export <name>` names, and writes the references for that set under `sharedOperations` in the generated file.
 
 ```ts
-import { app } from './generated/operations'
+import { app, sharedOperations } from './generated/operations'
 
 const orders = await db.query(app.reads.ordersByStatus, { status: 'pending' })
 await db.execute(app.writes.placeOrder, { total: 4999 })
+const invoices = await db.query(sharedOperations.reads.openInvoices, {})
 ```
 
 The generated file also exports `registryDigest`, which is the registry's digest at the time that you generated the file.
@@ -144,7 +172,7 @@ Each read gets the row type built from its `columns`. A read that declares no `c
 
 | Code | When |
 | --- | --- |
-| `UNKNOWN_QUERY` | No operation of that name is registered for the database. |
+| `UNKNOWN_QUERY` | No operation of that name exists in the database's own entry or in the shared set. |
 | `MISSING_ARGUMENT` | The request left out a declared argument. |
 | `ARGUMENT_NOT_ALLOWED` | The caller supplied an undeclared argument, or one that the server fills from identity. |
 | `IDENTITY_REQUIRED` | An operation fills an argument from identity, and the request's identity lacks that field. |

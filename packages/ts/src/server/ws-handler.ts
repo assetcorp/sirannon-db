@@ -70,7 +70,7 @@ export class WSHandler<Identity = unknown> {
     this.sirannon = sirannon
     this.acceptSql = options?.acceptSql === true
     this.acceptDeviceSync = options?.acceptDeviceSync === true
-    this.operations = createOperationSource<Identity>(options?.operations)
+    this.operations = createOperationSource<Identity>(options?.operations, options?.sharedOperations)
     this.maxPayloadLength = options?.maxPayloadLength ?? DEFAULT_MAX_PAYLOAD_LENGTH
     this.maxUnacknowledgedChanges = options?.maxUnacknowledgedChanges ?? DEFAULT_MAX_UNACKNOWLEDGED_CHANGES
     this.socketResumeBytes = Math.ceil((options?.maxBackpressureBytes ?? DEFAULT_MAX_BACKPRESSURE_BYTES) / 2)

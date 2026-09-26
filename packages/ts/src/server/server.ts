@@ -4,7 +4,6 @@ import type {
   AuthenticateHook,
   ClusterStatusAuthorizer,
   ClusterStatusInfo,
-  OperationRegistry,
   ReplicationStatusInfo,
   ServerExecutionTargetResolver,
   ServerOptions,
@@ -45,7 +44,7 @@ import {
   resolveMaxBodyBytes,
   resolveWsBackpressure,
 } from './limits.js'
-import { operationRegistryDigest } from './operation-lookup.js'
+import { type OperationSets, operationRegistryDigest } from './operation-lookup.js'
 import { type OperationRouteDeps, wrapOperationRoute } from './operation-route.js'
 import { loadUWebSockets, type UWebSockets } from './uws-loader.js'
 import { WSHandler } from './ws-handler.js'
@@ -92,7 +91,7 @@ export class SirannonServer<Identity = unknown> {
   private readonly acceptBackupRestore: boolean
   private readonly acceptDeviceSync: boolean
   private readonly restoreRuns = new BackupRestoreRuns()
-  private readonly operations: OperationRegistry<Identity> | undefined
+  private readonly operations: OperationSets<Identity>
   private readonly registryDigest: string | undefined
   private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
   private readonly getReplicationStatus: (() => ReplicationStatusInfo | null) | undefined
@@ -114,8 +113,8 @@ export class SirannonServer<Identity = unknown> {
     assertBackupRestoreAuthenticated(this.acceptBackupRestore, this.authenticateHook !== undefined)
     this.acceptDeviceSync = options?.acceptDeviceSync === true
     assertDeviceSyncAuthenticated(this.acceptDeviceSync, this.authenticateHook !== undefined)
-    this.operations = options?.operations
-    this.registryDigest = operationRegistryDigest(options?.operations)
+    this.operations = { registry: options?.operations, shared: options?.sharedOperations }
+    this.registryDigest = operationRegistryDigest(this.operations.registry, this.operations.shared)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.getReplicationStatus = options?.getReplicationStatus
     this.getClusterStatus = options?.getClusterStatus
@@ -132,7 +131,8 @@ export class SirannonServer<Identity = unknown> {
       maxUnacknowledgedChanges: options?.maxUnacknowledgedChanges,
       acceptSql: this.acceptSql,
       acceptDeviceSync: this.acceptDeviceSync,
-      operations: options?.operations,
+      operations: this.operations.registry,
+      sharedOperations: this.operations.shared,
     })
   }
 

@@ -1,6 +1,11 @@
 import { type SqlToken, tokenizeSql } from '../core/live/sql-tokens.js'
 import { findClauses, readSelectItems } from '../core/live/statement-clauses.js'
-import type { OperationRegistry, ReadOperation, WriteOperation } from '../core/operation-registry.js'
+import type {
+  DatabaseOperations,
+  OperationRegistry,
+  ReadOperation,
+  WriteOperation,
+} from '../core/operation-registry.js'
 import { operationRegistryDigest } from '../server/operation-lookup.js'
 
 /**
@@ -64,37 +69,52 @@ export interface OperationManifest {
    * One manifest for each database, keyed by database ID.
    */
   databases: Record<string, DatabaseManifest>
+  /**
+   * The operations that callers may invoke on every database, present when {@link buildOperationManifest} receives a shared set.
+   */
+  shared?: DatabaseManifest
 }
 
 /**
  * Returns a manifest that describes the arguments and result columns of every operation in a registry.
  *
- * @param registry - The registered operations to describe.
+ * @param registry - The registered operations to describe, keyed by database identifier.
+ * @param shared - The operations that callers may invoke on every database, which you pass to the server as `sharedOperations`.
  * @returns The manifest from which code generation renders types.
  *
  * @public
  */
-export function buildOperationManifest<I>(registry: OperationRegistry<I>): OperationManifest {
+export function buildOperationManifest<I>(
+  registry: OperationRegistry<I>,
+  shared?: DatabaseOperations<I>,
+): OperationManifest {
   const databases: Record<string, DatabaseManifest> = {}
-
   for (const databaseId of Object.keys(registry).sort()) {
-    const operations = registry[databaseId] ?? {}
-    const reads: Record<string, OperationShape> = {}
-    const writes: Record<string, OperationShape> = {}
-
-    for (const name of Object.keys(operations.reads ?? {}).sort()) {
-      const read = operations.reads?.[name]
-      if (read !== undefined) reads[name] = readShape(read)
-    }
-    for (const name of Object.keys(operations.writes ?? {}).sort()) {
-      const write = operations.writes?.[name]
-      if (write !== undefined) writes[name] = writeShape(write)
-    }
-
-    databases[databaseId] = { reads, writes }
+    databases[databaseId] = databaseManifest(registry[databaseId] ?? {})
   }
 
-  return { version: OPERATION_MANIFEST_VERSION, digest: operationRegistryDigest(registry), databases }
+  return {
+    version: OPERATION_MANIFEST_VERSION,
+    digest: operationRegistryDigest(registry, shared),
+    databases,
+    ...(shared === undefined ? {} : { shared: databaseManifest(shared) }),
+  }
+}
+
+function databaseManifest<I>(operations: DatabaseOperations<I>): DatabaseManifest {
+  const reads: Record<string, OperationShape> = {}
+  const writes: Record<string, OperationShape> = {}
+
+  for (const name of Object.keys(operations.reads ?? {}).sort()) {
+    const read = operations.reads?.[name]
+    if (read !== undefined) reads[name] = readShape(read)
+  }
+  for (const name of Object.keys(operations.writes ?? {}).sort()) {
+    const write = operations.writes?.[name]
+    if (write !== undefined) writes[name] = writeShape(write)
+  }
+
+  return { reads, writes }
 }
 
 function readShape<I>(operation: ReadOperation<I>): OperationShape {

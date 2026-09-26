@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { OperationRegistry } from '../core/operation-registry.js'
+import type { DatabaseOperations, OperationRegistry } from '../core/operation-registry.js'
 import { buildOperationManifest } from './manifest.js'
 import { renderOperationTypes } from './render.js'
 
@@ -10,19 +10,25 @@ import { renderOperationTypes } from './render.js'
  *
  * @public
  */
-export const CODEGEN_USAGE = `sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--package <name>]
+export const CODEGEN_USAGE = `sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--shared-export <name>] [--package <name>]
 
-Reads the operation registry a server is built from and writes the typed
-references a client calls it through. The registry module is imported, so run
-it under a loader that reads your source format when it is not JavaScript.`
+Reads the operations that you register with a server and writes the typed
+references through which a client calls them. The generator takes the
+per-database registry from the 'operations' export, or from the default
+export, and the operations for every database from the 'sharedOperations'
+export. The generator imports the registry module, so run it under a loader
+that reads your source format when that format is not JavaScript.`
 
 interface Options {
   registry: string
   out: string
   manifest: string | undefined
   exportName: string | undefined
+  sharedExportName: string | undefined
   packageName: string | undefined
 }
+
+const DEFAULT_SHARED_EXPORT = 'sharedOperations'
 
 function parseOptions(argv: readonly string[]): Options {
   const values = new Map<string, string>()
@@ -46,21 +52,39 @@ function parseOptions(argv: readonly string[]): Options {
     out,
     manifest: values.get('manifest'),
     exportName: values.get('export'),
+    sharedExportName: values.get('shared-export'),
     packageName: values.get('package'),
   }
 }
 
-function readRegistry(
+interface RegistryExports {
+  registry: OperationRegistry
+  shared: DatabaseOperations | undefined
+}
+
+function readShared(
   module: Record<string, unknown>,
   exportName: string | undefined,
   path: string,
-): OperationRegistry {
+): DatabaseOperations | undefined {
+  const candidate = module[exportName ?? DEFAULT_SHARED_EXPORT]
+  if (candidate === undefined && exportName === undefined) return undefined
+  if (candidate === undefined || candidate === null || typeof candidate !== 'object') {
+    throw new Error(`Module '${path}' exports no shared operations named '${exportName ?? DEFAULT_SHARED_EXPORT}'`)
+  }
+  return candidate as DatabaseOperations
+}
+
+function readRegistry(module: Record<string, unknown>, options: Options, path: string): RegistryExports {
+  const shared = readShared(module, options.sharedExportName, path)
+  const { exportName } = options
   const candidate = exportName === undefined ? (module.operations ?? module.default) : module[exportName]
-  if (candidate === undefined || typeof candidate !== 'object') {
+  if (candidate === undefined && exportName === undefined && shared !== undefined) return { registry: {}, shared }
+  if (candidate === undefined || candidate === null || typeof candidate !== 'object') {
     const named = exportName === undefined ? "'operations' or a default export" : `'${exportName}'`
     throw new Error(`Module '${path}' exports no operation registry named ${named}`)
   }
-  return candidate as OperationRegistry
+  return { registry: candidate as OperationRegistry, shared }
 }
 
 function write(path: string, contents: string): void {
@@ -75,7 +99,7 @@ function write(path: string, contents: string): void {
  * When you pass `--manifest`, the generator also writes the operation manifest to that file as JSON.
  *
  * @param argv - The command-line arguments that follow the executable and script names.
- * @throws An `Error` when an argument is missing or unrecognised, when Node cannot import the registry module, or when the module exports no operation registry.
+ * @throws An `Error` when an argument is missing or unrecognised, when Node cannot import the registry module, when the module exports neither an operation registry nor shared operations, or when the module has no export of the name that `--export` or `--shared-export` gives.
  *
  * @public
  */
@@ -83,7 +107,8 @@ export async function runCodegen(argv: readonly string[]): Promise<void> {
   const options = parseOptions(argv)
   const modulePath = resolve(options.registry)
   const imported = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>
-  const manifest = buildOperationManifest(readRegistry(imported, options.exportName, modulePath))
+  const { registry, shared } = readRegistry(imported, options, modulePath)
+  const manifest = buildOperationManifest(registry, shared)
 
   write(options.out, renderOperationTypes(manifest, { packageName: options.packageName }))
   if (options.manifest !== undefined) {

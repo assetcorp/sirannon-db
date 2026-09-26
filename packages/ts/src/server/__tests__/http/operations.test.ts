@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RequestDeniedError } from '../../../core/errors.js'
-import type { OperationRegistry } from '../../../core/operation-registry.js'
+import type { DatabaseOperations, OperationRegistry } from '../../../core/operation-registry.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
+import { operationRegistryDigest } from '../../operation-lookup.js'
 import { createServer, type SirannonServer } from '../../server.js'
 
 interface ApiResponse {
@@ -266,6 +267,75 @@ describe('POST /db/:id/execute/:name', () => {
     await start()
     const res = await fetch(`${baseUrl}/db/test/execute/ordersForCustomer`, { method: 'POST' })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('operations shared by every database', () => {
+  const sharedOperations: DatabaseOperations<Account> = {
+    reads: {
+      openInvoices: { statement: () => ({ sql: 'SELECT id, amount FROM invoices WHERE paid = 0 ORDER BY id' }) },
+      ordersForCustomer: { args: ['customerName'], statement: () => ({ sql: 'SELECT 1 AS shared' }) },
+    },
+    writes: {
+      addInvoice: {
+        args: ['amount'],
+        statements: args => ({
+          sql: 'INSERT INTO invoices (amount) VALUES (:amount)',
+          params: { amount: args.amount },
+        }),
+      },
+    },
+  }
+
+  async function startShared(): Promise<void> {
+    server = createServer<Account>(sirannon, { port: 0, operations, sharedOperations })
+    await server.listen()
+    baseUrl = `http://127.0.0.1:${server.listeningPort}`
+  }
+
+  async function post(path: string, body?: unknown): Promise<Response> {
+    return fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+  }
+
+  it('serves a shared read and write on a database opened after the server starts', async () => {
+    await startShared()
+    const tenant = await sirannon.open('tenant-globex', join(tempDir, 'tenant-globex.db'))
+    await tenant.execute('CREATE TABLE invoices (id INTEGER PRIMARY KEY, amount INTEGER, paid INTEGER DEFAULT 0)')
+
+    const write = await post('/db/tenant-globex/execute/addInvoice', { args: { amount: 300 } })
+    expect(write.status).toBe(200)
+
+    const read = await post('/db/tenant-globex/query/openInvoices')
+    expect(read.status).toBe(200)
+    expect(((await read.json()) as ApiResponse).rows).toEqual([{ id: 1, amount: 300 }])
+  })
+
+  it("executes a database's own operation over a shared one with the same name", async () => {
+    await startShared()
+    const res = await post('/db/test/query/ordersForCustomer', { args: { customerName: 'Alice' } })
+    const body = (await res.json()) as ApiResponse
+    expect(body.rows).toHaveLength(1)
+    expect(body.rows[0].amount).toBe(120)
+  })
+
+  it('still refuses a name that neither set registers', async () => {
+    await startShared()
+    const res = await post('/db/test/query/noSuchRead')
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as ApiResponse).error.code).toBe('UNKNOWN_QUERY')
+  })
+
+  it('announces named operations when only the shared set is registered', async () => {
+    server = createServer<Account>(sirannon, { port: 0, sharedOperations })
+    await server.listen()
+    const res = await fetch(`http://127.0.0.1:${server.listeningPort}/capabilities`)
+    const body = (await res.json()) as ApiResponse
+    expect(body.capabilities).toContain('query.named')
+    expect(body.registry?.digest).toBe(operationRegistryDigest(undefined, sharedOperations))
   })
 })
 

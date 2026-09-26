@@ -1,4 +1,4 @@
-import type { OperationRegistry } from './operation-registry.js'
+import type { DatabaseOperations, OperationRegistry } from './operation-registry.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
@@ -183,8 +183,15 @@ export interface ServerOptions<Identity = unknown> {
   maxUnacknowledgedChanges?: number
   /** The server calls this before every database route and every WebSocket upgrade, to identify the caller. */
   authenticate?: AuthenticateHook<Identity>
-  /** The statements that callers may invoke by name; with none registered, only the SQL routes serve reads and writes. */
+  /** The statements that callers may invoke by name on one database, keyed by database identifier; with neither this nor `sharedOperations` set, only the SQL routes serve reads and writes. */
   operations?: OperationRegistry<Identity>
+  /**
+   * The statements that callers may invoke by name on every database that this
+   * server serves, including a database that the registry opens after the
+   * server starts. When `operations` has an entry of the same name for that
+   * database, the server executes that entry.
+   */
+  sharedOperations?: DatabaseOperations<Identity>
   /** Enables the five statement routes and their WebSocket messages, and WebSocket subscriptions to a table's changes on a registry without an `onBeforeSubscribe` hook; the default is false. */
   acceptSql?: boolean
   /**
@@ -274,6 +281,7 @@ export interface WSHandlerOptions<Identity = unknown> {
   acceptSql?: boolean
   acceptDeviceSync?: boolean
   operations?: OperationRegistry<Identity>
+  sharedOperations?: DatabaseOperations<Identity>
   resolveExecutionTarget?: ServerExecutionTargetResolver
 }
 

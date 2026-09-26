@@ -3,12 +3,18 @@ import { ChangeTracker } from './cdc/change-tracker.js'
 import type { DeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ensureCdcEpoch } from './cdc/epoch.js'
 import { readAtPosition } from './cdc/read-position.js'
-import { SubscriptionBuilderImpl, SubscriptionManager, startPolling } from './cdc/subscription.js'
+import {
+  type ChangeDispatchObserver,
+  SubscriptionBuilderImpl,
+  SubscriptionManager,
+  startPolling,
+} from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
 import { Transaction } from './transaction.js'
 import type { SubscriptionBuilder } from './types.js'
+import { runWriterTransaction } from './writer-transaction.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -27,6 +33,7 @@ export class DatabaseCdcController {
     private readonly retention: number,
     private readonly openSnapshotConnection: (() => Promise<SQLiteConnection>) | null,
     private readonly deviceRetention: DeviceRetentionPolicy,
+    private readonly onDispatched?: ChangeDispatchObserver,
   ) {}
 
   ensureEpoch(): Promise<string> {
@@ -135,7 +142,7 @@ export class DatabaseCdcController {
     }
 
     const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-    const result = await writer.transaction(async txConn => {
+    const result = await runWriterTransaction(writer, async txConn => {
       const value = await fn(new CdcAwareTransaction(txConn, tracker, state))
       await this.applyStamps(txConn)
       return value
@@ -157,7 +164,7 @@ export class DatabaseCdcController {
 
   private ensure(): { tracker: ChangeTracker; subscriptions: SubscriptionManager } {
     const tracker = this.tracker ?? new ChangeTracker({ retention: this.retention })
-    const subscriptions = this.subscriptionManager ?? new SubscriptionManager()
+    const subscriptions = this.subscriptionManager ?? new SubscriptionManager(this.onDispatched)
     this.tracker = tracker
     this.subscriptionManager = subscriptions
     return { tracker, subscriptions }

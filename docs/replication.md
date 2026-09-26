@@ -119,7 +119,7 @@ const engine = new ReplicationEngine(db, writerConn, {
 await engine.start()
 ```
 
-With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back.
+With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back. The replica sends your write concern with the write, and the primary waits for it, or for its own default when you state none, before it replies. An error that the primary raises, such as `WRITE_CONCERN_ERROR` or `STALE_PRIMARY`, reaches you with its code unchanged.
 
 With `initialSync` on, which is the default, a new node copies the whole database before it serves reads. The source streams the schema and the table data in checksummed batches, and then it sends a manifest. The joining node passes through the phases `pending`, `syncing`, `catching-up`, and `ready`, and `engine.status().syncState.phase` gives the current one. For a database that is too large to copy over the network, copy the file yourself, and then start the replica with `initialSync: false` and with `resumeFromSeq` set to the sequence that your copy reached.
 

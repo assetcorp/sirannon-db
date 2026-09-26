@@ -1,6 +1,7 @@
 import type { SQLiteConnection } from './driver/types.js'
 import { execute, executeBatch, query } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
+import { runWriterTransaction } from './writer-transaction.js'
 
 /**
  * Executes statements inside one transaction; Sirannon passes it to the function that you give {@link Database.transaction}.
@@ -60,7 +61,7 @@ export class Transaction {
 
   /** @internal */
   static async run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>): Promise<T> {
-    return conn.transaction(async txConn => {
+    return runWriterTransaction(conn, async txConn => {
       const tx = new Transaction(txConn)
       return fn(tx)
     })

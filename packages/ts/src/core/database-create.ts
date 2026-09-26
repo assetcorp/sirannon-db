@@ -96,6 +96,7 @@ export async function createDatabaseRuntime(
     options?.cdcRetention ?? 3_600_000,
     canOpenSnapshotConnection ? openSnapshotConnection : null,
     resolveDeviceRetentionPolicy(options),
+    internals?.metrics?.observeDispatch(id),
   )
   const sync = new DatabaseSyncController(
     op => writeGate.run(() => writerLock.run(op)),

@@ -1,3 +1,5 @@
+import type { WriteConcern } from '../core/query-types.js'
+
 /**
  * Describes a connected peer, as the transport records it.
  *
@@ -56,6 +58,8 @@ export interface ForwardedTransaction {
   groupId?: string
   /** Holds the primary term that the replica reports as current. */
   primaryTerm?: bigint
+  /** The write concern that the caller states, which the primary waits for before it replies; without one, the primary applies its own default. */
+  writeConcern?: WriteConcern
 }
 
 /**
@@ -102,7 +106,7 @@ export interface PeerState {
   lastAckedSeq: bigint
   /** Holds the change-log position up to which this node sends batches to the peer. A timeout or a failed send moves it back. */
   lastSentSeq: bigint
-  /** Holds the most recent hybrid logical clock stamp from the peer. The engine sets it to an empty string when it adds the peer, and never updates it. */
+  /** Holds the highest hybrid logical clock stamp in any batch that this node has applied from the peer, and an empty string until the first such batch. */
   lastReceivedHlc: string
   /** Is true while the transport has an open connection to the peer. */
   connected: boolean

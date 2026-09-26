@@ -3,6 +3,7 @@ import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError, SirannonError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
+import { commitFailure } from './writer-transaction.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
@@ -166,7 +167,7 @@ async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<Execute
 }
 
 function controlError(err: unknown, sql: string): Error {
-  return asQueryError(err, sql)
+  return sql === 'COMMIT' ? commitFailure(err) : asQueryError(err, sql)
 }
 
 async function execControl(conn: SQLiteConnection, sql: string): Promise<Error | null> {

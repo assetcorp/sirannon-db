@@ -1,4 +1,5 @@
 import { Metadata, type ServiceError } from '@grpc/grpc-js'
+import { SirannonError } from '../../core/errors.js'
 import { TransportError } from '../../replication/errors.js'
 import type { ForwardedTransaction, ForwardedTransactionResult } from '../../replication/types.js'
 import { toForwardRequest } from './codec.js'
@@ -28,7 +29,11 @@ export function forwardOverRpc(
           return
         }
         if (response.error) {
-          reject(new TransportError(`Forward RPC error: ${response.error}`))
+          reject(
+            response.errorCode
+              ? new SirannonError(response.error, response.errorCode)
+              : new TransportError(`Forward RPC error: ${response.error}`),
+          )
           return
         }
         resolve({

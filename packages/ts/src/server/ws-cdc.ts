@@ -107,7 +107,7 @@ export class CdcContextRegistry {
     const retention = database.changeRetention.cdcRetention ?? this.retentionMs
     const deviceRetention = resolveDeviceRetentionPolicy(database.changeRetention, this.serverDeviceRetention)
     const tracker = new ChangeTracker(retention === undefined ? undefined : { retention })
-    const manager = new SubscriptionManager()
+    const manager = new SubscriptionManager(this.sirannon.metrics?.observeDispatch(database.id))
     let epoch = ''
     try {
       await tracker.advanceToLatest(cdcConn)

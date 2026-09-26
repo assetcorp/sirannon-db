@@ -1,6 +1,6 @@
 import { fireAfterQueryHooks, fireBeforeQueryHooks } from './hooks/query-hooks.js'
 import type { HookRegistry } from './hooks/registry.js'
-import type { MetricsCollector } from './metrics/collector.js'
+import type { MetricsCollector, QueryOutcomeMeasure } from './metrics/collector.js'
 import type { ExecuteResult, Params, QueryOptions } from './types.js'
 
 interface ObservedStatement {
@@ -41,9 +41,9 @@ export class DatabaseObserver {
     }
   }
 
-  track<T>(sql: string, op: () => Promise<T>): Promise<T> {
+  track<T>(sql: string, op: () => Promise<T>, measure?: QueryOutcomeMeasure<T>): Promise<T> {
     if (!this.metrics) return op()
-    return this.metrics.trackQuery(op, { databaseId: this.databaseId, sql })
+    return this.metrics.trackQuery(op, { databaseId: this.databaseId, sql }, measure)
   }
 
   async withTransactionHooks(
@@ -67,11 +67,13 @@ export class DatabaseObserver {
     const metrics = this.metrics
     if (!metrics) return op()
     let run = op
-    for (const statement of statements) {
+    statements.forEach((statement, index) => {
       const inner = run
-      const sql = statement.sql
-      run = () => metrics.trackQuery(inner, { databaseId: this.databaseId, sql })
-    }
+      run = () =>
+        metrics.trackQuery(inner, { databaseId: this.databaseId, sql: statement.sql }, results => ({
+          changes: results[index]?.changes,
+        }))
+    })
     return run()
   }
 

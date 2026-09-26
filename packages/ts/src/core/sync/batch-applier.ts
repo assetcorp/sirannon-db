@@ -8,14 +8,40 @@ import {
   updateChangeStampsAfterSeqSql,
 } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
-import { BatchValidationError } from './errors.js'
+import { BatchValidationError, ConflictError } from './errors.js'
 import type { HLC } from './hlc.js'
 import { persistHlcClock } from './hlc-store.js'
 import { REMOTE_ORIGIN_NODE_ID } from './origins.js'
 import type { PkResolver } from './pk.js'
 import { RowWriter } from './row-writer.js'
-import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
+import type {
+  ApplyResult,
+  ConflictContext,
+  ConflictResolution,
+  ConflictResolver,
+  ReplicationBatch,
+  ReplicationChange,
+} from './types.js'
 import { extractDroppedTable, IDENTIFIER_RE, validateDdlSafety } from './validators.js'
+
+async function resolveConflict(
+  resolver: ConflictResolver | ((table: string) => ConflictResolver),
+  ctx: ConflictContext,
+): Promise<ConflictResolution> {
+  try {
+    const changeResolver = typeof resolver === 'function' ? resolver(ctx.table) : resolver
+    return await changeResolver.resolve(ctx)
+  } catch (err: unknown) {
+    if (err instanceof ConflictError) throw err
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new ConflictError(
+      `Conflict resolution failed for table '${ctx.table}' row '${ctx.rowId}': ${reason}`,
+      ctx.table,
+      ctx.rowId,
+      err,
+    )
+  }
+}
 
 export interface ApplyGroupOptions {
   sourceNodeId: string
@@ -284,8 +310,7 @@ export class BatchApplier {
       oldData: null,
     }
 
-    const changeResolver = typeof resolver === 'function' ? resolver(change.table) : resolver
-    const resolution = await changeResolver.resolve({
+    const resolution = await resolveConflict(resolver, {
       table: change.table,
       rowId: change.rowId,
       localChange,

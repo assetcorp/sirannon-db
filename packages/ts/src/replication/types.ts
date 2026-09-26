@@ -202,7 +202,7 @@ export interface ReplicationConfig {
   batchIntervalMs?: number
   /** Sets how many unacknowledged batches one peer can have before this node pauses sending to it. */
   maxPendingBatches?: number
-  /** Sets the change-log distance beyond which a joining node would take a full copy in place of catching up. The engine ignores this field. */
+  /** Reserved, and the engine ignores it. */
   snapshotThreshold?: number
   /** Sets the largest difference, in milliseconds, between this node's clock and the newest timestamp in an incoming batch. This node rejects a batch that exceeds it. */
   maxClockDriftMs?: number

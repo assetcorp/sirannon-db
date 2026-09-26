@@ -76,12 +76,7 @@ export async function executeBatch(
     throwNotCurrentPrimary(engine)
   }
 
-  const results: ExecuteResult[] = []
-  for (const params of paramsBatch) {
-    const r = await engine.localExecutor.executeLocally(sql, params, options)
-    results.push(r)
-  }
-  return results
+  return engine.localExecutor.executeBatchLocally(sql, paramsBatch, options)
 }
 
 export async function transaction<T>(
@@ -99,10 +94,11 @@ export async function transaction<T>(
 export async function forwardStatements(
   engine: ReplicationEngine,
   statements: Array<{ sql: string; params?: Params }>,
-  _options?: QueryOptions,
+  options?: QueryOptions,
 ): Promise<ForwardedTransactionResult> {
+  const writeConcern = options?.writeConcern
   if (await canAcceptLocalWrite(engine)) {
-    return engine.localExecutor.executeForwardedLocally(statements)
+    return engine.localExecutor.executeForwardedLocally(statements, writeConcern)
   }
 
   const primaryPeerId = getForwardingPrimaryPeerId(engine)
@@ -115,5 +111,6 @@ export async function forwardStatements(
     statements,
     requestId: randomUUID(),
     ...getCoordinatorMessageFields(engine),
+    ...(writeConcern === undefined ? {} : { writeConcern }),
   })
 }

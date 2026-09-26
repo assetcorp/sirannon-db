@@ -1,13 +1,13 @@
 import { SirannonError } from '../errors.js'
 
-/** Base error for all replication-related failures.
+/** Reports a replication failure, and more specific replication errors such as {@link BatchValidationError} extend it.
  * @public
  */
 export class ReplicationError extends SirannonError {
   constructor(
     message: string,
     code: string = 'REPLICATION_ERROR',
-    /** Anything the failing operation attached, such as the peer or the batch involved. */
+    /** Extra context from the code that throws the error, such as the peer or the batch involved. */
     public readonly details?: Record<string, unknown>,
   ) {
     super(message, code)
@@ -15,7 +15,7 @@ export class ReplicationError extends SirannonError {
   }
 }
 
-/** Thrown when an incoming replication batch fails integrity checks (checksum, schema, clock drift).
+/** Sirannon throws this error when an incoming replication batch fails a validation check, such as a checksum mismatch, an invalid table name, an unsafe DDL statement, or too much clock drift.
  * @public
  */
 export class BatchValidationError extends ReplicationError {

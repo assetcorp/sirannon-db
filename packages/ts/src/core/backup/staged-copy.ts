@@ -20,13 +20,13 @@ import { readLogPosition } from './wal-log.js'
 const STAGED_FILE_NAME = 'copy.db'
 
 /**
- * Copies a database to a caller-supplied destination by writing one local file
- * and sending it on in fixed-size pieces, so the run needs local disk equal to
- * the backup.
+ * Copies a database to a local file and then sends that file in fixed-size
+ * pieces to a destination that the caller supplies, so the backup needs as
+ * much free local disk space as the size of the copy.
  *
- * @param conn - Connection the copy runs on, which must be the connection that writes.
- * @param request - Destination, naming, sizing, and progress reporting for this run.
- * @returns What the run copied, how long each part took, and how often the copy restarted.
+ * @param conn - The writer connection, which SQLite runs the copy on.
+ * @param request - The destination, name, piece size, and progress callback for this backup.
+ * @returns The report of the backup, with the pages that SQLite copies, the time that each phase takes, and the number of times that SQLite restarts the copy from page one.
  */
 export async function copyToDestinationStaged(
   conn: SQLiteConnection,

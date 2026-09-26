@@ -104,7 +104,7 @@ function runDirect(op: () => Promise<void>): Promise<void> {
 }
 
 /**
- * Repeats a database backup on a cron schedule and keeps a bounded number of files.
+ * Copies a database to a file on a cron schedule, and deletes the oldest copies beyond a set number.
  *
  * @public
  */
@@ -118,8 +118,8 @@ export class BackupScheduler {
   /**
    * Starts repeating backups and returns a function that stops them.
    *
-   * @param conn - Connection to the database being copied.
-   * @param request - Cron expression, destination directory, retention, and time zone, along with the callbacks and the database the copies come from.
+   * @param conn - The connection to the database that Sirannon copies.
+   * @param request - The cron expression, destination directory, retention, and time zone, with the callbacks and the details of the source database.
    * @returns A function that stops the schedule.
    */
   schedule(conn: SQLiteConnection, request: BackupScheduleRequest): () => void {
@@ -160,16 +160,17 @@ export class BackupScheduler {
   }
 
   /**
-   * Works out the database and the file every report names. A caller may supply
-   * either of them, and Sirannon reads the file SQLite has open where the caller
-   * named none. Sirannon puts that question to the connection that writes, so it
-   * asks with nothing else holding the writer.
+   * Returns the database identifier and the source file that every report
+   * names. The caller can supply either of them. Where the caller names no
+   * source file, Sirannon reads the path of the file that SQLite has open, and
+   * it runs that query on the writer connection while no other operation holds
+   * the writer.
    *
-   * @param conn - Connection the copies come from.
-   * @param run - The schedule, which holds whichever of the two the caller named.
-   * @param runExclusive - Runs the question with nothing else holding the writer.
-   * @returns The database identifier and the path of the file the copies come from.
-   * @throws A `BACKUP_ERROR` where the caller named no source file and SQLite has none open.
+   * @param conn - The connection that Sirannon copies from.
+   * @param run - The schedule, which holds whichever of the two the caller names.
+   * @param runExclusive - Runs the query while no other operation holds the writer.
+   * @returns The database identifier and the path of the source file.
+   * @throws A `BACKUP_ERROR` where the caller names no source file and SQLite reports no file open on the connection.
    */
   private async namesFor(
     conn: SQLiteConnection,
@@ -194,10 +195,11 @@ export class BackupScheduler {
   }
 
   /**
-   * Passes one finished copy to the caller's completion callback, and stops
-   * waiting on that callback once its deadline passes.
+   * Passes the report of one finished copy to the completion callback of the
+   * caller, and fails with `BACKUP_ERROR` once the deadline of that callback
+   * passes. A deadline of zero waits for the callback without a limit.
    *
-   * @param report - What the copy produced.
+   * @param report - The report of the finished copy.
    * @param run - The schedule, which holds the callback and its deadline.
    */
   private async handToCaller(report: BackupFileReport, run: ResolvedSchedule): Promise<void> {

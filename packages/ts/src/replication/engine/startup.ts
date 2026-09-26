@@ -13,12 +13,15 @@ async function loadAppliedSeqs(engine: ReplicationEngine): Promise<void> {
 }
 
 /**
- * Advances the engine's in-memory HLC past every timestamp persisted in this
- * database. Idempotent: callable on a fresh database (no-op) or on a
- * recovered one (advances to the max observed value).
+ * Advances the engine's in-memory HLC past the highest timestamp that this
+ * database stores, so that the clock stamps the next local write later than
+ * every stored one. On a new database, which stores no timestamp, the function
+ * changes nothing, and you can call it more than once because each call only
+ * moves the clock forward.
  *
- * Reusable for future promotion paths: a node that transitions to primary
- * must also start by absorbing every HLC stamped under its previous role.
+ * Code that promotes a node to primary should call it before the node's first
+ * write as primary, so that every timestamp that the node issues is later than
+ * the ones that it stamped in its previous role.
  */
 export async function recoverHlcFromDurableState(engine: ReplicationEngine): Promise<void> {
   const persisted = await loadPersistedHlc(engine.writerConn)

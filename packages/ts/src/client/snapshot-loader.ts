@@ -12,56 +12,56 @@ import { RemoteError } from './types.js'
 const DEFAULT_SNAPSHOT_PAGE_ROWS = 500
 
 /**
- * How far a snapshot download has progressed, for the table in flight and overall.
+ * The progress of a snapshot download, for the current table and across every table.
  *
  * @public
  */
 export interface SnapshotProgress {
-  /** Table the download is reading right now. */
+  /** The table that `downloadDatabaseSnapshot` is copying now. */
   table: string
-  /** Rows loaded from that table so far. */
+  /** The number of that table's rows in the local database so far. */
   tableLoadedRows: number
-  /** Rows that table holds in total. */
+  /** The total number of rows in that table, from the server's manifest. */
   tableTotalRows: number
-  /** Rows loaded across every table so far. */
+  /** The number of rows in the local database so far, across every table. */
   loadedRows: number
-  /** Rows the whole snapshot holds. */
+  /** The total number of rows in the snapshot. */
   totalRows: number
 }
 
 /**
- * Where a snapshot comes from and how it is read.
+ * The server and database that a snapshot comes from, and the settings for reading it.
  *
  * @public
  */
 export interface SnapshotDownloadOptions {
-  /** Address of the server serving the snapshot. */
+  /** The address of the server that serves the snapshot. */
   url: string
-  /** Identifier of the database to copy. */
+  /** The identifier of the database to copy. */
   databaseId: string
-  /** Headers attached to each snapshot request. */
+  /** Headers that `downloadDatabaseSnapshot` adds to each snapshot request. */
   headers?: Record<string, string>
-  /** Rows requested per page. Default: 500. */
+  /** The number of rows to request per page. Defaults to 500. */
   pageSize?: number
-  /** Milliseconds a single page request may take. */
+  /** The time limit, in milliseconds, for each request. */
   requestTimeoutMs?: number
-  /** Called as each page arrives. */
+  /** Called after `downloadDatabaseSnapshot` loads each page that contains rows. */
   onProgress?: (progress: SnapshotProgress) => void
 }
 
 /**
- * What one snapshot download produced.
+ * The result of one snapshot download.
  *
  * @public
  */
 export interface SnapshotDownloadResult {
-  /** Change-log position the device resumes its subscription from. */
+  /** The change-log position from which the device resumes its subscription. */
   startSeq: bigint
-  /** Sequence space that position belongs to. */
+  /** The epoch that identifies the sequence space of that position. */
   epoch: string
-  /** Tables the snapshot carried. */
+  /** The tables in the snapshot. */
   tables: string[]
-  /** Rows the download wrote. */
+  /** The number of rows that `downloadDatabaseSnapshot` wrote. */
   loadedRows: number
 }
 
@@ -122,11 +122,11 @@ function validatePage(raw: unknown): SnapshotPageResponse {
 }
 
 /**
- * Copies a database from a server into a local one, replacing what the local database holds.
+ * Copies a database from a server into a local database, and replaces every local table that the snapshot contains.
  *
- * @param port - The local database the snapshot is written into.
- * @param options - Where the snapshot comes from and how it is read.
- * @returns The change-log position and sequence space to resume from, the tables copied, and the rows written.
+ * @param port - The local database to write the snapshot into.
+ * @param options - The server and database that the snapshot comes from, and the settings for reading it.
+ * @returns The change-log position and epoch to resume from, the tables that this function copied, and the number of rows that it wrote.
  *
  * @public
  */

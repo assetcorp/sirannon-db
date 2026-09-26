@@ -7,13 +7,13 @@ import {
 
 const PIECE_HEADER_BYTES = 8
 
-/** One whole piece of a copy, taken from the extension on its way to the destination.
+/** One whole piece of a copy, which Sirannon takes from the extension and sends to the destination.
  * @internal
  */
 export interface BackupStreamPiece {
-  /** Position of this piece in the file, counted in whole pieces from zero. */
+  /** The position of this piece in the file, counted in whole pieces from zero. */
   index: number
-  /** Bytes this piece holds. */
+  /** The bytes of this piece. */
   bytes: Uint8Array
 }
 
@@ -38,10 +38,11 @@ function decodePiece(framed: Uint8Array): BackupStreamPiece {
 }
 
 /**
- * Runs the extension's statements on a connection of its own, so the copy and
- * the pieces it produces never share a statement with the database being
- * copied. The extension registers its virtual file system once per process and
- * keeps it after this connection closes, so a later run reaches the same one.
+ * Runs the statements of the extension on a separate connection, so that the
+ * copy and its pieces share no statement with the database that SQLite copies.
+ * The extension registers its virtual file system once per process and keeps
+ * it after this connection closes, so a later backup uses the same virtual
+ * file system.
  *
  * @internal
  */
@@ -52,12 +53,12 @@ export class BackupStreamHost {
   ) {}
 
   /**
-   * Opens a connection, loads the compiled extension into it, and compiles the
-   * statements one run needs.
+   * Opens a connection, loads the compiled extension into it, and prepares the
+   * statements that one backup needs.
    *
-   * @param openConnection - Opens the connection the statements run on.
-   * @param extensionPath - Absolute path of the compiled extension.
-   * @returns A host ready to open a stream.
+   * @param openConnection - Opens the connection that Sirannon runs the statements on.
+   * @param extensionPath - The absolute path of the compiled extension.
+   * @returns A host that is ready to open a stream.
    */
   static async start(
     openConnection: () => Promise<SQLiteConnection>,
@@ -80,13 +81,13 @@ export class BackupStreamHost {
   }
 
   /**
-   * Opens one stream and returns the identifier that names it in the
+   * Opens one stream and returns the identifier that appears in the
    * destination URI.
    *
-   * @param pieceBytes - Bytes one whole piece holds.
-   * @param maxQueuedPieces - Pieces the extension holds before it stops taking more.
-   * @param waitWhenFull - Whether the copy waits for the destination to catch up rather than queueing further pieces.
-   * @param stoppedTakerMicroseconds - How long the extension waits without a report from {@link BackupStreamHost.reportStillTaking} before it lets a piece through anyway.
+   * @param pieceBytes - The size of one whole piece, in bytes.
+   * @param maxQueuedPieces - The number of queued pieces at which the extension pauses the copy, when `waitWhenFull` is true.
+   * @param waitWhenFull - Whether the extension pauses the copy while the queue is full. When false, the extension queues every piece without a limit.
+   * @param stoppedTakerMicroseconds - The time in microseconds without a report from {@link BackupStreamHost.reportStillTaking} after which the extension lets one piece past the full queue.
    * @returns The identifier of the open stream.
    */
   async open(
@@ -108,10 +109,10 @@ export class BackupStreamHost {
   }
 
   /**
-   * Takes the next whole piece the copy has produced.
+   * Takes the next whole piece of the copy from the queue.
    *
-   * @param streamId - Stream to take from.
-   * @returns The piece, or null where the copy has produced none since the last call.
+   * @param streamId - The stream to take from.
+   * @returns The piece, or null where the queue is empty.
    */
   async take(streamId: number): Promise<BackupStreamPiece | null> {
     const framed = await this.statements.selectNextPiece(streamId)
@@ -119,60 +120,60 @@ export class BackupStreamHost {
   }
 
   /**
-   * Reports that this run is still taking pieces. SQLite holds the database's
-   * own lock for the whole of a copy step, so a run that stopped reporting
-   * would leave every other statement on that database waiting behind that
-   * step. The extension therefore lets one piece past its cap once these
-   * reports stop arriving.
+   * Tells the extension that Sirannon is still taking pieces. SQLite holds the
+   * lock of the database for a whole copy step, so if Sirannon stopped taking
+   * pieces while the copy waited on a full queue, every other statement on that
+   * database would wait behind that step. The extension therefore lets one
+   * piece past the full queue once these reports stop.
    *
-   * @param streamId - Stream to report against.
-   * @returns The pieces the extension is holding.
+   * @param streamId - The stream to report on.
+   * @returns The number of pieces in the queue.
    */
   reportStillTaking(streamId: number): Promise<number> {
     return this.statements.selectQueuedPieces(streamId)
   }
 
   /**
-   * Reports how many bytes of the copy have reached the extension.
+   * Returns the number of bytes that SQLite has written to a stream.
    *
-   * @param streamId - Stream to ask about.
-   * @returns Bytes SQLite has written to this stream.
+   * @param streamId - The stream to query.
+   * @returns The number of bytes that SQLite has written to this stream.
    */
   written(streamId: number): Promise<number> {
     return this.statements.selectBytesWritten(streamId)
   }
 
   /**
-   * Reports what stopped a stream, where anything did.
+   * Returns the failure that stopped a stream, if any.
    *
-   * @param streamId - Stream to ask about.
-   * @returns The failure the extension recorded, or null where it recorded none.
+   * @param streamId - The stream to query.
+   * @returns The failure that the extension recorded, or null where it recorded none.
    */
   failure(streamId: number): Promise<string | null> {
     return this.statements.selectFailure(streamId)
   }
 
   /**
-   * Closes the file to further writes and queues the pieces the extension was
-   * still holding, which are the first piece and the last one.
+   * Closes the file to further writes and queues the two pieces that the
+   * extension still holds, which are the first piece and the most recent one.
    *
-   * @param streamId - Stream to finish.
-   * @returns Bytes the finished file holds.
+   * @param streamId - The stream to finish.
+   * @returns The size of the finished file, in bytes.
    */
   finish(streamId: number): Promise<number> {
     return this.statements.selectFinishedBytes(streamId)
   }
 
   /**
-   * Releases a stream and everything it still held.
+   * Releases a stream and every piece that it still holds.
    *
-   * @param streamId - Stream to release.
+   * @param streamId - The stream to release.
    */
   async close(streamId: number): Promise<void> {
     await this.statements.selectReleasedBytes(streamId)
   }
 
-  /** Closes the connection the statements ran on. */
+  /** Closes the connection that Sirannon runs the statements on. */
   async stop(): Promise<void> {
     await this.connection.close()
   }

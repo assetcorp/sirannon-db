@@ -1,13 +1,13 @@
 import type { DatabaseManifest, OperationManifest, OperationShape } from './manifest.js'
 
 /**
- * How the generated TypeScript is written.
+ * Settings for the TypeScript source that {@link renderOperationTypes} returns.
  *
  * @public
  */
 export interface RenderOptions {
   /**
-   * Package the generated file imports its types from. Default: `@delali/sirannon-db`.
+   * The package that the generated file imports its types from, which defaults to `@delali/sirannon-db`.
    */
   packageName?: string
 }
@@ -15,10 +15,10 @@ export interface RenderOptions {
 const DEFAULT_PACKAGE = '@delali/sirannon-db'
 
 /**
- * Renders typed references for every operation in a manifest.
+ * Returns TypeScript source that declares a typed reference for every operation in a manifest.
  *
  * @param manifest - The operations to render.
- * @param options - The package the generated file imports from.
+ * @param options - The package that the generated file imports its types from.
  * @returns The TypeScript source to write.
  *
  * @public

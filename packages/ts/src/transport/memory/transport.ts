@@ -35,15 +35,15 @@ import {
 import type { MemoryBus } from './bus.js'
 
 /**
- * In-process ReplicationTransport for testing and single-process multi-node
- * scenarios.
+ * Sends replication messages between nodes that share one process, for tests
+ * and for single-process setups with several nodes.
  *
- * Messages between peers are delivered through a shared MemoryBus via
- * microtask scheduling (`queueMicrotask`), preserving the async delivery
- * semantics of a real network transport with no I/O. All
- * message types (batches, acks, forwards) go through runtime
- * validation before delivery, and malformed payloads are silently dropped
- * to match the behaviour of a lossy network.
+ * The transport delivers each message through a shared {@link MemoryBus} in a
+ * later microtask (`queueMicrotask`), so that delivery stays asynchronous, as
+ * it is over a network, with no I/O. For a forwarded write, the transport
+ * calls the primary's handler directly and returns its result. Every send
+ * method validates its message first and throws a `TransportError` for a
+ * malformed one.
  *
  * @public
  */
@@ -75,7 +75,7 @@ export class InMemoryTransport implements ReplicationTransport {
     return this.localRole
   }
 
-  /** Connects to the configured peers and announces this node. */
+  /** Joins the bus and connects this node to every other connected transport on the bus. */
   async connect(localNodeId: string, config: TransportConfig): Promise<void> {
     if (this.connected) {
       throw new TransportError('Transport is already connected')
@@ -128,7 +128,7 @@ export class InMemoryTransport implements ReplicationTransport {
     }
   }
 
-  /** Closes every peer connection. */
+  /** Leaves the bus and disconnects this node from every peer. */
   async disconnect(): Promise<void> {
     if (!this.connected) return
 
@@ -234,7 +234,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
-  /** Tells a joining node that first sync has finished, and sends the manifests to verify it. */
+  /** Tells a joining node that first sync is complete, and sends the manifests that the node checks its copy against. */
   async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncComplete(complete)) throw new TransportError('Invalid sync complete structure')
@@ -246,7 +246,7 @@ export class InMemoryTransport implements ReplicationTransport {
     })
   }
 
-  /** Confirms to the source that a joining node stored one first-sync page. */
+  /** Tells the source whether this joining node stored one first-sync page. */
   async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
     this.ensureConnected()
     if (!isValidSyncAck(ack)) throw new TransportError('Invalid sync ack structure')
@@ -268,7 +268,7 @@ export class InMemoryTransport implements ReplicationTransport {
     this.ackHandler = handler
   }
 
-  /** Registers the handler that runs a write a replica forwarded. */
+  /** Registers the handler that executes a write that a replica forwards. */
   onForwardReceived(handler: ForwardHandler): void {
     this.forwardHandler = handler
   }
@@ -293,17 +293,17 @@ export class InMemoryTransport implements ReplicationTransport {
     this.syncAckHandler = handler
   }
 
-  /** Registers the handler that runs when a peer connects. */
+  /** Registers the handler that the transport calls when a peer connects. */
   onPeerConnected(handler: PeerConnectedHandler): void {
     this.peerConnectedHandler = handler
   }
 
-  /** Registers the handler that runs when a peer disconnects. */
+  /** Registers the handler that the transport calls when a peer disconnects. */
   onPeerDisconnected(handler: PeerDisconnectedHandler): void {
     this.peerDisconnectedHandler = handler
   }
 
-  /** Returns every connected peer, keyed by identifier. */
+  /** Returns every connected peer, keyed by node ID. */
   peers(): ReadonlyMap<string, NodeInfo> {
     return this.connectedPeers
   }

@@ -32,6 +32,7 @@ async function start(hooks: HookConfig): Promise<void> {
   await db.execute('INSERT INTO ledger (id, amount) VALUES (1, 500)')
   server = createServer(sirannon, {
     port: 0,
+    acceptDeviceSync: true,
     authenticate: ctx => ({ role: ctx.headers.authorization === `Bearer ${READER_TOKEN}` ? 'reader' : 'guest' }),
   })
   await server.listen()

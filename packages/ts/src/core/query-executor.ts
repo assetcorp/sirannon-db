@@ -51,7 +51,7 @@ function asQueryError(err: unknown, sql: string): Error {
 }
 
 /**
- * Runs a read on one connection and returns the rows with their values decoded.
+ * Executes a read on one connection and returns the rows with their values decoded.
  *
  * @internal
  */
@@ -82,7 +82,7 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
 }
 
 /**
- * Runs a read on one connection and returns the first row, or undefined when there is none.
+ * Executes a read on one connection and returns the first row, or undefined when the read returns none.
  *
  * @internal
  */
@@ -101,7 +101,7 @@ export async function queryOne<T = Record<string, unknown>>(
 }
 
 /**
- * Runs one write on a connection and returns the change count and last inserted row id.
+ * Executes one write on a connection and returns the change count and the row id of the last inserted row.
  *
  * @internal
  */
@@ -276,7 +276,7 @@ async function forEachBatchRow(
 }
 
 /**
- * Runs one statement over many parameter sets on a connection and returns a result per set.
+ * Executes one statement on a connection once for each parameter set, and returns one result per set.
  *
  * @internal
  */

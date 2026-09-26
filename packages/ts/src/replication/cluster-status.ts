@@ -3,21 +3,22 @@ import type { ClusterReadEndpointInfo, ClusterStatusInfo } from '../core/types.j
 import type { CoordinatorRuntimeStatus, ReplicationStatus } from './types.js'
 
 /**
- * What a node needs to know beyond its own engine state to describe its group.
+ * Holds the database ID and the node addresses that {@link toClusterStatusInfo} takes in addition to the engine
+ * status.
  *
  * @public
  */
 export interface ClusterStatusOptions {
-  /** Identifier of the database the reported status describes. */
+  /** Identifies the database that the status reports on. */
   databaseId: string
-  /** Address a client reaches each node on, keyed by node id. */
+  /** Maps each node ID to the address that a client uses to reach that node. */
   endpoints: Readonly<Record<string, string>>
 }
 
 /**
- * Turns one node's engine status into the figures its readiness endpoint reports.
+ * Converts one node's engine status into the replication figures that the node's readiness endpoint reports.
  *
- * @param status - Status the replication engine reports for this node.
+ * @param status - The status that the replication engine reports for this node.
  * @returns The replication figures, ready to return from `getReplicationStatus`.
  *
  * @public
@@ -44,10 +45,10 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
 }
 
 /**
- * Turns one node's engine status into what `GET /db/{id}/cluster` reports about its group.
+ * Converts one node's engine status into the group status that `GET /db/{id}/cluster` returns.
  *
- * @param status - Status the replication engine reports for this node.
- * @param options - The database this status describes and the address of each node.
+ * @param status - The status that the replication engine reports for this node.
+ * @param options - The database that this status reports on and the address of each node.
  * @returns The group status, ready to return from `getClusterStatus`.
  *
  * @public
@@ -69,18 +70,18 @@ export function toClusterStatusInfo(status: ReplicationStatus, options: ClusterS
 }
 
 /**
- * Lists every node a client can read from, with the read concerns each one serves.
+ * Returns every node that a client can read from, with the read concerns that each node serves.
  *
- * A node counts towards majority and is neither quarantined, being taken out of
- * service, nor being rebuilt to appear at all. Where this node can see which
- * coordinator sessions are live, it lists only the nodes that hold one. A node
- * the group counts as in sync serves both `local` and `majority`; one that has
- * fallen behind serves `local` alone, because the engine answers a `local` read
- * without any in-sync check.
+ * The list holds the group's voting data-bearing nodes, minus any node that the
+ * group state marks as faulted, draining, or repairing. When the coordinator
+ * status includes the IDs of the nodes with a live session, the list keeps only
+ * those nodes. A node in the in-sync set serves both `local` and `majority`
+ * reads, while any other node serves `local` reads alone, because the engine
+ * answers a `local` read without checking the in-sync set.
  *
- * @param coordinator - Group state this node last read from the coordinator.
- * @param endpoints - Address a client reaches each node on, keyed by node id.
- * @returns One entry per node a client can read from.
+ * @param coordinator - The group state that this node last read from the coordinator.
+ * @param endpoints - Maps each node ID to the address that a client uses to reach that node.
+ * @returns One entry per node that a client can read from.
  *
  * @public
  */

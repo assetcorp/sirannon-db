@@ -1,7 +1,7 @@
 import type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from '../types.js'
 
 /**
- * Times queries and reports connection and change-capture activity to the configured metrics callbacks.
+ * Times each query and passes query timings, connection events, and change-capture events to the metrics callbacks that the caller configures.
  *
  * @internal
  */

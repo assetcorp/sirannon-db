@@ -102,7 +102,7 @@ const balance = await db.transaction(async tx => {
 })
 ```
 
-`bulkLoad` finishes a large import faster by relaxing durability inside one transaction, before it restores the configured level. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [guide of their own](https://sirannon.sondelali.com/docs/backups).
+`bulkLoad` writes a large import in one transaction under relaxed durability, and then it restores the durability level that you configured. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [guide of their own](https://sirannon.sondelali.com/docs/backups).
 
 ## Change data capture and live queries
 
@@ -134,7 +134,7 @@ Read the [live queries guide](https://sirannon.sondelali.com/docs/live-queries) 
 
 ## Serve it over the network
 
-A server refuses SQL from the network by default. Callers invoke the reads and writes that you register on it, by name:
+A server rejects SQL from the network by default. Callers call the reads and writes that you register on it by name:
 
 ```ts
 import { createServer } from '@delali/sirannon-db/server'
@@ -181,7 +181,7 @@ The `sirannon-codegen` command generates those references from the registry, so 
 
 With registered operations, your SQL stays on the server, so a caller of a registered read or write supplies only the arguments that you declared for it. With `acceptSql: true`, the server executes the statements that an admitted caller sends, so put that server behind an application layer or a private network boundary, or give it a `resolveExecutionTarget` that accepts only the statements that you know.
 
-Authenticate every request through the `authenticate` hook. Return the caller's identity from the hook so that the server can fill each `fromIdentity` argument of a registered operation, and throw to refuse the request:
+Authenticate every request through the `authenticate` hook. Return the caller's identity from the hook so that the server can fill each `fromIdentity` argument of a registered operation, and throw to reject the request:
 
 ```ts
 import { RequestDeniedError } from '@delali/sirannon-db'
@@ -200,7 +200,7 @@ const server = createServer<Identity>(sirannon, {
 })
 ```
 
-A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so the hook reads `headers.authorization` on both transports:
+A Node client attaches `headers` to the WebSocket upgrade as well as to HTTP requests, so your hook can read `headers.authorization` on both transports:
 
 ```ts
 const client = new SirannonClient('https://api.example.com', {
@@ -208,7 +208,7 @@ const client = new SirannonClient('https://api.example.com', {
 })
 ```
 
-A browser attaches no header to `new WebSocket(...)`, so a browser client puts a short-lived ticket in `webSocketProtocols`:
+A browser cannot attach a header to `new WebSocket(...)`, so give a browser client a short-lived ticket in `webSocketProtocols`:
 
 ```ts
 const client = new SirannonClient('https://api.example.com', {
@@ -218,7 +218,7 @@ const client = new SirannonClient('https://api.example.com', {
 
 When you construct a browser client on the WebSocket transport with `headers` alone, the constructor throws `INVALID_ARGUMENT`, because the browser would leave that credential out of the handshake. Pass both options when a browser client needs each of them, as the [entitlements example](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements) does. Its topology client sends `headers` with the discovery request to `GET /db/{id}/cluster`, while it sends the ticket with the socket handshake.
 
-Because the client offers the plain `sirannon.v1` identifier ahead of your values and the server selects it, the ticket stays out of the handshake response. Check the `Origin` header in the same hook. When the hook refuses an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
+Because the client offers the plain `sirannon.v1` identifier ahead of your values and the server selects it, the ticket stays out of the handshake response. Check the `Origin` header in the same hook. When the hook rejects an upgrade with status 401 or 403, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 
 - Bind to `127.0.0.1` or a private interface unless a proxy enforces TLS and access control.
 - Use HTTPS and WSS for traffic beyond the local machine, because the built-in server listens on plain HTTP.

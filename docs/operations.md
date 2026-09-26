@@ -1,10 +1,10 @@
 # Registered operations
 
-A Sirannon server accepts no SQL from the network until you set `acceptSql: true`. Instead, you register each statement the server may run under a name, and a caller sends that name with its arguments. The server holds every statement, so a caller reaches only the tables and columns you registered.
+A Sirannon server rejects SQL from the network until you set `acceptSql: true`. In its place, you register each statement that the server may execute under a name, and a caller sends that name with its arguments. The server holds every statement, so a caller can reach only the tables and columns that you registered.
 
 ## Register the operations
 
-The registry is server-side code, keyed by database identifier. A read returns one statement, a write returns one statement or several, and the server runs every statement of a write in one transaction.
+The registry is server-side code, keyed by database identifier. A read returns one statement, a write returns one statement or several, and the server executes every statement of a write in one transaction.
 
 ```ts
 import { createServer } from '@delali/sirannon-db/server'
@@ -39,11 +39,11 @@ const server = createServer(sirannon, {
 await server.listen()
 ```
 
-`args` names every argument a caller may supply. A caller that supplies an argument you didn't declare fails with `ARGUMENT_NOT_ALLOWED`, and one that leaves a declared argument out fails with `MISSING_ARGUMENT`. `columns` names what a read returns, and code generation turns that list into a row type.
+`args` names every argument that a caller may supply. A request that supplies an argument that you didn't declare fails with `ARGUMENT_NOT_ALLOWED`, and a request that leaves out a declared argument fails with `MISSING_ARGUMENT`. `columns` names the columns that a read returns, and code generation turns that list into a row type.
 
 ## Fill an argument from the caller's identity
 
-`fromIdentity` maps an argument to a field of the identity your `authenticate` hook returned, and the server fills that argument itself. A request that supplies such an argument fails with `ARGUMENT_NOT_ALLOWED`, so a caller can't overwrite the value the server chose.
+`fromIdentity` maps an argument to a field of the identity that your `authenticate` hook returned, and the server fills that argument itself. A request that supplies such an argument fails with `ARGUMENT_NOT_ALLOWED`, so a caller can't overwrite the value that the server filled in.
 
 ```ts
 interface Identity {
@@ -70,11 +70,11 @@ const server = createServer<Identity>(sirannon, {
 })
 ```
 
-TypeScript checks each `fromIdentity` value against the fields of your identity type, so a wrong field name fails to compile. A request that carries no identity fails with `IDENTITY_REQUIRED`.
+TypeScript checks each `fromIdentity` value against the fields of your identity type, so a wrong field name fails to compile. A request with no identity, or with an identity that lacks that field, fails with `IDENTITY_REQUIRED`.
 
 ## Call an operation
 
-Both client transports carry named calls. Pass an `OperationRef` to `query` and `execute`; a plain string still means SQL, which the server refuses unless you turned SQL on.
+Both client transports send named calls. Pass an `OperationRef` to `query` and `execute`; a plain string still means SQL, which the server rejects unless you turned SQL on.
 
 ```ts
 import { operationRef } from '@delali/sirannon-db'
@@ -86,28 +86,28 @@ const orders = await db.query(ordersByStatus, { status: 'pending' })
 const results = await db.execute(placeOrder, { total: 4999 })
 ```
 
-A registered write returns one result per statement, so `execute` gives you an array where the SQL form gives you a single result.
+A registered write returns one result per statement, so `execute` gives you an array, where the SQL form gives you a single result.
 
-Over HTTP the same calls are two routes, and `{name}` is URL-encoded:
+Over HTTP, the same calls go to two routes, and `{name}` is URL-encoded:
 
 ```text
 POST /db/{id}/query/{name}    { args?, readConcern? }   -> { rows }
 POST /db/{id}/execute/{name}  { args?, writeConcern? }  -> { results }
 ```
 
-Over WebSocket, a `query` or an `execute` message carrying `name` and `args` runs the registered operation. The server resolves `fromIdentity` against the identity your `authenticate` hook returned for the upgrade request.
+Over WebSocket, a `query` or an `execute` message that includes `name` and `args` calls the registered operation. The server resolves `fromIdentity` against the identity that your `authenticate` hook returned for the upgrade request.
 
 ## Announce what the server serves
 
-`GET /capabilities` lists what a server supports and carries the registry digest. A server running operations, statements, and device sync answers along these lines, where the `sync.*` tokens continue through the device-sync set:
+`GET /capabilities` lists what a server supports and includes the registry digest. A server with operations, SQL, and device sync turned on responds along these lines, where the `sync.*` tokens continue through the device-sync set:
 
 ```json
 { "capabilities": ["query.named", "query.sql", "sync.push", "sync.ack"], "registry": { "digest": "9f2c..." } }
 ```
 
-The digest is a hash over every registered database identifier, operation kind, operation name, argument name, and identity field name. It changes when an operation is added, removed, renamed, or takes different arguments, which is how a client notices a rolling deploy. A live query echoes the digest when it subscribes, and a server serving a different one refuses with `REGISTRY_MISMATCH`. It covers no statement text and no `columns` list, so a changed row shape leaves the digest as it was; regenerate the client types when you change what a read returns.
+The digest is a hash over every registered database identifier, operation kind, operation name, declared argument name, and identity-filled argument name. It changes when you add, remove, or rename an operation, or change its arguments, which is how a client detects a rolling deploy. A live query sends the digest when it subscribes, and a server with a different digest rejects the subscription with `REGISTRY_MISMATCH`. The hash covers no statement text, no `columns` list, and no identity field that `fromIdentity` maps an argument to, so a changed row shape leaves the digest as it was; regenerate the client types when you change what a read returns.
 
-`query.sql` tells a client that this server accepts statements. The client reads `/capabilities` once, caches the answer, and fails a statement with `SQL_NOT_ACCEPTED` before it leaves the process when the token is absent. The server refuses on its own as well, because a hand-written client runs no such check.
+`query.sql` tells a client that this server accepts statements. The client fetches `/capabilities` once, caches the response, and fails a statement with `SQL_NOT_ACCEPTED` before sending it when the token is absent. The server rejects the statement independently as well, because a hand-written client can skip that check.
 
 ## Turn SQL back on
 
@@ -117,17 +117,17 @@ Set `acceptSql: true` when you want the five statement routes and their WebSocke
 const server = createServer(sirannon, { port: 9876, acceptSql: true })
 ```
 
-That server runs any statement a caller sends, so authenticate every request and read the [security notes](../packages/ts/README.md#security) first. Registered operations stay available either way, and `acceptSql` never governs them.
+That server executes any statement that a caller sends, so authenticate every request and read the [security notes](../packages/ts/README.md#security) first. Registered operations stay available either way, and `acceptSql` has no effect on them.
 
 ## Generate typed references
 
-The `sirannon-codegen` binary reads the registry your server is built from and writes the references your client calls it through. The types then come from the definitions the server runs, and your continuous integration needs no running server.
+The `sirannon-codegen` binary imports the registry that your server is built from and writes the references that your client uses to call it. The types then come from the definitions that the server executes, and your continuous integration needs no server to be up.
 
 ```bash
 pnpm exec sirannon-codegen --registry ./src/operations.ts --out ./src/generated/operations.ts
 ```
 
-The generator imports the registry module, so run it under a loader that reads your source format when that module is not JavaScript. It reads an export named `operations` or a default export; pass `--export <name>` for any other name, and `--manifest <file>` to write the manifest as JSON alongside the types.
+The generator imports the registry module, so when that module is not JavaScript, start the generator under a loader for your source format. It uses an export named `operations` or a default export; pass `--export <name>` for any other name, and `--manifest <file>` to write the manifest as JSON alongside the types.
 
 ```ts
 import { app } from './generated/operations'
@@ -136,19 +136,19 @@ const orders = await db.query(app.reads.ordersByStatus, { status: 'pending' })
 await db.execute(app.writes.placeOrder, { total: 4999 })
 ```
 
-The generated file also exports `registryDigest`, the digest the registry carried when you generated it.
+The generated file also exports `registryDigest`, which is the registry's digest at the time that you generated the file.
 
-Each read carries the row type built from its `columns`. A read that declares none takes its row type from the statement, and only when it declares no arguments at all, because an argument chooses the statement. Every other read leaves the row shape open.
+Each read gets the row type built from its `columns`. A read that declares no `columns` gets its row type from the statement text, but only when it declares no arguments and fills none from identity, because an argument can change which statement the read returns. Every other read leaves the row shape open.
 
 ## Errors
 
 | Code | When |
 | --- | --- |
-| `UNKNOWN_QUERY` | No operation of that name is registered for the database |
-| `MISSING_ARGUMENT` | A declared argument was absent from the request |
-| `ARGUMENT_NOT_ALLOWED` | The caller supplied an undeclared argument, or one the server fills from identity |
-| `IDENTITY_REQUIRED` | An operation fills an argument from identity and the request carries none |
-| `REGISTRY_MISMATCH` | A live query echoed a digest this server does not serve |
-| `SQL_NOT_ACCEPTED` | The server accepts no SQL over the network |
+| `UNKNOWN_QUERY` | No operation of that name is registered for the database. |
+| `MISSING_ARGUMENT` | The request left out a declared argument. |
+| `ARGUMENT_NOT_ALLOWED` | The caller supplied an undeclared argument, or one that the server fills from identity. |
+| `IDENTITY_REQUIRED` | An operation fills an argument from identity, and the request's identity lacks that field. |
+| `REGISTRY_MISMATCH` | A live query sent a digest that differs from this server's digest. |
+| `SQL_NOT_ACCEPTED` | The server accepts no SQL over the network. |
 
-The normative definition is in [`packages/spec/05-server.md`](../packages/spec/05-server.md#registered-operations). [Live queries](live-queries.md) run over a registered read.
+The normative definition is in [`packages/spec/05-server.md`](../packages/spec/05-server.md#registered-operations). A remote [live query](live-queries.md) reads through a registered read.

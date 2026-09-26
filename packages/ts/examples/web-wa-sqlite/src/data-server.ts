@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { createServer } from '@delali/sirannon-db/server'
-import { createDeviceAuthenticator, type FieldTechnician } from './device-identity'
+import { createDeviceAuthenticator, createDeviceFleetCheck, type FieldTechnician } from './device-identity'
 import {
   DATABASE_ID,
   migrations,
@@ -39,7 +39,11 @@ const APP_ORIGINS = (process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN)
 const dataDir = fileURLToPath(new URL('../data/', import.meta.url))
 mkdirSync(dataDir, { recursive: true })
 
-const sirannon = new Sirannon({ driver: betterSqlite3(), migrations: [...migrations] })
+const sirannon = new Sirannon({
+  driver: betterSqlite3(),
+  migrations: [...migrations],
+  hooks: { onBeforePush: createDeviceFleetCheck() },
+})
 const db = await sirannon.open(DATABASE_ID, `${dataDir}${DATABASE_ID}.db`, {
   readPoolSize: 4,
   walMode: true,
@@ -59,6 +63,7 @@ const server = createServer<FieldTechnician>(sirannon, {
   host: HOST,
   port: PORT,
   cors: { origin: APP_ORIGINS, methods: ['GET', 'POST', 'OPTIONS'], headers: ['Content-Type', 'Authorization'] },
+  acceptDeviceSync: true,
   authenticate: createDeviceAuthenticator(APP_ORIGINS, DATABASE_ID),
 })
 

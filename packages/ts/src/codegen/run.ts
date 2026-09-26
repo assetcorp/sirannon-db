@@ -6,7 +6,7 @@ import { buildOperationManifest } from './manifest.js'
 import { renderOperationTypes } from './render.js'
 
 /**
- * Usage text the code generator prints when its arguments do not parse.
+ * The code generator appends this usage text to its error message when it cannot parse the arguments.
  *
  * @public
  */
@@ -70,10 +70,12 @@ function write(path: string, contents: string): void {
 }
 
 /**
- * Runs the code generator: it loads a registry module, builds the manifest, and writes the typed references.
+ * Writes typed operation references for the registry in the `--registry` module to the `--out` file.
  *
- * @param argv - Command-line arguments, without the executable and script names.
- * @throws When an argument is missing or the registry module cannot be loaded.
+ * When you pass `--manifest`, the generator also writes the operation manifest to that file as JSON.
+ *
+ * @param argv - The command-line arguments that follow the executable and script names.
+ * @throws An `Error` when an argument is missing or unrecognised, when Node cannot import the registry module, or when the module exports no operation registry.
  *
  * @public
  */

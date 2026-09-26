@@ -11,10 +11,11 @@ const HOOK_CONFIG_MAP: Record<keyof HookConfig, HookEvent> = {
   onDatabaseClose: 'databaseClose',
   onBeforeSubscribe: 'beforeSubscribe',
   onBeforeSnapshot: 'beforeSnapshot',
+  onBeforePush: 'beforePush',
 }
 
 /**
- * Holds the lifecycle hooks a database or registry has registered and invokes them in order.
+ * Stores the lifecycle hooks for a database or registry and calls each event's hooks in the order that the caller registered them.
  *
  * @internal
  */

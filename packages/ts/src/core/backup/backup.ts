@@ -48,13 +48,13 @@ export class BackupManager {
   constructor(private readonly streaming?: BackupStreamingSupport) {}
 
   /**
-   * Copies the database behind a connection to a file, while that database
-   * stays open for reads and writes.
+   * Copies the database that a connection has open to a file, while other
+   * callers go on reading from and writing to that database.
    *
-   * @param conn - Connection the copy runs on, which must be the connection that writes.
-   * @param destPath - Path to write the copy to. A file already there stops the copy.
-   * @param onFirstStep - Called once the copy's first step is done, so the caller can hand the writer back.
-   * @returns What the copy moved, how long it took, and how often it restarted.
+   * @param conn - The writer connection, which SQLite runs the copy on.
+   * @param destPath - The path to write the copy to. Sirannon refuses a path where a file already exists.
+   * @param onFirstStep - Called once after the first step of the copy, so that the caller can release the writer.
+   * @returns The pages that SQLite copies, the time that the copy takes, and the number of times that SQLite restarts it from page one.
    */
   async backup(conn: SQLiteConnection, destPath: string, onFirstStep?: () => void): Promise<BackupFileCopy> {
     if (hasControlCharacters(destPath)) {
@@ -108,11 +108,11 @@ export class BackupManager {
   }
 
   /**
-   * Reads the size of the file a copy wrote.
+   * Reads the size of the file that a copy writes.
    *
-   * @param resolved - Absolute path of that file.
-   * @param destPath - Path the caller named, which the error states.
-   * @returns Bytes it holds.
+   * @param resolved - The absolute path of that file.
+   * @param destPath - The path that the caller names, which Sirannon quotes in any error.
+   * @returns The size of the file, in bytes.
    */
   private fileBytes(resolved: string, destPath: string): number {
     try {
@@ -123,17 +123,16 @@ export class BackupManager {
   }
 
   /**
-   * Runs the copy, and removes the file it was writing where that copy fails, so
-   * that a database missing its later pages never stays on disk as though the
-   * copy had finished. Sirannon would otherwise count that half-written file
-   * among the copies it keeps, and it would evict a whole copy to make room for
-   * one nothing can restore.
+   * Runs the copy and deletes its file when the copy fails, so that a partly
+   * written database never stays on disk. Rotation would otherwise count that
+   * file among the copies it keeps, and it would delete a complete copy to make
+   * room for it.
    *
-   * Sirannon stops waiting on a copy once the stall deadline passes, and SQLite
-   * keeps writing that copy to the file. A removal that raced a live copy would
-   * leave a truncated file in place, and on Windows it would fail outright.
-   * Sirannon therefore removes the file only once the copy stops, while the
-   * caller receives the failure at once and waits for none of that.
+   * When the stall deadline passes, Sirannon stops waiting on the copy while
+   * SQLite goes on writing to the file. Deleting the file under a live copy
+   * would leave a truncated file in place, and on Windows the delete would fail.
+   * Sirannon therefore deletes the file once the copy stops, although the caller
+   * receives the failure straight away.
    */
   private async copyOrClearUp(
     conn: SQLiteConnection,

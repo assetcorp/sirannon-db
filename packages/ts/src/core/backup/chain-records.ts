@@ -13,11 +13,12 @@ function isTextOrAbsent(value: unknown): boolean {
 }
 
 /**
- * Checks that a value read back out of a destination holds every field of a
- * chain position, each of them a whole number, and frames that run forwards.
+ * Checks that a value from a destination holds every field of a chain position
+ * as a whole number, with frames counted from one and a last frame at or after
+ * the first.
  *
  * @param value - The value to check.
- * @returns Whether it is a position Sirannon wrote.
+ * @returns Whether the value has the shape of a chain position.
  *
  * @internal
  */
@@ -34,11 +35,11 @@ export function isBackupChainPosition(value: unknown): value is BackupChainPosit
 }
 
 /**
- * Checks that a value read back out of a destination is one line of the list of
- * chains.
+ * Checks that a value from a destination has the shape of one entry in the list
+ * of chains.
  *
  * @param value - The value to check.
- * @returns Whether it is a line Sirannon wrote.
+ * @returns Whether the value has the shape of a list entry.
  *
  * @internal
  */
@@ -48,11 +49,11 @@ export function isBackupChainHead(value: unknown): value is BackupChainHead {
 }
 
 /**
- * Checks that a value read back out of a destination is a complete record of
+ * Checks that a value from a destination holds every field of the record for
  * the full copy at the head of a chain.
  *
  * @param value - The value to check.
- * @returns Whether it is a record Sirannon wrote.
+ * @returns Whether the value has the shape of a full-copy record.
  *
  * @internal
  */
@@ -72,11 +73,11 @@ export function isBackupChainBase(value: unknown): value is BackupChainBase {
 }
 
 /**
- * Checks that a value read back out of a destination is a complete record of
+ * Checks that a value from a destination holds every field of the record for
  * one change piece.
  *
  * @param value - The value to check.
- * @returns Whether it is a record Sirannon wrote.
+ * @returns Whether the value has the shape of a change-piece record.
  *
  * @internal
  */

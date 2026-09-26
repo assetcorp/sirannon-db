@@ -4,7 +4,7 @@ import type { LiveHandlers, RemoteSubscription } from './types.js'
 import { RemoteError } from './types.js'
 
 /**
- * A live query running against a remote server, which keeps its rows current as the tables behind it change.
+ * A live query on a remote server, which keeps its rows current as rows change in the tables that the query selects from.
  *
  * @public
  */
@@ -40,14 +40,14 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
   }
 
   /**
-   * Returns the rows the query holds right now.
+   * Returns the query's current state, which is its status with either its rows or its error.
    */
   getState(): LiveQueryState<T> {
     return this.state
   }
 
   /**
-   * Calls back on each update and returns a function that stops the listener.
+   * Calls the listener with each update, and returns a function that removes it.
    *
    * @param listener - Receives each update.
    * @returns A function that removes the listener.
@@ -60,7 +60,7 @@ export class RemoteLiveQuery<T> implements LiveQuery<T> {
   }
 
   /**
-   * Ends the query and releases its subscription.
+   * Ends the query and unsubscribes it from the server.
    */
   async close(): Promise<void> {
     if (this.closed) return

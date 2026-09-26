@@ -1,4 +1,6 @@
 import {
+  type BeforePushHook,
+  HookDeniedError,
   type RequestContext,
   RequestDeniedError,
   readBearerToken,
@@ -44,5 +46,18 @@ export function createDeviceAuthenticator(
     }
 
     return { fleetId }
+  }
+}
+
+export function createDeviceFleetCheck(): BeforePushHook {
+  const fleetByDevice = new Map<string, string>()
+
+  return ({ deviceId, identity }) => {
+    const { fleetId } = identity as FieldTechnician
+    const owningFleet = fleetByDevice.get(deviceId) ?? fleetId
+    if (owningFleet !== fleetId) {
+      throw new HookDeniedError('beforePush', 'This device already syncs for another fleet.')
+    }
+    fleetByDevice.set(deviceId, owningFleet)
   }
 }

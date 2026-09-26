@@ -3,12 +3,12 @@ import { MigrationError } from '../errors.js'
 import type { Migration, MigrationSource } from './types.js'
 
 /**
- * The migrations a registry applies to every database it opens.
+ * Holds the migrations that a registry applies to every database that it opens.
  *
- * A registry given a function loads the set once and returns the same promise
- * to every open behind it, so that ten databases opening together read the
- * migration files once between them. A load that fails leaves nothing cached,
- * and the next open tries again.
+ * When the migrations come from a function, the set calls that function once
+ * and returns the same promise to every open, so that ten databases opening
+ * together load the migration files once. When the load fails, the set clears
+ * the cached promise, so the next open calls the function again.
  *
  * @internal
  */
@@ -18,10 +18,10 @@ export class RegistryMigrationSet {
   constructor(private readonly source: MigrationSource | undefined) {}
 
   /**
-   * Reads the set, loading it where a function supplies it.
+   * Returns the migrations, and calls the source function on the first request when the migrations come from a function.
    *
-   * @returns The migrations, which is an empty list where the registry has none.
-   * @throws When the function returns anything but a list.
+   * @returns The migrations, or an empty list when the registry has none.
+   * @throws A `MigrationError` with code `MIGRATION_SOURCE_INVALID` when the function returns something other than an array.
    */
   load(): Promise<Migration[]> {
     const source = this.source
@@ -50,7 +50,7 @@ export class RegistryMigrationSet {
   }
 
   /**
-   * Applies the set to one database. A database that refuses writes takes none.
+   * Applies the migrations to one database, and skips a read-only database.
    *
    * @param db - The database to migrate.
    */

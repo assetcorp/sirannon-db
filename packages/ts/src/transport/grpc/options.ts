@@ -1,35 +1,35 @@
 /**
- * Where the gRPC transport listens, and the certificates it presents and trusts.
+ * Sets the address that the gRPC transport listens on and the certificates that it presents and trusts.
  *
  * @public
  */
 export interface GrpcReplicationOptions {
   /**
-   * Address the gRPC server binds to. Default: '0.0.0.0'.
+   * Sets the address that the gRPC server binds to. Defaults to '0.0.0.0'.
    */
   host?: string
   /**
-   * Port the gRPC server binds to. Pass 0 to take any free port.
+   * Sets the port that the gRPC server binds to. The default, 0, lets the operating system pick a free port.
    */
   port?: number
   /**
-   * Path to this node's certificate.
+   * Sets the path to this node's TLS certificate.
    */
   tlsCert?: string
   /**
-   * Path to this node's private key.
+   * Sets the path to this node's private key.
    */
   tlsKey?: string
   /**
-   * Path to the authority certificate this node verifies its peers against.
+   * Sets the path to the certificate authority certificate that this node verifies its peers against.
    */
   tlsCaCert?: string
   /**
-   * Runs without TLS, which suits tests only.
+   * Turns off TLS. Use it only in tests.
    */
   insecure?: boolean
   /**
-   * Milliseconds a forwarded write may take before the replica gives up. Default: 30000.
+   * Sets how many milliseconds a replica waits for a forwarded write before it fails the write. Defaults to 30000.
    */
   forwardDeadlineMs?: number
 }

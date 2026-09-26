@@ -1,19 +1,19 @@
 # Sirannon DB - Node.js Example
 
-This self-contained Node.js example demonstrates Sirannon DB core features with either the `better-sqlite3` driver or Node's built-in `node:sqlite` driver.
+This self-contained Node.js example shows the core features of Sirannon DB with either the `better-sqlite3` driver or Node's built-in `node:sqlite` driver.
 
 ## Setup
 
 This example needs Node.js 22 or newer and pnpm.
 
-The example imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
+The example imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 
 ```bash
 pnpm install
 pnpm --filter @delali/sirannon-db build
 ```
 
-Run the build again whenever you change anything under `packages/ts/src`.
+Build the package again whenever you change anything under `packages/ts/src`.
 
 ## Run
 
@@ -36,7 +36,7 @@ Use Node's built-in SQLite driver:
 pnpm run start:node-native
 ```
 
-The Node native script passes `--experimental-sqlite` before loading the example.
+The Node native script passes `--experimental-sqlite` to Node before it loads the example.
 
 You can also choose the driver manually:
 
@@ -45,22 +45,22 @@ pnpm start -- --driver=better-sqlite3
 node --experimental-sqlite --import tsx src/main.ts --driver=node
 ```
 
-Supported driver values are `better-sqlite3`, `better`, `node`, and `node-native`.
+The `--driver` flag accepts `better-sqlite3`, `better`, `node`, and `node-native`.
 
 ## Features Demonstrated
 
-- Driver selection with `better-sqlite3` or Node native SQLite
-- Database creation via `Database.create()`
-- Schema creation via `db.execute()`
-- File-based migrations with `loadMigrations()` and `db.migrate()`
-- Data insertion with `db.execute()`
-- Queries with `db.query<T>()` and `db.queryOne<T>()`
-- Transactions with `db.transaction(async tx => ...)`
-- CDC subscriptions with `db.watch()` and `db.on().subscribe()`
-- Live queries with `db.live()`, where the result set maintains itself as rows change
-- Connection pool configuration with `readPoolSize`
-- Metrics via `Sirannon` with `metrics.onQueryComplete`
-- Multi-tenant databases opened on first access through `sirannon.resolve()` and `createTenantResolver()`, with `maxOpen` evicting the least recently used tenant
-- Query hooks with `onBeforeQuery`, `onAfterQuery`, and `onDatabaseOpen`
-- Backup with `db.backup()`
-- Graceful shutdown with `db.close()` and `sirannon.shutdown()`
+- The example selects either `better-sqlite3` or Node's native SQLite driver.
+- It creates a database with `Database.create()`.
+- It creates the schema with `db.execute()`.
+- It applies file-based migrations with `loadMigrations()` and `db.migrate()`.
+- It inserts data with `db.execute()`.
+- It queries with `db.query<T>()` and `db.queryOne<T>()`.
+- It groups writes in a transaction with `db.transaction(async tx => ...)`.
+- It subscribes to changes with `db.watch()` and `db.on().subscribe()`.
+- It opens a live query with `db.live()`, which keeps its result current as rows change.
+- It sets the size of the read connection pool with `readPoolSize`.
+- It collects metrics through `Sirannon` with `metrics.onQueryComplete`.
+- It opens tenant databases on first access through `sirannon.resolve()` and `createTenantResolver()`, and `maxOpen` closes the least recently used tenant.
+- It registers query hooks with `onBeforeQuery`, `onAfterQuery`, and `onDatabaseOpen`.
+- It takes a backup with `db.backup()`.
+- It shuts down cleanly with `db.close()` and `sirannon.shutdown()`.

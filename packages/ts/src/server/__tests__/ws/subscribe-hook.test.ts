@@ -28,7 +28,7 @@ async function open(hooks: HookConfig): Promise<void> {
   await db.execute('CREATE TABLE ledger (id INTEGER PRIMARY KEY, amount INTEGER)')
   await db.watch('notes')
   await db.watch('ledger')
-  handler = createWSHandler(sirannon, { acceptSql: true })
+  handler = createWSHandler(sirannon, { acceptSql: true, acceptDeviceSync: true })
   conn = createMockConnection()
   await handler.handleOpen(conn, 'mydb', IDENTITY)
 }

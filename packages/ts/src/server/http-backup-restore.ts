@@ -50,21 +50,21 @@ async function rebuildDatabase(request: RestoreRequest): Promise<void> {
 }
 
 /**
- * Serves the route that rebuilds a database from a moment the caller names.
+ * Handles the route that rebuilds a database at a moment that the caller names.
  *
- * The route stays shut unless the operator turns `acceptBackupRestore` on. A
- * restore replaces the database that is serving traffic, and no default
- * configuration should reach a route that does that.
+ * The route refuses every request with `BACKUP_RESTORE_NOT_ACCEPTED` until the
+ * operator turns `acceptBackupRestore` on, because a restore replaces a database
+ * while the server is serving it.
  *
- * Sirannon accepts the restore and answers straight away, since rebuilding a
- * large database may continue past the deadline any proxy between the caller
- * and the server allows. That database answers nothing while Sirannon replaces
- * its file, so the status route is where a caller reads how the restore went.
+ * The server starts the restore and answers with 202 at once, because rebuilding
+ * a large database can take longer than the timeout of a proxy between the caller
+ * and the server. The server takes the database offline while it replaces the
+ * file, so the caller reads the outcome from the status route.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @param accepted - Whether the operator opened this route.
- * @param runs - Where the server records how each restore went.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @param accepted - Whether the operator opens this route with `acceptBackupRestore`.
+ * @param runs - The server's record of each restore.
+ * @returns The handler that the server registers.
  */
 export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs: BackupRestoreRuns): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
@@ -118,13 +118,13 @@ export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs:
 }
 
 /**
- * Serves the route that reports how one database's restore went.
+ * Handles the route that reports the state of one database's restore.
  *
- * It reads the server's own record, which is what lets it answer while that
- * database is closed, and a caller asks at exactly that moment.
+ * It reads the server's own record, so that it can answer while the database
+ * is closed for the restore.
  *
- * @param runs - Where the server records how each restore went.
- * @returns The handler the server registers.
+ * @param runs - The server's record of each restore.
+ * @returns The handler that the server registers.
  */
 export function handleBackupRestoreStatus(runs: BackupRestoreRuns): DbGetRouteHandler {
   return async (res, dbId, _ctx, abort) => {

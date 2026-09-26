@@ -47,18 +47,17 @@ function readPrimaryTerm(value: unknown): bigint | undefined {
 }
 
 /**
- * Reads the body of `GET /db/{id}/cluster` into the status the server reported.
+ * Parses the body of `GET /db/{id}/cluster` and returns the cluster status that the server reports.
  *
- * The route answers with a decimal string for `primaryTerm`, so that a term beyond
- * the safe integer range survives JSON, and this returns it as a bigint. A caller
- * building a cluster view gets the health, the reason behind it, the node the group
- * names as primary, and the readable endpoints, each checked against the values the
- * engine reports.
+ * The route sends `primaryTerm` as a decimal string, so that JSON keeps a term beyond the
+ * safe integer range exact, and this function returns it as a bigint. It checks `health`
+ * and `healthReason` against the values that the engine can report, and checks the shape
+ * of the role, the current primary, and the read endpoints.
  *
  * @param data - The parsed JSON body of the response.
- * @param databaseId - The database the caller asked about.
- * @returns The status the server reported.
- * @throws A remote error with code `INVALID_RESPONSE` where the body is malformed or names another database.
+ * @param databaseId - The ID of the database that you asked about.
+ * @returns The cluster status that the server reports.
+ * @throws A `RemoteError` with code `INVALID_RESPONSE` when the body is malformed or its `databaseId` differs from `databaseId`.
  *
  * @public
  */

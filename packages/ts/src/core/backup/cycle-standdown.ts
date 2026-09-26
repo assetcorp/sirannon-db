@@ -4,23 +4,23 @@ import type { BackupCycleRequest } from './cycle-options.js'
 import type { BackupCycleState } from './cycle-state.js'
 
 /**
- * What a cycle hands the stand-down path, so that path lets go of a chain
- * without reaching into the cycle's own state.
+ * The callbacks and paths that a cycle passes to the stand-down code, so that
+ * the code can release a chain without reading the state of the cycle.
  *
  * @internal
  */
 export interface StandDownRequest {
-  /** The operator's settings, plus the database the cycle runs against. */
+  /** The settings of the operator, and the database that the cycle backs up. */
   request: BackupCycleRequest
-  /** Path of the write-ahead log behind that database. */
+  /** The path of the write-ahead log of that database. */
   logPath: string
   /** Whether the cycle still holds a chain. */
   holdsChain: () => boolean
   /** Sends the capture staged against that chain. */
   sendStagedCapture: () => Promise<unknown>
-  /** Forgets the chain, the state file naming it, and the check behind it. */
+  /** Discards the chain and its staged capture, deletes the state file, and resets the check that the list names the chain. */
   forgetChain: () => Promise<void>
-  /** Passes an error to the operator. */
+  /** Reports an error to the operator. */
   report: (err: unknown) => void
 }
 
@@ -40,16 +40,16 @@ async function letGoOfChain(cycle: StandDownRequest): Promise<void> {
 }
 
 /**
- * Lets go of the chain a node was building, once the capture staged against it
- * has reached the destination. A piece already read off the log is a piece that
- * chain can still use, so a destination refusing it leaves the chain and the
- * log where they are for the turn after this one to send.
+ * Sends the capture staged against the chain of a node, and then releases the
+ * chain and checkpoints the log. The chain can still use a capture that
+ * Sirannon has already read from the log, so when the destination refuses it,
+ * Sirannon keeps the chain and the log as they are for the next turn to send.
  *
- * The turn that brings the group's backups back to this node starts a fresh
- * chain, since a chain of physical pieces from one node continues on no other.
+ * When Sirannon picks this node again, its next turn starts a new chain, since
+ * the physical pieces from one node can extend no chain on another node.
  *
- * @param cycle - What the cycle offers the stand-down path.
- * @returns Whether the node let go of the chain and emptied its log.
+ * @param cycle - The callbacks and paths that the cycle passes in.
+ * @returns Whether the node releases the chain and checkpoints its log.
  *
  * @internal
  */
@@ -60,15 +60,16 @@ export async function standDownFromChain(cycle: StandDownRequest): Promise<boole
 }
 
 /**
- * Empties a log the cycle has left behind, where the operator set a limit and
- * the turn behind this call captured nothing. The chain ends there, and the
- * report names the writes that reach no backup.
+ * Checkpoints the log to empty it when the operator sets a limit, the log grows
+ * past that limit, and the turn that calls this captures nothing. The chain
+ * ends there, and Sirannon reports the writes that no backup holds.
  *
- * A staged capture the destination refuses goes with it, because an operator
- * setting that limit puts a writable database ahead of an unbroken chain.
+ * When the destination refuses the staged capture, Sirannon discards that
+ * capture as well, because an operator who sets the limit ranks a writable
+ * database above an unbroken chain.
  *
- * @param cycle - What the cycle offers the stand-down path.
- * @returns Whether the log had grown past the limit and was emptied.
+ * @param cycle - The callbacks and paths that the cycle passes in.
+ * @returns Whether the log has grown past the limit, in which case Sirannon releases the chain and checkpoints the log.
  *
  * @internal
  */
@@ -82,35 +83,35 @@ export async function releaseChainPastLogLimit(cycle: StandDownRequest): Promise
   return true
 }
 
-/** What a cycle supplies to the chain check, so that check reads no cycle state of its own.
+/** The state and callbacks that a cycle passes to the chain check, so that the check reads only what the cycle passes in.
  * @internal
  */
 export interface ChainGrip {
-  /** The operator's settings, plus the database the cycle runs against. */
+  /** The settings of the operator, and the database that the cycle backs up. */
   request: BackupCycleRequest
-  /** Name the list of chains is stored under. */
+  /** The name that Sirannon stores the list of chains under. */
   chainName: string
-  /** The chain the cycle is extending, or null where it has none. */
+  /** The state of the chain that the cycle extends, or null where the cycle holds no chain. */
   state: BackupCycleState | null
-  /** Whether an earlier turn already found that chain in the list. */
+  /** Whether an earlier turn confirmed that the list names that chain. */
   verified: boolean
   /** Discards the chain and the capture staged against it. */
   discardState: () => Promise<void>
-  /** Passes an error to the operator. */
+  /** Reports an error to the operator. */
   report: (err: SirannonError) => void
 }
 
 /**
- * Checks that the destination still lists the chain the cycle's state names,
- * including a chain that cycle started itself.
+ * Checks that the list of chains at the destination still names the chain in
+ * the state of the cycle, including a chain that the cycle started itself.
  *
- * No restore ever reads a record appended under a chain the listing omits, so
- * this check comes before the first record of every turn. A check that cannot
- * read the destination leaves the chain unverified, and the next turn tries
- * again before it appends anything.
+ * A restore finds records only through a chain in the list, so the cycle runs
+ * this check before it appends the first record of every turn. When the check
+ * cannot read the destination, the chain stays unverified, and the next turn
+ * checks again before it appends anything.
  *
- * @param grip - The chain the cycle is extending, and what it does where that chain is absent.
- * @returns Whether the chain is still listed, which the cycle records until it discards that chain.
+ * @param grip - The chain that the cycle extends, and the callbacks that run where the list omits it.
+ * @returns Whether the list still names the chain, which the cycle keeps until it discards that chain.
  *
  * @internal
  */

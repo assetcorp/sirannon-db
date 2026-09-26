@@ -1,16 +1,16 @@
 # Core engine
 
-The core entry point, `@delali/sirannon-db`, holds the database registry, the connection pools, and everything that runs against a local SQLite file. The [package README](../packages/ts/README.md) covers installation, the first query, and change data capture; this guide covers the rest.
+The core entry point, `@delali/sirannon-db`, holds the database registry, the connection pools, and every operation on a local SQLite file. The [package README](../packages/ts/README.md) covers installation, the first query, and change data capture, while this guide covers the rest.
 
 ## Bulk load
 
-`bulkLoad` runs the whole batch in one transaction under relaxed durability, then restores the configured level. Use it for imports you can re-run after a crash.
+`bulkLoad` executes the whole batch in one transaction under relaxed durability, then restores the configured level. Use it for imports that you can repeat after a crash.
 
 ```ts
 const summary = await db.bulkLoad('INSERT INTO events (id, payload) VALUES (?, ?)', rows, { durability: 'off' })
 ```
 
-Over the client, `loadAll` splits an iterable into batches and checkpoints the WAL once at the end:
+On the client, `loadAll` splits an iterable into batches and checkpoints the WAL once at the end:
 
 ```ts
 const summary = await db.loadAll('INSERT INTO events (id, payload) VALUES (?, ?)', rowStream, {
@@ -21,7 +21,7 @@ const summary = await db.loadAll('INSERT INTO events (id, payload) VALUES (?, ?)
 
 ## Live queries
 
-`db.live` returns a query result that change events keep current, so a view re-renders without polling and without re-reading the table:
+`db.live` returns a query result that Sirannon updates from change events, so a view re-renders without polling or re-reading the table:
 
 ```ts
 const orders = await db.live<{ id: number; total: number }>(
@@ -32,11 +32,11 @@ const orders = await db.live<{ id: number; total: number }>(
 orders.subscribe(() => render(orders.getState()))
 ```
 
-The [live queries guide](live-queries.md) covers the update kinds, the three cases that trigger a second read, and the statements a live query maintains.
+The [live queries guide](live-queries.md) covers the update kinds, the three cases that trigger a second read, and the statements that a live query can maintain.
 
 ## Migrations
 
-Numbered `.up.sql` and `.down.sql` files apply once each, inside a transaction, tracked in `_sirannon_migrations` with a checksum. Versions must be integers from 1 to 2,147,483,647 so they fit `PRAGMA user_version`, which mirrors the highest applied version.
+Sirannon applies each numbered migration file once inside a transaction and records it in `_sirannon_migrations` with a checksum. Versions must be integers from 1 to 2,147,483,647 so that they fit `PRAGMA user_version`, which Sirannon sets to the highest applied version.
 
 ```txt
 migrations/
@@ -56,7 +56,7 @@ await db.rollback(migrations, 2)   // undo everything after version 2
 await db.rollback(migrations, 0)   // undo everything
 ```
 
-Pass migration objects directly when you do not load from disk:
+Pass migration objects directly when your migrations are not in files:
 
 ```ts
 await db.migrate([
@@ -64,7 +64,7 @@ await db.migrate([
 ])
 ```
 
-Bundlers inline `.sql` files as strings, so a bundled app builds the same set without filesystem access:
+A bundler such as Vite can inline `.sql` files as strings, so a bundled app can build the same set without filesystem access:
 
 ```ts
 import { migrationsFromFiles } from '@delali/sirannon-db'
@@ -73,13 +73,13 @@ const files = import.meta.glob('./migrations/*.sql', { query: '?raw', import: 'd
 await db.migrate(migrationsFromFiles(files))
 ```
 
-A baseline squashes history. Write one file holding the full schema and mark the highest version it supersedes; a fresh database runs the baseline and everything after it, and a database with real history keeps using that history:
+A baseline replaces a long migration history with one file. Write one file that holds the full schema, and mark the highest version that it replaces. Sirannon applies the baseline and every later migration to a fresh database, while a database that already has a history goes on using that history:
 
 ```ts
 const migrations = loadMigrations('./migrations', { baseline: { version: 701, through: 700 } })
 ```
 
-Declare the set on the registry to migrate every database it opens, including tenants resolved lazily:
+Declare the set on the registry to migrate every database that it opens, including a tenant database that it resolves on first use:
 
 ```ts
 const sirannon = new Sirannon({
@@ -93,17 +93,17 @@ const db = await sirannon.resolve('tenant-42')
 
 ## Backups
 
-`backup()` copies a database to a file while it stays open for reads and writes, because SQLite moves the pages in steps and a write runs in the gap between two of them:
+`backup()` copies a database to a file while it stays open for reads and writes, because SQLite copies the pages in steps and a write can commit in the gap between two of them:
 
 ```ts
 await db.backup('./backups/snapshot.db')
 ```
 
-The [backups guide](backups.md) covers the cron schedule, sending a copy to storage you supply, the chain that follows a full copy with only what changed, and restoring from a moment you name.
+The [backups guide](backups.md) covers the cron schedule, sending a copy to storage that you supply, the chain of changes that follows each full copy, and restoring from a moment that you name.
 
 ## Hooks and metrics
 
-Throwing from a before-hook denies the operation.
+A before-hook refuses the operation by throwing.
 
 ```ts
 sirannon.onBeforeQuery(ctx => {
@@ -122,7 +122,7 @@ const withMetrics = new Sirannon({
 })
 ```
 
-Global hooks: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, `onDatabaseClose`. Register `onBeforeSubscribe` and `onBeforeSnapshot` through the `hooks` constructor option. The server calls the first once per table a client subscribes to and the second once per table a snapshot reads, each with the identity the `authenticate` hook returned, and a throw refuses the request. Substring matching is no SQL firewall, so pair hooks with an allow-list of known statements.
+The registry has five methods that register a global hook: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, and `onDatabaseClose`. Register `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` through the `hooks` constructor option. The server calls the first once for each table that a client subscribes to, the second once for each table that a snapshot reads, and the third once for each table that a pushed device batch writes to. Each of them receives the identity that the `authenticate` hook returns for the request, and throwing from it refuses the request. A substring match on SQL misses a statement that someone rewrites to avoid it, so pair hooks with an allow-list of known statements.
 
 ## Multi-tenant lifecycle
 

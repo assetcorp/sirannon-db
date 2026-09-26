@@ -12,35 +12,35 @@ import {
 
 const READ_CHUNK_BYTES = 4 * 1024 * 1024
 
-/** Where in the write-ahead log one capture stopped.
+/** The point in the write-ahead log where one capture stopped.
  * @internal
  */
 export interface LogCursor {
-  /** Checkpoint sequence of the log these frames belong to. */
+  /** The checkpoint sequence of the log that holds these frames. */
   logSequence: number
-  /** First salt of that same log. */
+  /** The first salt of that log. */
   salt1: number
-  /** Second salt of it. */
+  /** The second salt of that log. */
   salt2: number
-  /** The last frame taken, counted from one. */
+  /** The last frame that the capture copied, counted from one. */
   lastFrame: number
-  /** First half of the running checksum at that frame, which the next capture starts from. */
+  /** The first half of the running checksum at that frame, which the next capture continues from. */
   checksum1: number
-  /** Second half of it. */
+  /** The second half of that checksum. */
   checksum2: number
   /** Whether the checkpoint after this capture emptied the log. */
   checkpointed: boolean
 }
 
-/** How far down a log the live frames run.
+/** The last committed frame in a log, and the offset and checksum after it.
  * @internal
  */
 export interface LogScan {
-  /** The last frame that commits a transaction. Where the walk found none, this stays where it began. */
+  /** The last frame that commits a transaction, or the starting frame of the scan where the scan finds none. */
   lastCommitFrame: number
-  /** The byte just past that frame. */
+  /** The offset of the byte after that frame. */
   endOffset: number
-  /** The running checksum at it. */
+  /** The running checksum at that frame. */
   checksum: LogChecksum
 }
 
@@ -54,12 +54,13 @@ async function openForReading(path: string): Promise<Awaited<ReturnType<typeof o
 }
 
 /**
- * Reads the header of a database's write-ahead log. SQLite names that file
- * after the database file, and truncates it to nothing at a checkpoint, so an
- * absent or empty file is ordinary and comes back as undefined.
+ * Reads the header of the write-ahead log of a database. SQLite names that file
+ * after the database file and truncates it to zero bytes at a truncating
+ * checkpoint, so a missing or empty file is normal, and this returns undefined
+ * for it.
  *
- * @param logPath - Path of the log file.
- * @returns The header, or undefined where there is no readable log there.
+ * @param logPath - The path of the log file.
+ * @returns The header, or undefined where the path holds no readable log.
  */
 export async function readLogFileHeader(logPath: string): Promise<LogHeader | undefined> {
   const file = await openForReading(logPath)
@@ -75,16 +76,16 @@ export async function readLogFileHeader(logPath: string): Promise<LogHeader | un
 }
 
 /**
- * Walks a log from a frame you name and finds the last frame after it that
- * commits a transaction. A capture stops there, so it never takes half of a
- * transaction. Frames past that point are either uncommitted or left over from
- * a rolled-back transaction, and the checksum chain is what tells them apart
- * from live ones.
+ * Scans a log from a given frame and returns the last later frame that commits
+ * a transaction. A capture stops at that frame, so that it always copies whole
+ * transactions. The frames after that point either hold an uncommitted
+ * transaction or remain from a rolled-back one, and the checksum chain
+ * separates them from valid frames.
  *
- * @param logPath - Path of the log file.
- * @param header - Header of that log.
- * @param from - The frame to walk on from, and the checksum it left.
- * @returns Where the live frames end, and the checksum there.
+ * @param logPath - The path of the log file.
+ * @param header - The header of that log.
+ * @param from - The frame to scan on from, and the running checksum at that frame.
+ * @returns The end of the committed frames, and the checksum there.
  */
 export async function scanLogFrames(
   logPath: string,
@@ -149,15 +150,15 @@ export async function scanLogFrames(
 }
 
 /**
- * Copies a run of bytes out of the log into a file of its own. The checkpoint
- * that follows a capture empties the log, so the frames have to be somewhere
- * else by then.
+ * Copies a range of bytes from the log into a separate file. The checkpoint
+ * after a capture empties the log, so Sirannon must copy the frames out before
+ * that checkpoint.
  *
- * @param logPath - Path of the log file.
- * @param startOffset - First byte to copy.
- * @param endOffset - The byte just past the last one to copy.
- * @param destPath - Where to write them.
- * @returns How many bytes it wrote, which is always the whole run.
+ * @param logPath - The path of the log file.
+ * @param startOffset - The first byte to copy.
+ * @param endOffset - The offset of the byte after the last byte to copy.
+ * @param destPath - The path of the file to write.
+ * @returns The number of bytes written, which always equals the length of the range.
  */
 export async function copyLogRange(
   logPath: string,
@@ -206,10 +207,10 @@ export async function copyLogRange(
 }
 
 /**
- * Names the write-ahead log SQLite keeps beside a database file.
+ * Returns the path of the write-ahead log that SQLite keeps next to a database file.
  *
- * @param sourcePath - Path of the database file.
- * @returns Path of its log.
+ * @param sourcePath - The path of the database file.
+ * @returns The path of its log.
  *
  * @internal
  */
@@ -218,27 +219,27 @@ export function logPathFor(sourcePath: string): string {
 }
 
 /**
- * Reads how far a database's write-ahead log has reached at the moment of the
- * call. A full copy states this, so that a reader can tell which run of the log
- * the database was on when that copy finished.
+ * Reads the position of the write-ahead log of a database at the moment of the
+ * call. A full copy records this position, so that a reader can tell which
+ * generation of the log the database was on when the copy finished.
  *
- * Sirannon reads the log once the copy has moved every page. A writer may
- * commit in the gap between those two steps, and the frame named here would
- * then be later than the last frame the copy itself took in. So read this as
- * the state of the log at one moment.
+ * Sirannon reads the log after SQLite copies the last page. A writer can commit
+ * between those two steps, in which case the frame named here is later than
+ * the last frame in the copy, so treat this as the state of the log at one
+ * moment.
  *
- * The walk stops at the last frame that commits a transaction, so the answer
- * never names a frame a restore could not replay.
+ * The scan stops at the last frame that commits a transaction, so a restore can
+ * apply every frame up to the frame that the position names.
  *
- * A copy that has moved every page is worth storing on its own, so Sirannon
- * answers undefined for a log it cannot read and lets the run itself succeed. A
- * database that keeps no write-ahead log answers the same way, and so does one
- * whose log a checkpoint has emptied. The capture path reads the log through
- * {@link readLogFileHeader} and {@link scanLogFrames}, where a failure does stop
+ * A copy of every page is worth keeping without the position, so this returns
+ * undefined for a log that Sirannon cannot read, and the backup still
+ * succeeds. It also returns undefined for a database without a write-ahead log,
+ * and for an empty log. The capture path reads the log through
+ * {@link readLogFileHeader} and {@link scanLogFrames}, where a failure stops
  * the capture, because those frames are the backup.
  *
- * @param sourcePath - Path of the database file, beside which SQLite keeps the log.
- * @returns Where the log had reached, or undefined where Sirannon could not read it.
+ * @param sourcePath - The path of the database file, next to which SQLite keeps the log.
+ * @returns The position of the log, or undefined where Sirannon cannot read it.
  *
  * @internal
  */
@@ -260,23 +261,23 @@ export async function readLogPosition(sourcePath: string): Promise<BackupLogPosi
 }
 
 /**
- * Puts a cursor's two checksum halves back into the pair the frame walk starts from.
+ * Returns the two checksum halves of a cursor as the pair that the frame scan starts from.
  *
- * @param cursor - Where the previous capture stopped.
- * @returns Its checksum.
+ * @param cursor - The point where the previous capture stopped.
+ * @returns The checksum of the cursor.
  */
 export function cursorChecksum(cursor: LogCursor): LogChecksum {
   return { first: cursor.checksum1, second: cursor.checksum2 }
 }
 
 /**
- * Tells you whether the log on disk is still the one a cursor came from. SQLite
- * changes both salts every time it restarts a log, so matching salts mean the
- * frames on disk continue the ones already captured.
+ * Returns whether the log on disk is the same generation as the log of a
+ * cursor. SQLite changes both salts each time it restarts a log, so matching
+ * salts mean that the frames on disk continue the frames already captured.
  *
- * @param header - Header of the log now on disk.
- * @param cursor - Where the previous capture stopped.
- * @returns Whether it is the same log.
+ * @param header - The header of the log on disk.
+ * @param cursor - The point where the previous capture stopped.
+ * @returns Whether the log on disk is the same generation as the log of the cursor.
  */
 export function sameLog(header: LogHeader, cursor: LogCursor): boolean {
   return header.salt1 === cursor.salt1 && header.salt2 === cursor.salt2

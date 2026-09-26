@@ -6,16 +6,16 @@ import { LWWResolver } from './lww.js'
 type ColumnVersionGetter = (table: string, rowId: string) => Promise<Map<string, { hlc: string; nodeId: string }>>
 
 /**
- * Per-column conflict resolver that merges non-overlapping field changes.
+ * Resolves a conflict column by column, and returns a merged row with both sides' changes when the two sides changed different columns.
  *
- * Given a conflict between a local and remote write on the same row, this
- * resolver computes the set of columns each side changed relative to the
- * common ancestor (oldData). If the changed column sets don't overlap, both
- * sides' changes are merged into a single row, avoiding unnecessary data
- * loss. When columns do overlap, per-column HLC versions (retrieved via the
- * injected `getColumnVersions` callback) determine which side's value wins
- * for each contested column. If no column version metadata exists, the
- * resolver falls back to whole-row LWW.
+ * The resolver compares the local row and the remote row with the remote
+ * change's `oldData` to find the columns that each side changed. When the two
+ * sets share no column, the resolver returns one row that holds both sides'
+ * changes. For each column that both sides changed, the resolver compares the
+ * remote HLC with that column's stamp from `getColumnVersions`, and it takes
+ * the remote value when the remote stamp is higher, or equal with a higher
+ * node ID. When the row has no column stamps, the resolver applies whole-row
+ * {@link LWWResolver}.
  *
  * @public
  */
@@ -28,10 +28,10 @@ export class FieldMergeResolver implements ConflictResolver {
   }
 
   /**
-   * Merges columns only one side changed, and settles overlapping columns by their per-column stamps.
+   * Returns the resolution for one conflicting row, merging changes to different columns and settling each column that both sides changed by its per-column stamp.
    *
    * @param ctx - The local and incoming versions of one row.
-   * @returns Which version to write, or the merged row.
+   * @returns The version to keep, or the merged row.
    */
   async resolve(ctx: ConflictContext): Promise<ConflictResolution> {
     const columnVersions = await this.getColumnVersions(ctx.table, ctx.rowId)

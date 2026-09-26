@@ -12,39 +12,40 @@ const STAGED_CAPTURE_SUFFIX = '.wal'
 
 import { copyLogRange, cursorChecksum, type LogCursor, readLogFileHeader, sameLog, scanLogFrames } from './wal-log.js'
 
-/** What one capture reads from, and where it puts what it finds.
+/** The paths, chain position, and log cursor for one capture.
  * @internal
  */
 export interface CaptureRequest {
-  /** Path of the database file. The error message names it. */
+  /** The path of the database file, which the error message quotes. */
   sourcePath: string
-  /** Path of its write-ahead log. */
+  /** The path of its write-ahead log. */
   logPath: string
-  /** Directory to stage the frames in. */
+  /** The directory to stage the frames in. */
   stagingDir: string
-  /** The chain this piece extends. */
+  /** The chain that this piece extends. */
   chainId: string
-  /** Prefix to name it with at the destination. */
+  /** The prefix of the piece name at the destination. */
   namePrefix: string
-  /** Where it comes in its chain, counted from one. */
+  /** The position of the piece in its chain, counted from one. */
   sequence: number
-  /** Where the previous capture stopped. At the head of a chain there is none. */
+  /** The point in the log where the previous capture stopped, or null at the head of a chain. */
   cursor: LogCursor | null
   /**
    * Whether the database closed with its whole log captured. SQLite deletes the
-   * log as it closes, so a fresh log is expected on the way back up.
+   * log when the database closes, so Sirannon accepts a new log when the
+   * database opens again.
    */
   expectNewLog: boolean
 }
 
 /**
- * Names the file a capture stages its frames in. The cycle rebuilds this path
- * from the chain position each time, so no path it reads back off disk ever
- * reaches an unlink.
+ * Returns the path of the file that a capture stages its frames in. The cycle
+ * builds this path from the position in the chain each time, so that Sirannon
+ * deletes only a path that it builds itself.
  *
- * @param stagingDir - Directory the cycle stages captures in.
- * @param sequence - Where the piece comes in its chain, counted from one.
- * @returns Path of that file.
+ * @param stagingDir - The directory that the cycle stages captures in.
+ * @param sequence - The position of the piece in its chain, counted from one.
+ * @returns The path of that file.
  */
 export function stagedCapturePath(stagingDir: string, sequence: number): string {
   return join(stagingDir, `${STAGED_CAPTURE_PREFIX}${sequence}${STAGED_CAPTURE_SUFFIX}`)
@@ -60,18 +61,18 @@ function rewoundError(request: CaptureRequest, detail: string): SirannonError {
 }
 
 /**
- * Reads the log frames a database has written since the previous capture and
- * stages them in a file of their own. The checkpoint that follows empties the
- * log, so they have to be out of it by then.
+ * Copies the log frames that a database writes after the previous capture into
+ * a staging file of their own. The checkpoint after the capture empties the
+ * log, so Sirannon must copy the frames out before that checkpoint.
  *
- * The first capture of a chain takes the 32-byte log header along with the
- * frames. That is what lets a restore hand the piece straight to SQLite as a
- * log it can recover from.
+ * A capture that starts at frame one includes the 32-byte log header with the
+ * frames, so that a restore can pass the piece to SQLite as a log to recover
+ * from.
  *
- * A log that restarted before this capture reached it means writes went into no
- * backup at all, and that fails with `BACKUP_LOG_REWOUND`.
+ * When the log restarts before this capture reads it, no backup holds the
+ * writes in the lost frames, so this function throws `BACKUP_LOG_REWOUND`.
  *
- * @param request - Where to read, where to stage, and where the previous capture stopped.
+ * @param request - The paths to read from and stage in, and the point where the previous capture stopped.
  * @returns The staged capture, or undefined where the log holds nothing new.
  */
 export async function captureLogFrames(request: CaptureRequest): Promise<PendingCapture | undefined> {
@@ -147,33 +148,34 @@ export async function captureLogFrames(request: CaptureRequest): Promise<Pending
   }
 }
 
-/** What one turn of the cycle reads its frames with, and what it records them against.
+/** The settings, state, and paths for the capture step of one turn.
  * @internal
  */
 export interface CaptureTurnRequest {
-  /** Destination, naming, and the locks the turn takes its checkpoint under. */
+  /** The destination, the naming, and the locks that the turn holds during its checkpoint. */
   request: BackupCycleRequest
-  /** What the cycle records about the chain it is extending, which this advances. */
+  /** The state that the cycle records for the chain that it extends, which this step advances. */
   state: BackupCycleState
-  /** Path of the database's write-ahead log. */
+  /** The path of the write-ahead log of the database. */
   logPath: string
-  /** Directory Sirannon stages the frames in. */
+  /** The directory that Sirannon stages the frames in. */
   stagingDir: string
-  /** What the pieces are named after at the destination. */
+  /** The prefix of the piece names at the destination. */
   namePrefix: string
 }
 
 /**
- * Reads the frames written since the previous turn and then checkpoints the
- * log, both with nothing else holding the writer lock.
+ * Copies the frames written since the previous turn and then checkpoints the
+ * log, while no other operation holds the writer.
  *
- * The order is what makes the capture safe. SQLite lets a checkpoint overwrite
- * frames nothing has read yet, and it reports success either way, so the frames
- * reach local disk first and the checkpoint follows inside the same held
- * writer. Sirannon writes the state file after each of those two steps, which
- * is what lets a turn interrupted between them start again where it stopped.
+ * The capture must come first, because SQLite lets a checkpoint overwrite
+ * frames that Sirannon has yet to read, and it reports success either way.
+ * Sirannon therefore copies the frames to local disk before the checkpoint,
+ * and it holds the writer for both steps. Sirannon writes the state file after
+ * each step, so that a turn interrupted between them can resume where it
+ * stopped.
  *
- * @param turn - The cycle's request, its state, and where Sirannon stages the frames.
+ * @param turn - The request and state of the cycle, and the paths for the frames.
  *
  * @internal
  */
@@ -205,15 +207,15 @@ export async function captureAndCheckpointTurn(turn: CaptureTurnRequest): Promis
 }
 
 /**
- * Discards the chain a staging directory was built around, by removing the
- * state file and every set of frames staged against that chain.
+ * Discards the chain in a staging directory by deleting the state file and
+ * every staged capture.
  *
- * A restore calls this before it replaces the database file, since the rebuilt
- * file's log continues none of the old chain and the frames staged against that
- * chain then belong to no backup. Files left there would occupy disk for a
- * chain nothing extends.
+ * The restore route of the server calls this before it replaces the database
+ * file, since the log of the rebuilt file continues no part of the old chain,
+ * so no backup can use the frames staged for that chain. Those files would
+ * otherwise take up disk space for a chain that no capture extends.
  *
- * @param stagingDir - Directory the cycle staged its captures in.
+ * @param stagingDir - The directory that the cycle stages its captures in.
  *
  * @internal
  */

@@ -25,7 +25,7 @@ const driver = betterSqlite3()
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-ack-'))
   sirannon = new Sirannon({ driver })
-  handler = createWSHandler(sirannon, { acceptSql: true })
+  handler = createWSHandler(sirannon, { acceptSql: true, acceptDeviceSync: true })
   db = await sirannon.open('mydb', join(tempDir, 'ack.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')
@@ -145,5 +145,29 @@ describe('WS echo suppression', () => {
     const received = messagesOf('change').map(m => (m.event as { row: { id: number } }).row.id)
     expect(received).toContain(11)
     expect(received).not.toContain(10)
+  })
+})
+
+describe('device sync on a handler that leaves it off', () => {
+  it('refuses a device subscription and an acknowledgement, and still serves a plain subscription', async () => {
+    const closedHandler = createWSHandler(sirannon, { acceptSql: true })
+    const closedConn = createMockConnection()
+    await closedHandler.handleOpen(closedConn, 'mydb')
+
+    closedHandler.handleMessage(
+      closedConn,
+      JSON.stringify({ type: 'subscribe', id: 'device', table: 'notes', deviceId: DEVICE }),
+    )
+    closedHandler.handleMessage(closedConn, JSON.stringify({ type: 'ack', id: 'ack-1', deviceId: DEVICE, seq: '1' }))
+    closedHandler.handleMessage(closedConn, JSON.stringify({ type: 'subscribe', id: 'plain', table: 'notes' }))
+    await until(() => parseMessages(closedConn).length >= 3)
+
+    const replies = parseMessages(closedConn)
+    const codeFor = (id: string) =>
+      (replies.find(m => m.id === id && m.type === 'error')?.error as { code?: string } | undefined)?.code
+    expect(codeFor('device')).toBe('DEVICE_SYNC_NOT_ACCEPTED')
+    expect(codeFor('ack-1')).toBe('DEVICE_SYNC_NOT_ACCEPTED')
+    expect(replies.some(m => m.id === 'plain' && m.type === 'subscribed')).toBe(true)
+    await closedHandler.close()
   })
 })

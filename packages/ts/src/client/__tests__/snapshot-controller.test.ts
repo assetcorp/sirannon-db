@@ -45,7 +45,12 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT, weight INTEGER, art BLOB)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  server = createServer(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
+    port: 0,
+  })
   await server.listen()
   proxy = new ServerProxy(server.listeningPort)
   await proxy.listen()
@@ -83,7 +88,12 @@ async function stopServer(): Promise<void> {
 }
 
 async function startServer(): Promise<void> {
-  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  server = createServer(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
+    port: 0,
+  })
   await server.listen()
   proxy.pointAt(server.listeningPort)
 }

@@ -9,7 +9,8 @@ import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
 import { advanceStreamDigest } from './sync-verification.js'
 
 /**
- * Serves first-sync requests from joining nodes by streaming schema, table pages, and a manifest.
+ * Answers a joining node's first-sync request by streaming the schema, then each table's rows in batches, and last a
+ * manifest for every table that it streamed.
  *
  * @internal
  */

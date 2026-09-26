@@ -1,21 +1,21 @@
 import type { DatabaseOptions } from '../types.js'
 
 /**
- * How tenant identifiers map onto database files.
+ * Configures how {@link createTenantResolver} maps a tenant ID to a database file.
  *
  * @public
  */
 export interface TenantResolverOptions {
   /**
-   * Directory every tenant's database file is written to.
+   * The directory that holds every tenant's database file.
    */
   basePath: string
   /**
-   * File extension appended to the tenant identifier. Default: '.db'.
+   * The file extension that the resolver appends to the tenant ID, which defaults to `.db`.
    */
   extension?: string
   /**
-   * Options every tenant database opens with.
+   * The options with which Sirannon opens every tenant database.
    */
   defaultOptions?: DatabaseOptions
 }
@@ -25,10 +25,12 @@ const MAX_ID_LENGTH = 255
 const MAX_FILENAME_LENGTH = 255
 
 /**
- * Checks a tenant identifier against the characters and length a file name may carry.
+ * Returns a tenant ID unchanged when it is safe to use in a file name, which
+ * means 1 to 255 characters that start with a letter or digit and continue
+ * with letters, digits, underscores, or hyphens.
  *
- * @param id - The identifier to check.
- * @returns The identifier when it is safe, and undefined when it is not.
+ * @param id - The ID to check.
+ * @returns The ID when it is safe, or `undefined` otherwise.
  *
  * @public
  */
@@ -39,13 +41,13 @@ export function sanitizeTenantId(id: string): string | undefined {
 }
 
 /**
- * Builds the database file path for one tenant.
+ * Returns the database file path for one tenant.
  *
- * @param basePath - Directory the file is written to.
- * @param tenantId - Identifier of the tenant.
- * @param extension - File extension to append. Default: '.db'.
- * @returns The full path for that tenant's database file.
- * @throws When the identifier is unsafe or the resulting file name is too long.
+ * @param basePath - The directory that holds the file.
+ * @param tenantId - The tenant's ID.
+ * @param extension - The file extension to append, which defaults to `.db`.
+ * @returns The full path of that tenant's database file.
+ * @throws An `Error` when the ID is unsafe or the file name exceeds 255 characters.
  *
  * @public
  */
@@ -62,10 +64,10 @@ export function tenantPath(basePath: string, tenantId: string, extension = '.db'
 }
 
 /**
- * Builds a resolver that turns a tenant identifier into a database path, for {@link LifecycleConfig.autoOpen}.
+ * Returns a resolver for {@link LifecycleConfig.autoOpen} that turns a tenant ID into a database path.
  *
- * @param options - Base directory, file extension, and the options each tenant database opens with.
- * @returns A resolver that returns a path and options, or undefined for an unsafe identifier.
+ * @param options - The base directory, the file extension, and the options for each tenant database.
+ * @returns A resolver that returns a path and options, or `undefined` for an unsafe ID or a file name over 255 characters.
  *
  * @public
  */

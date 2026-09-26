@@ -26,7 +26,12 @@ beforeEach(async () => {
   const db = await sirannon.open('appdb', join(tempDir, 'server.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')
-  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  server = createServer<unknown>(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: () => ({}),
+    port: 0,
+  })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -88,6 +93,20 @@ describe('verifyDeviceSyncCapabilities', () => {
     }
   })
 
+  it('tells the device that a server announcing no device-sync capability keeps device sync off', async () => {
+    const stub = await listenOnce((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ capabilities: ['query.named'] }))
+    })
+    try {
+      await expect(verifyDeviceSyncCapabilities({ url: stub.url })).rejects.toMatchObject({
+        code: 'DEVICE_SYNC_NOT_ACCEPTED',
+      })
+    } finally {
+      stub.close()
+    }
+  })
+
   it('propagates an unreachable server as a connection error, not a refusal', async () => {
     await expect(
       verifyDeviceSyncCapabilities({ url: 'http://127.0.0.1:1', requestTimeoutMs: 500 }),
@@ -112,6 +131,31 @@ describe('SyncController capability handshake', () => {
       expect((await controller.status()).serverCapabilities).toEqual(expect.arrayContaining([...SERVER_CAPABILITIES]))
     } finally {
       await controller.stop()
+      await deviceSirannon.shutdown()
+    }
+  })
+
+  it('refuses to start against a server that keeps device sync off', async () => {
+    const closedSirannon = new Sirannon({ driver })
+    const serverDb = await closedSirannon.open('appdb', join(tempDir, 'closed-server.db'))
+    await serverDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
+    const closedServer = createServer(closedSirannon, { port: 0 })
+    await closedServer.listen()
+    const deviceSirannon = new Sirannon({ driver })
+    const deviceDb = await deviceSirannon.open('appdb', join(tempDir, 'device3.db'))
+    await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
+    const controller = new SyncController(deviceDb, {
+      url: `http://127.0.0.1:${closedServer.listeningPort}`,
+      databaseId: 'appdb',
+      tables: ['notes'],
+      autoResync: false,
+    })
+    try {
+      await expect(controller.start()).rejects.toMatchObject({ code: 'DEVICE_SYNC_NOT_ACCEPTED' })
+      expect((await controller.status()).state).toBe('stopped')
+    } finally {
+      await closedServer.close()
+      await closedSirannon.shutdown()
       await deviceSirannon.shutdown()
     }
   })

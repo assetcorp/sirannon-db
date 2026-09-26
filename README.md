@@ -8,9 +8,9 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-With Sirannon, you keep real SQLite underneath your application as it grows, so you can keep the SQL that you wrote against a file on your laptop when you serve that file over HTTP and WebSocket or replicate it from a primary to its read replicas. The wire formats, the value encodings, and the replication invariants that every implementation must follow are in the language-agnostic specification under [`packages/spec`](packages/spec/). The TypeScript package in this repository is the reference implementation of that specification.
+With Sirannon, you keep SQLite underneath your application as it grows, so the SQL that you write against a file on your laptop keeps working when you serve that file over HTTP and WebSocket or replicate it from a primary to its read replicas. The wire formats, the value encodings, and the replication invariants that every implementation must follow are in the language-agnostic specification under [`packages/spec`](packages/spec/). The TypeScript package in this repository is the reference implementation of that specification.
 
-Read the [documentation](https://sirannon.sondelali.com/docs), or start the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) on your own machine to watch a three-node cluster keep answering requests after its primary fails.
+Read the [documentation](https://sirannon.sondelali.com/docs), or start the [distributed entitlements example](packages/ts/examples/distributed-entitlements/) on your own machine to watch a three-node cluster keep serving requests after its primary fails.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 
@@ -19,10 +19,10 @@ Read the [documentation](https://sirannon.sondelali.com/docs), or start the [dis
 | Part | Status | Details |
 | --- | --- | --- |
 | Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | With the core engine, you get queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and a multi-tenant lifecycle. Continuous integration tests it on Node 22 and 24. |
-| Server and client (`@delali/sirannon-db/server`, `/client`) | Stable | Applications reach a database over HTTP and WebSocket through the client, which reconnects after a dropped connection and restores its subscriptions. The server refuses SQL from the network until you set `acceptSql: true`. |
+| Server and client (`@delali/sirannon-db/server`, `/client`) | Stable | Applications reach a database over HTTP and WebSocket through the client, which reconnects after a dropped connection and restores its subscriptions. The server rejects SQL from the network until you set `acceptSql: true`. |
 | Device sync (`@delali/sirannon-db/client`) | Experimental | A device writes to its own local database first, so it can go on writing while it's offline. The device sync controller then keeps that database in step with a server in both directions, through a push, a live pull, a snapshot resync, and a migration handshake. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | A primary stamps each change with a Hybrid Logical Clock and sends it to its replicas over gRPC with mutual TLS. The same export also provides conflict resolvers, first sync, and write concerns. |
-| Coordinator-backed failover (`/replication/coordinator/etcd`) | Experimental | etcd records write authority, primary terms, and the in-sync set. So far, a Docker conformance suite under fault injection is the whole of its evidence. |
+| Coordinator-backed failover (`/replication/coordinator/etcd`) | Experimental | etcd records write authority, primary terms, and the in-sync set. Its only test evidence so far is a Docker conformance suite that injects faults. |
 | Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The published package includes TypeScript declarations for all five drivers. |
 
 Sirannon opens each database in SQLite's WAL mode with `synchronous=NORMAL` by default, although you can raise that durability level. Read the [roadmap](ROADMAP.md) for the next stages of work.
@@ -90,18 +90,18 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 ## Features
 
 - **Queries and transactions.** SQLite's ACID guarantees apply to every read, write, batch, and transaction. Sirannon sends every write through one connection, while on a driver that supports several connections it sends reads through a pool.
-- **Change data capture.** SQLite triggers record every insert, update, and delete on a table that you watch. Sirannon polls that record at an interval that you can set, then delivers each new event to the table's subscribers.
+- **Change data capture.** SQLite triggers record every insert, update, and delete on a table that you watch. Sirannon polls that record at an interval that you can set and delivers each new event to the table's subscribers.
 - **Live queries.** `db.live` keeps a query result current by applying each change to the rows that it already holds. In React, the `useLiveQuery` hook from `@delali/sirannon-db/react` returns that result to your component.
-- **Registered operations.** A caller invokes a statement that you registered under a name, while the SQL stays on the server. The `sirannon-codegen` command generates typed client references from that registry.
-- **Migrations.** Sirannon applies each migration once, whether it comes from a file or from code, and records a checksum of its content. It mirrors the highest applied version into `PRAGMA user_version`, rolls back to any version, and squashes old history into a baseline. When two processes migrate one database at once, each migration still applies once. Sirannon also migrates every database that a registry opens, each tenant included, against the set that you declare on that registry.
+- **Registered operations.** A caller calls a statement by the name that you registered it under, so the SQL stays on the server. The `sirannon-codegen` command generates typed client references from that registry.
+- **Migrations.** Sirannon applies each migration once, whether it comes from a file or from code, and records a checksum of its content. It mirrors the highest applied version into `PRAGMA user_version`, and it can roll back to any version and squash old history into a baseline. Sirannon applies each migration once even when two processes migrate one database at the same time. It also migrates every database that a registry opens, each tenant included, against the set that you declare on that registry.
 - **Bulk load.** `bulkLoad` writes a large import in one transaction under relaxed durability and finishes with one checkpoint that syncs the file to disk. It restores the durability level that you configured once the load ends.
-- **Backups.** `backup()` copies a database to a file while the database stays open for reads and writes, because SQLite copies the pages in steps and lets a write proceed between two steps. `scheduleBackup()` repeats that copy on a cron expression. `backupTo()` sends the copy to storage that you supply. With the `backups` option, Sirannon takes one full copy and then copies only the changes since each previous run, so `restoreBackup()` can rebuild the database at any moment between the full copy and the latest run.
-- **Hooks and metrics.** Sirannon calls your hooks before and after each query, before each connection, subscription, and snapshot, and whenever it opens or closes a database. A before-hook that throws refuses the operation. Sirannon also reports query timings, connection events, and CDC activity to the metrics callbacks that you pass.
-- **Multi-tenant lifecycle.** Sirannon opens a database on first access, closes it after an idle timeout, and evicts the least recently used one once the number of open databases reaches the cap that you set.
-- **Server and client SDK.** `createServer` exposes a registry over HTTP and WebSocket. The client reconnects after a dropped connection and restores its subscriptions.
+- **Backups.** `backup()` copies a database to a file while the database stays open for reads and writes, because SQLite copies the pages in steps and lets a write proceed between two steps. `scheduleBackup()` repeats that copy on a cron expression, and `backupTo()` sends the copy to storage that you supply. With the `backups` option, Sirannon takes one full copy and then copies only the changes made since the previous capture, so `restoreBackup()` can rebuild the database at any moment between the full copy and the latest capture.
+- **Hooks and metrics.** Sirannon calls your hooks before and after each query, before each connection, subscription, and snapshot, and whenever it opens or closes a database. When a before-hook throws, Sirannon rejects the operation. Sirannon also reports query timings, connection events, and CDC activity to the metrics callbacks that you pass.
+- **Multi-tenant lifecycle.** Sirannon opens a database on first access and closes it after an idle timeout. Once the number of open databases reaches the cap that you set, it closes the least recently used one.
+- **Server and client SDK.** `createServer` serves a registry's databases over HTTP and WebSocket. The client reconnects after a dropped connection and restores its subscriptions.
 - **Device sync.** The device sync controller keeps an end-user device's whole local database in step with a server in both directions. It handles snapshot resync, the migration handshake, and capability negotiation. A device writes to its local database first, so it can go on writing while it's offline.
 - **Distributed replication.** A primary stamps each change with a Hybrid Logical Clock and sends checksummed batches of changes to its read replicas over gRPC with mutual TLS.
-- **Coordinator-backed failover.** An etcd coordinator records which node holds write authority in each primary term. A node that loses contact with the majority of its group refuses writes.
+- **Coordinator-backed failover.** An etcd coordinator records which node holds write authority in each primary term. A node that cannot confirm its write authority with etcd rejects writes.
 - **Conflict resolution.** When a node receives a change for a row that already exists there, Sirannon applies the conflict resolver that you choose, whether last-writer-wins, primary-wins, field merge, or one that you write.
 
 ## Documentation
@@ -137,11 +137,11 @@ pnpm install && pnpm --filter @delali/sirannon-db build
 cd packages/ts/examples/distributed-entitlements && pnpm run dev
 ```
 
-You need only Node.js for the single-node example, so build the package as above and then enter `cd packages/ts/examples/node && pnpm start`.
+You need only Node.js for the single-node example, so build the package as above and then start the example with `cd packages/ts/examples/node && pnpm start`.
 
 ## Architecture
 
-Application clients reach the current primary and the eligible read replicas over HTTP and WebSocket. The primary accepts writes while it holds live write authority in etcd. It stamps each change with a Hybrid Logical Clock timestamp and sends checksummed batches of changes to the replicas over gRPC with mutual TLS. When failover is safe, a Sirannon failover controller picks an eligible in-sync replica from the leases and the group state in etcd, and it then advances the primary term in one atomic update. Every node refuses a write or a replication batch with a stale term.
+Application clients reach the current primary and the eligible read replicas over HTTP and WebSocket. The primary accepts writes while it holds live write authority in etcd. It stamps each change with a Hybrid Logical Clock timestamp and sends checksummed batches of changes to the replicas over gRPC with mutual TLS. When the primary fails and failover is safe, a Sirannon failover controller picks an eligible in-sync replica from the leases and the group state in etcd, and it then advances the primary term in one atomic update. Every node rejects a write or a replication batch whose term is stale.
 
 <p align="center">
   <img src="docs/assets/replication-topology.svg" alt="Diagram of Sirannon's coordinator-backed replication. Clients write to the current primary and read from eligible nodes. The primary replicates to the replicas over gRPC with mutual TLS. A Sirannon controller performs failover through leases and atomic term updates in etcd." width="820">
@@ -149,11 +149,11 @@ Application clients reach the current primary and the eligible read replicas ove
 
 ## Security
 
-- The server refuses SQL from the network until you set `acceptSql: true`, so give callers their reads and writes through [registered operations](docs/operations.md). Authenticate every request through the `authenticate` hook, and check the `Origin` header in that hook on each WebSocket upgrade.
-- A Node client sends its `headers` on the WebSocket upgrade, so the hook reads `headers.authorization` on both transports. A browser sends no header with the handshake, so a browser client puts a short-lived ticket in `webSocketProtocols`. The server selects the plain `sirannon.v1` identifier, so the ticket stays out of the handshake response.
-- When the hook refuses an upgrade, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
+- The server rejects SQL from the network until you set `acceptSql: true`, so give callers their reads and writes through [registered operations](docs/operations.md). Authenticate every request through the `authenticate` hook, and check the `Origin` header in that hook on each WebSocket upgrade.
+- A Node client sends its `headers` on the WebSocket upgrade, so your hook can read `headers.authorization` on both transports. A browser sets no header on the handshake, so give a browser client a short-lived ticket in `webSocketProtocols`. The server selects the plain `sirannon.v1` identifier, so the ticket stays out of the handshake response.
+- When the hook rejects an upgrade, the server closes the connection with code 4401 or 4403, and the client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed.
 - The driver binds each parameter separately from the SQL text, so SQLite treats a value that you pass as a parameter as data.
-- Sirannon checks each CDC table and column name against `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. It refuses a migration or backup path with a control character, a null byte included, or a `..` segment.
+- Sirannon checks each CDC table and column name against `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. It rejects a migration or backup path that contains a control character, including a null byte, or a `..` segment.
 - The server caps each HTTP body and WebSocket message at 1 MB by default, and you can change that cap with `maxBodyBytes`.
 - The built-in server listens on plain HTTP and WebSocket, so terminate TLS at a reverse proxy such as nginx or Caddy, or at a cloud load balancer, before any client outside your trusted network connects.
 

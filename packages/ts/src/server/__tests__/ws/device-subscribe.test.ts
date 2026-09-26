@@ -20,7 +20,10 @@ let conn: MockWSConnection
 const driver = betterSqlite3()
 
 async function openHandler(maxUnacknowledgedChanges?: number): Promise<void> {
-  handler = createWSHandler(sirannon, maxUnacknowledgedChanges === undefined ? undefined : { maxUnacknowledgedChanges })
+  handler = createWSHandler(sirannon, {
+    acceptDeviceSync: true,
+    ...(maxUnacknowledgedChanges === undefined ? {} : { maxUnacknowledgedChanges }),
+  })
   conn = createMockConnection()
   await handler.handleOpen(conn, 'mydb')
 }

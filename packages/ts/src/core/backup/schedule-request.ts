@@ -1,21 +1,21 @@
 import type { BackupScheduleOptions } from '../types.js'
 
-/** Runs a backup while nothing else holds the writer, so that the copy never shares the writer connection with another write.
+/** Runs an operation while no other operation holds the writer, so that the copy has the writer connection to itself.
  * @public
  */
 export type RunExclusive = (op: () => Promise<void>) => Promise<void>
 
 /**
- * What one repeating backup needs beyond the caller's own options, so that
- * every report it produces names the database the copy came from.
+ * The options of one repeating backup, plus the database details that Sirannon
+ * puts in every report of that backup.
  *
  * @public
  */
 export interface BackupScheduleRequest extends BackupScheduleOptions {
-  /** Database the copies are taken from. Defaults to the name of the file SQLite has open. */
+  /** The identifier of the database that Sirannon copies. Defaults to the name of the source file without its extension. */
   databaseId?: string
-  /** File the copies are taken from. Defaults to the file SQLite has open on the connection. */
+  /** The file that Sirannon copies. Defaults to the file that SQLite has open on the connection. */
   sourcePath?: string
-  /** Runs each copy with nothing else holding the writer. Defaults to running it with no lock of its own. */
+  /** Runs each copy while no other operation holds the writer. By default, Sirannon runs each copy without a lock. */
   runExclusive?: RunExclusive
 }

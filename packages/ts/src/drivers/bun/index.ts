@@ -13,19 +13,20 @@ import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../c
  */
 export interface BunSqliteOptions {
   /**
-   * Milliseconds a statement waits for the write lock before it fails as busy. Default: 5000.
+   * The number of milliseconds that SQLite waits for the database lock before it returns a busy error, which defaults to 5000.
    */
   busyTimeout?: number
 }
 
 /**
- * Builds a driver that runs SQLite through `bun:sqlite`, which is built into the Bun runtime.
+ * Returns a driver that opens SQLite databases through `bun:sqlite`, which is built into the Bun runtime.
  *
- * It reads every integer as a BigInt and narrows the safe ones back, so a
- * value beyond `Number.MAX_SAFE_INTEGER` survives the round trip.
+ * The driver opens each connection with `safeIntegers`, so SQLite returns every
+ * integer as a `bigint`, and the driver converts each one within the safe range
+ * back to a `number`. A value beyond `Number.MAX_SAFE_INTEGER` therefore stays exact.
  *
- * @param driverOptions - How long a statement waits for the write lock.
- * @returns The driver, ready to pass to a `Sirannon` registry running under Bun.
+ * @param driverOptions - The busy timeout for each connection.
+ * @returns The driver, which you can pass to a `Sirannon` registry under Bun.
  *
  * @public
  */

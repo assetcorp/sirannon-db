@@ -13,11 +13,11 @@ export const REQUIRED_DEVICE_SYNC_CAPABILITIES = [
 ] as const
 
 /**
- * Announced by a server whose device stream packs several events per
- * `changes` frame and paces the delivery window continuously for a
- * subscription that requested `stagedStream`. A device requires the listed
- * device-sync capabilities but not this one, so it still syncs with an
- * older server over one-event frames.
+ * A server announces this capability when its device stream, for a
+ * subscription that asks for `stagedStream`, packs several events into each
+ * `changes` frame and paces the delivery window continuously. A device requires
+ * every capability in `REQUIRED_DEVICE_SYNC_CAPABILITIES` but not this one, so
+ * it can still sync with an older server that sends one event per frame.
  */
 export const STAGED_STREAM_CAPABILITY = 'sync.staged-stream'
 
@@ -36,10 +36,11 @@ export interface CapabilitiesResponse {
 export interface CapabilitiesOptions {
   registryDigest?: string
   acceptSql?: boolean
+  acceptDeviceSync?: boolean
 }
 
 export function buildCapabilitiesResponse(options?: CapabilitiesOptions): CapabilitiesResponse {
-  const capabilities = [...SERVER_CAPABILITIES]
+  const capabilities = options?.acceptDeviceSync === true ? [...SERVER_CAPABILITIES] : []
   if (options?.registryDigest !== undefined) capabilities.push(NAMED_QUERY_CAPABILITY)
   if (options?.acceptSql === true) capabilities.push(SQL_QUERY_CAPABILITY)
 

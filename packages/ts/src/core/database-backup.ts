@@ -20,29 +20,31 @@ import type { BackupScheduleOptions } from './types.js'
 
 type RunExclusive = (op: () => Promise<void>) => Promise<void>
 
-/** Where one database's backups are stored, and what a restore of that database reads.
+/** The destination and chain name under which Sirannon stores one database's backups, with the directory where it stages each capture.
  * @public
  */
 export interface BackupChainLocation {
-  /** The destination its pieces and its chain records go to. */
+  /** The destination that Sirannon sends the backup pieces and chain records to. */
   destination: BackupDestination
-  /** Name that destination lists its chains under. */
+  /** The name that Sirannon lists this database's chains under at the destination. */
   chainName: string
-  /** Directory the cycle stages each capture in before that capture goes out. */
+  /** The directory where the backup cycle writes each capture before it sends that capture to the destination. */
   stagingDir: string
-  /** Deadline the operator set on every call to that destination, where they set one. */
+  /** The deadline, in milliseconds, that the operator set on each call to the destination, when the operator set one. */
   destinationTimeoutMs?: number
 }
 
 /**
- * Refuses a database whose change log no cycle could ever read. The refusal
- * comes at open, before any connection exists, so nobody discovers it when the
- * first capture runs hours later.
+ * Throws `BACKUP_UNSUPPORTED` when the backup cycle cannot capture this
+ * database's change log, because the driver has no backup engine, the database
+ * is in memory, or write-ahead logging is off. Sirannon calls this before it
+ * opens any connection, so that the operator sees the error at open and not at
+ * the first capture.
  *
- * @param driver - Driver the database opens through.
- * @param id - Identifier it opens under.
- * @param path - File it opens.
- * @param walMode - Whether it opens in write-ahead logging mode.
+ * @param driver - The driver that opens the database.
+ * @param id - The database identifier, which the error message names.
+ * @param path - The path of the database file, or `':memory:'`.
+ * @param walMode - Whether the database uses write-ahead logging.
  *
  * @internal
  */
@@ -142,9 +144,10 @@ export class DatabaseBackupController {
   }
 
   /**
-   * Builds the cycle and starts it in the background. Its first turn copies the
-   * whole database, and an open cannot wait on that. A failure reaches the
-   * caller through the cycle's own error callback.
+   * Builds the backup cycle and starts it without awaiting the first turn, which
+   * copies the whole database, so that the open can return first. When the start
+   * fails, this method passes the error to the `onError` callback in the cycle
+   * options.
    */
   startCycle(options: BackupCycleOptions): void {
     const engine = this.require()
@@ -205,7 +208,7 @@ export class DatabaseBackupController {
     return backupPiecesSafeToDelete(await this.chains(), options)
   }
 
-  /** Stops the cycle, capturing the log one final time so nothing written since the previous turn is lost. */
+  /** Stops the backup cycle after one last capture, which sends the writes made since the previous turn to the destination. */
   async stopCycle(): Promise<void> {
     if (!this.cycle) return
     const cycle = this.cycle

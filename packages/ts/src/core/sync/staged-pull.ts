@@ -28,10 +28,11 @@ export interface ApplyStagedOptions {
 }
 
 /**
- * Writes pulled changes to the staging table in one transaction so that a device
- * holds an in-flight transaction on disk instead of in memory. Returns the
- * highest staged sequence; a commit here is what makes that sequence safe to
- * acknowledge, because the rows survive a crash and are applied on restart.
+ * Writes pulled changes to the staging table in one transaction, so that a
+ * device keeps a partly received transaction on disk, and returns the highest
+ * staged sequence number, or `null` for an empty list. Once this transaction
+ * commits, the device can acknowledge that sequence number, because the staged
+ * rows stay on disk after a crash and `recoverStagedPull` applies them on restart.
  */
 export async function stagePulledChanges(
   conn: SQLiteConnection,
@@ -66,13 +67,13 @@ export async function stagePulledChanges(
 }
 
 /**
- * Applies every complete staged transaction in sequence order. Each group
- * runs in one local transaction that also records the pull cursor through
- * `withinTx`; the staged rows are deleted only after that transaction
- * commits and `onChange` has reported them, so a crash at any point either
- * re-applies nothing or re-runs a delete that is guarded by the recorded
- * cursor. Returns the sequence applied through, or null when no staged
- * transaction was complete.
+ * Applies every complete staged transaction in sequence order, and returns the
+ * sequence number of the last one that it applies, or `null` when no staged
+ * transaction is complete. The function applies each transaction inside one
+ * local transaction that also records the pull cursor through `withinTx`. It
+ * deletes the staged rows once that transaction commits and `onChange` receives
+ * their events, so after a crash, `recoverStagedPull` uses the recorded cursor
+ * to delete the applied rows without applying them twice.
  */
 export async function applyStagedTransactions(
   conn: SQLiteConnection,
@@ -111,23 +112,24 @@ export interface StagedRecovery {
   resumeSeq: bigint | null
   appliedSeq: bigint | null
   /**
-   * The failure that stopped the recovery apply, or null. The staged rows
-   * are untouched by the failure and the resume watermark still covers
-   * them, so the caller opens the subscription anyway: a schema-gate refusal
-   * there is what tells a device it must migrate before this apply can
-   * succeed. The caller must then retry the recovery, because the resume
-   * watermark is past the transaction this apply left unapplied, so the
-   * server sends nothing that would prompt another try.
+   * The error that stopped the recovery apply, or `null`. The staged rows stay
+   * in place after the failed apply, and the resume sequence still covers
+   * them, so the caller opens the subscription regardless. When the server's
+   * schema gate refuses that subscription, the refusal error states that the
+   * device has to migrate first. The caller then has to retry the recovery
+   * itself, because the resume sequence lies past the unapplied transaction,
+   * so the server resends none of it.
    */
   applyError: unknown | null
 }
 
 /**
- * Restores staging to a consistent state after a restart: staged rows at or
- * below the recorded pull cursor were already applied and are dropped, every
- * complete staged transaction is applied, and an incomplete tail is kept so
- * the resumed stream can finish it. Returns the sequence to resume the pull
- * subscription from.
+ * Brings the staging table back to a consistent state after a restart, and
+ * returns the sequence number from which to resume the pull subscription.
+ * The function deletes the staged rows at or below the recorded pull cursor,
+ * since the device applied them before the restart. It then applies every
+ * complete staged transaction and keeps an incomplete tail, so that the
+ * resumed stream can finish that transaction.
  */
 export async function recoverStagedPull(
   conn: SQLiteConnection,

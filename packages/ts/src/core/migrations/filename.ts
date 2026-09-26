@@ -8,21 +8,21 @@ import { MigrationError } from '../errors.js'
 export const MIGRATION_FILENAME_PATTERN = /^(\d+)_(\w+)\.(up|down)\.sql$/
 
 /**
- * The three parts of a migration file name.
+ * Holds the three parts of a migration file name.
  *
  * @public
  */
 export interface ParsedMigrationFilename {
   /**
-   * Version number the file name starts with.
+   * The version number at the start of the file name.
    */
   version: number
   /**
-   * Migration name between the version and the direction.
+   * The migration name between the version and the direction.
    */
   name: string
   /**
-   * Whether the file applies the migration or undoes it.
+   * `up` for the SQL that applies the migration, or `down` for the SQL that undoes it.
    */
   direction: 'up' | 'down'
 }
@@ -30,8 +30,8 @@ export interface ParsedMigrationFilename {
 /**
  * Splits a migration file name into its version, name, and direction.
  *
- * @param filename - File name such as `001_create_orders.up.sql`.
- * @returns The three parts, or null when the name does not match the expected form.
+ * @param filename - A file name such as `001_create_orders.up.sql`.
+ * @returns The three parts, or `null` when the name has another form.
  *
  * @public
  */

@@ -2,86 +2,86 @@ import { SirannonError } from '../errors.js'
 import { isBackupChainBase, isBackupChainChange, isBackupChainHead } from './chain-records.js'
 import type { BackupDestination } from './destination.js'
 
-/** Name a destination stores the list of chains under, unless you set another.
+/** The default name that Sirannon stores the list of chains under at a destination.
  * @public
  */
 export const DEFAULT_CHAIN_NAME = 'sirannon-backup-chain'
 
-/** The stretch of a database's write-ahead log that one change piece covers.
+/** The range of write-ahead log frames that one change piece holds.
  * @public
  */
 export interface BackupChainPosition {
-  /** Checkpoint sequence of the log these frames came from. SQLite adds one to it at every restart of the log. */
+  /** The checkpoint sequence of the log that holds these frames. SQLite adds one to it each time it restarts the log. */
   logSequence: number
-  /** First salt of that log. The two salts together tell one run of the log from the next. */
+  /** The first salt of that log. Together with `salt2`, it identifies the generation of the log that holds the frames. */
   salt1: number
-  /** Second salt of it. */
+  /** The second salt of that log. */
   salt2: number
-  /** First frame in the piece, counted from one. */
+  /** The first frame in the piece, counted from one. */
   firstFrame: number
-  /** Last frame in it. */
+  /** The last frame in the piece. */
   lastFrame: number
 }
 
 /**
- * The full copy at the head of a chain. A restore starts from this copy and
- * replays the change pieces on top of it.
+ * The full copy at the head of a chain. Sirannon restores from this copy and
+ * then applies the change pieces on top of it.
  *
  * @public
  */
 export interface BackupChainBase {
-  /** Which kind of record this is. */
+  /** The kind of record. */
   kind: 'full'
-  /** The chain this copy begins. */
+  /** The chain that this copy begins. */
   chainId: string
-  /** Name its pieces are stored under at the destination. */
+  /** The name that Sirannon stores the pieces of this copy under at the destination. */
   name: string
-  /** Identifier the run reported its progress under. */
+  /** The identifier that Sirannon reports the progress of this copy under. */
   runId: string
-  /** Epoch milliseconds the copy finished. Any earlier moment needs an older chain. */
+  /** The moment, in epoch milliseconds, that the copy finished. A restore to any earlier moment needs an older chain. */
   finishedAt: number
-  /** How many pieces the copy came to. */
+  /** The number of pieces that Sirannon stores the copy in. */
   pieceCount: number
-  /** Size of one whole piece, in bytes. */
+  /** The size of one whole piece, in bytes. */
   pieceBytes: number
-  /** How many bytes reached the destination. */
+  /** The number of bytes that Sirannon stores at the destination. */
   bytesWritten: number
-  /** SHA-256 of the copy, unless fingerprinting was turned off. */
+  /** The SHA-256 of the copy, present while fingerprinting is on. */
   fingerprint?: string
 }
 
 /**
- * One capture: the log frames a database wrote between the piece before this
- * one and this one.
+ * One change piece, which holds the log frames that a database writes between
+ * the previous capture and this one.
  *
  * @public
  */
 export interface BackupChainChange {
-  /** Which kind of record this is. */
+  /** The kind of record. */
   kind: 'change'
-  /** The chain this piece extends, which names the full copy underneath it. */
+  /** The chain that this piece extends, which identifies the full copy that the piece applies on top of. */
   chainId: string
-  /** Name it is stored under at the destination. */
+  /** The name that Sirannon stores this piece under at the destination. */
   name: string
-  /** Identifier the capture reported its progress under. */
+  /** The identifier that Sirannon reports the progress of this capture under. */
   runId: string
-  /** Where this piece comes in its chain, counted from one. */
+  /** The position of this piece in its chain, counted from one. */
   sequence: number
-  /** The stretch of log it covers. */
+  /** The range of log frames that this piece holds. */
   position: BackupChainPosition
-  /** Epoch milliseconds the capture took the frames. A restore aims at moments like this one. */
+  /** The moment, in epoch milliseconds, that Sirannon captured the frames. A restore stops at a capture time such as this one. */
   capturedAt: number
-  /** How many frames it holds. */
+  /** The number of log frames in this piece. */
   frameCount: number
-  /** How many pieces the transfer came to. */
+  /** The number of destination pieces that Sirannon stores these frames in. */
   pieceCount: number
-  /** Size of one whole piece, in bytes. */
+  /** The size of one whole piece, in bytes. */
   pieceBytes: number
-  /** How many bytes reached the destination. */
+  /** The number of bytes that Sirannon stores at the destination. */
   bytesWritten: number
   /** Whether the checkpoint after this capture emptied the log. */
   checkpointed: boolean
-  /** SHA-256 of the frames, unless fingerprinting was turned off. */
+  /** The SHA-256 of the frames, present while fingerprinting is on. */
   fingerprint?: string
 }
 
@@ -90,26 +90,26 @@ export interface BackupChainChange {
  */
 export type BackupChainRecord = BackupChainBase | BackupChainChange
 
-/** One full copy and every change piece taken from it.
+/** One full copy and every change piece that Sirannon captures after it.
  * @public
  */
 export interface BackupChain {
-  /** Identifier of this chain. */
+  /** The identifier of this chain. */
   chainId: string
-  /** Epoch milliseconds it started. */
+  /** The moment, in epoch milliseconds, that Sirannon started the chain. */
   startedAt: number
-  /** The chain this one replaced, where it replaced one. */
+  /** The identifier of the previous chain, where this chain replaces one. */
   previousChainId?: string
   /**
-   * The full copy underneath. Once someone deletes that record the field is
-   * absent, and no restore can use the chain any more.
+   * The full copy that the chain starts from. After someone deletes that
+   * record, this field is absent, so no restore can use the chain.
    */
   base?: BackupChainBase
   /** The change pieces, oldest first. */
   changes: BackupChainChange[]
 }
 
-/** One line in the list of chains a destination holds.
+/** One entry in the list of chains at a destination.
  * @internal
  */
 export interface BackupChainHead {
@@ -130,13 +130,13 @@ function destinationError(message: string, err?: unknown): SirannonError {
 }
 
 /**
- * Names the file one chain stores its own records under. Each chain gets a name
- * of its own, so deleting an old chain leaves the rest of the destination
- * alone.
+ * Returns the name that Sirannon stores the records of one chain under. Each
+ * chain has a name of its own, so deleting an old chain leaves every other
+ * chain in place.
  *
- * @param chainName - Name the list of chains is stored under.
- * @param chainId - Identifier of the chain.
- * @returns The name to read and write that chain's records under.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param chainId - The identifier of the chain.
+ * @returns The name to read and write the records of that chain under.
  *
  * @public
  */
@@ -216,21 +216,22 @@ function chainRecords(records: readonly unknown[], name: string): BackupChainRec
 }
 
 /**
- * Adds one chain to the list a destination holds. A later run, or a restore on
- * a machine that has never seen this database, finds the chain through that
- * list without being told its identifier.
+ * Adds one chain to the list of chains at a destination. Sirannon can then find
+ * the chain through that list without being given its identifier, whether for
+ * a later backup or for a restore on a machine that has never opened this
+ * database.
  *
- * During a failover, two nodes of a replication group can pick the same index
- * for one moment, where the second write would replace the first. A destination
- * that claims a place through `writePieceIfAbsent` settles that outright, and
- * this moves on to the next index wherever the claim fails. A destination
- * without one has its record read back instead, which catches the other node's
- * write except where it lands between the two calls.
+ * During a failover, two nodes of a replication group can choose the same index
+ * at the same moment, in which case the second write replaces the first. Where
+ * the destination implements `writePieceIfAbsent`, Sirannon claims each index
+ * through it and tries the next index whenever the claim fails. Otherwise
+ * Sirannon writes the record and reads it back, which detects the write of the
+ * other node unless that node writes between those two calls.
  *
- * @param destination - Where the list is stored.
- * @param chainName - Name the list is stored under.
+ * @param destination - The destination that holds the list.
+ * @param chainName - The name that Sirannon stores the list under.
  * @param head - The chain to add.
- * @returns Where the chain went in the list, counted from zero.
+ * @returns The index of the chain in the list, counted from zero.
  */
 export async function appendChainHead(
   destination: BackupDestination,
@@ -260,13 +261,13 @@ export async function appendChainHead(
 }
 
 /**
- * Adds one record to a chain. The full copy takes position zero and each change
- * piece follows it in order.
+ * Adds one record to a chain. The full copy takes index zero, and each change
+ * piece takes the next index in order.
  *
- * @param destination - Where the chain's records are stored.
- * @param chainName - Name the list of chains is stored under.
+ * @param destination - The destination that holds the records of the chain.
+ * @param chainName - The name that Sirannon stores the list of chains under.
  * @param record - The record to add.
- * @param index - Where it goes in the chain, counted from zero.
+ * @param index - The index of the record in the chain, counted from zero.
  */
 export async function appendChainRecord(
   destination: BackupDestination,
@@ -278,13 +279,13 @@ export async function appendChainRecord(
 }
 
 /**
- * Reads the one place in the list a chain took, which is what a cycle holding
- * that place checks rather than reading every chain the destination lists.
+ * Reads the entry at one index in the list of chains, so that a cycle can
+ * check the entry that it claimed without reading the whole list.
  *
- * @param destination - Where the list is stored.
- * @param chainName - Name the list is stored under.
- * @param index - The place to read, counted from zero.
- * @returns The chain listed there, or null where that record lists none.
+ * @param destination - The destination that holds the list.
+ * @param chainName - The name that Sirannon stores the list under.
+ * @param index - The index to read, counted from zero.
+ * @returns The chain at that index, or null where the record at that index is not a valid entry.
  */
 export async function readChainHeadAt(
   destination: BackupDestination,
@@ -296,11 +297,11 @@ export async function readChainHeadAt(
 }
 
 /**
- * Reads the list of chains a destination holds.
+ * Reads the list of chains at a destination.
  *
- * @param destination - Where the list is stored.
- * @param chainName - Name the list is stored under.
- * @returns One line per chain, newest first.
+ * @param destination - The destination that holds the list.
+ * @param chainName - The name that Sirannon stores the list under.
+ * @returns One entry per chain, newest first.
  */
 export async function readChainHeads(destination: BackupDestination, chainName: string): Promise<BackupChainHead[]> {
   const records = await readRecords(destination, chainName)
@@ -308,12 +309,12 @@ export async function readChainHeads(destination: BackupDestination, chainName: 
 }
 
 /**
- * Tells you what a destination holds: every chain, its full copy, and every
- * change piece taken from it. This reads nothing but the destination, so a
- * restore on a fresh machine can call it before any database exists.
+ * Returns every chain at a destination, with its full copy and its change
+ * pieces. It reads only the destination, so you can call it on a fresh machine
+ * before any database exists.
  *
- * @param destination - Where the backups and their records are stored.
- * @param chainName - Name the list of chains is stored under. Defaults to `sirannon-backup-chain`.
+ * @param destination - The destination that holds the backups and their records.
+ * @param chainName - The name that Sirannon stores the list of chains under. Defaults to `sirannon-backup-chain`.
  * @returns The chains, newest first, each with its own records oldest first.
  *
  * @public

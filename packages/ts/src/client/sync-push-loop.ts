@@ -24,12 +24,12 @@ export interface PushLoopHooks {
 }
 
 /**
- * Drains this device's outbox to the server after the durable push cursor.
+ * Pushes the changes in this device's outbox that come after the durable push cursor.
  *
- * A failure backs off exponentially to the configured cap. A push the server
- * refuses with `MIGRATION_REQUIRED` reconciles migrations and clears the
- * backoff so that a device that fell behind the server schema recovers on its own
- * rather than retrying a refusal it cannot satisfy.
+ * After each failure, the loop doubles its wait before the next try, up to the
+ * configured cap. When the server refuses a push with `MIGRATION_REQUIRED`, the
+ * loop reconciles migrations and resets the wait once the schemas match, so that a
+ * device whose schema is behind the server's recovers automatically.
  */
 export class PushLoop {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -58,10 +58,11 @@ export class PushLoop {
   }
 
   /**
-   * Empties the outbox before a snapshot replaces the database so that local work
-   * reaches the server before the copy overwrites it. A schema refusal is
-   * reconciled once; a device that still cannot push returns rather than
-   * looping, leaving the snapshot to bring it back into line.
+   * Pushes every change in the outbox before a snapshot download replaces the
+   * database, so that the server receives local changes before the download
+   * overwrites them. After a `MIGRATION_REQUIRED` refusal, it reconciles migrations
+   * once, and when the device still cannot push, it returns so that the snapshot
+   * brings the device's schema up to date.
    */
   async drainFully(port: DeviceSyncPort): Promise<void> {
     let retriedAfterMigration = false

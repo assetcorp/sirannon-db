@@ -111,7 +111,7 @@ export const isolateCurrentPrimary = createServerFn({
   const nodes = await fetchClusterNodes()
   const primaryNodeId = nodes.find(node => node.currentPrimary !== null)?.currentPrimary
   if (!primaryNodeId) {
-    throw new Error('No current primary is visible from coordinator discovery')
+    throw new Error('Coordinator discovery reports no current primary')
   }
   await setProxyEnabled(`etcd-entitlements-${primaryNodeId}`, false)
 })

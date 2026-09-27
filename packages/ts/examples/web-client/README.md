@@ -1,10 +1,10 @@
 # Sirannon Fulfillment Operations Demo
 
-This example is an inventory console in which every list on the page is a live query. The browser opens two live queries over one WebSocket, and it never fetches a snapshot, polls, or applies a change event by hand. Writes go through registered operations, so the data server accepts no SQL from the network.
+This example is an inventory console in which every list on the page is a live query. The browser opens two live queries over one WebSocket, through which the server sends every change to their rows. The data server executes no SQL from the network, so the app sends every write as a call to a registered operation.
 
 ## Setup
 
-This example needs Node.js 22 or newer and pnpm.
+To start this example, you need Node.js 22 or newer and pnpm.
 
 The data server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 
@@ -15,7 +15,7 @@ pnpm --filter @delali/sirannon-db build
 
 The code generator behind `pnpm run codegen` imports that same output. Build the package again whenever you change anything under `packages/ts/src`.
 
-## Run
+## Start the example
 
 Start the Sirannon data server and the application server together:
 
@@ -30,50 +30,50 @@ pnpm --dir packages/ts/examples/web-client run server
 pnpm --dir packages/ts/examples/web-client run app:dev
 ```
 
-Open `http://localhost:3000`. Set `PORT` to move the application server to another port, and the data server then allows that origin automatically.
+Open `http://localhost:3000`. When you set `PORT` to move the application server to another port, the data server sets its CORS origin to `http://localhost:<PORT>`, unless you also set `APP_ORIGIN`.
 
-## What the browser runs
+## The browser code
 
-Both panels come from `useLiveQuery`, which returns the rows and a status:
+The app fills both panels from `useLiveQuery`, which returns the rows and a status:
 
 ```tsx
 const productsState = useLiveQuery(liveDatabase, main.reads.products, {})
 const activityState = useLiveQuery(liveDatabase, main.reads.activity, {})
 ```
 
-When a write changes a table, the server applies that change to the rows that each live query holds and sends the resulting row operations, so the table on the page updates in place. The page has no refresh button, because the live queries keep every row current.
+When a write changes a table, the server applies that change to the rows of each live query and sends the resulting row operations to the browser. The app then updates each table in place, so the page has no refresh button.
 
-Writes use `useCommand`, which returns a stable callback for a registered write:
+The app sends writes through `useCommand`, which returns a stable callback for a registered write:
 
 ```tsx
 const allocateFromBrowser = useCommand(liveDatabase, main.writes.allocateProduct)
 await allocateFromBrowser({ productId: product.id })
 ```
 
-The mode switcher changes the path that a write takes. `Write through the app server` calls a TanStack server function that validates the input with Zod and then calls the same registered write over HTTP. `Write from the browser` calls it over the socket that the live queries already use. Reads stay live in both modes.
+The mode switcher sets how the app sends each write. In `Write through the app server` mode, the app calls a TanStack server function, which validates the input with Zod and then calls the registered write over HTTP. In `Write from the browser` mode, the app calls the same registered write over the same WebSocket as the live queries. Reads stay live in both modes.
 
-## What the server registers
+## The server registry
 
-[`src/operations.ts`](src/operations.ts) holds every statement that this server executes, keyed by database identifier. A caller sends a name and arguments, and the server chooses the SQL. Every write except `resetInventory` also declares `fromIdentity`, so the server fills the `operator` column from the authenticated caller, and a request that supplies `operator` itself fails with `ARGUMENT_NOT_ALLOWED`.
+[`src/operations.ts`](src/operations.ts) contains every statement that this server executes, keyed by database identifier. A caller sends a name and arguments, from which the server builds the SQL. Every write except `resetInventory` also declares `fromIdentity`, so the server fills the `operator` column from the authenticated caller. When a request includes `operator` itself, the server responds with `ARGUMENT_NOT_ALLOWED`.
 
 The two demo credentials map to two operators, which is why the change log shows `ops-console` for writes through the app server and `warehouse-floor` for writes from the browser.
 
-`sirannon-codegen` turns that registry into the typed references that the client uses to call it:
+From that registry, `sirannon-codegen` generates the typed references for the client:
 
 ```bash
 pnpm --dir packages/ts/examples/web-client run codegen
 ```
 
-That command writes [`src/generated/operations.ts`](src/generated/operations.ts), which the repository tracks. Regenerate it whenever you change the registry, because a live query sends the generated `registryDigest` when it subscribes, and a server with a different registry rejects the subscription with `REGISTRY_MISMATCH`.
+That command writes [`src/generated/operations.ts`](src/generated/operations.ts), which git tracks. Regenerate it whenever you change the registry, because the client sends the generated `registryDigest` with every live query subscription. When that digest differs from the server's registry, the server responds to the subscription with a `REGISTRY_MISMATCH` error.
 
 ## Schema
 
 The data server creates two tables and seeds the first one on startup:
 
-- `products` (id, name, price, stock) starts with five sample records.
-- `activity` (id, product_name, action, quantity, operator, created_at) records each allocation, each receipt of stock, and each new product.
+- `products` (id, name, price, stock) contains five sample records at startup.
+- The registered writes add a row to `activity` (id, product_name, action, quantity, operator, created_at) for each allocation, each receipt of stock, and each new product.
 
-Each live query installs its own change tracking, so the server makes no `watch` call of its own.
+When the client subscribes to a live query, the server calls `watch` on the table that the query selects from, so the data server code has no `watch` call of its own.
 
 ## Environment
 
@@ -90,21 +90,22 @@ VITE_SIRANNON_DEMO_TOKEN=sirannon-warehouse-token
 
 ## Security model
 
-This demo has fewer protections than a production application, although it leaves out the unsafe patterns that people tend to copy from examples.
+This demo has fewer protections than a production application.
 
-What this example does:
+Protections in this example:
 
-- It binds the data server to `127.0.0.1` and restricts CORS to the application origin.
-- It leaves `acceptSql` at its default, so the five statement routes and their WebSocket messages fail with `SQL_NOT_ACCEPTED`. Confirm it with `curl http://localhost:9876/capabilities`, which lists `query.named` and no `query.sql`.
-- It requires `Authorization: Bearer <token>` on HTTP routes and a `Sec-WebSocket-Protocol` value derived from a token on the upgrade, and `authenticate` returns an operator identity, not a bare pass or fail.
-- It checks the WebSocket `Origin` header during the upgrade, which CORS does not cover.
-- It checks every argument inside the registered write, so the browser path and the app-server path enforce the same bounds.
+- The data server binds to `127.0.0.1`, and its CORS list contains only the application origin.
+- `acceptSql` stays at its default, so the server responds to the five statement routes and their WebSocket messages with `SQL_NOT_ACCEPTED`. Confirm it with `curl http://localhost:9876/capabilities`, whose response lists `query.named` and omits `query.sql`.
+- Every HTTP request must include `Authorization: Bearer <token>`, and every WebSocket upgrade must include a `Sec-WebSocket-Protocol` value derived from a token.
+- The `authenticate` hook returns an operator identity for each caller, and the registered writes store it in the `operator` column.
+- The server checks the WebSocket `Origin` header during the upgrade, which CORS does not cover.
+- Each registered write checks its arguments, so the same bounds apply to writes from the browser and to writes through the app server.
 
-What this example leaves out:
+Protections that this example lacks:
 
-- It has no real user login, sessions, JWTs, roles, or tenant checks.
-- It has no rate limiting, abuse protection, audit logging, or WAF rules.
-- It terminates no TLS, so local development uses `http://` and `ws://`.
-- Browser code can read the browser token, so treat it as a local demonstration.
+- The example has no user login, sessions, JWTs, roles, or tenant checks.
+- The example has no rate limiting, abuse protection, audit logging, or WAF rules.
+- The example terminates no TLS, so you connect over `http://` and `ws://` locally.
+- Browser code can read the browser token, so treat the example as a local demonstration only.
 
 Before you adapt this pattern for a public deployment, put the server behind HTTPS and WSS, derive short-lived WebSocket credentials from a real identity layer, keep long-lived secrets out of `VITE_*` variables, and redact authorization and WebSocket protocol values from access logs.

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
 import { createTenantResolver, Sirannon, type SQLiteDriver, sanitizeTenantId, tenantPath } from '@delali/sirannon-db'
 import { loadMigrations } from '@delali/sirannon-db/file-migrations'
 
@@ -33,7 +34,7 @@ function parseDriverName(args: readonly string[]): NodeDriverName | 'help' {
     }
 
     if (!arg.startsWith('--driver=')) {
-      throw new Error(`Unsupported argument '${arg}'. Use --help to see supported options.`)
+      throw new Error(`'${arg}' is not an option of this example. Start it with --help to list its options.`)
     }
 
     const value = arg.slice('--driver='.length)
@@ -47,7 +48,7 @@ function parseDriverName(args: readonly string[]): NodeDriverName | 'help' {
       continue
     }
 
-    throw new Error(`Unsupported driver '${value}'. Use --help to see supported drivers.`)
+    throw new Error(`'${value}' is not a driver that this example supports. Start it with --help to list its drivers.`)
   }
 
   return driverName
@@ -105,7 +106,7 @@ async function main() {
   })
   console.log(`   Database file: ${dbPath}\n`)
 
-  console.log('2. Creating schema via db.execute()...')
+  console.log('2. Creating the schema with db.execute()...')
   await db.execute(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,20 +115,18 @@ async function main() {
       stock INTEGER NOT NULL DEFAULT 0
     )
   `)
-  console.log('   Products table created.\n')
+  console.log('   The products table is ready.\n')
 
   console.log('3. Running file-based migrations...')
-  const migrationsDir = join(import.meta.dirname, 'migrations')
+  const migrationsDir = fileURLToPath(new URL('migrations', import.meta.url))
   const migrations = loadMigrations(migrationsDir)
   const migrationResult = await db.migrate(migrations)
-  console.log(
-    `   Applied ${migrationResult.applied.length} migration(s): ${migrationResult.applied.map(m => m.name).join(', ')}\n`,
-  )
+  console.log(`   Applied migrations: ${migrationResult.applied.map(m => m.name).join(', ')}\n`)
 
   console.log('4. Inserting data...')
   await db.execute('INSERT INTO users (name, email, age) VALUES (?, ?, ?)', ['Alice Johnson', 'alice@example.com', 30])
   await db.execute('INSERT INTO users (name, email, age) VALUES (?, ?, ?)', ['Bob Smith', 'bob@example.com', 25])
-  console.log('   Inserted 2 users.\n')
+  console.log('   Rows in users: 2\n')
 
   console.log('5. Querying data...')
   interface User {
@@ -138,22 +137,21 @@ async function main() {
     created_at: string
   }
   const users = await db.query<User>('SELECT * FROM users ORDER BY id')
-  console.log(`   Found ${users.length} users:`)
+  console.log(`   db.query() returns ${users.length} users:`)
   for (const user of users) {
     console.log(`     - ${user.name} (${user.email}), age ${user.age}`)
   }
   console.log()
 
-  console.log('   Using queryOne():')
   const alice = await db.queryOne<User>('SELECT * FROM users WHERE email = ?', ['alice@example.com'])
-  console.log(`   Found: ${alice?.name ?? 'not found'}\n`)
+  console.log(`   db.queryOne() returns: ${alice?.name ?? 'no row'}\n`)
 
   console.log('6. Running a transaction...')
   await db.transaction(async tx => {
     await tx.execute('INSERT INTO orders (user_id, total, status) VALUES (?, ?, ?)', [1, 99.99, 'completed'])
     await tx.execute('INSERT INTO orders (user_id, total, status) VALUES (?, ?, ?)', [2, 149.5, 'pending'])
     const orders = await tx.query<{ id: number; total: number; status: string }>('SELECT * FROM orders ORDER BY id')
-    console.log(`   Created ${orders.length} orders inside transaction.`)
+    console.log(`   Inside the transaction, the orders table holds ${orders.length} rows:`)
     for (const order of orders) {
       console.log(`     - Order #${order.id}: $${order.total} (${order.status})`)
     }
@@ -175,14 +173,14 @@ async function main() {
   ])
   await setTimeout(50)
 
-  console.log(`   Received ${cdcEvents.length} CDC event(s):`)
+  console.log(`   Change events on users: ${cdcEvents.length}`)
   for (const evt of cdcEvents) {
     console.log(`     - ${evt}`)
   }
   subscription.unsubscribe()
   console.log()
 
-  console.log('8. Live query: a result set that maintains itself...')
+  console.log('8. Live query: a result that Sirannon updates on every change...')
   const liveUsers = await db.live<{ id: number; name: string }>('SELECT id, name FROM users ORDER BY id')
   const liveUpdates: string[] = []
   const stopWatchingUsers = liveUsers.subscribe(update => {
@@ -200,13 +198,13 @@ async function main() {
     console.log(`   Rows after one insert: ${afterInsert.rows.length}`)
     console.log(`   Last row: ${afterInsert.rows[afterInsert.rows.length - 1]?.name}`)
   }
-  console.log(`   Updates delivered: ${liveUpdates.join(', ')}`)
+  console.log(`   Update kinds: ${liveUpdates.join(', ')}`)
 
   stopWatchingUsers()
   await liveUsers.close()
   console.log()
 
-  console.log('9. Connection pool with custom readPoolSize...')
+  console.log('9. A connection pool with a custom readPoolSize...')
   const db2Path = join(tempDir, 'pool-example.db')
   const db2 = await registry.open('pool-demo', db2Path, {
     readPoolSize: 8,
@@ -215,11 +213,12 @@ async function main() {
   await db2.execute('CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT)')
   await db2.execute('INSERT INTO demo (value) VALUES (?)', ['test'])
   const demoRows = await db2.query('SELECT * FROM demo')
-  console.log(`   Pool demo: ${db2.readerCount} readers, ${demoRows.length} row(s) queried.`)
+  console.log(`   Readers in the pool: ${db2.readerCount}`)
+  console.log(`   Rows returned: ${demoRows.length}`)
   await db2.close()
   console.log()
 
-  console.log('10. Metrics via Sirannon registry...')
+  console.log('10. Metrics through a Sirannon registry...')
   const queryLog: string[] = []
   const sirannon = new Sirannon({
     driver,
@@ -235,14 +234,14 @@ async function main() {
   await metricsDb.execute('INSERT INTO kv (key, value) VALUES (?, ?)', ['greeting', 'hello world'])
   await metricsDb.query('SELECT * FROM kv WHERE key = ?', ['greeting'])
 
-  console.log(`   Captured ${queryLog.length} query metrics:`)
+  console.log(`   Queries in the metrics log: ${queryLog.length}`)
   for (const log of queryLog.slice(0, 3)) {
     console.log(`     - ${log}`)
   }
   await sirannon.shutdown()
   console.log()
 
-  console.log('11. Multi-tenant via Sirannon lifecycle...')
+  console.log('11. A database per tenant through the Sirannon lifecycle...')
   const tenantDir = join(tempDir, 'tenants')
   mkdirSync(tenantDir, { recursive: true })
 
@@ -258,7 +257,7 @@ async function main() {
   for (const tenantId of tenantIds) {
     const tdb = await tenantSirannon.resolve(tenantId)
     if (!tdb) {
-      throw new Error(`The lifecycle resolver refused tenant '${tenantId}'`)
+      throw new Error(`resolve('${tenantId}') returns undefined`)
     }
 
     console.log(`   Tenant '${sanitizeTenantId(tenantId)}' -> ${tenantPath(tenantDir, tenantId)}`)
@@ -269,11 +268,11 @@ async function main() {
   }
 
   console.log(`   Tenants requested: ${tenantIds.length}`)
-  console.log(`   Databases held open under maxOpen 2: ${tenantSirannon.databases().size}`)
+  console.log(`   Open databases under maxOpen 2: ${tenantSirannon.databases().size}`)
 
   const reopened = await tenantSirannon.resolve('acme-corp')
   const reopenedPlan = await reopened?.queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', ['plan'])
-  console.log(`   Evicted tenant reopened on next access with plan: ${reopenedPlan?.value}`)
+  console.log(`   resolve('acme-corp') reopens the evicted tenant with plan: ${reopenedPlan?.value}`)
   await tenantSirannon.shutdown()
   console.log()
 
@@ -281,11 +280,11 @@ async function main() {
   const hookSirannon = new Sirannon({ driver })
   hookSirannon.onBeforeQuery(ctx => {
     if (ctx.sql.trim() === 'DROP TABLE test') {
-      throw new Error('DROP TABLE test is blocked by hook')
+      throw new Error('The beforeQuery hook throws on DROP TABLE test')
     }
   })
   hookSirannon.onDatabaseOpen(ctx => {
-    console.log(`   [hook] Database opened: ${ctx.databaseId}`)
+    console.log(`   [hook] onDatabaseOpen: ${ctx.databaseId}`)
   })
 
   const hookDb = await hookSirannon.open('hook-demo', join(tempDir, 'hooks.db'))
@@ -300,7 +299,7 @@ async function main() {
   try {
     await hookDb.execute('DROP TABLE test')
   } catch (err) {
-    console.log(`   [hook] Blocked: ${(err as Error).message}`)
+    console.log(`   [hook] Error: ${(err as Error).message}`)
   }
   await hookSirannon.shutdown()
   console.log()
@@ -308,22 +307,21 @@ async function main() {
   console.log('13. Backup...')
   const backupPath = join(tempDir, 'backup.db')
   await db.backup(backupPath)
-  console.log(`   Backup created at: ${backupPath}`)
+  console.log(`   Backup file: ${backupPath}`)
 
   const backupDb = await registry.open('backup-verify', backupPath, { readOnly: true })
   const backupUsers = await backupDb.query<User>('SELECT * FROM users')
-  console.log(`   Backup contains ${backupUsers.length} users.`)
+  console.log(`   The backup holds ${backupUsers.length} users.`)
   await backupDb.close()
   console.log()
 
   console.log('14. Graceful shutdown...')
   await registry.shutdown()
-  console.log('   Main database closed.')
-  console.log('   Cleaning up temp directory...')
+  console.log('   registry.shutdown() closes the main database.')
+  console.log('   Removing the temporary directory...\n')
   cleanupTempDir()
-  console.log('   Done.\n')
 
-  console.log('=== All features demonstrated ===')
+  console.log('=== End of the example ===')
 }
 
 main().catch(err => {

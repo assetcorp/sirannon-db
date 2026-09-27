@@ -64,7 +64,7 @@ export async function closeFieldDevice(device: FieldDevice): Promise<void> {
 
 function assertWithin(value: string, limit: number, field: string): void {
   if (value.length > limit) {
-    throw new Error(`A work order ${field} is limited to ${limit} characters, and this one carries ${value.length}.`)
+    throw new Error(`A work order ${field} can hold at most ${limit} characters, but this one has ${value.length}.`)
   }
 }
 
@@ -82,7 +82,9 @@ export async function createWorkOrder(device: FieldDevice, site: string, task: s
 
   const existing = await device.db.queryOne<{ count: number }>(`SELECT count(*) AS count FROM ${WORK_ORDERS_TABLE}`)
   if ((existing?.count ?? 0) >= MAX_WORK_ORDERS) {
-    throw new Error(`This board holds ${MAX_WORK_ORDERS} work orders, so close one before you add another.`)
+    throw new Error(
+      `The board can hold at most ${MAX_WORK_ORDERS} work orders, so delete one in the SQL console before you add another.`,
+    )
   }
 
   await device.db.execute(

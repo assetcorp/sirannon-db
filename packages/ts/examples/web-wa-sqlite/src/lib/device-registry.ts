@@ -4,7 +4,7 @@ const LOCAL_DEVICE_STORAGE_KEY = 'sirannon-field-local-device'
 const TAB_LOCK_PREFIX = 'sirannon-device-'
 
 export const DEVICE_NAME_RULE =
-  'Lowercase letters, digits, and hyphens, up to 32 characters, starting with a letter or digit.'
+  'Use up to 32 lowercase letters, digits, and hyphens, starting with a letter or a digit.'
 
 export function normaliseDeviceName(raw: string): string {
   return raw.trim().toLowerCase()

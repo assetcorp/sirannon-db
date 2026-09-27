@@ -134,7 +134,7 @@ function DeviceWorkspace({ name }: { name: string }) {
           <Alert variant="destructive">
             <TriangleAlert aria-hidden="true" />
             <AlertTitle>
-              Could not open device <span className="font-mono">{name}</span>
+              The local database for <span className="font-mono">{name}</span> fails to open
             </AlertTitle>
             <AlertDescription>{openError}</AlertDescription>
           </Alert>

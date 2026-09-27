@@ -17,16 +17,14 @@ export async function setProxyEnabled(proxyName: string, enabled: boolean): Prom
     )
   } catch (error) {
     if (isAbortError(error)) {
-      throw new Error(
-        `Toxiproxy failed to update ${proxyName}: request timed out after ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms`,
-      )
+      throw new Error(`The Toxiproxy update of ${proxyName} exceeds its ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms timeout`)
     }
     throw error
   }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
-    throw new Error(`Toxiproxy failed to update ${proxyName}: HTTP ${response.status} ${body}`)
+    throw new Error(`Toxiproxy responds to the update of ${proxyName} with HTTP ${response.status} ${body}`)
   }
 }
 

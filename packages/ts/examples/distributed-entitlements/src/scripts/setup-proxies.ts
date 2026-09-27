@@ -31,7 +31,7 @@ for (const proxy of proxies) {
   await createProxy(proxy)
 }
 
-console.log(`Created ${proxies.length} Toxiproxy links`)
+console.log(`Toxiproxy links: ${proxies.length}`)
 
 async function waitForToxiproxy(): Promise<void> {
   const deadline = Date.now() + TOXIPROXY_READY_TIMEOUT_MS
@@ -52,7 +52,7 @@ async function waitForToxiproxy(): Promise<void> {
       await delay(Math.min(remainingMs, 500))
     }
   }
-  throw new Error(`Toxiproxy did not become ready at ${TOXIPROXY_URL}`)
+  throw new Error(`Toxiproxy at ${TOXIPROXY_URL} is still not ready after ${TOXIPROXY_READY_TIMEOUT_MS}ms`)
 }
 
 async function createProxy(proxy: ProxySpec): Promise<void> {
@@ -91,7 +91,7 @@ async function request(
     )
   } catch (error) {
     if (isAbortError(error)) {
-      throw new Error(`Toxiproxy ${options.method} ${path} timed out after ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms`)
+      throw new Error(`Toxiproxy ${options.method} ${path} exceeds its ${TOXIPROXY_REQUEST_TIMEOUT_MS}ms timeout`)
     }
     throw error
   }
@@ -106,12 +106,12 @@ async function request(
   }
 
   const body = await response.text().catch(() => '')
-  throw new Error(`Toxiproxy ${options.method} ${path} failed with ${response.status}: ${body}`)
+  throw new Error(`Toxiproxy responds to ${options.method} ${path} with ${response.status}: ${body}`)
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit | undefined, timeoutMs: number): Promise<Response> {
   if (timeoutMs <= 0) {
-    throw new Error(`Toxiproxy request timed out before contacting ${url}`)
+    throw new Error(`The request to ${url} has a time budget of ${timeoutMs}ms`)
   }
 
   const controller = new AbortController()

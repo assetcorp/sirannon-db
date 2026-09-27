@@ -7,8 +7,8 @@ import '../styles.css'
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`
 
 const PAGE_DESCRIPTION = browserOnly
-  ? 'A work order app backed by a real SQLite database in the browser, which needs no server behind it and keeps every order on your own machine between visits.'
-  : 'A work order app backed by a real SQLite database in the browser, which keeps working offline and syncs local writes back to the server.'
+  ? 'This work order app stores its orders in a SQLite database in your browser, so the orders stay on your machine between visits, with no server behind the app.'
+  : 'This work order app stores its orders in a SQLite database in your browser and syncs local writes to the server whenever a connection is available.'
 
 export const Route = createRootRoute({
   head: () => ({

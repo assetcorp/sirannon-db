@@ -50,6 +50,8 @@ npx skills add assetcorp/sirannon-db
 
 The skill has the agent read the Sirannon version that your project installs, and it sends the agent to that version's types and documentation.
 
+On the [agents page](https://sirannon.sondelali.com/agents), you can copy a prompt for one of six database tasks and paste it into your coding agent.
+
 ## Quick start
 
 ```ts

@@ -55,4 +55,4 @@ for (const nodeId of NODE_IDS) {
   await chmod(nodeKeyPath, 0o600)
 }
 
-console.log(`Generated local mTLS certificates in ${certDir}`)
+console.log(`Local mTLS certificates: ${certDir}`)

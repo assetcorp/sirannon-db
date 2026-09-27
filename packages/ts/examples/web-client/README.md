@@ -1,21 +1,21 @@
 # Sirannon Fulfillment Operations Demo
 
-An inventory console where every list on the page is a live query. The browser opens two live queries over one WebSocket and never fetches a snapshot, never polls, and never applies a change event by hand. Writes go through registered operations, so the data server accepts no SQL from the network at all.
+This example is an inventory console in which every list on the page is a live query. The browser opens two live queries over one WebSocket, through which the server sends every change to their rows. The data server executes no SQL from the network, so the app sends every write as a call to a registered operation.
 
 ## Setup
 
-This example needs Node.js 22 or newer and pnpm.
+To start this example, you need Node.js 22 or newer and pnpm.
 
-The data server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you run anything. From the repository root:
+The data server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 
 ```bash
 pnpm install
 pnpm --filter @delali/sirannon-db build
 ```
 
-The code generator behind `pnpm run codegen` reads that same output. Run the build again whenever you change anything under `packages/ts/src`.
+The code generator behind `pnpm run codegen` imports that same output. Build the package again whenever you change anything under `packages/ts/src`.
 
-## Run
+## Start the example
 
 Start the Sirannon data server and the application server together:
 
@@ -23,57 +23,57 @@ Start the Sirannon data server and the application server together:
 pnpm --dir packages/ts/examples/web-client run dev
 ```
 
-Or run them separately:
+Or start them separately:
 
 ```bash
 pnpm --dir packages/ts/examples/web-client run server
 pnpm --dir packages/ts/examples/web-client run app:dev
 ```
 
-Open `http://localhost:3000`. Set `PORT` to move the application server, and the data server allows that origin automatically.
+Open `http://localhost:3000`. When you set `PORT` to move the application server to another port, the data server sets its CORS origin to `http://localhost:<PORT>`, unless you also set `APP_ORIGIN`.
 
-## What the browser runs
+## The browser code
 
-Both panels come from `useLiveQuery`, and each returns rows plus a status:
+The app fills both panels from `useLiveQuery`, which returns the rows and a status:
 
 ```tsx
 const productsState = useLiveQuery(liveDatabase, main.reads.products, {})
 const activityState = useLiveQuery(liveDatabase, main.reads.activity, {})
 ```
 
-The server re-reads the registered statement when a change lands and sends the row operations that follow from it, so the table updates in place. There is no refresh button on this page because there is nothing for it to do.
+When a write changes a table, the server applies that change to the rows of each live query and sends the resulting row operations to the browser. The app then updates each table in place, so the page has no refresh button.
 
-Writes use `useCommand`, which returns a stable callback for a registered write:
+The app sends writes through `useCommand`, which returns a stable callback for a registered write:
 
 ```tsx
 const allocateFromBrowser = useCommand(liveDatabase, main.writes.allocateProduct)
 await allocateFromBrowser({ productId: product.id })
 ```
 
-The mode switcher changes where a write goes. `Write through the app server` calls a TanStack server function that validates the input with Zod and then calls the same registered write over HTTP. `Write from the browser` calls it over the socket the live queries already hold. Reads stay live either way.
+The mode switcher sets how the app sends each write. In `Write through the app server` mode, the app calls a TanStack server function, which validates the input with Zod and then calls the registered write over HTTP. In `Write from the browser` mode, the app calls the same registered write over the same WebSocket as the live queries. Reads stay live in both modes.
 
-## What the server registers
+## The server registry
 
-[`src/operations.ts`](src/operations.ts) holds every statement this server will run, keyed by database identifier. A caller sends a name and arguments; the server chooses the SQL. Each write also declares `fromIdentity`, so the server fills the `operator` column from the authenticated caller and a request that supplies `operator` itself fails with `ARGUMENT_NOT_ALLOWED`.
+[`src/operations.ts`](src/operations.ts) contains every statement that this server executes, keyed by database identifier. A caller sends a name and arguments, from which the server builds the SQL. Every write except `resetInventory` also declares `fromIdentity`, so the server fills the `operator` column from the authenticated caller. When a request includes `operator` itself, the server responds with `ARGUMENT_NOT_ALLOWED`.
 
 The two demo credentials map to two operators, which is why the change log shows `ops-console` for writes through the app server and `warehouse-floor` for writes from the browser.
 
-`sirannon-codegen` turns that registry into the typed references the client calls it through:
+From that registry, `sirannon-codegen` generates the typed references for the client:
 
 ```bash
 pnpm --dir packages/ts/examples/web-client run codegen
 ```
 
-That writes [`src/generated/operations.ts`](src/generated/operations.ts), which is checked in. Regenerate it whenever you change the registry; the generated `registryDigest` is what a live query echoes when it subscribes, and a server serving a different registry refuses with `REGISTRY_MISMATCH`.
+That command writes [`src/generated/operations.ts`](src/generated/operations.ts), which git tracks. Regenerate it whenever you change the registry, because the client sends the generated `registryDigest` with every live query subscription. When that digest differs from the server's registry, the server responds to the subscription with a `REGISTRY_MISMATCH` error.
 
 ## Schema
 
-Two tables, seeded on startup:
+The data server creates two tables and seeds the first one on startup:
 
-- `products` (id, name, price, stock) with five sample records
-- `activity` (id, product_name, action, quantity, operator, created_at)
+- `products` (id, name, price, stock) contains five sample records at startup.
+- The registered writes add a row to `activity` (id, product_name, action, quantity, operator, created_at) for each allocation, each receipt of stock, and each new product.
 
-Live queries install their own change tracking, so the server calls no `watch` of its own.
+When the client subscribes to a live query, the server calls `watch` on the table that the query selects from, so the data server code has no `watch` call of its own.
 
 ## Environment
 
@@ -90,21 +90,22 @@ VITE_SIRANNON_DEMO_TOKEN=sirannon-warehouse-token
 
 ## Security model
 
-This demo is lighter than a production application, and it avoids the unsafe parts people tend to copy from examples.
+This demo has fewer protections than a production application.
 
-What this example does:
+Protections in this example:
 
-- Binds the data server to `127.0.0.1` and restricts CORS to the application origin.
-- Leaves `acceptSql` at its default, so the five statement routes and their WebSocket messages answer `SQL_NOT_ACCEPTED`. Confirm it with `curl http://localhost:9876/capabilities`, which lists `query.named` and no `query.sql`.
-- Requires `Authorization: Bearer <token>` on HTTP routes and a `Sec-WebSocket-Protocol` value derived from a token on the upgrade, and returns an operator identity from `authenticate` rather than a bare pass or fail.
-- Validates the WebSocket `Origin` header during the upgrade, which CORS does not cover.
-- Checks every argument inside the registered write, so the browser path and the app-server path enforce the same bounds.
+- The data server binds to `127.0.0.1`, and its CORS list contains only the application origin.
+- `acceptSql` stays at its default, so the server responds to the five statement routes and their WebSocket messages with `SQL_NOT_ACCEPTED`. Confirm it with `curl http://localhost:9876/capabilities`, whose response lists `query.named` and omits `query.sql`.
+- Every HTTP request must include `Authorization: Bearer <token>`, and every WebSocket upgrade must include a `Sec-WebSocket-Protocol` value derived from a token.
+- The `authenticate` hook returns an operator identity for each caller, and the registered writes store it in the `operator` column.
+- The server checks the WebSocket `Origin` header during the upgrade, which CORS does not cover.
+- Each registered write checks its arguments, so the same bounds apply to writes from the browser and to writes through the app server.
 
-What this example does not do:
+Protections that this example lacks:
 
-- It has no real user login, sessions, JWTs, roles, or tenant checks.
-- It has no rate limiting, abuse protection, audit logging, or WAF rules.
-- It terminates no TLS. Local development uses `http://` and `ws://`.
-- The browser token is visible to browser code. Treat it as a local demonstration.
+- The example has no user login, sessions, JWTs, roles, or tenant checks.
+- The example has no rate limiting, abuse protection, audit logging, or WAF rules.
+- The example terminates no TLS, so you connect over `http://` and `ws://` locally.
+- Browser code can read the browser token, so treat the example as a local demonstration only.
 
-Before adapting this pattern for a public deployment, put the server behind HTTPS and WSS, derive short-lived WebSocket credentials from a real identity layer, keep long-lived secrets out of `VITE_*` variables, and redact authorization and WebSocket protocol values from access logs.
+Before you adapt this pattern for a public deployment, put the server behind HTTPS and WSS, derive short-lived WebSocket credentials from a real identity layer, keep long-lived secrets out of `VITE_*` variables, and redact authorization and WebSocket protocol values from access logs.

@@ -1,6 +1,11 @@
-import { fireAfterQueryHooks, fireBeforeQueryHooks } from './hooks/query-hooks.js'
+import {
+  fireAfterQueryHooks,
+  fireBeforeQueryHooks,
+  STATEMENT_SUCCEEDED,
+  type StatementOutcome,
+} from './hooks/query-hooks.js'
 import type { HookRegistry } from './hooks/registry.js'
-import type { MetricsCollector } from './metrics/collector.js'
+import type { MetricsCollector, QueryOutcomeMeasure } from './metrics/collector.js'
 import type { ExecuteResult, Params, QueryOptions } from './types.js'
 
 interface ObservedStatement {
@@ -35,15 +40,18 @@ export class DatabaseObserver {
     this.fireBefore(sql, params, options)
     const start = performance.now()
     try {
-      return await op()
-    } finally {
-      this.fireAfter(sql, params, performance.now() - start)
+      const result = await op()
+      this.fireAfter(sql, params, performance.now() - start, STATEMENT_SUCCEEDED)
+      return result
+    } catch (error) {
+      this.fireAfter(sql, params, performance.now() - start, { failed: true, error })
+      throw error
     }
   }
 
-  track<T>(sql: string, op: () => Promise<T>): Promise<T> {
+  track<T>(sql: string, op: () => Promise<T>, measure?: QueryOutcomeMeasure<T>): Promise<T> {
     if (!this.metrics) return op()
-    return this.metrics.trackQuery(op, { databaseId: this.databaseId, sql })
+    return this.metrics.trackQuery(op, { databaseId: this.databaseId, sql }, measure)
   }
 
   async withTransactionHooks(
@@ -53,11 +61,17 @@ export class DatabaseObserver {
     for (const statement of statements) this.fireBefore(statement.sql, statement.params)
     const start = performance.now()
     try {
-      return await this.trackEach(statements, op)
-    } finally {
-      const durationMs = performance.now() - start
-      for (const statement of statements) this.fireAfter(statement.sql, statement.params, durationMs)
+      const results = await this.trackEach(statements, op)
+      this.fireAfterEach(statements, performance.now() - start, STATEMENT_SUCCEEDED)
+      return results
+    } catch (error) {
+      this.fireAfterEach(statements, performance.now() - start, { failed: true, error })
+      throw error
     }
+  }
+
+  private fireAfterEach(statements: readonly ObservedStatement[], durationMs: number, outcome: StatementOutcome): void {
+    for (const statement of statements) this.fireAfter(statement.sql, statement.params, durationMs, outcome)
   }
 
   private trackEach(
@@ -67,11 +81,13 @@ export class DatabaseObserver {
     const metrics = this.metrics
     if (!metrics) return op()
     let run = op
-    for (const statement of statements) {
+    statements.forEach((statement, index) => {
       const inner = run
-      const sql = statement.sql
-      run = () => metrics.trackQuery(inner, { databaseId: this.databaseId, sql })
-    }
+      run = () =>
+        metrics.trackQuery(inner, { databaseId: this.databaseId, sql: statement.sql }, results => ({
+          changes: results[index]?.changes,
+        }))
+    })
     return run()
   }
 
@@ -79,7 +95,7 @@ export class DatabaseObserver {
     fireBeforeQueryHooks(this.parentHooks, this.localHooks, this.databaseId, sql, params, options)
   }
 
-  private fireAfter(sql: string, params: Params | undefined, durationMs: number): void {
-    fireAfterQueryHooks(this.parentHooks, this.localHooks, this.databaseId, sql, params, durationMs)
+  private fireAfter(sql: string, params: Params | undefined, durationMs: number, outcome: StatementOutcome): void {
+    fireAfterQueryHooks(this.parentHooks, this.localHooks, this.databaseId, sql, params, durationMs, outcome)
   }
 }

@@ -8,7 +8,7 @@ function describeFailure(err: unknown): { code: string; message: string } {
   }
 }
 
-/** Where one database's restore stands. `idle` means that none has started since the server did.
+/** The state of one database's restore. `idle` means that no restore has started since the server started.
  * @public
  */
 export type BackupRestoreState = 'idle' | 'running' | 'done' | 'failed'
@@ -17,35 +17,35 @@ export type BackupRestoreState = 'idle' | 'running' | 'done' | 'failed'
  * @public
  */
 export interface BackupRestoreStatus {
-  /** Where the restore stands. */
+  /** The state of the restore. */
   state: BackupRestoreState
-  /** Epoch milliseconds the caller asked to be taken back to. */
+  /** The moment, in epoch milliseconds, that the caller asked to restore to. */
   moment?: number
-  /** Epoch milliseconds the restore started. */
+  /** When the restore started, in epoch milliseconds. */
   startedAt?: number
-  /** Epoch milliseconds it finished, whether it succeeded or failed. */
+  /** When the restore finished, in epoch milliseconds, whether it succeeded or failed. */
   finishedAt?: number
-  /** How far it has got, reported after every piece it fetches. */
+  /** The restore's progress, which the server updates after it fetches each piece. */
   progress?: BackupRestoreProgress
-  /** What a finished restore produced. */
+  /** The report of a finished restore. */
   report?: BackupRestoreReport
   /**
-   * Why the database it replaced would not open again. The rebuilt data is on
-   * disk and the registry has nothing open under the identifier, so an operator
-   * who sees this restarts the process.
+   * The error that stopped the rebuilt database from opening again. The rebuilt
+   * data is on disk, but the registry has no database open under the identifier,
+   * so restart the process when you see this error.
    */
   reopenError?: { code: string; message: string }
-  /** Why a failed restore stopped. */
+  /** The error that stopped a failed restore. */
   error?: { code: string; message: string }
 }
 
 /**
- * Records where each database's restore stands, so that a caller who triggered
- * one reads its outcome from a route of its own.
+ * Records the state of each database's restore, so that a caller who triggers
+ * one can read its outcome from a separate route.
  *
- * A restore closes the database it rebuilds, so that database can store nothing
- * about it. The server stores it, one entry per identifier, and each new
- * restore replaces the entry before it.
+ * The server closes the database while it rebuilds it, so the server cannot
+ * store the record in that database. It keeps one entry per identifier in
+ * memory, and each new restore replaces the previous entry.
  *
  * @internal
  */
@@ -53,11 +53,11 @@ export class BackupRestoreRuns {
   private readonly runs = new Map<string, BackupRestoreStatus>()
 
   /**
-   * Marks a restore of one database as under way, unless one is already running.
+   * Marks a restore of one database as started, unless another restore of it is in progress.
    *
-   * @param databaseId - Identifier of the database being rebuilt.
-   * @param moment - Epoch milliseconds the caller asked to be taken back to.
-   * @returns True where this call claimed the database, false where a restore already has it.
+   * @param databaseId - The identifier of the database that the server rebuilds.
+   * @param moment - The moment, in epoch milliseconds, that the caller asked to restore to.
+   * @returns True when this call claims the database, and false when another restore of it is in progress.
    */
   claim(databaseId: string, moment: number): boolean {
     if (this.runs.get(databaseId)?.state === 'running') return false
@@ -66,9 +66,9 @@ export class BackupRestoreRuns {
   }
 
   /**
-   * Records how far the restore of one database has got.
+   * Records the progress of one database's restore.
    *
-   * @param databaseId - Identifier of the database being rebuilt.
+   * @param databaseId - The identifier of the database that the server is rebuilding.
    * @param progress - Pieces fetched, bytes fetched, and change pieces replayed.
    */
   progressed(databaseId: string, progress: BackupRestoreProgress): void {
@@ -79,13 +79,14 @@ export class BackupRestoreRuns {
   /**
    * Records a restore that rebuilt the database.
    *
-   * A reopen that failed is reported beside the report, and the state stays
-   * `done`, because Sirannon replaced the data either way and an operator shown
-   * only the failure would believe their database untouched.
+   * When the database fails to open again, this method records that error beside
+   * the report and keeps the state `done`, because Sirannon replaced the data
+   * either way, and an operator who saw only the failure could believe that the
+   * data was unchanged.
    *
-   * @param databaseId - Identifier of the database that was rebuilt.
-   * @param report - What the restore produced.
-   * @param reopenFailure - What stopped the database opening again, where anything did.
+   * @param databaseId - The identifier of the rebuilt database.
+   * @param report - The restore's report.
+   * @param reopenFailure - The error that stopped the database from opening again, if there was one.
    */
   finished(databaseId: string, report: BackupRestoreReport, reopenFailure?: unknown): void {
     this.runs.set(databaseId, {
@@ -99,15 +100,15 @@ export class BackupRestoreRuns {
   }
 
   /**
-   * Records a restore that stopped, under the code it stopped with.
+   * Records a failed restore under the code of the error that stopped it.
    *
-   * Only a `SirannonError` passes its message through. Anything else reports
-   * the same sentence the HTTP layer sends for an unexpected failure, since a
-   * runtime error names the paths and the internals of the machine serving the
-   * request.
+   * The record keeps the message of a `SirannonError` only. For any other error,
+   * it stores the message that the HTTP layer sends for an unexpected failure,
+   * because a runtime error can include file paths and other internal details of
+   * the server's machine.
    *
-   * @param databaseId - Identifier of the database it was rebuilding.
-   * @param err - What stopped it.
+   * @param databaseId - The identifier of the database that the server was rebuilding.
+   * @param err - The error that stopped the restore.
    */
   failed(databaseId: string, err: unknown): void {
     const previous = this.runs.get(databaseId)
@@ -121,10 +122,10 @@ export class BackupRestoreRuns {
   }
 
   /**
-   * Reads where one database's restore stands.
+   * Returns the status of one database's restore.
    *
-   * @param databaseId - Identifier of the database to report on.
-   * @returns The restore, or an idle answer where none has run.
+   * @param databaseId - The identifier of the database.
+   * @returns The restore's status, or an `idle` status when no restore has started.
    */
   read(databaseId: string): BackupRestoreStatus {
     return this.runs.get(databaseId) ?? { state: 'idle' }

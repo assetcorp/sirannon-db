@@ -3,10 +3,10 @@ import type { DeviceSyncPort } from '../core/database-sync.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import { STAGED_STREAM_CAPABILITY } from '../server/capabilities.js'
 import { toBaseUrl } from './endpoint-urls.js'
-import { unrefTimer } from './http-json.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
 import { syncDeviceMigrations } from './migration-sync.js'
-import { downloadDatabaseSnapshot } from './snapshot-loader.js'
+import { deviceNetworkSignal } from './network-signal.js'
+import { downloadDatabaseSnapshot, snapshotGateOpen } from './snapshot-loader.js'
 import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
 import {
@@ -17,10 +17,14 @@ import {
 } from './sync-controller-wiring.js'
 import type { PullStream } from './sync-pull-stream.js'
 import type { PushLoop } from './sync-push-loop.js'
+import { PullReconnector } from './sync-reconnect.js'
 import type { ResyncScheduler } from './sync-resync-scheduler.js'
 import { SyncStatusNotifier } from './sync-status-notifier.js'
 import { assertWebSocketCredentials } from './transport/ws-headers.js'
 import { RemoteError } from './types.js'
+
+const SERVER_REFUSES_DEVICE_SYNC_CODES = new Set(['SYNC_UNSUPPORTED', 'DEVICE_SYNC_NOT_ACCEPTED'])
+const SERVER_UNREACHABLE_CODES = new Set(['CONNECTION_ERROR', 'TIMEOUT'])
 
 export type {
   SnapshotOptions,
@@ -31,17 +35,16 @@ export type {
 } from './sync-controller-types.js'
 
 /**
- * Keeps one device's local database in step with a server: it pushes local changes, pulls the server's, and downloads a fresh snapshot when the device falls too far behind.
+ * Keeps one device's local database in step with a server by pushing local changes, pulling the server's changes, and downloading a fresh snapshot when the server requires a resync.
  *
  * @public
  */
 export class SyncController {
   private readonly baseUrl: string
-  private readonly pushIntervalMs: number
-  private readonly maxPushRetryDelayMs: number
   private readonly pull: PullStream
   private readonly push: PushLoop
   private readonly resync: ResyncScheduler
+  private readonly reconnect: PullReconnector
   private readonly statusChanges: SyncStatusNotifier
 
   private port: DeviceSyncPort | null = null
@@ -49,8 +52,6 @@ export class SyncController {
   private capabilities: string[] | null = null
   private schemaVersion: number | null = null
   private syncState: SyncState = 'stopped'
-  private pullRetryTimer: ReturnType<typeof setTimeout> | null = null
-  private consecutivePullFailures = 0
   private pendingPushCount = 0
   private lastError: { code: string; message: string } | null = null
 
@@ -59,33 +60,45 @@ export class SyncController {
     private readonly options: SyncControllerOptions,
   ) {
     this.baseUrl = toBaseUrl(options.url)
-    this.pushIntervalMs = options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS
-    this.maxPushRetryDelayMs = options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS
     assertWebSocketCredentials(options.headers, options.webSocketProtocols)
+    const network = deviceNetworkSignal()
     this.statusChanges = new SyncStatusNotifier(
       options.onStatusChange,
       () => this.captureStatus(),
       () => this.refreshOutboxCount(),
     )
-    const collaborators = createSyncCollaborators(this.baseUrl, options, {
-      state: () => this.state,
-      port: () => this.port,
-      schemaVersion: () => this.schemaVersion ?? 0,
-      reconcileSchema: () => this.reconcileSchema(),
-      recordError: err => this.recordError(err),
-      clearError: () => this.setError(null),
-      markResyncRequired: () => this.markResyncRequired(),
-      onApplyFailure: err => this.handleApplyFailure(err),
-      onApplySuccess: () => {
-        this.consecutivePullFailures = 0
-        this.statusChanges.notify()
+    const collaborators = createSyncCollaborators(
+      this.baseUrl,
+      options,
+      {
+        state: () => this.state,
+        port: () => this.port,
+        schemaVersion: () => this.schemaVersion ?? 0,
+        reconcileSchema: () => this.reconcileSchema(),
+        recordError: err => this.recordError(err),
+        clearError: () => this.setError(null),
+        markResyncRequired: () => this.markResyncRequired(),
+        onApplyFailure: err => this.handleApplyFailure(err),
+        onApplySuccess: () => {
+          this.reconnect.reset()
+          this.statusChanges.notify()
+        },
+        download: () =>
+          this.downloadSnapshot({ pageSize: options.snapshotPageSize, onProgress: options.onSnapshotProgress }),
       },
-      download: () =>
-        this.downloadSnapshot({ pageSize: options.snapshotPageSize, onProgress: options.onSnapshotProgress }),
-    })
+      network,
+    )
     this.push = collaborators.push
     this.pull = collaborators.pull
     this.resync = collaborators.resync
+    this.reconnect = new PullReconnector(
+      {
+        baseDelayMs: options.pushIntervalMs ?? DEFAULT_PUSH_INTERVAL_MS,
+        maxDelayMs: options.maxPushRetryDelayMs ?? DEFAULT_MAX_PUSH_RETRY_DELAY_MS,
+        network,
+      },
+      { reopen: () => void this.reopenPull(), onOnline: () => this.push.retryNow() },
+    )
   }
 
   private get state(): SyncState {
@@ -105,6 +118,13 @@ export class SyncController {
 
   /**
    * Connects to the server and starts pushing and pulling changes.
+   *
+   * When the server is unreachable, the promise still resolves, `status()` reports `running` with the failure in
+   * `lastError`, and the controller retries the connection with growing waits. It makes no attempt while the device
+   * reports no network, and it retries at once when the network returns.
+   *
+   * @throws A `RemoteError` when the server refuses device sync, such as `DEVICE_SYNC_NOT_ACCEPTED`, `UNAUTHORIZED`, or
+   * `FORBIDDEN`.
    */
   async start(): Promise<void> {
     if (this.state === 'running' || this.state === 'starting') return
@@ -131,8 +151,12 @@ export class SyncController {
         }
       }
       if (!this.resync.required) {
-        await this.openPull()
+        await this.openPull().catch((err: unknown) => {
+          if (!(err instanceof RemoteError) || !SERVER_UNREACHABLE_CODES.has(err.code)) throw err
+          this.handleApplyFailure(err)
+        })
       }
+      this.reconnect.start()
       this.setState('running')
     } catch (err) {
       this.teardownStream()
@@ -147,7 +171,7 @@ export class SyncController {
   }
 
   /**
-   * Holds pushing and pulling without disconnecting.
+   * Pauses pushing and pulling and closes the pull connection until you call {@link SyncController.resume}.
    */
   pause(): void {
     if (this.state !== 'running') return
@@ -176,7 +200,7 @@ export class SyncController {
   }
 
   /**
-   * Reports where this device stands against the server.
+   * Returns this device's sync status, with the pending push count read fresh from the outbox.
    *
    * @returns The device's state, cursors, pending push count, and last failure.
    */
@@ -208,7 +232,7 @@ export class SyncController {
   }
 
   /**
-   * Pushes local changes now instead of waiting for the next interval.
+   * Pushes local changes now, ahead of the next push interval.
    */
   triggerPush(): void {
     void this.push.drain()
@@ -223,7 +247,7 @@ export class SyncController {
         requestTimeoutMs: this.options.requestTimeout,
       })
     } catch (err) {
-      if (err instanceof RemoteError && err.code === 'SYNC_UNSUPPORTED') throw err
+      if (err instanceof RemoteError && SERVER_REFUSES_DEVICE_SYNC_CODES.has(err.code)) throw err
       this.recordError(err)
     }
   }
@@ -294,7 +318,7 @@ export class SyncController {
       const failure = describeError(err)
       this.setError(failure)
       this.resync.recordFailure()
-      const databaseUsable = await this.snapshotGateOpen(port)
+      const databaseUsable = await snapshotGateOpen(port)
       this.setState('stopped')
       try {
         await this.start()
@@ -312,20 +336,6 @@ export class SyncController {
     }
   }
 
-  /**
-   * Answers whether the local database serves reads and writes again. A failure
-   * before the wipe begins leaves it intact, while one after it leaves every
-   * statement refused with `SNAPSHOT_IN_PROGRESS` until a later copy succeeds,
-   * so the application learns which of the two it is rather than assuming.
-   */
-  private async snapshotGateOpen(port: DeviceSyncPort): Promise<boolean> {
-    try {
-      return !(await port.snapshotLoadPending())
-    } catch {
-      return false
-    }
-  }
-
   private recordError(err: unknown): void {
     this.setError(describeError(err))
   }
@@ -333,16 +343,7 @@ export class SyncController {
   private handleApplyFailure(err: unknown): void {
     this.recordError(err)
     this.pull.teardown()
-    const live = this.state === 'running' || this.state === 'starting'
-    if (!live || this.pullRetryTimer !== null) return
-
-    const delay = Math.min(this.pushIntervalMs * 2 ** this.consecutivePullFailures, this.maxPushRetryDelayMs)
-    this.consecutivePullFailures += 1
-    this.pullRetryTimer = setTimeout(() => {
-      this.pullRetryTimer = null
-      void this.reopenPull()
-    }, delay)
-    unrefTimer(this.pullRetryTimer)
+    if (this.state === 'running' || this.state === 'starting') this.reconnect.schedule()
   }
 
   private async reopenPull(): Promise<void> {
@@ -355,11 +356,11 @@ export class SyncController {
   }
 
   /**
-   * Opens the pull subscription, reconciling migrations when the server refuses
-   * it because this device is behind. A device that only reads never pushes, so
-   * the subscribe refusal is the sole point at which it can learn that the
-   * server has migrated; without this it would retry the same refused
-   * subscription forever and silently receive nothing.
+   * Opens the pull subscription, and reconciles migrations when the server refuses
+   * it with `MIGRATION_REQUIRED` because this device's schema is behind. A device
+   * that only reads never pushes, so the refused subscription is the only signal
+   * that the server has migrated. Without this step, the controller would retry the
+   * same refused subscription indefinitely and the device would receive no changes.
    */
   private async openPull(): Promise<void> {
     const deviceId = this.deviceId
@@ -387,10 +388,7 @@ export class SyncController {
   private teardownStream(): void {
     this.push.stop()
     this.resync.cancel()
-    if (this.pullRetryTimer !== null) {
-      clearTimeout(this.pullRetryTimer)
-      this.pullRetryTimer = null
-    }
+    this.reconnect.stop()
     this.pull.teardown()
   }
 }

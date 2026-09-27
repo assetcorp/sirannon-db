@@ -3,21 +3,21 @@ import type { BackupChain, BackupChainRecord } from './chain.js'
 import type { BackupDestination } from './destination.js'
 import { fetchStoredFile, listStoredFilePieces } from './restore-fetch.js'
 
-/** What Sirannon found when it read one stored backup back out of a destination.
+/** The result of reading one stored backup from a destination and checking it against its record.
  * @public
  */
 export interface BackupVerifyResult {
-  /** Name the pieces are stored under. */
+  /** The name that Sirannon stores the pieces under. */
   name: string
-  /** The chain this record belongs to. */
+  /** The chain that holds this record. */
   chainId: string
   /** Whether this is the full copy at the head of that chain or one change piece along it. */
   kind: 'full' | 'change'
-  /** How many pieces the destination stored. */
+  /** The number of pieces at the destination. */
   pieceCount: number
-  /** How many bytes those pieces add up to. */
+  /** The total size of those pieces, in bytes. */
   bytesRead: number
-  /** The SHA-256 Sirannon computed over what it read, where the backup recorded one to compare it against. */
+  /** The SHA-256 that Sirannon computes over the bytes that it reads, present where the record holds a fingerprint to compare against. */
   fingerprint?: string
 }
 
@@ -31,26 +31,27 @@ function findRecord(chains: readonly BackupChain[], name: string): BackupChainRe
 }
 
 /**
- * Reads one backup back out of the destination and compares it against the
- * record the backup that wrote it left behind.
+ * Reads one backup from the destination and checks it against its record in
+ * the chain.
  *
- * A restore would fail on a damaged piece only once that restore had already
- * begun, so an operator calls this beforehand. Sirannon fetches every piece in
- * order and folds a SHA-256 over the bytes as they arrive, then compares that
- * digest and the byte count against the record. Only one piece is in memory at
- * any moment, and Sirannon writes none of them to disk, so a check over a large
- * full copy needs no local storage of its own.
+ * A restore finds a damaged piece only after it has begun, so call this
+ * beforehand to find the damage early. Sirannon fetches every piece in order
+ * and computes a SHA-256 over the bytes as it reads them, then compares that
+ * fingerprint and the byte count against the record. Sirannon holds one piece
+ * in memory at a time and writes nothing to disk, so a check of a large full
+ * copy needs no local storage.
  *
- * A missing piece, a byte count that differs from the recorded one, and a
- * digest that differs from the recorded one will each fail with
- * `BACKUP_DESTINATION_ERROR`. Where the backup turned fingerprinting off, the
- * piece listing and the byte count are the whole comparison, and the result
- * reports no fingerprint.
+ * A missing piece, a byte count that differs from the record, and a
+ * fingerprint that differs from the record each throw
+ * `BACKUP_DESTINATION_ERROR`. Where fingerprinting was off for the backup,
+ * Sirannon compares only the piece listing and the byte count, and the result
+ * has no fingerprint. A name that no chain records throws
+ * `BACKUP_CHAIN_BROKEN`.
  *
- * @param destination - Where the pieces are stored.
- * @param chains - The chains that destination stores, as `readBackupChains` returns them.
- * @param name - Name the backup is stored under, which every chain record states.
- * @returns The pieces read, the bytes they add up to, and the digest where the backup recorded one.
+ * @param destination - The destination that holds the pieces.
+ * @param chains - The chains at that destination, as {@link readBackupChains} returns them.
+ * @param name - The name that Sirannon stores the backup under, which its chain record states.
+ * @returns The number of pieces read, their total size in bytes, and the fingerprint where the record holds one.
  *
  * @public
  */

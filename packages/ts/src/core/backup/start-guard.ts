@@ -1,15 +1,15 @@
 type RunExclusive = (op: () => Promise<void>) => Promise<void>
 
 /**
- * Starts a copy while nothing else holds the writer, and hands the writer back
- * as soon as the copy's first step is done. SQLite copies no pages at all when
- * a transaction is already open on the source connection, and it handles a
- * transaction that opens once the copy is under way, so the copy needs the
- * writer only to start.
+ * Starts a copy while no other operation holds the writer, and releases the
+ * writer as soon as the first step of the copy completes. SQLite copies no
+ * pages while a transaction is open on the source connection, although the
+ * copy can continue through a transaction that opens after it has begun, so
+ * the copy needs the writer only for its first step.
  *
- * @param runExclusive - Runs an operation with nothing else holding the writer.
- * @param start - Starts the copy, and calls the callback it receives once the first step is done.
- * @returns What the copy produced.
+ * @param runExclusive - Runs an operation while no other operation holds the writer.
+ * @param start - Starts the copy, and calls the callback that it receives once the first step completes.
+ * @returns The result of the copy.
  */
 export async function startCopyWithoutHoldingWriter<T>(
   runExclusive: RunExclusive,

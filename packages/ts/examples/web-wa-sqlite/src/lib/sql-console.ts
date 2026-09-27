@@ -54,7 +54,7 @@ export async function runStatement(db: Database, sql: string): Promise<Statement
   const base = { sql: statement, columns: [], rows: [], rowCount: 0, changes: null, error: null }
 
   if (statement === '') {
-    return { ...base, elapsedMs: 0, error: 'Type a statement to run it.' }
+    return { ...base, elapsedMs: 0, error: 'Type a statement to execute it.' }
   }
 
   try {

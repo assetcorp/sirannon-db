@@ -160,6 +160,67 @@ describe('WebSocket SQL messages', () => {
     await handler.close()
   })
 
+  it('refuses a table subscription by default and streams none of its changes', async () => {
+    await start()
+    const handler = createWSHandler(sirannon, { operations })
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'test')
+
+    handler.handleMessage(conn, JSON.stringify({ id: 's1', type: 'subscribe', table: 'users' }))
+    const reply = lastMessage(conn) as { type: string; error: { code: string } }
+    expect(reply.type).toBe('error')
+    expect(reply.error.code).toBe('SQL_NOT_ACCEPTED')
+
+    const database = sirannon.get('test')
+    if (database === undefined) throw new Error('The test database is not open')
+    await database.execute("INSERT INTO users (name) VALUES ('Bob')")
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(conn.messages.map(message => JSON.parse(message) as { type: string }).map(message => message.type)).toEqual([
+      'error',
+    ])
+
+    await handler.close()
+  })
+
+  it('serves a table subscription that an onBeforeSubscribe hook admits', async () => {
+    await start()
+    const allowed: string[] = []
+    const gated = new Sirannon({
+      driver,
+      hooks: {
+        onBeforeSubscribe: ({ table }) => {
+          if (table !== 'users') throw new Error(`No stream for ${table}`)
+          allowed.push(table)
+        },
+      },
+    })
+    await gated.open('test', join(tempDir, 'test.db'))
+    const handler = createWSHandler(gated, { operations })
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'test')
+
+    handler.handleMessage(conn, JSON.stringify({ id: 's1', type: 'subscribe', table: 'users' }))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect((lastMessage(conn) as { type: string }).type).toBe('subscribed')
+    expect(allowed).toEqual(['users'])
+
+    await handler.close()
+    await gated.shutdown()
+  })
+
+  it('serves a table subscription when SQL is accepted', async () => {
+    await start()
+    const handler = createWSHandler(sirannon, { acceptSql: true })
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'test')
+
+    handler.handleMessage(conn, JSON.stringify({ id: 's1', type: 'subscribe', table: 'users' }))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect((lastMessage(conn) as { type: string }).type).toBe('subscribed')
+
+    await handler.close()
+  })
+
   it('serves them when SQL is accepted', async () => {
     await start()
     const handler = createWSHandler(sirannon, { acceptSql: true })

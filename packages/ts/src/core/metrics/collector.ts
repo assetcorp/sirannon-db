@@ -1,7 +1,12 @@
+import type { ChangeDispatchObserver } from '../cdc/subscription.js'
 import type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from '../types.js'
 
+type QueryOutcome = Pick<QueryMetrics, 'rowsReturned' | 'changes'>
+
+export type QueryOutcomeMeasure<T> = (result: T) => QueryOutcome
+
 /**
- * Times queries and reports connection and change-capture activity to the configured metrics callbacks.
+ * Times each query and passes query timings, connection events, and change-capture events to the metrics callbacks that the caller configures.
  *
  * @internal
  */
@@ -12,15 +17,22 @@ export class MetricsCollector {
     this.config = config ?? {}
   }
 
-  async trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>): Promise<T> {
+  async trackQuery<T>(
+    fn: () => Promise<T>,
+    context: Omit<QueryMetrics, 'durationMs' | 'error'>,
+    measure?: QueryOutcomeMeasure<T>,
+  ): Promise<T> {
     if (!this.config.onQueryComplete) {
       return fn()
     }
 
     const start = performance.now()
     let failed = false
+    let outcome: QueryOutcome = {}
     try {
-      return await fn()
+      const result = await fn()
+      if (measure) outcome = measure(result)
+      return result
     } catch (err) {
       failed = true
       throw err
@@ -29,6 +41,7 @@ export class MetricsCollector {
       try {
         this.config.onQueryComplete({
           ...context,
+          ...outcome,
           durationMs,
           error: failed,
         })
@@ -55,6 +68,13 @@ export class MetricsCollector {
       this.config.onCDCEvent?.(metrics)
     } catch {
       void 0
+    }
+  }
+
+  observeDispatch(databaseId: string): ChangeDispatchObserver | undefined {
+    if (!this.config.onCDCEvent) return undefined
+    return (event, subscriberCount) => {
+      this.trackCDCEvent({ databaseId, table: event.table, operation: event.type, subscriberCount })
     }
   }
 

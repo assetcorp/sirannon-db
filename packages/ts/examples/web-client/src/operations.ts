@@ -100,7 +100,7 @@ function readStock(value: unknown): number {
 
 function readOperator(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) {
-    refuse('operator is filled from the caller identity and was missing')
+    refuse("The server fills operator from the caller's identity, but this identity holds no operatorId")
   }
   return value
 }

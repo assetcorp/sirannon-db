@@ -49,7 +49,16 @@ function sourceFiles() {
 
 function commandFor(target, outputPath) {
   const positionIndependent = target.zigTriple?.includes('windows') ? [] : ['-fPIC']
-  const shared = ['-O2', '-shared', ...positionIndependent, '-I', sqliteHeaderDirectory(), '-o', outputPath, ...sourceFiles()]
+  const shared = [
+    '-O2',
+    '-shared',
+    ...positionIndependent,
+    '-I',
+    sqliteHeaderDirectory(),
+    '-o',
+    outputPath,
+    ...sourceFiles(),
+  ]
   if (target.appleArchitecture) {
     return { command: 'cc', args: ['-arch', target.appleArchitecture, ...shared] }
   }

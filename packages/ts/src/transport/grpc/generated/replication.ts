@@ -165,6 +165,8 @@ export interface ForwardRequest {
   statements: Statement[];
   groupId: string;
   primaryTerm: bigint;
+  writeConcernLevel: string;
+  writeConcernTimeoutMs: number;
 }
 
 export interface StatementResult {
@@ -178,6 +180,7 @@ export interface ForwardResponse {
   error: string;
   groupId: string;
   primaryTerm: bigint;
+  errorCode: string;
 }
 
 function createBaseColumnValue(): ColumnValue {
@@ -2710,7 +2713,14 @@ export const Statement_NamedParamsEntry: MessageFns<Statement_NamedParamsEntry> 
 };
 
 function createBaseForwardRequest(): ForwardRequest {
-  return { requestId: "", statements: [], groupId: "", primaryTerm: 0n };
+  return {
+    requestId: "",
+    statements: [],
+    groupId: "",
+    primaryTerm: 0n,
+    writeConcernLevel: "",
+    writeConcernTimeoutMs: 0,
+  };
 }
 
 export const ForwardRequest: MessageFns<ForwardRequest> = {
@@ -2729,6 +2739,12 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(32).int64(message.primaryTerm);
+    }
+    if (message.writeConcernLevel !== "") {
+      writer.uint32(42).string(message.writeConcernLevel);
+    }
+    if (message.writeConcernTimeoutMs !== 0) {
+      writer.uint32(48).uint32(message.writeConcernTimeoutMs);
     }
     return writer;
   },
@@ -2772,6 +2788,22 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.writeConcernLevel = reader.string();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.writeConcernTimeoutMs = reader.uint32();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -2801,6 +2833,16 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      writeConcernLevel: isSet(object.writeConcernLevel)
+        ? globalThis.String(object.writeConcernLevel)
+        : isSet(object.write_concern_level)
+        ? globalThis.String(object.write_concern_level)
+        : "",
+      writeConcernTimeoutMs: isSet(object.writeConcernTimeoutMs)
+        ? globalThis.Number(object.writeConcernTimeoutMs)
+        : isSet(object.write_concern_timeout_ms)
+        ? globalThis.Number(object.write_concern_timeout_ms)
+        : 0,
     };
   },
 
@@ -2818,6 +2860,12 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.writeConcernLevel !== "") {
+      obj.writeConcernLevel = message.writeConcernLevel;
+    }
+    if (message.writeConcernTimeoutMs !== 0) {
+      obj.writeConcernTimeoutMs = Math.round(message.writeConcernTimeoutMs);
+    }
     return obj;
   },
 
@@ -2830,6 +2878,8 @@ export const ForwardRequest: MessageFns<ForwardRequest> = {
     message.statements = object.statements?.map((e) => Statement.fromPartial(e)) || [];
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.writeConcernLevel = object.writeConcernLevel ?? "";
+    message.writeConcernTimeoutMs = object.writeConcernTimeoutMs ?? 0;
     return message;
   },
 };
@@ -2918,7 +2968,7 @@ export const StatementResult: MessageFns<StatementResult> = {
 };
 
 function createBaseForwardResponse(): ForwardResponse {
-  return { requestId: "", results: [], error: "", groupId: "", primaryTerm: 0n };
+  return { requestId: "", results: [], error: "", groupId: "", primaryTerm: 0n, errorCode: "" };
 }
 
 export const ForwardResponse: MessageFns<ForwardResponse> = {
@@ -2940,6 +2990,9 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(40).int64(message.primaryTerm);
+    }
+    if (message.errorCode !== "") {
+      writer.uint32(50).string(message.errorCode);
     }
     return writer;
   },
@@ -2991,6 +3044,14 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.errorCode = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -3021,6 +3082,11 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      errorCode: isSet(object.errorCode)
+        ? globalThis.String(object.errorCode)
+        : isSet(object.error_code)
+        ? globalThis.String(object.error_code)
+        : "",
     };
   },
 
@@ -3041,6 +3107,9 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.errorCode !== "") {
+      obj.errorCode = message.errorCode;
+    }
     return obj;
   },
 
@@ -3054,6 +3123,7 @@ export const ForwardResponse: MessageFns<ForwardResponse> = {
     message.error = object.error ?? "";
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.errorCode = object.errorCode ?? "";
     return message;
   },
 };

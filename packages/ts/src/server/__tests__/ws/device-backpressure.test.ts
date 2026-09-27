@@ -41,6 +41,8 @@ afterEach(async () => {
 async function listen(options: { window: number; congested?: boolean }): Promise<number> {
   server = createServer(sirannon, {
     acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
     port: 0,
     maxUnacknowledgedChanges: options.window,
     ...(options.congested === true ? { maxBodyBytes: 65_536, maxWebSocketBackpressureBytes: 131_072 } : {}),

@@ -39,6 +39,6 @@ export const MODE_OPTIONS: ModeOptionData[] = [
     mode: 'browser-direct',
     title: 'Write from the browser',
     route: 'Browser -> Sirannon WebSocket',
-    summary: 'The browser calls the same registered write over the socket its live queries run on.',
+    summary: 'The browser calls the same registered write over the same WebSocket as its live queries.',
   },
 ]

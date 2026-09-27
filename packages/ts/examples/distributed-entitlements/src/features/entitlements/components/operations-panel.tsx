@@ -139,7 +139,7 @@ export function OperationsPanel({
         <CardHeader>
           <CardTitle>Operations</CardTitle>
           <CardDescription>
-            {selectedCustomer ? selectedCustomer.name : 'Select an account to run entitlement operations'}
+            {selectedCustomer ? selectedCustomer.name : 'Select an account to apply entitlement operations'}
           </CardDescription>
           <CardAction>
             {pendingAction ? (
@@ -181,7 +181,7 @@ export function OperationsPanel({
               />
               <CommandButton
                 icon={Repeat2}
-                title="Replay same usage event"
+                title="Replay the same usage event"
                 detail="Same idempotency key, one quota change"
                 disabled={disabled}
                 onClick={handleReplayClick}
@@ -196,7 +196,7 @@ export function OperationsPanel({
               <CommandButton
                 icon={ReceiptText}
                 title="Send stale billing event"
-                detail="Older version should be recorded as stale"
+                detail="The billing write marks the older version as stale"
                 disabled={disabled}
                 onClick={handleStaleBillingClick}
               />

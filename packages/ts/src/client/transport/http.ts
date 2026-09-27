@@ -12,10 +12,10 @@ import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 
 /**
- * HTTP transport for sirannon-db. Sends requests via `fetch` to the
- * server's REST endpoints. Supports query, execute, transaction, batch,
- * and load operations. Real-time subscriptions are not available over
- * HTTP; use {@link WebSocketTransport} for CDC subscriptions.
+ * Sends queries, writes, transactions, batches, bulk loads, and registered
+ * operations to a sirannon-db server's HTTP routes with `fetch`. Change
+ * subscriptions and live queries need a WebSocket connection, so use
+ * {@link WebSocketTransport} for them.
  *
  * @public
  */
@@ -49,14 +49,14 @@ export class HttpTransport implements Transport {
     return this.post<ExecuteResponse>('/execute', { sql, params: encodeTaggedValues(params) })
   }
 
-  /** Sends several statements the server runs in one transaction. */
+  /** Sends several statements that the server executes in one transaction. */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<TransactionResponse> {
     return this.post<TransactionResponse>('/transaction', {
       statements: statements.map(stmt => ({ sql: stmt.sql, params: encodeTaggedValues(stmt.params) })),
     })
   }
 
-  /** Sends one statement over many parameter sets, which the server runs in one transaction. */
+  /** Sends one statement with many parameter sets, which the server executes in one transaction. */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse> {
     return this.post<BatchResponse>('/batch', {
       sql,
@@ -65,7 +65,7 @@ export class HttpTransport implements Transport {
     })
   }
 
-  /** Sends a bulk load, which the server runs at relaxed durability. */
+  /** Sends a bulk load, which the server executes at relaxed durability. */
   async load(
     sql: string,
     paramsBatch: Params[],
@@ -80,7 +80,7 @@ export class HttpTransport implements Transport {
     })
   }
 
-  /** Runs a registered read by name and returns its rows. */
+  /** Executes a registered read by name and returns its rows. */
   async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
     const response = await this.post<QueryResponse>(`/query/${encodeURIComponent(name)}`, {
       args: encodeTaggedValues(args),
@@ -89,7 +89,7 @@ export class HttpTransport implements Transport {
     return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
   }
 
-  /** Runs a registered write by name. */
+  /** Executes a registered write by name. */
   async executeNamed(
     name: string,
     args?: Record<string, unknown>,
@@ -101,7 +101,7 @@ export class HttpTransport implements Transport {
     })
   }
 
-  /** Opens a live query on a registered read and delivers its updates to the handlers. */
+  /** Throws a `RemoteError` with code `TRANSPORT_ERROR`, because live queries need the WebSocket transport. */
   async liveSubscribe(): Promise<RemoteSubscription> {
     throw new RemoteError(
       'TRANSPORT_ERROR',
@@ -109,7 +109,7 @@ export class HttpTransport implements Transport {
     )
   }
 
-  /** Opens a change subscription on a watched table. */
+  /** Throws a `RemoteError` with code `TRANSPORT_ERROR`, because change subscriptions need the WebSocket transport. */
   async subscribe(
     _table: string,
     _filter: Record<string, unknown> | undefined,
@@ -121,7 +121,7 @@ export class HttpTransport implements Transport {
     )
   }
 
-  /** Closes the transport and every subscription running on it. */
+  /** Closes the transport, so every later request throws a `RemoteError` with code `TRANSPORT_ERROR`. */
   close(): void {
     this.closed = true
   }

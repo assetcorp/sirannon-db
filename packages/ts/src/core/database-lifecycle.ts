@@ -1,33 +1,41 @@
+import type { ChangeRetentionOptions } from './cdc/device-retention.js'
 import { closeDatabaseRuntime, type DatabaseRuntime } from './database-create.js'
 import { ReadOnlyError, SirannonError } from './errors.js'
 import type { DatabaseOptions } from './types.js'
 
 /**
- * What every open database carries whatever statements run on it: which file
- * it is, the runtime behind it, the guards each member runs before it touches
- * that runtime, and the members that close it.
+ * Gives every open database its identity, its file, the checks that each
+ * method makes before it does any work, and the methods that close the
+ * database.
  *
- * Open a database through {@link Sirannon.open}, which hands back a
- * {@link Database} built on this.
+ * Open a database through {@link Sirannon.open}, which returns a
+ * {@link Database} that extends this class.
  *
  * @public
  */
 export class DatabaseLifecycle {
-  /** Identifier this database was opened under. */
+  /** The identifier that this database was opened under. */
   readonly id: string
-  /** File path of the SQLite database. */
+  /** The file path of the SQLite database. */
   readonly path: string
-  /** Whether this database refuses writes. */
+  /** Whether this database rejects writes. */
   readonly readOnly: boolean
 
   /**
-   * Pool, locks, and controllers this database runs its work through.
+   * The retention settings that this database was opened with, which form an empty object when the caller set none.
+   *
+   * @internal
+   */
+  readonly changeRetention: ChangeRetentionOptions
+
+  /**
+   * The pool, locks, and controllers that this database sends its work through.
    *
    * @internal
    */
   protected readonly runtime: DatabaseRuntime
   /**
-   * Functions that run while this database closes.
+   * The functions that Sirannon calls while this database closes.
    *
    * @internal
    */
@@ -39,12 +47,19 @@ export class DatabaseLifecycle {
     this.path = path
     this.runtime = runtime
     this.readOnly = options?.readOnly ?? false
+    this.changeRetention = {
+      ...(options?.cdcRetention === undefined ? {} : { cdcRetention: options.cdcRetention }),
+      ...(options?.deviceCursorRetention === undefined ? {} : { deviceCursorRetention: options.deviceCursorRetention }),
+      ...(options?.maxChangesHeldForDevice === undefined
+        ? {}
+        : { maxChangesHeldForDevice: options.maxChangesHeldForDevice }),
+    }
   }
 
   /**
-   * Registers a function that runs while this database closes.
+   * Registers a function that Sirannon calls while this database closes.
    *
-   * @param fn - Called during {@link DatabaseLifecycle.close}.
+   * @param fn - The function to call during {@link DatabaseLifecycle.close}.
    *
    * @internal
    */
@@ -54,7 +69,7 @@ export class DatabaseLifecycle {
   }
 
   /**
-   * Closes every connection this database holds and ends its subscriptions.
+   * Closes every connection that this database opened, and stops delivering changes to its subscriptions.
    */
   async close(): Promise<void> {
     if (this.closing) return
@@ -63,21 +78,21 @@ export class DatabaseLifecycle {
   }
 
   /**
-   * Whether this database has been closed.
+   * True once {@link DatabaseLifecycle.close} has started on this database.
    */
   get closed(): boolean {
     return this.closing
   }
 
   /**
-   * Number of read connections the pool holds.
+   * The number of read connections in the pool.
    */
   get readerCount(): number {
     return this.runtime.pool.readerCount
   }
 
   /**
-   * Refuses the call when this database is closed, is loading a snapshot, or refuses writes.
+   * Throws when this database is closed, is loading a snapshot, or rejects writes.
    *
    * @internal
    */
@@ -87,7 +102,7 @@ export class DatabaseLifecycle {
   }
 
   /**
-   * Refuses the call when this database is closed or is loading a snapshot.
+   * Throws when this database is closed or is loading a snapshot.
    *
    * @internal
    */
@@ -102,7 +117,7 @@ export class DatabaseLifecycle {
   }
 
   /**
-   * Refuses the call when this database is closed.
+   * Throws when this database is closed.
    *
    * @internal
    */

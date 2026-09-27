@@ -314,7 +314,9 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
   const config = engine.config.coordinator
   const state = engine.coordinatorState
   if (!config || !state) return undefined
+  const connected = isCoordinatorConnected(engine)
   return {
+    ...(connected && engine.liveNodeIds ? { liveNodeIds: [...engine.liveNodeIds] } : {}),
     clusterId: config.clusterId,
     groupId: config.groupId,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
@@ -325,7 +327,7 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
     faultedNodeIds: [...state.faultedNodeIds],
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
     authority: engine.coordinatorAuthority,
-    connected: isCoordinatorConnected(engine),
+    connected,
     controllerState: engine.controllerState,
   }
 }

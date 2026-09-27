@@ -2,17 +2,17 @@ import type { FileHandle } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 
 /**
- * Writes a run of bytes to a file and repeats the call until every one of them
- * is written. A single write can stop short once the disk has no room left, so
- * this reports an error there instead of returning with part of the run
- * unwritten.
+ * Writes a range of bytes to a file, and repeats the write call until the file
+ * holds every byte, since a single call can write only part of the range. It
+ * throws a `BACKUP_ERROR` when a call writes no bytes at all, so that the loop
+ * ends once the writes stop making progress.
  *
  * @param handle - The open file.
- * @param path - Path of that file, which the error names.
+ * @param path - The path of that file, which the error message quotes.
  * @param bytes - The bytes to write.
- * @param byteLength - How many of them to write, counted from the front.
- * @param offset - Where in the file they go.
- * @throws A `BACKUP_ERROR` where the file stops accepting bytes.
+ * @param byteLength - The number of bytes to write, counted from the start of `bytes`.
+ * @param offset - The position in the file to write them at.
+ * @throws A `BACKUP_ERROR` where a write call writes no bytes.
  *
  * @internal
  */

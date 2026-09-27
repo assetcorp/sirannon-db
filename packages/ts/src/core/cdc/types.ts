@@ -6,7 +6,7 @@ export type {
 } from '../types.js'
 
 /**
- * One row as it is stored in the change log table.
+ * Describes one row of the change log table.
  *
  * @internal
  */
@@ -24,7 +24,7 @@ export interface ChangeRow {
 }
 
 /**
- * One column of a watched table, as read from the SQLite catalogue.
+ * Describes one column of a watched table, as `PRAGMA table_info` returns it.
  *
  * @internal
  */
@@ -38,7 +38,7 @@ export interface ColumnInfo {
 }
 
 /**
- * Trigger state a change tracker holds for one watched table.
+ * Describes one watched table with the columns and primary-key columns that its change-capture triggers use.
  *
  * @internal
  */
@@ -49,21 +49,21 @@ export interface WatchedTableInfo {
 }
 
 /**
- * How long a change tracker keeps changes, and how much it reads at a time.
+ * Configures a change tracker's retention period, change log table, and poll size.
  *
  * @public
  */
 export interface ChangeTrackerOptions {
   /**
-   * Milliseconds a change stays readable before it is pruned. Default: 3_600_000 (one hour).
+   * The age in milliseconds after which the tracker's cleanup can delete a change, which defaults to `3_600_000`, one hour.
    */
   retention?: number
   /**
-   * Name of the table changes are recorded in.
+   * The name of the change log table, which defaults to `_sirannon_changes`.
    */
   changesTable?: string
   /**
-   * Changes read in one poll. Default: 1000.
+   * The number of changes that one poll requests, which defaults to 1000. A poll can return more, so that it ends on a transaction boundary.
    */
   pollBatchSize?: number
 }

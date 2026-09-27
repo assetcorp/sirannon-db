@@ -38,7 +38,13 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { acceptSql: true, port: 0, maxUnacknowledgedChanges: WINDOW })
+  server = createServer(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
+    port: 0,
+    maxUnacknowledgedChanges: WINDOW,
+  })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })

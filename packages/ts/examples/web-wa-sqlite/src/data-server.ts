@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Sirannon } from '@delali/sirannon-db'
 import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { createServer } from '@delali/sirannon-db/server'
-import { createDeviceAuthenticator, type FieldTechnician } from './device-identity'
+import { createDeviceAuthenticator, createDeviceFleetCheck, type FieldTechnician } from './device-identity'
 import {
   DATABASE_ID,
   migrations,
@@ -39,7 +39,11 @@ const APP_ORIGINS = (process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN)
 const dataDir = fileURLToPath(new URL('../data/', import.meta.url))
 mkdirSync(dataDir, { recursive: true })
 
-const sirannon = new Sirannon({ driver: betterSqlite3(), migrations: [...migrations] })
+const sirannon = new Sirannon({
+  driver: betterSqlite3(),
+  migrations: [...migrations],
+  hooks: { onBeforePush: createDeviceFleetCheck() },
+})
 const db = await sirannon.open(DATABASE_ID, `${dataDir}${DATABASE_ID}.db`, {
   readPoolSize: 4,
   walMode: true,
@@ -52,30 +56,33 @@ if ((existing?.count ?? 0) === 0) {
   for (const order of SEED_WORK_ORDERS) {
     await db.execute(SEED_INSERT_SQL, [order.id, order.site, order.task, SEED_UPDATED_AT])
   }
-  console.log(`Seeded ${SEED_WORK_ORDERS.length} work orders.`)
+  console.log(`The server seeds the ${WORK_ORDERS_TABLE} table with ${SEED_WORK_ORDERS.length} rows.`)
 }
 
 const server = createServer<FieldTechnician>(sirannon, {
   host: HOST,
   port: PORT,
   cors: { origin: APP_ORIGINS, methods: ['GET', 'POST', 'OPTIONS'], headers: ['Content-Type', 'Authorization'] },
+  acceptDeviceSync: true,
   authenticate: createDeviceAuthenticator(APP_ORIGINS, DATABASE_ID),
 })
 
 await server.listen()
 
-console.log(`Field service server listening on http://${HOST}:${PORT}`)
-console.log(`Database '${DATABASE_ID}' stored at ${dataDir}${DATABASE_ID}.db`)
-console.log(`Accepting device sync from ${APP_ORIGINS.join(', ')}`)
-console.log('SQL over the network is refused; devices reach this database through the sync routes only.')
-console.log('Every request names a fleet through a bearer token or a WebSocket subprotocol.')
+console.log(`The field service server is listening on http://${HOST}:${PORT}.`)
+console.log(`Database file for '${DATABASE_ID}': ${dataDir}${DATABASE_ID}.db`)
+console.log(`CORS origins for device sync: ${APP_ORIGINS.join(', ')}`)
+console.log(
+  'The server executes no SQL from the network, so a device can change this database only through the sync routes.',
+)
+console.log('Every request must include a fleet token, as a bearer header or a WebSocket subprotocol.')
 
 let shuttingDown = false
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
-  console.log(`\nReceived ${signal}, closing the server...`)
+  console.log(`\nClosing the server on ${signal}...`)
   await server.close()
   await sirannon.shutdown()
   process.exit(0)

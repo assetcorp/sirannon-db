@@ -8,7 +8,7 @@ HEADLINE_DURABILITY = "full"
 HEADLINE_WORKLOAD = "point-select"
 
 _NO_RUN_NOTICE = (
-    "_No benchmark run is committed yet. Run the suite on the disclosed cloud machine and commit "
+    "_Nobody has committed a benchmark run yet. Execute the suite on the disclosed cloud machine and commit "
     "its run directory under `benchmarks/server/results/runs/` to publish numbers here._"
 )
 
@@ -52,12 +52,12 @@ def headline_block(source: Source | None) -> str:
         f"On point-select at {rows} rows, with both engines fsyncing every commit, Sirannon sustained "
         f"{ops(sirannon.get('ops_median'))} operations a second against PostgreSQL's "
         f"{ops(postgres.get('ops_median'))}.",
-        f"Postgres held the lower tail latency at those operating points, {ms(postgres.get('p99_ms'))} ms "
+        f"At those operating points, Postgres had the lower p99 latency, {ms(postgres.get('p99_ms'))} ms "
         f"against Sirannon's {ms(sirannon.get('p99_ms'))} ms.",
-        f"That pattern holds on {postgres_wins} of the {measured} workloads at this durability level, so read "
-        "the rate and the latency together.",
+        f"Across all {measured} workloads at this durability level, Postgres had the lower p99 latency on "
+        f"{postgres_wins}, so read each rate together with its latency.",
         f"The harness recorded both engines in run `{source.run_id}` on {date}, on {machine}.",
-        "You will find every workload, both durability levels, and the full method in "
+        "You'll find every workload, both durability levels, and the full method in "
         "[`BENCHMARKS.md`](BENCHMARKS.md).",
     ]
     return " ".join(sentences)

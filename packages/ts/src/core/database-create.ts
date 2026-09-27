@@ -1,4 +1,5 @@
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
+import { resolveDeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ConnectionPool } from './connection-pool.js'
 import { assertChangeLogCaptureSupported, DatabaseBackupController } from './database-backup.js'
 import { DatabaseCdcController } from './database-cdc.js'
@@ -94,6 +95,8 @@ export async function createDatabaseRuntime(
     options?.cdcPollInterval ?? 50,
     options?.cdcRetention ?? 3_600_000,
     canOpenSnapshotConnection ? openSnapshotConnection : null,
+    resolveDeviceRetentionPolicy(options),
+    internals?.metrics?.observeDispatch(id),
   )
   const sync = new DatabaseSyncController(
     op => writeGate.run(() => writerLock.run(op)),

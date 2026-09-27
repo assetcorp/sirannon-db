@@ -1,14 +1,65 @@
 # Distributed replication
 
 <p align="center">
-  <img src="assets/replication-topology.svg" alt="Sirannon coordinator-backed replication topology: clients write to the current primary and read from eligible nodes, the primary replicates to replicas over gRPC with mutual TLS, and a Sirannon controller uses leases and atomic term updates stored in etcd to perform safe failover." width="820">
+  <img src="assets/replication-topology.svg" alt="Diagram of Sirannon's coordinator-backed replication. Clients write to the current primary and read from eligible nodes. The primary replicates to the replicas over gRPC with mutual TLS. A Sirannon controller performs failover through leases and atomic term updates in etcd." width="820">
 </p>
 
-One primary accepts writes and pushes changes to read replicas, which serve reads and forward writes when `writeForwarding` is on. Each node has its own SQLite file; Sirannon moves checksummed batches of changes over the replication transport and never shares one file over a network filesystem.
+One primary accepts writes and pushes its changes to read replicas, which serve reads and forward writes to the primary when `writeForwarding` is on. Each node opens its own SQLite file, so Sirannon moves checksummed batches of changes between the nodes over a replication transport.
+
+In this guide, you'll build `primary.ts` and `replica.ts`, and then `node-a.ts` for coordinator mode. Each file is a complete program.
+
+## Install the transport
+
+Install the core package, a driver, and the three packages that the gRPC transport imports:
+
+```bash
+pnpm add -E @delali/sirannon-db better-sqlite3 @grpc/grpc-js @bufbuild/protobuf grpc-health-check
+```
+
+When the process cannot load one of those three packages, `engine.start()` fails with code `TRANSPORT_DEPENDENCY_MISSING` and a message that names the package.
+
+## Create the certificates
+
+The nodes authenticate each other over mutual TLS, so each node needs a key, a certificate, and the certificate of the authority that signed every node certificate. Set each certificate's common name to the node's `nodeId`, because a node closes the stream from a peer whose certificate common name differs from the `nodeId` in that peer's handshake. The subject alternative name must match the host name that the other node dials.
+
+```bash
+mkdir -p certs data
+
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Orders replication CA" \
+  -keyout certs/ca.key -out certs/ca.crt
+
+for entry in primary:primary-us-east-1:primary.example.com replica:replica-eu-west-1:replica.example.com; do
+  IFS=: read -r file node host <<< "$entry"
+  printf 'basicConstraints = CA:FALSE\nkeyUsage = digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth, clientAuth\nsubjectAltName = DNS:%s\n' "$host" > "certs/$file.ext"
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=$node" -keyout "certs/$file.key" -out "certs/$file.csr"
+  openssl x509 -req -in "certs/$file.csr" -days 825 -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial \
+    -extfile "certs/$file.ext" -out "certs/$file.crt"
+done
+```
+
+Replace both host names with the ones that your nodes use.
+
+## Start the primary
+
+Open a writer connection, create the tables that you replicate, and watch each of them with a `ChangeTracker`, because the tracker records changes only on a table that you watch. Then open the same file through a `Sirannon` registry, and start a `ReplicationEngine` in the primary role:
 
 ```ts
+import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
 import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
+
+const dbPath = './data/orders.db'
+const driver = betterSqlite3()
+
+const writerConn = await driver.open(dbPath)
+await writerConn.exec('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, total INTEGER NOT NULL)')
+
+const tracker = new ChangeTracker()
+await tracker.watch(writerConn, 'orders')
+
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('orders', dbPath)
 
 const transport = new GrpcReplicationTransport({
   host: '0.0.0.0',
@@ -29,59 +80,126 @@ const engine = new ReplicationEngine(db, writerConn, {
 await engine.start()
 ```
 
-A replica points at the primary's endpoints:
+The engine records and applies changes through the writer connection. `snapshotConnectionFactory` opens a read-only connection, so a joining node can copy a consistent snapshot while the primary keeps accepting writes.
+
+## Point a replica at the primary
+
+The replica opens its own file and dials the primary at the address in `transportConfig.endpoints`. In static mode, a replica opens no listening port, so its transport takes only the certificate paths. During first sync, the replica calls `watch` on each table that it copies, so `replica.ts` needs no `watch` call of its own:
 
 ```ts
-const replicaEngine = new ReplicationEngine(replicaDb, replicaConn, {
-  nodeId: 'replica-eu-west-1',
-  topology: new PrimaryReplicaTopology('replica'),
-  transport: replicaTransport,
-  transportConfig: { endpoints: ['primary.example.com:4200'] },
-  writeForwarding: true,
-  changeTracker: replicaTracker,
+import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
+import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
+
+const dbPath = './data/orders-replica.db'
+const driver = betterSqlite3()
+
+const writerConn = await driver.open(dbPath)
+const tracker = new ChangeTracker()
+
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('orders', dbPath)
+
+const transport = new GrpcReplicationTransport({
+  tlsCert: './certs/replica.crt',
+  tlsKey: './certs/replica.key',
+  tlsCaCert: './certs/ca.crt',
 })
 
-await replicaEngine.start()
+const engine = new ReplicationEngine(db, writerConn, {
+  nodeId: 'replica-eu-west-1',
+  topology: new PrimaryReplicaTopology('replica'),
+  transport,
+  transportConfig: { endpoints: ['primary.example.com:4200'] },
+  writeForwarding: true,
+  changeTracker: tracker,
+})
+
+await engine.start()
 ```
 
-With `initialSync` on (the default), a new node pulls a full snapshot before it serves reads: the source streams schema and table data in batches with per-batch checksums, then a manifest, and the joiner moves through `pending` -> `syncing` -> `catching-up` -> `ready`, which you read from `engine.status().syncState`. For a database too large to transfer, copy the file and start from a known sequence with `initialSync: false` and `resumeFromSeq`.
+With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back. The replica sends your write concern with the write, and the primary waits for it, or for its own default when you state none, before it replies. When the primary raises an error, such as `WRITE_CONCERN_ERROR` or `STALE_PRIMARY`, the replica raises it to you with its code unchanged.
 
-Write concerns control how many replicas must acknowledge a write:
+With `initialSync` on, which is the default, a new node copies the whole database before it serves reads. The source streams the schema and the table data in checksummed batches, and then it sends a manifest. The joining node passes through the phases `pending`, `syncing`, `catching-up`, and `ready`, and `engine.status().syncState.phase` gives the current one. For a database that is too large to copy over the network, copy the file yourself, and then start the replica with `initialSync: false` and with `resumeFromSeq` set to the sequence that your copy reached.
+
+## Write concerns
+
+Pass a write concern to `engine.execute` in `primary.ts` to set how many replicas must acknowledge the write. A majority write on a primary with no connected replica fails with `WRITE_CONCERN_ERROR` once `timeoutMs` passes, so wait until a replica connects before you send one:
 
 ```ts
+while (!engine.status().peers.some(peer => peer.connected)) {
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
+
 await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999], {
   writeConcern: { level: 'majority', timeoutMs: 5000 },
 })
 ```
 
-Static mode returns after the local commit when you omit `writeConcern`; coordinator mode selects `'majority'`. Coordinator-mode majority counts the configured voting nodes, including the primary's own durable commit, so such a write survives automatic failover when only the failed primary is lost.
+Start `primary.ts` before `replica.ts`. When the primary stops, the replica keeps a reconnection timer pending, so the replica's process stays up while the primary is down. The replica's transport dials the primary again after 250 ms and doubles the wait after each failed attempt, up to 5,000 ms.
+
+In static mode, a write without `writeConcern` returns after the local commit, while in coordinator mode it waits for `'majority'`. In coordinator mode, the engine counts the configured voting nodes towards `'majority'`, including the primary's own durable commit, so a majority write is still present after an automatic failover that loses only the primary.
 
 ## Read concern
 
-A read concern states how current a read must be. Coordinator mode enforces it and static mode ignores it.
+Use a read concern to say how current a read must be. A node in coordinator mode enforces the read concern and applies `majority` when you pass none, while a node in static mode ignores it.
 
 | Level | What the node must prove |
 | --- | --- |
-| `local` | Nothing. The read returns local state, which failover may later quarantine. |
+| `local` | The node makes no check, and the read returns local state that a later failover can quarantine. |
 | `majority` | The node is in the in-sync set and is neither draining nor repairing. |
-| `linearizable` | The read runs on the current primary, after it proves live authority for its term. |
+| `linearizable` | The node is the current primary, and it confirms its authority for the current term with the coordinator before it serves the read. |
 
-A read concern that cannot be met fails with `READ_CONCERN_ERROR` rather than returning a weaker result.
+When a node can't meet the read concern, the read fails with a code that gives the reason, such as `NODE_NOT_IN_SYNC`, `STALE_PRIMARY`, or `READ_CONCERN_ERROR`, and returns no rows.
 
 ```ts
-const rows = await engine.query('SELECT id, total FROM orders WHERE id = ?', [42], {
+const rows = await engine.query('SELECT id, total FROM orders WHERE id = ?', [1], {
   readConcern: { level: 'linearizable' },
 })
 ```
 
-`GET /db/{id}/cluster` lists the levels each node currently serves, which is how the [topology-aware client](client.md#topology-aware-routing) picks an endpoint for a read.
+The [topology-aware client](client.md#topology-aware-routing) fetches `GET /db/{id}/cluster` to get the read concerns that each node currently serves, and it chooses an endpoint for each read from that list.
 
 ## Coordinator-backed failover
 
-Coordinator mode stores primary authority, node sessions, group state, and the in-sync set in a `ClusterCoordinator`. The package includes an etcd adapter:
+In coordinator mode, a `ClusterCoordinator` stores the primary's authority, the node sessions, the group state, and the in-sync set. The etcd adapter in the package imports `etcd3`, so install that package:
+
+```bash
+pnpm add -E etcd3
+```
+
+When the process cannot load `etcd3`, the first call that the engine makes to the coordinator fails with code `COORDINATOR_DEPENDENCY_MISSING`.
+
+Build each coordinator-mode node in the shape of `primary.ts`, and add a coordinator to its engine configuration. This `node-a.ts` is the first of three voting nodes, and its certificate has the common name `orders-node-a`:
 
 ```ts
+import { readFileSync } from 'node:fs'
+import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
 import { createEtcdCoordinator } from '@delali/sirannon-db/replication/coordinator/etcd'
+import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
+
+const dbPath = './data/orders.db'
+const driver = betterSqlite3()
+
+const writerConn = await driver.open(dbPath)
+await writerConn.exec('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, total INTEGER NOT NULL)')
+
+const tracker = new ChangeTracker()
+await tracker.watch(writerConn, 'orders')
+
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('orders', dbPath)
+
+const transport = new GrpcReplicationTransport({
+  host: '0.0.0.0',
+  port: 4200,
+  tlsCert: './certs/orders-node-a.crt',
+  tlsKey: './certs/orders-node-a.key',
+  tlsCaCert: './certs/ca.crt',
+})
 
 const coordinator = createEtcdCoordinator({
   hosts: ['https://etcd-1.internal:2379', 'https://etcd-2.internal:2379'],
@@ -110,21 +228,25 @@ const engine = new ReplicationEngine(db, writerConn, {
     controller: true,
   },
 })
+
+await engine.start()
 ```
 
-Every coordinator-mode node needs a stable, persisted `nodeId`, and automatic write failover needs at least three voting data-bearing nodes, since fewer voters cannot prove majority authority after losing one. Production access requires HTTPS and an authenticated identity; the in-memory coordinator and `allowInsecure: true` are for tests.
+Your etcd cluster has its own certificate authority, so ask whoever operates that cluster for the three files under `credentials`.
 
-The same coordinator decides which node of the group takes its backups. See [Backups in a replication group](backups.md#backups-in-a-replication-group).
+Give every coordinator-mode node a `nodeId` that stays the same across restarts. Put at least three voting data-bearing nodes in the group for automatic write failover, because when one node of a two-node group fails, the remaining node holds no majority and cannot take over writes. In production, connect to etcd over HTTPS with an authenticated identity, and keep the in-memory coordinator and `allowInsecure: true` for tests.
+
+[Backups in a replication group](backups.md#backups-in-a-replication-group) describes how each node uses the same coordinator to work out which node takes the group's backups.
 
 ## Conflict resolution
 
-A receiver that finds the target row already present passes the local and incoming versions to the configured resolver.
+When a receiving node applies a change to a row that already exists, it passes the local and the incoming versions to the resolver that you configured.
 
 | Strategy | Class | Behaviour |
 | --- | --- | --- |
-| Last-Writer-Wins | `LWWResolver` | Accepts a remote delete whatever the timestamps say, so a delete wins over a concurrent update. Otherwise takes the higher HLC timestamp and breaks ties by node ID. |
-| Field-Level Merge | `FieldMergeResolver` | Merges non-overlapping columns and uses per-column HLC metadata for overlapping ones. Falls back to whole-row LWW without column metadata. |
-| Primary Wins | `PrimaryWinsResolver` | Takes the version authored by a configured primary node ID, and falls back to LWW otherwise. |
+| Last-Writer-Wins | `LWWResolver` | It accepts a remote delete whatever the timestamps say, so it applies a delete over a concurrent update. For any other change, it takes the version with the higher HLC timestamp and breaks a tie by node ID. |
+| Field-Level Merge | `FieldMergeResolver` | It merges the columns that only one side changed and uses per-column HLC metadata for a column that both sides changed. Without column metadata, it resolves the whole row by last-writer-wins. |
+| Primary Wins | `PrimaryWinsResolver` | It takes the version that the configured primary node wrote, and it resolves any other conflict by last-writer-wins. |
 
 Write a custom resolver as a class with a `resolve(ctx: ConflictContext): ConflictResolution` method.
 
@@ -132,48 +254,50 @@ Write a custom resolver as a class with a `resolve(ctx: ConflictContext): Confli
 
 | Transport | Import | Use case |
 | --- | --- | --- |
-| gRPC | `@delali/sirannon-db/transport/grpc` | Production multi-node replication over the network with TLS |
-| In-Memory | `@delali/sirannon-db/transport/memory` | Testing and single-process multi-node scenarios |
-| Custom | Build your own | Anything satisfying the `ReplicationTransport` interface |
+| gRPC | `@delali/sirannon-db/transport/grpc` | Use it for production replication between machines over TLS. |
+| In-Memory | `@delali/sirannon-db/transport/memory` | Use it for tests and for several nodes in one process. |
+| Custom | Your own module | Write any class that implements the `ReplicationTransport` interface. |
 
-`ReplicationTransport` carries change batches, acknowledgements, write forwarding, and first sync between nodes. The client `Transport` interface is a different contract, described in the [client guide](client.md).
+A `ReplicationTransport` moves change batches, acknowledgements, forwarded writes, and first-sync data between nodes. The client's `Transport` interface is a separate contract, which the [client guide](client.md) describes.
 
 ## Common questions
 
 ### Is this SQLite over a shared network file system?
 
-No. Each node opens its own local SQLite file. Sirannon moves changes between nodes through a replication transport, and applications reach the data through the HTTP and WebSocket server. No node shares one file over NFS or another network file system.
+No, each node opens its own local SQLite file. Sirannon moves changes between the nodes through a replication transport, while applications reach the data through the HTTP and WebSocket server.
 
 ### What kind of replication is it?
 
-Change-log replication. Sirannon captures each local write, stamps it with a Hybrid Logical Clock, groups the writes into checksummed `ReplicationBatch` messages, and applies them on replicas by primary key. A replicated change carries the table, the operation, the primary key, the old row, the new row, the transaction identifier, the node identifier, and the HLC. It replays no raw SQL, and the write path is no CRDT.
+Sirannon uses change-log replication, in which it captures each local write and stamps it with a Hybrid Logical Clock timestamp. It then groups those writes into checksummed `ReplicationBatch` messages, which each replica applies by primary key.
 
-WebSocket serves a different purpose. It carries application queries, writes, and CDC subscriptions from clients, and it never carries a `ReplicationBatch` between nodes. Production node-to-node replication uses `GrpcReplicationTransport`.
+A replicated change holds the table, the operation, the primary key, the old row, the new row, the transaction identifier, the node identifier, and the HLC timestamp. A replica applies those row values directly, and it replays SQL only for the schema changes on the allowlist further down this page. A single primary accepts every ordinary write, so Sirannon needs no CRDT.
+
+The WebSocket connection is for applications, which send queries, writes, and CDC subscriptions over it. In production, nodes replicate to each other over `GrpcReplicationTransport`.
 
 ### What conflict model does it use?
 
-One primary per replication group serialises normal writes before replication. During batch application, a receiver that finds the target row already present calls the configured resolver. The built-in choices are last-writer-wins by HLC, `PrimaryWins`, and `FieldMerge` with per-column HLCs.
+One primary per replication group serialises the ordinary writes before replication. When a receiving node applies a batch that changes a row that already exists, it calls the resolver that you configured. The built-in choices are last-writer-wins by HLC, `PrimaryWins`, and `FieldMerge` with per-column HLCs.
 
-The package exposes no command that merges a divergent former primary back into the group. Coordinator mode quarantines a former primary with local-only writes and takes it out of safe service, and an operator then rebuilds or restores that node before it rejoins.
+The package has no command that merges a divergent former primary back into the group. In coordinator mode, Sirannon quarantines a former primary that holds local-only writes and takes it out of service, and an operator then rebuilds or restores that node before it rejoins.
 
 ### What happens under a network partition?
 
-Static primary-replica mode has no failover of its own, so writes stay unavailable until an operator or an external system promotes another node and reroutes clients. Coordinator mode uses a cluster coordinator, primary terms, node leases, and in-sync sets, and only a proven in-sync replica becomes primary. When Sirannon can't prove a safe primary, writes fail with a clear error rather than proceeding.
+Static primary-replica mode has no failover of its own, so writes fail until an operator or an external system promotes another node and points the clients at it. In coordinator mode, the controller works from the cluster coordinator's primary terms, node leases, and in-sync sets, and it promotes only a replica that the coordinator lists as in sync. When a node cannot confirm with the coordinator that it holds write authority, it rejects every write with an error code.
 
 ### What does majority write concern mean?
 
-In coordinator mode, `majority` counts the configured voting data-bearing nodes in the replication group, including the primary's own durable commit. Such a write survives automatic failover when only the failed primary is lost and an eligible in-sync replica remains. Coordinator mode applies `majority` to a write that names no concern, while static mode returns after the local commit.
+In coordinator mode, Sirannon counts the configured voting data-bearing nodes in the replication group towards `majority`, including the primary's own durable commit. A majority write is still present after an automatic failover that loses only the primary, as long as an eligible in-sync replica remains.
 
 ### Does it replicate schema changes?
 
-Yes, within a safety allowlist covering `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. Sirannon rejects DDL carrying several statements, `AS SELECT`, `ATTACH`, extension loading, and other unsafe patterns.
+Yes, Sirannon replicates the schema changes on its safety allowlist, which holds `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. It rejects a DDL statement that contains several statements, `AS SELECT`, `ATTACH`, extension loading, or another unsafe pattern.
 
 ### What happens with foreign keys and unique constraints?
 
-SQLite enforces constraints on each node, and incoming replicated data still has to satisfy them. The single-primary write path keeps concurrent unique-key conflicts from arising in normal operation. First sync orders tables by foreign-key dependency, and a resync turns foreign keys off only during the controlled table-wipe phase.
+SQLite enforces the constraints on each node, so every replicated change must satisfy them there. Because one primary serialises the writes, two concurrent writes can't conflict on a unique key in normal operation. During first sync, the source sends the tables in foreign-key order. A joining node turns foreign keys off while it wipes its tables and copies the new data, and it turns them back on once the copy completes.
 
 ### Is Sirannon local-first or multi-writer today?
 
-The production path is primary-replica. Conflict resolvers decide how a receiving node applies a change to an existing row, and they make the replication engine neither multi-writer nor a CRDT. For offline-first end-user devices, see the [device sync guide](device-sync.md).
+Sirannon replicates from one primary to its replicas. You pick a conflict resolver to set how a receiving node applies a change to an existing row, but whichever resolver you pick, the replication engine accepts ordinary writes on one node only. For offline-first end-user devices, read the [device sync guide](device-sync.md).
 
 The `ReplicationOptions`, `CoordinatorModeConfig`, and `TransportConfig` tables are in the [configuration reference](configuration.md).

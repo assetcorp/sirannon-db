@@ -5,18 +5,19 @@ import type { SyncStatus } from './sync-controller-types.js'
 const MIN_OUTBOX_COUNT_INTERVAL_MS = 100
 
 /**
- * Delivers `onStatusChange` for a sync controller.
+ * Calls `onStatusChange` for a sync controller.
  *
- * Every field except the pending push count is already in memory, so a
- * transition is captured the moment it happens and no transition is lost,
- * however short-lived it is. The captured statuses are handed to the listener
- * on a microtask, in the order they occurred, which keeps the listener out of
- * the controller's own call stack.
+ * The controller keeps every status field except the pending push count in
+ * memory, so the notifier captures each transition when it happens and keeps
+ * every one, however short-lived. It calls the listener with the captured
+ * statuses on a microtask, in the order that they occur, outside the
+ * controller's own call stack.
  *
- * The pending push count is the one field that costs an outbox read through the
- * write gate, so it is refreshed in the background at most once every
- * `MIN_OUTBOX_COUNT_INTERVAL_MS` and a change in it raises a further status. A
- * controller with no listener reads nothing and runs no timer.
+ * The pending push count is the one field that needs an outbox read through the
+ * write gate, so the notifier refreshes it in the background at most once every
+ * `MIN_OUTBOX_COUNT_INTERVAL_MS` and captures a further status when the count
+ * changes. When the controller has no listener, the notifier reads nothing and
+ * starts no timer.
  */
 export class SyncStatusNotifier {
   private readonly queued: SyncStatus[] = []
@@ -32,7 +33,7 @@ export class SyncStatusNotifier {
   ) {}
 
   /**
-   * Captures the controller's status now and delivers it on a microtask.
+   * Captures the controller's status now and passes it to the listener on a microtask.
    */
   notify(): void {
     if (this.listener === undefined) return

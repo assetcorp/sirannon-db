@@ -1,43 +1,43 @@
 /**
- * Result of writing a frame to a WebSocket connection.
+ * The outcome of writing one frame to a WebSocket connection.
  *
- * - `sent`: delivered with no backpressure.
- * - `buffered`: accepted into the socket's outbound buffer under the
- *   backpressure limit; it will drain over time and must not be resent.
- * - `dropped`: rejected because it would exceed the backpressure limit, so
- *   the frame was not delivered. The caller must fail loud rather than treat
- *   the request as answered.
+ * - `sent`: uWebSockets writes the whole frame with no backpressure.
+ * - `buffered`: uWebSockets queues the frame in the socket's outbound buffer,
+ *   under the backpressure limit, and sends it later, so the caller must not send it again.
+ * - `dropped`: uWebSockets discards the frame, because the socket is closed or the
+ *   frame would push its buffer past the backpressure limit, so the client never
+ *   receives it. The caller must then report the request as failed.
  */
 export type WSSendOutcome = 'sent' | 'buffered' | 'dropped'
 
 /**
- * One open WebSocket, as the handler sends over it.
+ * The methods that the handler uses to write to one open WebSocket.
  *
  * @internal
  */
 export interface WSConnection {
   /**
-   * Sends one frame and reports whether it went out, was buffered, or was dropped.
+   * Sends one frame and returns whether uWebSockets sent it, buffered it, or dropped it.
    */
   send(data: string): WSSendOutcome
   /**
-   * Reports how many bytes the socket still holds unsent.
+   * Returns the number of bytes that the socket has buffered and not yet sent.
    *
-   * A `buffered` outcome promises no later drain notification, because a send that
-   * queues only the tail of a frame can flush that tail without the socket ever
-   * becoming writable again. A sender that paused itself reads this to find out
-   * whether it is still waiting on anything.
+   * After a `buffered` outcome, uWebSockets may never fire a drain event, because
+   * when it queues only the tail of a frame, it can flush that tail without the
+   * socket becoming writable again. A paused device stream calls this method to
+   * check whether the socket still has bytes left to send.
    */
   bufferedAmount(): number
   /**
-   * Writes a control frame so the socket flushes what it is holding.
+   * Sends a ping frame so that uWebSockets flushes the bytes that the socket has buffered.
    *
    * uWebSockets keeps a partial write queued until the next write on that socket,
-   * so a sender with nothing left to send calls this to move the remainder.
+   * so a caller with nothing left to send calls this method to send the rest.
    */
   flush(): void
   /**
-   * Closes the connection with a code and reason.
+   * Closes the connection with a close code and a reason.
    */
   close(code?: number, reason?: string): void
 }

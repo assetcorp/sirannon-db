@@ -22,7 +22,7 @@ export function SqlConsoleResults({ result }: { result: StatementResult | null }
     return (
       <div className="text-muted-foreground px-4 py-3 font-mono text-xs">
         <p>work_orders(id, site, task, status, technician, note, updated_at)</p>
-        <p className="mt-2">Press Ctrl+Enter or Cmd+Enter to run one statement.</p>
+        <p className="mt-2">Press Ctrl+Enter or Cmd+Enter to execute one statement.</p>
       </div>
     )
   }
@@ -32,7 +32,7 @@ export function SqlConsoleResults({ result }: { result: StatementResult | null }
   }
 
   if (result.changes !== null) {
-    return <Notice tone="ok">{`${result.changes} ${result.changes === 1 ? 'row' : 'rows'} changed`}</Notice>
+    return <Notice tone="ok">{`Changed rows: ${result.changes}`}</Notice>
   }
 
   if (result.rowCount === 0) {
@@ -72,7 +72,7 @@ export function SqlConsoleResults({ result }: { result: StatementResult | null }
       </table>
       {result.rowCount > MAX_DISPLAYED_ROWS ? (
         <p className="text-muted-foreground px-3 py-2 font-mono text-xs">
-          {`Showing the first ${MAX_DISPLAYED_ROWS} of ${result.rowCount} rows.`}
+          {`The grid shows the first ${MAX_DISPLAYED_ROWS} of ${result.rowCount} rows.`}
         </p>
       ) : null}
     </div>

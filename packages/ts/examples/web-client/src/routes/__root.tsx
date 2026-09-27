@@ -22,7 +22,7 @@ function head() {
       {
         name: 'description',
         content:
-          'A fulfillment operations console where every list on the page is a live query served over one Sirannon WebSocket.',
+          'In this fulfillment operations console, every list on the page is a live query over one Sirannon WebSocket.',
       },
       {
         name: 'theme-color',
@@ -72,7 +72,7 @@ function NotFoundComponent() {
   return (
     <main className="not-found">
       <h1>Page not found</h1>
-      <p>The requested route is not available in this example.</p>
+      <p>This example serves only its home page.</p>
     </main>
   )
 }

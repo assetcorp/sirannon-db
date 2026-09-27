@@ -105,7 +105,7 @@ function EmptyTimeline() {
   return (
     <div className="text-muted-foreground flex h-[360px] flex-col items-center justify-center gap-2 px-6 text-center">
       <CircleDashed className="size-5" aria-hidden="true" />
-      <span className="text-sm">No activity is available for this account.</span>
+      <span className="text-sm">This account has no activity yet.</span>
     </div>
   )
 }

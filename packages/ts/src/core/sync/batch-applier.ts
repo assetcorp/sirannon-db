@@ -8,14 +8,40 @@ import {
   updateChangeStampsAfterSeqSql,
 } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
-import { BatchValidationError } from './errors.js'
+import { BatchValidationError, ConflictError } from './errors.js'
 import type { HLC } from './hlc.js'
 import { persistHlcClock } from './hlc-store.js'
 import { REMOTE_ORIGIN_NODE_ID } from './origins.js'
 import type { PkResolver } from './pk.js'
 import { RowWriter } from './row-writer.js'
-import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
+import type {
+  ApplyResult,
+  ConflictContext,
+  ConflictResolution,
+  ConflictResolver,
+  ReplicationBatch,
+  ReplicationChange,
+} from './types.js'
 import { extractDroppedTable, IDENTIFIER_RE, validateDdlSafety } from './validators.js'
+
+async function resolveConflict(
+  resolver: ConflictResolver | ((table: string) => ConflictResolver),
+  ctx: ConflictContext,
+): Promise<ConflictResolution> {
+  try {
+    const changeResolver = typeof resolver === 'function' ? resolver(ctx.table) : resolver
+    return await changeResolver.resolve(ctx)
+  } catch (err: unknown) {
+    if (err instanceof ConflictError) throw err
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new ConflictError(
+      `Conflict resolution failed for table '${ctx.table}' row '${ctx.rowId}': ${reason}`,
+      ctx.table,
+      ctx.rowId,
+      err,
+    )
+  }
+}
 
 export interface ApplyGroupOptions {
   sourceNodeId: string
@@ -183,10 +209,10 @@ export class BatchApplier {
   }
 
   /**
-   * Applies one pulled transaction whose changes are read from disk in
-   * batches so that a transaction of any size is applied with bounded memory.
-   * The whole group runs in one local transaction: the batches, the echo
-   * stamping, and `withinTx` commit together or not at all.
+   * Applies one staged transaction, reading its changes from `source` one batch
+   * at a time so that memory use stays bounded for a transaction of any size.
+   * The method writes every batch, the echo stamps, and the `withinTx` work
+   * inside one local transaction, so a failure at any step rolls all of it back.
    */
   async applyStagedGroup(options: ApplyStagedGroupOptions): Promise<StagedGroupResult> {
     const { source, resolver, withinTx } = options
@@ -284,8 +310,7 @@ export class BatchApplier {
       oldData: null,
     }
 
-    const changeResolver = typeof resolver === 'function' ? resolver(change.table) : resolver
-    const resolution = await changeResolver.resolve({
+    const resolution = await resolveConflict(resolver, {
       table: change.table,
       rowId: change.rowId,
       localChange,

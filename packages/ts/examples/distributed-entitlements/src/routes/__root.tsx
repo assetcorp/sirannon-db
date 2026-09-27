@@ -15,7 +15,7 @@ export const Route = createRootRoute({
       {
         name: 'description',
         content:
-          'A three-node Sirannon cluster running a SaaS entitlement control plane, with etcd authority, gRPC replication, and automatic failover.',
+          'In this example, a three-node Sirannon cluster serves a SaaS entitlement control plane with etcd authority, gRPC replication, and automatic failover.',
       },
       { name: 'theme-color', content: '#0d9488' },
     ],

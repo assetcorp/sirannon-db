@@ -1,9 +1,10 @@
 const DEVICE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/
 const REGISTRY_STORAGE_KEY = 'sirannon-field-devices'
+const LOCAL_DEVICE_STORAGE_KEY = 'sirannon-field-local-device'
 const TAB_LOCK_PREFIX = 'sirannon-device-'
 
 export const DEVICE_NAME_RULE =
-  'Lowercase letters, digits, and hyphens, up to 32 characters, starting with a letter or digit.'
+  'Use up to 32 lowercase letters, digits, and hyphens, starting with a letter or a digit.'
 
 export function normaliseDeviceName(raw: string): string {
   return raw.trim().toLowerCase()
@@ -30,6 +31,21 @@ export function rememberDevice(name: string): void {
     const devices = listKnownDevices()
     if (devices.includes(name)) return
     localStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify([...devices, name].sort()))
+  } catch {}
+}
+
+export function readLocalDevice(): string | null {
+  try {
+    const name = localStorage.getItem(LOCAL_DEVICE_STORAGE_KEY)
+    return name !== null && isValidDeviceName(name) ? name : null
+  } catch {
+    return null
+  }
+}
+
+export function storeLocalDevice(name: string): void {
+  try {
+    localStorage.setItem(LOCAL_DEVICE_STORAGE_KEY, name)
   } catch {}
 }
 

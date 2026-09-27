@@ -1,4 +1,6 @@
 import {
+  type BeforePushHook,
+  HookDeniedError,
   type RequestContext,
   RequestDeniedError,
   readBearerToken,
@@ -27,7 +29,7 @@ export function createDeviceAuthenticator(
       throw new RequestDeniedError(
         403,
         'FORBIDDEN_ORIGIN',
-        'The field service data server accepts requests from its own application origins only.',
+        'The Origin header of a request to the field service data server must match one of its application origins.',
       )
     }
 
@@ -39,10 +41,23 @@ export function createDeviceAuthenticator(
       throw new RequestDeniedError(
         401,
         'UNAUTHORIZED',
-        'A device request must carry a token naming a known fleet, as a bearer header or a WebSocket subprotocol.',
+        'A device request must include a token that matches a known fleet, as a bearer header or a WebSocket subprotocol.',
       )
     }
 
     return { fleetId }
+  }
+}
+
+export function createDeviceFleetCheck(): BeforePushHook {
+  const fleetByDevice = new Map<string, string>()
+
+  return ({ deviceId, identity }) => {
+    const { fleetId } = identity as FieldTechnician
+    const owningFleet = fleetByDevice.get(deviceId) ?? fleetId
+    if (owningFleet !== fleetId) {
+      throw new HookDeniedError('beforePush', 'This device already syncs for another fleet.')
+    }
+    fleetByDevice.set(deviceId, owningFleet)
   }
 }

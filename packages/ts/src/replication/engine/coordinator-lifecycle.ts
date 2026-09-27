@@ -1,27 +1,17 @@
-import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { CoordinatorError } from '../errors.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
-import {
-  hasCurrentPrimaryAuthorityFor,
-  noteCoordinatorContact,
-  refreshCoordinatorState,
-} from './coordinator-authority.js'
+import { startControllerLoop, stopControllerLeaseWatch } from './controller-loop.js'
+import { hasCurrentPrimaryAuthorityFor, noteCoordinatorContact } from './coordinator-authority.js'
 import {
   handleFormerPrimaryDemotion,
   reconcileInSyncSet,
   startCoordinatorRejoinSyncIfReady,
 } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
+import { unrefTimer } from './timers.js'
 
-const DEFAULT_CONTROLLER_LEASE_TTL_MS = 10_000
-const DEFAULT_CONTROLLER_TICK_INTERVAL_MS = 1_000
 const IN_SYNC_RECONCILE_INTERVAL_MS = 1_000
-
-function unrefTimer(timer: ReturnType<typeof setInterval>): void {
-  const unref = (timer as { unref?: () => void }).unref
-  unref?.call(timer)
-}
 
 function localCoordinatorPrimary(engine: ReplicationEngine): { nodeId: string; endpoint?: string } {
   const endpoint = engine.config.coordinator?.endpoint
@@ -69,9 +59,15 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
     handleCoordinatorStateUpdate(engine, next)
   })
 
+  if (coordinator.watchNodeSessions) {
+    engine.nodeSessionWatchDisposer = await coordinator.watchNodeSessions(config.clusterId, liveNodeIds => {
+      engine.liveNodeIds = [...liveNodeIds]
+    })
+  }
+
   startCoordinatorLeaseRenewal(engine)
   startInSyncReconcileLoop(engine)
-  startControllerLoop(engine)
+  await startControllerLoop(engine)
 }
 
 function startInSyncReconcileLoop(engine: ReplicationEngine): void {
@@ -183,95 +179,6 @@ async function restoreCoordinatorSession(engine: ReplicationEngine, ttlMs: numbe
   }
 }
 
-function startControllerLoop(engine: ReplicationEngine): void {
-  const config = engine.config.coordinator
-  if (!config) return
-  const controllerConfig = typeof config.controller === 'object' ? config.controller : {}
-  const enabled = typeof config.controller === 'boolean' ? config.controller : (controllerConfig.enabled ?? true)
-  if (!enabled) {
-    engine.controllerState = 'disabled'
-    return
-  }
-
-  engine.controllerState = 'standby'
-  const ttlMs = controllerConfig.leaseTtlMs ?? DEFAULT_CONTROLLER_LEASE_TTL_MS
-  const holderId = controllerConfig.holderId ?? engine.nodeId
-  const tickMs = controllerConfig.tickIntervalMs ?? DEFAULT_CONTROLLER_TICK_INTERVAL_MS
-  const timer = setInterval(() => {
-    controllerTick(engine, holderId, ttlMs).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.controllerState = 'lost'
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-controller', recoverable: true })
-    })
-  }, tickMs)
-  unrefTimer(timer)
-  engine.controllerTimer = timer
-}
-
-async function controllerTick(engine: ReplicationEngine, holderId: string, ttlMs: number): Promise<void> {
-  const config = engine.config.coordinator
-  if (!config) return
-  if (engine.controllerLeaseId) {
-    const renewed = await config.coordinator.renewLease(engine.controllerLeaseId, ttlMs)
-    if (!renewed) {
-      engine.controllerLeaseId = null
-      engine.controllerState = 'lost'
-      return
-    }
-    noteCoordinatorContact(engine)
-    engine.controllerState = 'active'
-    await runControllerPromotionCheck(engine)
-    return
-  }
-
-  const acquired = await config.coordinator.tryAcquireControllerLease({
-    clusterId: config.clusterId,
-    holderId,
-    ttlMs,
-  })
-  noteCoordinatorContact(engine)
-  if (acquired.acquired) {
-    engine.controllerLeaseId = acquired.lease.id
-    engine.controllerState = 'active'
-    await runControllerPromotionCheck(engine)
-  } else {
-    engine.controllerState = 'standby'
-  }
-}
-
-async function runControllerPromotionCheck(engine: ReplicationEngine): Promise<void> {
-  const config = engine.config.coordinator
-  if (!config) return
-  const state = await refreshCoordinatorState(engine)
-  if (!state) return
-  const primaryNodeId = state.currentPrimary?.nodeId
-  const primaryLive = primaryNodeId
-    ? await config.coordinator.getLiveNodeSession(config.clusterId, primaryNodeId)
-    : null
-  const primaryCanKeepDuty =
-    primaryNodeId &&
-    primaryLive &&
-    compatibilityAllowsPromotion(state.compatibility, primaryLive.compatibility) &&
-    !state.drainingNodeIds.includes(primaryNodeId) &&
-    !state.repairingNodeIds.includes(primaryNodeId) &&
-    !state.faultedNodeIds.includes(primaryNodeId)
-  if (primaryCanKeepDuty) {
-    return
-  }
-  try {
-    const promoted = await config.coordinator.promoteEligibleReplica({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      excludeNodeIds: primaryNodeId ? [primaryNodeId] : [],
-    })
-    engine.coordinatorState = promoted
-    engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, promoted)
-  } catch (err: unknown) {
-    const wrappedErr = err instanceof Error ? err : new Error(String(err))
-    engine.emitError({ error: wrappedErr, operation: 'coordinator-promotion', recoverable: true })
-  }
-}
-
 export function stopCoordinatorTimers(engine: ReplicationEngine): void {
   if (engine.coordinatorLeaseTimer) {
     clearInterval(engine.coordinatorLeaseTimer)
@@ -294,6 +201,12 @@ export async function stopCoordinatorMode(engine: ReplicationEngine): Promise<vo
     await engine.coordinatorWatchDisposer()
     engine.coordinatorWatchDisposer = null
   }
+  if (engine.nodeSessionWatchDisposer) {
+    await engine.nodeSessionWatchDisposer()
+    engine.nodeSessionWatchDisposer = null
+  }
+  engine.liveNodeIds = null
+  await stopControllerLeaseWatch(engine)
   if (engine.controllerLeaseId) {
     const leaseId = engine.controllerLeaseId
     engine.controllerLeaseId = null

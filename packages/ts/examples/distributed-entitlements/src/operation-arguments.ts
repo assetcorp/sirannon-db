@@ -45,7 +45,7 @@ export function readFlag(value: unknown, field: string): 0 | 1 {
 
 export function readActor(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) {
-    refuse('actor is filled from the authenticated identity and was missing')
+    refuse("The server fills actor from the caller's identity, but this identity holds no actor")
   }
   return value
 }

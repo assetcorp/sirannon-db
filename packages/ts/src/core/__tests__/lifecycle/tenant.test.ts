@@ -7,8 +7,14 @@ describe('tenant utilities', () => {
   describe('sanitizeTenantId', () => {
     it('allows simple alphanumeric IDs', () => {
       expect(sanitizeTenantId('tenant1')).toBe('tenant1')
-      expect(sanitizeTenantId('ABC')).toBe('ABC')
+      expect(sanitizeTenantId('7eleven')).toBe('7eleven')
       expect(sanitizeTenantId('a')).toBe('a')
+    })
+
+    it('rejects capital letters', () => {
+      expect(sanitizeTenantId('ABC')).toBeUndefined()
+      expect(sanitizeTenantId('Acme')).toBeUndefined()
+      expect(sanitizeTenantId('acme-Corp')).toBeUndefined()
     })
 
     it('allows hyphens and underscores after the first character', () => {
@@ -71,6 +77,7 @@ describe('tenant utilities', () => {
       expect(() => tenantPath('/data', '../escape')).toThrow('Invalid tenant ID')
       expect(() => tenantPath('/data', '')).toThrow('Invalid tenant ID')
       expect(() => tenantPath('/data', '-bad')).toThrow('Invalid tenant ID')
+      expect(() => tenantPath('/data', 'Acme')).toThrow('lowercase letters, digits, underscores, or hyphens')
     })
 
     it('throws when filename (id + extension) exceeds 255 characters', () => {
@@ -113,6 +120,7 @@ describe('tenant utilities', () => {
       expect(resolver('')).toBeUndefined()
       expect(resolver('a/b')).toBeUndefined()
       expect(resolver('-bad')).toBeUndefined()
+      expect(resolver('Acme')).toBeUndefined()
     })
 
     it('passes through default options', () => {

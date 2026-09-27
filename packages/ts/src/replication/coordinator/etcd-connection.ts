@@ -1,46 +1,50 @@
-import type { IOptions } from 'etcd3'
+import type { Etcd3, IOptions, Namespace } from 'etcd3'
+import type { EtcdGroupStore } from './etcd-group-store.js'
 import { assertNonEmpty } from './group-rules.js'
 
 /**
- * Where the etcd coordinator connects, under which key prefix it stores group state, and how it authenticates.
+ * Sets the etcd endpoints that the etcd coordinator connects to, the key prefix that it stores group state under, and
+ * how it authenticates.
  *
  * @public
  */
 export interface EtcdClusterCoordinatorOptions {
   /**
-   * etcd endpoints to connect to. Production access requires https addresses.
+   * Lists the etcd endpoints to connect to. The coordinator accepts only https endpoints unless `allowInsecure` is true.
    */
   hosts: string | string[]
   /**
-   * Prefix applied to every key this coordinator writes, which keeps clusters apart in one etcd.
+   * Sets the prefix that this coordinator puts in front of every key that it writes, so that several deployments can
+   * share one etcd.
    */
   keyPrefix: string
   /**
-   * TLS material, which production access requires.
+   * Holds the TLS material, which the coordinator requires unless `allowInsecure` is true.
    */
   credentials?: IOptions['credentials']
   /**
-   * Username and password, as an alternative to a client certificate.
+   * Holds a username and password, which the coordinator accepts in place of a client certificate.
    */
   auth?: IOptions['auth']
   /**
-   * Options passed straight through to the underlying gRPC channel.
+   * Holds options that the coordinator passes unchanged to the underlying gRPC channel.
    */
   grpcOptions?: IOptions['grpcOptions']
   /**
-   * Milliseconds to wait for a connection to etcd.
+   * Sets how many milliseconds the client waits to connect to etcd.
    */
   dialTimeoutMs?: number
   /**
-   * Milliseconds any single etcd call may take.
+   * Sets how many milliseconds a single etcd call can take before its deadline expires.
    */
   defaultCallTimeoutMs?: number
   /**
-   * Accepts plain http endpoints without credentials, which suits tests only.
+   * Lets the coordinator connect to plain http endpoints without credentials. Use it only in tests.
    */
   allowInsecure?: boolean
   /**
-   * Called when a group watch fails so that a caller can log it or raise an alert.
+   * Receives each error that an etcd watch reports or that a watch callback throws, and each lost lease, so that you
+   * can log it or raise an alert.
    */
   onWatcherError?: (error: Error) => void
 }
@@ -80,6 +84,12 @@ export function toEtcdOptions(options: EtcdClusterCoordinatorOptions): IOptions 
   }
 }
 
+export interface EtcdConnection {
+  client: Etcd3
+  namespace: Namespace
+  groups: EtcdGroupStore
+}
+
 export function normaliseKeyPrefix(prefix: string): string {
   const trimmed = prefix.replace(/^\/+/, '').replace(/\/+$/, '')
   if (trimmed.length === 0) {
@@ -93,7 +103,11 @@ export function controllerLeaseKey(clusterId: string): string {
 }
 
 export function nodeSessionKey(clusterId: string, nodeId: string): string {
-  return `clusters/${encodeKey(clusterId)}/nodes/${encodeKey(nodeId)}`
+  return `${nodeSessionPrefix(clusterId)}${encodeKey(nodeId)}`
+}
+
+export function nodeSessionPrefix(clusterId: string): string {
+  return `clusters/${encodeKey(clusterId)}/nodes/`
 }
 
 export function replicationGroupKey(clusterId: string, groupId: string): string {

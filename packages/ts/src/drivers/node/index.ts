@@ -17,14 +17,15 @@ import { copyDatabaseWithNodeSqlite } from './copy.js'
  */
 export interface NodeSqliteOptions {
   /**
-   * Milliseconds a statement waits for the write lock before it fails.
+   * The number of milliseconds that SQLite waits for the database lock before it returns a busy error, which defaults to 5000.
    */
   busyTimeout?: number
   /**
-   * Path to the compiled extension that streams a backup to a caller-supplied
-   * destination. It defaults to the binary the install fetched for this
-   * platform, and naming one here is how a host with no published binary
-   * streams a copy from an extension it built itself.
+   * The path to the compiled extension that Sirannon uses to stream a backup
+   * to a destination that the caller supplies. It defaults to the library in
+   * the `@delali/sirannon-vfs-*` package for this platform, when that package
+   * is installed. Set it on a platform without a published binary, so that
+   * Sirannon streams backups through an extension that you build yourself.
    */
   vfsExtensionPath?: string
 }
@@ -44,10 +45,10 @@ function carriesSteppedBackupCall(): boolean {
 }
 
 /**
- * Builds a driver on Node's own SQLite module, which needs no native dependency.
+ * Returns a driver that opens SQLite databases through Node's built-in `node:sqlite` module, so your project installs no native dependency.
  *
- * @param driverOptions - How long a statement waits for the write lock.
- * @returns The driver, ready to pass to a `Sirannon` registry.
+ * @param driverOptions - The busy timeout and the path to the backup streaming extension.
+ * @returns The driver, which you can pass to a `Sirannon` registry.
  *
  * @public
  */

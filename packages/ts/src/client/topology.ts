@@ -12,33 +12,33 @@ import { TopologyAwareTransport } from './topology-transport.js'
 import { RemoteError, type Transport } from './types.js'
 
 /**
- * Which nodes the client holds, how it finds the rest, and where it sends each read.
+ * The nodes that the client starts with, how it discovers the rest, and where it sends each read.
  *
  * @public
  */
 export interface TopologyAwareClientOptions extends ClientOptions {
   /**
-   * Nodes the client starts from when it discovers the group through the coordinator.
+   * The nodes that the client asks for the group's routing when it discovers the group through the coordinator.
    */
   endpoints?: string[]
   /**
-   * Address of the primary, for a group you list by hand.
+   * The address of the primary, for a group that you list by hand.
    */
   primary?: string
   /**
-   * Addresses of the replicas, for a group you list by hand.
+   * The addresses of the replicas, for a group that you list by hand.
    */
   replicas?: string[]
   /**
-   * Where reads go. Default: 'primary'.
+   * Which kind of node the client sends each read to. Defaults to 'primary'.
    */
   readPreference?: 'primary' | 'replica' | 'nearest'
   /**
-   * Whether the client uses the nodes you listed or asks the group for them. Default: 'static'.
+   * Whether the client uses the nodes that you list or asks the group for them. Defaults to 'static'.
    */
   discovery?: 'static' | 'coordinator'
   /**
-   * Currency every read requires, which the client uses to choose a node.
+   * The read concern that every read requires, which the client uses to choose a node.
    */
   readConcern?: ReadConcernLevel
 }
@@ -51,10 +51,11 @@ interface EndpointLatency {
 
 const CLUSTER_DISCOVERY_FETCH_TIMEOUT_MS = 2_000
 const LATENCY_TTL_MS = 60_000
+const UNREACHABLE_ENDPOINT_TTL_MS = 5_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 
 /**
- * Connects to a replication group rather than one server: it routes each read to a node that meets its read concern, and each write to the primary.
+ * Connects to a replication group, and routes each read to a node that meets its read concern and each write to the primary.
  *
  * @public
  */
@@ -71,7 +72,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   private latencies: EndpointLatency[] = []
   private latencyMeasuredAt = 0
   private latencyMeasuring: Promise<void> | null = null
-  private readonly removedReplicas = new Set<string>()
+  private readonly endpointsSetAside = new Map<string, number>()
 
   constructor(options: TopologyAwareClientOptions) {
     super(options)
@@ -85,10 +86,10 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   }
 
   /**
-   * Builds the routing transport a database's requests travel over.
+   * Builds the routing transport that sends one database's requests.
    *
    * @param databaseId - Identifier of the database.
-   * @returns A transport that picks a node per request.
+   * @returns A transport that picks a node for each request.
    */
   protected createTransport(databaseId: string): Transport {
     const transport = new TopologyAwareTransport(databaseId, this, closing =>
@@ -104,7 +105,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   }
 
   /**
-   * Returns the address writes are sent to, which is the current primary.
+   * Returns the address that the client sends writes to, which is the current primary.
    *
    * @param databaseId - Identifier of the database.
    * @returns Address of the node that accepts writes.
@@ -123,7 +124,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
       return this.primaryUrl ?? this.baseUrl
     }
 
-    const availableReplicas = this.replicaUrls.filter(url => !this.removedReplicas.has(url))
+    const availableReplicas = this.replicaUrls.filter(url => this.isReachable(url))
 
     if (this.readPreference === 'replica') {
       if (availableReplicas.length === 0) {
@@ -133,7 +134,7 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
     }
 
     await this.ensureLatencyMeasured()
-    const reachable = this.latencies.filter(entry => entry.reachable && !this.removedReplicas.has(entry.url))
+    const reachable = this.latencies.filter(entry => entry.reachable && this.isReachable(entry.url))
     if (reachable.length === 0) {
       return this.primaryUrl ?? this.baseUrl
     }
@@ -149,7 +150,9 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
       throw new RemoteError('NO_SAFE_PRIMARY', 'No current primary is available for linearizable reads')
     }
 
-    const readable = routing.readEndpoints.filter(endpoint => endpoint.readConcerns.includes(concern))
+    const readable = routing.readEndpoints.filter(
+      endpoint => endpoint.readConcerns.includes(concern) && this.isReachable(endpoint.url),
+    )
     const preferredReadable =
       this.readPreference === 'replica' && routing.currentPrimary
         ? readable.filter(endpoint => endpoint.url !== routing.currentPrimary)
@@ -190,8 +193,16 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   }
 
   /** @internal */
-  _removeReplica(url: string): void {
-    this.removedReplicas.add(url)
+  _setEndpointAside(url: string): void {
+    this.endpointsSetAside.set(url, Date.now() + UNREACHABLE_ENDPOINT_TTL_MS)
+  }
+
+  private isReachable(url: string): boolean {
+    const usableFrom = this.endpointsSetAside.get(url)
+    if (usableFrom === undefined) return true
+    if (Date.now() < usableFrom) return false
+    this.endpointsSetAside.delete(url)
+    return true
   }
 
   /** @internal */

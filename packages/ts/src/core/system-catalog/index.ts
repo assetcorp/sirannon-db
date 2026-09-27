@@ -16,7 +16,6 @@ export {
   selectMaxChangeSeq,
   selectMaxRowChangeHlc,
   selectMinChangeSeqSql,
-  selectMinForeignChangeSeqSql,
   selectNodeChangesAfterSeqSql,
   selectOutboundChangesSql,
   selectTablesChangesInRangeSql,
@@ -36,8 +35,11 @@ export { assertSafeIdentifier, ensureColumn, tableColumns } from './columns.js'
 export {
   type DeviceCursorRow,
   deleteDeviceCursorsUpdatedBefore,
+  deleteExpiredDeviceCursors,
+  type ExpiredDeviceCursorBounds,
   ensureDeviceCursorsTable,
   selectDeviceCursors,
+  selectMinDeviceCursorBoundary,
   upsertDeviceCursor,
 } from './device-cursors-table.js'
 export {

@@ -93,7 +93,7 @@ const sirannon = new Sirannon({
         throw new RequestDeniedError(
           403,
           'FORBIDDEN',
-          `Change streams cover the control-plane tables only, so '${table}' has none`,
+          `This node streams changes only for the control-plane tables, which exclude '${table}'`,
         )
       }
     },
@@ -189,7 +189,11 @@ server = createServer<ControlPlaneOperator>(sirannon, {
       return { actor: 'control-plane-browser' }
     }
 
-    throw new RequestDeniedError(401, 'UNAUTHORIZED', 'Missing valid Sirannon entitlements demo token')
+    throw new RequestDeniedError(
+      401,
+      'UNAUTHORIZED',
+      'A request must include the Sirannon entitlements demo token, as a bearer header or a WebSocket subprotocol.',
+    )
   },
   authorizeClusterStatus: ctx => readBearerToken(ctx) === token,
   resolveExecutionTarget: id => (id === DATABASE_ID ? engine : null),
@@ -201,7 +205,7 @@ server = createServer<ControlPlaneOperator>(sirannon, {
 })
 
 await server.listen()
-console.log(`Sirannon entitlements ${nodeId} listening on ${httpHost}:${httpPort}`)
+console.log(`Sirannon entitlements node ${nodeId} is listening on ${httpHost}:${httpPort}.`)
 
 process.on('SIGTERM', () => {
   shutdown().finally(() => process.exit(0))
@@ -225,7 +229,7 @@ function sirannonPackageVersion(): string {
   const manifestUrl = new URL('../../../package.json', import.meta.url)
   const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8')) as { version?: unknown }
   if (typeof manifest.version !== 'string') {
-    throw new Error(`No version found in ${manifestUrl.pathname}`)
+    throw new Error(`${manifestUrl.pathname} has no version field`)
   }
   return manifest.version
 }

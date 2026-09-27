@@ -46,7 +46,7 @@ export function useInventoryController() {
   const error =
     actionError ??
     firstLiveError(liveStates) ??
-    (rejectedRows > 0 ? `${rejectedRows} rows did not match the expected shape` : null)
+    (rejectedRows > 0 ? `The page omits ${rejectedRows} rows that fail the schema check` : null)
 
   const runMutation = useCallback(async (label: string, mutation: () => Promise<unknown>): Promise<boolean> => {
     setPendingAction(label)

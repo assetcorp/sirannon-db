@@ -80,7 +80,7 @@ export function useFieldDevice(name: string) {
               snapshotting: !outcome.ok && outcome.retrying,
               bannerError: outcome.ok
                 ? null
-                : `${outcome.error.message}${outcome.retrying ? ' Retrying shortly.' : ''}`,
+                : `${outcome.error.message}${outcome.retrying ? ' The controller retries the download automatically.' : ''}`,
             }),
         })
       } catch (err) {

@@ -64,5 +64,5 @@ export async function subscribeControlPlane(handlers: ControlPlaneSubscriptionHa
     throw errors[0]
   }
 
-  throw new AggregateError(errors, 'Failed to establish control-plane subscriptions')
+  throw new AggregateError(errors, 'The dashboard cannot open its control-plane subscriptions')
 }

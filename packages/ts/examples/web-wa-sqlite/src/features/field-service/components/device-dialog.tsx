@@ -40,8 +40,8 @@ export function DeviceDialog({ currentDevice }: { currentDevice: string }) {
         <DialogHeader>
           <DialogTitle>Switch device</DialogTitle>
           <DialogDescription>
-            This tab is <span className="font-mono">{currentDevice}</span>. Switching opens another device's local
-            database; the one here stays in this browser and keeps its unsynced work.
+            This tab is <span className="font-mono">{currentDevice}</span>. When you switch, the tab opens another
+            device's local database, and the unsynced work of this device stays in this browser.
           </DialogDescription>
         </DialogHeader>
         <DevicePicker currentDevice={currentDevice} onPick={handlePick} />

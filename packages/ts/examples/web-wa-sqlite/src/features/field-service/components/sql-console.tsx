@@ -13,7 +13,7 @@ const STARTER_STATEMENTS: readonly { label: string; sql: string }[] = [
   {
     label: 'Add one',
     sql: `INSERT INTO work_orders (id, site, task, updated_at)
-VALUES (hex(randomblob(8)), 'Console yard', 'Written from the SQL console', datetime('now'))`,
+VALUES (hex(randomblob(8)), 'Console yard', 'Test row from the SQL console', datetime('now'))`,
   },
 ]
 
@@ -31,8 +31,8 @@ function StarterButton({ label, sql, onPick }: { label: string; sql: string; onP
 
 function summarise(result: StatementResult): string {
   const elapsed = `${result.elapsedMs.toFixed(1)} ms`
-  if (result.error !== null) return `failed in ${elapsed}`
-  if (result.changes !== null) return `${result.changes} changed in ${elapsed}`
+  if (result.error !== null) return `error after ${elapsed}`
+  if (result.changes !== null) return `${result.changes} changed ${result.changes === 1 ? 'row' : 'rows'} in ${elapsed}`
   return `${result.rowCount} ${result.rowCount === 1 ? 'row' : 'rows'} in ${elapsed}`
 }
 
@@ -146,7 +146,7 @@ export function SqlConsole({
         <div className="flex flex-wrap items-center gap-1 px-3 pb-2">
           <Button size="xs" onClick={handleRun} disabled={running}>
             <Play aria-hidden="true" />
-            Run
+            Execute
           </Button>
           {STARTER_STATEMENTS.map(starter => (
             <StarterButton key={starter.label} label={starter.label} sql={starter.sql} onPick={setSql} />

@@ -56,7 +56,7 @@ if ((existing?.count ?? 0) === 0) {
   for (const order of SEED_WORK_ORDERS) {
     await db.execute(SEED_INSERT_SQL, [order.id, order.site, order.task, SEED_UPDATED_AT])
   }
-  console.log(`Seeded ${SEED_WORK_ORDERS.length} work orders.`)
+  console.log(`The server seeds the ${WORK_ORDERS_TABLE} table with ${SEED_WORK_ORDERS.length} rows.`)
 }
 
 const server = createServer<FieldTechnician>(sirannon, {
@@ -69,18 +69,20 @@ const server = createServer<FieldTechnician>(sirannon, {
 
 await server.listen()
 
-console.log(`Field service server listening on http://${HOST}:${PORT}`)
-console.log(`Database '${DATABASE_ID}' stored at ${dataDir}${DATABASE_ID}.db`)
-console.log(`Accepting device sync from ${APP_ORIGINS.join(', ')}`)
-console.log('SQL over the network is refused; devices reach this database through the sync routes only.')
-console.log('Every request names a fleet through a bearer token or a WebSocket subprotocol.')
+console.log(`The field service server is listening on http://${HOST}:${PORT}.`)
+console.log(`Database file for '${DATABASE_ID}': ${dataDir}${DATABASE_ID}.db`)
+console.log(`CORS origins for device sync: ${APP_ORIGINS.join(', ')}`)
+console.log(
+  'The server executes no SQL from the network, so a device can change this database only through the sync routes.',
+)
+console.log('Every request must include a fleet token, as a bearer header or a WebSocket subprotocol.')
 
 let shuttingDown = false
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
-  console.log(`\nReceived ${signal}, closing the server...`)
+  console.log(`\nClosing the server on ${signal}...`)
   await server.close()
   await sirannon.shutdown()
   process.exit(0)

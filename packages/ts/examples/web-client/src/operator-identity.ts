@@ -26,7 +26,7 @@ export function createOperatorAuthenticator(
         throw new RequestDeniedError(
           403,
           'FORBIDDEN_ORIGIN',
-          'The demo data server rejects WebSocket upgrades from untrusted origins.',
+          'A WebSocket upgrade to the demo data server must include an Origin header that matches an application origin.',
         )
       }
 
@@ -36,7 +36,7 @@ export function createOperatorAuthenticator(
         throw new RequestDeniedError(
           401,
           'UNAUTHORIZED',
-          'The demo data server requires a WebSocket auth protocol naming a known operator.',
+          'A WebSocket upgrade to the demo data server must include a subprotocol credential that matches a known operator.',
         )
       }
 
@@ -46,7 +46,11 @@ export function createOperatorAuthenticator(
     const token = readBearerToken(ctx)
     const operatorId = token === undefined ? undefined : OPERATORS_BY_TOKEN.get(token)
     if (operatorId === undefined) {
-      throw new RequestDeniedError(401, 'UNAUTHORIZED', 'The demo data server requires a bearer token for an operator.')
+      throw new RequestDeniedError(
+        401,
+        'UNAUTHORIZED',
+        'A request to the demo data server must include a bearer token that matches a known operator.',
+      )
     }
 
     return { operatorId }

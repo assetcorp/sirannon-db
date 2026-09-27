@@ -115,7 +115,7 @@ export function useEntitlementsController(initialData: LoaderData) {
   )
 
   const handleSubscriptionReset = useCallback(() => {
-    setLastEvent('Reconnected past the retained history; re-reading the control plane')
+    setLastEvent('The reconnect falls outside the retained history, so the dashboard reads the control plane again')
     queueLiveRefresh()
   }, [queueLiveRefresh])
 

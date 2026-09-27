@@ -15,7 +15,8 @@ function handleRetry() {
 function RetryButton() {
   return (
     <Button variant="ghost" className="w-full" onClick={handleRetry}>
-      <RotateCw data-icon="inline-start" aria-hidden="true" />I closed the other tab, try again
+      <RotateCw data-icon="inline-start" aria-hidden="true" />
+      Try again
     </Button>
   )
 }

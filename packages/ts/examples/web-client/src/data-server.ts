@@ -36,8 +36,8 @@ const driver = betterSqlite3()
 const sirannon = new Sirannon({
   driver,
   hooks: {
-    onDatabaseOpen: [ctx => console.log(`[hook] Database opened: ${ctx.databaseId}`)],
-    onDatabaseClose: [ctx => console.log(`[hook] Database closed: ${ctx.databaseId}`)],
+    onDatabaseOpen: [ctx => console.log(`[hook] onDatabaseOpen: ${ctx.databaseId}`)],
+    onDatabaseClose: [ctx => console.log(`[hook] onDatabaseClose: ${ctx.databaseId}`)],
   },
 })
 
@@ -74,7 +74,7 @@ for (const product of SEED_PRODUCTS) {
   ])
 }
 
-console.log('Seed data inserted.')
+console.log(`The data server seeds the products table with ${SEED_PRODUCTS.length} products.`)
 
 const server = createServer<Operator>(sirannon, {
   host: HOST,
@@ -89,10 +89,10 @@ const server = createServer<Operator>(sirannon, {
 })
 
 await server.listen()
-console.log(`Sirannon data server listening on ${HOST}:${PORT}`)
+console.log(`The Sirannon data server is listening on ${HOST}:${PORT}.`)
 console.log(`  HTTP: http://localhost:${PORT}`)
 console.log(`  WS:   ws://localhost:${PORT}`)
-console.log('  SQL over the network is off; every call names a registered operation.')
+console.log('  The server executes only the registered operations, which a client calls by name.')
 
 let isShuttingDown = false
 
@@ -108,21 +108,21 @@ const shutdown = async () => {
     await server.close()
   } catch (error) {
     exitCode = 1
-    console.error('Failed to close server during shutdown.', error)
+    console.error('The HTTP listener fails to close during shutdown.', error)
   }
 
   try {
     await sirannon.shutdown()
   } catch (error) {
     exitCode = 1
-    console.error('Failed to shut down Sirannon during shutdown.', error)
+    console.error('Sirannon fails to close its databases during shutdown.', error)
   }
 
   try {
     rmSync(tempDir, { recursive: true, force: true })
   } catch (error) {
     exitCode = 1
-    console.error('Failed to remove temporary directory during shutdown.', error)
+    console.error('The data server fails to remove its temporary directory during shutdown.', error)
   }
 
   process.exit(exitCode)

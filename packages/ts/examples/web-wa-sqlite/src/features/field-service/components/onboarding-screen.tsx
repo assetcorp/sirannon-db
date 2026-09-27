@@ -1,21 +1,11 @@
 import { Alert, AlertDescription, AlertTitle } from '@delali/sirannon-example-shared/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@delali/sirannon-example-shared/ui/card'
-import { useNavigate } from '@tanstack/react-router'
 import { TriangleAlert, Wrench } from 'lucide-react'
-import { useCallback } from 'react'
-
+import { browserOnly } from '../../../lib/app-mode'
+import { DeviceNameForm } from './device-name-form'
 import { DevicePicker } from './device-picker'
 
-export function OnboardingScreen({ rejectedName }: { rejectedName?: string }) {
-  const navigate = useNavigate()
-
-  const handlePick = useCallback(
-    (name: string) => {
-      void navigate({ to: '/', search: { device: name } })
-    },
-    [navigate],
-  )
-
+export function OnboardingScreen({ rejectedName, onPick }: { rejectedName?: string; onPick: (name: string) => void }) {
   return (
     <main className="flex min-h-dvh items-center justify-center px-4 py-10">
       <div className="w-full max-w-md space-y-4">
@@ -25,7 +15,9 @@ export function OnboardingScreen({ rejectedName }: { rejectedName?: string }) {
           </div>
           <div>
             <h1 className="text-lg leading-tight font-bold">Field Service</h1>
-            <p className="text-muted-foreground text-sm">A Sirannon device sync example</p>
+            <p className="text-muted-foreground text-sm">
+              {browserOnly ? 'A Sirannon example on SQLite in the browser' : 'A Sirannon device sync example'}
+            </p>
           </div>
         </div>
 
@@ -41,12 +33,13 @@ export function OnboardingScreen({ rejectedName }: { rejectedName?: string }) {
           <CardHeader>
             <CardTitle>Name this device</CardTitle>
             <CardDescription>
-              Each device keeps its own SQLite database in this browser and syncs it with the server. Open the same page
-              in another tab under a different name and you have a second device.
+              {browserOnly
+                ? 'The app keeps the work orders for this device in a SQLite database in this browser. When you claim an order, the app puts this name on it.'
+                : 'Each device keeps its own SQLite database in this browser and syncs it with the server. Open the same page in another tab under a different name and you have a second device.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <DevicePicker onPick={handlePick} />
+            {browserOnly ? <DeviceNameForm label="Device name" onPick={onPick} /> : <DevicePicker onPick={onPick} />}
           </CardContent>
         </Card>
       </div>

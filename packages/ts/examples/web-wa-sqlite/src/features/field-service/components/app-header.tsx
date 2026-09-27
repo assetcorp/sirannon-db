@@ -1,10 +1,11 @@
 import { ThemeToggle } from '@delali/sirannon-example-shared/components/theme-toggle'
 import { readStoredChoice } from '@delali/sirannon-example-shared/theme'
+import { Badge } from '@delali/sirannon-example-shared/ui/badge'
 import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { Label } from '@delali/sirannon-example-shared/ui/label'
 import { Separator } from '@delali/sirannon-example-shared/ui/separator'
 import { Switch } from '@delali/sirannon-example-shared/ui/switch'
-import { Terminal, Wrench } from 'lucide-react'
+import { Smartphone, Terminal, Wrench } from 'lucide-react'
 import { useId, useState } from 'react'
 import { browserOnly } from '../../../lib/app-mode'
 
@@ -40,7 +41,14 @@ export function AppHeader({
         </div>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <DeviceDialog currentDevice={deviceName} />
+          {browserOnly ? (
+            <Badge variant="outline" className="h-8 gap-1.5 px-2.5">
+              <Smartphone aria-hidden="true" />
+              <span className="max-w-32 truncate font-mono text-[13px]">{deviceName}</span>
+            </Badge>
+          ) : (
+            <DeviceDialog currentDevice={deviceName} />
+          )}
           <Separator orientation="vertical" className="hidden h-6 sm:block" />
           <Button
             variant={consoleOpen ? 'secondary' : 'ghost'}

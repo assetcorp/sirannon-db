@@ -59,6 +59,11 @@ async function serverHasNote(id: number): Promise<boolean> {
   return (await serverDb.query('SELECT id FROM notes WHERE id = ?', [id])).length === 1
 }
 
+async function devicePullSubscribed(): Promise<boolean> {
+  const status = await controller?.status()
+  return status !== undefined && status.lastPulledSeq !== null
+}
+
 function startController(): Promise<void> {
   controller = new SyncController(deviceDb, {
     url: `http://127.0.0.1:${port}`,
@@ -107,6 +112,7 @@ describe('starting device sync with the server unreachable', () => {
     await startServer()
 
     await until(() => serverHasNote(1))
+    await until(devicePullSubscribed)
     await serverDb.execute("INSERT INTO notes (id, body) VALUES (2, 'written on the server')")
     await until(async () => (await deviceDb.query('SELECT id FROM notes WHERE id = 2')).length === 1)
   })

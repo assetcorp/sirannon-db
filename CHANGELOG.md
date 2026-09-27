@@ -1,3 +1,25 @@
+## 0.3.4 (2026-09-27)
+
+### 🚀 Features
+
+- add coding-agent skill and afterQuery error field ([447b033](https://github.com/assetcorp/sirannon-db/commit/447b033))
+- **ts:** implement optional dependency handling for uWebSockets.js and gRPC ([cce8a7e](https://github.com/assetcorp/sirannon-db/commit/cce8a7e))
+- **ts:** bound device CDC retention and recover from peer failures ([eff0ef0](https://github.com/assetcorp/sirannon-db/commit/eff0ef0))
+- **ts:** watch the controller lease before a standby bids ([f887977](https://github.com/assetcorp/sirannon-db/commit/f887977))
+- **ts:** isolate hook failures and sharpen commit and forwarding errors ([43c5897](https://github.com/assetcorp/sirannon-db/commit/43c5897))
+- **ts:** gate table subscriptions and ride out an unreachable server ([9c2ad68](https://github.com/assetcorp/sirannon-db/commit/9c2ad68))
+- **ts:** serve shared operations across every database ([9e8f6a3](https://github.com/assetcorp/sirannon-db/commit/9e8f6a3))
+- **ts:** give browser-only builds a local device flow ([5305856](https://github.com/assetcorp/sirannon-db/commit/5305856))
+
+### 🩹 Fixes
+
+- **ts:** reject capital letters in tenant IDs ([c7aae50](https://github.com/assetcorp/sirannon-db/commit/c7aae50))
+- **ts:** wait for device pull subscription in offline-start test ([684eaa9](https://github.com/assetcorp/sirannon-db/commit/684eaa9))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.3 (2026-08-26)
 
 ### 🩹 Fixes

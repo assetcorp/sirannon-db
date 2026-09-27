@@ -29,5 +29,5 @@ if (!db) throw new Error(`Unknown tenant '${tenantId}'`)
 - `resolve` returns `undefined` for an identifier outside `[a-zA-Z0-9][a-zA-Z0-9_-]*` or longer than 255 characters, so check its result.
 - Create `basePath` before the first `resolve`, because `open` refuses a missing directory.
 - `idleTimeout` and `maxOpen` default to off. At a full cap that it cannot free, `resolve` throws `MaxDatabasesError`.
-- For AI agents, build the identifier from the boundary that you want to keep, such as `${customerId}-${agentId}`.
+- For AI agents, build the identifier from the boundary that you want to keep, and put the length of the first part in front, as in `${customerId.length}_${customerId}_${agentId}`. With a plain `${customerId}-${agentId}`, customer `a-b` with agent `c` and customer `a` with agent `b-c` both map to `a-b-c`, so the registry would open one database for the two of them.
 - To delete a tenant, `await sirannon.close(id)`, then delete its file with any `-wal` and `-shm` files beside it.

@@ -2,9 +2,9 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from '@delali/sirann
 import { Button } from '@delali/sirannon-example-shared/ui/button'
 import { useNavigate } from '@tanstack/react-router'
 import { LoaderCircle, TriangleAlert, X } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { browserOnly } from '../../lib/app-mode'
-import { isValidDeviceName, normaliseDeviceName } from '../../lib/device-registry'
+import { isValidDeviceName, normaliseDeviceName, readLocalDevice, storeLocalDevice } from '../../lib/device-registry'
 import { claimWorkOrder, completeWorkOrder, createWorkOrder, reopenWorkOrder } from '../../lib/field-device'
 import { AppHeader } from './components/app-header'
 import { LockedScreen } from './components/locked-screen'
@@ -19,14 +19,57 @@ import { useFieldDevice } from './use-field-device'
 const CONSOLE_CLEARANCE_PX = 16
 
 export function FieldServiceApp({ deviceName }: { deviceName: string | undefined }) {
+  return browserOnly ? <LocalDeviceApp /> : <SyncedDeviceApp deviceName={deviceName} />
+}
+
+function SyncedDeviceApp({ deviceName }: { deviceName: string | undefined }) {
+  const navigate = useNavigate()
+
+  const handlePick = useCallback(
+    (picked: string) => {
+      void navigate({ to: '/', search: { device: picked } })
+    },
+    [navigate],
+  )
+
   if (deviceName === undefined) {
-    return <OnboardingScreen />
+    return <OnboardingScreen onPick={handlePick} />
   }
   const name = normaliseDeviceName(deviceName)
   if (!isValidDeviceName(name)) {
-    return <OnboardingScreen rejectedName={deviceName} />
+    return <OnboardingScreen rejectedName={deviceName} onPick={handlePick} />
   }
   return <DeviceWorkspace key={name} name={name} />
+}
+
+function LocalDeviceApp() {
+  const [name, setName] = useState<string | null | undefined>(undefined)
+
+  useEffect(() => {
+    setName(readLocalDevice())
+  }, [])
+
+  const handlePick = useCallback((picked: string) => {
+    const stored = readLocalDevice()
+    if (stored !== null) {
+      setName(stored)
+      return
+    }
+    storeLocalDevice(picked)
+    setName(picked)
+  }, [])
+
+  if (name === undefined) {
+    return null
+  }
+  if (name === null) {
+    return <OnboardingScreen onPick={handlePick} />
+  }
+  return <DeviceWorkspace key={name} name={name} />
+}
+
+function handleReload() {
+  window.location.reload()
 }
 
 function DeviceWorkspace({ name }: { name: string }) {
@@ -95,9 +138,15 @@ function DeviceWorkspace({ name }: { name: string }) {
             </AlertTitle>
             <AlertDescription>{openError}</AlertDescription>
           </Alert>
-          <Button variant="outline" className="w-full" onClick={handleChooseAnotherDevice}>
-            Choose another device
-          </Button>
+          {browserOnly ? (
+            <Button variant="outline" className="w-full" onClick={handleReload}>
+              Try again
+            </Button>
+          ) : (
+            <Button variant="outline" className="w-full" onClick={handleChooseAnotherDevice}>
+              Choose another device
+            </Button>
+          )}
         </div>
       </main>
     )

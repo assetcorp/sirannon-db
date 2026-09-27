@@ -53,7 +53,7 @@ grep -rl SyncController dist/client
 
 After a browser-only build, the search finds nothing. After `build` in place of `build:browser`, the same search finds the sync chunk.
 
-In this mode, the app leaves the sync switch out of the header. It also leaves out the status strip, the failure alert, and the snapshot panel, since none of them has anything to report without a server. Everything else stays, including the local database, the migration, the seed rows, the live query, and the SQL console. The output under `dist/client` is a directory of static files, so any static host can serve it.
+In this mode, the app leaves the sync switch and the device switch out of the header. It also leaves out the status strip, the failure alert, and the snapshot panel, since none of them has anything to report without a server. Everything else stays, including the local database, the migration, the seed rows, the live query, and the SQL console. The output under `dist/client` is a directory of static files, so any static host can serve it.
 
 ## Devices
 
@@ -61,7 +61,11 @@ On your first visit, the app asks you to name the device, because the name selec
 
 Only one tab at a time can open a device. Each tab takes a Web Lock on its device name, so the app refuses a second tab on the same name and shows that tab an explanation and a picker. Without that lock, two tabs on one name would share a single database file, so an edit in one tab would show up in the other through that shared file and look like sync.
 
+A browser-only build, however, opens one device in each browser, because without a server, a second device would hold a separate board that never receives the first device's work orders. On the first visit, the app asks for a device name and stores it in localStorage, so every later visit opens the same local database. The app ignores the `?device=` parameter in this mode. The app shows a second tab why the device is locked, with a button that reloads the page once you close the first tab.
+
 ## What to try
+
+In a browser-only build, try steps 1 and 7, since the other steps need the server. That build also leaves out the push count in step 1, because it has no status strip.
 
 1. **Claim a work order.** The card moves to `In progress` at once, because the write goes to the local database. Watch `Queued to push` go to 1 and back to 0 as the push loop drains the outbox.
 2. **Open a second device.** Use the device control in the header, or add `?device=van-2` in a second tab. A device that has never synced pushes the rows that it holds and then downloads a snapshot of the whole database, so it starts with everything that the first device already has.

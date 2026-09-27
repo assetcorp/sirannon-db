@@ -26,7 +26,8 @@ const db = await sirannon.resolve(tenantId)
 if (!db) throw new Error(`Unknown tenant '${tenantId}'`)
 ```
 
-- `resolve` returns `undefined` for an identifier outside `[a-zA-Z0-9][a-zA-Z0-9_-]*` or longer than 255 characters, so check its result.
+- `resolve` returns `undefined` for an identifier outside `[a-z0-9][a-z0-9_-]*` or one whose file name, `.db` included, is longer than 255 characters, so check its result. On 0.3.3, which also accepts capital letters, build identifiers from lowercase letters anyway, because on a file system that ignores case, such as the macOS and Windows defaults, `Acme` and `acme` open the same file.
+- When the ID that identifies a tenant in another system holds capital letters, give each tenant a lowercase ID of your own, such as a random UUID in lowercase, and store it against the other ID. `Acme` and `acme` both lowercase to `acme`, so lowercasing the other ID would put two of its tenants in one database.
 - Create `basePath` before the first `resolve`, because `open` refuses a missing directory.
 - `idleTimeout` and `maxOpen` default to off. At a full cap that it cannot free, `resolve` throws `MaxDatabasesError`.
 - For AI agents, build the identifier from the boundary that you want to keep, and put the length of the first part in front, as in `${customerId.length}_${customerId}_${agentId}`. With a plain `${customerId}-${agentId}`, customer `a-b` with agent `c` and customer `a` with agent `b-c` both map to `a-b-c`, so the registry would open one database for the two of them.

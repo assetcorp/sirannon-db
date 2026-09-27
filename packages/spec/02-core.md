@@ -399,6 +399,8 @@ LifecycleConfig {
 
 When `resolve(id)` finds no registered database and a resolver is configured, the registry calls the resolver, then opens and registers any path it returns. When `idleTimeout` is above zero, a recurring check (recommended interval `min(max(floor(timeout / 2), 100), 60000)` ms) closes the databases idle past the window. When the registry reaches `maxOpen`, it evicts the least-recently-used database to make room, or the open fails with `MAX_DATABASES` where it can evict nothing.
 
+A tenant resolver, which builds the file name from the identifier, must return a path only for an identifier that matches `^[a-z0-9][a-z0-9_-]*$` and whose file name, extension included, is at most 255 characters, and it must return null for every other identifier. The pattern excludes capital letters, because on a file system that ignores case, `Acme.db` and `acme.db` name the same file.
+
 ---
 
 ## Migrations

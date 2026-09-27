@@ -9,6 +9,12 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 - The **change log** is the `_sirannon_changes` table, where triggers record row-level inserts, updates, and deletes for watched tables. It serves subscriptions and replication, and it retains one hour by default.
 - The **write-ahead log**, or WAL, is the file SQLite appends committed changes to before folding them back into the main database file. The fold-back is a **checkpoint**, and a long-lived reader stops checkpoints from making progress.
 
+## Clients, devices, and nodes
+
+- A **client** is an application's connection to a Sirannon server over HTTP or WebSocket, through `SirannonClient` for one server or `TopologyAwareClient` for the nodes of a replication group. A client holds no local database.
+- A **device** is an end user's app holding a local Sirannon database that it keeps in step with one server database through device sync. A device is not a replication node, so call it a device, never a client or a replica.
+- A **replication node** is a Sirannon server in a replication group. Nodes replicate to each other over gRPC, and the node that opens a connection is a client only in the gRPC sense of that connection.
+
 ## Backup
 
 - A **backup chain** is one full copy of a database plus an ordered series of change pieces. The newest piece alone restores nothing, and the chain restores everything up to its end.

@@ -1,11 +1,11 @@
-/** Magic number at the front of a log whose checksums read their words little-endian.
+/** The magic number at the start of a log whose checksums treat each word as little-endian.
  * @internal
  */
 export const MAGIC_WITH_LITTLE_ENDIAN_CONTENT = 0x377f0682
 
 const MAGIC_WITH_BIG_ENDIAN_CONTENT = 0x377f0683
 
-/** Log format version SQLite writes into the header, and the only one it reads.
+/** The log format version that SQLite writes into the header, and the only version that SQLite accepts.
  * @internal
  */
 export const LOG_FORMAT_VERSION = 3007000
@@ -13,73 +13,73 @@ export const LOG_FORMAT_VERSION = 3007000
 const SMALLEST_PAGE_BYTES = 512
 const LARGEST_PAGE_BYTES = 65536
 
-/** Bytes in the header at the front of a write-ahead log.
+/** The size in bytes of the header at the start of a write-ahead log.
  * @internal
  */
 export const LOG_HEADER_BYTES = 32
 
-/** Bytes in the header in front of every log frame.
+/** The size in bytes of the header before every log frame.
  * @internal
  */
 export const LOG_FRAME_HEADER_BYTES = 24
 
-/** The two halves of the running checksum SQLite keeps down a write-ahead log.
+/** The two halves of the running checksum that SQLite computes along a write-ahead log.
  * @internal
  */
 export interface LogChecksum {
-  /** The half SQLite stores as checksum-1. */
+  /** The half that SQLite stores as checksum-1. */
   first: number
-  /** The half SQLite stores as checksum-2. */
+  /** The half that SQLite stores as checksum-2. */
   second: number
 }
 
-/** The first 32 bytes of a write-ahead log.
+/** The fields in the first 32 bytes of a write-ahead log.
  * @internal
  */
 export interface LogHeader {
-  /** Size of one database page, in bytes. */
+  /** The size of one database page, in bytes. */
   pageSize: number
-  /** Size of one frame, being its 24-byte header plus one page. */
+  /** The size of one frame, which is its 24-byte header plus one page. */
   frameBytes: number
-  /** Checkpoint sequence number. SQLite adds one to it every time it restarts the log. */
+  /** The checkpoint sequence number. SQLite adds one to it each time it restarts the log. */
   logSequence: number
-  /** First salt. A restart of the log changes it. */
+  /** The first salt, which SQLite changes each time it restarts the log. */
   salt1: number
-  /** Second salt. A restart changes this one too. */
+  /** The second salt, which SQLite also changes at each restart. */
   salt2: number
-  /** Checksum over the first 24 bytes. The checksum of frame one starts from here. */
+  /** The checksum over the first 24 bytes, which the checksum of frame one continues from. */
   checksum: LogChecksum
-  /** Whether the checksum takes the byte stream as big-endian words. */
+  /** Whether SQLite computes the checksum over big-endian words. */
   bigEndianContent: boolean
 }
 
-/** The 24 bytes in front of one log frame.
+/** The fields in the 24-byte header before one log frame.
  * @internal
  */
 export interface LogFrameHeader {
-  /** Number of the database page in this frame. */
+  /** The number of the database page in this frame. */
   pageNumber: number
-  /** Size of the database in pages once this frame commits. A frame that commits nothing holds zero here. */
+  /** The size of the database in pages after this frame commits, or zero for a frame that commits no transaction. */
   databasePages: number
-  /** First salt, copied from the log header. */
+  /** The first salt, copied from the log header. */
   salt1: number
-  /** Second salt, copied from the log header. */
+  /** The second salt, copied from the log header. */
   salt2: number
-  /** Running checksum up to and including this frame. */
+  /** The running checksum up to and including this frame. */
   checksum: LogChecksum
 }
 
 /**
- * Continues the running checksum SQLite writes down a log, over one more run of
- * bytes. The magic number at the front of the log sets the byte order of the
- * 32-bit words that run is taken as.
+ * Continues the running checksum of a log over one more range of bytes. The
+ * magic number at the start of the log sets the byte order of the 32-bit words
+ * in that range.
  *
- * @param view - Bytes to fold in.
- * @param offset - Where the run starts.
- * @param byteLength - How far the run goes, always a multiple of eight bytes.
- * @param bigEndianContent - Whether to take the words as big-endian.
- * @param seed - The checksum this run continues from.
- * @returns The checksum once the run is folded in.
+ * @param view - The bytes to add to the checksum.
+ * @param offset - The start of the range.
+ * @param byteLength - The length of the range, which must be a multiple of eight bytes.
+ * @param bigEndianContent - Whether to read the words as big-endian.
+ * @param seed - The checksum to continue from.
+ * @returns The checksum after the range.
  */
 export function foldLogChecksum(
   view: DataView,
@@ -100,12 +100,12 @@ export function foldLogChecksum(
 }
 
 /**
- * Reads the header at the front of a write-ahead log, checked against the
- * checksum stored inside it. A torn header, or a file that is no log at all,
- * comes back as undefined.
+ * Reads the header at the start of a write-ahead log and checks it against the
+ * checksum that it stores. This returns undefined for a torn header, or for a
+ * file that is not a log.
  *
  * @param bytes - At least the first 32 bytes of the log file.
- * @returns The header, or undefined where those bytes are no log Sirannon can read.
+ * @returns The header, or undefined where those bytes hold no valid log header.
  */
 export function readLogHeader(bytes: Uint8Array): LogHeader | undefined {
   if (bytes.byteLength < LOG_HEADER_BYTES) return undefined
@@ -136,11 +136,11 @@ export function readLogHeader(bytes: Uint8Array): LogHeader | undefined {
 }
 
 /**
- * Reads the 24 bytes in front of one frame.
+ * Reads the 24-byte header before one frame.
  *
- * @param view - Bytes holding the frame.
- * @param offset - Where the frame starts.
- * @returns What that header states.
+ * @param view - The bytes that hold the frame.
+ * @param offset - The start of the frame.
+ * @returns The fields of that header.
  */
 export function readLogFrameHeader(view: DataView, offset: number): LogFrameHeader {
   return {
@@ -153,17 +153,17 @@ export function readLogFrameHeader(view: DataView, offset: number): LogFrameHead
 }
 
 /**
- * Checks that one frame follows the frame before it. Two things have to hold:
- * the frame's salts still match the log header, and its stored checksum matches
- * the running checksum over its own first eight bytes and its page. A frame
- * left behind by a rolled-back transaction fails that second test, which is how
- * Sirannon tells a live frame from a dead one.
+ * Checks that one frame follows the frame before it. The salts of the frame
+ * must match the log header, and its stored checksum must match the running
+ * checksum over its first eight bytes and its page. A frame that a rolled-back
+ * transaction leaves in the file fails the checksum test, which is how Sirannon
+ * tells a valid frame from a stale one.
  *
- * @param view - Bytes holding the frame.
- * @param offset - Where the frame starts.
- * @param header - Header of the log the frame belongs to.
- * @param seed - The checksum the previous frame left, or the header's own for frame one.
- * @returns The frame header and the checksum it leaves, or undefined where the frame does not follow.
+ * @param view - The bytes that hold the frame.
+ * @param offset - The start of the frame.
+ * @param header - The header of the log that holds the frame.
+ * @param seed - The checksum after the previous frame, or the checksum of the log header for frame one.
+ * @returns The frame header and the running checksum after it, or undefined where the frame does not follow.
  */
 export function readValidLogFrame(
   view: DataView,
@@ -187,11 +187,11 @@ export function readValidLogFrame(
 }
 
 /**
- * Gives the byte offset one frame starts at in the log file.
+ * Returns the byte offset of one frame in the log file.
  *
  * @param frameNumber - The frame, counted from one.
- * @param frameBytes - Size of one frame in bytes.
- * @returns Its byte offset.
+ * @param frameBytes - The size of one frame, in bytes.
+ * @returns The byte offset of the frame.
  */
 export function logFrameOffset(frameNumber: number, frameBytes: number): number {
   return LOG_HEADER_BYTES + (frameNumber - 1) * frameBytes

@@ -18,7 +18,7 @@ function normaliseClientUrl(url: string): string {
 }
 
 /**
- * Connects to one sirannon-db server and hands out a {@link RemoteDatabase} per database.
+ * Connects to one sirannon-db server and returns a {@link RemoteDatabase} for each database on it.
  *
  * @public
  */
@@ -31,7 +31,7 @@ export class SirannonClient extends DatabaseClient {
   }
 
   /**
-   * Builds the transport a database's requests travel over.
+   * Builds the transport that sends one database's requests.
    *
    * @param databaseId - Identifier of the database.
    * @returns A transport bound to that database.
@@ -41,7 +41,7 @@ export class SirannonClient extends DatabaseClient {
   }
 
   /**
-   * Returns the address requests are sent to.
+   * Returns the address that this client sends requests to.
    *
    * @returns The server's base address.
    */

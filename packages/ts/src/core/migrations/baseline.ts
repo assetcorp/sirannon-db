@@ -49,17 +49,19 @@ export function resolveEffectiveBaseline(sorted: Migration[]): Migration | undef
 }
 
 /**
- * Marks the migration an existing database starts from, so earlier versions are recorded without running.
+ * Marks one migration file as a baseline, which a new database runs in place of every version up to and including `through`.
+ *
+ * A database that already has migration history skips the baseline and applies only the versions that it lacks.
  *
  * @public
  */
 export interface BaselineFileOption {
   /**
-   * Version of the migration carrying the baseline.
+   * The version of the migration that acts as the baseline.
    */
   version: number
   /**
-   * Highest version this baseline covers.
+   * The highest earlier version that a new database skips in favour of the baseline.
    */
   through: number
 }

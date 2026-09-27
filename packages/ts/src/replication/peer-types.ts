@@ -1,26 +1,28 @@
+import type { WriteConcern } from '../core/query-types.js'
+
 /**
- * What one node records about a peer it is connected to.
+ * Describes a connected peer, as the transport records it.
  *
  * @public
  */
 export interface NodeInfo {
-  /** Identifier of the peer. */
+  /** Identifies the peer. */
   id: string
-  /** Replication group the peer belongs to. */
+  /** Identifies the peer's replication group. */
   groupId?: string
-  /** Whether the peer accepts writes or serves reads. */
+  /** Records whether the peer is the primary or a replica. */
   role: 'primary' | 'replica'
-  /** Primary term the peer holds. */
+  /** Holds the primary term that the peer reports. */
   primaryTerm?: bigint
-  /** Replication protocol version the peer speaks. */
+  /** Holds the replication protocol version that the peer uses. */
   protocolVersion?: string
-  /** Milliseconds since the Unix epoch, taken when the peer connected. */
+  /** Holds the time, in milliseconds since the Unix epoch, at which the peer connected. */
   joinedAt: number
-  /** Milliseconds since the Unix epoch, taken at the last message from the peer. */
+  /** Holds the time, in milliseconds since the Unix epoch, of the last message from the peer. The bundled transports set it only when the peer connects. */
   lastSeenAt: number
-  /** Highest change-log position the peer has acknowledged. */
+  /** Holds the highest change-log position that the peer acknowledges. The bundled transports set it to `0n` only when the peer connects, while {@link PeerState.lastAckedSeq} follows each acknowledgement. */
   lastAckedSeq: bigint
-  /** Anything else the transport attached about the peer. */
+  /** Holds any other data that the transport attaches about the peer. */
   metadata?: Record<string, unknown>
 }
 
@@ -30,84 +32,86 @@ export interface NodeInfo {
  * @public
  */
 export interface ReplicationAck {
-  /** Identifier of the batch being acknowledged. */
+  /** Identifies the batch that the node acknowledges. */
   batchId: string
-  /** Highest change-log position the sender has now applied. */
+  /** Holds the highest change-log position that the sender applied. */
   ackedSeq: bigint
-  /** Identifier of the node sending the acknowledgement. */
+  /** Identifies the node that sends the acknowledgement. */
   nodeId: string
-  /** Replication group the sender belongs to. */
+  /** Identifies the sender's replication group. */
   groupId?: string
-  /** Primary term the sender reports as current. */
+  /** Holds the primary term that the sender reports as current. */
   primaryTerm?: bigint
 }
 
 /**
- * A write a replica sends to the primary, because it accepts no writes itself.
+ * Describes a write that a replica sends to the primary, because the replica cannot accept writes itself.
  *
  * @public
  */
 export interface ForwardedTransaction {
-  /** The statements to run, in order, each with its own parameters. */
+  /** Lists the statements to execute, in order, each with its own parameters. */
   statements: Array<{ sql: string; params?: Record<string, unknown> | unknown[] }>
-  /** Identifier the result echoes, so the replica matches it to the request. */
+  /** Identifies this forwarded request. */
   requestId: string
-  /** Replication group the forwarding replica belongs to. */
+  /** Identifies the forwarding replica's replication group. */
   groupId?: string
-  /** Primary term the replica reports as current. */
+  /** Holds the primary term that the replica reports as current. */
   primaryTerm?: bigint
+  /** The write concern that the caller states, which the primary waits for before it replies; without one, the primary applies its own default. */
+  writeConcern?: WriteConcern
 }
 
 /**
- * What the primary reports back for a write a replica forwarded to it.
+ * Describes the result that the primary returns for a forwarded write.
  *
  * @public
  */
 export interface ForwardedTransactionResult {
-  /** One result per statement, in the order the primary ran them. */
+  /** Holds one result per statement, in the order that the primary executed them. */
   results: Array<{ changes: number; lastInsertRowId: number | string }>
-  /** Identifier the request carried. */
+  /** Holds the request ID that the primary generates for this execution, which differs from the ID in the forwarded request. */
   requestId: string
-  /** Replication group the primary belongs to. */
+  /** Identifies the primary's replication group. */
   groupId?: string
-  /** Primary term the primary held when it ran the write. */
+  /** Holds the term under which the primary executed the write. */
   primaryTerm?: bigint
 }
 
 /**
- * One batch a node has sent and is still waiting to see acknowledged.
+ * Describes one batch that this node sent and that its peer has yet to acknowledge.
  *
  * @public
  */
 export interface InFlightBatch {
-  /** Identifier of the batch. */
+  /** Identifies the batch. */
   batchId: string
-  /** Change-log position of its first change. */
+  /** Holds the change-log position of the batch's first change. */
   fromSeq: bigint
-  /** Change-log position of its last change. */
+  /** Holds the change-log position of the batch's last change. */
   toSeq: bigint
-  /** Milliseconds since the Unix epoch, taken when the batch was sent. */
+  /** Holds the time, in milliseconds since the Unix epoch, at which this node sent the batch. */
   sentAt: number
 }
 
 /**
- * Where one peer stands from this node's point of view.
+ * Describes one peer's replication progress, as this node tracks it.
  *
  * @public
  */
 export interface PeerState {
-  /** Identifier of the peer. */
+  /** Identifies the peer. */
   nodeId: string
-  /** Highest change-log position the peer has acknowledged. */
+  /** Holds the highest change-log position among the peer's acknowledgements. */
   lastAckedSeq: bigint
-  /** Highest change-log position this node has sent it. */
+  /** Holds the change-log position up to which this node sends batches to the peer. A timeout or a failed send moves it back. */
   lastSentSeq: bigint
-  /** Most recent hybrid logical clock stamp received from the peer. */
+  /** Holds the highest hybrid logical clock stamp in any batch that this node has applied from the peer, and an empty string until the first such batch. */
   lastReceivedHlc: string
-  /** Whether the transport holds an open connection to the peer. */
+  /** Is true while the transport has an open connection to the peer. */
   connected: boolean
-  /** Batches waiting to be sent to the peer. */
+  /** Counts the batches that this node sent to the peer and that await acknowledgement. */
   pendingBatches: number
-  /** Batches sent to the peer and not yet acknowledged. */
+  /** Lists the batches that this node sent to the peer and that the peer has yet to acknowledge. */
   inFlightBatches: InFlightBatch[]
 }

@@ -2,8 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChangeTracker } from '../../cdc/change-tracker.js'
 import { SubscriptionManager, startPolling } from '../../cdc/subscription.js'
 import type { SQLiteConnection } from '../../driver/types.js'
+import { CHANGES_TABLE } from '../../internal-tables.js'
+import { ensureDeviceCursorsTable, upsertDeviceCursor } from '../../system-catalog/index.js'
 import type { ChangeEvent } from '../../types.js'
 import { createTestDb, insertUser } from './_helpers.js'
+
+const DEVICE_ID = 'aaaa0000aaaa0000aaaa0000aaaa0000'
+
+async function changeCount(conn: SQLiteConnection): Promise<number> {
+  const stmt = await conn.prepare(`SELECT COUNT(*) AS total FROM ${CHANGES_TABLE}`)
+  const row = (await stmt.get()) as { total: number }
+  return Number(row.total)
+}
 
 describe('startPolling', () => {
   let conn: SQLiteConnection
@@ -153,6 +163,34 @@ describe('startPolling', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0]).toBeInstanceOf(Error)
     expect(errors[0].message).toContain('poll failed as string')
+  })
+
+  it('keeps a change no device has acknowledged while it deletes older ones', async () => {
+    manager.subscribe('users', undefined, () => {})
+    const pruning = new ChangeTracker({ retention: 0 })
+    await pruning.watch(conn, 'users')
+    await insertUser(conn, 'Alice')
+    await ensureDeviceCursorsTable(conn)
+    await upsertDeviceCursor(conn, DEVICE_ID, 0n, Date.now() / 1000)
+
+    const stop = startPolling(conn, pruning, manager, 10)
+    await vi.advanceTimersByTimeAsync(1000)
+    stop()
+
+    expect(await changeCount(conn)).toBe(1)
+  })
+
+  it('deletes an old change once no device cursor holds it', async () => {
+    manager.subscribe('users', undefined, () => {})
+    const pruning = new ChangeTracker({ retention: 0 })
+    await pruning.watch(conn, 'users')
+    await insertUser(conn, 'Alice')
+
+    const stop = startPolling(conn, pruning, manager, 10)
+    await vi.advanceTimersByTimeAsync(1000)
+    stop()
+
+    expect(await changeCount(conn)).toBe(0)
   })
 
   it('runs tracker cleanup after each 100 successful ticks', async () => {

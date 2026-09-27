@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { OperationArguments, OperationRegistry } from '../../core/operation-registry.js'
+import type { DatabaseOperations, OperationArguments, OperationRegistry } from '../../core/operation-registry.js'
+import { operationRegistryDigest } from '../../server/operation-lookup.js'
 import { buildOperationManifest, selectColumns } from '../manifest.js'
 import { renderOperationTypes } from '../render.js'
 
@@ -37,6 +38,12 @@ const registry: OperationRegistry<Identity> = {
         }),
       },
     },
+  },
+}
+
+const sharedOperations: DatabaseOperations<Identity> = {
+  reads: {
+    openInvoices: { statement: () => ({ sql: 'SELECT id, amount FROM invoices WHERE paid = 0' }) },
   },
 }
 
@@ -116,6 +123,22 @@ describe('buildOperationManifest', () => {
 
     expect(manifest.databases.shop.reads.orders.columns).toEqual(['id', 'reference'])
   })
+
+  it('describes the shared operations apart from every database', () => {
+    const manifest = buildOperationManifest(registry, sharedOperations)
+
+    expect(manifest.shared?.reads.openInvoices).toEqual({ args: [], identityArgs: [], columns: ['id', 'amount'] })
+    expect(manifest.databases.shop.reads.openInvoices).toBeUndefined()
+    expect(buildOperationManifest(registry).shared).toBeUndefined()
+  })
+
+  it('keeps the digest of a registry without shared operations, and changes it when a shared set appears', () => {
+    const withoutShared = buildOperationManifest(registry).digest
+
+    expect(operationRegistryDigest(registry, undefined)).toBe(withoutShared)
+    expect(buildOperationManifest(registry, sharedOperations).digest).not.toBe(withoutShared)
+    expect(operationRegistryDigest({}, sharedOperations)).not.toBe(operationRegistryDigest({ '': sharedOperations }))
+  })
 })
 
 describe('selectColumns', () => {
@@ -167,6 +190,23 @@ describe('renderOperationTypes', () => {
     })
 
     expect(() => renderOperationTypes(colliding)).toThrow(/both generate the identifier 'my_db'/)
+  })
+
+  it('writes one reference set for the operations shared by every database', () => {
+    const generated = renderOperationTypes(buildOperationManifest(registry, sharedOperations))
+
+    expect(generated).toContain('export interface SharedOpenInvoicesRow {')
+    expect(generated).toContain('export const sharedOperations = {')
+    expect(generated).toContain(
+      '    openInvoices: { name: "openInvoices" } as OperationRef<Record<string, never>, SharedOpenInvoicesRow>,',
+    )
+    expect(generated).toContain('export const shop = {')
+  })
+
+  it('names both sets when a database generates the shared identifier', () => {
+    const colliding = buildOperationManifest({ sharedOperations: { reads: {} } }, sharedOperations)
+
+    expect(() => renderOperationTypes(colliding)).toThrow(/both generate the identifier 'sharedOperations'/)
   })
 
   it('imports from the module the caller names', () => {

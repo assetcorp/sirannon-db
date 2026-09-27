@@ -13,6 +13,7 @@ import {
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
 import { pollChanges, readSinceTables } from './change-log-reader.js'
+import { PruneBoundaries, type PruneBoundarySource, seqBoundFor } from './prune-boundaries.js'
 import { StatementCache } from './statement-cache.js'
 import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
@@ -22,9 +23,9 @@ const DEFAULT_POLL_BATCH_SIZE = 1000
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 /**
- * Records every change to the tables you watch so that subscribers and replication can read them in order.
+ * Records every insert, update, and delete on each table that you watch as a row in the change log, so that subscribers and replication can consume the changes in order.
  *
- * Construct one, watch the tables you want captured, and pass it to a replication engine or leave it to the database that owns it.
+ * Once you watch each table that you want to capture, you can pass the tracker to a replication engine.
  *
  * @public
  */
@@ -38,7 +39,7 @@ export class ChangeTracker {
   private changesTableEnsured = false
   private watchedTablesCache: ReadonlySet<string> | null = null
   private readonly stmtCache = new StatementCache()
-  private pruneBoundary: bigint | null = null
+  private readonly pruneBoundaries = new PruneBoundaries()
   private lastPollAtTxBoundary = true
 
   constructor(options?: ChangeTrackerOptions) {
@@ -50,10 +51,10 @@ export class ChangeTracker {
   }
 
   /**
-   * Starts recording changes to a table by installing its change-capture triggers.
+   * Installs change-capture triggers on a table, so that every later write to it adds a row to the change log.
    *
-   * @param conn - Writer connection the triggers are created on.
-   * @param table - Name of the table to watch.
+   * @param conn - The writer connection on which the tracker creates the triggers.
+   * @param table - The name of the table to watch.
    */
   async watch(conn: SQLiteConnection, table: string): Promise<void> {
     this.assertIdentifier(table, 'table name')
@@ -91,10 +92,10 @@ export class ChangeTracker {
   }
 
   /**
-   * Stops recording changes to a table and drops its triggers.
+   * Drops a table's change-capture triggers and removes the table from the watched set.
    *
-   * @param conn - Writer connection the triggers are dropped from.
-   * @param table - Name of the table to stop watching.
+   * @param conn - The writer connection on which the tracker drops the triggers.
+   * @param table - The name of the table to stop watching.
    */
   async unwatch(conn: SQLiteConnection, table: string): Promise<void> {
     if (!this.watched.has(table)) {
@@ -107,29 +108,17 @@ export class ChangeTracker {
   }
 
   /**
-   * Rebuilds CDC triggers for every watched table directly on the supplied
-   * connection, without opening a nested transaction.
+   * Rebuilds the change-capture triggers on `conn` for every watched table
+   * whose column list has changed, without opening a nested transaction.
    *
-   * Required when a caller has already issued `BEGIN` on `conn` and runs a
-   * DDL statement that changes a watched table's column list: the next DML
-   * inside the same transaction must see triggers compiled against the new
-   * columns, otherwise CDC `new_data` silently omits them. Callers that are
-   * not inside an active transaction may also use this method; CREATE
-   * TRIGGER and DROP TRIGGER statements are committed individually by the
-   * driver in that case.
-   *
-   * Failure semantics:
-   * - If a watched table no longer exists (e.g. it was just dropped by the
-   *   DDL), it is skipped. The watched-map entry is left alone so a separate
-   *   cleanup path can handle it; throwing here would roll back the user's
-   *   transaction over a benign condition.
-   * - If reading column metadata succeeds but the column list is unchanged,
-   *   no triggers are touched.
-   * - If reading column metadata succeeds and the column list differs from
-   *   the cached one, the existing triggers are dropped and reinstalled on
-   *   `conn`. The cached column list is updated on success.
-   * - Any other error (driver failure, identifier validation failure) is
-   *   rethrown so the caller's transaction can roll back deterministically.
+   * Call it after a DDL statement inside an open transaction, so that the next
+   * write in that transaction records the new columns in `new_data`. You can
+   * also call it outside a transaction, in which case SQLite commits each
+   * `CREATE TRIGGER` and `DROP TRIGGER` statement on its own. The method skips
+   * a watched table that no longer exists, and it leaves that table's entry for
+   * `pruneDroppedTables` to remove after the commit. A
+   * driver error or an invalid column name propagates to the caller, so that
+   * the caller can roll back its transaction.
    *
    * @internal
    */
@@ -166,24 +155,16 @@ export class ChangeTracker {
   }
 
   /**
-   * Removes the supplied tables from the watched map and drops any leftover
-   * CDC triggers carrying their identifier on the supplied connection.
+   * Drops the change-capture triggers of each named table that the tracker
+   * watches, and removes that table from the watched set.
    *
-   * Intended to be called after a DDL transaction that dropped one or more
-   * watched tables has committed. On rollback the caller must not invoke
-   * this method; the rollback semantics rely on the caller discarding its
-   * captured drop list before reaching this call.
-   *
-   * Idempotent: tables not currently in the watched map are silently
-   * skipped. `dropCdcTriggers` issues `DROP TRIGGER IF EXISTS` so calling
-   * twice in succession produces the same state.
-   *
-   * Defence in depth: even after a `DROP TABLE`, the in-transaction trigger
-   * refresh path may have observed a freshly-created table of the same name
-   * (the DROP and CREATE happened inside the same transaction) and
-   * re-installed triggers compiled against the new schema. Those triggers
-   * are dropped here so the recreated table starts with a clean slate and
-   * the caller must explicitly `watch` it again.
+   * Call it once a transaction that drops watched tables commits, and skip the
+   * call when that transaction rolls back. The method skips each table outside
+   * the watched set and issues `DROP TRIGGER IF EXISTS`, so a second call leaves
+   * the same state. When one transaction drops a table and creates another with
+   * the same name, `refreshAllTriggersUsingConnection` can
+   * install triggers on the new table. This method drops those triggers too, so
+   * you have to call `watch` again for the new table.
    *
    * @internal
    */
@@ -230,7 +211,7 @@ export class ChangeTracker {
   }
 
   /**
-   * The highest seq already polled; live subscribers receive events beyond it.
+   * Returns the sequence number of the last change that the tracker polled or skipped with `advanceToLatest`, so live subscribers receive only later changes.
    *
    * @internal
    */
@@ -258,7 +239,7 @@ export class ChangeTracker {
   }
 
   /**
-   * The lowest retained seq, or `null` when the change log is empty.
+   * Returns the lowest sequence number in the change log, or `null` when the log is empty or missing.
    *
    * @internal
    */
@@ -322,13 +303,18 @@ export class ChangeTracker {
   }
 
   /** @internal */
-  setPruneBoundary(seq: bigint): void {
-    this.pruneBoundary = seq
+  setPruneBoundary(source: PruneBoundarySource, seq: bigint): void {
+    this.pruneBoundaries.set(source, seq)
   }
 
   /** @internal */
-  clearPruneBoundary(): void {
-    this.pruneBoundary = null
+  clearPruneBoundary(source: PruneBoundarySource): void {
+    this.pruneBoundaries.clear(source)
+  }
+
+  /** @internal */
+  get changeLogTable(): string {
+    return this.changesTable
   }
 
   /** @internal */
@@ -340,21 +326,7 @@ export class ChangeTracker {
   }
 
   private computeSeqBound(): bigint | null {
-    const boundary = this.pruneBoundary
-
-    if (this.lastSeq > 0n && boundary !== null) {
-      return this.lastSeq < boundary ? this.lastSeq : boundary
-    }
-
-    if (boundary !== null) {
-      return boundary
-    }
-
-    if (this.lastSeq > 0n) {
-      return this.lastSeq
-    }
-
-    return null
+    return seqBoundFor(this.pruneBoundaries.lowest(), this.lastSeq)
   }
 
   private assertIdentifier(name: string, label: string): void {

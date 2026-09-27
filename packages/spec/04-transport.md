@@ -188,6 +188,8 @@ message ForwardRequest {
   repeated Statement statements = 2;
   string group_id    = 3;
   int64  primary_term = 4;
+  string write_concern_level = 5;
+  uint32 write_concern_timeout_ms = 6;
 }
 
 message StatementResult { int32 changes = 1; int64 last_insert_row_id = 2; }
@@ -198,12 +200,13 @@ message ForwardResponse {
   string error       = 3;
   string group_id    = 4;
   int64  primary_term = 5;
+  string error_code  = 6;
 }
 ```
 
 ### Value Encoding on the Wire
 
-A `ColumnValue` carries the native SQLite value with no tagged envelope: null, string, 64-bit integer, double, byte array, or boolean. Any integer decodes back as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty string or 0 and decodes back to absent. A `Statement` carries either `named_params` or `positional_params`; when both are populated, the receiver uses `named_params`.
+A `ColumnValue` carries the native SQLite value with no tagged envelope: null, string, 64-bit integer, double, byte array, or boolean. Any integer decodes back as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty string or 0 and decodes back to absent. A `Statement` carries either `named_params` or `positional_params`; when both are populated, the receiver uses `named_params`. An absent write concern encodes as an empty `write_concern_level`, and an absent `timeoutMs` as 0; the receiver rejects any level other than `local`, `majority`, or `all`. A failed `Forward` sets `error` to the message and `error_code` to the error's code, and the forwarding node raises an error with that code, so that its caller receives `STALE_PRIMARY` or `WRITE_CONCERN_ERROR` as the primary raised it.
 
 ### Term Fields
 
@@ -213,7 +216,7 @@ A `ColumnValue` carries the native SQLite value with no tagged envelope: null, s
 
 ## Connection Model
 
-In static mode the primary runs the gRPC server and replicas connect as clients: a replica opens the `Replicate` bidirectional stream (the primary writes batches, the replica writes acks), calls `Forward` as a unary RPC, and opens the `Sync` bidirectional stream for first sync. A node starts its gRPC server when its local role is `primary` or a `groupId` is configured. In coordinator mode every data-bearing node may expose the server, and replicas replicate from the current recorded primary; when the primary changes, replicas close stale streams and connect to the new primary for the new term. The transport itself does not reconnect on stream loss.
+In static mode the primary runs the gRPC server and replicas connect as clients: a replica opens the `Replicate` bidirectional stream (the primary writes batches, the replica writes acks), calls `Forward` as a unary RPC, and opens the `Sync` bidirectional stream for first sync. A node starts its gRPC server when its local role is `primary` or a `groupId` is configured. In coordinator mode every data-bearing node may expose the server, and replicas replicate from the current recorded primary; when the primary changes, replicas close stale streams and connect to the new primary for the new term. On stream loss the transport redials that endpoint while it stays connected, waiting longer before each attempt and returning to the shortest wait once the endpoint answers, and it stops dialling once the transport disconnects. A pending redial must hold the host process open, so a replica whose primary stops stays up until it reconnects. A transport that disconnects stops its gRPC server within a bounded time and cancels any stream a peer still holds open, so a node reconnects without waiting on that peer.
 
 ### Peer Identity
 

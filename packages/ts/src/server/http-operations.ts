@@ -1,5 +1,5 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import type { OperationArguments, OperationRegistry, OperationStatement } from '../core/operation-registry.js'
+import type { OperationArguments, OperationStatement } from '../core/operation-registry.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
@@ -12,7 +12,7 @@ import {
   sendError,
   sendJson,
 } from './http-common.js'
-import { findRead, findWrite, isRefusal, resolveArguments } from './operation-lookup.js'
+import { findRead, findWrite, isRefusal, type OperationSets, resolveArguments } from './operation-lookup.js'
 import { decodeBoundParams, toExecuteResponse } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
 
@@ -52,11 +52,11 @@ function decodeArguments(res: HttpResponse, raw: Record<string, unknown> | undef
 
 export function handleOperationQuery<I>(
   sirannon: Sirannon,
-  registry: OperationRegistry<I> | undefined,
+  sets: OperationSets<I>,
   resolveTarget?: ServerExecutionTargetResolver,
 ): OperationRouteHandler {
   return async (res, dbId, name, identity, rawBody, abort) => {
-    const operation = findRead(registry, dbId, name)
+    const operation = findRead(sets, dbId, name)
     if (isRefusal(operation)) {
       sendError(res, operation.status, operation.code, operation.message)
       return
@@ -105,11 +105,11 @@ export function handleOperationQuery<I>(
 
 export function handleOperationExecute<I>(
   sirannon: Sirannon,
-  registry: OperationRegistry<I> | undefined,
+  sets: OperationSets<I>,
   resolveTarget?: ServerExecutionTargetResolver,
 ): OperationRouteHandler {
   return async (res, dbId, name, identity, rawBody, abort) => {
-    const operation = findWrite(registry, dbId, name)
+    const operation = findWrite(sets, dbId, name)
     if (isRefusal(operation)) {
       sendError(res, operation.status, operation.code, operation.message)
       return

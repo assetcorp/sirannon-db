@@ -9,13 +9,13 @@ const MAX_CATCHUP_READ_BATCH = 1_000
 const MIN_CATCHUP_READ_BATCH = 32
 
 /**
- * How the delivery window paces the stream. `perTransaction` is the
- * contract for a device that applies a transaction from memory: the window
- * is checked only before a new transaction starts so that a transaction larger
- * than the window is still delivered whole. `perEvent` is the contract for
- * a device that stages to disk and acknowledges staged changes: the window
- * may pause the stream anywhere, because acknowledgements keep arriving
- * mid-transaction.
+ * How the delivery window paces the stream. Under `perTransaction`, which suits
+ * a device that applies each transaction from memory, the stream checks the
+ * window only before a new transaction starts, so the device receives a
+ * transaction larger than the window whole. Under `perEvent`, which suits a
+ * device that stages changes to disk and acknowledges them as it stages them,
+ * the stream can pause at any event, because the device keeps sending
+ * acknowledgements in the middle of a transaction.
  */
 export type DeviceStreamPacing = 'perTransaction' | 'perEvent'
 
@@ -39,14 +39,14 @@ export interface DeviceStreamDeps {
 /**
  * Streams the change log to one device subscription with bounded memory.
  *
- * In `live` mode events flow straight from the poller through a one-event
- * lookahead that resolves the `txEnd` flag, so at most one event is ever
- * held back. Whenever the stream cannot send, because the delivery window is
- * full or the socket reports backpressure, it switches to `catchup` mode:
- * nothing is buffered, the position of the last queued event is remembered,
- * and the gap is re-read from the change log once an acknowledgement or a
- * socket drain reopens the way. The change log is the buffer; retention
- * already keeps every row a live device has not acknowledged.
+ * In `live` mode, the poller passes each event through a one-event lookahead
+ * that sets the `txEnd` flag, so the stream holds back at most one event. When
+ * the stream cannot send, because the delivery window is full or uWebSockets
+ * reports backpressure on the socket, it switches to `catchup` mode. In that mode it buffers
+ * no events and records the position where it stopped, then reads the missing
+ * range from the change log once the device acknowledges more changes or the
+ * socket drains. The stream needs no buffer of its own, because the server
+ * keeps every change that a live device has not acknowledged in the change log.
  */
 export class DeviceChangeStream {
   private mode: 'live' | 'catchup'
@@ -136,14 +136,15 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Moves a socket that stopped writing on its own. uWebSockets holds the
-   * remainder of a partial write until the next write on that socket and
-   * reports no drain in the meantime, so a stream that has queued everything
-   * it has would leave the last changes sitting there. A small buffered count
-   * that has not moved since the previous poll is that state, and a control
-   * frame carries the remainder out. A socket holding enough to count as
-   * congested is draining under its own flow control and takes nothing extra,
-   * because another frame there would cross the backpressure limit.
+   * Sends a ping on a socket whose buffered bytes have stopped flushing.
+   * uWebSockets keeps the rest of a partial write queued until the next write
+   * on that socket and fires no drain event in the meantime, so the last
+   * changes of a stream with nothing more to send could stay in the buffer.
+   * When the buffered count is above zero, unchanged since the previous poll
+   * batch, and below the congestion threshold, this method sends a ping so that
+   * uWebSockets flushes the rest. It skips a congested socket, because that
+   * socket drains under its own flow control and one more frame could push it
+   * past the backpressure limit.
    */
   private nudgeStalledSocket(): void {
     const buffered = this.deps.socketBuffered()
@@ -197,26 +198,25 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Waits for the socket only while it holds enough to be worth waiting for.
-   * uWebSockets reports `buffered` for a send it could not finish in one go,
-   * including one that queued a few hundred bytes of a frame it otherwise
-   * sent, and it notifies a drain only when the socket becomes writable
-   * again. A stream that parked on the outcome alone would wait on a small
-   * remainder that the next send would have flushed, and the wake-up would
-   * never come.
+   * Makes the stream wait for a drain event only while the socket is congested.
+   * uWebSockets reports `buffered` for any send that it cannot finish at once,
+   * including one that leaves only a few hundred bytes of a frame queued, and
+   * it fires a drain event only when the socket becomes writable again. If the
+   * stream waited on every `buffered` outcome, it could wait on a small
+   * remainder for a drain event that never fires.
    */
   private parkOnSocket(): void {
     this.socketWait = this.deps.socketCongested()
   }
 
   /**
-   * Abandons the in-flight stream state and falls back to the change log.
-   * The grouper's held event was never queued and its seq is above both
-   * watermarks, so dropping it loses nothing. The catch-up read resumes
-   * after the last position fully settled: `highestQueuedSeq` is the last
-   * event that reached the socket, and `processedSeq` may run further ahead
-   * of it over a span whose every event was suppressed, so a long run of
-   * the device's own echoes is not re-read on every pause.
+   * Discards the in-flight stream state and switches to reading the change log.
+   * The event that the grouper holds back is still unqueued, and its seq is
+   * above both watermarks, so discarding it loses no change. The catch-up read
+   * starts after the later of two positions. `highestQueuedSeq` is the last
+   * event that the stream queued on the socket, and `processedSeq` can be further
+   * ahead when the transform suppresses every event after that one, so the
+   * stream skips a long sequence of the device's own echoes on every pause.
    */
   private enterCatchup(): void {
     const flushed = this.deps.packer?.flush() ?? 'queued'
@@ -238,10 +238,10 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Starts the catch-up read, or records that one is owed when a read is
-   * already running. A read that hands back the stream mid-pass, because the
-   * socket reported backpressure it no longer holds, would otherwise leave
-   * the stream in catch-up with nothing scheduled to resume it.
+   * Starts the catch-up read, or sets a flag for another read when one is
+   * already in progress. Without the flag, a read that stops partway because
+   * of backpressure that clears before the read ends could leave the stream in
+   * catch-up mode with no read scheduled to resume it.
    */
   private requestDrain(): void {
     if (this.draining) {
@@ -252,12 +252,12 @@ export class DeviceChangeStream {
   }
 
   /**
-   * A closed window stops the catch-up read only where the window may pace
-   * the stream: anywhere under `perEvent` pacing, and at a transaction
-   * boundary under `perTransaction` pacing. Mid-transaction the read keeps
-   * going, because a `perTransaction` device acknowledges only applied
-   * whole transactions, and holding the rest of an open transaction back
-   * would wait for an acknowledgement that can never arrive.
+   * Returns true when the catch-up read must pause for a full delivery window,
+   * which happens at any event under `perEvent` pacing and only at a
+   * transaction boundary under `perTransaction` pacing. A `perTransaction`
+   * device acknowledges only whole transactions that it has applied, so if
+   * the stream held back the rest of an open transaction, it would wait for
+   * an acknowledgement that the device never sends.
    */
   private readGateClosed(): boolean {
     if (!this.windowClosed()) return false
@@ -265,12 +265,13 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Sizes the next catch-up read from what the socket accepted this time.
-   * A read that ends at a full socket discards everything past the event
-   * that stopped it, so a device on a congested link would otherwise decode
-   * the same rows on every pause. Doubling the accepted count keeps a
-   * caught-up device reading whole batches while a paced one reads close to
-   * what it can send.
+   * Sets the size of the next catch-up read to twice the number of events that
+   * the stream offered from the last read, between 32 and 1,000. When a read stops
+   * at a full socket, the stream discards every event after the one where it
+   * stopped, so with a larger fixed batch the server would decode the same rows again on
+   * every pause for a device on a congested link. Doubling the count gives a
+   * caught-up device full batches and a paced device batches close to the
+   * number of events that its socket accepts.
    */
   private resizeCatchupBatch(accepted: number): void {
     const doubled = accepted * 2
@@ -349,11 +350,12 @@ export class DeviceChangeStream {
   }
 
   /**
-   * Rejoins the live feed. Runs synchronously right after a log read so that no
-   * poller tick can dispatch between the caught-up check and the mode flip.
-   * The grouper survives the transition: the event it holds is released by
-   * the boundary flush when the poller stopped at a transaction boundary,
-   * exactly as a resuming ordinary subscription does.
+   * Switches the stream back to the live feed. This method is synchronous and
+   * follows a log read directly, so that no poller tick can dispatch events
+   * between the caught-up check and the switch to `live` mode. The stream keeps its grouper across the switch,
+   * and when the poller's last batch ends at a transaction boundary, the
+   * boundary flush releases the event that the grouper holds, as it does for
+   * an ordinary subscription that resumes.
    */
   private goLive(): void {
     this.mode = 'live'

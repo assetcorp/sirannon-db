@@ -4,35 +4,32 @@ import type { BackupRunReport } from './report.js'
 import { fetchStoredFile, listStoredFilePieces, type StoredFile } from './restore-fetch.js'
 import { writeFully } from './write-fully.js'
 
-/** What one assembled file took to build.
+/** The byte and piece counts for one file that Sirannon assembles from a destination.
  * @public
  */
 export interface AssembleResult {
-  /** Bytes the assembly wrote. */
+  /** The number of bytes that Sirannon writes to the local file. */
   bytesWritten: number
-  /** Pieces the assembly read. */
+  /** The number of pieces that Sirannon reads from the destination. */
   pieceCount: number
-  /** SHA-256 of the assembled file, where the run recorded one to check it against. */
+  /** The SHA-256 of the assembled file, present only where the backup report holds a fingerprint to check it against. */
   fingerprint?: string
 }
 
 /**
- * Builds a local file from the pieces a destination holds, fetching one piece
- * at a time and writing it where its index places it. Where SQLite never wrote
- * a piece that stretch of the file stays zero, and every later byte goes to the
- * offset its own index sets.
+ * Rebuilds a local file from the pieces at a destination, fetching one piece at
+ * a time and writing each one at the offset that its index sets.
  *
- * Sirannon checks the listing before it opens the local file, so that a
- * destination missing a piece is refused while the path named here is still
- * untouched. Once the file is open, Sirannon removes it after any failure,
- * because a database missing its middle would otherwise stay on disk as though
- * the assembly had finished.
+ * Sirannon lists the pieces before it opens the local file, so that it can
+ * refuse a destination with a missing piece while the file at `destPath` stays
+ * as it was. Once the file is open, Sirannon deletes it after any failure, so
+ * that a partly written database never stays on disk.
  *
- * @param destination - Where the pieces are read from.
- * @param file - What the run that wrote those pieces recorded, which the assembly checks its result against.
- * @param destPath - Path the assembled file is written to.
+ * @param destination - The destination that holds the pieces.
+ * @param file - The record of the backup that stored those pieces, which Sirannon checks the result against.
+ * @param destPath - The path that Sirannon writes the assembled file to.
  * @param onPiece - Called after each piece with the running counts.
- * @returns The bytes and pieces the assembly wrote, and the fingerprint it computed.
+ * @returns The bytes and pieces that Sirannon writes, and the fingerprint that it computes.
  *
  * @internal
  */
@@ -69,13 +66,13 @@ export async function assembleStoredFile(
 }
 
 /**
- * Builds a local file from the pieces a destination holds, checking the result
- * against what the run that wrote them reported.
+ * Rebuilds a local file from the pieces at a destination, and checks the result
+ * against the report of the backup that stored them.
  *
- * @param destination - Where the pieces are read from.
- * @param report - What the run that wrote those pieces recorded.
- * @param destPath - Path the assembled file is written to.
- * @returns The bytes and pieces the assembly wrote, and the fingerprint it computed.
+ * @param destination - The destination that holds the pieces.
+ * @param report - The report of the backup that stored those pieces.
+ * @param destPath - The path that Sirannon writes the assembled file to.
+ * @returns The bytes and pieces that Sirannon writes, and the fingerprint that it computes.
  *
  * @public
  */

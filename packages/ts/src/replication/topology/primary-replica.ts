@@ -1,20 +1,21 @@
 import type { Topology, TopologyRole } from '../types.js'
 
 /**
- * Single-writer topology with one primary and one or more read-only replicas.
+ * Sets the replication rules for a group with one writable primary and one or more read-only replicas.
  *
- * Only the primary node accepts writes; replicas reject writes with a
- * TopologyError (or forward them when writeForwarding is enabled on the
- * engine). The primary replicates outbound batches only to peers whose role
- * is 'replica', and replicas only accept inbound batches from a peer whose
- * role is 'primary'. Conflict resolution is not required because a single
- * writer eliminates concurrent write conflicts by design.
+ * Only the primary accepts writes. A replica rejects a write with a
+ * `TopologyError`, or forwards it to the primary when you turn on
+ * `writeForwarding` in the engine's config. The primary sends batches only to
+ * peers whose role is 'replica', and a replica applies batches only from a peer
+ * whose role is 'primary'. Since only one node writes, no two nodes can change
+ * the same row at once, so {@link PrimaryReplicaTopology.requiresConflictResolution}
+ * returns false.
  *
  * @public
  */
 export class PrimaryReplicaTopology implements Topology {
   /**
-   * Whether this node accepts writes or serves reads.
+   * Records whether this node is the primary, which accepts writes, or a replica, which serves reads.
    */
   readonly role: TopologyRole
 
@@ -43,7 +44,7 @@ export class PrimaryReplicaTopology implements Topology {
   }
 
   /**
-   * Reports whether this node applies changes arriving from a given peer.
+   * Reports whether this node applies the changes that a given peer sends.
    *
    * @param _peerId - Identifier of the peer, which this topology ignores.
    * @param peerRole - Role of the peer.
@@ -54,7 +55,8 @@ export class PrimaryReplicaTopology implements Topology {
   }
 
   /**
-   * Reports whether incoming changes need a resolver, which a single writer removes the need for.
+   * Reports whether the engine has to resolve conflicts for this topology. Only the primary writes, so the answer is
+   * always false.
    *
    * @returns False.
    */

@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Database } from '../../database.js'
-import { HookDeniedError } from '../../errors.js'
+import { HookDeniedError, QueryError } from '../../errors.js'
 import { Sirannon } from '../../sirannon.js'
-import type { QueryHookContext } from '../../types.js'
+import type { AfterQueryHookContext, QueryHookContext } from '../../types.js'
 import { testDriver } from '../helpers/test-driver.js'
 
 let tempDir: string
@@ -79,6 +79,63 @@ describe('Hooks integration', () => {
       expect(afterCalls.map(c => c.params)).toEqual([['first'], ['second']])
       expect(beforeCalls.every(c => c.databaseId === 'main')).toBe(true)
       expect(afterCalls.every(c => c.durationMs >= 0)).toBe(true)
+
+      await sir.shutdown()
+    })
+
+    it('passes the error to onAfterQuery when a statement fails, and no error when it succeeds', async () => {
+      const afterCalls: AfterQueryHookContext[] = []
+
+      const sir = new Sirannon({
+        driver: testDriver,
+        hooks: {
+          onAfterQuery: ctx => {
+            afterCalls.push(ctx)
+          },
+        },
+      })
+
+      const db = await sir.open('main', join(tempDir, 'after-error.db'))
+      await db.execute('CREATE TABLE invoices (id INTEGER PRIMARY KEY, total INTEGER NOT NULL)')
+      afterCalls.length = 0
+
+      await db.execute('INSERT INTO invoices (total) VALUES (?)', [120])
+      const refused = await db.execute('INSERT INTO invoices (id) VALUES (?)', [2]).catch((err: unknown) => err)
+
+      expect(afterCalls).toHaveLength(2)
+      expect(afterCalls[0].error).toBeUndefined()
+      expect(refused).toBeInstanceOf(QueryError)
+      expect(afterCalls[1].error).toBe(refused)
+
+      await sir.shutdown()
+    })
+
+    it('passes the transaction error to onAfterQuery for every statement of a failed transaction', async () => {
+      const afterCalls: AfterQueryHookContext[] = []
+
+      const sir = new Sirannon({
+        driver: testDriver,
+        hooks: {
+          onAfterQuery: ctx => {
+            afterCalls.push(ctx)
+          },
+        },
+      })
+
+      const db = await sir.open('main', join(tempDir, 'after-tx-error.db'))
+      await db.execute('CREATE TABLE invoices (id INTEGER PRIMARY KEY, total INTEGER NOT NULL)')
+      afterCalls.length = 0
+
+      const refused = await db
+        .executeTransaction([
+          { sql: 'INSERT INTO invoices (total) VALUES (?)', params: [80] },
+          { sql: 'INSERT INTO invoices (id) VALUES (?)', params: [7] },
+        ])
+        .catch((err: unknown) => err)
+
+      expect(refused).toBeInstanceOf(Error)
+      expect(afterCalls).toHaveLength(2)
+      expect(afterCalls.every(c => c.error === refused)).toBe(true)
 
       await sir.shutdown()
     })

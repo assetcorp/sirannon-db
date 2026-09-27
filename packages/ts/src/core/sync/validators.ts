@@ -20,14 +20,15 @@ const DDL_TARGET_RE =
   /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|DROP\s+INDEX(?:\s+IF\s+EXISTS)?)\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i
 
 /**
- * Reports whether a DDL statement names a table or index the engine reserves for itself.
+ * Returns `true` when a DDL statement targets a table or index whose name Sirannon reserves.
  *
- * The check reads the object the statement targets, so a user column keeping a
- * reserved prefix still passes while a statement reaching `_sirannon_changes` or
- * the `sqlite_` catalogue does not.
+ * The function checks only the name of the table or index that the statement
+ * targets, so it returns `false` for an added column whose name has a reserved
+ * prefix, and `true` for a statement against `_sirannon_changes` or a `sqlite_`
+ * table.
  *
- * @param sql - The DDL statement to read.
- * @returns True where the statement targets a reserved table or index.
+ * @param sql - The DDL statement to check.
+ * @returns `true` when the statement targets a reserved table or index.
  */
 export function ddlTargetsReservedIdentifier(sql: string): boolean {
   const indexTargets = CREATE_INDEX_TARGETS_RE.exec(sql)
@@ -55,22 +56,15 @@ export function validateDdlSafety(sql: string): boolean {
 const DROP_TABLE_RE = /^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*;?\s*$/i
 
 /**
- * Extracts the target table name from a `DROP TABLE` statement, or returns
- * `null` if the SQL is not a `DROP TABLE` (or the name does not match the
- * project's identifier rules).
+ * Returns the table name from a `DROP TABLE` statement, or `null` when the SQL
+ * is another statement or names the table in a form that the pattern rejects.
  *
- * Used by the local executor and the batch applier to record which watched
- * tables have been dropped during a transaction so the `ChangeTracker` map
- * can be pruned after the transaction commits. The SQL passed in is already
- * validated by upstream guards: no embedded semicolons, allow-listed DDL
- * shapes, no `load_extension` or other denied functions.
- *
- * The regex deliberately rejects any DROP TABLE form that contains trailing
- * tokens beyond an optional terminating semicolon (e.g. unexpected schema
- * qualifiers, comments, or stray operators). When a future SQLite version
- * adds new DROP TABLE syntax this function returns `null` for the new form,
- * which is the safe fallback: the watched entry stays put and the operator
- * can resolve it manually.
+ * The local executor and the batch applier collect these names so that the
+ * caller can prune each dropped table from the `ChangeTracker` after the
+ * transaction commits. The pattern accepts an optional `IF EXISTS`, double
+ * quotes around the name, and one trailing semicolon. It returns `null` for a
+ * schema-qualified name or any other trailing text, in which case the tracker
+ * keeps its entry for that table.
  */
 export function extractDroppedTable(sql: string): string | null {
   const m = DROP_TABLE_RE.exec(sql)

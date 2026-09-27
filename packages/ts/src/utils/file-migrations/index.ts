@@ -7,37 +7,37 @@ import { LAZY_DOWN_SQL } from '../../core/migrations/lazy-down.js'
 import type { Migration } from '../../core/migrations/types.js'
 
 /**
- * How a directory of migration files is turned into migrations.
+ * Configures how {@link loadMigrations} builds migrations from a directory of files.
  *
  * @public
  */
 export interface LoadMigrationsOptions {
   /**
-   * Marks the migration an existing database starts from.
+   * Marks one migration as a baseline, which a new database runs in place of the earlier versions.
    */
   baseline?: BaselineFileOption
 }
 
 /**
- * One migration found on disk, with the paths of its up and down files.
+ * Describes one migration that {@link scanDirectory} finds on disk, with the paths of its up and down files.
  *
  * @public
  */
 export interface ScannedMigration {
   /**
-   * Version number the file name starts with.
+   * The version number at the start of the file name.
    */
   version: number
   /**
-   * Migration name between the version and the direction.
+   * The migration name between the version and the direction.
    */
   name: string
   /**
-   * Path of the file that applies the migration.
+   * The path of the file with the SQL that applies the migration.
    */
   upPath: string
   /**
-   * Path of the file that undoes it, or null when the migration has none.
+   * The path of the file with the SQL that undoes the migration, or `null` when the directory has no down file for it.
    */
   downPath: string | null
 }
@@ -50,11 +50,11 @@ function hasControlCharacters(s: string): boolean {
 }
 
 /**
- * Lists the migration files in a directory, in ascending version order.
+ * Returns the migrations in a directory, in ascending version order, and skips each file whose name has another form.
  *
- * @param dirPath - Directory holding the migration files.
+ * @param dirPath - The directory that holds the migration files.
  * @returns One entry per migration, with the paths of its up and down files.
- * @throws When the path is unsafe or a file name does not parse.
+ * @throws A `MigrationError` when the path is unsafe or names no directory, when two file names share a version, or when a version has no up file.
  *
  * @public
  */
@@ -139,9 +139,11 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
 }
 
 /**
- * Reads the up files of scanned migrations, leaving each down file to be read only if a rollback needs it.
+ * Returns migrations with the SQL from each scanned migration's up file. The
+ * migrations hold only the up SQL, and {@link loadMigrations} adds the down
+ * file read that a rollback uses.
  *
- * @param scanned - Migrations found by {@link scanDirectory}.
+ * @param scanned - The migrations that {@link scanDirectory} returns.
  * @returns The migrations, in ascending version order.
  *
  * @public
@@ -192,10 +194,10 @@ function attachLazyDown(migration: Migration, downPath: string): void {
 }
 
 /**
- * Reads a directory of migration files and returns the migrations to apply.
+ * Returns the migrations from a directory of migration files, and reads each down file only when you roll that migration back.
  *
- * @param dirPath - Directory holding the migration files.
- * @param options - The baseline to apply, when an existing database starts from one.
+ * @param dirPath - The directory that holds the migration files.
+ * @param options - The baseline, when one migration replaces the earlier versions for a new database.
  * @returns The migrations, in ascending version order.
  *
  * @public

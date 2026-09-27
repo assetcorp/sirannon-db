@@ -40,10 +40,15 @@ interface CasGroupStateResult {
 }
 
 /**
- * The replication group half of the etcd coordinator. Every write is a
- * compare-and-swap against the value the read returned, so two controllers
- * racing on the same group leave one of them to retry against the winner's
- * state rather than overwriting it.
+ * Stores the replication group state in etcd for the etcd coordinator.
+ * {@link EtcdGroupStore.setReplicationGroupState} overwrites the stored value.
+ * Every other write commits only if the stored value still matches the value
+ * that the store fetched first, so that two controllers that update one group
+ * at the same time cannot overwrite each other. When etcd refuses an in-sync,
+ * admission, or maintenance update, the store fetches the new state and tries
+ * again, up to five times, before it throws a `CoordinatorError`.
+ * {@link EtcdGroupStore.compareAndAdvancePrimaryTerm} returns the new state to
+ * its caller without a retry.
  */
 export class EtcdGroupStore {
   constructor(

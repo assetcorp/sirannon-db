@@ -1,7 +1,13 @@
-import type { BeforeSnapshotHook, BeforeSubscribeHook, ConnectionHookContext, QueryHookContext } from '../types.js'
+import type {
+  BeforePushHook,
+  BeforeSnapshotHook,
+  BeforeSubscribeHook,
+  ConnectionHookContext,
+  QueryHookContext,
+} from '../types.js'
 
 /**
- * Names of the lifecycle points a hook can attach to.
+ * The lifecycle points at which you can register a hook.
  *
  * @internal
  */
@@ -13,23 +19,31 @@ export type HookEvent =
   | 'databaseClose'
   | 'beforeSubscribe'
   | 'beforeSnapshot'
+  | 'beforePush'
 
 /**
- * Context a subscribe hook receives.
+ * The context that a subscribe hook receives.
  *
  * @internal
  */
 export type SubscribeHookContext = Parameters<BeforeSubscribeHook>[0]
 
 /**
- * Context a snapshot hook receives.
+ * The context that a snapshot hook receives.
  *
  * @internal
  */
 export type SnapshotHookContext = Parameters<BeforeSnapshotHook>[0]
 
 /**
- * Maps each lifecycle point to the context its hooks receive.
+ * The context that a push hook receives.
+ *
+ * @internal
+ */
+export type PushHookContext = Parameters<BeforePushHook>[0]
+
+/**
+ * Maps each lifecycle point to the context that its hooks receive.
  *
  * @internal
  */
@@ -41,17 +55,18 @@ export interface HookEventContextMap {
   databaseClose: ConnectionHookContext
   beforeSubscribe: SubscribeHookContext
   beforeSnapshot: SnapshotHookContext
+  beforePush: PushHookContext
 }
 
 /**
- * Function a hook registration stores for one lifecycle point.
+ * The function that you register as a hook for one lifecycle point.
  *
  * @internal
  */
 export type HookHandler<E extends HookEvent> = (ctx: HookEventContextMap[E]) => void | Promise<void>
 
 /**
- * Removes the hook it was returned for, and changes nothing when called again.
+ * Removes the hook whose registration returned this function, and a second call has no effect.
  *
  * @public
  */

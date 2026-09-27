@@ -25,7 +25,7 @@ const driver = betterSqlite3()
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'sirannon-ws-ack-'))
   sirannon = new Sirannon({ driver })
-  handler = createWSHandler(sirannon, { acceptSql: true })
+  handler = createWSHandler(sirannon, { acceptSql: true, acceptDeviceSync: true })
   db = await sirannon.open('mydb', join(tempDir, 'ack.db'))
   await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await db.watch('notes')
@@ -51,16 +51,34 @@ function messagesOf(type: string): Record<string, unknown>[] {
   return parseMessages(conn).filter(m => m.type === type)
 }
 
+async function subscribeDevice(deviceId: string, subscriptionId: string): Promise<void> {
+  const before = messagesOf('subscribed').length
+  handler.handleMessage(conn, JSON.stringify({ type: 'subscribe', id: subscriptionId, table: 'notes', deviceId }))
+  await until(() => messagesOf('subscribed').length > before)
+}
+
+async function readCursors(): Promise<{ device_id: string; acked_seq: number }[]> {
+  const inspect = await driver.open(join(tempDir, 'ack.db'))
+  const exists = await inspect.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`)
+  const table = await exists.get(DEVICE_CURSORS_TABLE)
+  if (table === undefined) {
+    await inspect.close()
+    return []
+  }
+  const stmt = await inspect.prepare(`SELECT device_id, acked_seq FROM ${DEVICE_CURSORS_TABLE}`)
+  const rows = (await stmt.all()) as { device_id: string; acked_seq: number }[]
+  await inspect.close()
+  return rows
+}
+
 describe('WS acks', () => {
   it('records a device cursor and confirms the ack', async () => {
+    await subscribeDevice(DEVICE, 's1')
     handler.handleMessage(conn, JSON.stringify({ type: 'ack', id: 'a1', deviceId: DEVICE, seq: '7' }))
     await until(() => messagesOf('result').length >= 1)
 
     expect(messagesOf('result')[0].data).toEqual({ acked: true, seq: '7' })
-    const inspect = await driver.open(join(tempDir, 'ack.db'))
-    const stmt = await inspect.prepare(`SELECT device_id, acked_seq FROM ${DEVICE_CURSORS_TABLE}`)
-    const rows = (await stmt.all()) as { device_id: string; acked_seq: number }[]
-    await inspect.close()
+    const rows = await readCursors()
     expect(rows).toHaveLength(1)
     expect(rows[0].device_id).toBe(DEVICE)
     expect(Number(rows[0].acked_seq)).toBe(7)
@@ -70,6 +88,24 @@ describe('WS acks', () => {
     handler.handleMessage(conn, JSON.stringify({ type: 'ack', id: 'a2', deviceId: 'short', seq: '1' }))
     await until(() => messagesOf('error').length >= 1)
     expect((messagesOf('error')[0].error as { code: string }).code).toBe('INVALID_MESSAGE')
+  })
+
+  it('refuses an ack for a device this connection has not subscribed with', async () => {
+    handler.handleMessage(conn, JSON.stringify({ type: 'ack', id: 'a3', deviceId: DEVICE, seq: '7' }))
+    await until(() => messagesOf('error').length >= 1)
+
+    expect((messagesOf('error')[0].error as { code: string }).code).toBe('DEVICE_NOT_SUBSCRIBED')
+    expect(await readCursors()).toHaveLength(0)
+  })
+
+  it('refuses an ack for a device other than the one this connection subscribed with', async () => {
+    await subscribeDevice(DEVICE, 's1')
+    const other = 'eeee0000eeee0000eeee0000eeee0000'
+    handler.handleMessage(conn, JSON.stringify({ type: 'ack', id: 'a4', deviceId: other, seq: '7' }))
+    await until(() => messagesOf('error').length >= 1)
+
+    expect((messagesOf('error')[0].error as { code: string }).code).toBe('DEVICE_NOT_SUBSCRIBED')
+    expect((await readCursors()).map(row => row.device_id)).not.toContain(other)
   })
 })
 
@@ -109,5 +145,29 @@ describe('WS echo suppression', () => {
     const received = messagesOf('change').map(m => (m.event as { row: { id: number } }).row.id)
     expect(received).toContain(11)
     expect(received).not.toContain(10)
+  })
+})
+
+describe('device sync on a handler that leaves it off', () => {
+  it('refuses a device subscription and an acknowledgement, and still serves a plain subscription', async () => {
+    const closedHandler = createWSHandler(sirannon, { acceptSql: true })
+    const closedConn = createMockConnection()
+    await closedHandler.handleOpen(closedConn, 'mydb')
+
+    closedHandler.handleMessage(
+      closedConn,
+      JSON.stringify({ type: 'subscribe', id: 'device', table: 'notes', deviceId: DEVICE }),
+    )
+    closedHandler.handleMessage(closedConn, JSON.stringify({ type: 'ack', id: 'ack-1', deviceId: DEVICE, seq: '1' }))
+    closedHandler.handleMessage(closedConn, JSON.stringify({ type: 'subscribe', id: 'plain', table: 'notes' }))
+    await until(() => parseMessages(closedConn).length >= 3)
+
+    const replies = parseMessages(closedConn)
+    const codeFor = (id: string) =>
+      (replies.find(m => m.id === id && m.type === 'error')?.error as { code?: string } | undefined)?.code
+    expect(codeFor('device')).toBe('DEVICE_SYNC_NOT_ACCEPTED')
+    expect(codeFor('ack-1')).toBe('DEVICE_SYNC_NOT_ACCEPTED')
+    expect(replies.some(m => m.id === 'plain' && m.type === 'subscribed')).toBe(true)
+    await closedHandler.close()
   })
 })

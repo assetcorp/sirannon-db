@@ -1,9 +1,16 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { DEVICE_CURSORS_TABLE } from '../internal-tables.js'
+import { assertSafeIdentifier } from './columns.js'
 
 export interface DeviceCursorRow {
   deviceId: string
   ackedSeq: bigint
+}
+
+export interface ExpiredDeviceCursorBounds {
+  idleCutoff: number
+  changeAgeCutoff: number
+  maxChangesHeldForDevice: number
 }
 
 export async function ensureDeviceCursorsTable(conn: SQLiteConnection): Promise<void> {
@@ -35,6 +42,62 @@ export async function deleteDeviceCursorsUpdatedBefore(conn: SQLiteConnection, c
   const stmt = await conn.prepare(`DELETE FROM "${DEVICE_CURSORS_TABLE}" WHERE updated_at < ?`)
   const result = await stmt.run(cutoff)
   return result.changes
+}
+
+export async function deleteExpiredDeviceCursors(
+  conn: SQLiteConnection,
+  changesTable: string,
+  bounds: ExpiredDeviceCursorBounds,
+): Promise<number> {
+  assertSafeIdentifier(changesTable)
+
+  const stmt = await conn.prepare(
+    `DELETE FROM "${DEVICE_CURSORS_TABLE}"
+     WHERE updated_at < ?
+        OR (? > 0 AND (
+              SELECT COUNT(*) FROM "${changesTable}" AS held
+              WHERE held.seq > "${DEVICE_CURSORS_TABLE}".acked_seq
+                AND held.node_id != "${DEVICE_CURSORS_TABLE}".device_id
+            ) > ?)
+        OR EXISTS (
+             SELECT 1 FROM "${changesTable}" AS oldest
+             WHERE oldest.seq = (
+                     SELECT MIN(later.seq) FROM "${changesTable}" AS later
+                     WHERE later.seq > "${DEVICE_CURSORS_TABLE}".acked_seq
+                       AND later.node_id != "${DEVICE_CURSORS_TABLE}".device_id
+                   )
+               AND oldest.changed_at < ?
+           )`,
+  )
+  const result = await stmt.run(
+    bounds.idleCutoff,
+    bounds.maxChangesHeldForDevice,
+    bounds.maxChangesHeldForDevice,
+    bounds.changeAgeCutoff,
+  )
+  return result.changes
+}
+
+export async function selectMinDeviceCursorBoundary(
+  conn: SQLiteConnection,
+  changesTable: string,
+): Promise<bigint | null> {
+  assertSafeIdentifier(changesTable)
+
+  const stmt = await conn.prepare(
+    `SELECT MIN(
+              COALESCE(
+                (SELECT MIN(later.seq) FROM "${changesTable}" AS later
+                 WHERE later.seq > cursors.acked_seq AND later.node_id != cursors.device_id) - 1,
+                (SELECT COALESCE(MAX(seq), 0) FROM "${changesTable}")
+              )
+            ) AS boundary
+     FROM "${DEVICE_CURSORS_TABLE}" AS cursors`,
+  )
+  const row = (await stmt.get()) as { boundary?: unknown } | undefined
+  const boundary = row?.boundary
+  if (boundary === undefined || boundary === null) return null
+  return typeof boundary === 'bigint' ? boundary : BigInt(String(boundary))
 }
 
 export async function selectDeviceCursors(conn: SQLiteConnection): Promise<DeviceCursorRow[]> {

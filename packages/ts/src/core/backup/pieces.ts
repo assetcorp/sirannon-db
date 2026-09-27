@@ -3,26 +3,26 @@ import { open } from 'node:fs/promises'
 import { SirannonError } from '../errors.js'
 import type { BackupDestination } from './destination.js'
 
-/** What one file sent in pieces left at the destination.
+/** The pieces and bytes that Sirannon stores at a destination for one file.
  * @internal
  */
 export interface SentPieces {
-  /** How many pieces the transfer came to. */
+  /** The number of pieces that Sirannon stores. */
   pieceCount: number
-  /** How many bytes it stored. */
+  /** The number of bytes that Sirannon stores. */
   bytesWritten: number
-  /** SHA-256 of what it sent, where the caller asked for one. */
+  /** The SHA-256 of the bytes that Sirannon sends, present where the caller asks for one. */
   fingerprint?: string
 }
 
 /**
- * Wraps whatever a caller's destination threw in the error code a caller
- * matches on. The message states which piece failed and which file it
- * belongs to.
+ * Wraps an error from the destination of a caller in a
+ * `BACKUP_DESTINATION_ERROR`, and passes a `SirannonError` through unchanged.
+ * The message names the piece that failed and its file.
  *
- * @param name - Name the piece is stored under.
- * @param index - Position of the piece in the file.
- * @param err - What the destination threw.
+ * @param name - The name of the file that the piece is part of.
+ * @param index - The position of the piece in the file.
+ * @param err - The error that the destination throws.
  * @returns The error to report for that piece.
  */
 export function destinationPieceError(name: string, index: number, err: unknown): SirannonError {
@@ -34,14 +34,14 @@ export function destinationPieceError(name: string, index: number, err: unknown)
 }
 
 /**
- * Reads back every piece a run stored and fingerprints them in the order they
- * assemble in. A run that never held the whole file has no other way to
- * report one.
+ * Reads back every stored piece of a file and returns the SHA-256 of those
+ * pieces in index order. A streamed copy never holds the whole file, so
+ * Sirannon can compute its fingerprint only this way.
  *
- * @param destination - Where the pieces are read from.
- * @param name - Name they were stored under.
- * @param pieceCount - Pieces the run stored.
- * @returns The SHA-256 of the file those pieces assemble into.
+ * @param destination - The destination that holds the pieces.
+ * @param name - The name that Sirannon stores the pieces under.
+ * @param pieceCount - The number of stored pieces.
+ * @returns The SHA-256 of the file that those pieces assemble into.
  */
 export async function fingerprintStoredPieces(
   destination: BackupDestination,
@@ -60,16 +60,16 @@ export async function fingerprintStoredPieces(
 }
 
 /**
- * Sends a local file to a destination in fixed-size pieces. Every piece brings
- * a report, so a caller watching a long transfer can see it move.
+ * Sends a local file to a destination in fixed-size pieces, and calls `report`
+ * after each piece so that a caller can follow a long transfer.
  *
- * @param sourcePath - File to read.
- * @param destination - Where the pieces go.
- * @param name - Name to store them under.
- * @param pieceBytes - Size of one whole piece, in bytes.
- * @param fingerprint - Whether to fingerprint what goes out.
+ * @param sourcePath - The file to send.
+ * @param destination - The destination that stores the pieces.
+ * @param name - The name to store the pieces under.
+ * @param pieceBytes - The size of one whole piece, in bytes.
+ * @param fingerprint - Whether to compute the SHA-256 of the bytes that Sirannon sends.
  * @param report - Called after each piece with the running counts.
- * @returns What reached the destination, and the fingerprint where one was asked for.
+ * @returns The pieces and bytes that Sirannon stores, and the fingerprint where the caller asks for one.
  */
 export async function sendFileInPieces(
   sourcePath: string,

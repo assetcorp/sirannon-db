@@ -4,13 +4,13 @@ import { parseMigrationFilename } from './filename.js'
 import type { Migration } from './types.js'
 
 /**
- * How a set of migration files is turned into migrations.
+ * Configures how {@link migrationsFromFiles} builds migrations from a set of files.
  *
  * @public
  */
 export interface MigrationsFromFilesOptions {
   /**
-   * Marks the migration an existing database starts from.
+   * Marks one migration as a baseline, which a new database runs in place of the earlier versions.
    */
   baseline?: BaselineFileOption
 }
@@ -27,10 +27,10 @@ function basename(key: string): string {
 }
 
 /**
- * Builds migrations from file contents you have already read, which suits a bundler that inlines the SQL.
+ * Returns migrations built from file contents that you already hold in memory, such as SQL that a bundler inlines.
  *
- * @param files - Migration file names mapped to their SQL.
- * @param options - The baseline to apply, when an existing database starts from one.
+ * @param files - An object that maps each migration file name to its SQL text.
+ * @param options - The baseline, when one migration replaces the earlier versions for a new database.
  * @returns The migrations, in ascending version order.
  *
  * @public

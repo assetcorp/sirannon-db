@@ -6,19 +6,19 @@ import type { MetricsConfig } from './metrics-types.js'
 import type { MigrationSource } from './migrations/types.js'
 import type { ReadConcernLevel } from './query-types.js'
 
-/** One node a client can read from, and the read concerns it currently serves.
+/** One node that a client can read from, and the read concerns that the node meets now.
  * @public
  */
 export interface ClusterReadEndpointInfo {
-  /** Identifier of the node behind this endpoint. */
+  /** The identifier of the node at this endpoint. */
   nodeId: string
-  /** Address a client sends its reads to. */
+  /** The address that a client sends its reads to. */
   endpoint: string
-  /** Read concerns this node meets right now. */
+  /** The read concerns that this node meets now. */
   readConcerns: ReadConcernLevel[]
 }
 
-/** Every value a node reports as its health state.
+/** Every value that a node can report as its health state.
  * @public
  */
 export const NODE_HEALTH_STATES = [
@@ -30,17 +30,17 @@ export const NODE_HEALTH_STATES = [
   'unavailable',
 ] as const
 
-/** The single word describing what a node can do right now.
+/** The word that names what a node can do now.
  * @public
  */
 export type NodeHealthState = (typeof NODE_HEALTH_STATES)[number]
 
-/** The condition that produced a {@link NodeHealthState}.
+/** The condition behind a {@link NodeHealthState}.
  * @public
  */
 export type NodeHealthReason = (typeof NODE_HEALTH_REASONS)[number]
 
-/** Every value a node reports as the reason behind its health state.
+/** Every value that a node can report as the reason for its health state.
  * @public
  */
 export const NODE_HEALTH_REASONS = [
@@ -55,171 +55,194 @@ export const NODE_HEALTH_REASONS = [
 ] as const
 
 /**
- * The health of one node, covering only the node that reports it.
+ * The health of the one node that reports it.
  *
- * `canRead` and `canWrite` are what that node will accept at this moment;
- * `state` and `reason` name the condition behind them.
+ * `canRead` and `canWrite` are true when that node accepts reads and writes
+ * now, and `state` and `reason` name the condition behind them.
  *
  * @public
  */
 export interface NodeHealth {
-  /** What the node can do right now. */
+  /** What the node can do now. */
   state: NodeHealthState
   /** The condition behind that state. */
   reason: NodeHealthReason
-  /** Whether the node serves reads at this moment. */
+  /** Whether the node serves reads now. */
   canRead: boolean
-  /** Whether the node accepts writes at this moment. */
+  /** Whether the node accepts writes now. */
   canWrite: boolean
 }
 
-/** What one node reports about its replication group, as served by `GET /db/{id}/cluster`.
+/** What one node reports about its replication group, which `GET /db/{id}/cluster` returns.
  * @public
  */
 export interface ClusterStatusInfo {
-  /** Identifier of the database this status describes. */
+  /** The identifier of the database that this status describes. */
   databaseId: string
-  /** Identifier of the replication group the node belongs to. */
+  /** The identifier of the node's replication group. */
   replicationGroupId?: string
-  /** Whether this node accepts writes or serves reads. */
+  /** Whether this node is the primary, which accepts writes, or a replica, which serves reads. */
   role?: 'primary' | 'replica'
-  /** The primary this node reports as current, or null when it has none. */
+  /** The primary that this node reports as current, or null when the node reports none. */
   currentPrimary?: { nodeId: string; endpoint?: string } | null
-  /** The primary term this node reports as current. */
+  /** The primary term that this node reports as current. */
   primaryTerm?: bigint
-  /** Every node a client can read from, with the read concerns each one serves. */
+  /** Every node that a client can read from, with the read concerns that each one meets. */
   readEndpoints?: ClusterReadEndpointInfo[]
-  /** What this node can do right now. */
+  /** What this node can do now. */
   health: NodeHealthState
-  /** The condition behind that health. */
+  /** The condition behind that health state. */
   healthReason: NodeHealthReason
 }
 
-/** Configuration for automatic database lifecycle management.
+/** The settings for opening and closing databases automatically.
  * @public
  */
 export interface LifecycleConfig {
-  /** Opens a database the first time someone asks for an identifier the registry has not seen. */
+  /** Opens a database the first time that a caller asks {@link Sirannon.resolve} for an identifier that has no open database. */
   autoOpen?: {
     resolver: (id: string) => { path: string; options?: DatabaseOptions } | undefined
   }
-  /** Milliseconds before an idle database is closed. 0 = disabled. */
+  /** The number of idle milliseconds after which the registry closes a database; 0 turns idle closing off. */
   idleTimeout?: number
-  /** Maximum number of concurrently open databases. 0 = unlimited. */
+  /** The most databases open at once before an automatic open evicts the least recently used one; 0 sets no limit. */
   maxOpen?: number
 }
 
-/** Options for opening a single database.
+/** The options for opening one database.
  * @public
  */
 export interface DatabaseOptions {
-  /** Open the database in read-only mode. */
+  /** Whether to open the database in read-only mode. */
   readOnly?: boolean
-  /** Number of read connections in the pool. Default: 4. */
+  /** The number of read connections in the pool; the default is 4. */
   readPoolSize?: number
-  /** Enable WAL mode. Default: true. */
+  /** Whether to open the database in WAL mode; the default is true. */
   walMode?: boolean
   /**
-   * Writer durability (`PRAGMA synchronous`). Default: 'normal'. This is the
-   * level restored after every bulk load, whatever the load relaxed it to.
+   * The writer's `PRAGMA synchronous` level; the default is 'normal'. Sirannon
+   * restores this level after every bulk load.
    */
   synchronous?: SynchronousLevel
-  /** CDC polling interval in milliseconds. Default: 50. */
+  /** How often Sirannon polls the change log, in milliseconds; the default is 50. */
   cdcPollInterval?: number
-  /** CDC retention period in milliseconds. Default: 3_600_000 (1 hour). */
+  /** How long Sirannon keeps change-log entries, in milliseconds; the default is 3_600_000, one hour. */
   cdcRetention?: number
   /**
-   * Run writes on a dedicated worker thread so disk flushes never block the
-   * thread serving connections; reads stay on the calling thread. Requires a
-   * driver with a worker entry (the `better-sqlite3` and `node` drivers have
-   * one), otherwise opening throws. Default: off.
+   * How long, in milliseconds, Sirannon keeps changes for a device's cursor.
+   * Sirannon drops the cursor when the cursor goes this long without an update,
+   * or when the oldest change that the device still needs reaches this age. The
+   * default is 2_592_000_000, 30 days.
+   */
+  deviceCursorRetention?: number
+  /**
+   * The most changes that Sirannon keeps for one device's cursor. Sirannon
+   * drops the cursor of a device that falls further behind than this, and that
+   * device then downloads the database again when it reconnects. 0 sets no
+   * limit, and the default is 0.
+   */
+  maxChangesHeldForDevice?: number
+  /**
+   * Whether to execute writes on a dedicated worker thread, so that disk
+   * flushes never block the thread that serves connections, while reads stay
+   * on the calling thread. The driver needs a worker entry, which the
+   * `better-sqlite3` and `node` drivers have, and with any other driver the open
+   * throws `WRITER_WORKER_UNSUPPORTED`. The default is off.
    */
   writerWorker?: boolean | WriterWorkerOptions
   /**
-   * Capture this database's write-ahead log to a destination you supply, on an
-   * interval. A backup then costs what changed since the last one, not what the
-   * database holds, so a terabyte that changed by 200 MB pays for 200 MB.
+   * Captures this database's write-ahead log to a destination that you supply,
+   * on an interval. Apart from the full copies, each capture sends only the log
+   * frames written since the previous capture, so its size follows how much
+   * the database changed.
    *
-   * A database given this option takes checkpointing away from SQLite and runs
-   * it itself. It has to: a checkpoint lets SQLite overwrite log frames nothing
-   * has captured yet. Default: off.
+   * With this option, Sirannon turns off SQLite's automatic checkpoint and
+   * checkpoints the log itself after each capture, because a checkpoint lets
+   * SQLite overwrite log frames that no capture has read yet. The default is
+   * off.
    */
   backups?: BackupCycleOptions
 }
 
-/** Limits and recovery settings for the thread that runs writes.
+/** The limits and recovery settings for the writer worker thread.
  * @public
  */
 export interface WriterWorkerOptions {
-  /** Writes allowed in flight before new writes are rejected with a busy signal. Default: 1024. */
+  /** The number of writes allowed in flight before Sirannon rejects new writes with a `WriteOverloadError`; the default is 1024. */
   maxPendingWrites?: number
-  /** Per-operation deadline in ms; when an operation stalls past it, its caller is rejected loudly while the worker keeps running, so a stalled write's outcome is indeterminate. 0 disables it. Default: 30000. */
+  /** The deadline for each operation, in milliseconds; the default is 30000, and 0 turns it off. At the deadline, Sirannon asks the worker to cancel the operation, and when the worker gives no answer within a second deadline, Sirannon rejects the caller's promise while the worker continues, so the outcome of that write is unknown. */
   writeTimeoutMs?: number
-  /** Restarts the worker this many times after it crashes on its own before writes fail permanently. Default: 5. */
+  /** How many times Sirannon restarts the worker after the worker crashes on its own, before writes fail permanently; the default is 5. */
   maxRestarts?: number
 }
 
-/** Top-level options for the Sirannon database registry.
+/** The options for a Sirannon database registry.
  * @public
  */
 export interface SirannonOptions {
-  /** SQLite driver every database in this registry opens through. */
+  /** The SQLite driver that opens every database in this registry. */
   driver: SQLiteDriver
-  /** Lifecycle hooks that run for every database in this registry. */
+  /** The hooks that Sirannon calls for every database in this registry. */
   hooks?: HookConfig
-  /** Callbacks that receive statement, connection, and change-capture metrics. */
+  /** The callbacks that receive Sirannon's metrics. */
   metrics?: MetricsConfig
-  /** Automatic opening, idle eviction, and the limit on concurrently open databases. */
+  /** The settings for automatic opening, idle closing, and the limit on open databases. */
   lifecycle?: LifecycleConfig
-  /** Migrations every database in this registry applies when it opens. */
+  /** The migrations that Sirannon applies to each writable database in this registry as it opens. */
   migrations?: MigrationSource
-  /** Default writer-worker setting for the databases this registry opens. */
+  /** The default writer-worker setting for the databases that this registry opens. */
   writerWorker?: boolean | WriterWorkerOptions
+  /** The default change-log retention, in milliseconds, for the databases that this registry opens. */
+  cdcRetention?: number
+  /** The default device-cursor retention, in milliseconds, for the databases that this registry opens. */
+  deviceCursorRetention?: number
+  /** The default limit on the changes that Sirannon keeps for one device's cursor, for the databases that this registry opens. */
+  maxChangesHeldForDevice?: number
 }
 
-/** Options for scheduled backups.
+/** The options for scheduled backups.
  * @public
  */
 export interface BackupScheduleOptions {
-  /** Cron expression (e.g., '0 * * * *' for hourly). */
+  /** The cron expression, such as '0 * * * *' for every hour. */
   cron: string
-  /** Directory to store backup files. */
+  /** The directory that Sirannon writes the backup files to. */
   destDir: string
-  /** Maximum number of backup files to keep. Default: 5. */
+  /** The most backup files that Sirannon keeps; the default is 5. */
   maxFiles?: number
   /**
-   * Sirannon evaluates the cron expression in this IANA time zone (e.g. 'America/New_York').
-   * When omitted, it uses the host's local time zone, which also sets the daylight saving rules that apply.
+   * The IANA time zone, such as 'America/New_York', in which Sirannon evaluates
+   * the cron expression. When you omit it, Sirannon uses the host's local time
+   * zone and its daylight saving rules.
    */
   timezone?: string
   /**
-   * Called after every copy the schedule finishes, with the file it wrote and
-   * what that copy moved. Use it to send the file somewhere durable, or to
-   * record that the schedule is still running.
+   * Sirannon calls this after each copy that the schedule finishes, with the
+   * file that it wrote and the copy's report. Use it to send the file to durable
+   * storage, or to record that the schedule is still working.
    *
-   * Sirannon waits for the promise this returns, and it clears the older files
-   * only once that promise settles, so it deletes no copy your upload is still
-   * reading. Sirannon passes a failure to
-   * {@link BackupScheduleOptions.onError}, which is where it reports a failed
-   * copy as well. The deadline in
-   * {@link BackupScheduleOptions.onBackupTimeoutMs} bounds that wait.
+   * Sirannon awaits the promise that this returns and deletes the older files
+   * only once that promise settles, so that it deletes no copy that your code
+   * is still uploading. Sirannon passes a failure of this callback, like a
+   * failed copy, to {@link BackupScheduleOptions.onError}, and
+   * {@link BackupScheduleOptions.onBackupTimeoutMs} limits the wait.
    */
   onBackup?: (report: BackupFileReport) => void | Promise<void>
   /**
-   * Milliseconds {@link BackupScheduleOptions.onBackup} may take before
-   * Sirannon gives up waiting on it. It defaults to ten minutes, and zero
-   * leaves the wait unbounded.
+   * How many milliseconds {@link BackupScheduleOptions.onBackup} may take
+   * before Sirannon stops waiting for it; the default is 600_000, ten minutes,
+   * and 0 waits with no limit.
    *
-   * Sirannon clears the older files and takes the next copy once this callback
-   * settles or this deadline passes. Without a deadline, a callback left waiting
-   * on a socket would hold the schedule still for good. Past the deadline
-   * Sirannon reports the timeout through
-   * {@link BackupScheduleOptions.onError} and goes on with the schedule. Your
-   * callback keeps running while Sirannon counts that copy among the files it
-   * may delete, so set this longer than your slowest upload takes.
+   * Sirannon deletes the older files and takes the next copy once the callback
+   * settles or this deadline passes, so a callback that hangs on a socket
+   * delays the schedule by this long at most. Past the deadline, Sirannon
+   * reports the timeout through {@link BackupScheduleOptions.onError} and
+   * continues the schedule while your callback keeps working. Sirannon then
+   * counts that copy among the files that it may delete, so set this longer
+   * than your slowest upload.
    */
   onBackupTimeoutMs?: number
-  /** Called when a scheduled backup fails. Without this, errors are silently discarded. */
+  /** Sirannon calls this when a scheduled backup fails, and discards the error when you omit it. */
   onError?: (error: Error) => void
 }
 
@@ -227,6 +250,7 @@ export type {
   AfterQueryHook,
   AfterQueryHookContext,
   BeforeConnectHook,
+  BeforePushHook,
   BeforeQueryHook,
   BeforeSnapshotHook,
   BeforeSubscribeHook,

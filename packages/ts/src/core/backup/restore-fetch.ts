@@ -2,31 +2,31 @@ import { createHash } from 'node:crypto'
 import { SirannonError } from '../errors.js'
 import type { BackupDestination, BackupPiece } from './destination.js'
 
-/** One file a backup run stored at a destination, as that run recorded it.
+/** The record of one file that a backup stores at a destination.
  * @internal
  */
 export interface StoredFile {
-  /** Name the pieces are stored under. */
+  /** The name that Sirannon stores the pieces under. */
   name: string
-  /** How many pieces the run stored. */
+  /** The number of stored pieces. */
   pieceCount: number
-  /** Size of one whole piece, in bytes. */
+  /** The size of one whole piece, in bytes. */
   pieceBytes: number
-  /** How many bytes the run stored. */
+  /** The number of stored bytes. */
   bytesWritten: number
-  /** SHA-256 of the file those pieces assemble into, where the run recorded one. */
+  /** The SHA-256 of the file that those pieces assemble into, where the record holds one. */
   fingerprint?: string
 }
 
-/** What one fetch read back out of a destination.
+/** The bytes and pieces that one fetch reads from a destination.
  * @internal
  */
 export interface FetchedFile {
-  /** Bytes the fetch read. */
+  /** The number of bytes that Sirannon reads. */
   bytesFetched: number
-  /** Pieces it read. */
+  /** The number of pieces that Sirannon reads. */
   pieceCount: number
-  /** SHA-256 of what it read, where the record it checked against states one. */
+  /** The SHA-256 of the bytes that Sirannon reads, present where the record holds a fingerprint to check against. */
   fingerprint?: string
 }
 
@@ -55,14 +55,15 @@ function assertNoPieceIsMissing(pieces: readonly BackupPiece[], file: StoredFile
 }
 
 /**
- * Asks a destination which pieces of one stored file it holds, and refuses the
- * file where a piece is missing or where a longer run left an extra one behind.
+ * Lists the pieces of one stored file at a destination, and throws a
+ * `BACKUP_DESTINATION_ERROR` where a piece is missing or where the destination
+ * holds more pieces than the record states.
  *
- * A caller lists before it opens a file of its own, so that a destination
- * missing a piece is refused while the caller's path is still untouched.
+ * Callers list the pieces before they open a local file, so that a missing
+ * piece fails the restore before the local file changes.
  *
- * @param destination - Where the pieces are stored.
- * @param file - What the run that stored them recorded.
+ * @param destination - The destination that holds the pieces.
+ * @param file - The record of the backup that stored the pieces.
  * @returns The pieces, in index order.
  *
  * @internal
@@ -80,20 +81,19 @@ export async function listStoredFilePieces(destination: BackupDestination, file:
 }
 
 /**
- * Reads one stored file back out of a destination, a piece at a time, and hands
- * each piece straight on. Sirannon holds nothing but the piece in hand, which
- * is what keeps a restore of a large database inside a small amount of memory.
+ * Reads one stored file from a destination a piece at a time, and passes each
+ * piece to `take` as soon as Sirannon reads it. Sirannon holds one piece in
+ * memory at a time, so a restore of a large database needs little memory.
  *
- * Sirannon then checks the bytes it read and the fingerprint it computed
- * against the record the backup left behind. A backup records one fingerprint
- * for the whole file, so Sirannon runs that check once it has read the last
- * piece.
+ * After the last piece, Sirannon checks the byte count and the fingerprint that
+ * it computes against the record of the backup, since that record holds one
+ * fingerprint for the whole file.
  *
- * @param destination - Where the pieces are read from.
- * @param file - What the run that stored them recorded.
- * @param pieces - The pieces {@link listStoredFilePieces} found, in index order.
+ * @param destination - The destination that holds the pieces.
+ * @param file - The record of the backup that stored the pieces.
+ * @param pieces - The pieces that {@link listStoredFilePieces} returns, in index order.
  * @param take - Called with each piece in that order.
- * @returns What the fetch read, and the fingerprint it computed.
+ * @returns The bytes and pieces that Sirannon reads, and the fingerprint that it computes.
  *
  * @internal
  */

@@ -3,6 +3,7 @@ import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError, SirannonError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
+import { commitFailure } from './writer-transaction.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
@@ -51,7 +52,7 @@ function asQueryError(err: unknown, sql: string): Error {
 }
 
 /**
- * Runs a read on one connection and returns the rows with their values decoded.
+ * Executes a read on one connection and returns the rows with their values decoded.
  *
  * @internal
  */
@@ -82,7 +83,7 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
 }
 
 /**
- * Runs a read on one connection and returns the first row, or undefined when there is none.
+ * Executes a read on one connection and returns the first row, or undefined when the read returns none.
  *
  * @internal
  */
@@ -101,7 +102,7 @@ export async function queryOne<T = Record<string, unknown>>(
 }
 
 /**
- * Runs one write on a connection and returns the change count and last inserted row id.
+ * Executes one write on a connection and returns the change count and the row id of the last inserted row.
  *
  * @internal
  */
@@ -152,8 +153,7 @@ export async function executeGroup(conn: SQLiteConnection, units: readonly Group
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  await rollbackQuietly(conn)
-  return outcomes.map(() => ({ ok: false, error: failure }))
+  return settleRefusedCommit(conn, units, outcomes, failure)
 }
 
 async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<ExecuteResult[]> {
@@ -166,7 +166,7 @@ async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<Execute
 }
 
 function controlError(err: unknown, sql: string): Error {
-  return asQueryError(err, sql)
+  return sql === 'COMMIT' ? commitFailure(err) : asQueryError(err, sql)
 }
 
 async function execControl(conn: SQLiteConnection, sql: string): Promise<Error | null> {
@@ -200,8 +200,28 @@ async function executeGroupIsolated(conn: SQLiteConnection, units: readonly Grou
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  await rollbackQuietly(conn)
-  return outcomes.map(outcome => (outcome.ok ? { ok: false, error: failure } : outcome))
+  return settleRefusedCommit(conn, units, outcomes, failure)
+}
+
+async function settleRefusedCommit(
+  conn: SQLiteConnection,
+  units: readonly GroupUnit[],
+  outcomes: GroupOutcome[],
+  failure: Error,
+): Promise<GroupOutcome[]> {
+  const transactionStillOpen = (await execControl(conn, 'ROLLBACK')) === null
+  const rerunEachAlone = transactionStillOpen && succeededUnitCount(outcomes) > 1
+  for (let i = 0; i < units.length; i++) {
+    if (!outcomes[i].ok) continue
+    outcomes[i] = rerunEachAlone ? await runUnitAlone(conn, units[i]) : { ok: false, error: failure }
+  }
+  return outcomes
+}
+
+function succeededUnitCount(outcomes: readonly GroupOutcome[]): number {
+  let count = 0
+  for (const outcome of outcomes) if (outcome.ok) count++
+  return count
 }
 
 async function runIsolatedUnit(conn: SQLiteConnection, unit: GroupUnit, savepoint: string): Promise<UnitAttempt> {
@@ -276,7 +296,7 @@ async function forEachBatchRow(
 }
 
 /**
- * Runs one statement over many parameter sets on a connection and returns a result per set.
+ * Executes one statement on a connection once for each parameter set, and returns one result per set.
  *
  * @internal
  */

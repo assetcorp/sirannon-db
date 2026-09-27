@@ -15,11 +15,14 @@ ServerOptions {
   maxWebSocketBackpressureBytes?: number   (default: max(16_777_216, maxBodyBytes))
   cdcRetentionMs?:                number   (default: 3_600_000)
   deviceCursorRetentionMs?:       number   (default: 2_592_000_000)   -- see 08-device-sync.md
+  maxChangesHeldForDevice?:       number   (default: 0, unlimited)    -- see 08-device-sync.md
   maxUnacknowledgedChanges?:      number   (default: 1_000)           -- see 08-device-sync.md
   authenticate?:                  AuthenticateHook
   operations?:                    OperationRegistry
+  sharedOperations?:              DatabaseOperations
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
+  acceptDeviceSync?:              boolean  (default: false)           -- see 08-device-sync.md
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
   getClusterStatus?:              (databaseId) -> ClusterStatusInfo or null
@@ -30,6 +33,8 @@ CorsOptions { origin?: string or List<string>, methods?: List<string>, headers?:
 ```
 
 `maxBodyBytes` must be a positive integer; a transport that stores the limit in a narrower type than the configured value must refuse to start with `INVALID_MAX_BODY_BYTES` rather than enforce a truncated limit (the reference caps the value at 4,294,967,295). `maxWebSocketBackpressureBytes` must be a positive integer of at least `maxBodyBytes`, so one reply frame always fits, and is subject to the same rule with `INVALID_WS_BACKPRESSURE`.
+
+`cdcRetentionMs`, `deviceCursorRetentionMs`, and `maxChangesHeldForDevice` govern the subscriptions this server serves, and the matching field in one database's own options overrides the server-wide value for that database. A database an application also polls inside its own process takes those limits from its own options and from the registry default alone (see [02-core.md](02-core.md#database)).
 
 ### Authentication
 
@@ -45,21 +50,24 @@ On the WebSocket upgrade the server must complete the handshake and close immedi
 ### Registered Operations
 
 ```text
-OperationRegistry = Map<databaseId, {
+OperationRegistry  = Map<databaseId, DatabaseOperations>
+DatabaseOperations = {
   reads?:  Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        columns?: List<string>, statement: (args) -> Statement }>
   writes?: Map<name, { args?: List<string>, fromIdentity?: Map<string, identityField>,
                        statements: (args) -> Statement or List<Statement> }>
-}>
+}
 
 Statement { sql: string, params?: Params }
 ```
 
 A caller invokes a registered operation by name, and the request carries no SQL. The registry is server-side code, keyed by database identifier. `args` declares the argument names a caller may supply. `fromIdentity` maps an argument name to a field of the identity `authenticate` returned, and the server must supply that argument itself. A request supplying an argument named in `fromIdentity` must fail with `ARGUMENT_NOT_ALLOWED`; the server must not override the supplied value instead. An implementation must constrain `fromIdentity` values to the fields of the identity type, so that a wrong field name fails to compile.
 
+`sharedOperations` is one set of reads and writes that the server serves for every database identifier, including a database that the registry opens after the server starts. The server must resolve a name against the database's own entry in `operations` first and against `sharedOperations` second.
+
 A read contains exactly one statement and an optional `columns` list of what that statement returns. A write contains one or more statements, and the server must run them in a single transaction. The server passes the resolved arguments to both. It serves them over HTTP at `POST /db/{id}/query/{name}` and `POST /db/{id}/execute/{name}`, over WebSocket through a `query` or an `execute` message carrying `name`, and opens a live query over a read when a `subscribe` message names one.
 
-A server configured with a registry must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
+A server configured with `operations` or `sharedOperations` must announce `query.named` through `GET /capabilities` and include `registry.digest`, a hash over every registered database identifier, operation kind, operation name, and argument name. An implementation must hash each shared operation under a kind of its own, so that moving an operation between `operations` and `sharedOperations` changes the digest. The digest must change whenever the contract a client generates against changes, which is how a client detects a rolling deploy. A server that accepts SQL statements over the network must announce `query.sql`, and a server that rejects them must omit the token, because a client tests for its absence before sending SQL.
 
 ### Execution Target
 
@@ -127,7 +135,9 @@ POST /db/{id}/query/{name}   { args?, readConcern? }   -> { rows: List<Map> }
 POST /db/{id}/execute/{name} { args?, writeConcern? }  -> { results: List<Execute> }
 ```
 
-`acceptSql` governs the five statement routes and the five statement WebSocket messages, and defaults to false. With it false, a server must serve registered operations only, and must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
+`acceptSql` governs the five statement routes, the five statement WebSocket messages, and table subscriptions, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`. It must also fail a `subscribe` message carrying `table` or `tables` and no `deviceId` with `SQL_NOT_ACCEPTED`, unless the registry has a `beforeSubscribe` hook. It serves its other routes as their own options allow: registered operations, live queries, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
+
+`acceptDeviceSync` governs device sync and defaults to false. With it false, a server must fail `POST /db/{id}/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, a `subscribe` message carrying `deviceId`, and an `ack` message with `403 DEVICE_SYNC_NOT_ACCEPTED`. It must also omit every `sync.` capability from `GET /capabilities`, so that a device can distinguish such a server from one that predates device sync. A server configured with `acceptDeviceSync` true and no `authenticate` hook refuses to start, with `INVALID_DEVICE_SYNC`.
 
 `{name}` is URL-encoded, and the server must decode it before matching. `args` follows the value encoding, and an operation declaring no argument accepts an empty body. A name registered as neither a read nor a write must fail with `UNKNOWN_QUERY` on both routes, and the write route must not resolve a read name. `execute/{name}` returns one result per statement.
 
@@ -161,6 +171,8 @@ ClusterStatusInfo {
 `health` and `healthReason` carry `NodeHealth`, defined in [03-replication.md](03-replication.md). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
 
 `readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`.
+
+A node that watches the coordinator's node sessions must also leave out every node whose session has lapsed (see [03-replication.md](03-replication.md#coordinator-backed-failover)). A node that reaches no coordinator, and one whose coordinator serves no such watch, lists the group's membership alone.
 
 ### Backup Endpoints
 
@@ -219,9 +231,9 @@ BackupRestoreStatus {
 
 | Status | Codes |
 |--------|-------|
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
 | 413 | `PAYLOAD_TOO_LARGE` |
@@ -278,7 +290,7 @@ The server applies the `readConcern` of a `query` message to the read it runs, a
 
 Every client message carries a string `id` the server echoes to correlate the reply; for a subscription the `id` is the subscription identifier. `sinceSeq`, `seq`, and `ack.seq` are decimal strings so sequence numbers beyond the safe integer range survive JSON. Change-event `row` and `oldRow` follow the value encoding, and `rowId` identifies the changed row. `hlc`, `origin`, and `txId` carry the change's timestamp, origin node, and transaction when it is stamped, and `txEnd` is true on the last change of a transaction (see [Transaction Boundaries](#transaction-boundaries)). A `changes` message carries several events in ascending `seq` order, each holding the fields of a `change` event; the server sends it only on a subscription carrying `stagedStream: true`. The `deviceId`, `schemaVersion`, `stagedStream`, and `ack` fields drive device sync, and `subscribed` carries `maxUnacknowledgedChanges` on a subscription presenting a `deviceId` (see [08-device-sync.md](08-device-sync.md)).
 
-A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` and `stagedStream` each require a `deviceId`, and `stagedStream` must be a boolean. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`. The server must invoke the `beforeSubscribe` hook of [02-core.md](02-core.md#hooks) once per table a subscribe message names, before it opens the subscription. The hook context carries the identity the `authenticate` hook returned for the upgrade. A hook that throws refuses the whole subscription.
+A message is rejected with `INVALID_JSON` when it is not JSON, `INVALID_MESSAGE` when it is not an object or lacks a string `type` or `id`, and `UNKNOWN_TYPE` for an unrecognised type. A subscription needs a string `table`, or a `tables` array of 1 to 500 table names in place of it; `tables` and `stagedStream` each require a `deviceId`, and `stagedStream` must be a boolean. A duplicate `id` fails with `DUPLICATE_SUBSCRIPTION`, a read-only database with `READ_ONLY`, and an in-memory database with `CDC_UNSUPPORTED`. The server must invoke the `beforeSubscribe` hook of [02-core.md](02-core.md#hooks) once per table a subscribe message names, before it opens the subscription. The hook context carries the identity the `authenticate` hook returned for the upgrade, and the `deviceId` of a device-sync subscribe message. A hook that throws refuses the whole subscription.
 
 ### Transaction Boundaries
 

@@ -9,39 +9,40 @@ const SELECT_FINISHED_BYTES = 'SELECT sirannon_stream_finish(?) AS bytes'
 const SELECT_RELEASED_BYTES = 'SELECT sirannon_stream_close(?) AS bytes'
 
 /**
- * The statements one backup run needs from the streaming extension. Sirannon
- * runs some of them once per piece, so each one is compiled ahead of the run.
+ * Holds the prepared statements that a streamed backup calls on the streaming
+ * extension. Sirannon calls some of them once per piece, so it prepares each
+ * one before the backup starts.
  *
  * @internal
  */
 export interface BackupStreamStatements {
-  /** Opens a stream and returns the identifier that names it in the destination URI. */
+  /** Opens a stream and returns its ID, which the destination URI includes. */
   selectNewStreamId(
     pieceBytes: number,
     maxQueuedPieces: number,
     waitWhenFull: number,
     stoppedTakerMicroseconds: number,
   ): Promise<number>
-  /** Returns the next whole piece the copy has produced, or null where it has produced none. */
+  /** Returns the next whole piece of the copy, or `null` while the queue is empty. */
   selectNextPiece(streamId: number): Promise<Uint8Array | null>
-  /** Reports that the caller is still running, and returns the pieces the extension holds. */
+  /** Signals to the extension that the caller is still taking pieces, and returns the number of pieces in the queue. */
   selectQueuedPieces(streamId: number): Promise<number>
-  /** Returns the bytes SQLite has written to a stream. */
+  /** Returns the current size in bytes of the file that SQLite writes through a stream. */
   selectBytesWritten(streamId: number): Promise<number>
-  /** Returns what stopped a stream, or null where nothing did. */
+  /** Returns the failure message for a stream, or `null` when the stream has none. */
   selectFailure(streamId: number): Promise<string | null>
-  /** Closes a stream to further writes, queues what it still held, and returns the bytes the file holds. */
+  /** Closes a stream to further writes, queues the bytes that the stream still buffers, and returns the size of the file in bytes. */
   selectFinishedBytes(streamId: number): Promise<number>
-  /** Releases a stream and returns the bytes it carried. */
+  /** Releases a stream and returns the size of its file in bytes. */
   selectReleasedBytes(streamId: number): Promise<number>
 }
 
 /**
- * Compiles the statements a streamed backup runs against the extension, so the
- * run itself carries no SQL.
+ * Prepares the statements that a streamed backup calls on the extension, and
+ * keeps their SQL in this module.
  *
- * @param conn - Connection the extension is loaded into.
- * @returns The compiled statements, each returning the value its question asks for.
+ * @param conn - The connection into which the caller loaded the extension.
+ * @returns The prepared statements, each of which returns one value from the extension.
  */
 export async function prepareBackupStreamStatements(conn: SQLiteConnection): Promise<BackupStreamStatements> {
   const [newStreamId, nextPiece, queuedPieces, bytesWritten, failure, finishedBytes, releasedBytes] = await Promise.all(

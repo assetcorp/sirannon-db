@@ -68,10 +68,6 @@ export function selectMinChangeSeqSql(tableName: string): string {
   return `SELECT MIN(seq) AS seq FROM "${tableName}"`
 }
 
-export function selectMinForeignChangeSeqSql(tableName: string): string {
-  return `SELECT MIN(seq) AS seq FROM "${tableName}" WHERE seq > ? AND node_id != ?`
-}
-
 export function deleteChangesBeforeSql(tableName: string): string {
   return `DELETE FROM "${tableName}" WHERE changed_at < ?`
 }

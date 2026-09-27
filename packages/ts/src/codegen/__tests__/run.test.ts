@@ -58,6 +58,41 @@ describe('runCodegen', () => {
     expect(manifest.databases.shop.reads.openOrders).toMatchObject({ args: ['status'], identityArgs: ['tenant'] })
   })
 
+  it('writes the operations that every database shares from their own export', async () => {
+    writeFileSync(
+      join(workspace, 'shared.mjs'),
+      `export const sharedOperations = {
+  reads: { openInvoices: { columns: ['id', 'amount'], statement: () => ({ sql: 'SELECT id, amount FROM invoices' }) } },
+}
+`,
+    )
+    const typesPath = join(workspace, 'shared.ts')
+    const manifestPath = join(workspace, 'shared.json')
+
+    await runCodegen(['--registry', join(workspace, 'shared.mjs'), '--out', typesPath, '--manifest', manifestPath])
+
+    expect(readFileSync(typesPath, 'utf8')).toContain('export interface SharedOpenInvoicesRow {')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      databases: Record<string, unknown>
+      shared: { reads: Record<string, { columns: string[] }> }
+    }
+    expect(manifest.databases).toEqual({})
+    expect(manifest.shared.reads.openInvoices.columns).toEqual(['id', 'amount'])
+  })
+
+  it('refuses a shared export name the module does not have', async () => {
+    await expect(
+      runCodegen([
+        '--registry',
+        join(workspace, 'operations.mjs'),
+        '--out',
+        join(workspace, 'out.ts'),
+        '--shared-export',
+        'everyTenant',
+      ]),
+    ).rejects.toThrow(/exports no shared operations named 'everyTenant'/)
+  })
+
   it('refuses a module that exports no registry, and an unknown argument', async () => {
     writeFileSync(join(workspace, 'empty.mjs'), 'export const unrelated = 1\n')
 

@@ -1,17 +1,18 @@
 import { invokeCallerCallback } from '../caller-callbacks.js'
 
 /**
- * Passes one value to a callback the caller supplied, dropping whatever that
- * callback throws and whatever a promise it returns rejects with.
+ * Passes one value to a callback that the caller supplies, and discards any
+ * error that the callback throws or that its returned promise rejects with.
  *
- * Every report the cycle makes, whether of a run, a skip, a failure, or the
- * progress of a copy, reaches the caller from inside the turn that produced it.
- * A callback that throws would otherwise abort that turn, so the backup would
- * fail for a fault in the reporting alone. The cycle never waits for what the
- * callback returns, so an asynchronous callback finishes on its own.
+ * Sirannon delivers every report of the cycle, whether of a run, a skip, a
+ * failure, or the progress of a copy, from inside the turn that produces it. A
+ * callback that throws would otherwise abort that turn, so a fault in the
+ * reporting alone would fail the backup. The cycle never waits for a promise
+ * that the callback returns, so an asynchronous callback completes
+ * independently of the turn.
  *
- * @param callback - The callback the caller supplied, where they supplied one.
- * @param value - What the cycle has to report.
+ * @param callback - The callback that the caller supplies, if any.
+ * @param value - The value to report.
  */
 export function reportQuietly<T>(callback: ((value: T) => void) | undefined, value: T): void {
   if (!callback) return

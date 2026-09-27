@@ -5,7 +5,7 @@ import { fetchCapabilityReport } from './sync-capabilities.js'
 import { RemoteError } from './types.js'
 
 /**
- * Message a client raises when the server accepts no SQL over the network.
+ * The message that the client throws when the server accepts no SQL over the network.
  *
  * @internal
  */
@@ -16,19 +16,19 @@ export const SQL_UNCONFIRMED_MESSAGE =
   'GET /capabilities returned 404, so this client cannot confirm that the server accepts SQL and refuses to send it. Check that the URL reaches a sirannon-db server and that any proxy in front of it forwards /capabilities.'
 
 /**
- * Capability questions a remote database asks before it sends a statement.
+ * The capability checks that the client performs before a remote database sends a statement.
  *
  * @public
  */
 export interface ServerCapabilityCheck {
-  /** Throws when the server accepts no SQL over the network, so a client refuses to send any. */
+  /** Throws unless the server announces that it accepts SQL over the network, so the client sends SQL only to a server that accepts it. */
   assertSqlAccepted(): Promise<void>
-  /** Reads the digest of the server's operation registry, or undefined when the server announces none. */
+  /** Returns the digest of the server's operation registry, or `undefined` when the server announces none. */
   registryDigest(refresh?: boolean): Promise<string | undefined>
 }
 
 /**
- * Reads and caches the capability report a server announces.
+ * Fetches and caches the capability report that a server announces.
  *
  * @internal
  */

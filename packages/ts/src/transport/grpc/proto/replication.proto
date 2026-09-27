@@ -146,6 +146,8 @@ message ForwardRequest {
   repeated Statement statements = 2;
   string group_id = 3;
   int64 primary_term = 4;
+  string write_concern_level = 5;
+  uint32 write_concern_timeout_ms = 6;
 }
 
 message StatementResult {
@@ -159,4 +161,5 @@ message ForwardResponse {
   string error = 3;
   string group_id = 4;
   int64 primary_term = 5;
+  string error_code = 6;
 }

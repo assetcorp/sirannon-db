@@ -1,7 +1,8 @@
 import type { ReplicationEngine } from './engine.js'
 
 /**
- * Batches locally recorded changes and pushes them to the peers the topology accepts.
+ * Sends the changes in this node's replication log to its peers in batches, on a timer. In coordinator mode, the
+ * loop sends only while this node holds primary authority; otherwise, the topology's `shouldReplicateTo` picks the peers.
  *
  * @internal
  */
@@ -44,9 +45,9 @@ export class SenderLoop {
     if (!engine.tracker) return
     const minAcked = await engine.log.getMinAckedSeq()
     if (minAcked === null) {
-      engine.tracker.clearPruneBoundary()
+      engine.tracker.clearPruneBoundary('replication')
     } else {
-      engine.tracker.setPruneBoundary(minAcked)
+      engine.tracker.setPruneBoundary('replication', minAcked)
     }
   }
 

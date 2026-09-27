@@ -1,85 +1,85 @@
-/** Where a live query stands: waiting for its first rows, holding rows, or failed.
+/** Describes a live query's state, which is pending until the first read returns, ready with the current rows, or an error after a failure.
  * @public
  */
 export type LiveQueryState<T> =
   | {
-      /** Where the query stands: `'pending'` while its first read is in flight, `'ready'` once it holds rows, `'error'` after a failure. */
+      /** `'pending'` while the first read is in flight, `'ready'` once the rows are available, or `'error'` after a failure. */
       status: 'pending'
     }
   | {
-      /** Names this state as one holding rows. */
+      /** Marks the state that has rows. */
       status: 'ready'
-      /** The rows the query holds, in the order the read returned them. */
+      /** The current rows of the query, in its result order. */
       rows: readonly T[]
-      /** True while the query re-reads, and the rows above stay readable throughout. */
+      /** `true` while Sirannon re-reads the query, in which case `rows` is the previous result until the re-read finishes. */
       revalidating: boolean
     }
   | {
-      /** Names this state as one holding the failure the query met. */
+      /** Marks the state after a failure. */
       status: 'error'
-      /** What the read or the subscription behind it threw. */
+      /** The error that the read or its change subscription threw. */
       error: Error
     }
 
-/** One change to a live query's result set, as a position and the row at it.
+/** Describes one edit to a live query's result set, as a position and the row at that position.
  * @public
  */
 export type ResultOp<T> =
   | {
-      /** Which edit this is: `'insert'` for a row added, `'update'` for a row changed in place, `'delete'` for a row removed. */
+      /** `'insert'` for an added row, `'update'` for a row that changed in place, or `'delete'` for a removed row. */
       op: 'insert'
-      /** Position in the result set the edit applies to, counted from zero. */
+      /** The zero-based position of the inserted row in the result set. */
       index: number
-      /** The row that now sits at that position. */
+      /** The row at that position after the edit. */
       row: T
     }
   | {
-      /** Names this edit as a row changed in place. */
+      /** Marks an edit to a row that changed in place. */
       op: 'update'
-      /** Position of the row that changed. */
+      /** The zero-based position of the row that changed. */
       index: number
-      /** The row as it now reads. */
+      /** The row after the change. */
       row: T
     }
   | {
-      /** Names this edit as a row removed. */
+      /** Marks the removal of a row. */
       op: 'delete'
-      /** Position the removed row held. */
+      /** The zero-based position of the removed row before the edit. */
       index: number
     }
 
-/** What a live query tells its listeners: the rows replaced, edited in place, being re-read, or failed.
+/** Describes an update that a live query sends to its listeners, for a replaced result set, edits to apply, a re-read in progress, or a failure.
  * @public
  */
 export type LiveUpdate<T> =
   | {
-      /** Which update this is: `'rows'` for a replaced result set, `'ops'` for edits to apply, `'revalidating'` while the query re-reads, `'error'` after a failure. */
+      /** `'rows'` for a replaced result set, `'ops'` for edits to apply, `'revalidating'` while Sirannon re-reads the query, or `'error'` after a failure. */
       kind: 'rows'
     }
   | {
-      /** Names this update as one carrying edits. */
+      /** Marks an update with edits to apply. */
       kind: 'ops'
-      /** The edits that move the result set to its new state, in the order to apply them. */
+      /** The edits, in the order in which to apply them to reach the new result set. */
       ops: readonly ResultOp<T>[]
     }
   | {
-      /** Names this update as notice that the query has started re-reading. */
+      /** Marks the start of a re-read. */
       kind: 'revalidating'
     }
   | {
-      /** Names this update as notice that the query failed. */
+      /** Marks a failure, whose error {@link LiveQuery.getState} returns. */
       kind: 'error'
     }
 
-/** A registered read that keeps its rows current as the underlying tables change.
+/** A registered read whose rows Sirannon updates as the underlying tables change.
  * @public
  */
 export interface LiveQuery<T = Record<string, unknown>> {
-  /** Returns the rows the query holds right now. */
+  /** Returns the query's current state, with the rows when the state is ready. */
   getState(): LiveQueryState<T>
-  /** Calls back on each update and returns a function that stops the listener. */
+  /** Registers a listener for each update, and returns a function that removes it. */
   subscribe(listener: (update: LiveUpdate<T>) => void): () => void
-  /** Ends the query and releases its subscription. */
+  /** Closes the query and releases its change subscription. */
   close(): Promise<void>
 }
 
@@ -87,14 +87,14 @@ export interface LiveQuery<T = Record<string, unknown>> {
  * @public
  */
 export interface LiveQueryOptions {
-  /** Milliseconds of random delay before a re-read, which spreads the load of many queries reacting at once. */
+  /** The upper bound in milliseconds of a random delay before each re-read, so that many queries affected by one change re-read at different moments. */
   rereadJitterMs?: number
-  /** Changes in one transaction above which the query re-reads instead of applying them one by one. */
+  /** The largest number of changes in one transaction that Sirannon applies to the result one by one. For a larger transaction, Sirannon re-reads the whole query. */
   maxTransactionChanges?: number
   /**
-   * Receives the failure of any listener this query calls. The query never waits for what a
-   * listener returns, so a throw and a rejection both arrive here, and every other listener
-   * still receives the update. Sirannon drops whatever this reporter itself throws.
+   * Receives the error from any listener of this query that throws or returns a rejected promise.
+   * Sirannon calls each listener without awaiting it, so the other listeners still receive the
+   * update. Sirannon discards any error that `onError` itself throws.
    */
   onError?: (error: Error) => void
 }

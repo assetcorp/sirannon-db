@@ -1,13 +1,14 @@
 import { ExtensionError, SirannonError } from '../errors.js'
 
 /**
- * Runs a runtime's own extension loading call, so every driver reports one
- * error type for one cause. A `SirannonError` from the runtime passes through
- * unchanged, and any other failure becomes an {@link ExtensionError}.
+ * Calls the runtime's own extension loading function and rethrows any failure
+ * as an {@link ExtensionError}, so that every driver throws the same error type
+ * when an extension fails to load. A `SirannonError` from the runtime
+ * propagates unchanged.
  *
- * @param extensionPath - Absolute path the failure message reports.
- * @param load - The runtime's loading call.
- * @returns A promise that settles once the runtime has loaded the extension.
+ * @param extensionPath - The absolute path that the error message includes.
+ * @param load - The runtime's loading function.
+ * @returns A promise that resolves once the runtime loads the extension.
  */
 export async function loadThroughRuntime(extensionPath: string, load: () => void): Promise<void> {
   try {

@@ -2,24 +2,21 @@ import { HLC } from '../hlc.js'
 import type { ConflictContext, ConflictResolution, ConflictResolver } from '../types.js'
 
 /**
- * Last-Writer-Wins conflict resolver.
+ * Resolves a conflict by keeping the write with the higher hybrid logical clock (HLC) timestamp.
  *
- * A remote delete is accepted whatever the timestamps say, so a delete wins over
- * a concurrent update and a deleted row is never resurrected.
- *
- * Otherwise compares the remote HLC against the local HLC. The higher timestamp wins.
- * When both timestamps are equal (concurrent writes within the same
- * millisecond and logical tick), the tie is broken deterministically by
- * comparing node IDs lexicographically, so that every node reaches the same
- * resolution without coordination. This is the default resolver and the
- * fallback used by PrimaryWinsResolver and FieldMergeResolver when they
- * cannot make a more specific decision.
+ * The resolver accepts every remote delete without comparing timestamps, so a
+ * delete wins over a concurrent update. It also accepts the remote write
+ * when the local row has no timestamp. When the two timestamps are equal, the
+ * resolver accepts the remote write only if its node ID sorts higher, so that
+ * every node reaches the same resolution without coordination. Sirannon uses
+ * this resolver by default, and {@link PrimaryWinsResolver} and
+ * {@link FieldMergeResolver} fall back to it.
  *
  * @public
  */
 export class LWWResolver implements ConflictResolver {
   /**
-   * Takes the incoming row when its stamp is higher, and keeps the local row otherwise.
+   * Returns the incoming row when its stamp is higher, and the local row otherwise.
    *
    * @param ctx - The local and incoming versions of one row.
    * @returns Which version to write.

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
-import type { OperationArguments, OperationRegistry } from '../../../core/operation-registry.js'
+import type { DatabaseOperations, OperationArguments, OperationRegistry } from '../../../core/operation-registry.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { operationRegistryDigest } from '../../operation-lookup.js'
@@ -279,6 +279,24 @@ describe('live queries over WebSocket', () => {
     const results = messagesOfType(conn, 'result')
     expect((results[0].data as { results: { changes: number }[] }).results[0].changes).toBe(1)
     expect((results[1].data as { rows: unknown[] }).rows).toEqual([{ id: 2, reference: 'A-2', total: 340 }])
+    await handler.close()
+  })
+
+  it('serves a shared read as a live query on a database with no entry of its own', async () => {
+    const sharedOperations: DatabaseOperations<Identity> = {
+      reads: { everyOrder: { statement: () => ({ sql: 'SELECT id, reference FROM orders ORDER BY id' }) } },
+    }
+    const handler = createWSHandler<Identity>(sirannon, { sharedOperations })
+    const conn = createMockConnection()
+    await handler.handleOpen(conn, 'shop', { tenantId: 'acme' })
+
+    const digest = operationRegistryDigest(undefined, sharedOperations)
+    subscribe(conn, handler, { id: 'live-1', name: 'everyOrder', registryDigest: digest })
+    await waitFor(() => messagesOfType(conn, 'subscribed').length === 1)
+    expect(messagesOfType(conn, 'subscribed')[0].rows).toHaveLength(3)
+
+    await db.execute("INSERT INTO orders (tenant_id, reference, status, total) VALUES ('acme', 'A-3', 'open', 50)")
+    await waitFor(() => messagesOfType(conn, 'live').length === 1)
     await handler.close()
   })
 

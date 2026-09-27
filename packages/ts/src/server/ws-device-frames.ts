@@ -1,16 +1,15 @@
 import { encodeTaggedValues } from '../core/cdc/encoding.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { WSSendOutcome } from './ws-connection.js'
-import type { WSWireChangeEvent } from './ws-protocol.js'
+import type { WSWireChangeEvent } from './ws-server-messages.js'
 
 /**
- * Target size of one packed `changes` frame. A soft limit in the manner of
- * MySQL's row-event grouping: events are packed until the next one would
- * cross it, and a single event larger than the whole target is sent alone
- * rather than split. 64 KiB keeps a frame at 1/16 of the 1 MiB
- * `maxBodyBytes` frame ceiling and 1/256 of the 16 MiB send-backpressure
- * allowance, while a full 1,000-change delivery window of ordinary rows
- * still spans several frames instead of collapsing into one burst.
+ * The target size of one packed `changes` frame. The packer adds events to a
+ * frame until the next one would take it past this size, and it sends an event
+ * larger than the whole target in a frame of its own. At 64 KiB, a frame is
+ * 1/16 of the default 1 MiB `maxBodyBytes` and 1/256 of the default 16 MiB
+ * backpressure limit, while a full delivery window of 1,000 ordinary changes
+ * still spans several frames.
  */
 export const DEVICE_FRAME_TARGET_BYTES = 65_536
 
@@ -30,13 +29,13 @@ export function wireChangeEvent(event: ChangeEvent): WSWireChangeEvent {
   }
 }
 
-/** The outcome of offering an event to the packer: a send outcome when a frame went out, or `queued`. */
+/** The outcome of adding an event to the packer, which is the send outcome when the packer sends a frame, or `queued` when it keeps the event for a later frame. */
 export type FrameAppendOutcome = WSSendOutcome | 'queued'
 
 /**
- * Packs encoded change events into `changes` frames bounded by a byte
- * target. Each event is serialised once; the frame is assembled from the
- * serialised pieces so that the byte accounting is exact.
+ * Packs change events into `changes` frames up to a size target. The packer
+ * serialises each event once, builds the frame from those strings, and
+ * measures the frame by string length.
  */
 export class DeviceFramePacker {
   private parts: string[] = []

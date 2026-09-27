@@ -8,7 +8,7 @@ const CHECKPOINT_ATTEMPTS = 3
 const CHECKPOINT_RETRY_DELAY_MS = 50
 
 /**
- * Reports whether a value is one of the durability levels a bulk load accepts.
+ * Returns true when the value is `'off'` or `'normal'`, the two durability levels that a bulk load accepts.
  *
  * @internal
  */
@@ -31,47 +31,47 @@ export interface BulkLoadRun {
 }
 
 /**
- * Run a bulk load with relaxed writer durability, then restore the
- * operator-configured level. The caller must hold the database's writer lock
- * for the whole call so that no other write commits under the relaxed level.
+ * Executes a bulk load at a relaxed synchronous level, then restores the level
+ * that the operator configured. The caller must hold the writer lock for the
+ * whole call so that no other write commits at the relaxed level.
  *
- * Interruption safety, by failure mode:
- * - A load statement fails: the surrounding transaction rolls back, the
- *   configured level is restored, and the database is exactly as it was before
- *   the load; the operator recovers by re-running the load.
- * - The process crashes mid-load: `PRAGMA synchronous` is connection state
- *   that SQLite never stores in the database file, so the next open re-applies
- *   the configured level, and the uncommitted transaction rolls back from the
- *   WAL on open.
- * - Power loss or an OS crash during a load at 'off': SQLite documents that
- *   the file may be corrupted, which is why 'off' fits only a load the
- *   operator can re-run from scratch; 'normal' keeps WAL corruption safety.
+ * Each failure leaves the database in a known state:
+ * - When a load statement fails, SQLite rolls the transaction back and this
+ *   function restores the configured level, so the operator can re-run the load.
+ * - When the process crashes during a load, SQLite rolls the uncommitted
+ *   transaction back from the WAL on the next open, and that open applies the
+ *   configured level again, because SQLite keeps `PRAGMA synchronous` on the
+ *   connection and never stores it in the file.
+ * - When the power fails or the operating system crashes during a load at
+ *   'off', SQLite documents that the file can be corrupted, so 'off' suits only
+ *   a load that the operator can re-run from scratch, while 'normal' keeps the
+ *   WAL safe from corruption.
  *
- * The restore runs on both the success and the failure path. A restore pragma
- * only fails when the writer connection itself is gone, so on a committed load
- * that failure is reported as 'DURABILITY_RESTORE_FAILED', which tells the
- * operator the load committed and must not be re-run; on a failed load the
- * original load error stays dominant.
+ * This function restores the level on the success path and on the failure
+ * path. When the restore fails after a committed load, it throws
+ * 'DURABILITY_RESTORE_FAILED' so that the operator knows that the load
+ * committed and must not be re-run; when the load itself failed, it rethrows
+ * the load error.
  *
- * On success, and only when the load changed rows, the WAL is checkpointed
- * after the restore so the loaded pages are written into the main database
- * file and fsync'd at the restored synchronous level. A reader holding the WAL
- * can defer that transfer: the checkpoint retries a few times and then leaves
- * the remaining pages for a later checkpoint rather than failing a load that
- * has already committed, so those pages stay in the WAL until then. The
- * checkpoint runs synchronously in the engine and blocks the event loop for
- * the flush, which grows with the size of the load.
+ * After a load that committed and changed rows, this function checkpoints the
+ * WAL at the restored level, which copies the loaded pages into the main
+ * database file and fsyncs them. While a reader holds the WAL open, SQLite can
+ * leave pages uncopied, so this function tries the checkpoint up to three times
+ * and then returns without failing the committed load, leaving the remaining
+ * pages for a later checkpoint. On a driver that calls SQLite on the main
+ * thread, the checkpoint blocks the event loop for as long as the flush takes,
+ * which grows with the size of the load.
  *
- * A multi-batch import passes `checkpoint: false` on every load but the last so
- * the one fsyncing checkpoint is paid once at the end instead of once per
- * batch; each intermediate load still restores the configured level, and
- * SQLite's automatic checkpoint keeps the WAL bounded during the import at the
- * relaxed level with no fsync of its own.
+ * A caller that imports in several batches should pass `checkpoint: false` on
+ * every load except the last, so that it pays for one fsyncing checkpoint at
+ * the end. Each of those loads still restores the configured level, while
+ * SQLite's automatic checkpoint keeps the WAL bounded at the relaxed level
+ * without an fsync.
  *
- * A database that captures its own change log runs no checkpoint here at all,
- * whatever the caller asked for. A checkpoint ahead of the capture would let
- * SQLite overwrite the very frames this load wrote. Its cycle checkpoints
- * instead, once it has those frames.
+ * On a database that captures its own change log, this function skips the
+ * checkpoint whatever the caller asked for, because a checkpoint before the
+ * capture would let SQLite overwrite the frames that this load wrote. The
+ * backup cycle checkpoints once it has captured those frames.
  *
  * @internal
  */

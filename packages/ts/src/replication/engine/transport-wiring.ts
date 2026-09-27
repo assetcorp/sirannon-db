@@ -91,6 +91,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       }
 
       await engine.log.setLastAppliedSeq(fromPeerId, batch.toSeq)
+      engine.peerTracker.onBatchApplied(fromPeerId, batch.hlcRange.max)
 
       const previousApplied = engine.appliedSeqByPeer.get(fromPeerId) ?? 0n
       if (batch.toSeq > previousApplied) {
@@ -158,7 +159,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)
       }
       try {
-        const result = await engine.localExecutor.executeForwardedLocally(request.statements)
+        const result = await engine.localExecutor.executeForwardedLocally(request.statements, request.writeConcern)
         return engine.decorate(result)
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))

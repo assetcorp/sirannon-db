@@ -1,14 +1,34 @@
 import { ChangeTracker } from '../core/cdc/change-tracker.js'
+import {
+  applyDeviceCursorBoundary,
+  type ChangeRetentionOptions,
+  resolveDeviceRetentionPolicy,
+} from '../core/cdc/device-retention.js'
 import { ensureCdcEpoch } from '../core/cdc/epoch.js'
 import { SubscriptionManager } from '../core/cdc/subscription.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
-import { DEFAULT_DEVICE_CURSOR_RETENTION_MS, effectiveMinDeviceCursor } from './device-cursors.js'
 
 const DEFAULT_POLL_INTERVAL_MS = 50
 const CLEANUP_INTERVAL_TICKS = 100
+
+export function toChangeRetentionOptions(options?: {
+  cdcRetentionMs?: number
+  deviceCursorRetentionMs?: number
+  maxChangesHeldForDevice?: number
+}): ChangeRetentionOptions {
+  return {
+    ...(options?.cdcRetentionMs === undefined ? {} : { cdcRetention: options.cdcRetentionMs }),
+    ...(options?.deviceCursorRetentionMs === undefined
+      ? {}
+      : { deviceCursorRetention: options.deviceCursorRetentionMs }),
+    ...(options?.maxChangesHeldForDevice === undefined
+      ? {}
+      : { maxChangesHeldForDevice: options.maxChangesHeldForDevice }),
+  }
+}
 
 export interface CDCContext {
   cdcConn: SQLiteConnection
@@ -21,15 +41,15 @@ export interface CDCContext {
 export class CdcContextRegistry {
   private readonly sirannon: Sirannon
   private readonly retentionMs: number | undefined
-  private readonly deviceCursorRetentionMs: number
+  private readonly serverDeviceRetention: ChangeRetentionOptions
   private readonly contexts = new Map<string, CDCContext>()
   private readonly pending = new Map<string, Promise<CDCContext>>()
   private closed = false
 
-  constructor(sirannon: Sirannon, retentionMs?: number, deviceCursorRetentionMs?: number) {
+  constructor(sirannon: Sirannon, serverRetention: ChangeRetentionOptions = {}) {
     this.sirannon = sirannon
-    this.retentionMs = retentionMs
-    this.deviceCursorRetentionMs = deviceCursorRetentionMs ?? DEFAULT_DEVICE_CURSOR_RETENTION_MS
+    this.retentionMs = serverRetention.cdcRetention
+    this.serverDeviceRetention = serverRetention
   }
 
   async ensure(databaseId: string, database: Database): Promise<CDCContext> {
@@ -84,8 +104,10 @@ export class CdcContextRegistry {
   private async createContext(database: Database): Promise<CDCContext> {
     const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
 
-    const tracker = new ChangeTracker(this.retentionMs === undefined ? undefined : { retention: this.retentionMs })
-    const manager = new SubscriptionManager()
+    const retention = database.changeRetention.cdcRetention ?? this.retentionMs
+    const deviceRetention = resolveDeviceRetentionPolicy(database.changeRetention, this.serverDeviceRetention)
+    const tracker = new ChangeTracker(retention === undefined ? undefined : { retention })
+    const manager = new SubscriptionManager(this.sirannon.metrics?.observeDispatch(database.id))
     let epoch = ''
     try {
       await tracker.advanceToLatest(cdcConn)
@@ -127,12 +149,7 @@ export class CdcContextRegistry {
           tickCount = 0
           await database
             .runCdcMaintenance(async writer => {
-              const minCursor = await effectiveMinDeviceCursor(writer, this.deviceCursorRetentionMs)
-              if (minCursor === null) {
-                tracker.clearPruneBoundary()
-              } else {
-                tracker.setPruneBoundary(minCursor)
-              }
+              await applyDeviceCursorBoundary(writer, tracker, deviceRetention)
               await tracker.cleanup(writer)
             })
             .catch(() => {})

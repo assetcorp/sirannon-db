@@ -136,10 +136,13 @@ export function isEligiblePromotionSession(
 }
 
 /**
- * The three membership transitions, shared so the etcd and in-memory
- * coordinators cannot disagree about who is in sync. Each returns the state it
- * was given when the input changes nothing, which is how a caller tells a
- * refused update from an applied one.
+ * Returns the group state after an in-sync set update. This function,
+ * {@link nextAdmittedInSyncState}, and {@link nextMaintenanceState} implement the
+ * membership rules that both the etcd and the in-memory coordinators apply, so
+ * that both coordinators compute the same in-sync set. This function and
+ * {@link nextAdmittedInSyncState} return the state object that the caller
+ * passed in when the update changes nothing, which lets the caller skip the
+ * write, while {@link nextMaintenanceState} always returns a new object.
  */
 export function nextInSyncSetState(
   state: ReplicationGroupState,

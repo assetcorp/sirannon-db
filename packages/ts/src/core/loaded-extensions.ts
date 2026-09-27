@@ -26,15 +26,16 @@ function forwardingConnection(connection: SQLiteConnection, onClose: () => void)
 }
 
 /**
- * Holds the resolved path of every compiled extension a database has loaded,
- * along with every connection this database opened beyond its pool, so each of
- * them can call the extension's functions. SQLite scopes a loaded extension to
- * the connection that loaded it, and a database opens a fresh connection for
- * each consistent snapshot read and one more for its live queries.
+ * Records the resolved path of every compiled extension that a database has
+ * loaded, and tracks every connection that the database opens beyond its pool,
+ * so that each of those connections can call the extensions' functions. SQLite
+ * scopes a loaded extension to the connection that loaded it, and a database
+ * opens a new connection for each consistent snapshot read and one more for its
+ * live queries.
  *
- * Loading and opening run one at a time, so a connection opened while a load is
- * in flight either loads that extension on the way in or is one of the
- * connections the load reaches.
+ * This class performs loads and opens one at a time, so a connection either
+ * opens after a load and loads that extension as it opens, or opens before the
+ * load and is one of the connections that the load covers.
  *
  * @internal
  */
@@ -60,7 +61,7 @@ export class LoadedExtensions {
     }
   }
 
-  /** Loads an extension onto the pool's connections and every connection opened beyond it, then records it. */
+  /** Loads an extension into the pool's connections and every tracked connection, then records its resolved path. */
   load(poolConnections: readonly SQLiteConnection[], extensionPath: string): Promise<void> {
     return this.runInTurn(async () => {
       const resolved = await loadExtension(this.driver, [...poolConnections, ...this.openedConnections], extensionPath)
@@ -69,12 +70,12 @@ export class LoadedExtensions {
   }
 
   /**
-   * Opens a connection, loads every recorded extension onto it, and returns a
-   * connection that forwards to it. Closing the returned connection stops the
-   * tracking and closes the one underneath.
+   * Opens a connection, loads every recorded extension into it, and returns a
+   * wrapper that forwards each call to it. Closing the wrapper stops the
+   * tracking and closes the connection underneath.
    *
-   * @param openConnection - Opens the connection this database needs.
-   * @returns The connection to read and write through.
+   * @param openConnection - The function that opens the connection that this database needs.
+   * @returns The wrapper to read and write through.
    */
   open(openConnection: () => Promise<SQLiteConnection>): Promise<SQLiteConnection> {
     return this.runInTurn(async () => {

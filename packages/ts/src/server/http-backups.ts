@@ -15,12 +15,12 @@ import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.j
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 
 /**
- * Reads the JSON body of a request whose fields are all optional, so that a
- * caller with nothing to say sends nothing.
+ * Parses the JSON body of a request whose fields are all optional, so that a
+ * caller with no fields to set can send an empty body.
  *
- * @param res - Response the server refuses a malformed body through.
- * @param rawBody - Bytes the request supplied.
- * @returns The parsed body, an empty one where the request supplied no bytes, or null where the server has already refused it.
+ * @param res - The response through which the server rejects a malformed body.
+ * @param rawBody - The bytes of the request body.
+ * @returns The parsed body, an empty object when the request body is empty, or null when the server has already sent an error response.
  */
 export function parseOptionalBody<T>(res: HttpResponse, rawBody: Buffer): T | null {
   if (rawBody.length === 0) return {} as T
@@ -28,13 +28,13 @@ export function parseOptionalBody<T>(res: HttpResponse, rawBody: Buffer): T | nu
 }
 
 /**
- * Finds the open database a backup route addresses.
+ * Returns the open database that a backup route names.
  *
- * @param res - Response the server refuses through.
- * @param abort - Whether the caller has disconnected.
- * @param sirannon - Registry the database is open in.
- * @param dbId - Identifier the route named.
- * @returns The database, or null where the server has already answered the caller.
+ * @param res - The response through which the server sends an error.
+ * @param abort - Tracks whether the caller has disconnected.
+ * @param sirannon - The registry in which the database is open.
+ * @param dbId - The identifier in the route.
+ * @returns The database, or null when the server has already answered the caller.
  */
 export async function resolveBackupDatabase(
   res: HttpResponse,
@@ -78,15 +78,15 @@ function readStatus(res: HttpResponse, abort: ResponseAbort, database: Database)
 }
 
 /**
- * Serves the route that takes one turn of the checkpoint cycle now.
+ * Handles the route that starts one turn of the checkpoint cycle now.
  *
- * Sirannon accepts the turn and answers the caller straight away, since a full
- * copy of a large database may continue past the deadline any proxy between
- * that caller and the server allows. The progress route is where the caller
- * reads what the turn produced.
+ * The server waits one event-loop tick, so that it can report a turn that fails
+ * at once, then answers with 202, because a full copy of a large database can
+ * take longer than the timeout of a proxy between the caller and the server. The
+ * caller reads the result of the turn from the status route.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @returns The handler that the server registers.
  */
 export function handleBackupTrigger(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, _rawBody, abort) => {
@@ -105,11 +105,11 @@ export function handleBackupTrigger(sirannon: Sirannon): DbRouteHandler {
 }
 
 /**
- * Serves the route that reports what the cycle is doing and what its recent
- * turns produced.
+ * Handles the route that reports the checkpoint cycle's current activity and
+ * the results of its recent turns.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @returns The handler that the server registers.
  */
 export function handleBackupStatus(sirannon: Sirannon): DbGetRouteHandler {
   return async (res, dbId, _ctx, abort) => {
@@ -122,10 +122,10 @@ export function handleBackupStatus(sirannon: Sirannon): DbGetRouteHandler {
 }
 
 /**
- * Serves the route that lists what the backup destination stores.
+ * Handles the route that lists the chains in the backup destination.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @returns The handler that the server registers.
  */
 export function handleBackupChain(sirannon: Sirannon): DbGetRouteHandler {
   return async (res, dbId, _ctx, abort) => {
@@ -144,11 +144,11 @@ export function handleBackupChain(sirannon: Sirannon): DbGetRouteHandler {
 }
 
 /**
- * Serves the route that reads one stored backup back out of the destination and
- * compares it against the record the backup that wrote it left behind.
+ * Handles the route that reads one stored backup back from the destination and
+ * compares it against the record that Sirannon wrote when it made the backup.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @returns The handler that the server registers.
  */
 export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
@@ -175,13 +175,13 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
 }
 
 /**
- * Serves the route that answers which backups no restore still needs.
+ * Handles the route that lists the backups that you no longer need for any restore.
  *
- * Sirannon lists them and deletes nothing, so a caller reads the answer and
- * then does as it likes with its own destination.
+ * Sirannon lists them and deletes nothing, so the caller decides what to
+ * delete from its own destination.
  *
- * @param sirannon - Registry the databases the server serves are open in.
- * @returns The handler the server registers.
+ * @param sirannon - The registry in which the server's databases are open.
+ * @returns The handler that the server registers.
  */
 export function handleBackupSafeToDelete(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {

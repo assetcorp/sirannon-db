@@ -32,13 +32,13 @@ export interface PullStreamHooks {
 }
 
 /**
- * Pulls the device stream and applies it through the on-disk staging table:
- * every received change is staged durably, a transaction is applied to the
- * real tables only when its `txEnd` change is staged, and acknowledgements
- * carry the staged watermark, because a staged change survives a crash and
- * is applied on restart. The subscription resumes from the staged
- * watermark, so a transaction cut off mid-stream is finished, not retried
- * from its start.
+ * Pulls the device stream and applies it through the on-disk staging table.
+ * The stream stages every change that it receives durably, and applies a
+ * transaction to the real tables once its `txEnd` change is staged. It
+ * acknowledges changes up to the staged watermark, because a staged change
+ * stays on disk through a crash and the stream applies it on restart. The
+ * stream subscribes again from the staged watermark, so after a disconnect in
+ * the middle of a transaction, it receives only the rest of that transaction.
  */
 export class PullStream {
   private transport: WebSocketTransport | null = null

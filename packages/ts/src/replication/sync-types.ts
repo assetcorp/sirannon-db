@@ -1,31 +1,31 @@
 import type { SyncTableManifest } from '../core/sync/types.js'
 
 /**
- * How far a joining node has got through first sync.
+ * Names how far a joining node is through first sync.
  *
  * @public
  */
 export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready'
 
 /**
- * Where a joining node stands in first sync.
+ * Describes a joining node's progress through first sync.
  *
  * @public
  */
 export interface SyncState {
-  /** How far the node has got. */
+  /** Names how far the node is through first sync. */
   phase: SyncPhase
-  /** Peer streaming the copy, or null when no sync is running. */
+  /** Identifies the peer that streams the copy, or is null when no sync is in progress. */
   sourcePeerId: string | null
-  /** Change-log position the copy was taken at. */
+  /** Holds the change-log position at which the source took the copy. */
   snapshotSeq: bigint | null
-  /** Tables already copied in full. */
+  /** Lists the tables that the node already holds in full. */
   completedTables: string[]
-  /** Tables the copy covers. */
+  /** Counts the tables that the copy covers. */
   totalTables: number
-  /** Milliseconds since the Unix epoch, taken when the sync started. */
+  /** Holds the time, in milliseconds since the Unix epoch, at which the sync started. */
   startedAt: number | null
-  /** Why the sync failed, or null while it is going well. */
+  /** Holds the reason that the last sync request failed, or null when no failure is recorded. */
   error: string | null
 }
 
@@ -35,86 +35,86 @@ export interface SyncState {
  * @public
  */
 export interface SyncRequest {
-  /** Identifier every message of this sync carries. */
+  /** Identifies this sync, and every message of the sync repeats it. */
   requestId: string
-  /** Identifier of the node asking for the copy. */
+  /** Identifies the node that asks for the copy. */
   joinerNodeId: string
-  /** Tables the joiner already holds in full, so a resumed sync skips them. */
+  /** Lists the tables that the joiner already holds in full, so that the source skips them when the sync resumes. */
   completedTables: string[]
-  /** Whether the joiner verifies the stream with chained batch digests. */
+  /** Is true when the joiner can verify the stream with chained batch digests. */
   supportsStreamVerification?: boolean
-  /** Replication group the joiner belongs to. */
+  /** Identifies the joiner's replication group. */
   groupId?: string
-  /** Primary term the joiner reports as current. */
+  /** Holds the primary term that the joiner reports as current. */
   primaryTerm?: bigint
 }
 
 /**
- * One page of first-sync table data.
+ * Holds one page of first-sync table data.
  *
  * @public
  */
 export interface SyncBatch {
-  /** Identifier of the sync this page belongs to. */
+  /** Identifies the sync that this page is part of. */
   requestId: string
-  /** Table these rows come from. */
+  /** Names the table that the rows come from. */
   table: string
-  /** Position of this page in the table's stream, counting from zero. */
+  /** Holds the position of this page in the table's stream, counting from zero. */
   batchIndex: number
-  /** The rows themselves. */
+  /** Holds the rows. */
   rows: Record<string, unknown>[]
-  /** Schema statements, sent with the first page so the joiner can build the tables. */
+  /** Holds the schema statements, which the source sends in a `__schema__` page before any table, so that the joiner can create the tables. */
   schema?: string[]
-  /** Checksum of the rows, which the joiner verifies before it writes them. */
+  /** Holds the checksum of the rows, which the joiner verifies before it writes them. */
   checksum: string
-  /** Set on the last page of a table. */
+  /** Is true on the last page of a table. */
   isLastBatchForTable: boolean
-  /** Tables the whole copy covers. */
+  /** Counts the tables that the whole copy covers. */
   totalTables?: number
-  /** Replication group the source belongs to. */
+  /** Identifies the source's replication group. */
   groupId?: string
-  /** Primary term the source held. */
+  /** Holds the source's primary term. */
   primaryTerm?: bigint
 }
 
 /**
- * Tells a joining node that first sync has finished, and carries what it needs to verify the copy.
+ * Tells a joining node that first sync is complete, and gives it the manifests that it checks the copy against.
  *
  * @public
  */
 export interface SyncComplete {
-  /** Identifier of the sync that finished. */
+  /** Identifies the sync that finished. */
   requestId: string
-  /** Change-log position the copy was taken at, which the joiner resumes from. */
+  /** Holds the change-log position at which the source took the copy, which the joiner resumes replication from. */
   snapshotSeq: bigint
-  /** One manifest per table, so the joiner can check what it received. */
+  /** Holds one manifest per table, so that the joiner can check the rows that it received. */
   manifests: SyncTableManifest[]
-  /** Replication group the source belongs to. */
+  /** Identifies the source's replication group. */
   groupId?: string
-  /** Primary term the source held. */
+  /** Holds the source's primary term. */
   primaryTerm?: bigint
 }
 
 /**
- * Confirms to the source that a joining node stored one first-sync page, or says why it could not.
+ * Tells the source whether a joining node stored one first-sync page, and gives the reason for a failure.
  *
  * @public
  */
 export interface SyncAck {
-  /** Identifier of the sync this acknowledgement belongs to. */
+  /** Identifies the sync that this acknowledgement is part of. */
   requestId: string
-  /** Identifier of the node that received the page. */
+  /** Identifies the joining node. */
   joinerNodeId: string
-  /** Table the page came from. */
+  /** Names the table that the page came from. */
   table: string
-  /** Position of the page in that table's stream. */
+  /** Holds the position of the page in that table's stream. */
   batchIndex: number
-  /** Whether the joiner stored the page. */
+  /** Is true when the joiner stored the page. */
   success: boolean
-  /** Why the joiner could not store it. */
+  /** Holds the reason that the joiner could not store the page. */
   error?: string
-  /** Replication group the joiner belongs to. */
+  /** Identifies the joiner's replication group. */
   groupId?: string
-  /** Primary term the joiner reports as current. */
+  /** Holds the primary term that the joiner reports as current. */
   primaryTerm?: bigint
 }

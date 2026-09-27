@@ -15,33 +15,33 @@ import { type BackupCycleState, type PendingCapture, writeCycleState } from './c
 import { sendFileInPieces } from './pieces.js'
 import { type BackupRunReport, DEFAULT_PIECE_BYTES } from './report.js'
 
-/** A chain the cycle has started.
+/** A chain that the cycle starts.
  * @internal
  */
 export interface StartedChain {
-  /** Identifier of the new chain. */
+  /** The identifier of the new chain. */
   chainId: string
-  /** Epoch milliseconds it started. */
+  /** The moment, in epoch milliseconds, that the chain started. */
   startedAt: number
-  /** Where it went in the list of chains, counted from zero. */
+  /** The index of the chain in the list of chains, counted from zero. */
   headIndex: number
-  /** What the full copy at its head wrote. */
+  /** The report of the full copy at the head of the chain. */
   report: BackupRunReport
 }
 
 /**
  * Copies the whole database to the destination and records that copy as the
- * head of a new chain. Every change piece after it names this copy as the one
- * it builds on.
+ * head of a new chain. Every later change piece in the chain applies on top of
+ * this copy.
  *
- * The copy's own record goes out before the chain joins the list, so a listing
- * never turns up a chain whose full copy is missing.
+ * Sirannon stores the record of the copy before it adds the chain to the list,
+ * so that a chain enters the list only after its full copy is recorded.
  *
- * @param request - Destination, naming, and the full copy to run.
- * @param chainName - Name the list of chains is stored under.
- * @param namePrefix - What to name the copy after.
- * @param previousChainId - The chain it replaces, where the cycle was extending one.
- * @returns The new chain, and what its full copy wrote.
+ * @param request - The destination, the naming, and the function that takes the full copy.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param namePrefix - The prefix of the name of the copy.
+ * @param previousChainId - The chain that the new chain replaces, where the cycle holds one.
+ * @returns The new chain, and the report of its full copy.
  */
 export async function startChain(
   request: BackupCycleRequest,
@@ -91,17 +91,17 @@ export async function startChain(
 }
 
 /**
- * Sends a staged capture to the destination and records it as the next piece of
- * its chain. The record names the stretch of log the piece covers, which is
- * what tells a restore where it fits.
+ * Sends a staged capture to the destination and records it as the next piece
+ * of its chain. The record states the range of log frames in the piece, so
+ * that a restore can tell where the piece fits.
  *
- * @param request - Destination, naming, and the database the capture came from.
- * @param chainName - Name the list of chains is stored under.
- * @param chainId - The chain this piece extends.
+ * @param request - The destination, the naming, and the source database of the capture.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param chainId - The chain that this piece extends.
  * @param pending - The staged capture.
- * @param recordIndex - Where its record goes in the chain, counted from zero.
- * @param stagedPath - File the capture staged its frames in.
- * @returns What the transfer wrote.
+ * @param recordIndex - The index of its record in the chain, counted from zero.
+ * @param stagedPath - The file that holds the staged frames.
+ * @returns The report of the transfer.
  */
 export async function transferCapture(
   request: BackupCycleRequest,
@@ -174,15 +174,16 @@ export async function transferCapture(
 }
 
 /**
- * Sends the capture a previous turn staged on local disk, and records it as the
- * next piece of its chain. The cycle runs this before it reads the log again,
- * so the destination holds the pieces in the order the database wrote them.
+ * Sends the capture that a previous turn staged on local disk, and records it
+ * as the next piece of its chain. The cycle calls this before it reads the log
+ * again, so that the destination receives the pieces in the order of the
+ * writes that they hold.
  *
- * @param request - Destination, naming, and the database the capture came from.
- * @param chainName - Name the list of chains is stored under.
- * @param stagingDir - Directory the capture was staged in.
- * @param state - What the cycle remembers about the chain, which this advances.
- * @returns What the transfer wrote, or undefined where no capture was waiting.
+ * @param request - The destination, the naming, and the source database of the capture.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param stagingDir - The directory that holds the staged capture.
+ * @param state - The state that the cycle records for the chain, which this function advances.
+ * @returns The report of the transfer, or undefined where no capture is staged.
  *
  * @internal
  */
@@ -215,18 +216,19 @@ export async function sendStagedCapture(
 }
 
 /**
- * Starts a fresh chain with a full copy and returns the state the cycle records
- * against that chain.
+ * Starts a new chain with a full copy and returns the state that the cycle
+ * records for that chain.
  *
- * A cycle calls this on its first turn, once a chain has passed its full-copy
- * interval, and where a log restarted before a capture had read it.
+ * A cycle calls this when it holds no chain, once a chain passes its full-copy
+ * interval, and after a turn fails with `BACKUP_LOG_REWOUND` or
+ * `BACKUP_CHAIN_BROKEN`.
  *
- * @param request - Destination, naming, and the full copy to take.
- * @param chainName - Name the list of chains is stored under.
- * @param namePrefix - What to name the copy after.
- * @param stagingDir - Directory the cycle stages its captures in.
- * @param previousChainId - The chain this one replaces, where the cycle was extending one.
- * @returns The state to record against the new chain, and what its full copy wrote.
+ * @param request - The destination, the naming, and the function that takes the full copy.
+ * @param chainName - The name that Sirannon stores the list of chains under.
+ * @param namePrefix - The prefix of the name of the copy.
+ * @param stagingDir - The directory that the cycle stages its captures in.
+ * @param previousChainId - The chain that this one replaces, where the cycle holds one.
+ * @returns The state to record for the new chain, and the report of its full copy.
  *
  * @internal
  */

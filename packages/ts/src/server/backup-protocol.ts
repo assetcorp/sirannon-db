@@ -6,20 +6,20 @@ import type { BackupVerifyResult } from '../core/backup/verify.js'
 export const BACKUP_RESTORE_NOT_ACCEPTED_MESSAGE =
   'This server does not restore databases over the wire; turn on acceptBackupRestore to open the route'
 
-/** The answer to a backup a caller triggered, which the server takes on and does not wait for.
+/** The server's answer when a caller triggers a backup, which it sends once it accepts the turn and before the backup finishes.
  * @public
  */
 export interface BackupTriggerResponse {
-  /** True whenever the server answers, since it answers only once it has accepted the turn. */
+  /** Always true, because the server sends this answer only after it accepts the turn. */
   started: true
 }
 
-/** What the cycle is doing, and what its recent turns produced.
+/** The checkpoint cycle's current activity, and the results of its recent turns.
  * @public
  */
 export type BackupStatusResponse = BackupCycleStatus
 
-/** Every chain the destination stores.
+/** Every chain in the backup destination.
  * @public
  */
 export interface BackupChainResponse {
@@ -27,42 +27,42 @@ export interface BackupChainResponse {
   chains: BackupChain[]
 }
 
-/** Names the backup to read back out of the destination.
+/** The backup to read back from the destination.
  * @public
  */
 export interface BackupVerifyRequest {
-  /** Name the backup is stored under, which every chain record states. */
+  /** The name under which the destination stores the backup, as it appears in every chain record. */
   name?: unknown
 }
 
-/** What Sirannon found when it read one backup back.
+/** The result of reading one backup back from the destination.
  * @public
  */
 export type BackupVerifyResponse = BackupVerifyResult
 
-/** How far back a restore must still reach.
+/** How far back you must still be able to restore.
  * @public
  */
 export interface BackupSafeToDeleteRequest {
-  /** Epoch milliseconds of the earliest moment a restore must still reach. Leave it out and the answer covers only the backups no restore could ever use. */
+  /** The earliest moment, in epoch milliseconds, that you must still be able to restore to. When it is absent, the server lists only the backups that you cannot restore from. */
   restorableFrom?: unknown
 }
 
-/** The records no restore still needs.
+/** The records that you no longer need for any restore.
  * @public
  */
 export interface BackupSafeToDeleteResponse {
-  /** The records you may delete, oldest first. */
+  /** The records that you can delete, oldest first. */
   records: BackupChainRecord[]
 }
 
-/** The moment to rebuild the database at, and how many change pieces one batch replays.
+/** The moment to which the server rebuilds the database, and how many change pieces it replays in one batch.
  * @public
  */
 export interface BackupRestoreRequest {
-  /** Epoch milliseconds you want back. Leave it out for the newest backup the destination stores. */
+  /** The moment, in epoch milliseconds, to restore the database to. When it is absent, the server uses the current time, so it restores the newest state that the destination stores. */
   moment?: unknown
-  /** How many change pieces to replay between one checkpoint and the next. Leave it out for the default of 16. */
+  /** How many change pieces the server replays between one checkpoint and the next. Defaults to 16. */
   batchSize?: unknown
 }
 
@@ -78,10 +78,10 @@ function wholeNumberError(field: string, value: unknown, atLeast: number, atMost
 }
 
 /**
- * Refuses a verify request that names no backup.
+ * Returns an error message when a verify request names no backup.
  *
- * @param value - What the request supplied under `name`.
- * @returns The refusal, or null where the request names one.
+ * @param value - The value that the request sends under `name`.
+ * @returns The error message, or null when the request names a backup.
  */
 export function verifyNameValidationError(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0) {
@@ -91,20 +91,20 @@ export function verifyNameValidationError(value: unknown): string | null {
 }
 
 /**
- * Refuses a safe-to-delete request whose earliest moment is not a moment.
+ * Returns an error message when the `restorableFrom` of a safe-to-delete request is not a whole number of at least 0.
  *
- * @param value - What the request supplied under `restorableFrom`.
- * @returns The refusal, or null where the request supplied a moment or nothing at all.
+ * @param value - The value that the request sends under `restorableFrom`.
+ * @returns The error message, or null when the value is a valid moment or absent.
  */
 export function restorableFromValidationError(value: unknown): string | null {
   return wholeNumberError('restorableFrom', value, 0)
 }
 
 /**
- * Refuses a restore request whose moment or batch size Sirannon could not use.
+ * Returns an error message when the moment or the batch size of a restore request is invalid.
  *
- * @param body - What the request supplied.
- * @returns The refusal, or null where both fields are usable or absent.
+ * @param body - The body of the restore request.
+ * @returns The error message, or null when both fields are valid or absent.
  */
 export function restoreRequestValidationError(body: BackupRestoreRequest): string | null {
   return (

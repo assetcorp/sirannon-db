@@ -18,14 +18,16 @@ export function requireRole(): TopologyRole {
 
 export function requireClusterToken(): string {
   const value = requireEnv('SIRANNON_CLUSTER_TOKEN')
-  console.log('Using SIRANNON_CLUSTER_TOKEN from the environment for cluster HTTP and WebSocket auth')
+  console.log(
+    'The node reads SIRANNON_CLUSTER_TOKEN from the environment for cluster HTTP and WebSocket authentication.',
+  )
   return value
 }
 
 export function requireEnv(name: string): string {
   const value = process.env[name]
   if (!value) {
-    throw new Error(`${name} is required`)
+    throw new Error(`${name} must be set`)
   }
   return value
 }

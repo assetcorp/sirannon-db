@@ -22,11 +22,12 @@ const PLATFORMS_WITH_A_BINARY = new Set([
 let muslLibc: boolean | undefined
 
 /**
- * Reports whether this host links against musl rather than glibc. Alpine does,
- * and most other distributions do not. A shared library built for one fails to
- * load on the other, so Linux carries a binary for each.
+ * Returns `true` when the Node process report names no glibc version, which on
+ * Linux means that the C library is musl, as on Alpine. The dynamic loader
+ * rejects a shared library built for the other C library, so each Linux package
+ * ships one build for glibc and one for musl.
  *
- * @returns Whether the C library here is musl.
+ * @returns `true` when the process report names no glibc version.
  *
  * @internal
  */
@@ -43,11 +44,11 @@ export function usesMuslLibc(): boolean {
 }
 
 /**
- * Names the file the compiled extension is published under. Each platform
- * loads shared libraries under its own file extension.
+ * Returns the file name of the compiled extension for a platform, which ends in
+ * `.dylib` on macOS, `.dll` on Windows, and `.so` elsewhere.
  *
- * @param platform - Platform name, in the form Node reports it.
- * @returns The file name to look for.
+ * @param platform - The platform name, in the form of `process.platform`.
+ * @returns The library file name.
  *
  * @internal
  */
@@ -56,13 +57,14 @@ export function vfsLibraryFileName(platform: string): string {
 }
 
 /**
- * Gives the path of the compiled extension inside its package, relative to the
- * package root. SQLite reads the entry point's name from the file name, so the
- * musl build keeps the same file name in a directory of its own.
+ * Returns the path of the compiled extension inside its package, relative to
+ * the package root. SQLite derives the entry point's name from the file name,
+ * so the package stores the musl build under the same file name in a `musl`
+ * directory.
  *
- * @param platform - Platform name, in the form Node reports it.
- * @param muslLibc - Whether this host links against musl.
- * @returns The path segments that lead to the library.
+ * @param platform - The platform name, in the form of `process.platform`.
+ * @param muslLibc - `true` when the host uses musl.
+ * @returns The path segments of the library, relative to the package root.
  *
  * @internal
  */
@@ -72,13 +74,13 @@ export function vfsLibrarySegments(platform: string, muslLibc: boolean): string[
 }
 
 /**
- * Names the package that carries the compiled extension for one platform. Each
- * platform has a package of its own, so an install fetches the one binary this
- * host runs.
+ * Returns the name of the package that ships the compiled extension for one
+ * platform and architecture. Each pair has its own package, which declares its
+ * `os` and `cpu` fields.
  *
- * @param platform - Platform name, in the form Node reports it.
- * @param architecture - Processor architecture, in the form Node reports it.
- * @returns The package name, or null where that pair has no published binary.
+ * @param platform - The platform name, in the form of `process.platform`.
+ * @param architecture - The processor architecture, in the form of `process.arch`.
+ * @returns The package name, or `null` for a pair outside the published set.
  *
  * @internal
  */
@@ -88,11 +90,11 @@ export function vfsPackageName(platform: string, architecture: string): string |
 }
 
 /**
- * Finds the compiled extension the install fetched for this host.
+ * Returns the absolute path of the compiled extension in the platform package that is installed for this host.
  *
- * @param platform - Platform name, in the form Node reports it.
- * @param architecture - Processor architecture, in the form Node reports it.
- * @returns The absolute path of the library, or null where this host has none.
+ * @param platform - The platform name, in the form of `process.platform`.
+ * @param architecture - The processor architecture, in the form of `process.arch`.
+ * @returns The absolute path of the library, or `null` when the package or the library file is missing.
  *
  * @internal
  */

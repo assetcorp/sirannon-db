@@ -1,96 +1,95 @@
 /**
- * Which node of a replication group takes its backups.
+ * The node of a replication group that takes its backups.
  *
- * `'replica'` prefers a replica and falls back to the primary where the group
- * has no other node to offer. `'primary'` puts the backups on the node the
- * group names primary, and leaves them to no node at all while that node is out
- * of service. An object names one node outright. A node matching itself against that name
- * needs no coordinator to answer.
+ * With `'replica'`, Sirannon picks an eligible replica, and it picks the
+ * primary where the group has no eligible replica. With `'primary'`, Sirannon
+ * picks the primary, and no node takes backups while the primary is not
+ * eligible. An object names one node directly, and each node compares its own
+ * identifier against that name without reading the membership.
  *
  * @public
  */
 export type BackupNodePreference = 'replica' | 'primary' | { nodeId: string }
 
 /**
- * Who a replication group names primary, and which of its nodes hold data
- * current enough to back up.
+ * The primary of a replication group, and the nodes that hold data current
+ * enough to back up.
  *
  * @public
  */
 export interface BackupGroupMembership {
-  /** Identifier of the primary, or null while the group names none. */
+  /** The identifier of the primary, or null while the group has no primary. */
   primaryNodeId: string | null
-  /** Identifiers of the nodes eligible to take the backup. */
+  /** The identifiers of the nodes that are eligible to take the backup. */
   nodeIds: string[]
 }
 
 /**
- * Where the cycle reads this node's identity and its replication group's
- * membership. A database opened without one backs itself up every turn, which
- * is the answer a single-node deployment wants.
+ * The source of the identity of this node and the membership of its
+ * replication group. Without a group source, the cycle backs up the database on
+ * every turn, as a single-node deployment needs.
  *
- * `coordinatorBackupGroup` in the replication entry builds one of these over a
- * cluster coordinator. Write your own where the membership you trust lives
- * somewhere else.
+ * `coordinatorBackupGroup` in the replication entry point builds a group source
+ * from a cluster coordinator. Write your own where another system holds the
+ * membership.
  *
  * @public
  */
 export interface BackupGroupSource {
-  /** Identifier this node is known by inside the group. */
+  /** The identifier of this node within the group. */
   readonly nodeId: string
   /**
-   * Reads the group's membership as it stands right now.
+   * Reads the current membership of the group.
    *
-   * @returns Who the group names primary, and which nodes are eligible.
+   * @returns The primary of the group, and the nodes that are eligible.
    */
   readMembership(): Promise<BackupGroupMembership>
 }
 
 /**
- * Why one turn of the cycle wrote nothing.
+ * The reason that one turn of the cycle writes nothing.
  *
- * `'not-preferred'` means another node takes this group's backups.
- * `'group-unavailable'` means this node could not read the membership it
- * decides from. `'previous-run-active'` means the turn before this one had yet
- * to finish.
+ * `'not-preferred'` means that another node, or no node, takes the backups of
+ * this group. `'group-unavailable'` means that Sirannon cannot read the
+ * membership of the group. `'previous-run-active'` means that the previous turn
+ * is still in progress.
  *
  * @public
  */
 export type BackupSkipReason = 'not-preferred' | 'group-unavailable' | 'previous-run-active'
 
 /**
- * One turn the cycle skipped, and what it skipped for.
+ * One turn that the cycle skips, and the reason for the skip.
  *
  * @public
  */
 export interface BackupSkip {
-  /** Which of the three conditions held. */
+  /** The condition that applies. */
   reason: BackupSkipReason
-  /** What happened, in a sentence an operator can read in a log. */
+  /** A sentence for the log of the operator that describes the skip. */
   message: string
-  /** Identifier of this node, where a group source named one. */
+  /** The identifier of this node, where a group source supplies one. */
   nodeId?: string
-  /** Identifier of the node whose turn it was, where the group named one. */
+  /** The identifier of the node that takes the backups, where Sirannon picks one. */
   preferredNodeId?: string
   /**
-   * How many bytes of write-ahead log this node was holding when it skipped.
-   * Alert on this figure rising and you hear about a node holding its log long
+   * The size in bytes of the write-ahead log on this node at the skip. An alert
+   * on this value as it rises warns you that the log on a node is growing, well
    * before `maxUncapturedLogBytes` ends its chain.
    */
   uncapturedLogBytes?: number
 }
 
 /**
- * Works out which node of a replication group takes its backups.
+ * Returns the node of a replication group that takes its backups.
  *
- * Every node of the group computes this from the same membership, so one of
- * them finds its own identifier in the answer and the rest stand down.
- * Sirannon sorts the eligible nodes first, which is what makes that answer the
- * same wherever it runs.
+ * Every node of the group computes this from the same membership, so that only
+ * the node that the answer names takes the turn. Sirannon sorts the eligible
+ * nodes first, so that every node reaches the same answer.
  *
- * @param membership - Who the group names primary, and which nodes are eligible.
- * @param preference - Which node the operator wants the backups taken on.
- * @returns Identifier of that node, or null where the group offers none.
+ * @param membership - The primary of the group, and the nodes that are eligible.
+ * @param preference - The node that the operator wants the backups taken on.
+ * @returns The identifier of that node, or null where no node qualifies.
  *
  * @internal
  */

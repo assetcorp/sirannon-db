@@ -44,7 +44,8 @@ export function isValidForwardedTransaction(req: unknown): req is ForwardedTrans
     typeof r.requestId === 'string' &&
     Array.isArray(r.statements) &&
     optionalString(r.groupId) &&
-    optionalBigint(r.primaryTerm)
+    optionalBigint(r.primaryTerm) &&
+    optionalWriteConcern(r.writeConcern)
   )
 }
 
@@ -108,6 +109,17 @@ function optionalString(value: unknown): boolean {
 
 function optionalBigint(value: unknown): boolean {
   return value === undefined || typeof value === 'bigint'
+}
+
+function optionalWriteConcern(value: unknown): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'object' || value === null) return false
+  const concern = value as Record<string, unknown>
+  const knownLevel = concern.level === 'local' || concern.level === 'majority' || concern.level === 'all'
+  const timeoutMs = concern.timeoutMs
+  const validTimeout =
+    timeoutMs === undefined || (typeof timeoutMs === 'number' && Number.isSafeInteger(timeoutMs) && timeoutMs > 0)
+  return knownLevel && validTimeout
 }
 
 function optionalNonNegativeInteger(value: unknown): boolean {

@@ -3,33 +3,36 @@ import type { ClusterCoordinator } from './coordinator/types.js'
 import { CoordinatorError } from './errors.js'
 
 /**
- * Which group a node reads its backup membership from, and where that group's
- * state is kept.
+ * Configures {@link coordinatorBackupGroup} with the coordinator that stores the
+ * group's state, the replication group to read backup membership from, and this
+ * node's ID.
  *
  * @public
  */
 export interface CoordinatorBackupGroupOptions {
-  /** Where primary authority, node sessions, and group state are stored. */
+  /** Holds the coordinator that stores primary authority, node sessions, and the group state. */
   coordinator: ClusterCoordinator
-  /** Identifier of the cluster the group belongs to. */
+  /** Identifies the cluster that contains the group. */
   clusterId: string
-  /** Identifier of the replication group. */
+  /** Identifies the replication group. */
   groupId: string
-  /** Identifier of this node, which must match the one it replicates under. */
+  /** Identifies this node. Pass the same node ID that this node's replication engine uses. */
   nodeId: string
 }
 
 /**
- * Builds the group source a backup cycle asks before it copies anything, over
- * the coordinator the group already uses for failover.
+ * Returns a backup group source that reads the group's membership from the
+ * coordinator that the group already uses for failover. The backup cycle calls
+ * `readMembership` on the source before the cycle copies anything.
  *
- * Every node of the group passes one of these to its `backups` option, and each
- * scheduled turn reads the same membership from it. One node finds itself named
- * and takes the backup; the others stand down. A failover changes which node is
- * named, but it changes no schedule.
+ * Every node of the group passes one of these sources to its `backups` option.
+ * On each scheduled turn, every node reads the same membership and picks the
+ * same node to take the backup, while the other nodes skip that turn. A
+ * failover can change which node takes the backups, but you keep the same
+ * schedule on every node.
  *
- * This offers the nodes the group counts as in sync, less any node being
- * drained, rebuilt, or held out as faulted.
+ * The membership lists the nodes in the group's in-sync set, minus any node
+ * that the group state marks as draining, repairing, or faulted.
  *
  * @param options - The coordinator, the cluster, the group, and this node's identifier.
  * @returns The source, ready to pass as `replicationGroup`.

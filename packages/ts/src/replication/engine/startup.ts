@@ -1,7 +1,7 @@
 import { loadPersistedHlc } from '../../core/sync/hlc-store.js'
-import { selectMaxAppliedSourceSeqByNode } from '../../core/system-catalog/index.js'
+import { selectMaxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
-import { startCoordinatorMode } from './coordinator-lifecycle.js'
+import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { wireTransportHandlers } from './transport-wiring.js'
@@ -13,12 +13,15 @@ async function loadAppliedSeqs(engine: ReplicationEngine): Promise<void> {
 }
 
 /**
- * Advances the engine's in-memory HLC past every timestamp persisted in this
- * database. Idempotent: callable on a fresh database (no-op) or on a
- * recovered one (advances to the max observed value).
+ * Advances the engine's in-memory HLC past the highest timestamp that this
+ * database stores, so that the clock stamps the next local write later than
+ * every stored one. On a new database, which stores no timestamp, the function
+ * changes nothing, and you can call it more than once because each call only
+ * moves the clock forward.
  *
- * Reusable for future promotion paths: a node that transitions to primary
- * must also start by absorbing every HLC stamped under its previous role.
+ * Code that promotes a node to primary should call it before the node's first
+ * write as primary, so that every timestamp that the node issues is later than
+ * the ones that it stamped in its previous role.
  */
 export async function recoverHlcFromDurableState(engine: ReplicationEngine): Promise<void> {
   const persisted = await loadPersistedHlc(engine.writerConn)
@@ -117,4 +120,29 @@ export async function startEngine(engine: ReplicationEngine): Promise<void> {
   }
 
   engine.senderLoop.start()
+}
+
+export async function stopEngine(engine: ReplicationEngine): Promise<void> {
+  if (!engine.running) return
+  engine.running = false
+  stopCoordinatorTimers(engine)
+
+  engine.syncJoiner.stopTimers()
+  engine.syncServer.abortAll()
+
+  if (engine.syncState.phase === 'syncing') {
+    try {
+      await setForeignKeysEnabled(engine.writerConn, true)
+    } catch (err: unknown) {
+      const wrappedErr = err instanceof Error ? err : new Error(String(err))
+      engine.emitError({ error: wrappedErr, operation: 'engine-stop-pragma-restore', recoverable: false })
+    }
+  }
+
+  engine.senderLoop.stop()
+  if (engine.tracker) {
+    engine.tracker.clearPruneBoundary('replication')
+  }
+  await stopCoordinatorMode(engine)
+  await engine.config.transport.disconnect()
 }

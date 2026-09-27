@@ -25,9 +25,9 @@ import type {
 export type { DatabaseInternals } from './database-create.js'
 
 /**
- * One open SQLite database, with its reads, writes, transactions, migrations, change subscriptions, and live queries.
+ * An open SQLite database, with methods for reads, writes, transactions, migrations, change subscriptions, and live queries.
  *
- * Open one through {@link Sirannon.open} rather than constructing it.
+ * Open one through {@link Sirannon.open}.
  *
  * @public
  */
@@ -54,10 +54,11 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Returns the device-sync port for this database, which reads and advances
-   * the cursors a `SyncController` keeps against a server.
+   * Returns the device-sync port for this database, which a `SyncController`
+   * calls to apply pulled changes, read unpushed local changes, and store its
+   * push and pull cursors.
    *
-   * @returns The port, which `downloadDatabaseSnapshot` also accepts.
+   * @returns The port, which you can also pass to `downloadDatabaseSnapshot`.
    */
   deviceSync(): DeviceSyncPort {
     this.ensureNotClosed()
@@ -65,12 +66,12 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs a read and returns every row.
+   * Executes a read and returns every row.
    *
-   * @param sql - The statement to run.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Read concern for this statement.
-   * @returns The rows the statement produced.
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The read concern for this statement.
+   * @returns The rows that the statement returns.
    */
   async query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     this.ensureOpen()
@@ -84,12 +85,12 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs a read and returns its first row.
+   * Executes a read and returns its first row.
    *
-   * @param sql - The statement to run.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Read concern for this statement.
-   * @returns The first row, or undefined when the statement produced none.
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The read concern for this statement.
+   * @returns The first row, or undefined when the statement returns none.
    */
   async queryOne<T = Record<string, unknown>>(
     sql: string,
@@ -101,12 +102,12 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs one write.
+   * Executes one write statement.
    *
-   * @param sql - The statement to run.
-   * @param params - Values bound to the statement, named or positional.
-   * @param options - Write concern for this statement.
-   * @returns How many rows changed, and the last inserted row id.
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The write concern for this statement.
+   * @returns The number of rows that the statement changed, and the row id of the last inserted row.
    */
   async execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     this.ensureWritable()
@@ -114,11 +115,11 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs one statement over many parameter sets inside a single transaction.
+   * Executes one statement once for each parameter set, inside a single transaction.
    *
-   * @param sql - The statement to run for each parameter set.
-   * @param paramsBatch - One parameter set per run.
-   * @param options - Write concern for the transaction.
+   * @param sql - The statement to execute for each parameter set.
+   * @param paramsBatch - One parameter set for each execution.
+   * @param options - The write concern for the transaction.
    * @returns One result per parameter set, in order.
    */
   async executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
@@ -127,21 +128,23 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Imports many rows with relaxed writer durability, then restores the configured level.
+   * Imports many rows at a relaxed synchronous level, then restores the level that you configured.
    *
-   * Use this for a load you can re-run from scratch, because
-   * {@link Database.executeBatch} keeps full durability. The load holds the
-   * writer lock throughout and restores the configured level before this
-   * resolves, whether it succeeds or fails. One transaction covers the whole
-   * batch, and the rows are summed rather than returned one by one to bound
-   * memory on a large load. Like {@link Database.execute}, this writes only to
-   * the local database; under replication the server routes loads through the
-   * engine instead.
+   * Use this for a load that you can re-run from scratch, and use
+   * {@link Database.executeBatch} where the rows need full durability. Sirannon
+   * holds the writer lock for the whole load and commits every row in one
+   * transaction. Whether the load succeeds or fails, Sirannon restores the
+   * configured level before this method resolves. The result contains totals
+   * for the whole load, so that a large load keeps no per-row results in memory.
    *
-   * @param sql - The statement to run for each parameter set.
+   * Like {@link Database.execute}, this writes to the local database only. A
+   * server whose execution target has no `bulkLoad` method, such as the
+   * replication engine, rejects bulk loads with `BULK_LOAD_UNSUPPORTED`.
+   *
+   * @param sql - The statement to execute for each parameter set.
    * @param paramsBatch - One parameter set per row.
-   * @param options - Durability during the load, and whether it ends with a checkpoint.
-   * @returns How many rows the load applied and how many rows changed.
+   * @param options - The synchronous level during the load, and whether the load ends with a checkpoint.
+   * @returns The number of parameter sets that the load applied, and the number of rows that changed.
    */
   async bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     this.ensureWritable()
@@ -149,13 +152,15 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs a fixed list of statements in one transaction so that several callers can share one commit.
+   * Executes a fixed list of statements in one transaction, which Sirannon can commit together with other callers' writes.
    *
-   * This takes the statements up front rather than a callback, because a group
-   * cannot wait on an arbitrary caller-supplied callback without delaying every
-   * transaction beside it.
+   * When every statement is an INSERT, UPDATE, DELETE, or REPLACE, Sirannon
+   * groups the transaction with other writes into one commit, and otherwise it
+   * executes the transaction on its own. This method takes the statements up
+   * front, because a group commit that waited on a caller's callback would delay
+   * every other transaction in the group.
    *
-   * @param statements - The statements to run, in order, each with its own parameters.
+   * @param statements - The statements to execute, in order, each with its own parameters.
    * @returns One result per statement, in order.
    */
   async executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
@@ -165,10 +170,10 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs a function inside one transaction, committing when it returns and rolling back when it throws.
+   * Calls a function inside one transaction, and commits when the function returns or rolls back when it throws.
    *
-   * @param fn - Receives the transaction and runs statements on it.
-   * @returns Whatever the function returned.
+   * @param fn - The function to call with the transaction, which executes its statements through it.
+   * @returns The value that the function returns.
    */
   async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     this.ensureWritable()
@@ -176,9 +181,9 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Starts recording changes to a table so that subscribers and replication see them.
+   * Starts recording changes to a table, so that subscribers and replication receive them.
    *
-   * @param table - Name of the table to watch.
+   * @param table - The name of the table to watch.
    */
   async watch(table: string): Promise<void> {
     this.ensureWritable()
@@ -188,7 +193,7 @@ export class Database extends DatabaseBackups {
   /**
    * Stops recording changes to a table.
    *
-   * @param table - Name of the table to stop watching.
+   * @param table - The name of the table to stop watching.
    */
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
@@ -196,10 +201,10 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Runs a CDC maintenance write (change-log pruning) on the shared writer
-   * under the writer lock. Serialising it with application writes keeps it
-   * from becoming a second writer that contends for SQLite's single write
-   * lock and stalls the event loop on `busy_timeout`.
+   * Executes a change-log maintenance write, such as pruning, on the shared
+   * writer connection under the writer lock, so that it queues behind
+   * application writes and never contends with them for SQLite's write lock,
+   * which would block the event loop for the `busy_timeout`.
    *
    * @internal
    */
@@ -215,10 +220,10 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Begins a change subscription on a watched table.
+   * Starts building a change subscription on a watched table.
    *
-   * @param table - Name of the watched table.
-   * @returns A builder you narrow with a filter and then subscribe to.
+   * @param table - The name of the watched table.
+   * @returns A builder that you narrow with a filter and then subscribe to.
    */
   on(table: string): SubscriptionBuilder {
     this.ensureOpen()
@@ -226,12 +231,12 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Opens a live query that keeps a registered read's rows current as the tables behind it change.
+   * Opens a live query that keeps the rows of a single-table SELECT current as that table changes, and watches the table first.
    *
-   * @param operation - Name of the registered read, or a reference built by {@link operationRef}.
-   * @param args - Arguments the operation takes.
-   * @param options - Re-read jitter and the transaction size above which the query re-reads.
-   * @returns The live query, already subscribed.
+   * @param sql - The SELECT statement to keep current.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The re-read jitter, the transaction size above which the query re-reads, and the reporter for listener failures.
+   * @returns The live query, holding its first rows and subscribed to changes.
    */
   async live<T = Record<string, unknown>>(
     sql: string,
@@ -244,10 +249,10 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Applies every migration this database has not yet applied, in ascending version order.
+   * Applies every migration that this database has yet to apply, in ascending version order.
    *
    * @param migrations - The full set of migrations for this database.
-   * @returns Which migrations this call applied, and how many it skipped.
+   * @returns The migrations that this call applied, and the number that the database had already applied.
    */
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureOpen()
@@ -255,7 +260,7 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Lists the migrations this database has applied.
+   * Lists the migrations that this database has applied.
    *
    * @returns One entry per applied migration, with its version, name, and checksum.
    */
@@ -265,11 +270,11 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Undoes applied migrations, newest first.
+   * Reverts applied migrations, newest first.
    *
-   * @param migrations - The full set of migrations so that the runner finds each down statement.
-   * @param version - Lowest version to keep. Without it, only the newest migration is undone.
-   * @returns Which migrations this call undid.
+   * @param migrations - The full set of migrations, from which the runner takes each down statement.
+   * @param version - The version to roll back to, which stays applied with every version below it; when you omit it, the runner reverts only the newest migration.
+   * @returns The migrations that this call reverted.
    */
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureOpen()
@@ -277,9 +282,9 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Loads a SQLite extension into this database.
+   * Loads a compiled SQLite extension into every connection of this database.
    *
-   * @param extensionPath - Path to the extension, which the driver resolves to an absolute path.
+   * @param extensionPath - The path to the extension, which the driver resolves to an absolute path.
    */
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
@@ -287,9 +292,9 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Registers a hook that runs before each statement on this database. Throw from it to refuse the statement.
+   * Registers a hook that Sirannon calls before each statement on this database; throw from the hook to reject the statement.
    *
-   * @param hook - Receives the statement, its parameters, and the concerns it carries.
+   * @param hook - The hook, which Sirannon calls with the statement, its parameters, and its read or write concern.
    * @returns A function that removes the hook.
    */
   onBeforeQuery(hook: BeforeQueryHook): HookDispose {
@@ -297,9 +302,9 @@ export class Database extends DatabaseBackups {
   }
 
   /**
-   * Registers a hook that runs after each statement on this database.
+   * Registers a hook that Sirannon calls after each statement on this database.
    *
-   * @param hook - Receives the statement and how long it took.
+   * @param hook - The hook, which Sirannon calls with the statement and its duration.
    * @returns A function that removes the hook.
    */
   onAfterQuery(hook: AfterQueryHook): HookDispose {

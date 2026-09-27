@@ -117,7 +117,7 @@ shouldAcceptFrom(peer):     role == 'replica' and peer.role == 'primary'
 
 ## Conflict Resolution
 
-A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier invokes it during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
+A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier invokes it during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. A resolver that throws fails the batch with `CONFLICT_ERROR`, which carries the change's `table` and `rowId` and keeps the resolver's error as its cause. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
 
 ```text
 ConflictContext { table, rowId, localChange or null, remoteChange, localHlc or null, remoteHlc }
@@ -238,6 +238,8 @@ This canonical form is distinct from the [tagged value encoding](02-core.md#tagg
 
 Static mode generates a `nodeId` when none is given; coordinator mode requires a stable persisted `nodeId` and rejects a configuration without one. The `snapshotThreshold` field is reserved and has no run-time effect.
 
+When a start fails, an implementation must leave the engine stopped, release whatever that start took, and report the failure to its caller, so that a later start opens the transport afresh.
+
 ### Sender Loop
 
 Every `batchIntervalMs`, for each peer the topology replicates to (in coordinator mode, every peer while the node holds authority), the sender expires in-flight batches older than `ackTimeoutMs`, skips the peer while `pendingBatches` reaches `maxPendingBatches`, reads one batch from the peer's `lastSentSeq`, and sends it. An expired batch rewinds `lastSentSeq` to retransmit from the lost batch.
@@ -270,10 +272,10 @@ A read concern that cannot be met fails rather than returning a weaker result.
 
 ## Write Forwarding
 
-When `writeForwarding` is enabled on a replica, `execute` and `executeBatch` forward to the primary instead of being rejected; `transaction` is never forwarded and fails with `TOPOLOGY_ERROR` on a non-writable node. The forwarder targets the connected primary (in coordinator mode, the current primary for the group) and sends the statements under the current `groupId` and `primaryTerm`; a receiver that no longer holds the term rejects with `STALE_PRIMARY`. With no primary reachable, forwarding fails with `TOPOLOGY_ERROR`.
+When `writeForwarding` is enabled on a replica, `execute` and `executeBatch` forward to the primary instead of being rejected; `transaction` is never forwarded and fails with `TOPOLOGY_ERROR` on a non-writable node. The forwarder targets the connected primary (in coordinator mode, the current primary for the group) and sends the statements under the current `groupId` and `primaryTerm`; a receiver that no longer holds the term rejects with `STALE_PRIMARY`. With no primary reachable, forwarding fails with `TOPOLOGY_ERROR`. The forwarder sends the caller's write concern with the statements, and the primary waits for that concern, or for its own default when the caller states none, before it replies (see [Write Concern](#write-concern)).
 
 ```text
-ForwardedTransaction       { statements: List<{ sql, params? }>, requestId, groupId?, primaryTerm? }
+ForwardedTransaction       { statements: List<{ sql, params? }>, requestId, groupId?, primaryTerm?, writeConcern? }
 ForwardedTransactionResult { results: List<{ changes, lastInsertRowId }>, requestId, groupId?, primaryTerm? }
 ```
 
@@ -293,7 +295,7 @@ PeerState {
 }
 ```
 
-An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the acked sequence, and decrements `pendingBatches`. An in-flight batch older than `ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so retransmission resumes there.
+An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the acked sequence, and decrements `pendingBatches`. Applying a batch from a peer raises that peer's `lastReceivedHlc` to the batch's `hlcRange.max`. An in-flight batch older than `ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so retransmission resumes there.
 
 On connecting to the node it replicates from, a node that is `ready` or `catching-up` sends its applied sequence for that node's stream as a `ReplicationAck` with an empty `batchId`.
 
@@ -345,6 +347,10 @@ DDL received through replication or first sync is validated against an allowlist
 Coordinator mode uses a linearisable coordinator to store authority metadata and provide watches. The first production backend is etcd; an in-memory backend is allowed for tests and local development. The coordinator stores only authority metadata (controller lease, node session leases, group configuration, current primary, primary term, in-sync set, and compact progress markers) and never user rows or the replication log.
 
 The coordinator must provide, at least: acquiring and renewing a controller lease; registering, reading, and deregistering node session leases; reading, writing, and watching replication-group state; comparing and advancing the primary term atomically; and admitting a node to the in-sync set only against a proven durability point.
+
+A coordinator may also provide a watch over the node sessions of a cluster, which calls back with every node holding a live session on each registration and each lapse. A node holding that watch serves reads only from the nodes the watch names (see [05-server.md](05-server.md#get-dbidcluster)), and a node whose coordinator provides no such watch, or that reaches no coordinator, reads from the group's membership alone.
+
+A coordinator may also provide a watch over the controller lease, which calls back with the lease on each change of holder and with none once no node holds it. A standby controller holding that watch bids for the lease only while the watch reports no live holder, while a standby whose coordinator provides no such watch bids once every `tickIntervalMs`.
 
 ### Replication Group and Node Identity
 

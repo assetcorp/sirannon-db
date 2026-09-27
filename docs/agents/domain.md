@@ -1,42 +1,38 @@
-# Domain Docs
+# Domain docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+Before you explore this repository, read the domain documents in the list below, and follow the instructions in each later section on how to use them.
 
-This repo is single-context: one `CONTEXT.md` and one `docs/adr/` at the root cover both packages.
+The repository has a single context, so one `CONTEXT.md` and one `docs/adr/` folder at the root hold the domain documents for both packages.
 
-## Before exploring, read these
+## Read these before you explore
 
-- **`CONTEXT.md`** at the repo root.
-- **`docs/adr/`** — read the decision records that touch the area you're about to work in. Four exist today, covering replication end-to-end testing, the engine test observability API, in-process chaos hooks, and Sirannon-owned automatic failover.
+- Read `CONTEXT.md` at the repository root, where each term that this repository uses with a fixed meaning has its definition.
+- Read every decision record in `docs/adr/` about the area that you're about to work in. Each record's file name is a short summary of its decision, so list the folder to find the records that apply.
 
-`CONTEXT.md` doesn't exist yet, so **proceed silently** when you can't find it. Don't flag its absence; don't suggest creating it upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates it lazily when terms actually get resolved. `/grill-with-docs` is already the route this repo uses for a new decision record, as `AGENTS.md` says.
+When `CONTEXT.md` lacks a term that you need, carry on with your work and note the gap for the `/domain-modeling` skill, which an agent uses to add a term once somebody settles its meaning. Write a new decision record through the `/grill-with-docs` skill, following the instruction in `AGENTS.md`.
 
 ## File structure
 
-```
+```text
 /
-├── CONTEXT.md                         ← not written yet
-├── docs/adr/
-│   ├── 0001-replication-e2e-architecture.md
-│   ├── 0002-engine-test-observability-api.md
-│   ├── 0003-chaos-via-in-process-hooks.md
-│   └── 0004-sirannon-owned-automatic-failover.md
-├── docs/                              ← user-facing guides, not domain docs
+├── CONTEXT.md        ← the glossary of domain terms
+├── docs/adr/         ← one numbered file per decision record
+├── docs/             ← user-facing guides, which are not domain docs
 └── packages/
-    ├── spec/                          ← the contract every implementation follows
-    └── ts/                            ← the reference implementation
+    ├── spec/         ← the contract that every implementation follows
+    └── ts/           ← the reference implementation
 ```
 
-`packages/spec` outranks both `CONTEXT.md` and any decision record. Where a domain doc and the spec disagree, the spec wins and the domain doc is the thing to fix.
+Treat `packages/spec` as the authority over both `CONTEXT.md` and every decision record, so where the text of a domain document differs from the spec, fix the domain document.
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When you name a domain concept in your output, whether in an issue title, a refactoring proposal, a hypothesis, or a test name, use the term from `CONTEXT.md` and keep to that one term throughout.
 
-If the concept you need isn't in the glossary yet, that's a signal, and it means one of two things: either you're inventing language the project doesn't use, in which case reconsider, or there's a real gap, in which case note it for `/domain-modeling`.
+When the glossary lacks a concept that you need, one of two things is true. Either you're inventing a word that appears nowhere in this repository, in which case you should reconsider the word, or you've found a real gap, in which case you should note it for `/domain-modeling`.
 
-## Flag ADR conflicts
+## Flag a conflict with a decision record
 
-If your output contradicts an existing decision record, surface it explicitly rather than silently overriding:
+When you propose a change against an existing decision record, say so explicitly, as in this example:
 
-> _Contradicts ADR-0004 (Sirannon-owned automatic failover), but worth reopening because…_
+> _I'm proposing a change against ADR-0004, under which Sirannon's own controller performs automatic failover, and I'd reopen that decision because [your reason]._

@@ -8,7 +8,7 @@ const INT_PAYLOAD_RE = /^-?\d{1,19}$/
 const MILLISECONDS_PER_SECOND = 1000
 
 /**
- * Converts a stored `changed_at` into the milliseconds a change event reports.
+ * Converts a stored `changed_at` value into the whole milliseconds of a change event's `timestamp`.
  *
  * @param changedAt - Seconds since the Unix epoch, as the change log and the staging table store them.
  * @returns Whole milliseconds since the Unix epoch.
@@ -18,7 +18,7 @@ export function changedAtToEventTimestamp(changedAt: number): number {
 }
 
 /**
- * Converts the milliseconds a change event reports into a stored `changed_at`.
+ * Converts a change event's `timestamp` in milliseconds into a `changed_at` value in seconds.
  *
  * @param timestamp - Milliseconds since the Unix epoch.
  * @returns Seconds since the Unix epoch, as the staging table stores them.
@@ -60,14 +60,14 @@ function encodeTaggedLeaf(value: unknown): unknown {
 }
 
 /**
- * Encodes the bigint and binary cells of rows materialised for one response,
- * writing into the rows themselves.
+ * Encodes each bigint and binary cell in place, in rows that Sirannon builds
+ * for a single response.
  *
- * Use it on rows that one response owns. Every change subscriber receives the
- * same change event, so encoding its rows in place would corrupt what the
- * other subscribers read.
+ * Pass only rows that this one response references. Every change subscriber
+ * receives the same change event object, so encoding its rows in place would
+ * alter the rows that every other subscriber receives.
  *
- * @param rows - The rows to encode, which this function changes.
+ * @param rows - The rows to encode, which this function modifies.
  * @returns The same rows, with each bigint and binary cell encoded.
  */
 export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {

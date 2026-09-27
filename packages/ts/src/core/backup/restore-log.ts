@@ -23,42 +23,42 @@ const WRITE_FORMAT_OFFSET = 18
 const WRITE_AHEAD_LOGGING_FORMAT = 2
 const CHECKSUM_SEED: LogChecksum = { first: 0, second: 0 }
 
-/** The first hundred bytes of a SQLite database file, as far as a restore reads them.
+/** The fields that a restore reads from the 100-byte header of a SQLite database file.
  * @internal
  */
 export interface DatabaseHeader {
-  /** Size of one page, in bytes. */
+  /** The size of one page, in bytes. */
   pageSize: number
-  /** Whether the file records itself as a write-ahead logging database. */
+  /** Whether the header marks the file as a write-ahead logging database. */
   walMode: boolean
 }
 
 /**
- * What a change piece's chain record says the log it came from looked like. The
- * first piece of every run of the log begins with that log's own 32-byte
- * header, and comparing the two catches a record that describes a different
+ * The log header values that the chain record of a change piece states. The
+ * first piece of every generation of the log begins with the 32-byte header of
+ * that log, so comparing the two catches a record that describes a different
  * database.
  *
  * @internal
  */
 export interface ExpectedLogHeader {
-  /** Size of one page, in bytes. */
+  /** The size of one page, in bytes. */
   pageSize: number
-  /** Checkpoint sequence number of the log the frames came from. */
+  /** The checkpoint sequence number of the log that holds the frames. */
   logSequence: number
-  /** First salt of that log. */
+  /** The first salt of that log. */
   salt1: number
-  /** Second salt of it. */
+  /** The second salt of that log. */
   salt2: number
 }
 
-/** What one written log holds, and where it leaves the database.
+/** The frame count of one written log, and the size of the database after SQLite applies it.
  * @internal
  */
 export interface WrittenLog {
-  /** Frames the log holds. */
+  /** The number of frames in the log. */
   frameCount: number
-  /** Pages the database reaches once SQLite replays them. */
+  /** The number of pages in the database after SQLite applies the frames. */
   databasePages: number
 }
 
@@ -67,13 +67,13 @@ function restoreError(message: string): SirannonError {
 }
 
 /**
- * Reads the page size and the journalling format out of a database file. A
- * restore needs both. The frames it replays hold pages of one size only, and
- * SQLite reads a log beside a file that records write-ahead logging while
- * ignoring one beside a file that does not.
+ * Reads the page size and the journal format from the header of a database
+ * file. A restore needs both, because the frames that it applies hold pages of
+ * one size, and SQLite reads a log next to a file only when the header of that
+ * file marks write-ahead logging.
  *
- * @param path - Path of the database file.
- * @returns What its header states.
+ * @param path - The path of the database file.
+ * @returns The page size and journal format that the header states.
  *
  * @internal
  */
@@ -134,14 +134,13 @@ function randomSalt(): number {
 }
 
 /**
- * Writes the write-ahead log that SQLite replays one batch of change pieces
- * through.
+ * Writes the write-ahead log through which SQLite applies one batch of change
+ * pieces.
  *
- * A destination stores each frame exactly as it was captured, still holding the
- * salts and the running checksum of the log it came from. This writer stamps
- * its own salts over them and folds the checksum again from its own header,
- * which is what lets a batch start part-way down a chain instead of at frame
- * one.
+ * A destination stores each frame as Sirannon captured it, with the salts and
+ * the running checksum of its original log. This writer writes its own salts
+ * over them and recomputes the checksum from its own header, so that a batch
+ * can start part-way along a chain.
  *
  * @internal
  */
@@ -168,11 +167,11 @@ export class RestoreLogWriter {
   }
 
   /**
-   * Opens the log beside a restored database and writes its header.
+   * Creates the log next to a restored database and writes its header.
    *
-   * @param path - Path of the log file.
-   * @param pageSize - Size of one page of the database being restored, in bytes.
-   * @param logSequence - Checkpoint sequence number to record in the header.
+   * @param path - The path of the log file.
+   * @param pageSize - The page size of the database that Sirannon restores, in bytes.
+   * @param logSequence - The checkpoint sequence number to write into the header.
    * @returns The writer, ready for the first piece.
    */
   static async create(path: string, pageSize: number, logSequence: number): Promise<RestoreLogWriter> {
@@ -191,22 +190,21 @@ export class RestoreLogWriter {
     return new RestoreLogWriter(handle, path, pageSize, salt1, salt2, checksum)
   }
 
-  /** Bytes one frame takes, being its header plus one page. */
+  /** The size of one frame in bytes, which is its header plus one page. */
   get frameBytes(): number {
     return LOG_FRAME_HEADER_BYTES + this.pageSize
   }
 
   /**
-   * Starts a new change piece, naming how many bytes of log header stand in
-   * front of its first frame.
+   * Starts a new change piece, with the number of log header bytes before its
+   * first frame.
    *
-   * Where the piece begins with a header, this reads it and checks it against
-   * the record that named the piece. A record claiming a page size the frames
-   * were never written at would otherwise have SQLite read every frame at the
-   * wrong length.
+   * Where the piece begins with a header, the writer checks that header against
+   * the chain record of the piece, since a record with the wrong page size would
+   * make SQLite read every frame at the wrong length.
    *
-   * @param headerBytes - Bytes of log header in front of the frames.
-   * @param expected - What the piece's chain record says that header holds.
+   * @param headerBytes - The number of log header bytes before the frames.
+   * @param expected - The header values that the chain record of the piece states.
    */
   beginPiece(headerBytes: number, expected?: ExpectedLogHeader): void {
     if (this.carry.byteLength > 0) {
@@ -220,11 +218,12 @@ export class RestoreLogWriter {
   }
 
   /**
-   * Stamps every whole frame in the bytes given and appends them to the log.
-   * Where a frame is split across two pieces, this keeps the first part until
-   * the second one is added.
+   * Writes the salts and checksum of this log into every whole frame in the
+   * given bytes, and appends those frames to the log. Where a frame spans two
+   * stored pieces, the writer keeps the first part until the next call supplies
+   * the rest.
    *
-   * @param bytes - The next run of bytes of the change piece.
+   * @param bytes - The next bytes of the change piece.
    */
   async add(bytes: Uint8Array): Promise<void> {
     let arriving = bytes
@@ -295,10 +294,10 @@ export class RestoreLogWriter {
   }
 
   /**
-   * Closes the log and reports what it holds.
+   * Closes the log and returns its frame count and the resulting database size.
    *
-   * @returns The frames the log holds, and the size the database reaches once SQLite replays them.
-   * @throws A `BACKUP_CHAIN_BROKEN` where the pieces ended part-way through a frame, or where the last frame commits nothing.
+   * @returns The number of frames in the log, and the number of pages in the database after SQLite applies them.
+   * @throws A `BACKUP_CHAIN_BROKEN` where the pieces end part-way through a frame, or where the last frame commits no transaction.
    */
   async finish(): Promise<WrittenLog> {
     await this.close()
@@ -315,7 +314,7 @@ export class RestoreLogWriter {
     return { frameCount: this.framesWritten, databasePages: this.lastDatabasePages }
   }
 
-  /** Closes the log without checking it, which is what a failed batch calls before it removes the file. */
+  /** Closes the log without checking it, which Sirannon does for a failed batch before it deletes the file. */
   async abandon(): Promise<void> {
     await this.close().catch(() => {})
   }

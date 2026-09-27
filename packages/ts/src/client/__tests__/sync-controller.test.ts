@@ -38,7 +38,12 @@ beforeEach(async () => {
   await deviceDb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)')
   await deviceDb.watch('notes')
 
-  server = createServer(sirannon, { acceptSql: true, port: 0 })
+  server = createServer(sirannon, {
+    acceptSql: true,
+    acceptDeviceSync: true,
+    authenticate: (): unknown => undefined,
+    port: 0,
+  })
   await server.listen()
   baseUrl = `http://127.0.0.1:${server.listeningPort}`
 })
@@ -304,6 +309,7 @@ describe('SyncController credentials', () => {
     await server.close()
     server = createServer<unknown>(sirannon, {
       acceptSql: true,
+      acceptDeviceSync: true,
       port: 0,
       authenticate: ({ headers }) => {
         if (headers['sec-websocket-key'] === undefined) return undefined
@@ -333,6 +339,7 @@ describe('SyncController credentials', () => {
     await server.close()
     server = createServer<unknown>(sirannon, {
       acceptSql: true,
+      acceptDeviceSync: true,
       port: 0,
       authenticate: ({ headers }) => {
         if (headers['sec-websocket-key'] === undefined) return undefined

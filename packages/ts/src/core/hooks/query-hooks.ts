@@ -1,5 +1,9 @@
-import type { Params, QueryHookContext, QueryOptions } from '../types.js'
+import type { AfterQueryHookContext, Params, QueryHookContext, QueryOptions } from '../types.js'
 import type { HookRegistry } from './registry.js'
+
+export type StatementOutcome = { failed: false } | { failed: true; error: unknown }
+
+export const STATEMENT_SUCCEEDED: StatementOutcome = { failed: false }
 
 export function fireBeforeQueryHooks(
   parentHooks: HookRegistry | null,
@@ -31,16 +35,15 @@ export function fireAfterQueryHooks(
   sql: string,
   params: Params | undefined,
   durationMs: number,
+  outcome: StatementOutcome,
 ): void {
   const hasParent = parentHooks?.has('afterQuery')
   const hasLocal = localHooks.has('afterQuery')
   if (!hasParent && !hasLocal) return
 
-  const ctx = { databaseId, sql, params, durationMs }
-  try {
-    parentHooks?.invokeSync('afterQuery', ctx)
-  } catch {}
-  try {
-    localHooks.invokeSync('afterQuery', ctx)
-  } catch {}
+  const ctx: AfterQueryHookContext = outcome.failed
+    ? { databaseId, sql, params, durationMs, error: outcome.error }
+    : { databaseId, sql, params, durationMs }
+  parentHooks?.invokeSyncIgnoringFailures('afterQuery', ctx)
+  localHooks.invokeSyncIgnoringFailures('afterQuery', ctx)
 }

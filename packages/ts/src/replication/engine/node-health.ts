@@ -26,10 +26,10 @@ function staticHealth(engine: ReplicationEngine, phase: SyncPhase): NodeHealth {
 }
 
 /**
- * Reports what this node alone can do right now.
+ * Returns what this node can do at the moment of the call, using only the state that this node holds.
  *
- * @param engine - The engine whose sync phase, group membership, and coordinator contact are read.
- * @returns The node's health state, the condition behind it, and whether the node can serve a read or accept a write.
+ * @param engine - The engine whose sync phase, group membership, and coordinator connection this function checks.
+ * @returns The node's health state, the reason for it, and whether the node can serve a read or accept a write.
  */
 export function computeNodeHealth(engine: ReplicationEngine): NodeHealth {
   const phase = engine.syncState.phase

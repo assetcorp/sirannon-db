@@ -56,7 +56,7 @@ describe('registry migrations', () => {
       lifecycle: { autoOpen: { resolver: createTenantResolver({ basePath: tempDir }) } },
     })
 
-    const db = await sir.resolve('tenantA')
+    const db = await sir.resolve('tenant-a')
     expect(db).toBeDefined()
     const rows = await db?.query('SELECT id FROM users')
     expect(rows).toEqual([])
@@ -104,8 +104,8 @@ describe('registry migrations', () => {
       lifecycle: { autoOpen: { resolver: createTenantResolver({ basePath: tempDir }) } },
     })
 
-    await expect(sir.resolve('tenantA')).rejects.toThrow(MigrationError)
-    expect(sir.has('tenantA')).toBe(false)
+    await expect(sir.resolve('tenant-a')).rejects.toThrow(MigrationError)
+    expect(sir.has('tenant-a')).toBe(false)
     await sir.shutdown()
   })
 
@@ -121,7 +121,7 @@ describe('registry migrations', () => {
       lifecycle: { autoOpen: { resolver } },
     })
 
-    const [a, b, c] = await Promise.all([sir.resolve('tenantA'), sir.resolve('tenantA'), sir.resolve('tenantA')])
+    const [a, b, c] = await Promise.all([sir.resolve('tenant-a'), sir.resolve('tenant-a'), sir.resolve('tenant-a')])
     expect(a).toBeDefined()
     expect(b).toBe(a)
     expect(c).toBe(a)
@@ -136,11 +136,11 @@ describe('registry migrations', () => {
       lifecycle: { autoOpen: { resolver: createTenantResolver({ basePath: tempDir }) } },
     })
 
-    const results = await Promise.allSettled([sir.resolve('tenantA'), sir.resolve('tenantA')])
+    const results = await Promise.allSettled([sir.resolve('tenant-a'), sir.resolve('tenant-a')])
     for (const result of results) {
       expect(result.status).toBe('rejected')
     }
-    expect(sir.has('tenantA')).toBe(false)
+    expect(sir.has('tenant-a')).toBe(false)
     await sir.shutdown()
   })
 
@@ -150,7 +150,7 @@ describe('registry migrations', () => {
       migrations: [failingMigration],
       lifecycle: { autoOpen: { resolver: createTenantResolver({ basePath: tempDir }) } },
     })
-    await expect(sirBroken.resolve('tenantA')).rejects.toThrow(MigrationError)
+    await expect(sirBroken.resolve('tenant-a')).rejects.toThrow(MigrationError)
     await sirBroken.shutdown()
 
     const sirFixed = new Sirannon({
@@ -158,7 +158,7 @@ describe('registry migrations', () => {
       migrations: [createUsersTable],
       lifecycle: { autoOpen: { resolver: createTenantResolver({ basePath: tempDir }) } },
     })
-    const db = await sirFixed.resolve('tenantA')
+    const db = await sirFixed.resolve('tenant-a')
     expect(db).toBeDefined()
     await sirFixed.shutdown()
   })

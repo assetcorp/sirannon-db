@@ -24,7 +24,7 @@ This page lists every option that the registry, the databases that it opens, the
 | `idleTimeout` | `number` | `0` | Milliseconds before an idle database closes; `0` disables the timer |
 | `maxOpen` | `number` | `0` | Maximum databases open at once, evicting least-recently-used; `0` means unlimited |
 
-`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` that it applies to every tenant that it opens.
+`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` that it applies to every tenant that it opens. The resolver accepts a tenant ID made of lowercase letters, digits, underscores, and hyphens that starts with a letter or a digit, as long as the file name, extension included, fits in 255 characters. It returns `undefined` for any other ID. The rule excludes capital letters because on a file system that ignores case, such as the default one on macOS or Windows, `Acme.db` and `acme.db` name the same file. When another system identifies your tenants with IDs that hold capital letters, store a lowercase ID of your own for each tenant, because `Acme` and `acme` both lowercase to `acme` and would then share one database.
 
 ## `DatabaseOptions`
 

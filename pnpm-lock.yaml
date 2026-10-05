@@ -90,7 +90,7 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.69.0
+        specifier: github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4
       vitest:
         specifier: 4.0.18
@@ -159,7 +159,7 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.69.0
+        specifier: github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4
       zod:
         specifier: 4.4.3
@@ -244,7 +244,7 @@ importers:
         version: 19.2.6
       shadcn:
         specifier: 4.10.0
-        version: 4.10.0(babel-plugin-macros@3.1.0)(typescript@5.9.3)
+        version: 4.10.0(@types/node@26.1.2)(babel-plugin-macros@3.1.0)(typescript@5.9.3)
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
@@ -285,7 +285,7 @@ importers:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.69.0
+        specifier: github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4
       zod:
         specifier: 4.4.3
@@ -370,7 +370,7 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       uWebSockets.js:
-        specifier: github:uNetworking/uWebSockets.js#v20.69.0
+        specifier: github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4
       wa-sqlite:
         specifier: 1.0.0
@@ -9209,11 +9209,6 @@ snapshots:
 
   '@inquirer/ansi@2.0.7': {}
 
-  '@inquirer/confirm@6.1.1':
-    dependencies:
-      '@inquirer/core': 11.2.1
-      '@inquirer/type': 4.0.7
-
   '@inquirer/confirm@6.1.1(@types/node@25.5.0)':
     dependencies:
       '@inquirer/core': 11.2.1(@types/node@25.5.0)
@@ -9227,16 +9222,6 @@ snapshots:
       '@inquirer/type': 4.0.7(@types/node@26.1.2)
     optionalDependencies:
       '@types/node': 26.1.2
-
-  '@inquirer/core@11.2.1':
-    dependencies:
-      '@inquirer/ansi': 2.0.7
-      '@inquirer/figures': 2.0.7
-      '@inquirer/type': 4.0.7
-      cli-width: 4.1.0
-      fast-wrap-ansi: 0.2.2
-      mute-stream: 3.0.0
-      signal-exit: 4.1.0
 
   '@inquirer/core@11.2.1(@types/node@25.5.0)':
     dependencies:
@@ -9263,8 +9248,6 @@ snapshots:
       '@types/node': 26.1.2
 
   '@inquirer/figures@2.0.7': {}
-
-  '@inquirer/type@4.0.7': {}
 
   '@inquirer/type@4.0.7(@types/node@25.5.0)':
     optionalDependencies:
@@ -13667,31 +13650,6 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  msw@2.14.6(typescript@5.9.3):
-    dependencies:
-      '@inquirer/confirm': 6.1.1
-      '@mswjs/interceptors': 0.41.9
-      '@open-draft/deferred-promise': 3.0.0
-      '@types/statuses': 2.0.6
-      cookie: 1.1.1
-      graphql: 16.14.1
-      headers-polyfill: 5.0.1
-      is-node-process: 1.2.0
-      outvariant: 1.4.3
-      path-to-regexp: 6.3.0
-      picocolors: 1.1.1
-      rettime: 0.11.11
-      statuses: 2.0.2
-      strict-event-emitter: 0.5.1
-      tough-cookie: 6.0.1
-      type-fest: 5.7.0
-      until-async: 3.0.2
-      yargs: 17.7.2
-    optionalDependencies:
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - '@types/node'
-
   multitars@0.2.5: {}
 
   mute-stream@3.0.0: {}
@@ -14618,49 +14576,6 @@ snapshots:
       https-proxy-agent: 7.0.6
       kleur: 4.1.5
       msw: 2.14.6(@types/node@26.1.2)(typescript@5.9.3)
-      node-fetch: 3.3.2
-      open: 11.0.0
-      ora: 8.2.0
-      postcss: 8.5.15
-      postcss-selector-parser: 7.1.1
-      prompts: 2.4.2
-      recast: 0.23.11
-      stringify-object: 5.0.0
-      tailwind-merge: 3.6.0
-      ts-morph: 26.0.0
-      tsconfig-paths: 4.2.0
-      validate-npm-package-name: 7.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - '@types/node'
-      - babel-plugin-macros
-      - supports-color
-      - typescript
-
-  shadcn@4.10.0(babel-plugin-macros@3.1.0)(typescript@5.9.3):
-    dependencies:
-      '@babel/core': 7.29.7
-      '@babel/parser': 7.29.7
-      '@babel/plugin-transform-typescript': 7.29.7(@babel/core@7.29.7)
-      '@babel/preset-typescript': 7.29.7(@babel/core@7.29.7)
-      '@dotenvx/dotenvx': 1.71.0
-      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
-      '@types/validate-npm-package-name': 4.0.2
-      browserslist: 4.28.2
-      commander: 14.0.3
-      cosmiconfig: 9.0.1(typescript@5.9.3)
-      dedent: 1.7.2(babel-plugin-macros@3.1.0)
-      deepmerge: 4.3.1
-      diff: 8.0.4
-      execa: 9.6.1
-      fast-glob: 3.3.3
-      fs-extra: 11.3.5
-      fuzzysort: 3.1.0
-      https-proxy-agent: 7.0.6
-      kleur: 4.1.5
-      msw: 2.14.6(typescript@5.9.3)
       node-fetch: 3.3.2
       open: 11.0.0
       ora: 8.2.0

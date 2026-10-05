@@ -23,7 +23,7 @@
     "lucide-react": "1.17.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.69.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4",
     "zod": "4.4.3"
   },
   "devDependencies": {

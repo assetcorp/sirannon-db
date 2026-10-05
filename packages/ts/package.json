@@ -206,7 +206,7 @@
     "tsup": "8.5.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.69.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4",
     "vitest": "4.0.18"
   }
 }

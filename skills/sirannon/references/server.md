@@ -3,10 +3,10 @@
 ## 1. Install the server's peer package
 
 ```bash
-pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
+pnpm add -E "uWebSockets.js@$(node -p "require('./node_modules/@delali/sirannon-db/package.json').devDependencies['uWebSockets.js']")"
 ```
 
-npm has no package by that name, so install it from GitHub exactly as written. A missing package makes `server.listen()` throw `SERVER_DEPENDENCY_MISSING`, and on 0.3.3 the import itself fails.
+The command installs uWebSockets.js from the GitHub source in the `devDependencies` of the installed `@delali/sirannon-db`, since its author publishes it only on GitHub. Ignore the packages with similar names on npm. When the package is missing, `server.listen()` throws `SERVER_DEPENDENCY_MISSING`, while on 0.3.3 the import itself fails.
 
 ## 2. Write the server
 

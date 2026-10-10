@@ -912,8 +912,34 @@ MetricsConfig {
   onConnectionClose?: (metrics: ConnectionMetrics) -> void
 }
 
-QueryMetrics       { databaseId: string, sql: string, durationMs: number, error?: boolean }
+QueryMetrics {
+  databaseId:    string
+  sql:           string
+  durationMs:    number
+  rowsReturned?: number
+  changes?:      number
+  rowsRead?:     number
+  rowsWritten?:  number
+  source?:       'live'
+  error?:        boolean
+}
+
 ConnectionMetrics  { databaseId: string, path: string, readerCount: number, event: 'open' | 'close' }
 ```
 
 Metrics callbacks are optional and configured only when `metrics` is supplied. `onConnectionClose` reports `readerCount` as 0. An error thrown by a metrics callback must not affect database operations.
+
+An implementation must set `rowsReturned` to the number of rows that a read returns and `changes` to the number of rows that a write changes, except on a failed statement. When the database's driver reports `rowCounts`, an implementation must set `rowsRead` and `rowsWritten` on every statement, including a failed one.
+
+An implementation must report each read that a live query makes, including every second read and every probe after a change, through `onQueryComplete` with `source` set to `'live'` and `sql` set to the live query's SQL. An implementation must leave `source` unset on every other statement.
+
+### Row Counts
+
+A driver reporting `rowCounts` must count rows read and rows written over each statement's whole execution:
+
+- The driver must add one row read for each range seek, rowid lookup, move to the first or last row, and step to the next or previous row on a table or an index, and for each step of a virtual table's cursor.
+- The driver must add no row read for an equality seek on an index that finds no match, for a uniqueness or membership probe on an index, or for the table lookup that follows an index match.
+- The driver must add the number of entries that SQLite counts when it answers a `count(*)` from a table's entries.
+- The driver must add one row written for each row that the statement inserts into, updates in, or deletes from a table, for each entry that it inserts into an index, and for each row that a virtual table's update changes, and none for a write to one of SQLite's ephemeral tables.
+- Both counts must include the work of every trigger that the statement fires, including a foreign-key action, except a trigger whose name begins with `_sirannon_trg_`.
+- The driver must keep each count exact up to 2^53 - 1.

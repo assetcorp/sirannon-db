@@ -46,6 +46,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `EXTENSION_ERROR` | A native SQLite extension could not be loaded. |
 | `INVALID_DRIVER` | Driver configuration failed validation. |
 | `INVALID_SYNCHRONOUS` | An unknown `synchronous` level was supplied. |
+| `ROW_COUNTS_UNSUPPORTED` | A driver that reports `rowCounts` opened an engine that has no row counters. |
 | `INVALID_DURABILITY` | An unknown bulk-load durability was supplied. |
 | `DURABILITY_RESTORE_FAILED` | The writer durability could not be restored after a bulk load. |
 | `SNAPSHOT_IN_PROGRESS` | A read or write was attempted while a device-sync snapshot load runs. |

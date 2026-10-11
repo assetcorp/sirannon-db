@@ -1,0 +1,39 @@
+--- a/src/objects/statement.hpp
++++ b/src/objects/statement.hpp
+@@ -50,6 +50,7 @@
+ 	static NODE_METHOD(JS_safeIntegers);
+ 	static NODE_METHOD(JS_columns);
+ 	static NODE_METHOD(JS_toString);
++	static NODE_METHOD(JS_takeRowCounts);
+ 	static NODE_GETTER(JS_busy);
+
+ 	Database* db;
+--- a/src/objects/statement.cpp
++++ b/src/objects/statement.cpp
+@@ -71,6 +71,7 @@
+ 		PrototypeMethod<Statement, &Statement::JS_safeIntegers>("safeIntegers", addon),
+ 		PrototypeMethod<Statement, &Statement::JS_columns>("columns", addon),
+ 		PrototypeMethod<Statement, &Statement::JS_toString>("toString", addon),
++		PrototypeMethod<Statement, &Statement::JS_takeRowCounts>("takeRowCounts", addon),
+ 	}, addon);
+ }
+
+@@ -374,6 +375,18 @@
+ 		.As<Napi::String>();
+ }
+
++NODE_METHOD(Statement::JS_takeRowCounts) {
++	UNWRAP_OR_RETURN(Statement, stmt, info.This());
++	if (!stmt->alive) return ThrowTypeError(info.Env(), "The database connection is not open");
++	UseIsolate;
++	const uint32_t rows_read = static_cast<uint32_t>(sqlite3_stmt_status(stmt->handle, LIBSQL_STMTSTATUS_ROWS_READ, 1));
++	const uint32_t rows_written = static_cast<uint32_t>(sqlite3_stmt_status(stmt->handle, LIBSQL_STMTSTATUS_ROWS_WRITTEN, 1));
++	Napi::Object result = Napi::Object::New(env);
++	result.Set("rowsRead", Napi::Number::New(env, rows_read));
++	result.Set("rowsWritten", Napi::Number::New(env, rows_written));
++	return result;
++}
++
+ NODE_GETTER(Statement::JS_busy) {
+ 	UNWRAP_OR_RETURN(Statement, stmt, info.This());
+ 	return Napi::Boolean::New(info.Env(), stmt->alive && stmt->locked);

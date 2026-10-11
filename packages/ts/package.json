@@ -30,6 +30,8 @@
   "scripts": {
     "build": "rm -rf dist && tsup",
     "build:vfs": "node ../../native/vfs/build.mjs",
+    "build:sqlite": "node ../../native/sqlite/build.mjs",
+    "check:sqlite": "node ../../native/sqlite/check.mjs",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
     "check:api": "node scripts/assert-api-reports.mjs",
@@ -199,6 +201,7 @@
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "jsdom": "29.1.1",
+    "node-api-headers": "1.9.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "selfsigned": "5.5.0",

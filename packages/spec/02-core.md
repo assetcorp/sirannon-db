@@ -929,17 +929,15 @@ ConnectionMetrics  { databaseId: string, path: string, readerCount: number, even
 
 Metrics callbacks are optional and configured only when `metrics` is supplied. `onConnectionClose` reports `readerCount` as 0. An error thrown by a metrics callback must not affect database operations.
 
-An implementation must set `rowsReturned` to the number of rows that a read returns and `changes` to the number of rows that a write changes, except on a failed statement. When the database's driver reports `rowCounts`, an implementation must set `rowsRead` and `rowsWritten` on every statement, including a failed one.
+An implementation must set `rowsReturned` to the number of rows that each successful read returns, `changes` to the number of rows that each successful write changes, and, when the driver reports `rowCounts`, `rowsRead` and `rowsWritten` on every statement, failed or not.
 
-An implementation must report each read that a live query makes, including every second read and every probe after a change, through `onQueryComplete` with `source` set to `'live'` and `sql` set to the live query's SQL. An implementation must leave `source` unset on every other statement.
+An implementation must report every read that a live query performs, including each second read and each probe, through `onQueryComplete` with `source` set to `'live'` and `sql` set to the live query's SQL, and must leave `source` unset on every other statement.
 
 ### Row Counts
 
-A driver reporting `rowCounts` must count rows read and rows written over each statement's whole execution:
+A driver reporting `rowCounts` must keep both counts exact up to 2^53 - 1 over each statement's whole execution:
 
-- The driver must add one row read for each range seek, rowid lookup, move to the first or last row, and step to the next or previous row on a table or an index, and for each step of a virtual table's cursor.
-- The driver must add no row read for an equality seek on an index that finds no match, for a uniqueness or membership probe on an index, or for the table lookup that follows an index match.
-- The driver must add the number of entries that SQLite counts when it answers a `count(*)` from a table's entries.
-- The driver must add one row written for each row that the statement inserts into, updates in, or deletes from a table, for each entry that it inserts into an index, and for each row that a virtual table's update changes, and none for a write to one of SQLite's ephemeral tables.
-- Both counts must include the work of every trigger that the statement fires, including a foreign-key action, except a trigger whose name begins with `_sirannon_trg_`.
-- The driver must keep each count exact up to 2^53 - 1.
+- The driver must count one row read for each range seek, rowid lookup, move to the first or last row, and step to the next or previous row on a table or an index, for each step of a virtual table's cursor, and for each entry that SQLite counts to answer a `count(*)`.
+- The driver must count no row read for an equality seek on an index that finds no match, a uniqueness or membership probe on an index, or the table lookup that follows an index match.
+- The driver must count one row written for each row that the statement inserts into, updates in, or deletes from a table, for each entry that it inserts into an index, and for each row that a virtual table's update changes, excluding SQLite's ephemeral tables and indexes.
+- Both counts must include the work of every trigger that the statement fires, foreign-key actions included, except a trigger whose name begins with `_sirannon_trg_`.

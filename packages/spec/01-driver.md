@@ -45,7 +45,7 @@ DriverCapabilities {
 | `multipleConnections` | The engine can open several independent connections to one database file. When `true`, Sirannon creates a pool with dedicated reader connections; when `false`, all reads and writes share one connection. |
 | `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
 | `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
-| `rowCounts` | A driver reporting `true` must set `rowsRead` and `rowsWritten`, following [Row Counts](02-core.md#row-counts), on every `RunResult`, every `BatchSummary`, and every error that a statement call throws. Its `open` must fail with `ROW_COUNTS_UNSUPPORTED` when the engine that it loads has no row counters. |
+| `rowCounts` | A driver reporting `true` must expose the counted statement calls, set `rowsRead` and `rowsWritten` by the rules in [Row Counts](02-core.md#row-counts) on every `RunResult`, `BatchSummary`, and statement error, and fail `open` with `ROW_COUNTS_UNSUPPORTED` when its engine has no row counters. |
 
 ### OpenOptions
 
@@ -162,7 +162,7 @@ Parameters are passed as trailing arguments, not a single list.
 - **get** returns the first matching row, or null (absent) when nothing matches.
 - **run** runs the statement for its side effects and returns a `RunResult`.
 - **allRaw** behaves like `all` but skips safe-range bigint narrowing, leaving every integer as a bigint. A driver may omit it; callers then fall back to `all`.
-- **allCounted**, **getCounted**, and **allRawCounted** must return the value that `all`, `get`, or `allRaw` returns, together with the row counts of that call alone. A driver reporting `rowCounts` must expose `allCounted` and `getCounted`, and it must expose `allRawCounted` whenever it exposes `allRaw`.
+- **allCounted**, **getCounted**, and **allRawCounted** must return the value of `all`, `get`, or `allRaw` together with the row counts of that call alone; a driver must expose `allRawCounted` whenever it exposes `allRaw`.
 
 ---
 

@@ -277,6 +277,17 @@ jobs:
         working-directory: packages/ts
         run: pnpm check:sqlite
 
+      - name: Check the row counts from a renamed Node executable
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        working-directory: packages/ts
+        shell: pwsh
+        run: |
+          $renamedHost = Join-Path $env:RUNNER_TEMP 'renamed-host.exe'
+          Copy-Item (Get-Command node).Source $renamedHost
+          & $renamedHost ../../native/sqlite/check.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   row-counts-musl:
     name: Row counts on ${{ matrix.target }}
     needs: row-counts-build

@@ -14,6 +14,7 @@ const delayLoadHook = join(sourceDirectory, 'win-delay-load-hook.cc')
 const linuxExportsMap = join(sourceDirectory, 'linux-exports.map')
 
 const PATCHED_BETTER_SQLITE3_VERSION = '13.0.2'
+const PINNED_ZIG_VERSION = '0.16.0'
 const NODE_HOST_BINARY = 'node.exe'
 const ADDON_FILE_NAME = 'better_sqlite3.node'
 const ZIG_LINK_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024
@@ -98,6 +99,10 @@ function compilers(target) {
   }
 }
 
+function linkTimeOptimisation(target) {
+  return target.importMachine ? [] : ['-flto']
+}
+
 function compileObjects(target, inputs, workDirectory, sqliteDirectory) {
   const { c, cxx } = compilers(target)
   const positionIndependent = target.importMachine ? [] : ['-fPIC']
@@ -106,6 +111,7 @@ function compileObjects(target, inputs, workDirectory, sqliteDirectory) {
     ...c.args,
     '-c',
     '-O3',
+    ...linkTimeOptimisation(target),
     '-std=c99',
     '-w',
     ...positionIndependent,
@@ -122,6 +128,7 @@ function compileObjects(target, inputs, workDirectory, sqliteDirectory) {
     ...cxx.args,
     '-c',
     '-O3',
+    ...linkTimeOptimisation(target),
     '-std=c++20',
     '-fvisibility=hidden',
     '-fvisibility-inlines-hidden',
@@ -196,6 +203,7 @@ function link(target, inputs, workDirectory, objects) {
     run(cxx.command, [
       ...cxx.args,
       '-bundle',
+      ...linkTimeOptimisation(target),
       '-undefined',
       'dynamic_lookup',
       '-Wl,-dead_strip',
@@ -209,6 +217,7 @@ function link(target, inputs, workDirectory, objects) {
     run(cxx.command, [
       ...cxx.args,
       '-shared',
+      ...linkTimeOptimisation(target),
       '-s',
       '-Wl,-Bsymbolic',
       `-Wl,--version-script=${linuxExportsMap}`,
@@ -221,7 +230,17 @@ function link(target, inputs, workDirectory, objects) {
   return addonPath
 }
 
+function assertPinnedZig() {
+  const version = execFileSync('zig', ['version'], { encoding: 'utf8' }).trim()
+  if (version !== PINNED_ZIG_VERSION) {
+    throw new Error(
+      `The row-counting SQLite build needs zig ${PINNED_ZIG_VERSION}, the version that CI pins, and the zig on the PATH is ${version}`,
+    )
+  }
+}
+
 function build(name, target) {
+  if (target.zigTriple) assertPinnedZig()
   const inputs = resolveInputs()
   const workDirectory = mkdtempSync(join(tmpdir(), 'sirannon-sqlite-'))
   try {

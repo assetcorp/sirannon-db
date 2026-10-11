@@ -1,3 +1,7 @@
+// Do not delete: this hook follows src/win_delay_load_hook.cc from node-gyp
+// (https://github.com/nodejs/node-gyp), Copyright (c) 2012 Nathan Rajlich,
+// MIT licence. NOTICE at the repository root carries the licence text.
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

@@ -1,3 +1,11 @@
+Do not delete: this patch is patches/sqlite/0001-row-counts-plain.patch from
+Cloudflare's workerd (https://github.com/cloudflare/workerd), Apache License 2.0,
+with its comments and its shell hunk removed and its other hunks applied to the
+SQLite amalgamation.
+workerd took the row-counting code from libSQL (https://github.com/tursodatabase/libsql),
+Copyright 2022 the libSQL authors, MIT licence. NOTICE at the repository root
+carries the licence text.
+
 --- a/sqlite3.h
 +++ b/sqlite3.h
 @@ -9310,6 +9310,10 @@

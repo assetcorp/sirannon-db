@@ -69,8 +69,8 @@ export function asQueryError(err: unknown, sql: string): Error {
 /**
  * Returns a result holding only the change count and the last inserted row id, so that row counts stay out of what a caller receives.
  *
- * @param result - A result that can carry row counts.
- * @returns `result` itself when it carries no row counts, and otherwise a copy without them.
+ * @param result - A result that can hold row counts.
+ * @returns `result` itself when it holds no row counts, and otherwise a copy without them.
  * @internal
  */
 export function withoutRowCounts(result: ExecuteResult): ExecuteResult {
@@ -118,7 +118,7 @@ export async function queryMetered<T = Record<string, unknown>>(
 }
 
 /**
- * Executes a read on one connection and returns the rows encoded for the wire, with the statement's row counts when the driver reports them.
+ * Executes a read on one connection and returns the rows encoded for a network response, with the statement's row counts when the driver reports them.
  *
  * @param conn - The connection that executes the read.
  * @param sql - The statement to execute.
@@ -184,7 +184,7 @@ export async function queryOneMetered<T = Record<string, unknown>>(
 /**
  * Executes one write on a connection and returns the change count and the row id of the last inserted row.
  *
- * When the driver counts rows, the result and any error also carry `rowsRead` and `rowsWritten`.
+ * When the driver counts rows, the result and any error also hold `rowsRead` and `rowsWritten`.
  *
  * @internal
  */

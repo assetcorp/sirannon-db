@@ -3,24 +3,24 @@
 [![npm](https://img.shields.io/npm/v/@delali/sirannon-sqlite-linux-x64)](https://www.npmjs.com/package/@delali/sirannon-sqlite-linux-x64)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-sqlite-linux-x64)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-This package holds better-sqlite3's native module, built for Linux on x86-64 against a SQLite that counts the rows each statement reads and writes.
+This package contains better-sqlite3's native module, built for Linux on x86-64 against a SQLite that counts the rows that each statement reads and writes.
 
 ## Install
 
-You install `@delali/sirannon-sqlite`, and npm installs this package with it:
+When you install `@delali/sirannon-sqlite`, npm installs this package with it:
 
 ```bash
 pnpm add -E @delali/sirannon-db @delali/sirannon-sqlite
 ```
 
-[`@delali/sirannon-sqlite`](https://www.npmjs.com/package/@delali/sirannon-sqlite) lists all six platform packages as optional dependencies, so npm installs only the one whose `os` and `cpu` match your host. The release workflow publishes this package at the library's version, and `@delali/sirannon-sqlite` pins that version exactly.
+[`@delali/sirannon-sqlite`](https://www.npmjs.com/package/@delali/sirannon-sqlite) lists all six platform packages as optional dependencies, so npm installs only the one whose `os` and `cpu` match your host. The release workflow publishes this package at the library's version, which is the exact version that `@delali/sirannon-sqlite` requires.
 
 ## What it does
 
-Sirannon's better-sqlite3 driver loads this module when you pass `rowCounts: true`, and it reports each statement's rows read and rows written through `onQueryComplete`. The [core engine guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md#rows-read-and-rows-written) lists the counting rules.
+When you pass `rowCounts: true`, Sirannon's better-sqlite3 driver loads this module and reports the rows that each statement reads and writes through `onQueryComplete`. The counting rules are in the [core engine guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md#rows-read-and-rows-written).
 
-This package holds two builds, one for glibc and one for musl, because a native module built against one C library cannot load against the other. `@delali/sirannon-sqlite` picks the musl build where the host reports no glibc runtime.
+This package contains two builds, one for glibc and one for musl, because a native module built against one C library cannot load against the other. The JavaScript in `@delali/sirannon-sqlite` loads the musl build when Node's process report shows no glibc version.
 
 ## Licence
 
-This package is published under the Apache-2.0 and MIT licences. Its `NOTICE` names the projects whose code it carries, and [assetcorp/sirannon-db](https://github.com/assetcorp/sirannon-db) holds the patches, the build script, and the tests.
+The Apache-2.0 and MIT licences cover this package. Each project whose code is in this package has its name and licence in the package's `NOTICE` file, and the patches, the build script, and the tests are in [assetcorp/sirannon-db](https://github.com/assetcorp/sirannon-db).

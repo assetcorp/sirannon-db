@@ -199,7 +199,7 @@ function runEach(
  * @param stmt - A statement prepared on the row-counting build.
  * @param paramsBatch - One parameter set for each execution.
  * @param taker - The connection's row count taker.
- * @returns One result per parameter set, in order. When a set fails, the error carries the counts of every set executed up to and including it.
+ * @returns One result per parameter set, in order. When a set fails, the error holds the counts of every set executed up to and including it.
  * @internal
  */
 export function runCountedBatch(
@@ -221,7 +221,7 @@ export function runCountedBatch(
  * @param stmt - A statement prepared on the row-counting build.
  * @param paramsBatch - One parameter set for each execution.
  * @param taker - The connection's row count taker.
- * @returns The parameter sets applied, the rows changed, and the total row counts. When a set fails, the error carries the counts of every set executed up to and including it.
+ * @returns The parameter sets applied, the rows changed, and the total row counts. When a set fails, the error holds the counts of every set executed up to and including it.
  * @internal
  */
 export function runCountedBatchSummary(

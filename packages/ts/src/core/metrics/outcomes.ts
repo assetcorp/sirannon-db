@@ -10,7 +10,7 @@ const CODES_OF_AN_UNKNOWN_OUTCOME = new Set([
 ])
 
 /**
- * The metrics of a statement whose row counts nobody can know, because the writer worker stopped answering while it executed the statement.
+ * The metrics of a statement whose row counts Sirannon cannot know, because the writer worker timed out, crashed, or exited while it executed the statement.
  *
  * @internal
  */
@@ -29,10 +29,10 @@ export function leavesOutcomeUnknown(error: unknown): boolean {
 }
 
 /**
- * Returns the metrics of a failed statement, which hold the rows that it read and wrote before it failed.
+ * Returns the metrics of a failed statement, which hold the rows that SQLite read and wrote before the statement failed.
  *
  * @param error - The error that the statement raised.
- * @returns The row counts that the error carries, {@link ROW_COUNTS_UNKNOWN} when the outcome is unknown, or no fields otherwise.
+ * @returns The row counts that the error holds, {@link ROW_COUNTS_UNKNOWN} when the outcome is unknown, or no fields otherwise.
  * @internal
  */
 export function failedStatementOutcome(error: unknown): QueryOutcome {

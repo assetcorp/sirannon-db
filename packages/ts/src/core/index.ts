@@ -40,6 +40,7 @@ export { defineDriver } from './driver/define.js'
 export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'
 export type {
   BatchSummary,
+  Counted,
   DatabaseCopyRequest,
   DatabaseCopyStep,
   DriverCapabilities,

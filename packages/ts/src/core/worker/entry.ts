@@ -1,7 +1,8 @@
 import { parentPort } from 'node:worker_threads'
+import { addRowCounts, type RowCounts, rowCountsOf, withRowCounts } from '../driver/row-counts.js'
 import type { GroupRunOutcome, SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
-import { executeGroup } from '../query-executor.js'
+import { executeGroup } from '../group-executor.js'
 import {
   serializeError,
   WORKER_CANCELLED_CODE,
@@ -48,6 +49,32 @@ async function statementFor(sql: string): Promise<SQLiteStatement> {
   return stmt
 }
 
+function missingCountedCall(call: string): SirannonError {
+  return new SirannonError(
+    `The driver rebuilt inside the writer worker opens statements without ${call}, so it reports no row counts`,
+    'ROW_COUNTS_UNSUPPORTED',
+  )
+}
+
+async function allCounted(sql: string, params: unknown[]): Promise<WorkerResult> {
+  const stmt = await statementFor(sql)
+  if (!stmt.allCounted) throw missingCountedCall('allCounted')
+  return stmt.allCounted(...params)
+}
+
+async function getCounted(sql: string, params: unknown[]): Promise<WorkerResult> {
+  const stmt = await statementFor(sql)
+  if (!stmt.getCounted) throw missingCountedCall('getCounted')
+  return stmt.getCounted(...params)
+}
+
+async function allRawCounted(sql: string, params: unknown[]): Promise<WorkerResult> {
+  const stmt = await statementFor(sql)
+  if (!stmt.allRaw) return allCounted(sql, params)
+  if (!stmt.allRawCounted) throw missingCountedCall('allRawCounted')
+  return stmt.allRawCounted(...params)
+}
+
 async function open(
   entry: { specifier: string; exportName?: string; config?: unknown },
   path: string,
@@ -85,6 +112,12 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       const stmt = await statementFor(req.sql)
       return stmt.allRaw ? stmt.allRaw(...req.params) : stmt.all(...req.params)
     }
+    case 'allCounted':
+      return allCounted(req.sql, req.params)
+    case 'getCounted':
+      return getCounted(req.sql, req.params)
+    case 'allRawCounted':
+      return allRawCounted(req.sql, req.params)
     case 'runBatch': {
       const conn = requireConnection()
       if (conn.runBatch) return conn.runBatch(req.sql, req.paramsBatch)
@@ -96,14 +129,23 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       if (conn.runBatchSummary) return conn.runBatchSummary(req.sql, req.paramsBatch)
       const stmt = await statementFor(req.sql)
       let changes = 0
-      for (const params of req.paramsBatch) changes += (await stmt.run(...params)).changes
-      return { rowsLoaded: req.paramsBatch.length, changes }
+      let counts: RowCounts | undefined
+      for (const params of req.paramsBatch) {
+        const result = await stmt.run(...params)
+        changes += result.changes
+        counts = addRowCounts(counts, rowCountsOf(result))
+      }
+      return withRowCounts({ rowsLoaded: req.paramsBatch.length, changes }, counts)
     }
     case 'runGroup': {
       const outcomes = await executeGroup(requireConnection(), req.units)
-      return outcomes.map<GroupRunOutcome>(outcome =>
-        outcome.ok ? { ok: true, results: outcome.values } : { ok: false, error: serializeError(outcome.error) },
-      )
+      return outcomes.map<GroupRunOutcome>(outcome => {
+        if (outcome.ok) return { ok: true, results: outcome.values }
+        const error = serializeError(outcome.error)
+        return outcome.statementRowCounts
+          ? { ok: false, error, statementRowCounts: outcome.statementRowCounts }
+          : { ok: false, error }
+      })
     }
     case 'loadExtension': {
       const conn = requireConnection()

@@ -26,14 +26,21 @@ function pauseIfMarked(sql: string): void {
   while (!existsSync(releaseFile)) pause(HOLD_POLL_MS)
 }
 
-export function sleepingDriver(): SQLiteDriver {
-  const base = betterSqlite3()
-  const workerEntry = { specifier: import.meta.url, exportName: 'sleepingDriver' }
+export interface SleepingDriverConfig {
+  rowCountsBindingPath?: string
+}
+
+export function sleepingDriver(config?: SleepingDriverConfig): SQLiteDriver {
+  const countsRows = config?.rowCountsBindingPath !== undefined
+  const base = betterSqlite3(
+    countsRows ? { rowCounts: true, rowCountsBindingPath: config.rowCountsBindingPath } : undefined,
+  )
+  const workerEntry = { specifier: import.meta.url, exportName: 'sleepingDriver', config }
   return defineDriver({
     capabilities: base.capabilities,
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
-      const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
+      const host = await WriterWorker.start(workerEntry, path, options, { ...hostOptions, countsRows })
       return host.connection
     },
     open: async (path, options) => {

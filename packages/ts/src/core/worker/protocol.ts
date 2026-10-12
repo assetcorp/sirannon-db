@@ -1,3 +1,4 @@
+import { rowCountsOf, withRowCounts } from '../driver/row-counts.js'
 import type {
   BatchSummary,
   DatabaseCopyStep,
@@ -14,6 +15,9 @@ export type WorkerRequest =
   | { id: number; kind: 'get'; sql: string; params: unknown[] }
   | { id: number; kind: 'all'; sql: string; params: unknown[] }
   | { id: number; kind: 'allRaw'; sql: string; params: unknown[] }
+  | { id: number; kind: 'allCounted'; sql: string; params: unknown[] }
+  | { id: number; kind: 'getCounted'; sql: string; params: unknown[] }
+  | { id: number; kind: 'allRawCounted'; sql: string; params: unknown[] }
   | { id: number; kind: 'runBatch'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runBatchSummary'; sql: string; paramsBatch: unknown[][] }
   | { id: number; kind: 'runGroup'; units: { statements: { sql: string; params: unknown[]; trusted?: boolean }[] }[] }
@@ -35,6 +39,8 @@ export interface SerializedError {
   message: string
   name?: string
   code?: string
+  rowsRead?: number
+  rowsWritten?: number
 }
 
 export type WorkerCopyStep = { id: number; kind: 'copyStep'; step: DatabaseCopyStep }
@@ -49,11 +55,14 @@ export const WORKER_COPY_STOPPED_CODE = 'WRITER_WORKER_COPY_STOPPED'
 export function serializeError(err: unknown): SerializedError {
   if (err instanceof Error) {
     const code = (err as { code?: unknown }).code
-    return {
-      message: err.message,
-      name: err.name,
-      ...(typeof code === 'string' ? { code } : {}),
-    }
+    return withRowCounts(
+      {
+        message: err.message,
+        name: err.name,
+        ...(typeof code === 'string' ? { code } : {}),
+      },
+      rowCountsOf(err),
+    )
   }
   return { message: String(err) }
 }
@@ -62,5 +71,5 @@ export function deserializeError(error: SerializedError): Error {
   const err = new Error(error.message)
   if (error.name) err.name = error.name
   if (error.code) (err as { code?: string }).code = error.code
-  return err
+  return withRowCounts(err, rowCountsOf(error))
 }

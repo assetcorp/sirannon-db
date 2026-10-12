@@ -47,6 +47,10 @@ jobs:
         working-directory: packages/ts
         run: pnpm build:vfs
 
+      - name: Build the row-counting SQLite for this runner
+        working-directory: packages/ts
+        run: pnpm build:sqlite
+
       - name: Lint
         run: pnpm lint
 
@@ -69,6 +73,7 @@ jobs:
         run: pnpm test
         env:
           SIRANNON_REQUIRE_STREAMING_EXTENSION: '1'
+          SIRANNON_REQUIRE_ROW_COUNTING_SQLITE: '1'
 
   benchmarks-writeup:
     name: Benchmarks writeup drift

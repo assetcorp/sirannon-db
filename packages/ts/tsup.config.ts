@@ -4,6 +4,7 @@ import { defineConfig, type Options } from 'tsup'
 
 const peerDeps = [
   'better-sqlite3',
+  '@delali/sirannon-sqlite',
   'uWebSockets.js',
   'wa-sqlite',
   'expo-sqlite',

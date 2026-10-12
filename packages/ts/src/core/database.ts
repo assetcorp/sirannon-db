@@ -245,7 +245,12 @@ export class Database extends DatabaseBackups {
   ): Promise<LiveQuery<T>> {
     this.ensureWritable()
     const cdc = this.runtime.cdc
-    return openLiveQuery<T>({ cdc, watch: table => this.watch(table) }, sql, params, options)
+    return openLiveQuery<T>(
+      { cdc, observer: this.runtime.reads.observer, watch: table => this.watch(table) },
+      sql,
+      params,
+      options,
+    )
   }
 
   /**

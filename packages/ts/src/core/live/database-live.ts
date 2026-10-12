@@ -1,7 +1,10 @@
 import type { DatabaseCdcController } from '../database-cdc.js'
+import type { DatabaseObserver } from '../database-observability.js'
+import { allMetered } from '../driver/row-counts.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError } from '../errors.js'
 import { LIVE_PROBE_TABLE_PREFIX } from '../internal-tables.js'
+import { readOutcome } from '../metrics/outcomes.js'
 import { selectTableSql, tableInfoRows } from '../system-catalog/index.js'
 import type { Params } from '../types.js'
 import { parseColumnCollations } from './column-collations.js'
@@ -11,7 +14,7 @@ import type { HeldRow } from './live-result.js'
 import { PrimedLiveDelivery } from './primed-delivery.js'
 import { buildLivePlan, type LivePlan } from './query-plan.js'
 import { encodeRowKey, rowidKey } from './row-keys.js'
-import { RowProbe } from './row-probe.js'
+import { type LiveReadMeter, RowProbe } from './row-probe.js'
 import { toSortValue } from './sqlite-order.js'
 import { analyseStatement } from './statement-shape.js'
 import type { LiveQuery, LiveQueryOptions } from './types.js'
@@ -24,6 +27,7 @@ let nextProbeTable = 0
 
 export interface DatabaseLiveDeps {
   cdc: DatabaseCdcController
+  observer: DatabaseObserver
   watch(table: string): Promise<void>
 }
 
@@ -56,11 +60,12 @@ export async function openLiveQuery<T>(
     params,
   )
 
+  const meter: LiveReadMeter = read => deps.observer.track(sql, read, readOutcome, undefined, 'live')
   const probeTable = `${LIVE_PROBE_TABLE_PREFIX}${nextProbeTable++}`
-  const probe = await RowProbe.open(conn, probeTable, plan, params, run)
+  const probe = await RowProbe.open(conn, probeTable, plan, params, run, meter)
 
   try {
-    return await MaintainedLiveQuery.open<T>(buildSource<T>(deps, conn, run, plan, probe, params, options))
+    return await MaintainedLiveQuery.open<T>(buildSource<T>(deps, conn, run, plan, probe, params, options, meter))
   } catch (err) {
     await probe.close().catch(() => {})
     throw err
@@ -75,6 +80,7 @@ function buildSource<T>(
   probe: RowProbe,
   params: Params | undefined,
   options: LiveQueryOptions | undefined,
+  meter: LiveReadMeter,
 ): LiveQuerySource<T> {
   const delivery = new PrimedLiveDelivery(deps.cdc, conn, run, plan.shape.table)
 
@@ -86,7 +92,7 @@ function buildSource<T>(
     maxTransactionBytes: MAX_TRANSACTION_BYTES,
     onError: options?.onError,
     wait: ms => new Promise<void>(resolve => setTimeout(resolve, ms)),
-    read: () => readAtPosition<T>(deps.cdc, plan, params),
+    read: () => readAtPosition<T>(deps.cdc, plan, params, meter),
     start: (handlers, sinceSeq) => delivery.start(handlers, sinceSeq),
     release: () => probe.close(),
   }
@@ -96,10 +102,11 @@ async function readAtPosition<T>(
   cdc: DatabaseCdcController,
   plan: LivePlan,
   params: Params | undefined,
+  meter: LiveReadMeter,
 ): Promise<PositionedRead<T>> {
   const captured = await cdc.readAtPositionWith(async conn => {
     const stmt = await conn.prepare(plan.readSql)
-    return stmt.all<Record<string, unknown>>(...bindRead(params))
+    return (await meter(() => allMetered<Record<string, unknown>>(stmt, bindRead(params)))).value
   })
   return { rows: captured.value.map(row => toHeldRow<T>(plan, row)), seq: captured.seq }
 }

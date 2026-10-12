@@ -1,6 +1,8 @@
+import { type RowCounts, rowCountsOf, withRowCounts } from './driver/row-counts.js'
 import type { GroupRunError, SQLiteConnection } from './driver/types.js'
 import { SirannonError } from './errors.js'
-import { bindParams, execute, executeGroup, type GroupOutcome, type GroupStatement } from './query-executor.js'
+import { executeGroup, type GroupOutcome, type GroupStatement } from './group-executor.js'
+import { bindParams, execute } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
 import type { WriterLock } from './writer-lock.js'
 
@@ -19,16 +21,26 @@ export function canGroupTransaction(statements: readonly GroupStatement[]): bool
   return true
 }
 
+export interface FailedWriteRowCounts {
+  statements?: RowCounts[]
+}
+
 interface Job {
   statements: readonly GroupStatement[]
   resolve: (values: ExecuteResult[]) => void
   reject: (error: unknown) => void
+  failedRowCounts?: FailedWriteRowCounts
 }
 
 interface GroupCommitterHooks {
   acquireWriter: () => SQLiteConnection
   afterCommit: (writer: SQLiteConnection, sql: string) => Promise<void>
   stampStatements: (options?: { persistClock?: boolean }) => readonly GroupStatement[] | null
+}
+
+function rejectWithRowCounts(job: Job, error: unknown, statements: RowCounts[] | undefined): void {
+  if (job.failedRowCounts && statements) job.failedRowCounts.statements = statements.slice(0, job.statements.length)
+  job.reject(error)
 }
 
 export class GroupCommitter {
@@ -43,20 +55,24 @@ export class GroupCommitter {
     private readonly maxGroup: number = DEFAULT_MAX_GROUP_SIZE,
   ) {}
 
-  submit(sql: string, params?: Params): Promise<ExecuteResult> {
+  submit(sql: string, params?: Params, failedRowCounts?: FailedWriteRowCounts): Promise<ExecuteResult> {
     return new Promise<ExecuteResult>((resolve, reject) => {
       this.pending.push({
         statements: [{ sql, params }],
         resolve: values => resolve(values[0]),
         reject,
+        failedRowCounts,
       })
       this.schedule()
     })
   }
 
-  submitTransaction(statements: readonly GroupStatement[]): Promise<ExecuteResult[]> {
+  submitTransaction(
+    statements: readonly GroupStatement[],
+    failedRowCounts?: FailedWriteRowCounts,
+  ): Promise<ExecuteResult[]> {
     return new Promise<ExecuteResult[]>((resolve, reject) => {
-      this.pending.push({ statements, resolve, reject })
+      this.pending.push({ statements, resolve, reject, failedRowCounts })
       this.schedule()
     })
   }
@@ -116,7 +132,8 @@ export class GroupCommitter {
       try {
         lone.resolve([await this.writerLock.run(() => this.runSingle(lone.statements[0]))])
       } catch (err) {
-        lone.reject(err)
+        const counts = rowCountsOf(err)
+        rejectWithRowCounts(lone, err, counts ? [counts] : undefined)
       }
       return
     }
@@ -131,7 +148,7 @@ export class GroupCommitter {
     for (let i = 0; i < batch.length; i++) {
       const outcome = outcomes[i]
       if (outcome.ok) batch[i].resolve(outcome.values.slice(0, batch[i].statements.length))
-      else batch[i].reject(outcome.error)
+      else rejectWithRowCounts(batch[i], outcome.error, outcome.statementRowCounts)
     }
   }
 
@@ -158,8 +175,9 @@ export class GroupCommitter {
     stamps: readonly GroupStatement[],
   ): Promise<ExecuteResult> {
     await writer.exec('SAVEPOINT sirannon_stamp')
+    let result: ExecuteResult | undefined
     try {
-      const result = await execute(writer, statement.sql, statement.params)
+      result = await execute(writer, statement.sql, statement.params)
       for (const stamp of stamps) {
         await execute(writer, stamp.sql, stamp.params, stamp.trusted === true)
       }
@@ -170,7 +188,7 @@ export class GroupCommitter {
         await writer.exec('ROLLBACK TO sirannon_stamp')
         await writer.exec('RELEASE sirannon_stamp')
       } catch {}
-      throw err
+      throw result === undefined ? err : withRowCounts(err, rowCountsOf(result))
     }
   }
 
@@ -188,9 +206,13 @@ export class GroupCommitter {
     })
     if (writer.runGroup) {
       const raw = await writer.runGroup(units)
-      return raw.map(outcome =>
-        outcome.ok ? { ok: true, values: outcome.results } : { ok: false, error: toError(outcome.error) },
-      )
+      return raw.map<GroupOutcome>(outcome => {
+        if (outcome.ok) return { ok: true, values: outcome.results }
+        const error = toError(outcome.error)
+        return outcome.statementRowCounts
+          ? { ok: false, error, statementRowCounts: outcome.statementRowCounts }
+          : { ok: false, error }
+      })
     }
     return executeGroup(writer, units)
   }
@@ -199,5 +221,5 @@ export class GroupCommitter {
 function toError(error: GroupRunError): Error {
   const err = error.code ? new SirannonError(error.message, error.code) : new Error(error.message)
   if (error.name) err.name = error.name
-  return err
+  return withRowCounts(err, rowCountsOf(error))
 }

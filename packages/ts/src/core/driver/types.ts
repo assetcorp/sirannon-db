@@ -3,6 +3,7 @@ import type { BackupCycleRequest } from '../backup/cycle-options.js'
 import type { BackupFileCopy, BackupRunReport, BackupRunRequest } from '../backup/report.js'
 import type { BackupScheduleRequest } from '../backup/schedule-request.js'
 import type { WorkerHostOptions } from '../worker/host.js'
+import type { RowCounts } from './row-counts.js'
 
 /** Describes the result of one write through the driver.
  * @public
@@ -12,6 +13,24 @@ export interface RunResult {
   changes: number
   /** The rowid that SQLite assigned to the last inserted row. */
   lastInsertRowId: number | bigint
+  /** The number of rows that SQLite read while it executed the statement, which a driver reporting `rowCounts` sets. */
+  rowsRead?: number
+  /** The number of rows that SQLite wrote while it executed the statement, which a driver reporting `rowCounts` sets. */
+  rowsWritten?: number
+}
+
+/**
+ * A value that a counted statement call returns, together with the rows that SQLite read and wrote during that call alone.
+ *
+ * @public
+ */
+export interface Counted<V> {
+  /** The value that the matching uncounted call returns. */
+  value: V
+  /** The number of rows that SQLite read during the call. */
+  rowsRead: number
+  /** The number of rows that SQLite wrote during the call. */
+  rowsWritten: number
 }
 
 /**
@@ -89,6 +108,10 @@ export interface BatchSummary {
   rowsLoaded: number
   /** The number of rows that those statements inserted, updated, or deleted. */
   changes: number
+  /** The number of rows that SQLite read across every parameter set, which a driver reporting `rowCounts` sets. */
+  rowsRead?: number
+  /** The number of rows that SQLite wrote across every parameter set, which a driver reporting `rowCounts` sets. */
+  rowsWritten?: number
 }
 
 /** A prepared statement that a driver returns, which you can run many times.
@@ -110,6 +133,17 @@ export interface SQLiteStatement {
    * with the extra pass.
    */
   allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>
+  /** Runs the statement and returns every row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
+  allCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>
+  /** Runs the statement and returns the first row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
+  getCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>>
+  /**
+   * Runs the statement and returns every row with each integer as a `bigint`,
+   * with the rows that SQLite read and wrote during this call. A driver
+   * reporting `rowCounts` implements it whenever it implements
+   * {@link SQLiteStatement.allRaw}.
+   */
+  allRawCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>
 }
 
 /**
@@ -124,14 +158,22 @@ export interface GroupRunError {
   name?: string
   /** The machine-readable code, when the driver supplies one. */
   code?: string
+  /** The number of rows that the failed statement read, when the driver counts rows. */
+  rowsRead?: number
+  /** The number of rows that the failed statement wrote, when the driver counts rows. */
+  rowsWritten?: number
 }
 
 /**
- * Describes the outcome of one unit in a grouped write.
+ * Describes the outcome of one unit in a grouped write. A failed unit lists
+ * the row counts of each statement that it executed, the failed one last,
+ * when the driver counts rows.
  *
  * @internal
  */
-export type GroupRunOutcome = { ok: true; results: RunResult[] } | { ok: false; error: GroupRunError }
+export type GroupRunOutcome =
+  | { ok: true; results: RunResult[] }
+  | { ok: false; error: GroupRunError; statementRowCounts?: RowCounts[] }
 
 /** One open connection to a SQLite database.
  * @public
@@ -232,6 +274,13 @@ export interface DriverCapabilities {
   extensions: boolean
   /** `true` when the runtime can copy an open database through SQLite's stepped backup interface. */
   steppedCopy: boolean
+  /**
+   * `true` when the driver reports the rows that SQLite read and wrote for
+   * every statement, on each `RunResult`, `BatchSummary`, and statement error,
+   * and through the counted statement calls such as
+   * {@link SQLiteStatement.allCounted}.
+   */
+  rowCounts: boolean
 }
 
 /**

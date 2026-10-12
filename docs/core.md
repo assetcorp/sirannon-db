@@ -124,6 +124,38 @@ const withMetrics = new Sirannon({
 
 The registry has five methods that register a global hook: `onBeforeQuery`, `onAfterQuery`, `onBeforeConnect`, `onDatabaseOpen`, and `onDatabaseClose`. Register `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` through the `hooks` constructor option. The server calls the first once for each table that a client subscribes to, the second once for each table that a snapshot reads, and the third once for each table that a pushed device batch writes to. Each of them receives the identity that the `authenticate` hook returns for the request, and throwing from it refuses the request. A substring match on SQL misses a statement that someone rewrites to avoid it, so pair hooks with an allow-list of known statements.
 
+### Rows read and rows written
+
+When you host many tenants on one machine, you can bill each tenant by the rows that SQLite reads and writes for its statements, because those counts stay the same however busy the machine is. Install `@delali/sirannon-sqlite` beside the library, and pass `rowCounts: true` to the better-sqlite3 driver:
+
+```bash
+pnpm add -E @delali/sirannon-sqlite
+```
+
+```ts
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+
+const usage = new Map<string, { rowsRead: number; rowsWritten: number }>()
+
+const metered = new Sirannon({
+  driver: betterSqlite3({ rowCounts: true }),
+  metrics: {
+    onQueryComplete: ({ databaseId, rowsRead = 0, rowsWritten = 0 }) => {
+      const tenant = usage.get(databaseId) ?? { rowsRead: 0, rowsWritten: 0 }
+      tenant.rowsRead += rowsRead
+      tenant.rowsWritten += rowsWritten
+      usage.set(databaseId, tenant)
+    },
+  },
+})
+```
+
+Sirannon then sets `rowsRead` and `rowsWritten` on every statement that it reports to `onQueryComplete`, and that includes each statement inside a transaction and each statement that fails. A failed statement reports the rows that SQLite read before the failure, so a tenant pays for a scan that ends in an error. The one exception is a statement whose outcome nobody knows, because the writer worker timed out or exited while it executed, and Sirannon leaves both counts out of that statement's metrics. A scan of 5,000 rows that returns five of them reports 5,000 rows read, while a lookup by primary key reports one. A write reports one row written for each row that it inserts, updates, or deletes, and one more for each index entry that it inserts. Both counts include the work of every trigger that the statement fires, foreign-key actions among them. Each count stays exact up to 2^53 - 1 rows for one statement.
+
+Sirannon's own change-capture triggers add no rows to either count. However, SQLite executes a multi-row `UPDATE` on a watched table in two passes, which reads each updated row once or twice more than the same `UPDATE` reads on a table without triggers. The reads that a live query makes, whether for its first rows, for a second read, or to check the rows that a transaction changed, reach `onQueryComplete` with `source: 'live'`. Sirannon counts nothing for change delivery, device sync, backups, or replication. It also sends neither count to a client, so only your own process sees them.
+
+The driver opens every database through `@delali/sirannon-sqlite`, which carries better-sqlite3 built against a SQLite that counts rows, and npm installs that build with it from the package for your platform. `open` fails with `ROW_COUNTS_UNSUPPORTED` when the package or your platform's build is missing, so a metered host never executes a statement that it cannot bill. On a platform without a published build, compile one with `native/sqlite/build.mjs` from the Sirannon repository and pass its path as `rowCountsBindingPath`. The other drivers report no row counts, so Sirannon leaves both fields out of their metrics, and your callback can tell a statement that read no rows from one that the driver never counted.
+
 ## Multi-tenant lifecycle
 
 ```ts

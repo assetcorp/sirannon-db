@@ -14,6 +14,27 @@ export interface QueryMetrics {
   rowsReturned?: number
   /** The number of rows that a write changes, and absent for a read or a failed statement. */
   changes?: number
+  /**
+   * The number of table and index rows that SQLite read while it executed the
+   * statement, including the work of every trigger that the statement fired.
+   * Sirannon sets it on every statement, failed or not, when the driver
+   * reports `rowCounts`, as `betterSqlite3({ rowCounts: true })` does. It
+   * leaves it absent when the driver counts no rows, and on a statement whose
+   * outcome stays unknown because the writer worker timed out or exited.
+   */
+  rowsRead?: number
+  /**
+   * The number of rows that the statement inserted, updated, or deleted, plus
+   * the index entries that it inserted, including the writes of every trigger
+   * that the statement fired. Sirannon sets it whenever it sets `rowsRead`.
+   */
+  rowsWritten?: number
+  /**
+   * Sirannon sets it to `'live'` when a live query executed the statement,
+   * whether for its first rows, for a second read, or to check the rows that
+   * a transaction changed, and it leaves it absent on every other statement.
+   */
+  source?: 'live'
   /** True when the statement threw. */
   error?: boolean
 }

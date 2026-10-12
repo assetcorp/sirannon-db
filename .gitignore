@@ -113,6 +113,13 @@ native/npm/*/*
 !native/npm/*/package.json
 !native/npm/*/README.md
 
+native/sqlite/out/
+native/sqlite/npm/*/*
+!native/sqlite/npm/*/package.json
+!native/sqlite/npm/*/README.md
+!native/sqlite/npm/sirannon-sqlite/index.js
+!native/sqlite/npm/sirannon-sqlite/index.d.ts
+
 native/vfs-encryption-prototype/*.dylib
 native/vfs-encryption-prototype/*.so
 native/vfs-encryption-prototype/*.dll

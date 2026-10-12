@@ -15,7 +15,7 @@ import { ExtensionError } from '../../core/errors.js'
  */
 export function expoSqlite(): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false },
+    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
     async open(path, options) {
       const SQLite = await import('expo-sqlite')
       const db = await SQLite.openDatabaseAsync(path, {

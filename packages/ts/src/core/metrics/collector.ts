@@ -1,9 +1,11 @@
 import type { ChangeDispatchObserver } from '../cdc/subscription.js'
 import type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from '../types.js'
 
-type QueryOutcome = Pick<QueryMetrics, 'rowsReturned' | 'changes'>
+export type QueryOutcome = Pick<QueryMetrics, 'rowsReturned' | 'changes' | 'rowsRead' | 'rowsWritten'>
 
 export type QueryOutcomeMeasure<T> = (result: T) => QueryOutcome
+
+export type QueryFailureMeasure = (error: unknown) => QueryOutcome
 
 /**
  * Times each query and passes query timings, connection events, and change-capture events to the metrics callbacks that the caller configures.
@@ -17,10 +19,15 @@ export class MetricsCollector {
     this.config = config ?? {}
   }
 
+  get tracksQueries(): boolean {
+    return this.config.onQueryComplete !== undefined
+  }
+
   async trackQuery<T>(
     fn: () => Promise<T>,
     context: Omit<QueryMetrics, 'durationMs' | 'error'>,
     measure?: QueryOutcomeMeasure<T>,
+    measureFailure?: QueryFailureMeasure,
   ): Promise<T> {
     if (!this.config.onQueryComplete) {
       return fn()
@@ -35,19 +42,28 @@ export class MetricsCollector {
       return result
     } catch (err) {
       failed = true
+      if (measureFailure) outcome = measureFailure(err)
       throw err
     } finally {
-      const durationMs = performance.now() - start
-      try {
-        this.config.onQueryComplete({
-          ...context,
-          ...outcome,
-          durationMs,
-          error: failed,
-        })
-      } catch {
-        void 0
-      }
+      this.reportQuery(context, outcome, performance.now() - start, failed)
+    }
+  }
+
+  reportQuery(
+    context: Omit<QueryMetrics, 'durationMs' | 'error'>,
+    outcome: QueryOutcome,
+    durationMs: number,
+    failed: boolean,
+  ): void {
+    try {
+      this.config.onQueryComplete?.({
+        ...context,
+        ...outcome,
+        durationMs,
+        error: failed,
+      })
+    } catch {
+      void 0
     }
   }
 

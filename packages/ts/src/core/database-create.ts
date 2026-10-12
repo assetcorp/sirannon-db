@@ -77,7 +77,13 @@ export async function createDatabaseRuntime(
   const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
   const writerLock = new WriterLock(driver.createWriterContext?.())
   const hookRegistry = new HookRegistry()
-  const observer = new DatabaseObserver(id, hookRegistry, internals?.parentHooks ?? null, internals?.metrics ?? null)
+  const observer = new DatabaseObserver(
+    id,
+    hookRegistry,
+    internals?.parentHooks ?? null,
+    internals?.metrics ?? null,
+    driver.capabilities.rowCounts === true,
+  )
   const backups = new DatabaseBackupController(
     op => writerLock.run(op),
     () => pool.acquireWriter(),

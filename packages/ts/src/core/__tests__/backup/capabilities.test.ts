@@ -3,7 +3,10 @@ import { describeBackupCapabilities } from '../../backup/capabilities.js'
 
 describe('describeBackupCapabilities', () => {
   it('states that a runtime with a stepped copy needs local disk equal to the backup', () => {
-    const report = describeBackupCapabilities({ multipleConnections: true, extensions: true, steppedCopy: true }, true)
+    const report = describeBackupCapabilities(
+      { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts: false },
+      true,
+    )
 
     expect(report).toEqual({
       fullCopy: true,
@@ -16,7 +19,7 @@ describe('describeBackupCapabilities', () => {
 
   it('reports no full copy where the runtime carries no stepped copy call', () => {
     const report = describeBackupCapabilities(
-      { multipleConnections: false, extensions: false, steppedCopy: false },
+      { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
       true,
     )
 
@@ -28,7 +31,7 @@ describe('describeBackupCapabilities', () => {
 
   it('states that a runtime streaming its copy needs no local disk', () => {
     const report = describeBackupCapabilities(
-      { multipleConnections: true, extensions: true, steppedCopy: true },
+      { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts: false },
       true,
       true,
     )
@@ -44,7 +47,7 @@ describe('describeBackupCapabilities', () => {
 
   it('reports no streamed copy where the runtime carries no stepped copy call', () => {
     const report = describeBackupCapabilities(
-      { multipleConnections: false, extensions: false, steppedCopy: false },
+      { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
       true,
       true,
     )
@@ -54,7 +57,10 @@ describe('describeBackupCapabilities', () => {
   })
 
   it('reports nothing at all where the driver supplies no backup engine', () => {
-    const report = describeBackupCapabilities({ multipleConnections: true, extensions: true, steppedCopy: true }, false)
+    const report = describeBackupCapabilities(
+      { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts: false },
+      false,
+    )
 
     expect(report.fullCopy).toBe(false)
     expect(report.schedule).toBe(false)

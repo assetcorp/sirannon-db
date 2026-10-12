@@ -1,10 +1,14 @@
 import { Worker } from 'node:worker_threads'
 import type {
+  BatchSummary,
+  Counted,
   DatabaseCopyStep,
   DriverWorkerEntry,
   GroupRunOutcome,
   OpenOptions,
+  RunResult,
   SQLiteConnection,
+  SQLiteStatement,
 } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import {
@@ -24,6 +28,7 @@ const CLOSE_GRACE_MS = 1_000
 export interface WorkerHostOptions {
   writeTimeoutMs?: number
   maxRestarts?: number
+  countsRows?: boolean
 }
 
 interface PendingRequest {
@@ -55,6 +60,7 @@ export class WriterWorker {
     private readonly openRequest: Omit<OpenRequest, 'id'>,
     private readonly timeoutMs: number,
     private readonly maxRestarts: number,
+    private readonly countsRows: boolean,
   ) {
     this.connection = this.makeConnection()
   }
@@ -69,6 +75,7 @@ export class WriterWorker {
       { kind: 'open', entry, path, options },
       workerOptions?.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS,
       workerOptions?.maxRestarts ?? DEFAULT_MAX_RESTARTS,
+      workerOptions?.countsRows === true,
     )
     worker.spawn()
     try {
@@ -281,6 +288,17 @@ export class WriterWorker {
       })
   }
 
+  private countedCalls(sql: string): Pick<SQLiteStatement, 'allCounted' | 'getCounted' | 'allRawCounted'> {
+    return {
+      allCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'allCounted', sql, params }) as Promise<Counted<T[]>>,
+      getCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'getCounted', sql, params }) as Promise<Counted<T | undefined>>,
+      allRawCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'allRawCounted', sql, params }) as Promise<Counted<T[]>>,
+    }
+  }
+
   private makeConnection(): SQLiteConnection {
     const conn: SQLiteConnection = {
       exec: sql => this.request({ kind: 'exec', sql }) as Promise<void>,
@@ -288,19 +306,18 @@ export class WriterWorker {
         all: <T = unknown>(...params: unknown[]) => this.request({ kind: 'all', sql, params }) as Promise<T[]>,
         get: <T = unknown>(...params: unknown[]) =>
           this.request({ kind: 'get', sql, params }) as Promise<T | undefined>,
-        run: (...params: unknown[]) =>
-          this.request({ kind: 'run', sql, params }) as Promise<{ changes: number; lastInsertRowId: number | bigint }>,
+        run: (...params: unknown[]) => this.request({ kind: 'run', sql, params }) as Promise<RunResult>,
         allRaw: <T = unknown>(...params: unknown[]) => this.request({ kind: 'allRaw', sql, params }) as Promise<T[]>,
+        ...(this.countsRows ? this.countedCalls(sql) : {}),
       }),
       runBatch: (sql, paramsBatch) =>
-        this.request({ kind: 'runBatch', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<
-          { changes: number; lastInsertRowId: number | bigint }[]
-        >,
+        this.request({ kind: 'runBatch', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<RunResult[]>,
       runBatchSummary: (sql, paramsBatch) =>
-        this.request({ kind: 'runBatchSummary', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<{
-          rowsLoaded: number
-          changes: number
-        }>,
+        this.request({
+          kind: 'runBatchSummary',
+          sql,
+          paramsBatch: paramsBatch as unknown[][],
+        }) as Promise<BatchSummary>,
       runGroup: units =>
         this.request({
           kind: 'runGroup',

@@ -30,6 +30,9 @@
   "scripts": {
     "build": "rm -rf dist && tsup",
     "build:vfs": "node ../../native/vfs/build.mjs",
+    "build:sqlite": "node ../../native/sqlite/build.mjs",
+    "assemble:sqlite": "node ../../native/sqlite/assemble.mjs",
+    "check:sqlite": "node ../../native/sqlite/check.mjs",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
     "check:types": "node scripts/assert-consumer-types.mjs",
     "check:api": "node scripts/assert-api-reports.mjs",
@@ -146,6 +149,7 @@
   },
   "peerDependencies": {
     "@bufbuild/protobuf": ">=2.0.0",
+    "@delali/sirannon-sqlite": "workspace:*",
     "@grpc/grpc-js": ">=1.10.0",
     "better-sqlite3": ">=12.0.0",
     "etcd3": ">=1.1.2",
@@ -157,6 +161,9 @@
   },
   "peerDependenciesMeta": {
     "@bufbuild/protobuf": {
+      "optional": true
+    },
+    "@delali/sirannon-sqlite": {
       "optional": true
     },
     "@grpc/grpc-js": {
@@ -186,6 +193,7 @@
   },
   "devDependencies": {
     "@bufbuild/protobuf": "2.11.0",
+    "@delali/sirannon-sqlite": "workspace:*",
     "@grpc/grpc-js": "1.14.4",
     "@microsoft/api-extractor": "7.58.12",
     "@types/better-sqlite3": "7.6.13",
@@ -199,6 +207,7 @@
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "jsdom": "29.1.1",
+    "node-api-headers": "1.9.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "selfsigned": "5.5.0",

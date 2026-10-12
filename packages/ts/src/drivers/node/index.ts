@@ -55,7 +55,12 @@ function carriesSteppedBackupCall(): boolean {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: carriesSteppedBackupCall() },
+    capabilities: {
+      multipleConnections: true,
+      extensions: true,
+      steppedCopy: carriesSteppedBackupCall(),
+      rowCounts: false,
+    },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)

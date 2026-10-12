@@ -1,3 +1,4 @@
+import { allMetered, type Metered } from '../driver/row-counts.js'
 import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
 import {
   dropLiveProbeTable,
@@ -19,6 +20,8 @@ export interface ProbeMatch {
   sort: SortValue[]
 }
 
+export type LiveReadMeter = <T>(read: () => Promise<Metered<T[]>>) => Promise<Metered<T[]>>
+
 export class RowProbe {
   private closed = false
 
@@ -31,6 +34,7 @@ export class RowProbe {
     private readonly clear: SQLiteStatement,
     private readonly match: SQLiteStatement,
     private readonly matchParams: unknown[],
+    private readonly meter: LiveReadMeter,
   ) {}
 
   static async open(
@@ -39,6 +43,7 @@ export class RowProbe {
     plan: LivePlan,
     params: Params | undefined,
     run: <R>(operation: () => Promise<R>) => Promise<R>,
+    meter: LiveReadMeter,
   ): Promise<RowProbe> {
     const sql = plan.probeSql(probeTable)
     try {
@@ -49,7 +54,7 @@ export class RowProbe {
         const match = await conn.prepare(sql)
         const named = probeNamedParams(sql, params)
         const matchParams = named === undefined || Array.isArray(named) ? plan.probeParams(params) : [named]
-        return new RowProbe(conn, probeTable, plan, run, insert, clear, match, matchParams)
+        return new RowProbe(conn, probeTable, plan, run, insert, clear, match, matchParams, meter)
       })
     } catch (err) {
       await run(() => dropLiveProbeTable(conn, probeTable)).catch(() => {})
@@ -68,8 +73,8 @@ export class RowProbe {
           await this.insert.run(candidate.slot, ...values)
         }
 
-        const rows = await this.match.all<Record<string, unknown>>(...this.matchParams)
-        for (const row of rows) {
+        const matched = await this.meter(() => allMetered<Record<string, unknown>>(this.match, this.matchParams))
+        for (const row of matched.value) {
           matches.set(Number(row[KEY_COLUMN]), this.take(row))
         }
       } finally {

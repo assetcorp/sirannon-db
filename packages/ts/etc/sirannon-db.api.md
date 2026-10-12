@@ -311,6 +311,8 @@ export interface BaselineFileOption {
 export interface BatchSummary {
     changes: number;
     rowsLoaded: number;
+    rowsRead?: number;
+    rowsWritten?: number;
 }
 
 // @public
@@ -530,6 +532,13 @@ export interface CorsOptions {
 }
 
 // @public
+export interface Counted<V> {
+    rowsRead: number;
+    rowsWritten: number;
+    value: V;
+}
+
+// @public
 export function createTenantResolver(options: TenantResolverOptions): (id: string) => {
     path: string;
     options?: DatabaseOptions;
@@ -673,6 +682,7 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver;
 export interface DriverCapabilities {
     extensions: boolean;
     multipleConnections: boolean;
+    rowCounts: boolean;
     steppedCopy: boolean;
 }
 
@@ -874,11 +884,15 @@ export class MetricsCollector {
     // (undocumented)
     observeDispatch(databaseId: string): ChangeDispatchObserver | undefined;
     // (undocumented)
+    reportQuery(context: Omit<QueryMetrics, 'durationMs' | 'error'>, outcome: QueryOutcome, durationMs: number, failed: boolean): void;
+    // (undocumented)
     trackCDCEvent(metrics: CDCMetrics): void;
     // (undocumented)
     trackConnection(metrics: ConnectionMetrics): void;
     // (undocumented)
-    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>): Promise<T>;
+    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>, measureFailure?: QueryFailureMeasure): Promise<T>;
+    // (undocumented)
+    get tracksQueries(): boolean;
 }
 
 // @public
@@ -1041,7 +1055,10 @@ export interface QueryMetrics {
     databaseId: string;
     durationMs: number;
     error?: boolean;
+    rowsRead?: number;
     rowsReturned?: number;
+    rowsWritten?: number;
+    source?: 'live';
     sql: string;
 }
 
@@ -1150,6 +1167,8 @@ export function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult>;
 export interface RunResult {
     changes: number;
     lastInsertRowId: number | bigint;
+    rowsRead?: number;
+    rowsWritten?: number;
 }
 
 // @public
@@ -1280,8 +1299,11 @@ export interface SQLiteDriver {
 // @public
 export interface SQLiteStatement {
     all<T = unknown>(...params: unknown[]): Promise<T[]>;
+    allCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
     allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>;
+    allRawCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
     get<T = unknown>(...params: unknown[]): Promise<T | undefined>;
+    getCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>>;
     run(...params: unknown[]): Promise<RunResult>;
 }
 
@@ -1331,7 +1353,9 @@ export class Transaction {
     get lastInsertRowId(): number | bigint;
     query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]>;
     // @internal (undocumented)
-    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>): Promise<T>;
+    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>, meter?: StatementMeter | null): Promise<T>;
+    // @internal
+    withMeter(meter: StatementMeter | null): this;
 }
 
 // @public

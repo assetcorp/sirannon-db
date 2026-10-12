@@ -18,7 +18,7 @@ export interface RowCounts {
 export type Metered<V> = { value: V } & Partial<RowCounts>
 
 /**
- * Runs a statement and returns every row, with the statement's row counts when the driver reports them.
+ * Executes a statement and returns every row, with the statement's row counts when the driver reports them.
  *
  * @param stmt - The prepared statement.
  * @param params - The values to bind.
@@ -31,7 +31,7 @@ export async function allMetered<T>(stmt: SQLiteStatement, params: readonly unkn
 }
 
 /**
- * Returns the row counts that a result or an error carries, or `undefined` when it carries none.
+ * Returns the row counts that a result or an error holds, or `undefined` when it holds none.
  *
  * @param source - A driver result, a Sirannon result, or a thrown error.
  * @returns Both counts, or `undefined` unless `source` holds a numeric `rowsRead` and `rowsWritten`.
@@ -75,7 +75,7 @@ export function addRowCounts(total: RowCounts | undefined, next: RowCounts | und
 }
 
 /**
- * Returns the total row counts of a list of results, or `undefined` when none of them carries counts.
+ * Returns the total row counts of a list of results, or `undefined` when none of them holds counts.
  *
  * @param results - The results of the statements.
  * @returns The sum of their counts.

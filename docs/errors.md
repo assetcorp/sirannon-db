@@ -49,7 +49,7 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `ExtensionError` | `EXTENSION_ERROR` | Sirannon cannot load a native SQLite extension |
 | - | `INVALID_DRIVER` | The driver configuration fails validation |
 | - | `INVALID_SYNCHRONOUS` | The caller supplies an unknown `synchronous` level |
-| - | `ROW_COUNTS_UNSUPPORTED` | The better-sqlite3 driver opens a database with `rowCounts: true`, and `@delali/sirannon-sqlite`, its build for this platform, or that build's row counters are missing |
+| - | `ROW_COUNTS_UNSUPPORTED` | The better-sqlite3 driver opens a database with `rowCounts: true` while `@delali/sirannon-sqlite` is missing, has no build for this platform, or loads a build that counts no rows |
 | - | `INVALID_DURABILITY` | A load names a `durability` other than `'off'` or `'normal'` |
 | - | `DURABILITY_RESTORE_FAILED` | The load commits, but the writer fails before it restores durability |
 | - | `SNAPSHOT_IN_PROGRESS` | A caller reads or writes while a device-sync snapshot load replaces the database |

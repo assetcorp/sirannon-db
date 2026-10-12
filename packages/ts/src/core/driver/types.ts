@@ -133,12 +133,12 @@ export interface SQLiteStatement {
    * with the extra pass.
    */
   allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>
-  /** Runs the statement and returns every row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
+  /** Executes the statement and returns every row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
   allCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>
-  /** Runs the statement and returns the first row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
+  /** Executes the statement and returns the first row, with the rows that SQLite read and wrote during this call. A driver reporting `rowCounts` implements it. */
   getCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>>
   /**
-   * Runs the statement and returns every row with each integer as a `bigint`,
+   * Executes the statement and returns every row with each integer as a `bigint`,
    * with the rows that SQLite read and wrote during this call. A driver
    * reporting `rowCounts` implements it whenever it implements
    * {@link SQLiteStatement.allRaw}.
@@ -158,16 +158,16 @@ export interface GroupRunError {
   name?: string
   /** The machine-readable code, when the driver supplies one. */
   code?: string
-  /** The number of rows that the failed statement read, when the driver counts rows. */
+  /** The number of rows that SQLite read before the statement failed, when the driver counts rows. */
   rowsRead?: number
-  /** The number of rows that the failed statement wrote, when the driver counts rows. */
+  /** The number of rows that SQLite wrote before the statement failed, when the driver counts rows. */
   rowsWritten?: number
 }
 
 /**
- * Describes the outcome of one unit in a grouped write. A failed unit lists
- * the row counts of each statement that it executed, the failed one last,
- * when the driver counts rows.
+ * Describes the outcome of one unit in a grouped write. When the unit fails
+ * and the driver counts rows, `statementRowCounts` holds the row counts of
+ * each statement that the unit executed, with the failed statement last.
  *
  * @internal
  */

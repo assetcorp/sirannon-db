@@ -36,10 +36,10 @@ export interface BetterSqlite3Options {
   /**
    * Set it to `true` to report the rows that SQLite reads and writes for every
    * statement, through the metrics that `onQueryComplete` receives. The driver
-   * then opens databases through `@delali/sirannon-sqlite`, which carries
-   * better-sqlite3 built against a SQLite that counts rows, and `open` fails
-   * with `ROW_COUNTS_UNSUPPORTED` when that package or this platform's build
-   * is missing.
+   * then opens databases through `@delali/sirannon-sqlite`, which contains
+   * better-sqlite3 built against a SQLite that counts rows. `open` throws
+   * `ROW_COUNTS_UNSUPPORTED` when that package or this platform's build is
+   * missing.
    */
   rowCounts?: boolean
   /**

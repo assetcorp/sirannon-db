@@ -23,7 +23,7 @@ export type GroupOutcome =
  *
  * A failed unit leaves the other units' writes intact, because Sirannon rolls
  * the group back and executes each unit inside a savepoint of its own. Each
- * outcome carries the row counts of the attempt that took effect.
+ * outcome holds the row counts of the attempt that took effect.
  *
  * @param conn - The writer connection.
  * @param units - The units to execute, each a list of statements.

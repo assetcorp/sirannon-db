@@ -16,11 +16,12 @@ limitations under the License.
 This product includes code from these projects:
 
 - workerd (https://github.com/cloudflare/workerd), licensed under the Apache
-  License, Version 2.0. native/sqlite/row-counts.patch is workerd's
-  patches/sqlite/0001-row-counts-plain.patch, which Sirannon applies to the
-  SQLite amalgamation after removing its comments and its shell hunk.
+  License, Version 2.0. native/sqlite/row-counts.patch starts from workerd's
+  patches/sqlite/0001-row-counts-plain.patch, without its comments and its
+  shell hunk, and the header of native/sqlite/row-counts.patch lists the
+  changes that Sirannon made to it.
 - libSQL (https://github.com/tursodatabase/libsql), Copyright 2022 the libSQL
-  authors, licensed under the MIT License. workerd's row-count patch carries
+  authors, licensed under the MIT License. workerd's row-count patch contains
   libSQL's row-counting code.
 - node-gyp (https://github.com/nodejs/node-gyp), Copyright (c) 2012 Nathan
   Rajlich, licensed under the MIT License. native/sqlite/win-delay-load-hook.cc
@@ -28,14 +29,14 @@ This product includes code from these projects:
 - better-sqlite3 (https://github.com/WiseLibs/better-sqlite3), Copyright (c)
   2017 Joshua Wise, licensed under the MIT License.
   native/sqlite/statement-row-counts.patch changes better-sqlite3's source.
-  The @delali/sirannon-sqlite package carries better-sqlite3's JavaScript
-  unchanged in its lib directory, and each @delali/sirannon-sqlite-<platform>
-  package carries better-sqlite3's native module compiled from that changed
-  source.
+  The lib directory of the @delali/sirannon-sqlite package contains
+  better-sqlite3's JavaScript unchanged, and each
+  @delali/sirannon-sqlite-<platform> package contains better-sqlite3's native
+  module compiled from that changed source.
 - node-addon-api (https://github.com/nodejs/node-addon-api), Copyright (c)
   2017 Node.js API collaborators, licensed under the MIT License. Each
-  @delali/sirannon-sqlite-<platform> package carries code compiled from its
-  headers.
+  @delali/sirannon-sqlite-<platform> package contains code compiled from
+  node-addon-api's headers.
 
 The MIT License grants the following permission for libSQL, node-gyp,
 better-sqlite3, and node-addon-api:

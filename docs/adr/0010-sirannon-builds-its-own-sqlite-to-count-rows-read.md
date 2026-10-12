@@ -18,6 +18,7 @@ A host that puts many tenants on one machine needs to know how much of the machi
 - The driver returns the counts with each statement's own result. When Sirannon rolls back a grouped write and executes it again, it therefore reports only the attempt that took effect. For a failed statement, Sirannon reports the work that SQLite did before the failure.
 - Sirannon reports the counts through `onQueryComplete`, including each read that a live query makes, marked `source: 'live'`. Sirannon reports no counts for change delivery, device sync, backups, or the changes that one node applies from another.
 - A driver configured to count fails at open with `ROW_COUNTS_UNSUPPORTED` when it cannot load the counting build, so that a billing host receives either a count for every statement or an error at open.
+- Sirannon keeps one build of SQLite for every change that it makes to SQLite or to better-sqlite3, with one numbered patch for each change under `native/sqlite/patches`, as workerd keeps its SQLite patches. A later change therefore adds a patch to the same build, together with a driver option and a check that the loaded build offers it, and the package and its `sqliteBindingPath` option keep their names.
 - Sirannon builds the native file for the same 8 targets as the streaming extension, with the same zig toolchain. Before each release, CI loads the file and checks its counts on each target's own operating system and architecture.
 
 ## Cost

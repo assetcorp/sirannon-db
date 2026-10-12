@@ -1,6 +1,6 @@
 import { type RowCounts, rowCountsOf, withRowCounts } from './driver/row-counts.js'
 import type { GroupRunError, SQLiteConnection } from './driver/types.js'
-import { SirannonError } from './errors.js'
+import { QueryError, SirannonError, TransactionError } from './errors.js'
 import { executeGroup, type GroupOutcome, type GroupStatement } from './group-executor.js'
 import { bindParams, execute } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
@@ -219,7 +219,13 @@ export class GroupCommitter {
 }
 
 function toError(error: GroupRunError): Error {
+  return withRowCounts(rebuildError(error), rowCountsOf(error))
+}
+
+function rebuildError(error: GroupRunError): Error {
+  if (error.code === 'QUERY_ERROR' && error.sql !== undefined) return new QueryError(error.message, error.sql)
+  if (error.code === 'TRANSACTION_ERROR') return new TransactionError(error.message)
   const err = error.code ? new SirannonError(error.message, error.code) : new Error(error.message)
   if (error.name) err.name = error.name
-  return withRowCounts(err, rowCountsOf(error))
+  return err
 }

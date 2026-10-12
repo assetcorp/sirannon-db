@@ -6,7 +6,6 @@ export {
   selectMaxAppliedSourceSeqByNode,
 } from './applied-changes-table.js'
 export {
-  deleteChangesBeforeSql,
   deleteChangesBeforeUpToSeqSql,
   ensureChangesTable,
   insertDdlChange,
@@ -75,6 +74,7 @@ export {
   selectCountTableRows,
   selectTableExists,
   selectTableSql,
+  selectTriggerSql,
   selectUserSchemaObjects,
   selectUserTableNames,
   setForeignKeysEnabled,

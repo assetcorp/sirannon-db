@@ -11,7 +11,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
 export interface BetterSqlite3Options {
     busyTimeout?: number;
     rowCounts?: boolean;
-    rowCountsBindingPath?: string;
+    sqliteBindingPath?: string;
     vfsExtensionPath?: string;
 }
 

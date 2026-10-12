@@ -41,17 +41,15 @@ import {
   DEFAULT_SYNC_BATCH_SIZE,
 } from './constants.js'
 import {
-  effectiveTopologyRole,
   getCoordinatorMessageFields,
-  getCoordinatorRuntimeStatus,
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
 } from './coordinator-authority.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
-import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
+import { execute, executeBatch, executeTransaction, forwardStatements, query, transaction } from './data-api.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
-import { computeNodeHealth } from './node-health.js'
+import { nodeStatus } from './node-health.js'
 import { SenderLoop } from './sender-loop.js'
 import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
@@ -254,16 +252,7 @@ export class ReplicationEngine extends EventEmitter {
    * @returns The node's role, peers, sequence position, sync state, health, and coordinator group state.
    */
   status(): ReplicationStatus {
-    return {
-      nodeId: this.nodeId,
-      role: effectiveTopologyRole(this),
-      peers: this.peerTracker.allPeerStates(),
-      localSeq: this.lastSentSeq,
-      replicating: this.running,
-      health: computeNodeHealth(this),
-      syncState: { ...this.syncState },
-      coordinator: getCoordinatorRuntimeStatus(this),
-    }
+    return nodeStatus(this)
   }
 
   /**
@@ -324,8 +313,23 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
+   * Executes a fixed list of statements in one transaction on this node, or forwards them to the primary, which
+   * executes them in one transaction, when this node cannot accept writes and `writeForwarding` is on.
+   *
+   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param options - The write concern for the transaction, which the primary also applies to forwarded statements before it answers.
+   * @returns One result per statement, in order.
+   */
+  executeTransaction(
+    statements: readonly { sql: string; params?: Params }[],
+    options?: QueryOptions,
+  ): Promise<ExecuteResult[]> {
+    return executeTransaction(this, statements, options)
+  }
+
+  /**
    * Calls `fn` inside one transaction on this node. On a node that cannot accept writes, it throws a `TopologyError`,
-   * since the engine forwards only `execute` and `executeBatch` writes to the primary.
+   * since the engine forwards only the statements that `execute`, `executeBatch`, and `executeTransaction` receive.
    *
    * @param fn - The function that receives the transaction and executes statements on it.
    * @param options - The write concern to wait for after the transaction commits.

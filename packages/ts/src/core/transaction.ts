@@ -3,7 +3,7 @@ import type { QueryFailureMeasure, QueryOutcomeMeasure } from './metrics/collect
 import { batchWriteOutcome, failedStatementOutcome, readOutcome, writeOutcome } from './metrics/outcomes.js'
 import { execute, executeBatch, queryMetered, withoutRowCounts } from './query-executor.js'
 import type { ExecuteResult, Params } from './types.js'
-import { runWriterTransaction } from './writer-transaction.js'
+import { runWriterTransaction, type WriterTransactionRunner } from './writer-transaction.js'
 
 /**
  * Receives each statement that a transaction executes, so that Sirannon can report its metrics.
@@ -100,8 +100,9 @@ export class Transaction {
     conn: SQLiteConnection,
     fn: (tx: Transaction) => Promise<T>,
     meter: StatementMeter | null = null,
+    runInTransaction: WriterTransactionRunner = runWriterTransaction,
   ): Promise<T> {
-    return runWriterTransaction(conn, async txConn => {
+    return runInTransaction(conn, async txConn => {
       const tx = new Transaction(txConn).withMeter(meter)
       return fn(tx)
     })

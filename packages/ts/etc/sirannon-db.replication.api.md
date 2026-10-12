@@ -484,6 +484,10 @@ export class ReplicationEngine extends EventEmitter {
     emitError(event: ReplicationErrorEvent): void;
     execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]>;
+    executeTransaction(statements: readonly {
+        sql: string;
+        params?: Params;
+    }[], options?: QueryOptions): Promise<ExecuteResult[]>;
     // @internal (undocumented)
     readonly expectedBatchIndex: Map<string, number>;
     forwardStatements(statements: Array<{

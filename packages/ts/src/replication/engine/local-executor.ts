@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { type RowCounts, rowCountsOf } from '../../core/driver/row-counts.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
-import { execute } from '../../core/query-executor.js'
+import { batchWriteOutcome, failedStatementOutcome, writeOutcome } from '../../core/metrics/outcomes.js'
+import { StatementRecorder } from '../../core/metrics/statement-recorder.js'
+import { execute, withoutRowCounts } from '../../core/query-executor.js'
 import { insertDdlChange } from '../../core/system-catalog/index.js'
-import type { Transaction } from '../../core/transaction.js'
+import type { StatementMeter, Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions, WriteConcern } from '../../core/types.js'
 import { runWriterTransaction } from '../../core/writer-transaction.js'
 import { ReplicationError } from '../errors.js'
@@ -35,7 +38,13 @@ export class LocalExecutor {
 
   constructor(private readonly engine: ReplicationEngine) {}
 
-  async executeLocally(sql: string, params?: Params, options?: QueryOptions) {
+  executeLocally(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
+    return this.engine.database.observer.withQueryHooks(sql, params, options, () =>
+      this.executeOneLocally(sql, params, options),
+    )
+  }
+
+  private async executeOneLocally(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     const engine = this.engine
     const isDdl = DDL_PREFIX_RE.test(sql)
     if (isDdl && sql.includes(';')) {
@@ -44,25 +53,33 @@ export class LocalExecutor {
     const txId = randomUUID()
     const droppedTable = isDdl ? extractDroppedTable(sql) : null
 
-    const result = await runWriterTransaction(engine.writerConn, async tx => {
-      const seqBefore = await engine.log.getLocalSeq()
+    let countsBeforeCommit: RowCounts | undefined
+    const result = await engine.database.observer.track(
+      sql,
+      () =>
+        runWriterTransaction(engine.writerConn, async tx => {
+          const seqBefore = await engine.log.getLocalSeq()
 
-      const r = await execute(tx, sql, params)
+          const r = await execute(tx, sql, params)
+          countsBeforeCommit = rowCountsOf(r)
 
-      if (isDdl) {
-        await insertDdlChange(tx, CHANGES_TABLE, {
-          ddlStatement: sql,
-          nodeId: engine.nodeId,
-          txId,
-          hlc: engine.hlc.now(),
-        })
-      } else {
-        await engine.log.stampChanges(tx, seqBefore, txId)
-        await engine.log.updateColumnVersions(tx, seqBefore)
-      }
+          if (isDdl) {
+            await insertDdlChange(tx, CHANGES_TABLE, {
+              ddlStatement: sql,
+              nodeId: engine.nodeId,
+              txId,
+              hlc: engine.hlc.now(),
+            })
+          } else {
+            await engine.log.stampChanges(tx, seqBefore, txId)
+            await engine.log.updateColumnVersions(tx, seqBefore)
+          }
 
-      return { changes: r.changes, lastInsertRowId: r.lastInsertRowId }
-    })
+          return r
+        }),
+      writeOutcome,
+      error => countsBeforeCommit ?? failedStatementOutcome(error),
+    )
 
     const newSeq = await engine.log.getLocalSeq()
     if (newSeq > engine.lastLocalSeq) {
@@ -81,13 +98,26 @@ export class LocalExecutor {
       await waitForWriteConcern(engine, newSeq, writeConcern)
     }
 
-    return result
+    return withoutRowCounts(result)
   }
 
-  async executeBatchLocally(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
-    const { results, newSeq } = await this.executeInOneTransaction(paramsBatch.map(params => ({ sql, params })))
-    await this.waitForWriteConcernOf(newSeq, options?.writeConcern)
-    return results
+  executeBatchLocally(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
+    const observer = this.engine.database.observer
+    return observer.withQueryHooks(sql, undefined, options, async () => {
+      const recorder = new StatementRecorder()
+      const { results, newSeq } = await observer.track(
+        sql,
+        () =>
+          this.executeInOneTransaction(
+            paramsBatch.map(params => ({ sql, params })),
+            recorder,
+          ),
+        written => batchWriteOutcome(written.results),
+        error => recorder.failedTotal(error, failedStatementOutcome),
+      )
+      await this.waitForWriteConcernOf(newSeq, options?.writeConcern)
+      return results.map(withoutRowCounts)
+    })
   }
 
   async executeForwardedLocally(
@@ -108,8 +138,7 @@ export class LocalExecutor {
       }
     }
 
-    const { results, newSeq } = await this.executeInOneTransaction(statements)
-    await this.waitForWriteConcernOf(newSeq, statedWriteConcern)
+    const results = await this.executeStatementsLocally(statements, statedWriteConcern)
     return {
       results: results.map(r => ({
         changes: r.changes,
@@ -117,6 +146,25 @@ export class LocalExecutor {
       })),
       requestId: randomUUID(),
     }
+  }
+
+  async executeStatementsLocally(
+    statements: Array<{ sql: string; params?: Params }>,
+    statedWriteConcern?: WriteConcern,
+  ): Promise<ExecuteResult[]> {
+    const recorder = new StatementRecorder()
+    let newSeq = 0n
+    const results = await this.engine.database.observer.withTransactionHooks(
+      statements,
+      async () => {
+        const written = await this.executeInOneTransaction(statements, recorder)
+        newSeq = written.newSeq
+        return written.results
+      },
+      recorder.transactionOutcomes(),
+    )
+    await this.waitForWriteConcernOf(newSeq, statedWriteConcern)
+    return results.map(withoutRowCounts)
   }
 
   private async waitForWriteConcernOf(seq: bigint, stated: WriteConcern | undefined): Promise<void> {
@@ -128,6 +176,7 @@ export class LocalExecutor {
 
   private async executeInOneTransaction(
     statements: Array<{ sql: string; params?: Params }>,
+    meter: StatementMeter,
   ): Promise<{ results: ExecuteResult[]; newSeq: bigint }> {
     const engine = this.engine
     const results: ExecuteResult[] = []
@@ -144,8 +193,7 @@ export class LocalExecutor {
           throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
         }
 
-        const r = await execute(tx, sql, params)
-        results.push({ changes: r.changes, lastInsertRowId: r.lastInsertRowId })
+        results.push(await meter.track(sql, () => execute(tx, sql, params), writeOutcome, failedStatementOutcome))
 
         if (isDdl) {
           sawDdl = true
@@ -224,7 +272,7 @@ export class LocalExecutor {
         }
       }
 
-      const replicationTx = new ReplicationTransaction(tx, hooks)
+      const replicationTx = new ReplicationTransaction(tx, hooks).withMeter(engine.database.observer.meter)
       const result = await fn(replicationTx)
 
       await engine.log.stampChanges(tx, seqBefore, txId)

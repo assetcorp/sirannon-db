@@ -28,7 +28,7 @@ function addonPath() {
   const requested = process.argv[2]
   const path = requested ? resolve(requested) : join(sourceDirectory, 'out', hostTarget(), 'better_sqlite3.node')
   if (!existsSync(path)) {
-    throw new Error(`No row-counting SQLite build exists at ${path}, so build it first with pnpm build:sqlite`)
+    throw new Error(`No build of Sirannon's SQLite exists at ${path}, so build it first with pnpm build:sqlite`)
   }
   return path
 }

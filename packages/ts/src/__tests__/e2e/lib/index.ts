@@ -10,6 +10,7 @@ export {
   createPrimary,
   createReplica,
   type ManagedNode,
+  type NodeRegistry,
   type NodeStorage,
   stopNode,
 } from './factory.js'

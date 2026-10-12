@@ -564,6 +564,8 @@ export class Database extends DatabaseBackups {
     live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
+    // @internal
+    get observer(): DatabaseObserver;
     on(table: string): SubscriptionBuilder;
     onAfterQuery(hook: AfterQueryHook): HookDispose;
     onBeforeQuery(hook: BeforeQueryHook): HookDispose;

@@ -39,6 +39,7 @@ export interface SerializedError {
   message: string
   name?: string
   code?: string
+  sql?: string
   rowsRead?: number
   rowsWritten?: number
 }
@@ -54,12 +55,13 @@ export const WORKER_COPY_STOPPED_CODE = 'WRITER_WORKER_COPY_STOPPED'
 
 export function serializeError(err: unknown): SerializedError {
   if (err instanceof Error) {
-    const code = (err as { code?: unknown }).code
+    const { code, sql } = err as { code?: unknown; sql?: unknown }
     return withRowCounts(
       {
         message: err.message,
         name: err.name,
         ...(typeof code === 'string' ? { code } : {}),
+        ...(typeof sql === 'string' ? { sql } : {}),
       },
       rowCountsOf(err),
     )

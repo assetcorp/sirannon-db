@@ -40,7 +40,7 @@ export class DatabaseLifecycle {
    * @internal
    */
   protected readonly closeListeners: (() => void | Promise<void>)[] = []
-  private closing = false
+  private closing: Promise<void> | null = null
 
   protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions) {
     this.id = id
@@ -70,18 +70,23 @@ export class DatabaseLifecycle {
 
   /**
    * Closes every connection that this database opened, and stops delivering changes to its subscriptions.
+   *
+   * A call made while an earlier close is still under way waits for that close
+   * and settles with its result, so the file has no connection from this
+   * database open once any call returns.
+   *
+   * @returns A promise that settles once every connection is closed, and rejects with the error of a connection that failed to close.
    */
-  async close(): Promise<void> {
-    if (this.closing) return
-    this.closing = true
-    await closeDatabaseRuntime(this.runtime, this.closeListeners)
+  close(): Promise<void> {
+    this.closing ??= closeDatabaseRuntime(this.runtime, this.closeListeners)
+    return this.closing
   }
 
   /**
    * True once {@link DatabaseLifecycle.close} has started on this database.
    */
   get closed(): boolean {
-    return this.closing
+    return this.closing !== null
   }
 
   /**
@@ -122,7 +127,7 @@ export class DatabaseLifecycle {
    * @internal
    */
   protected ensureNotClosed(): void {
-    if (this.closing) {
+    if (this.closing !== null) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }
   }

@@ -1,5 +1,6 @@
 import { DatabaseBackups } from './database-backups.js'
 import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
+import type { DatabaseObserver } from './database-observability.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
@@ -213,6 +214,15 @@ export class Database extends DatabaseBackups {
     await this.runtime.writerLock.run(() => op(this.runtime.pool.acquireWriter()))
   }
 
+  /**
+   * Returns the observer that fires this database's query hooks and reports its query metrics, for a component that executes statements on the database's behalf, such as the replication engine.
+   *
+   * @internal
+   */
+  get observer(): DatabaseObserver {
+    return this.runtime.reads.observer
+  }
+
   /** @internal */
   async ensureChangeStamping(): Promise<void> {
     this.ensureWritable()
@@ -258,9 +268,10 @@ export class Database extends DatabaseBackups {
    *
    * @param migrations - The full set of migrations for this database.
    * @returns The migrations that this call applied, and the number that the database had already applied.
+   * @throws A `ReadOnlyError` when the database is open in read-only mode.
    */
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
-    this.ensureOpen()
+    this.ensureWritable()
     return this.runtime.migrations.migrate(migrations)
   }
 
@@ -280,9 +291,10 @@ export class Database extends DatabaseBackups {
    * @param migrations - The full set of migrations, from which the runner takes each down statement.
    * @param version - The version to roll back to, which stays applied with every version below it; when you omit it, the runner reverts only the newest migration.
    * @returns The migrations that this call reverted.
+   * @throws A `ReadOnlyError` when the database is open in read-only mode.
    */
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
-    this.ensureOpen()
+    this.ensureWritable()
     return this.runtime.migrations.rollback(migrations, version)
   }
 

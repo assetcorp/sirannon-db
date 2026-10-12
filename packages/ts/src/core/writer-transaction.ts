@@ -38,3 +38,56 @@ export async function runWriterTransaction<T>(
     throw commitFailure(err)
   }
 }
+
+/**
+ * Executes some work inside one transaction on a writer connection and returns what that work returns.
+ *
+ * @internal
+ */
+export type WriterTransactionRunner = <T>(
+  conn: SQLiteConnection,
+  body: (txConn: SQLiteConnection) => Promise<T>,
+) => Promise<T>
+
+const JOINED_TRANSACTION_SAVEPOINT = 'sirannon_joined'
+
+async function unwindSavepoint(conn: SQLiteConnection): Promise<void> {
+  try {
+    await conn.exec(`ROLLBACK TO ${JOINED_TRANSACTION_SAVEPOINT}`)
+    await conn.exec(`RELEASE ${JOINED_TRANSACTION_SAVEPOINT}`)
+  } catch {}
+}
+
+/**
+ * Executes `body` inside a savepoint on `conn` and returns its result, so that
+ * its writes join the transaction that the caller already holds on the writer
+ * and roll back on their own when `body` throws.
+ *
+ * Where no transaction is open, the savepoint opens one and its release
+ * commits it, and a release that SQLite refuses raises `TRANSACTION_ERROR`.
+ *
+ * @param conn - The writer connection that the caller holds.
+ * @param body - The work to execute inside the savepoint.
+ * @returns What `body` returns.
+ * @internal
+ */
+export async function runInSavepoint<T>(
+  conn: SQLiteConnection,
+  body: (txConn: SQLiteConnection) => Promise<T>,
+): Promise<T> {
+  await conn.exec(`SAVEPOINT ${JOINED_TRANSACTION_SAVEPOINT}`)
+  let value: T
+  try {
+    value = await body(conn)
+  } catch (err: unknown) {
+    await unwindSavepoint(conn)
+    throw err
+  }
+  try {
+    await conn.exec(`RELEASE ${JOINED_TRANSACTION_SAVEPOINT}`)
+  } catch (err: unknown) {
+    await unwindSavepoint(conn)
+    throw commitFailure(err)
+  }
+  return value
+}

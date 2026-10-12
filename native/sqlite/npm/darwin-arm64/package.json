@@ -1,7 +1,7 @@
 {
   "name": "@delali/sirannon-sqlite-darwin-arm64",
   "version": "0.0.0",
-  "description": "better-sqlite3 compiled against a SQLite that counts the rows each statement reads and writes, for macOS on Apple silicon.",
+  "description": "better-sqlite3 compiled against Sirannon's build of SQLite, for macOS on Apple silicon.",
   "license": "Apache-2.0 AND MIT",
   "author": "Delali (https://sondelali.com)",
   "homepage": "https://github.com/assetcorp/sirannon-db",

@@ -2,15 +2,15 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EXIT_TABLE, exitingDriver } from '../../../__tests__/helpers/fault-drivers/exiting-driver.js'
+import { heldSql, releaseHeldWrite, sleepingDriver } from '../../../__tests__/helpers/fault-drivers/sleeping-driver.js'
+import { COPY_STALL_MS, stallingCopyDriver } from '../../../__tests__/helpers/fault-drivers/stalling-copy-driver.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { memoryDestination } from '../../__tests__/backup/memory-destination.js'
 import type { Database } from '../../database.js'
 import { defineDriver } from '../../driver/define.js'
 import { Sirannon } from '../../sirannon.js'
 import type { ChangeEvent } from '../../types.js'
-import { EXIT_TABLE, exitingDriver } from './fixtures/exiting-driver.js'
-import { heldSql, releaseHeldWrite, sleepingDriver } from './fixtures/sleeping-driver.js'
-import { COPY_STALL_MS, stallingCopyDriver } from './fixtures/stalling-copy-driver.js'
 
 const WRITE_DEADLINE_MS = 2_000
 const WORKER_RESTART_DEADLINE_MS = 10_000

@@ -61,8 +61,10 @@ export class SubscriptionManager {
   dispatch(events: ChangeEvent[]): void {
     for (const event of events) {
       const ids = this.byTable.get(event.table) ?? NO_SUBSCRIBERS
+      const firstIdAfterThisEvent = this.nextId
       let deliveredTo = 0
       for (const id of ids) {
+        if (id >= firstIdAfterThisEvent) continue
         const sub = this.subscriptions.get(id)
         if (!sub) continue
         const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)

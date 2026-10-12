@@ -40,6 +40,19 @@ export async function selectTableSql(conn: SQLiteConnection, table: string): Pro
   return row?.sql ?? null
 }
 
+/**
+ * Returns the statement that SQLite stores for a trigger, which SQLite rebuilds from the original `CREATE TRIGGER` without its `IF NOT EXISTS`.
+ *
+ * @param conn - The connection to read the schema through.
+ * @param trigger - The name of the trigger.
+ * @returns The stored statement, or `null` when no trigger has that name.
+ */
+export async function selectTriggerSql(conn: SQLiteConnection, trigger: string): Promise<string | null> {
+  const stmt = await conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+  const row = (await stmt.get(trigger)) as { sql?: string | null } | undefined
+  return row?.sql ?? null
+}
+
 export async function selectCountTableRows(conn: SQLiteConnection, table: string): Promise<number> {
   const stmt = await conn.prepare(`SELECT COUNT(*) AS cnt FROM "${table}"`)
   const row = (await stmt.get()) as { cnt: number | bigint } | undefined

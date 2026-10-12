@@ -6,14 +6,15 @@ import type { DatabaseObserver, TransactionOutcomes } from './database-observabi
 import { type RowCounts, rowCountsOf } from './driver/row-counts.js'
 import type { SQLiteConnection, SynchronousLevel } from './driver/types.js'
 import { canGroupTransaction, type FailedWriteRowCounts, type GroupCommitter } from './group-committer.js'
-import type { QueryFailureMeasure, QueryOutcome, QueryOutcomeMeasure } from './metrics/collector.js'
-import { batchWriteOutcome, failedStatementOutcome, ROW_COUNTS_UNKNOWN, writeOutcome } from './metrics/outcomes.js'
+import type { QueryOutcomeMeasure } from './metrics/collector.js'
+import { batchWriteOutcome, failedStatementOutcome, writeOutcome } from './metrics/outcomes.js'
+import { StatementRecorder } from './metrics/statement-recorder.js'
 import { executeBatch, executeBatchSummary, withoutRowCounts } from './query-executor.js'
 import type { StatementMeter, Transaction } from './transaction.js'
 import type { BulkLoadOptions, BulkLoadResult, ExecuteResult, Params, QueryOptions } from './types.js'
 import type { WriteGate } from './worker/gate.js'
 import type { WriterLock } from './writer-lock.js'
-import { runWriterTransaction } from './writer-transaction.js'
+import { runInSavepoint, runWriterTransaction, type WriterTransactionRunner } from './writer-transaction.js'
 
 export interface DatabaseWriteDeps {
   pool: ConnectionPool
@@ -27,39 +28,10 @@ export interface DatabaseWriteDeps {
   capturesChangeLog: boolean
 }
 
-function rowCountsOnly(outcome: QueryOutcome): QueryOutcome {
-  if (outcome === ROW_COUNTS_UNKNOWN) return outcome
-  return outcome.rowsRead === undefined ? {} : { rowsRead: outcome.rowsRead, rowsWritten: outcome.rowsWritten }
-}
-
 function groupedOutcomes(failed: FailedWriteRowCounts): TransactionOutcomes {
   return {
     succeeded: results => results.map(writeOutcome),
     failed: () => failed.statements?.map((counts: RowCounts) => ({ ...counts })) ?? [],
-  }
-}
-
-class StatementRecorder implements StatementMeter {
-  readonly outcomes: QueryOutcome[] = []
-
-  async track<T>(
-    _sql: string,
-    op: () => Promise<T>,
-    measure: QueryOutcomeMeasure<T>,
-    measureFailure: QueryFailureMeasure,
-  ): Promise<T> {
-    try {
-      const result = await op()
-      this.outcomes.push(measure(result))
-      return result
-    } catch (err) {
-      this.outcomes.push(measureFailure(err))
-      throw err
-    }
-  }
-
-  transactionOutcomes(): TransactionOutcomes {
-    return { succeeded: () => this.outcomes, failed: () => this.outcomes.map(rowCountsOnly) }
   }
 }
 
@@ -88,6 +60,7 @@ export class DatabaseWriteController {
 
   executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]> {
     const { observer, writeGate, writerLock, pool } = this.deps
+    const runInTransaction = this.transactionRunnerForCaller()
     return observer
       .withQueryHooks(sql, undefined, options, () =>
         writeGate.run(() =>
@@ -97,6 +70,7 @@ export class DatabaseWriteController {
               sql,
               txConn => executeBatch(txConn, sql, paramsBatch),
               batchWriteOutcome,
+              runInTransaction,
             ),
           ),
         ),
@@ -127,9 +101,9 @@ export class DatabaseWriteController {
   }
 
   executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
-    const { observer, writeGate, groupCommitter } = this.deps
+    const { observer, writeGate, writerLock, groupCommitter } = this.deps
     const owned = statements.map(statement => ({ sql: statement.sql, params: statement.params }))
-    if (canGroupTransaction(owned)) {
+    if (canGroupTransaction(owned) && !writerLock.isHeld()) {
       const failed: FailedWriteRowCounts = {}
       const run = () => writeGate.run(() => groupCommitter.submitTransaction(owned, failed))
       const results = observer.observesQueries
@@ -154,7 +128,14 @@ export class DatabaseWriteController {
 
   private runTransaction<T>(fn: (tx: Transaction) => Promise<T>, meter: StatementMeter | null): Promise<T> {
     const { writeGate, writerLock, pool, cdc } = this.deps
-    return writeGate.run(() => writerLock.run(() => cdc.runTransaction(pool.acquireWriter(), fn, meter)))
+    const runInTransaction = this.transactionRunnerForCaller()
+    return writeGate.run(() =>
+      writerLock.run(() => cdc.runTransaction(pool.acquireWriter(), fn, meter, runInTransaction)),
+    )
+  }
+
+  private transactionRunnerForCaller(): WriterTransactionRunner {
+    return this.deps.writerLock.isHeld() ? runInSavepoint : runWriterTransaction
   }
 
   private runStatementsAlone(
@@ -175,13 +156,14 @@ export class DatabaseWriteController {
     sql: string,
     run: (txConn: SQLiteConnection) => Promise<T>,
     measure: QueryOutcomeMeasure<T>,
+    runInTransaction: WriterTransactionRunner = runWriterTransaction,
   ): Promise<T> {
     const { observer, cdc } = this.deps
     let countsBeforeCommit: RowCounts | undefined
     const result = await observer.track(
       sql,
       () =>
-        runWriterTransaction(writer, async txConn => {
+        runInTransaction(writer, async txConn => {
           const value = await run(txConn)
           countsBeforeCommit = rowCountsOf(measure(value))
           await cdc.applyStamps(txConn)

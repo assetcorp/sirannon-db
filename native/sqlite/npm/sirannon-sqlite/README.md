@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@delali/sirannon-sqlite)](https://www.npmjs.com/package/@delali/sirannon-sqlite)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-sqlite)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-This package contains better-sqlite3 13.0.2, built against a SQLite that counts the rows that each statement reads and writes. When you pass `rowCounts: true`, Sirannon's better-sqlite3 driver loads this package and reports both counts for every statement through `onQueryComplete`, so that a host that puts many tenants on one machine can bill each of them.
+This package contains better-sqlite3 13.0.2, built against Sirannon's own build of SQLite, which counts the rows that each statement reads and writes. When you pass `rowCounts: true`, Sirannon's better-sqlite3 driver loads this package and reports both counts for every statement through `onQueryComplete`, so that a host that puts many tenants on one machine can bill each of them.
 
 ## Install
 
@@ -27,9 +27,9 @@ This package lists six platform packages as optional dependencies, so npm instal
 
 ## What it contains
 
-The `lib` directory contains better-sqlite3's JavaScript, unchanged. Sirannon compiles the native module from better-sqlite3's C++ source with one method added, `takeRowCounts`, and from SQLite with Cloudflare's row-counting patch applied. Sirannon's changes to that patch widen both counters to 64 bits and leave the work of Sirannon's own change-capture triggers out of both counts. The counting rules are in the [core engine guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md#rows-read-and-rows-written).
+The `lib` directory contains better-sqlite3's JavaScript, unchanged. Sirannon compiles the native module from better-sqlite3's C++ source and the SQLite amalgamation, after it applies each patch in the repository's `native/sqlite/patches` directory. The first SQLite patch is Cloudflare's row-counting patch, which Sirannon changed to widen both counters to 64 bits and to leave the work of its own change-capture triggers out of both counts, and the first better-sqlite3 patch adds the `takeRowCounts` method that reads them. The counting rules are in the [core engine guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md#rows-read-and-rows-written).
 
-On a platform without a published build, the driver throws `ROW_COUNTS_UNSUPPORTED` when it opens a database. Compile a build with `native/sqlite/build.mjs` from the repository, and pass its path to the driver as `rowCountsBindingPath`.
+On a platform without a published build, the driver throws `ROW_COUNTS_UNSUPPORTED` when it opens a database. Compile a build with `native/sqlite/build.mjs` from the repository, and pass its path to the driver as `sqliteBindingPath`.
 
 ## Licence
 

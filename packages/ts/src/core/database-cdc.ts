@@ -14,7 +14,7 @@ import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
 import { type StatementMeter, Transaction } from './transaction.js'
 import type { SubscriptionBuilder } from './types.js'
-import { runWriterTransaction } from './writer-transaction.js'
+import { runWriterTransaction, type WriterTransactionRunner } from './writer-transaction.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -139,14 +139,15 @@ export class DatabaseCdcController {
     writer: SQLiteConnection,
     fn: (tx: Transaction) => Promise<T>,
     meter: StatementMeter | null = null,
+    runInTransaction: WriterTransactionRunner = runWriterTransaction,
   ): Promise<T> {
     const tracker = this.tracker
     if (!tracker) {
-      return Transaction.run(writer, fn, meter)
+      return Transaction.run(writer, fn, meter, runInTransaction)
     }
 
     const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-    const result = await runWriterTransaction(writer, async txConn => {
+    const result = await runInTransaction(writer, async txConn => {
       const value = await fn(new CdcAwareTransaction(txConn, tracker, state).withMeter(meter))
       await this.applyStamps(txConn)
       return value

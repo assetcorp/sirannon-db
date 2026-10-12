@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { copyBetterSqliteJavaScript } from '../../native/sqlite/better-sqlite3-source.mjs'
 
 const ADDON_FILE_NAME = 'better_sqlite3.node'
-const ROW_COUNTING_PACKAGE = '@delali/sirannon-sqlite'
+const SIRANNON_SQLITE_PACKAGE = '@delali/sirannon-sqlite'
 const BUILDS = {
   'darwin-arm64': { package: 'darwin-arm64', addon: ADDON_FILE_NAME },
   'darwin-x64': { package: 'darwin-x64', addon: ADDON_FILE_NAME },
@@ -63,7 +63,7 @@ function publish(packageName, packageDirectory) {
 function reportRefusals(refused, total) {
   if (refused.length === 0) return
   console.error(
-    `The registry refused ${refused.length} of ${total} row-counting SQLite packages at ${version}: ${refused.join(', ')}. ` +
+    `The registry refused ${refused.length} of ${total} Sirannon SQLite packages at ${version}: ${refused.join(', ')}. ` +
       'A package that exists and answers 404 to a publish has no trusted publisher for this workflow, ' +
       'which npm configures with: npm trust github <package> --file publish.yml --repo assetcorp/sirannon-db',
   )
@@ -93,9 +93,9 @@ for (const packageName of PLATFORM_PACKAGES) {
   rewriteManifest(join(packageDirectory, 'package.json'), manifest => {
     manifest.version = version
   })
-  const outcome = publish(`${ROW_COUNTING_PACKAGE}-${packageName}`, packageDirectory)
+  const outcome = publish(`${SIRANNON_SQLITE_PACKAGE}-${packageName}`, packageDirectory)
   if (outcome === 'published') publishedCount++
-  if (outcome === 'refused') refused.push(`${ROW_COUNTING_PACKAGE}-${packageName}`)
+  if (outcome === 'refused') refused.push(`${SIRANNON_SQLITE_PACKAGE}-${packageName}`)
 }
 reportRefusals(refused, PLATFORM_PACKAGES.length + 1)
 
@@ -103,18 +103,18 @@ rewriteManifest(join(MAIN_PACKAGE_DIRECTORY, 'package.json'), manifest => {
   manifest.version = version
   manifest.optionalDependencies = {}
   for (const packageName of PLATFORM_PACKAGES) {
-    manifest.optionalDependencies[`${ROW_COUNTING_PACKAGE}-${packageName}`] = version
+    manifest.optionalDependencies[`${SIRANNON_SQLITE_PACKAGE}-${packageName}`] = version
   }
 })
-const mainOutcome = publish(ROW_COUNTING_PACKAGE, MAIN_PACKAGE_DIRECTORY)
+const mainOutcome = publish(SIRANNON_SQLITE_PACKAGE, MAIN_PACKAGE_DIRECTORY)
 if (mainOutcome === 'published') publishedCount++
-reportRefusals(mainOutcome === 'refused' ? [ROW_COUNTING_PACKAGE] : [], PLATFORM_PACKAGES.length + 1)
+reportRefusals(mainOutcome === 'refused' ? [SIRANNON_SQLITE_PACKAGE] : [], PLATFORM_PACKAGES.length + 1)
 
 rewriteManifest(join('packages', 'ts', 'package.json'), manifest => {
-  manifest.peerDependencies[ROW_COUNTING_PACKAGE] = version
-  manifest.devDependencies[ROW_COUNTING_PACKAGE] = version
+  manifest.peerDependencies[SIRANNON_SQLITE_PACKAGE] = version
+  manifest.devDependencies[SIRANNON_SQLITE_PACKAGE] = version
 })
 
 console.log(
-  `Published ${publishedCount} of ${PLATFORM_PACKAGES.length + 1} row-counting SQLite packages at ${version} under the ${distTag} tag`,
+  `Published ${publishedCount} of ${PLATFORM_PACKAGES.length + 1} Sirannon SQLite packages at ${version} under the ${distTag} tag`,
 )

@@ -1,7 +1,7 @@
 import type { NodeHealth, NodeHealthReason } from '../../core/types.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
-import type { SyncPhase } from '../types.js'
-import { isCoordinatorConnected } from './coordinator-authority.js'
+import type { ReplicationStatus, SyncPhase } from '../types.js'
+import { effectiveTopologyRole, getCoordinatorRuntimeStatus, isCoordinatorConnected } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 
 function isSidelined(state: ReplicationGroupState, nodeId: string): boolean {
@@ -65,4 +65,23 @@ export function computeNodeHealth(engine: ReplicationEngine): NodeHealth {
     return { state: 'degraded', reason: 'lagging', canRead, canWrite }
   }
   return { state: 'healthy', reason: 'in-sync', canRead, canWrite }
+}
+
+/**
+ * Returns this node's replication status, built from the state that the engine holds at the moment of the call.
+ *
+ * @param engine - The engine whose role, peers, sequence position, sync state, and health the status reports.
+ * @returns The status that {@link ReplicationEngine.status} returns.
+ */
+export function nodeStatus(engine: ReplicationEngine): ReplicationStatus {
+  return {
+    nodeId: engine.nodeId,
+    role: effectiveTopologyRole(engine),
+    peers: engine.peerTracker.allPeerStates(),
+    localSeq: engine.lastSentSeq,
+    replicating: engine.running,
+    health: computeNodeHealth(engine),
+    syncState: { ...engine.syncState },
+    coordinator: getCoordinatorRuntimeStatus(engine),
+  }
 }

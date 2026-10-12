@@ -158,6 +158,8 @@ export interface GroupRunError {
   name?: string
   /** The machine-readable code, when the driver supplies one. */
   code?: string
+  /** The statement that failed, when the error is a `QUERY_ERROR` that names one. */
+  sql?: string
   /** The number of rows that SQLite read before the statement failed, when the driver counts rows. */
   rowsRead?: number
   /** The number of rows that SQLite wrote before the statement failed, when the driver counts rows. */

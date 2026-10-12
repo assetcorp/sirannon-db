@@ -26,6 +26,10 @@ interface AppliedRow extends AppliedChecksumRow {
   name: string
 }
 
+function isMigrationStep(step: unknown): boolean {
+  return typeof step === 'string' || typeof step === 'function'
+}
+
 /**
  * Applies and rolls back migrations against one connection.
  *
@@ -223,9 +227,21 @@ export class MigrationRunner {
   }
 
   private static validateMigrations(migrations: Migration[]): Migration[] {
+    if (!Array.isArray(migrations)) {
+      throw new MigrationError('Migrations must be an array of migrations', 0, 'MIGRATION_VALIDATION_ERROR')
+    }
+
     const seenVersions = new Map<number, string>()
 
     for (const m of migrations) {
+      if (typeof m !== 'object' || m === null) {
+        throw new MigrationError(
+          `Each migration must be an object with a version, a name, and an up; received ${m === null ? 'null' : typeof m}`,
+          0,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
+
       if (!Number.isSafeInteger(m.version) || m.version <= 0 || m.version > SQLITE_USER_VERSION_MAX) {
         throw new MigrationError(
           `Invalid migration version: ${m.version}. Versions must be integers from 1 to ${SQLITE_USER_VERSION_MAX} so they mirror to PRAGMA user_version`,
@@ -234,8 +250,8 @@ export class MigrationRunner {
         )
       }
 
-      if (!MIGRATION_NAME_RE.test(m.name)) {
-        throw new MigrationError(`Invalid migration name: '${m.name}'`, m.version, 'MIGRATION_VALIDATION_ERROR')
+      if (typeof m.name !== 'string' || !MIGRATION_NAME_RE.test(m.name)) {
+        throw new MigrationError(`Invalid migration name: '${String(m.name)}'`, m.version, 'MIGRATION_VALIDATION_ERROR')
       }
 
       const existing = seenVersions.get(m.version)
@@ -248,6 +264,14 @@ export class MigrationRunner {
       }
       seenVersions.set(m.version, m.name)
 
+      if (!isMigrationStep(m.up)) {
+        throw new MigrationError(
+          `Migration ${m.version}_${m.name} must have an up that is SQL text or a function`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
+
       if (typeof m.up === 'string' && m.up.trim().length === 0) {
         throw new MigrationError(
           `Migration ${m.version}_${m.name} has empty up SQL`,
@@ -256,9 +280,25 @@ export class MigrationRunner {
         )
       }
 
-      if (m.down !== undefined && typeof m.down === 'string' && m.down.trim().length === 0) {
+      if (m.down !== undefined && !isMigrationStep(m.down)) {
+        throw new MigrationError(
+          `Migration ${m.version}_${m.name} must have a down that is SQL text or a function, or no down`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
+
+      if (typeof m.down === 'string' && m.down.trim().length === 0) {
         throw new MigrationError(
           `Migration ${m.version}_${m.name} has empty down SQL`,
+          m.version,
+          'MIGRATION_VALIDATION_ERROR',
+        )
+      }
+
+      if (m.baseline !== undefined && (typeof m.baseline !== 'object' || m.baseline === null)) {
+        throw new MigrationError(
+          `Baseline migration ${m.version}_${m.name} must mark its baseline as an object with a through version`,
           m.version,
           'MIGRATION_VALIDATION_ERROR',
         )

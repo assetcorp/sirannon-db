@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -8,8 +8,8 @@ import { copyBetterSqliteJavaScript, referenceRequire, resolveBetterSqliteDirect
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url))
 const outputRoot = join(sourceDirectory, 'out')
-const sqlitePatch = join(sourceDirectory, 'row-counts.patch')
-const statementPatch = join(sourceDirectory, 'statement-row-counts.patch')
+const sqlitePatchDirectory = join(sourceDirectory, 'patches', 'sqlite')
+const betterSqlitePatchDirectory = join(sourceDirectory, 'patches', 'better-sqlite3')
 const delayLoadHook = join(sourceDirectory, 'win-delay-load-hook.cc')
 const linuxExportsMap = join(sourceDirectory, 'linux-exports.map')
 
@@ -68,6 +68,23 @@ function run(command, args, options = {}) {
   execFileSync(command, args, { stdio: 'inherit', ...options })
 }
 
+function patchesIn(directory) {
+  const patches = readdirSync(directory)
+    .filter(name => name.endsWith('.patch'))
+    .sort()
+    .map(name => join(directory, name))
+  if (patches.length === 0) {
+    throw new Error(`${directory} holds no .patch files, so the build has nothing to apply`)
+  }
+  return patches
+}
+
+function applyPatches(directory, workingDirectory) {
+  for (const patch of patchesIn(directory)) {
+    run('git', ['apply', '--whitespace=nowarn', patch], { cwd: workingDirectory })
+  }
+}
+
 function prepareSources(inputs, workDirectory) {
   const sqliteDirectory = join(workDirectory, 'sqlite3')
   mkdirSync(sqliteDirectory, { recursive: true })
@@ -75,8 +92,8 @@ function prepareSources(inputs, workDirectory) {
     copyFileSync(join(inputs.betterSqliteDirectory, 'deps', 'sqlite3', file), join(sqliteDirectory, file))
   }
   cpSync(join(inputs.betterSqliteDirectory, 'src'), join(workDirectory, 'src'), { recursive: true })
-  run('git', ['apply', '--whitespace=nowarn', sqlitePatch], { cwd: sqliteDirectory })
-  run('git', ['apply', '--whitespace=nowarn', statementPatch], { cwd: workDirectory })
+  applyPatches(sqlitePatchDirectory, sqliteDirectory)
+  applyPatches(betterSqlitePatchDirectory, workDirectory)
   return sqliteDirectory
 }
 
@@ -226,7 +243,7 @@ function assertPinnedZig() {
   const version = execFileSync('zig', ['version'], { encoding: 'utf8' }).trim()
   if (version !== PINNED_ZIG_VERSION) {
     throw new Error(
-      `The row-counting SQLite build needs zig ${PINNED_ZIG_VERSION}, the version that CI pins, and the zig on the PATH is ${version}`,
+      `Sirannon's SQLite build needs zig ${PINNED_ZIG_VERSION}, the version that CI pins, and the zig on the PATH is ${version}`,
     )
   }
 }
@@ -253,7 +270,7 @@ const requested = process.argv[2] ?? hostTarget()
 const target = TARGETS[requested]
 if (!target) {
   console.error(
-    `No row-counting SQLite build exists for ${requested}. Known targets: ${Object.keys(TARGETS).join(', ')}`,
+    `Sirannon's SQLite has no build target named ${requested}. Known targets: ${Object.keys(TARGETS).join(', ')}`,
   )
   process.exit(2)
 }
@@ -262,6 +279,6 @@ try {
   console.log(`Built ${build(requested, target)}`)
   console.log(`Copied better-sqlite3's JavaScript to ${copyBetterSqliteJavaScript()}`)
 } catch (err) {
-  console.error(`Building the row-counting SQLite for ${requested} failed: ${err.message}`)
+  console.error(`Building Sirannon's SQLite for ${requested} failed: ${err.message}`)
   process.exit(1)
 }

@@ -67,7 +67,7 @@ export interface CDCMetrics {
   subscriberCount: number
 }
 
-/** The callbacks that receive Sirannon's metrics.
+/** The callbacks that receive Sirannon's metrics. Sirannon ignores an error that a callback throws and a promise that it returns, so a failing callback leaves the database's work unaffected.
  * @public
  */
 export interface MetricsConfig {

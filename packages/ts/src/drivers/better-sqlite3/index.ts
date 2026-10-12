@@ -9,11 +9,12 @@ import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeW
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 import {
   countingStatement,
-  loadRowCountingSqlite,
+  ROW_COUNTS_FEATURE,
   RowCountTaker,
   runCountedBatch,
   runCountedBatchSummary,
 } from './row-counting.js'
+import { loadSirannonSqlite } from './sirannon-sqlite.js'
 
 /**
  * Settings for the better-sqlite3 driver.
@@ -43,14 +44,14 @@ export interface BetterSqlite3Options {
    */
   rowCounts?: boolean
   /**
-   * The path to a row-counting build of better-sqlite3's native module. It
-   * defaults to the file in the `@delali/sirannon-sqlite-*` package for this
-   * platform. Set it on a platform without a published build, so that the
-   * driver counts rows with a build that you compile from Sirannon's
-   * `native/sqlite` directory. The driver reads it only when `rowCounts` is
-   * `true`.
+   * The path to a build of better-sqlite3's native module against Sirannon's
+   * SQLite. It defaults to the file in the `@delali/sirannon-sqlite-*`
+   * package for this platform. Set it on a platform without a published
+   * build, so that the driver uses a build that you compile from Sirannon's
+   * `native/sqlite` directory. The driver reads it only when an option that
+   * needs Sirannon's SQLite, such as `rowCounts`, is set.
    */
-  rowCountsBindingPath?: string
+  sqliteBindingPath?: string
 }
 
 type BetterSqlite3Database = import('better-sqlite3').Database
@@ -151,7 +152,7 @@ async function openDatabase(
     const Database = (await import('better-sqlite3')).default
     return { db: new Database(path, { readonly }), taker: null }
   }
-  const sqlite = await loadRowCountingSqlite(driverOptions.rowCountsBindingPath)
+  const sqlite = await loadSirannonSqlite([ROW_COUNTS_FEATURE], driverOptions.sqliteBindingPath)
   return { db: new sqlite.Database(path, { readonly, nativeBinding: sqlite.bindingPath }), taker: new RowCountTaker() }
 }
 

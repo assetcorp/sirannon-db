@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { MigrationError } from '../../core/errors.js'
 import { applyBaselineOption, type BaselineFileOption } from '../../core/migrations/baseline.js'
 import { parseMigrationFilename } from '../../core/migrations/filename.js'
@@ -106,15 +106,21 @@ export function scanDirectory(dirPath: string): ScannedMigration[] {
     }
 
     const filePath = join(resolvedPath, entry.name)
+    const pathKey = direction === 'up' ? 'upPath' : 'downPath'
     if (!existing) {
-      grouped.set(version, {
-        name,
-        [direction === 'up' ? 'upPath' : 'downPath']: filePath,
-      })
-    } else {
-      if (direction === 'up') existing.upPath = filePath
-      else existing.downPath = filePath
+      grouped.set(version, { name, [pathKey]: filePath })
+      continue
     }
+
+    const claimed = existing[pathKey]
+    if (claimed !== undefined) {
+      throw new MigrationError(
+        `Duplicate ${direction} migration for version ${version}: '${basename(claimed)}' and '${entry.name}'`,
+        version,
+        'MIGRATION_DUPLICATE_VERSION',
+      )
+    }
+    existing[pathKey] = filePath
   }
 
   const results: ScannedMigration[] = []

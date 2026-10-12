@@ -18,6 +18,14 @@ function assertReadyPhase(engine: ReplicationEngine, activity: 'serve reads' | '
   }
 }
 
+function fromForwarded(result: ForwardedTransactionResult['results'][number]): ExecuteResult {
+  return {
+    changes: result.changes,
+    lastInsertRowId:
+      typeof result.lastInsertRowId === 'string' ? BigInt(result.lastInsertRowId) : result.lastInsertRowId,
+  }
+}
+
 export async function query<T>(
   engine: ReplicationEngine,
   sql: string,
@@ -41,14 +49,7 @@ export async function execute(
     if (engine.config.writeForwarding) {
       const result = await forwardStatements(engine, [{ sql, params }], options)
       const first = result.results[0]
-      if (!first) {
-        return { changes: 0, lastInsertRowId: 0 }
-      }
-      return {
-        changes: first.changes,
-        lastInsertRowId:
-          typeof first.lastInsertRowId === 'string' ? BigInt(first.lastInsertRowId) : first.lastInsertRowId,
-      }
+      return first ? fromForwarded(first) : { changes: 0, lastInsertRowId: 0 }
     }
     throwNotCurrentPrimary(engine)
   }
@@ -68,15 +69,32 @@ export async function executeBatch(
     if (engine.config.writeForwarding) {
       const statements = paramsBatch.map(p => ({ sql, params: p }))
       const result = await forwardStatements(engine, statements, options)
-      return result.results.map(r => ({
-        changes: r.changes,
-        lastInsertRowId: typeof r.lastInsertRowId === 'string' ? BigInt(r.lastInsertRowId) : Number(r.lastInsertRowId),
-      }))
+      return result.results.map(fromForwarded)
     }
     throwNotCurrentPrimary(engine)
   }
 
   return engine.localExecutor.executeBatchLocally(sql, paramsBatch, options)
+}
+
+export async function executeTransaction(
+  engine: ReplicationEngine,
+  statements: readonly { sql: string; params?: Params }[],
+  options?: QueryOptions,
+): Promise<ExecuteResult[]> {
+  assertReadyPhase(engine, 'accept operations')
+  const owned = statements.map(statement => ({ sql: statement.sql, params: statement.params }))
+  if (owned.length === 0) return []
+
+  if (!(await canAcceptLocalWrite(engine))) {
+    if (engine.config.writeForwarding) {
+      const result = await forwardStatements(engine, owned, options)
+      return result.results.map(fromForwarded)
+    }
+    throwNotCurrentPrimary(engine)
+  }
+
+  return engine.localExecutor.executeStatementsLocally(owned, options?.writeConcern)
 }
 
 export async function transaction<T>(

@@ -22,15 +22,12 @@ export class PruneBoundaries {
   }
 }
 
-export function seqBoundFor(lowest: bigint | null, lastSeq: bigint): bigint | null {
+export function seqBoundFor(lowest: bigint | null, lastSeq: bigint): bigint {
   if (lastSeq > 0n && lowest !== null) {
     return lastSeq < lowest ? lastSeq : lowest
   }
   if (lowest !== null) {
     return lowest
   }
-  if (lastSeq > 0n) {
-    return lastSeq
-  }
-  return null
+  return lastSeq
 }

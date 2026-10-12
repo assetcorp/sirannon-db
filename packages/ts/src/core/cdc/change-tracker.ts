@@ -2,7 +2,6 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError, ForbiddenSqlError } from '../errors.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
 import {
-  deleteChangesBeforeSql,
   deleteChangesBeforeUpToSeqSql,
   ensureChangesTable,
   selectMaxChangeSeq,
@@ -15,7 +14,7 @@ import type { ChangeEvent } from '../types.js'
 import { pollChanges, readSinceTables } from './change-log-reader.js'
 import { PruneBoundaries, type PruneBoundarySource, seqBoundFor } from './prune-boundaries.js'
 import { StatementCache } from './statement-cache.js'
-import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
+import { cdcTriggersMatch, dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
@@ -80,12 +79,12 @@ export class ChangeTracker {
       if (same) {
         return
       }
+    }
+    if (existing || !(await cdcTriggersMatch(conn, this.changesTable, table, columns, pkColumns))) {
       await conn.transaction(async txConn => {
         await dropCdcTriggers(txConn, table)
         await this.installTriggers(txConn, table, columns, pkColumns)
       })
-    } else {
-      await this.installTriggers(conn, table, columns, pkColumns)
     }
     this.watched.set(table, { table, columns, pkColumns })
     this.watchedTablesCache = null
@@ -286,19 +285,8 @@ export class ChangeTracker {
 
     const cutoff = Date.now() / 1000 - this.retentionMs / 1000
     const seqBound = this.computeSeqBound()
-
-    if (seqBound !== null) {
-      const stmt = await this.stmtCache.get(
-        conn,
-        'cleanup_coordinated',
-        deleteChangesBeforeUpToSeqSql(this.changesTable),
-      )
-      const result = await stmt.run(cutoff, seqBound.toString())
-      return result.changes
-    }
-
-    const stmt = await this.stmtCache.get(conn, 'cleanup', deleteChangesBeforeSql(this.changesTable))
-    const result = await stmt.run(cutoff)
+    const stmt = await this.stmtCache.get(conn, 'cleanup_coordinated', deleteChangesBeforeUpToSeqSql(this.changesTable))
+    const result = await stmt.run(cutoff, seqBound.toString())
     return result.changes
   }
 
@@ -325,7 +313,7 @@ export class ChangeTracker {
     return this.watchedTablesCache
   }
 
-  private computeSeqBound(): bigint | null {
+  private computeSeqBound(): bigint {
     return seqBoundFor(this.pruneBoundaries.lowest(), this.lastSeq)
   }
 

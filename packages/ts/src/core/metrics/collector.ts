@@ -1,3 +1,4 @@
+import { invokeCallerCallback } from '../caller-callbacks.js'
 import type { ChangeDispatchObserver } from '../cdc/subscription.js'
 import type { CDCMetrics, ConnectionMetrics, MetricsConfig, QueryMetrics } from '../types.js'
 
@@ -55,36 +56,17 @@ export class MetricsCollector {
     durationMs: number,
     failed: boolean,
   ): void {
-    try {
-      this.config.onQueryComplete?.({
-        ...context,
-        ...outcome,
-        durationMs,
-        error: failed,
-      })
-    } catch {
-      void 0
-    }
+    invokeCallerCallback(() => this.config.onQueryComplete?.({ ...context, ...outcome, durationMs, error: failed }))
   }
 
   trackConnection(metrics: ConnectionMetrics): void {
-    try {
-      if (metrics.event === 'open') {
-        this.config.onConnectionOpen?.(metrics)
-      } else {
-        this.config.onConnectionClose?.(metrics)
-      }
-    } catch {
-      void 0
-    }
+    invokeCallerCallback(() =>
+      metrics.event === 'open' ? this.config.onConnectionOpen?.(metrics) : this.config.onConnectionClose?.(metrics),
+    )
   }
 
   trackCDCEvent(metrics: CDCMetrics): void {
-    try {
-      this.config.onCDCEvent?.(metrics)
-    } catch {
-      void 0
-    }
+    invokeCallerCallback(() => this.config.onCDCEvent?.(metrics))
   }
 
   observeDispatch(databaseId: string): ChangeDispatchObserver | undefined {

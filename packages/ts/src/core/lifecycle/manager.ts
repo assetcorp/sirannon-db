@@ -14,10 +14,16 @@ export interface LifecycleCallbacks {
   has: (id: string) => boolean
 }
 
+function settledWithoutValue(): void {}
+
 /**
  * Opens a database through the `autoOpen` resolver when the registry asks for it, and closes each database that stays idle for `idleTimeout` or longer.
  *
  * When one more open database would exceed `maxOpen`, the manager first closes the least recently used database.
+ * Automatic opens under a `maxOpen` limit take their turn one at a time to
+ * claim a place, and each open that is under way holds its place until it
+ * settles, so tenants that arrive together never push the count past the
+ * limit.
  *
  * @internal
  */
@@ -28,6 +34,8 @@ export class LifecycleManager {
   private idleTimer: ReturnType<typeof setInterval> | null = null
   private _disposed = false
   #idleCheckPromise: Promise<void> | null = null
+  #placeClaims: Promise<unknown> = Promise.resolve()
+  readonly #opensUnderWay = new Set<Promise<void>>()
 
   constructor(config: LifecycleConfig, callbacks: LifecycleCallbacks) {
     this.config = config
@@ -53,22 +61,19 @@ export class LifecycleManager {
     const resolved = resolver(id)
     if (!resolved) return undefined
 
+    const open = () => this.callbacks.open(id, resolved.path, resolved.options)
     const maxOpen = this.config.maxOpen
-    if (maxOpen && maxOpen > 0 && this.callbacks.count() >= maxOpen) {
-      await this.evict()
-      if (this.callbacks.count() >= maxOpen) {
-        throw new MaxDatabasesError(maxOpen)
-      }
-    }
+    const { opened } = maxOpen && maxOpen > 0 ? await this.#claimPlace(maxOpen, open) : { opened: open() }
 
-    const db = await this.callbacks.open(id, resolved.path, resolved.options)
+    const db = await opened
     this.markActive(id)
     return db
   }
 
   markActive(id: string): void {
     if (!this._disposed) {
-      this.lastAccess.set(id, Date.now())
+      this.lastAccess.delete(id)
+      this.lastAccess.set(id, performance.now())
     }
   }
 
@@ -76,7 +81,7 @@ export class LifecycleManager {
     const timeout = this.config.idleTimeout
     if (!timeout || timeout <= 0) return
 
-    const now = Date.now()
+    const now = performance.now()
     const toRemove: string[] = []
     const toClose: string[] = []
 
@@ -103,31 +108,7 @@ export class LifecycleManager {
   }
 
   async evict(): Promise<void> {
-    let oldestId: string | null = null
-    let oldestTime = Infinity
-    const stale: string[] = []
-
-    for (const [id, time] of this.lastAccess) {
-      if (!this.callbacks.has(id)) {
-        stale.push(id)
-        continue
-      }
-      if (time < oldestTime) {
-        oldestTime = time
-        oldestId = id
-      }
-    }
-
-    for (const id of stale) {
-      this.lastAccess.delete(id)
-    }
-
-    if (oldestId) {
-      try {
-        await this.callbacks.close(oldestId)
-      } catch {}
-      this.lastAccess.delete(oldestId)
-    }
+    await this.#closeLeastRecentlyUsed()
   }
 
   untrack(id: string): void {
@@ -157,6 +138,44 @@ export class LifecycleManager {
     if (this._disposed) {
       throw new SirannonError('LifecycleManager has been disposed', 'LIFECYCLE_DISPOSED')
     }
+  }
+
+  #claimPlace(maxOpen: number, open: () => Promise<Database>): Promise<{ opened: Promise<Database> }> {
+    const claim = this.#placeClaims.then(() => this.#makeRoomThenOpen(maxOpen, open))
+    this.#placeClaims = claim.catch(settledWithoutValue)
+    return claim
+  }
+
+  async #makeRoomThenOpen(maxOpen: number, open: () => Promise<Database>): Promise<{ opened: Promise<Database> }> {
+    while (this.callbacks.count() >= maxOpen) {
+      if (await this.#closeLeastRecentlyUsed()) continue
+      if (this.#opensUnderWay.size === 0) throw new MaxDatabasesError(maxOpen)
+      await Promise.race(this.#opensUnderWay)
+    }
+
+    const opened = open()
+    const underWay: Promise<void> = opened.then(
+      () => {
+        this.#opensUnderWay.delete(underWay)
+      },
+      () => {
+        this.#opensUnderWay.delete(underWay)
+      },
+    )
+    this.#opensUnderWay.add(underWay)
+    return { opened }
+  }
+
+  async #closeLeastRecentlyUsed(): Promise<boolean> {
+    for (const id of [...this.lastAccess.keys()]) {
+      this.lastAccess.delete(id)
+      if (!this.callbacks.has(id)) continue
+      try {
+        await this.callbacks.close(id)
+      } catch {}
+      return true
+    }
+    return false
   }
 
   async #runIdleCheck(): Promise<void> {

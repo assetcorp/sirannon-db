@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@delali/sirannon-sqlite-darwin-arm64)](https://www.npmjs.com/package/@delali/sirannon-sqlite-darwin-arm64)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-sqlite-darwin-arm64)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-This package contains better-sqlite3's native module, built for macOS on Apple silicon against a SQLite that counts the rows that each statement reads and writes.
+This package contains better-sqlite3's native module, built for macOS on Apple silicon against Sirannon's build of SQLite, which counts the rows that each statement reads and writes.
 
 ## Install
 

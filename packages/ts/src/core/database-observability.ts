@@ -74,8 +74,8 @@ export class DatabaseObserver implements StatementMeter {
     return this.metrics.trackQuery(
       op,
       this.context(sql, source),
-      result => this.complete(measure ? measure(result) : {}),
-      error => this.complete(measureFailure(error)),
+      result => (measure ? measure(result) : {}),
+      error => this.completeFailure(measureFailure(error)),
     )
   }
 
@@ -100,7 +100,7 @@ export class DatabaseObserver implements StatementMeter {
     return source ? { databaseId: this.databaseId, sql, source } : { databaseId: this.databaseId, sql }
   }
 
-  private complete(outcome: QueryOutcome): QueryOutcome {
+  private completeFailure(outcome: QueryOutcome): QueryOutcome {
     if (!this.countsRows || outcome === ROW_COUNTS_UNKNOWN || outcome.rowsRead !== undefined) return outcome
     return { ...outcome, rowsRead: 0, rowsWritten: 0 }
   }
@@ -136,9 +136,15 @@ export class DatabaseObserver implements StatementMeter {
     durationMs: number,
     failedWithout: QueryOutcome | null,
   ): void {
+    const failed = failedWithout !== null
     for (let i = 0; i < statements.length; i++) {
       const outcome = perStatement[i] ?? failedWithout ?? {}
-      metrics.reportQuery(this.context(statements[i].sql), this.complete(outcome), durationMs, failedWithout !== null)
+      metrics.reportQuery(
+        this.context(statements[i].sql),
+        failed ? this.completeFailure(outcome) : outcome,
+        durationMs,
+        failed,
+      )
     }
   }
 

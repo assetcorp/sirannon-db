@@ -35,7 +35,7 @@ const comments = table(5, 'comments')
 const FULL_SET = [comments, squashed, tags, users, posts]
 
 describe('a baseline that squashes earlier history', () => {
-  it('builds a fresh database from the baseline and the versions above it, without the superseded versions', async () => {
+  it('builds a fresh database from the baseline and the versions above it alone', async () => {
     const { db, path } = await openDatabase()
 
     const result = await db.migrate(FULL_SET)
@@ -55,7 +55,7 @@ describe('a baseline that squashes earlier history', () => {
     expect(await db.migrate(FULL_SET)).toEqual({ applied: [], skipped: 5 })
   })
 
-  it('never applies the baseline to a database whose history already reaches the squashed versions', async () => {
+  it('skips the baseline on a database whose history already reaches the squashed versions', async () => {
     const { db, path } = await openDatabase()
     await db.migrate(OLD_HISTORY)
 
@@ -123,7 +123,7 @@ describe('a baseline that squashes earlier history', () => {
     expect(readFileState(older.path).history.map(row => row.version)).toEqual([4, 5, 8, 10])
   })
 
-  it('refuses a through version that is no integer from 1 to below the baseline, and a version inside the squashed range', async () => {
+  it('refuses a through version outside 1 to one below the baseline version, and a version inside the squashed range', async () => {
     const { db, path } = await openDatabase()
     const throughs: unknown[] = [0, -1, 1.5, Number.NaN, '3', undefined, null, 4, 5]
 

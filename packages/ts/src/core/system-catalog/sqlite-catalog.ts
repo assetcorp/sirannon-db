@@ -23,6 +23,15 @@ export async function tableInfoRows(conn: SQLiteConnection, table: string): Prom
   return (await stmt.all()) as TableInfoRow[]
 }
 
+export interface TableColumnRow extends TableInfoRow {
+  hidden: number
+}
+
+export async function tableColumnsWithGenerated(conn: SQLiteConnection, table: string): Promise<TableColumnRow[]> {
+  const stmt = await conn.prepare(`PRAGMA table_xinfo("${table}")`)
+  return ((await stmt.all()) as TableColumnRow[]).map(row => ({ ...row, hidden: Number(row.hidden) }))
+}
+
 export async function tableColumnNames(conn: SQLiteConnection, table: string): Promise<string[]> {
   return (await tableInfoRows(conn, table)).map(col => col.name)
 }
@@ -86,4 +95,92 @@ export async function selectUserTableNames(conn: SQLiteConnection, excludePrefix
   )
   const rows = (await stmt.all(`${excludePrefix}%`)) as Array<{ name: string }>
   return rows.map(row => row.name)
+}
+
+/**
+ * Returns the name that the schema stores for an ordinary table whose name matches `table` in any ASCII letter case, or `null` when no ordinary table matches, so a view or a virtual table yields `null`.
+ *
+ * @param conn - The connection whose `main` schema holds the table.
+ * @param table - The table name that the caller passed, in any letter case.
+ * @returns The stored table name, or `null` when the schema holds no ordinary table of that name.
+ * @internal
+ */
+export async function selectOrdinaryTableName(conn: SQLiteConnection, table: string): Promise<string | null> {
+  const stmt = await conn.prepare(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'table' AND name = ? COLLATE NOCASE AND sql NOT LIKE 'CREATE VIRTUAL TABLE%'`,
+  )
+  const row = (await stmt.get(table)) as { name?: unknown } | undefined
+  return typeof row?.name === 'string' ? row.name : null
+}
+
+export interface IndexListRow {
+  name: string
+  unique: number
+  origin: string
+  partial: number
+}
+
+/**
+ * Returns the `CREATE INDEX` statement that SQLite stores for an index.
+ *
+ * @param conn - The connection whose schema holds the index.
+ * @param index - The name of the index.
+ * @returns The stored statement, or `null` for an index that a `UNIQUE` or `PRIMARY KEY` constraint created, since SQLite stores none for it.
+ * @internal
+ */
+export async function selectIndexSql(conn: SQLiteConnection, index: string): Promise<string | null> {
+  const stmt = await conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+  const row = (await stmt.get(index)) as { sql?: string | null } | undefined
+  return row?.sql ?? null
+}
+
+/**
+ * Returns every index on a table, in the order that `PRAGMA index_list` reports them, with whether each one is unique and whether a `CREATE INDEX` statement (`c`), a `UNIQUE` constraint (`u`), or the primary key (`pk`) created it.
+ *
+ * @param conn - The connection whose schema holds the table.
+ * @param table - The stored name of the table.
+ * @returns One row per index, with `unique` set to 1 for a unique index and 0 otherwise.
+ * @internal
+ */
+export async function tableIndexList(conn: SQLiteConnection, table: string): Promise<IndexListRow[]> {
+  const stmt = await conn.prepare('SELECT name, "unique", origin, partial FROM pragma_index_list(?) ORDER BY seq')
+  const rows = (await stmt.all(table)) as Array<{
+    name: string
+    unique: number | bigint
+    origin: string
+    partial: number | bigint
+  }>
+  return rows.map(row => ({
+    name: row.name,
+    unique: Number(row.unique),
+    origin: row.origin,
+    partial: Number(row.partial),
+  }))
+}
+
+export interface IndexColumnRow {
+  cid: number
+  name: string | null
+  collation: string
+  key: number
+}
+
+/**
+ * Returns every column of an index in key order, as `PRAGMA index_xinfo` reports them, including the collation that the index compares each column with.
+ *
+ * @param conn - The connection whose schema holds the index.
+ * @param index - The name of the index.
+ * @returns One row per index column, where `key` is 1 for a key column and 0 for an auxiliary column, `cid` is -1 for the rowid, and `cid` is -2 with a `null` name for an expression.
+ * @internal
+ */
+export async function indexColumns(conn: SQLiteConnection, index: string): Promise<IndexColumnRow[]> {
+  const stmt = await conn.prepare('SELECT cid, name, coll, "key" FROM pragma_index_xinfo(?) ORDER BY seqno')
+  const rows = (await stmt.all(index)) as Array<{
+    cid: number | bigint
+    name: string | null
+    coll: string
+    key: number | bigint
+  }>
+  return rows.map(row => ({ cid: Number(row.cid), name: row.name, collation: row.coll, key: Number(row.key) }))
 }

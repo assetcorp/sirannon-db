@@ -1,7 +1,6 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { testDriver } from '../../../core/__tests__/helpers/test-driver.js'
 import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
 import { Database } from '../../../core/database.js'
 import type { SQLiteConnection, SQLiteDriver } from '../../../core/driver/types.js'
@@ -10,6 +9,7 @@ import { ReplicationEngine } from '../../../replication/engine.js'
 import { PrimaryReplicaTopology } from '../../../replication/topology/primary-replica.js'
 import type { ReplicationConfig, ReplicationErrorEvent } from '../../../replication/types.js'
 import { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
+import { testDriver } from '../../helpers/test-driver.js'
 import type { MtlsCerts } from './certs.js'
 
 export interface ManagedNode {

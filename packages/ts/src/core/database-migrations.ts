@@ -1,4 +1,5 @@
 import type { ChangeTracker } from './cdc/change-tracker.js'
+import { columnDropAwareConnection } from './cdc/column-drop.js'
 import type { ConnectionPool } from './connection-pool.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { MIGRATIONS_TABLE } from './internal-tables.js'
@@ -17,9 +18,13 @@ export async function migrateWithTriggerRefresh(
   tracker: ChangeTracker | null,
   migrations: Migration[],
 ): Promise<MigrationResult> {
-  const result = await MigrationRunner.run(conn, migrations)
-  if (result.applied.length > 0) await refreshTriggersAfterSchemaChange(tracker, conn)
-  return result
+  return MigrationRunner.run(migrationConnection(tracker, conn), migrations, txConn =>
+    refreshTriggersAfterSchemaChange(tracker, txConn),
+  )
+}
+
+function migrationConnection(tracker: ChangeTracker | null, conn: SQLiteConnection): SQLiteConnection {
+  return tracker === null ? conn : columnDropAwareConnection(tracker, conn)
 }
 
 export async function rollbackWithTriggerRefresh(
@@ -28,7 +33,7 @@ export async function rollbackWithTriggerRefresh(
   migrations: Migration[],
   version?: number,
 ): Promise<RollbackResult> {
-  const result = await MigrationRunner.rollback(conn, migrations, version)
+  const result = await MigrationRunner.rollback(migrationConnection(tracker, conn), migrations, version)
   if (result.rolledBack.length > 0) await refreshTriggersAfterSchemaChange(tracker, conn)
   return result
 }

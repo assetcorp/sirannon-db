@@ -26,6 +26,16 @@ export function prepareInsertAppliedChange(conn: SQLiteConnection): Promise<Prep
   )
 }
 
+/** Deletes every applied-change record of one source above one sequence. */
+export async function deleteAppliedChangesAfterSeq(
+  conn: SQLiteConnection,
+  sourceNodeId: string,
+  seq: bigint,
+): Promise<void> {
+  const stmt = await conn.prepare(`DELETE FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ? AND source_seq > ?`)
+  await stmt.run(sourceNodeId, seq.toString())
+}
+
 export async function selectMaxAppliedSourceSeq(conn: SQLiteConnection, sourceNodeId: string): Promise<bigint> {
   const stmt = await conn.prepare(
     `SELECT MAX(source_seq) AS max_seq FROM ${APPLIED_CHANGES_TABLE} WHERE source_node_id = ?`,

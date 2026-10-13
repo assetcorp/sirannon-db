@@ -1,12 +1,18 @@
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError, CoordinatorError } from '../errors.js'
 import {
+  applyCoordinatorState,
   arraysEqual,
   errorDetails,
   hasCurrentPrimaryAuthorityFor,
   refreshCoordinatorState,
 } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { isAnchoredToCurrentTerm } from './history-anchor.js'
+import { selectQuarantined, upsertQuarantined } from './term-history.js'
+
+const rejoinAdmissionsInFlight = new WeakSet<ReplicationEngine>()
+const rejoinCopiesAwaitingAdmission = new WeakMap<ReplicationEngine, bigint>()
 
 export function requiresCoordinatorRejoin(engine: ReplicationEngine, state: ReplicationGroupState): boolean {
   if (state.currentPrimary?.nodeId === engine.nodeId) return false
@@ -22,6 +28,7 @@ export function requiresCoordinatorRejoinSync(engine: ReplicationEngine, state: 
 export async function prepareCoordinatorRejoinIfNeeded(engine: ReplicationEngine): Promise<void> {
   const state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
   if (!state || !requiresCoordinatorRejoin(engine, state)) return
+  if (requiresCoordinatorRejoinSync(engine, state) && (await selectQuarantined(engine.writerConn))) return
   await evaluateFormerPrimaryHistory(engine, state)
 }
 
@@ -33,6 +40,7 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
   if (state.faultedNodeIds.includes(engine.nodeId)) return
 
   if (state.drainingNodeIds.includes(engine.nodeId)) {
+    if (state.repairingNodeIds.includes(engine.nodeId)) rejoinCopiesAwaitingAdmission.set(engine, state.primaryTerm)
     await removeLocalNodeFromCoordinatorInSyncSet(engine, state)
     return
   }
@@ -45,7 +53,7 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
   }
 
   const sourceNodeId = state.currentPrimary?.nodeId
-  if (!sourceNodeId || engine.syncState.sourcePeerId !== sourceNodeId) {
+  if (!sourceNodeId || engine.syncState.sourcePeerId !== sourceNodeId || !isAnchoredToCurrentTerm(engine)) {
     engine.coordinatorState = state
     engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, state)
     return
@@ -65,8 +73,36 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
     sourceNodeId,
     appliedSeq,
   })
-  engine.coordinatorState = admitted ?? state
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, engine.coordinatorState)
+  const next = admitted ?? state
+  applyCoordinatorState(engine, next)
+  if (!next.repairingNodeIds.includes(engine.nodeId)) rejoinCopiesAwaitingAdmission.delete(engine)
+}
+
+/**
+ * Admits the local node to the in-sync set once a drain that outlasted its rejoin copy ends, because the primary
+ * admits a repairing node only through its rejoin sync and that sync finished while the drain kept the node out.
+ *
+ * @param engine - The replication engine of the local node.
+ * @returns A promise that settles once the admission attempt finishes, or at once when no finished copy awaits
+ * admission.
+ * @internal
+ */
+export async function admitRejoinedNodeIfReady(engine: ReplicationEngine): Promise<void> {
+  const copiedTerm = rejoinCopiesAwaitingAdmission.get(engine)
+  const state = engine.coordinatorState
+  if (copiedTerm === undefined || !state) return
+  if (!requiresCoordinatorRejoinSync(engine, state) || copiedTerm !== state.primaryTerm) {
+    rejoinCopiesAwaitingAdmission.delete(engine)
+    return
+  }
+  if (!engine.running || rejoinAdmissionsInFlight.has(engine) || state.drainingNodeIds.includes(engine.nodeId)) return
+  if (engine.syncState.phase !== 'ready' || engine.syncState.sourcePeerId !== state.currentPrimary?.nodeId) return
+  rejoinAdmissionsInFlight.add(engine)
+  try {
+    await markCoordinatorSyncReady(engine)
+  } finally {
+    rejoinAdmissionsInFlight.delete(engine)
+  }
 }
 
 export async function handleCoordinatorAckProgress(
@@ -79,7 +115,9 @@ export async function handleCoordinatorAckProgress(
   if (!config || !state) return
   if (nodeId === engine.nodeId) return
   if (!hasCurrentPrimaryAuthorityFor(engine, state)) return
+  if (engine.history.termStartTerm !== state.primaryTerm) return
   if (state.inSyncNodeIds.includes(nodeId)) return
+  if (state.repairingNodeIds.includes(nodeId) || state.faultedNodeIds.includes(nodeId)) return
   if (!state.votingDataBearingNodeIds.includes(nodeId)) return
   if (ackedSeq < state.durabilityPointSeq) return
 
@@ -92,8 +130,7 @@ export async function handleCoordinatorAckProgress(
   })
   if (!admitted) return
 
-  engine.coordinatorState = admitted
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, admitted)
+  applyCoordinatorState(engine, admitted)
 }
 
 export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<void> {
@@ -139,8 +176,7 @@ async function removeLocalNodeFromCoordinatorInSyncSet(
     nextState = updated
   }
 
-  engine.coordinatorState = nextState
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, nextState)
+  applyCoordinatorState(engine, nextState)
 }
 
 export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, state: ReplicationGroupState): void {
@@ -214,9 +250,9 @@ async function evaluateFormerPrimaryHistory(
   const currentPrimary = state.currentPrimary
   if (!config || !currentPrimary || state.faultedNodeIds.includes(engine.nodeId)) return state
 
-  const localSeq = await engine.log.getLocalSeq()
+  const localWriteSeq = await engine.log.getLocalWriteSeq()
   const currentPrimaryAckedSeq = await engine.log.getPeerAckedSeq(currentPrimary.nodeId)
-  if (localSeq <= currentPrimaryAckedSeq) {
+  if (localWriteSeq <= currentPrimaryAckedSeq) {
     return state
   }
 
@@ -244,10 +280,11 @@ async function evaluateFormerPrimaryHistory(
   nextState = faulted ?? nextState
   engine.coordinatorState = nextState
   engine.coordinatorAuthority = false
+  if (faulted) await upsertQuarantined(engine.writerConn, true)
   engine.emitError({
     error: new AuthorityError('Former primary returned with local-only writes and was quarantined', 'AUTHORITY_LOST', {
       ...errorDetails(engine, nextState),
-      localSeq: localSeq.toString(),
+      localWriteSeq: localWriteSeq.toString(),
       currentPrimaryAckedSeq: currentPrimaryAckedSeq.toString(),
     }),
     operation: 'coordinator-former-primary-divergence',

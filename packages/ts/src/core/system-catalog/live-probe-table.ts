@@ -8,6 +8,11 @@ export interface LiveProbeColumn {
   name: string
   type: string
   collation: string | null
+  generatedAs: string | null
+}
+
+export function storedLiveProbeColumns(columns: readonly LiveProbeColumn[]): LiveProbeColumn[] {
+  return columns.filter(column => column.generatedAs === null)
 }
 
 export async function ensureLiveProbeTable(
@@ -29,7 +34,8 @@ export async function ensureLiveProbeTable(
 
     const type = column.type.trim().length === 0 ? '' : ` ${column.type.trim()}`
     const collate = column.collation === null ? '' : ` COLLATE "${column.collation}"`
-    return `"${column.name}"${type}${collate}`
+    const generated = column.generatedAs === null ? '' : ` GENERATED ALWAYS AS (${column.generatedAs}) VIRTUAL`
+    return `"${column.name}"${type}${collate}${generated}`
   })
 
   await conn.exec(`CREATE TEMP TABLE IF NOT EXISTS "${probeTable}" (${definitions.join(', ')})`)
@@ -46,11 +52,12 @@ export async function prepareInsertLiveProbeRow(
   columns: readonly LiveProbeColumn[],
 ): Promise<SQLiteStatement> {
   assertSafeIdentifier(probeTable)
-  const names = columns.map(column => {
+  const stored = storedLiveProbeColumns(columns)
+  const names = stored.map(column => {
     assertSafeIdentifier(column.name)
     return `"${column.name}"`
   })
-  const placeholders = new Array(columns.length + 1).fill('?').join(', ')
+  const placeholders = new Array(stored.length + 1).fill('?').join(', ')
   return conn.prepare(`INSERT INTO temp."${probeTable}" (rowid, ${names.join(', ')}) VALUES (${placeholders})`)
 }
 

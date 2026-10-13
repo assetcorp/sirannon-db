@@ -14,7 +14,7 @@ export interface RequestContext {
   method: string
   /** The URL path of the request. */
   path: string
-  /** The identifier of the database that the route names. */
+  /** The percent-decoded identifier of the database that the route names, or the path segment as sent when it is not valid percent-encoding. */
   databaseId?: string
   /** The network address of the client that sent the request. */
   remoteAddress: string

@@ -19,6 +19,7 @@ export interface WSConnectCallbacks {
 export interface WSHandshakeOptions {
   protocols?: string | string[]
   headers?: Record<string, string>
+  timeoutMs?: number
 }
 
 interface HeaderCapableWebSocket {
@@ -55,9 +56,11 @@ function refusalError(close: WSCloseInfo): RemoteError {
 export function openWebSocket(url: string, options: WSHandshakeOptions, callbacks: WSConnectCallbacks): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false
+    let handshakeTimer: ReturnType<typeof setTimeout> | undefined
     const ws = createSocket(url, options)
 
     const onOpen = () => {
+      clearTimeout(handshakeTimer)
       settled = true
       callbacks.onConnected(ws)
       resolve()
@@ -65,12 +68,14 @@ export function openWebSocket(url: string, options: WSHandshakeOptions, callback
 
     const onError = () => {
       if (!settled) {
+        clearTimeout(handshakeTimer)
         settled = true
         reject(new RemoteError('CONNECTION_ERROR', `Failed to connect to ${url}`))
       }
     }
 
     const onClose = (event: CloseEvent) => {
+      clearTimeout(handshakeTimer)
       ws.removeEventListener('open', onOpen)
       ws.removeEventListener('error', onError)
       const close = readCloseInfo(event)
@@ -100,5 +105,19 @@ export function openWebSocket(url: string, options: WSHandshakeOptions, callback
     ws.addEventListener('error', onError)
     ws.addEventListener('close', onClose)
     ws.addEventListener('message', onMessage)
+
+    const timeoutMs = options.timeoutMs ?? 0
+    if (timeoutMs > 0) {
+      handshakeTimer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        ws.removeEventListener('open', onOpen)
+        ws.removeEventListener('error', onError)
+        ws.removeEventListener('close', onClose)
+        ws.removeEventListener('message', onMessage)
+        ws.close()
+        reject(new RemoteError('TIMEOUT', `The WebSocket handshake with ${url} took longer than ${timeoutMs}ms`))
+      }, timeoutMs)
+    }
   })
 }

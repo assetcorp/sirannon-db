@@ -2,7 +2,7 @@ import { SirannonError } from '../core/errors.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-const UWS_MAX_LIMIT_BYTES = 4_294_967_295
+export const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 
 /**
  * Throws when the operator opens the restore route without an `authenticate` hook.

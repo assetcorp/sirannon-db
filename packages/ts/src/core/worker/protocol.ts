@@ -7,6 +7,7 @@ import type {
   OpenOptions,
   RunResult,
 } from '../driver/types.js'
+import { SirannonError } from '../errors.js'
 
 export type WorkerRequest =
   | { id: number; kind: 'open'; entry: DriverWorkerEntry; path: string; options: OpenOptions }
@@ -42,6 +43,7 @@ export interface SerializedError {
   sql?: string
   rowsRead?: number
   rowsWritten?: number
+  sirannonError?: true
 }
 
 export type WorkerCopyStep = { id: number; kind: 'copyStep'; step: DatabaseCopyStep }
@@ -62,6 +64,7 @@ export function serializeError(err: unknown): SerializedError {
         name: err.name,
         ...(typeof code === 'string' ? { code } : {}),
         ...(typeof sql === 'string' ? { sql } : {}),
+        ...(err instanceof SirannonError ? { sirannonError: true as const } : {}),
       },
       rowCountsOf(err),
     )
@@ -70,8 +73,10 @@ export function serializeError(err: unknown): SerializedError {
 }
 
 export function deserializeError(error: SerializedError): Error {
-  const err = new Error(error.message)
+  const err =
+    error.sirannonError === true && error.code !== undefined
+      ? new SirannonError(error.message, error.code)
+      : Object.assign(new Error(error.message), error.code === undefined ? {} : { code: error.code })
   if (error.name) err.name = error.name
-  if (error.code) (err as { code?: string }).code = error.code
   return withRowCounts(err, rowCountsOf(error))
 }

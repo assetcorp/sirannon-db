@@ -1,5 +1,6 @@
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import { SQLITE_USER_VERSION_MAX } from '../core/migrations/baseline.js'
+import { MAX_CHANGE_SEQ } from '../core/sync/change-seqs.js'
 import type { ApplyResult, ReplicationBatch, ReplicationChange } from '../core/sync/types.js'
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
 
@@ -27,8 +28,10 @@ export interface ChangesRequest {
       nodeId: string
       newData: Record<string, unknown> | null
       oldData: Record<string, unknown> | null
+      seq?: string
     }[]
     checksum: string
+    txContinues?: boolean
   }
 }
 
@@ -112,6 +115,30 @@ function changeValidationError(change: unknown, index: number): string | null {
   if (change.oldData !== null && !isPlainObject(change.oldData)) {
     return `changes[${index}].oldData must be an object or null`
   }
+  if (change.seq !== undefined && !isStorableSeq(change.seq)) {
+    return `changes[${index}].seq must be an integer string from 0 to ${MAX_CHANGE_SEQ}`
+  }
+  return null
+}
+
+function isStorableSeq(candidate: unknown): candidate is string {
+  return typeof candidate === 'string' && SEQ_STRING_RE.test(candidate) && BigInt(candidate) <= MAX_CHANGE_SEQ
+}
+
+function changeSeqsValidationError(raw: { fromSeq: string; toSeq: string; changes: unknown[] }): string | null {
+  const seqs = raw.changes.map(change => (change as { seq?: string }).seq)
+  const carried = seqs.filter(seq => seq !== undefined).length
+  if (carried === 0) return null
+  if (carried !== seqs.length) return 'Either every change carries "seq" or none does'
+  for (let i = 1; i < seqs.length; i++) {
+    if (BigInt(seqs[i] as string) <= BigInt(seqs[i - 1] as string)) return 'Each change "seq" must rise strictly'
+  }
+  if (
+    BigInt(seqs[0] as string) !== BigInt(raw.fromSeq) ||
+    BigInt(seqs[seqs.length - 1] as string) !== BigInt(raw.toSeq)
+  ) {
+    return 'The first change "seq" must equal "batch.fromSeq" and the last must equal "batch.toSeq"'
+  }
   return null
 }
 
@@ -121,11 +148,11 @@ export function syncBatchValidationError(raw: unknown): string | null {
   if (typeof raw.batchId !== 'string' || raw.batchId.length === 0 || raw.batchId.length > 128) {
     return '"batch.batchId" must be a non-empty string of at most 128 characters'
   }
-  if (typeof raw.fromSeq !== 'string' || !SEQ_STRING_RE.test(raw.fromSeq)) {
-    return '"batch.fromSeq" must be a positive integer string'
+  if (!isStorableSeq(raw.fromSeq)) {
+    return `"batch.fromSeq" must be an integer string from 0 to ${MAX_CHANGE_SEQ}`
   }
-  if (typeof raw.toSeq !== 'string' || !SEQ_STRING_RE.test(raw.toSeq)) {
-    return '"batch.toSeq" must be a positive integer string'
+  if (!isStorableSeq(raw.toSeq)) {
+    return `"batch.toSeq" must be an integer string from 0 to ${MAX_CHANGE_SEQ}`
   }
   if (BigInt(raw.fromSeq) > BigInt(raw.toSeq)) return '"batch.fromSeq" must not exceed "batch.toSeq"'
   if (!isPlainObject(raw.hlcRange) || typeof raw.hlcRange.min !== 'string' || typeof raw.hlcRange.max !== 'string') {
@@ -148,6 +175,14 @@ export function syncBatchValidationError(raw: unknown): string | null {
       return `changes[${i}].nodeId must match "batch.sourceNodeId"`
     }
   }
+  const seqsError = changeSeqsValidationError({ fromSeq: raw.fromSeq, toSeq: raw.toSeq, changes: raw.changes })
+  if (seqsError !== null) return seqsError
+  if (raw.txContinues !== undefined && typeof raw.txContinues !== 'boolean') {
+    return '"batch.txContinues" must be a boolean'
+  }
+  if (raw.txContinues === true && (raw.changes[0] as { seq?: string }).seq === undefined) {
+    return '"batch.txContinues" requires every change to carry "seq"'
+  }
   return null
 }
 
@@ -164,7 +199,7 @@ export function decodeSyncBatch(body: ChangesRequest['batch']): ReplicationBatch
     oldData: change.oldData === null ? null : (decodeTaggedValues(change.oldData) as Record<string, unknown>),
   }))
 
-  return {
+  const batch: ReplicationBatch = {
     sourceNodeId: body.sourceNodeId,
     batchId: body.batchId,
     fromSeq: BigInt(body.fromSeq),
@@ -173,6 +208,13 @@ export function decodeSyncBatch(body: ChangesRequest['batch']): ReplicationBatch
     changes,
     checksum: body.checksum,
   }
+  if (body.changes[0]?.seq !== undefined) {
+    batch.changeSeqs = body.changes.map(change => BigInt(change.seq ?? '0'))
+  }
+  if (body.txContinues === true) {
+    batch.txContinues = true
+  }
+  return batch
 }
 
 export function toChangesResponse(result: ApplyResult): ChangesResponse {

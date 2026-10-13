@@ -1,4 +1,10 @@
-import type { ClusterReadEndpointInfo, ClusterStatusInfo, NodeHealthReason, NodeHealthState } from '../core/types.js'
+import type {
+  ClusterReadEndpointInfo,
+  ClusterStatusInfo,
+  NodeHealthReason,
+  NodeHealthState,
+  ReadConcernLevel,
+} from '../core/types.js'
 import { NODE_HEALTH_REASONS, NODE_HEALTH_STATES } from '../core/types.js'
 import { RemoteError } from './types.js'
 
@@ -23,6 +29,10 @@ function readPrimary(value: unknown): ClusterStatusInfo['currentPrimary'] {
   }
 }
 
+function isReadConcernLevel(value: unknown): value is ReadConcernLevel {
+  return value === 'local' || value === 'majority' || value === 'linearizable'
+}
+
 function readReadEndpoints(value: unknown): ClusterReadEndpointInfo[] | undefined {
   if (value === undefined) return undefined
   if (!Array.isArray(value)) throw invalid('readEndpoints must be an array')
@@ -32,10 +42,13 @@ function readReadEndpoints(value: unknown): ClusterReadEndpointInfo[] | undefine
     if (typeof endpoint.nodeId !== 'string') throw invalid('read endpoint nodeId must be a string')
     if (typeof endpoint.endpoint !== 'string') throw invalid('read endpoint URL must be a string')
     if (!Array.isArray(endpoint.readConcerns)) throw invalid('read endpoint concerns must be an array')
+    if (!endpoint.readConcerns.every(isReadConcernLevel)) {
+      throw invalid('read endpoint concerns must each be local, majority, or linearizable')
+    }
     return {
       nodeId: endpoint.nodeId,
       endpoint: endpoint.endpoint,
-      readConcerns: endpoint.readConcerns as ClusterReadEndpointInfo['readConcerns'],
+      readConcerns: endpoint.readConcerns,
     }
   })
 }
@@ -50,9 +63,9 @@ function readPrimaryTerm(value: unknown): bigint | undefined {
  * Parses the body of `GET /db/{id}/cluster` and returns the cluster status that the server reports.
  *
  * The route sends `primaryTerm` as a decimal string, so that JSON keeps a term beyond the
- * safe integer range exact, and this function returns it as a bigint. It checks `health`
- * and `healthReason` against the values that the engine can report, and checks the shape
- * of the role, the current primary, and the read endpoints.
+ * safe integer range exact, and this function returns it as a bigint. It checks `health`,
+ * `healthReason`, and the read concerns of each read endpoint against the values that the
+ * engine can report, and checks the shape of the role, the current primary, and the read endpoints.
  *
  * @param data - The parsed JSON body of the response.
  * @param databaseId - The ID of the database that you asked about.

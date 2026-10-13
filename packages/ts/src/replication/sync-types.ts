@@ -30,7 +30,21 @@ export interface SyncState {
 }
 
 /**
- * Asks a peer to stream a full copy of the database.
+ * Names one transaction in a replication group's history by the timestamp and the transaction ID that every node
+ * stores with its changes.
+ *
+ * @public
+ */
+export interface SyncHistoryPoint {
+  /** Holds the transaction's encoded HLC timestamp. */
+  hlc: string
+  /** Holds the transaction's ID. */
+  txId: string
+}
+
+/**
+ * Asks a peer to stream a full copy of the database, or, when the request names the joiner's newest history
+ * transaction, to resume the joiner's history from the last transaction that both nodes hold.
  *
  * @public
  */
@@ -43,6 +57,8 @@ export interface SyncRequest {
   completedTables: string[]
   /** Is true when the joiner can verify the stream with chained batch digests. */
   supportsStreamVerification?: boolean
+  /** Names the newest transaction in the joiner's history, which a coordinator-mode source looks for in its own history before it streams a full copy. */
+  historyTail?: SyncHistoryPoint
   /** Identifies the joiner's replication group. */
   groupId?: string
   /** Holds the primary term that the joiner reports as current. */
@@ -89,6 +105,10 @@ export interface SyncComplete {
   snapshotSeq: bigint
   /** Holds one manifest per table, so that the joiner can check the rows that it received. */
   manifests: SyncTableManifest[]
+  /** Names the newest history transaction that the copy holds, or, when `resumed` is true, the last transaction that both nodes hold. */
+  historyPoint?: SyncHistoryPoint
+  /** Is true when the source streamed no copy, so that the joiner discards its history after `historyPoint` and resumes replication from `snapshotSeq`. */
+  resumed?: boolean
   /** Identifies the source's replication group. */
   groupId?: string
   /** Holds the source's primary term. */

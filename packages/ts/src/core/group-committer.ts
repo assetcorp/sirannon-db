@@ -1,5 +1,5 @@
 import { type RowCounts, rowCountsOf, withRowCounts } from './driver/row-counts.js'
-import type { GroupRunError, SQLiteConnection } from './driver/types.js'
+import type { GroupRunError, GroupRunOutcome, SQLiteConnection } from './driver/types.js'
 import { QueryError, SirannonError, TransactionError } from './errors.js'
 import { executeGroup, type GroupOutcome, type GroupStatement } from './group-executor.js'
 import { bindParams, execute } from './query-executor.js'
@@ -35,7 +35,9 @@ interface Job {
 interface GroupCommitterHooks {
   acquireWriter: () => SQLiteConnection
   afterCommit: (writer: SQLiteConnection, sql: string) => Promise<void>
+  runUngroupable: (writer: SQLiteConnection, sql: string, run: () => Promise<ExecuteResult>) => Promise<ExecuteResult>
   stampStatements: (options?: { persistClock?: boolean }) => readonly GroupStatement[] | null
+  stampOpening: () => GroupStatement | null
 }
 
 function rejectWithRowCounts(job: Job, error: unknown, statements: RowCounts[] | undefined): void {
@@ -160,9 +162,11 @@ export class GroupCommitter {
 
   private async runSingle(statement: GroupStatement): Promise<ExecuteResult> {
     const writer = this.hooks.acquireWriter()
-    const stamps = isGroupable(statement.sql) ? this.hooks.stampStatements() : null
-    const result =
-      stamps === null || stamps.length === 0
+    const groupable = isGroupable(statement.sql)
+    const stamps = groupable ? this.hooks.stampStatements() : null
+    const result = !groupable
+      ? await this.hooks.runUngroupable(writer, statement.sql, () => execute(writer, statement.sql, statement.params))
+      : stamps === null || stamps.length === 0
         ? await execute(writer, statement.sql, statement.params)
         : await this.runStampedAlone(writer, statement, stamps)
     await this.hooks.afterCommit(writer, statement.sql)
@@ -194,28 +198,38 @@ export class GroupCommitter {
 
   private async runGroup(batch: Job[]): Promise<GroupOutcome[]> {
     const writer = this.hooks.acquireWriter()
+    const opening = this.hooks.stampOpening()
+    const leading = opening === null ? [] : [opening]
     const units = batch.map((job, index) => {
       const stamps = this.hooks.stampStatements({ persistClock: index === batch.length - 1 }) ?? []
       return {
-        statements: [...job.statements, ...stamps].map(statement => ({
+        statements: [...leading, ...job.statements, ...stamps].map(statement => ({
           sql: statement.sql,
           params: bindParams(statement.params),
           ...(statement.trusted === true ? { trusted: true } : {}),
         })),
       }
     })
-    if (writer.runGroup) {
-      const raw = await writer.runGroup(units)
-      return raw.map<GroupOutcome>(outcome => {
-        if (outcome.ok) return { ok: true, values: outcome.results }
-        const error = toError(outcome.error)
-        return outcome.statementRowCounts
-          ? { ok: false, error, statementRowCounts: outcome.statementRowCounts }
-          : { ok: false, error }
-      })
-    }
-    return executeGroup(writer, units)
+    const outcomes = writer.runGroup ? fromRawOutcomes(await writer.runGroup(units)) : await executeGroup(writer, units)
+    return opening === null ? outcomes : outcomes.map(withoutLeadingStatement)
   }
+}
+
+function fromRawOutcomes(raw: readonly GroupRunOutcome[]): GroupOutcome[] {
+  return raw.map<GroupOutcome>(outcome => {
+    if (outcome.ok) return { ok: true, values: outcome.results }
+    const error = toError(outcome.error)
+    return outcome.statementRowCounts
+      ? { ok: false, error, statementRowCounts: outcome.statementRowCounts }
+      : { ok: false, error }
+  })
+}
+
+function withoutLeadingStatement(outcome: GroupOutcome): GroupOutcome {
+  if (outcome.ok) return { ok: true, values: outcome.values.slice(1) }
+  return outcome.statementRowCounts
+    ? { ok: false, error: outcome.error, statementRowCounts: outcome.statementRowCounts.slice(1) }
+    : outcome
 }
 
 function toError(error: GroupRunError): Error {

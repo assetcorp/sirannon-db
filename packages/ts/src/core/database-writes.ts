@@ -1,10 +1,12 @@
 import { runBulkLoad } from './bulk-load.js'
+import { runWithColumnDropsPrepared } from './cdc/column-drop.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import type { ConnectionPool } from './connection-pool.js'
 import type { DatabaseCdcController } from './database-cdc.js'
 import type { DatabaseObserver, TransactionOutcomes } from './database-observability.js'
 import { type RowCounts, rowCountsOf } from './driver/row-counts.js'
 import type { SQLiteConnection, SynchronousLevel } from './driver/types.js'
+import { SirannonError } from './errors.js'
 import { canGroupTransaction, type FailedWriteRowCounts, type GroupCommitter } from './group-committer.js'
 import type { QueryOutcomeMeasure } from './metrics/collector.js'
 import { batchWriteOutcome, failedStatementOutcome, writeOutcome } from './metrics/outcomes.js'
@@ -26,6 +28,13 @@ export interface DatabaseWriteDeps {
   synchronous: SynchronousLevel
   walMode: boolean
   capturesChangeLog: boolean
+}
+
+function bulkLoadInsideTransaction(): SirannonError {
+  return new SirannonError(
+    'bulkLoad commits in a transaction of its own at a relaxed synchronous level, so it cannot run inside another transaction; call executeBatch on that transaction instead',
+    'BULK_LOAD_IN_TRANSACTION',
+  )
 }
 
 function groupedOutcomes(failed: FailedWriteRowCounts): TransactionOutcomes {
@@ -68,7 +77,10 @@ export class DatabaseWriteController {
             this.runInTransaction(
               pool.acquireWriter(),
               sql,
-              txConn => executeBatch(txConn, sql, paramsBatch),
+              txConn =>
+                runWithColumnDropsPrepared(this.deps.cdc.changeTracker, txConn, sql, () =>
+                  executeBatch(txConn, sql, paramsBatch),
+                ),
               batchWriteOutcome,
               runInTransaction,
             ),
@@ -80,8 +92,9 @@ export class DatabaseWriteController {
 
   bulkLoad(sql: string, paramsBatch: Params[], options?: BulkLoadOptions): Promise<BulkLoadResult> {
     const { observer, writeGate, writerLock, pool, synchronous, walMode, capturesChangeLog } = this.deps
-    return observer.withQueryHooks(sql, undefined, undefined, () =>
-      writeGate.run(() =>
+    return observer.withQueryHooks(sql, undefined, undefined, () => {
+      if (writerLock.isHeld()) return Promise.reject(bulkLoadInsideTransaction())
+      return writeGate.run(() =>
         writerLock.run(async () => {
           const writer = pool.acquireWriter()
           const summary = await runBulkLoad({
@@ -92,12 +105,21 @@ export class DatabaseWriteController {
             checkpoint: options?.checkpoint ?? true,
             capturesChangeLog,
             loadRows: () =>
-              this.runInTransaction(writer, sql, txConn => executeBatchSummary(txConn, sql, paramsBatch), writeOutcome),
+              this.runInTransaction(
+                writer,
+                sql,
+                txConn =>
+                  runWithColumnDropsPrepared(this.deps.cdc.changeTracker, txConn, sql, () =>
+                    executeBatchSummary(txConn, sql, paramsBatch),
+                  ),
+                writeOutcome,
+              ),
+            restoreBeforeNextWrite: restore => writerLock.repairBeforeNextHold(restore),
           })
           return { rowsLoaded: summary.rowsLoaded, changes: summary.changes }
         }),
-      ),
-    )
+      )
+    })
   }
 
   executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
@@ -164,6 +186,8 @@ export class DatabaseWriteController {
       sql,
       () =>
         runInTransaction(writer, async txConn => {
+          const opening = cdc.openStamps(txConn, runInTransaction)
+          if (opening !== null) await opening
           const value = await run(txConn)
           countsBeforeCommit = rowCountsOf(measure(value))
           await cdc.applyStamps(txConn)

@@ -20,10 +20,11 @@ function settledWithoutValue(): void {}
  * Opens a database through the `autoOpen` resolver when the registry asks for it, and closes each database that stays idle for `idleTimeout` or longer.
  *
  * When one more open database would exceed `maxOpen`, the manager first closes the least recently used database.
- * Automatic opens under a `maxOpen` limit take their turn one at a time to
- * claim a place, and each open that is under way holds its place until it
- * settles, so tenants that arrive together never push the count past the
- * limit.
+ * Under a `maxOpen` limit, the manager admits one automatic open at a time and
+ * counts every open that is still under way against the limit until that open
+ * settles. When requests for several new tenants arrive at once, each one
+ * therefore waits for its turn, so the number of open databases stays within
+ * the limit.
  *
  * @internal
  */

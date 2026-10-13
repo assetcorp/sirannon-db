@@ -9,7 +9,7 @@ import type { WSLiveMessage, WSServerMessage } from './protocol.js'
 import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry, toChangeRetentionOptions } from './ws-cdc.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
-import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
+import { WS_CLOSE_GOING_AWAY, WS_CLOSE_MESSAGE_TOO_BIG, WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import { wireChangeEvent } from './ws-device-frames.js'
 import type { DeviceChangeStream } from './ws-device-stream.js'
 import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
@@ -81,7 +81,7 @@ export class WSHandler<Identity = unknown> {
   async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
     if (this.closed) {
       this.sendError(conn, '', 'HANDLER_CLOSED', 'WebSocket handler is shut down')
-      conn.close(1013, 'Handler shutting down')
+      conn.close(WS_CLOSE_GOING_AWAY, 'Handler shutting down')
       return
     }
 
@@ -140,7 +140,7 @@ export class WSHandler<Identity = unknown> {
     if (!state) return
 
     if (Buffer.byteLength(data) > this.maxPayloadLength) {
-      this.sendError(conn, '', 'PAYLOAD_TOO_LARGE', 'Message exceeds maximum payload length')
+      conn.close(WS_CLOSE_MESSAGE_TOO_BIG, 'PAYLOAD_TOO_LARGE')
       return
     }
 
@@ -248,7 +248,7 @@ export class WSHandler<Identity = unknown> {
         sub.unsubscribe()
       }
       state.subscriptions.clear()
-      conn.close(1001, 'Handler shutting down')
+      conn.close(WS_CLOSE_GOING_AWAY, 'Handler shutting down')
     }
     this.connections.clear()
 

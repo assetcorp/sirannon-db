@@ -16,6 +16,7 @@ function unreffed(timer: ReturnType<typeof setTimeout>): UnreffableTimeout {
 
 export class SyncRecovery {
   private activeRequestId: string | null = null
+  private activeSourcePeerId: string | null = null
   private responseTimer: UnreffableTimeout | null = null
   private retryTimer: UnreffableTimeout | null = null
   private retryDelayMs = SYNC_RETRY_MIN_DELAY_MS
@@ -27,20 +28,13 @@ export class SyncRecovery {
 
   markRequestSent(requestId: string, sourcePeerId: string): void {
     this.activeRequestId = requestId
-    this.clearResponseTimer()
-    this.responseTimer = unreffed(
-      setTimeout(() => {
-        this.responseTimer = null
-        if (!this.engine.running || this.activeRequestId !== requestId) return
-        const reason = `The sync source sent no data within ${this.engine.syncAckTimeoutMs}ms`
-        this.report(reason, requestId, 'sync-response-timeout', sourcePeerId)
-        void this.abandonAndRetry(reason)
-      }, this.engine.syncAckTimeoutMs),
-    )
+    this.activeSourcePeerId = sourcePeerId
+    this.armResponseTimer(`The sync source sent no data within ${this.engine.syncAckTimeoutMs}ms`)
   }
 
   markRequestFailed(): void {
     this.activeRequestId = null
+    this.activeSourcePeerId = null
     this.clearResponseTimer()
     this.scheduleRetry()
   }
@@ -50,8 +44,21 @@ export class SyncRecovery {
     this.clearResponseTimer()
   }
 
+  noteAcknowledged(requestId: string): void {
+    if (requestId !== this.activeRequestId) return
+    this.armResponseTimer(
+      `The sync source sent nothing within ${this.engine.syncAckTimeoutMs}ms of the last acknowledgement`,
+    )
+  }
+
+  noteCopyReceived(requestId: string): void {
+    if (requestId !== this.activeRequestId) return
+    this.clearResponseTimer()
+  }
+
   markSyncReady(): void {
     this.activeRequestId = null
+    this.activeSourcePeerId = null
     this.clearResponseTimer()
     this.cancelRetry()
     this.retryDelayMs = SYNC_RETRY_MIN_DELAY_MS
@@ -84,8 +91,25 @@ export class SyncRecovery {
     this.engine.emitError({ error: new SyncError(reason, requestId), operation, peerId, recoverable: true })
   }
 
+  private armResponseTimer(reason: string): void {
+    const requestId = this.activeRequestId
+    const sourcePeerId = this.activeSourcePeerId
+    this.clearResponseTimer()
+    if (requestId === null || sourcePeerId === null) return
+    this.responseTimer = unreffed(
+      setTimeout(() => {
+        this.responseTimer = null
+        if (!this.engine.running || this.activeRequestId !== requestId) return
+        if (this.engine.syncState.phase !== 'syncing') return
+        this.report(reason, requestId, 'sync-response-timeout', sourcePeerId)
+        void this.abandonAndRetry(reason)
+      }, this.engine.syncAckTimeoutMs),
+    )
+  }
+
   private async abandonAndRetry(reason: string): Promise<void> {
     this.activeRequestId = null
+    this.activeSourcePeerId = null
     this.clearResponseTimer()
     await abandonActiveSync(this.engine, reason)
     if (!this.engine.running) return
@@ -113,6 +137,35 @@ export class SyncRecovery {
     if (this.responseTimer === null) return
     clearTimeout(this.responseTimer)
     this.responseTimer = null
+  }
+}
+
+/**
+ * Tells the source of a finished first copy which sequence the copy holds, so that the source resends every change
+ * after that sequence, including the changes that it sent while the joiner was still copying and so dropped.
+ *
+ * A failed send costs nothing more than a delay, because the joiner reports its position again when it reconnects to
+ * the source.
+ *
+ * @param engine - The joining node's engine, which sends the report and records a failed send.
+ * @param sourcePeerId - The node that served the copy.
+ * @param snapshotSeq - The source sequence that the copy holds.
+ *
+ * @internal
+ */
+export async function reportSnapshotPosition(
+  engine: ReplicationEngine,
+  sourcePeerId: string,
+  snapshotSeq: bigint,
+): Promise<void> {
+  try {
+    await engine.config.transport.sendAck(
+      sourcePeerId,
+      engine.decorate({ batchId: '', ackedSeq: snapshotSeq, nodeId: engine.nodeId }),
+    )
+  } catch (err: unknown) {
+    const wrappedErr = err instanceof Error ? err : new Error(String(err))
+    engine.emitError({ error: wrappedErr, operation: 'sync-position-report', peerId: sourcePeerId, recoverable: true })
   }
 }
 

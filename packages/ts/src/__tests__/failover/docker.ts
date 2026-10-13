@@ -111,9 +111,33 @@ export async function startToxiproxyContainer(
     portArgs.push('-p', `127.0.0.1:${port}:${port}`)
   }
 
-  await docker(['run', '--detach', '--rm', '--name', containerName, ...portArgs, TOXIPROXY_IMAGE], 30_000)
+  await docker(
+    [
+      'run',
+      '--detach',
+      '--rm',
+      '--name',
+      containerName,
+      '--add-host',
+      'host.docker.internal:host-gateway',
+      ...portArgs,
+      TOXIPROXY_IMAGE,
+    ],
+    30_000,
+  )
   await waitForHttpOk(`http://127.0.0.1:${apiPort}/version`, 30_000)
   return { containerName, apiPort }
+}
+
+export async function pauseContainer(containerName: string): Promise<void> {
+  await docker(['pause', containerName], 30_000)
+}
+
+export async function unpauseContainer(containerName: string): Promise<void> {
+  const state = await docker(['inspect', '--format', '{{.State.Paused}}', containerName], 15_000)
+  if (state.stdout.trim() === 'true') {
+    await docker(['unpause', containerName], 30_000)
+  }
 }
 
 export async function cleanupDockerResources(handles: { containers: string[]; networks: string[] }): Promise<void> {

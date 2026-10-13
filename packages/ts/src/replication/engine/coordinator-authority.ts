@@ -13,6 +13,9 @@ import {
 import type { ConflictResolver, ReplicationStatus, TopologyRole } from '../types.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
+import { ensurePrimaryTermStart } from './term-history.js'
+
+const IN_SYNC_UPDATE_ATTEMPTS = 3
 
 export function arraysEqual(left: string[], right: string[]): boolean {
   if (left.length !== right.length) return false
@@ -52,14 +55,35 @@ export function effectiveTopologyRole(engine: ReplicationEngine): TopologyRole {
   return state.currentPrimary?.nodeId === engine.nodeId ? 'primary' : 'replica'
 }
 
+/**
+ * Records a group state that this node has just read from the coordinator, and hands it to the engine's demotion
+ * handler when the state shows that another node has taken over primary duty from this one in a later term.
+ *
+ * The group watch, a session restore, and every refresh call this function, so that the node notices its own demotion
+ * whichever of those reads returns the later term first.
+ *
+ * @param engine - The engine that keeps the group state and the authority flag.
+ * @param next - The group state that the coordinator returned, or null when it holds no state for the group.
+ * @returns True when the state demoted this node from primary, and false otherwise.
+ */
+export function applyCoordinatorState(engine: ReplicationEngine, next: ReplicationGroupState | null): boolean {
+  const previous = engine.coordinatorState
+  const wasPrimary = previous ? hasCurrentPrimaryAuthorityFor(engine, previous) : engine.coordinatorAuthority
+  noteCoordinatorContact(engine)
+  engine.coordinatorState = next
+  engine.coordinatorAuthority = next ? hasCurrentPrimaryAuthorityFor(engine, next) : false
+  if (!next || !wasPrimary || engine.coordinatorAuthority) return false
+  if (next.primaryTerm <= (previous?.primaryTerm ?? 0n)) return false
+  engine.coordinatorDemotionHandler?.(next)
+  return true
+}
+
 export async function refreshCoordinatorState(engine: ReplicationEngine): Promise<ReplicationGroupState | null> {
   const config = engine.config.coordinator
   if (!config) return null
   try {
     const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
-    noteCoordinatorContact(engine)
-    engine.coordinatorState = state
-    engine.coordinatorAuthority = state ? hasCurrentPrimaryAuthorityFor(engine, state) : false
+    applyCoordinatorState(engine, state)
     return state
   } catch {
     engine.coordinatorAuthority = false
@@ -245,21 +269,7 @@ export async function updateCoordinatorProgressAfterWrite(
   const config = engine.config.coordinator
   if (!config) return
   const ackedNodeIds = engine.peerTracker.ackedConfiguredNodeIds(seq, engine.nodeId, state.votingDataBearingNodeIds)
-  const retainedInSync = state.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
-  let nextState = state
-
-  if (!arraysEqual(retainedInSync, state.inSyncNodeIds) || state.durabilityPointSeq < seq) {
-    const updated = await config.coordinator.updateInSyncSet({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      inSyncNodeIds: retainedInSync,
-      durabilityPointSeq: seq,
-    })
-    if (!updated) {
-      throw new CoordinatorError('Failed to update in-sync set before acknowledging majority write')
-    }
-    nextState = updated
-  }
+  let nextState = await retainAckedInSyncNodes(engine, seq, ackedNodeIds, engine.coordinatorState ?? state)
 
   for (const nodeId of ackedNodeIds) {
     if (nextState.inSyncNodeIds.includes(nodeId)) continue
@@ -277,7 +287,50 @@ export async function updateCoordinatorProgressAfterWrite(
     nextState = admitted
   }
 
-  engine.coordinatorState = nextState
+  applyCoordinatorState(engine, nextState)
+}
+
+async function retainAckedInSyncNodes(
+  engine: ReplicationEngine,
+  seq: bigint,
+  ackedNodeIds: string[],
+  known: ReplicationGroupState,
+): Promise<ReplicationGroupState> {
+  const config = engine.config.coordinator
+  if (!config) return known
+  let base = known
+  for (let attempt = 1; ; attempt++) {
+    const retainedInSync = base.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
+    if (arraysEqual(retainedInSync, base.inSyncNodeIds) && base.durabilityPointSeq >= seq) return base
+    try {
+      const updated = await config.coordinator.updateInSyncSet({
+        clusterId: config.clusterId,
+        groupId: config.groupId,
+        inSyncNodeIds: retainedInSync,
+        durabilityPointSeq: seq,
+      })
+      if (!updated) {
+        throw new CoordinatorError('Failed to update in-sync set before acknowledging majority write')
+      }
+      return updated
+    } catch (err: unknown) {
+      if (!(err instanceof RangeError)) throw err
+      if (attempt >= IN_SYNC_UPDATE_ATTEMPTS) {
+        throw new CoordinatorError('The in-sync set kept changing while this node recorded a majority write', {
+          ...errorDetails(engine, base),
+          cause: err.message,
+        })
+      }
+      const refreshed = await refreshCoordinatorState(engine)
+      if (!refreshed) {
+        throw new CoordinatorError(
+          'The coordinator holds no state for this replication group',
+          errorDetails(engine, base),
+        )
+      }
+      base = refreshed
+    }
+  }
 }
 
 export async function waitForWriteConcern(
@@ -292,6 +345,7 @@ export async function waitForWriteConcern(
     if (!state) {
       throw new CoordinatorError('Cannot satisfy write concern without replication-group state')
     }
+    if (engine.history.termStartTerm !== state.primaryTerm) await ensurePrimaryTermStart(engine)
     if (wc.level === 'majority') {
       await engine.peerTracker.waitForConfiguredMajority(seq, engine.nodeId, state.votingDataBearingNodeIds, timeout)
       await updateCoordinatorProgressAfterWrite(engine, seq, state)

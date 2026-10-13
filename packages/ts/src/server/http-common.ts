@@ -2,6 +2,7 @@ import type { HttpResponse } from 'uWebSockets.js'
 import { SirannonError, WriteOverloadError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver, WriteConcern } from '../core/types.js'
+import { markBodyArriving, settleResponse } from './connection-drain.js'
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
@@ -30,6 +31,7 @@ export function initAbortHandler(res: HttpResponse): ResponseGuard {
 
   res.onAborted(() => {
     aborted = true
+    settleResponse(res)
     for (const fn of listeners) fn()
   })
 
@@ -69,6 +71,7 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseGua
       reject(new Error('Request aborted'))
     })
 
+    markBodyArriving(res, true)
     res.onData((chunk, isLast) => {
       if (done || abort.aborted) return
 
@@ -89,6 +92,7 @@ export function readBody(res: HttpResponse, maxBytes: number, abort: ResponseGua
 
       if (isLast) {
         done = true
+        markBodyArriving(res, false)
         resolve(Buffer.concat(chunks))
       }
     })
@@ -120,6 +124,7 @@ export function sendJson(res: HttpResponse, data: unknown, status = '200 OK'): v
   res.cork(() => {
     res.writeStatus(status).writeHeader('Content-Type', 'application/json').end(payload)
   })
+  settleResponse(res)
 }
 
 export function sendError(
@@ -139,6 +144,7 @@ export function sendError(
     }
     res.writeHeader('Content-Type', 'application/json').end(payload)
   })
+  settleResponse(res)
 }
 
 export function httpStatusForError(err: SirannonError): number {
@@ -198,6 +204,23 @@ export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: un
   } else {
     sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
   }
+}
+
+export const DATABASE_ID_SEGMENT = 'Database identifier'
+
+export const OPERATION_NAME_SEGMENT = 'Operation name'
+
+export function decodePathSegment(value: string): string | null {
+  if (!value.includes('%')) return value
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
+export function sendUndecodablePathSegment(res: HttpResponse, field: string, value: string): void {
+  sendError(res, 400, 'INVALID_REQUEST', `${field} '${value}' is not valid percent-encoding`)
 }
 
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }

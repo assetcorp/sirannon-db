@@ -58,6 +58,23 @@ export interface ReplicationBatch {
   groupId?: string
   /** The sending node's primary term at the time it built the batch. */
   primaryTerm?: bigint
+  /**
+   * The change-log sequence number that the sender read the batch after, so that the receiving node can refuse a batch
+   * that follows a batch it never received. A node that runs an earlier release leaves it out.
+   */
+  afterSeq?: bigint
+  /**
+   * The change-log sequence number of each change, in the order of `changes`, so that the receiving node can skip each
+   * change it already applied. The numbers rise strictly, the first equals `fromSeq`, and the last equals `toSeq`. A
+   * sender that leaves it out has its changes numbered by position when the range holds exactly one number per change.
+   */
+  changeSeqs?: bigint[]
+  /**
+   * Set when the last transaction in the batch continues in the next batch, so that the receiving node holds that
+   * transaction's changes and applies the whole transaction at once when its last change arrives. It requires
+   * `changeSeqs`.
+   */
+  txContinues?: boolean
 }
 
 /** The local and incoming versions of one row, which Sirannon passes to a conflict resolver.

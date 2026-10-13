@@ -8,6 +8,7 @@ import type {
   WSSubscribedMessage,
   WSWireChangeEvent,
 } from '../../server/protocol.js'
+import { RemoteError } from '../types.js'
 
 export interface ActiveSubscription {
   table: string
@@ -30,9 +31,49 @@ export interface ActiveSubscription {
   resumeSeq: (() => bigint | undefined) | undefined
   epoch: string | undefined
   stagedStream: boolean | undefined
+  established: boolean
+}
+
+const UNREACHABLE_SERVER_CODES: ReadonlySet<string> = new Set(['CONNECTION_ERROR', 'TIMEOUT'])
+
+export function markSubscriptionsDisconnected(subscriptions: Map<string, ActiveSubscription>): void {
+  for (const sub of subscriptions.values()) {
+    sub.established = false
+  }
+}
+
+export async function restoreSubscriptions(
+  subscriptions: Map<string, ActiveSubscription>,
+  request: (message: WSClientMessage) => Promise<void>,
+  isClosed: () => boolean,
+): Promise<RemoteError | null> {
+  let unreachable: RemoteError | null = null
+
+  for (const [id, sub] of [...subscriptions.entries()]) {
+    if (isClosed()) break
+    if (sub.established || subscriptions.get(id) !== sub) continue
+    try {
+      await request(buildResubscribeMessage(id, sub))
+    } catch (err) {
+      if (err instanceof RemoteError && UNREACHABLE_SERVER_CODES.has(err.code)) {
+        unreachable = err
+        continue
+      }
+      if (err instanceof RemoteError && err.code === 'DUPLICATE_SUBSCRIPTION') {
+        sub.established = true
+        continue
+      }
+      if (subscriptions.get(id) !== sub) continue
+      subscriptions.delete(id)
+      reportCallerFailure(sub.onError, err)
+    }
+  }
+
+  return unreachable
 }
 
 export function applySubscribedMessage(sub: ActiveSubscription, msg: WSSubscribedMessage): void {
+  sub.established = true
   if (msg.epoch !== undefined) {
     sub.epoch = msg.epoch
   }

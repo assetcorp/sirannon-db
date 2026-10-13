@@ -10,10 +10,11 @@ import type { ExecuteResult, Params, QueryOptions, WriteConcern } from '../../co
 import { runWriterTransaction } from '../../core/writer-transaction.js'
 import { ReplicationError } from '../errors.js'
 import type { ForwardedTransactionResult } from '../types.js'
-import { DDL_PREFIX_RE, extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
+import { extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
 import { resolveWriteConcern, waitForWriteConcern } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { ReplicationTransaction, type ReplicationTransactionHooks } from './replication-transaction.js'
+import { replicatedSchemaChangeOf } from './schema-statement.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
 /**
@@ -46,12 +47,10 @@ export class LocalExecutor {
 
   private async executeOneLocally(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     const engine = this.engine
-    const isDdl = DDL_PREFIX_RE.test(sql)
-    if (isDdl && sql.includes(';')) {
-      throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
-    }
+    const schemaChange = replicatedSchemaChangeOf(sql)
+    const isDdl = schemaChange !== null
     const txId = randomUUID()
-    const droppedTable = isDdl ? extractDroppedTable(sql) : null
+    const droppedTable = isDdl ? extractDroppedTable(schemaChange) : null
 
     let countsBeforeCommit: RowCounts | undefined
     const result = await engine.database.observer.track(
@@ -65,7 +64,7 @@ export class LocalExecutor {
 
           if (isDdl) {
             await insertDdlChange(tx, CHANGES_TABLE, {
-              ddlStatement: sql,
+              ddlStatement: schemaChange,
               nodeId: engine.nodeId,
               txId,
               hlc: engine.hlc.now(),
@@ -188,21 +187,18 @@ export class LocalExecutor {
       const seqBefore = await engine.log.getLocalSeq()
 
       for (const { sql, params } of statements) {
-        const isDdl = DDL_PREFIX_RE.test(sql)
-        if (isDdl && sql.includes(';')) {
-          throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
-        }
+        const schemaChange = replicatedSchemaChangeOf(sql)
 
         results.push(await meter.track(sql, () => execute(tx, sql, params), writeOutcome, failedStatementOutcome))
 
-        if (isDdl) {
+        if (schemaChange !== null) {
           sawDdl = true
-          const droppedTable = extractDroppedTable(sql)
+          const droppedTable = extractDroppedTable(schemaChange)
           if (droppedTable !== null) {
             droppedTables.push(droppedTable)
           }
           await insertDdlChange(tx, CHANGES_TABLE, {
-            ddlStatement: sql,
+            ddlStatement: schemaChange,
             nodeId: engine.nodeId,
             txId,
             hlc: engine.hlc.now(),
@@ -273,7 +269,12 @@ export class LocalExecutor {
       }
 
       const replicationTx = new ReplicationTransaction(tx, hooks).withMeter(engine.database.observer.meter)
-      const result = await fn(replicationTx)
+      let result: T
+      try {
+        result = await fn(replicationTx)
+      } finally {
+        replicationTx.end()
+      }
 
       await engine.log.stampChanges(tx, seqBefore, txId)
       await engine.log.updateColumnVersions(tx, seqBefore)

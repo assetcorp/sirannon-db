@@ -105,13 +105,17 @@ export class TopologyAwareClient extends DatabaseClient implements TopologyRouti
   }
 
   /**
-   * Returns the address that the client sends writes to, which is the current primary.
+   * Returns the address that the client reads the server's capabilities from, which is the current primary. In
+   * coordinator mode, while the group names no primary, it returns the node that a read would go to, so that a
+   * statement read still reaches a readable node during a failover.
    *
    * @param databaseId - Identifier of the database.
-   * @returns Address of the node that accepts writes.
+   * @returns Address of the primary, or of the node that serves reads when the group names no primary.
    */
   protected async resolveServerUrl(databaseId: string): Promise<string> {
-    return this._getWriteEndpoint(databaseId)
+    if (this.discovery !== 'coordinator') return this._getWriteEndpoint(databaseId)
+    const routing = await this.ensureClusterRouting(databaseId)
+    return routing.currentPrimary ?? this.routedReadEndpoint(databaseId)
   }
 
   /** @internal */

@@ -22,7 +22,7 @@ export interface TransactionOutcomes {
 
 type QueryContext = Omit<QueryMetrics, 'durationMs' | 'error'>
 
-export class DatabaseObserver implements StatementMeter {
+export class DatabaseObserver {
   constructor(
     private readonly databaseId: string,
     private readonly localHooks: HookRegistry,
@@ -32,8 +32,16 @@ export class DatabaseObserver implements StatementMeter {
   ) {}
 
   get observesQueries(): boolean {
+    return this.metrics !== null || this.hooksQueries
+  }
+
+  get meter(): StatementMeter | null {
+    if (this.hooksQueries) return this.hookedStatements
+    return this.metrics?.tracksQueries ? this.measuredStatements : null
+  }
+
+  private get hooksQueries(): boolean {
     return (
-      this.metrics !== null ||
       this.localHooks.has('beforeQuery') ||
       this.localHooks.has('afterQuery') ||
       (this.parentHooks?.has('beforeQuery') ?? false) ||
@@ -41,8 +49,13 @@ export class DatabaseObserver implements StatementMeter {
     )
   }
 
-  get meter(): StatementMeter | null {
-    return this.metrics?.tracksQueries ? this : null
+  private readonly hookedStatements: StatementMeter = {
+    track: (sql, op, measure, measureFailure, params) =>
+      this.withQueryHooks(sql, params, undefined, () => this.track(sql, op, measure, measureFailure)),
+  }
+
+  private readonly measuredStatements: StatementMeter = {
+    track: (sql, op, measure, measureFailure) => this.track(sql, op, measure, measureFailure),
   }
 
   async withQueryHooks<T>(

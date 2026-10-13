@@ -89,10 +89,14 @@ function renderOperations(
 
   for (const [name, shape] of Object.entries(database.reads)) {
     if (shape.columns === null) continue
-    const rowType = claim(declared, `${names.rowPrefix}${pascalCase(name)}Row`, readClaimant(names.claimant, name))
+    const rowType = claim(
+      declared,
+      bindable(`${names.rowPrefix}${pascalCase(name)}Row`),
+      readClaimant(names.claimant, name),
+    )
     rowTypes.set(name, rowType)
     lines.push(`export interface ${rowType} {`)
-    for (const column of shape.columns) lines.push(`  ${propertyKey(column)}: unknown`)
+    for (const column of new Set(shape.columns)) lines.push(`  ${propertyKey(column)}: unknown`)
     lines.push('}', '')
   }
 
@@ -121,13 +125,69 @@ function argsType(shape: OperationShape): string {
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
+const UNBINDABLE_NAMES = new Set([
+  'arguments',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'eval',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+  'OperationRef',
+  'registryDigest',
+])
+
 function propertyKey(name: string): string {
   return IDENTIFIER.test(name) ? name : JSON.stringify(name)
 }
 
+function bindable(value: string): string {
+  return IDENTIFIER.test(value) && !UNBINDABLE_NAMES.has(value) ? value : `_${value}`
+}
+
 function identifier(value: string): string {
-  const cleaned = value.replace(/[^A-Za-z0-9_$]/g, '_')
-  return IDENTIFIER.test(cleaned) ? cleaned : `_${cleaned}`
+  return bindable(value.replace(/[^A-Za-z0-9_$]/g, '_'))
 }
 
 function pascalCase(value: string): string {

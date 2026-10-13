@@ -99,7 +99,7 @@ export class PullStream {
         getResumeSeq: () => this.resumeWatermark() ?? undefined,
         epoch: this.pullEpoch,
         stagedStream: this.stagedStream,
-        onReset: () => this.hooks.onResyncRequired(),
+        onError: err => this.handleStreamFailure(err),
         onSubscribed: info => this.handleSubscribed(info),
       })
       this.subscriptions.push(subscription)
@@ -107,6 +107,8 @@ export class PullStream {
 
     if (recoveryApplyError !== null) {
       this.hooks.onApplyFailure(recoveryApplyError)
+    } else {
+      this.hooks.onApplySuccess()
     }
   }
 
@@ -176,6 +178,13 @@ export class PullStream {
     if (this.ackBaseSeq === null) {
       this.ackBaseSeq = this.resumeWatermark()
     }
+  }
+
+  private handleStreamFailure(err: unknown): void {
+    if (this.failed) return
+    this.failed = true
+    this.inbox = []
+    this.hooks.onApplyFailure(err)
   }
 
   private handlePullEvent(event: ChangeEvent): void {

@@ -25,6 +25,12 @@ export async function deleteMetaValue(conn: SQLiteConnection, key: string): Prom
 export const UPSERT_META_VALUE_SQL = `INSERT INTO "${META_TABLE}" (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
 
+export function upsertMetaMaxChangeSeqSql(changesTable: string): string {
+  return `INSERT INTO "${META_TABLE}" (key, value)
+     VALUES (?, (SELECT CAST(COALESCE(MAX(seq), 0) AS TEXT) FROM "${changesTable}"))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+}
+
 export async function upsertMetaValue(conn: SQLiteConnection, key: string, value: string): Promise<void> {
   const stmt = await conn.prepare(UPSERT_META_VALUE_SQL)
   await stmt.run(key, value)

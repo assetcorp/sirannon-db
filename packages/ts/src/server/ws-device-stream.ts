@@ -49,6 +49,7 @@ export interface DeviceStreamDeps {
  * keeps every change that a live device has not acknowledged in the change log.
  */
 export class DeviceChangeStream {
+  cursorHeld = false
   private mode: 'live' | 'catchup'
   private grouper: TransactionGrouper | null = null
   private catchupFrom: bigint
@@ -288,7 +289,11 @@ export class DeviceChangeStream {
     try {
       while (!this.halted && this.mode === 'catchup') {
         this.wakeRequested = false
-        if (this.socketWait || this.readGateClosed()) return
+        if (this.socketWait) return
+        if (this.readGateClosed()) {
+          this.settleFrame(this.deps.packer?.flush() ?? 'queued')
+          return
+        }
 
         const upTo = this.deps.logCursor()
         if (this.catchupFrom >= upTo) {
@@ -300,6 +305,7 @@ export class DeviceChangeStream {
         try {
           events = await this.deps.readLog(this.catchupFrom, upTo, this.catchupBatch)
         } catch (err) {
+          if (this.halted) return
           this.halted = true
           this.deps.onFault(err)
           return

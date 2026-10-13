@@ -12,13 +12,13 @@ export interface SyncControllerOptions {
   url: string
   /** The identifier of the database on that server. */
   databaseId: string
-  /** The tables that this device syncs. */
+  /** The tables that this device syncs, at least one. */
   tables: readonly string[]
   /** Headers that the controller adds to every HTTP request, and to the pull subscription's WebSocket upgrade in a runtime whose WebSocket constructor accepts handshake headers. */
   headers?: Record<string, string>
   /** Subprotocols that the controller offers on the pull subscription's WebSocket upgrade, which is how a browser device sends a credential. The controller offers `sirannon.v1` ahead of them. */
   webSocketProtocols?: string | string[]
-  /** The number of changes that the controller reads from the outbox for one push. */
+  /** The number of changes that the controller reads from the outbox for one push, a whole number from 1 to 1000. */
   batchSize?: number
   /** Milliseconds between pushes of locally recorded changes. */
   pushIntervalMs?: number
@@ -26,7 +26,7 @@ export interface SyncControllerOptions {
   ackIntervalMs?: number
   /** The longest delay, in milliseconds, between retries of a failed push. */
   maxPushRetryDelayMs?: number
-  /** The time, in milliseconds, that the controller allows for a single request. */
+  /** The time, in milliseconds, that the controller allows for a single request, or 0 to wait without a limit. */
   requestTimeout?: number
   /** Whether the controller downloads a fresh snapshot automatically when it marks the device for a resync. Defaults to true. */
   autoResync?: boolean
@@ -34,7 +34,7 @@ export interface SyncControllerOptions {
   snapshotRetryDelayMs?: number
   /** The longest delay, in milliseconds, between snapshot retries. */
   maxSnapshotRetryDelayMs?: number
-  /** The number of rows that the controller requests per snapshot page. */
+  /** The number of rows that the controller requests per snapshot page, a whole number from 1 to 1000. */
   snapshotPageSize?: number
   /** The number of unacknowledged pulled changes above which the device acknowledges at once, ahead of `ackIntervalMs`. */
   immediateAckAfterChanges?: number
@@ -92,7 +92,7 @@ export type SyncState = 'stopped' | 'starting' | 'running' | 'paused' | 'snapsho
  * @public
  */
 export interface SnapshotOptions {
-  /** The number of rows that the controller requests per page. */
+  /** The number of rows that the controller requests per page, a whole number from 1 to 1000. */
   pageSize?: number
   /** Called after the controller loads each page that contains rows. */
   onProgress?: (progress: SnapshotProgress) => void

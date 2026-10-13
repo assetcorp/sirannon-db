@@ -21,7 +21,8 @@ export function isValidBatch(batch: unknown): batch is ReplicationBatch {
     typeof b.hlcRange === 'object' &&
     b.hlcRange !== null &&
     optionalString(b.groupId) &&
-    optionalBigint(b.primaryTerm)
+    optionalBigint(b.primaryTerm) &&
+    optionalBigint(b.afterSeq)
   )
 }
 
@@ -57,7 +58,8 @@ export function isValidSyncRequest(req: unknown): req is SyncRequest {
     typeof r.joinerNodeId === 'string' &&
     Array.isArray(r.completedTables) &&
     optionalString(r.groupId) &&
-    optionalBigint(r.primaryTerm)
+    optionalBigint(r.primaryTerm) &&
+    optionalHistoryPoint(r.historyTail)
   )
 }
 
@@ -85,7 +87,9 @@ export function isValidSyncComplete(complete: unknown): complete is SyncComplete
     typeof c.snapshotSeq === 'bigint' &&
     Array.isArray(c.manifests) &&
     optionalString(c.groupId) &&
-    optionalBigint(c.primaryTerm)
+    optionalBigint(c.primaryTerm) &&
+    optionalHistoryPoint(c.historyPoint) &&
+    (c.resumed === undefined || typeof c.resumed === 'boolean')
   )
 }
 
@@ -109,6 +113,13 @@ function optionalString(value: unknown): boolean {
 
 function optionalBigint(value: unknown): boolean {
   return value === undefined || typeof value === 'bigint'
+}
+
+function optionalHistoryPoint(value: unknown): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'object' || value === null) return false
+  const point = value as Record<string, unknown>
+  return typeof point.hlc === 'string' && point.hlc !== '' && typeof point.txId === 'string'
 }
 
 function optionalWriteConcern(value: unknown): boolean {

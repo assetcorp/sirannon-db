@@ -27,25 +27,34 @@ export class ToxiproxyClient {
   }
 
   async addLatency(proxyName: string, name: string, latencyMs: number): Promise<void> {
-    await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics`, {
-      method: 'POST',
-      body: {
-        name,
-        type: 'latency',
-        stream: 'downstream',
-        toxicity: 1,
-        attributes: {
-          latency: latencyMs,
-          jitter: Math.max(1, Math.floor(latencyMs / 5)),
+    for (const stream of ['downstream', 'upstream'] as const) {
+      await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics`, {
+        method: 'POST',
+        body: {
+          name: `${name}-${stream}`,
+          type: 'latency',
+          stream,
+          toxicity: 1,
+          attributes: {
+            latency: latencyMs,
+            jitter: Math.max(1, Math.floor(latencyMs / 5)),
+          },
         },
-      },
-    })
+      })
+    }
   }
 
   async clearToxic(proxyName: string, toxicName: string): Promise<void> {
-    await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics/${encodeURIComponent(toxicName)}`, {
-      method: 'DELETE',
-    })
+    for (const stream of ['downstream', 'upstream'] as const) {
+      await this.request(
+        `/proxies/${encodeURIComponent(proxyName)}/toxics/${encodeURIComponent(`${toxicName}-${stream}`)}`,
+        { method: 'DELETE' },
+      )
+    }
+  }
+
+  async reset(): Promise<void> {
+    await this.request('/reset', { method: 'POST' })
   }
 
   private async request(path: string, options: { method: string; body?: Record<string, unknown> }): Promise<unknown> {

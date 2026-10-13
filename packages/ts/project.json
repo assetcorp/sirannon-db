@@ -64,6 +64,13 @@
         "cwd": "packages/ts"
       }
     },
+    "test:failover": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm vitest run --config vitest.failover.config.ts",
+        "cwd": "packages/ts"
+      }
+    },
     "test:soak": {
       "executor": "nx:run-commands",
       "options": {

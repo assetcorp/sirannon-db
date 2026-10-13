@@ -43,7 +43,7 @@ AuthenticateHook = (ctx: RequestContext) -> Identity or null, or async of either
 RequestContext   { headers: Map<string, string>, method, path, databaseId?, remoteAddress }
 ```
 
-The server must invoke `authenticate` before every `/db/{id}` request: the HTTP data routes, the backup routes, `GET /db/{id}/cluster`, and the WebSocket upgrade. It must not invoke the hook for `GET /health`, `GET /health/ready`, or `GET /capabilities`. The hook returns the identity for the request, or nothing for an anonymous request. To reject a request, the hook throws. An error with a `status` property must produce that status, code, and message; any other error must produce status 500 with code `HOOK_ERROR`. Sirannon defines no built-in authentication, so the hook is where an implementation authenticates a request.
+The server must invoke `authenticate` before every `/db/{id}` request: the HTTP data routes, the backup routes, `GET /db/{id}/cluster`, and the WebSocket upgrade. It must not invoke the hook for `GET /health`, `GET /health/ready`, or `GET /capabilities`. The hook returns the identity for the request, or nothing for an anonymous request. To reject a request, the hook throws. An error carrying an integer `status` from 400 to 599, a non-empty string `code`, and a string `message` must produce that status, code, and message, whatever the class of the error; any other error, including a Sirannon error with no `status`, must produce status 500 with code `HOOK_ERROR`. Sirannon defines no built-in authentication, so the hook is where an implementation authenticates a request.
 
 On the WebSocket upgrade the server must complete the handshake and close immediately with code 4401 for a refusal of status 401 and 4403 for a refusal of status 403, carrying the error code and message as the close reason. A refusal of any other status must produce the HTTP status response.
 
@@ -96,7 +96,7 @@ Query result rows, the `row` and `oldRow` of change events, bind parameters (`pa
 
 ## HTTP Endpoints (Normative)
 
-Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded database identifier.
+Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded database identifier. The server must percent-decode `{id}` before it passes `databaseId` to the `authenticate` hook and before it resolves the database. When `{id}` is not valid percent-encoding, the hook receives the segment as sent, and the server must fail the request with `400 INVALID_REQUEST` once the hook accepts it.
 
 | Method + path | Purpose |
 |---------------|---------|
@@ -135,11 +135,13 @@ POST /db/{id}/query/{name}   { args?, readConcern? }   -> { rows: List<Map> }
 POST /db/{id}/execute/{name} { args?, writeConcern? }  -> { results: List<Execute> }
 ```
 
+The five statement routes and the five statement WebSocket messages must fail a statement whose `sql` is empty, or whose `params` is neither an object nor an array, with `400 INVALID_REQUEST` over HTTP and `INVALID_MESSAGE` over WebSocket.
+
 `acceptSql` governs the five statement routes, the five statement WebSocket messages, and table subscriptions, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`. It must also fail a `subscribe` message carrying `table` or `tables` and no `deviceId` with `SQL_NOT_ACCEPTED`, unless the registry has a `beforeSubscribe` hook. It serves its other routes as their own options allow: registered operations, live queries, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
 
 `acceptDeviceSync` governs device sync and defaults to false. With it false, a server must fail `POST /db/{id}/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, a `subscribe` message carrying `deviceId`, and an `ack` message with `403 DEVICE_SYNC_NOT_ACCEPTED`. It must also omit every `sync.` capability from `GET /capabilities`, so that a device can distinguish such a server from one that predates device sync. A server configured with `acceptDeviceSync` true and no `authenticate` hook refuses to start, with `INVALID_DEVICE_SYNC`.
 
-`{name}` is URL-encoded, and the server must decode it before matching. `args` follows the value encoding, and an operation declaring no argument accepts an empty body. A name registered as neither a read nor a write must fail with `UNKNOWN_QUERY` on both routes, and the write route must not resolve a read name. `execute/{name}` returns one result per statement.
+`{name}` is URL-encoded, and the server must decode it before matching. The server must fail a `{name}` that is not valid percent-encoding with `400 INVALID_REQUEST` once the `authenticate` hook accepts the request. `args` follows the value encoding, and an operation declaring no argument accepts an empty body. A name registered as neither a read nor a write must fail with `UNKNOWN_QUERY` on both routes, and the write route must not resolve a read name. `execute/{name}` returns one result per statement.
 
 `readConcern` carries only `{ level }`; `writeConcern` carries `{ level, timeoutMs? }`. A transaction needs at least one statement; a batch and a load need at least one parameter set.
 
@@ -250,7 +252,7 @@ A request body over `maxBodyBytes` is rejected with `413 PAYLOAD_TOO_LARGE` befo
 
 ## WebSocket Protocol (Normative)
 
-A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC subscriptions.
+A WebSocket connects at `/db/{id}` and supports queries, writes, and CDC subscriptions. The server decodes `{id}` as it does on the HTTP routes, and must answer an upgrade whose `{id}` is not valid percent-encoding with `400 INVALID_REQUEST` once the `authenticate` hook accepts it.
 
 ### Subprotocol Negotiation
 
@@ -314,11 +316,11 @@ The server invokes no `beforeSubscribe` hook for a live subscription.
 
 ### Subscription Resumption
 
-`sinceSeq` carries the highest `seq` the client has processed. When present, the server replays every retained change with a greater `seq` before delivering live events. `epoch` identifies the sequence space a cursor came from; the server reports it on `subscribed`, and a cursor presented with a different epoch forces a resync instead of a foreign replay. The `subscribed` message's `seq` is the sequence the subscription is live from; a client that has seen no change adopts it as its resume cursor. The server sets `resync: true` when `sinceSeq` fell below the retained history or arrived with a foreign epoch; the subscription still starts live, and the client must treat its prior state as stale and re-read the table.
+`sinceSeq` carries the highest `seq` the client has processed. When present, the server replays every retained change with a greater `seq` before delivering live events. `epoch` identifies the sequence space a cursor came from; the server reports it on `subscribed`, and a cursor presented with a different epoch forces a resync instead of a foreign replay. The `subscribed` message's `seq` is the sequence the subscription is live from; a client that has seen no change adopts it as its resume cursor. The server sets `resync: true` when `sinceSeq` fell below the retained history, exceeds the highest `seq` that the change log has assigned, or arrived with a foreign epoch. A resynced subscription starts live from the `seq` that `subscribed` carries, so the server delivers every later change whatever value `sinceSeq` held, and the client must treat its prior state as stale and re-read the table.
 
 ### Backpressure and Limits
 
-An inbound message over `maxBodyBytes` is rejected with `PAYLOAD_TOO_LARGE`. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. On a subscription presenting a `deviceId`, the server pauses delivery while the outbound buffer holds data and resumes from the change log once it drains, so that it delivers a transaction larger than the buffer across several sends and keeps the buffer under the bound. The server also closes with 1013 while shutting down, 1008 when the database is not found, closed, or the target resolves to none, and 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client must not reconnect after 4401, 4403, or any code in the 4000-4099 range. The recommended idle timeout is 120 seconds with automatic ping/pong. The server paces a subscription presenting a `deviceId` by acknowledgements: it holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
+The server must close a connection that sends a message over `maxBodyBytes` with close code 1009 and the reason `PAYLOAD_TOO_LARGE`, since a message that the server refuses to parse yields no `id` to answer. When the transport refuses a message before the server reads it, the connection can end without a close frame. The server bounds each connection's outbound buffer by `maxWebSocketBackpressureBytes`; when a send would push the buffer past the bound, the server must close the connection with close code 4290 rather than drop a frame, so that the client detects the loss. A client that receives 4290 should reconnect and resume through subscription resumption. On a subscription presenting a `deviceId`, the server pauses delivery while the outbound buffer holds data and resumes from the change log once it drains, so that it delivers a transaction larger than the buffer across several sends and keeps the buffer under the bound. The server also closes with 1001 while shutting down, 1008 when the database is not found, closed, or the target resolves to none, 4401 or 4403 when the `authenticate` hook refuses the upgrade, and 4410 when it has deleted the device cursor of a subscribed device (see [08-device-sync.md](08-device-sync.md#live-pull)). A client must not reconnect after 4401, 4403, or any code in the 4000-4099 range. The recommended idle timeout is 120 seconds with automatic ping/pong. The server paces a subscription presenting a `deviceId` by acknowledgements: it holds delivery once the highest sequence sent runs more than `maxUnacknowledgedChanges` ahead of that device's acknowledged cursor, and resumes on the next `ack`.
 
 ---
 

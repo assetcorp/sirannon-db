@@ -4,11 +4,12 @@ import type { ConflictContext, ConflictResolution, ConflictResolver } from '../t
 /**
  * Resolves a conflict by keeping the write with the higher hybrid logical clock (HLC) timestamp.
  *
- * The resolver accepts every remote delete without comparing timestamps, so a
- * delete wins over a concurrent update. It also accepts the remote write
- * when the local row has no timestamp. When the two timestamps are equal, the
- * resolver accepts the remote write only if its node ID sorts higher, so that
- * every node reaches the same resolution without coordination. Sirannon uses
+ * The resolver compares a remote delete by its timestamp like any other write,
+ * so a delete wins over an update only when it is the later of the two. It
+ * accepts the remote write when the local row has no timestamp. When the two
+ * timestamps are equal, both writes come from one transaction, so the resolver
+ * accepts a remote delete, and accepts any other remote write only if its node
+ * ID sorts higher, so that every node reaches the same resolution. Sirannon uses
  * this resolver by default, and {@link PrimaryWinsResolver} and
  * {@link FieldMergeResolver} fall back to it.
  *
@@ -22,10 +23,6 @@ export class LWWResolver implements ConflictResolver {
    * @returns Which version to write.
    */
   resolve(ctx: ConflictContext): ConflictResolution {
-    if (ctx.remoteChange.operation === 'delete') {
-      return { action: 'accept_remote' }
-    }
-
     if (ctx.localHlc === null) {
       return { action: 'accept_remote' }
     }
@@ -38,6 +35,10 @@ export class LWWResolver implements ConflictResolver {
 
     if (cmp < 0) {
       return { action: 'keep_local' }
+    }
+
+    if (ctx.remoteChange.operation === 'delete') {
+      return { action: 'accept_remote' }
     }
 
     if (ctx.remoteChange.nodeId > (ctx.localChange?.nodeId ?? '')) {

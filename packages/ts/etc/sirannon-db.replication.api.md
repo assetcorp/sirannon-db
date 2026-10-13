@@ -307,6 +307,10 @@ export class PeerTracker {
     // (undocumented)
     removePeer(nodeId: string): void;
     // (undocumented)
+    restartProgress(sentSeq: bigint): void;
+    // (undocumented)
+    resumeFrom(nodeId: string, appliedSeq: bigint): void;
+    // (undocumented)
     waitForAll(seq: bigint, timeoutMs: number): Promise<void>;
     // (undocumented)
     waitForConfiguredAll(seq: bigint, localNodeId: string, votingNodeIds: string[], timeoutMs: number): Promise<void>;
@@ -373,8 +377,10 @@ export interface ReplicationAck {
 
 // @public
 export interface ReplicationBatch {
+    afterSeq?: bigint;
     batchId: string;
     changes: ReplicationChange[];
+    changeSeqs?: bigint[];
     checksum: string;
     fromSeq: bigint;
     groupId?: string;
@@ -385,6 +391,7 @@ export interface ReplicationBatch {
     primaryTerm?: bigint;
     sourceNodeId: string;
     toSeq: bigint;
+    txContinues?: boolean;
 }
 
 // @public
@@ -463,6 +470,8 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     coordinatorAuthority: boolean;
     // @internal (undocumented)
+    coordinatorDemotionHandler: ((state: ReplicationGroupState) => void) | null;
+    // @internal (undocumented)
     coordinatorLastContactMs: number;
     // @internal (undocumented)
     coordinatorLeaseTimer: ReturnType<typeof setInterval> | null;
@@ -500,6 +509,8 @@ export class ReplicationEngine extends EventEmitter {
     getCurrentSeq(): bigint;
     // @internal (undocumented)
     highestSourceSeqSeen: bigint;
+    // @internal (undocumented)
+    readonly history: TermHistory;
     // @internal (undocumented)
     readonly hlc: HLC;
     // @internal (undocumented)
@@ -541,6 +552,8 @@ export class ReplicationEngine extends EventEmitter {
     nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
     observedControllerLease: CoordinatorLease | null;
+    // @internal (undocumented)
+    observedControllerLeaseLiveUntilMs: number;
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
@@ -612,7 +625,7 @@ export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void;
 
 // @internal
 export class ReplicationLog {
-    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, changesTable?: string, tracker?: ChangeTracker);
+    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, changesTable?: string, tracker?: ChangeTracker, logsAppliedDdl?: boolean);
     // (undocumented)
     applyBatch(batch: ReplicationBatch, resolver: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
     // (undocumented)
@@ -632,6 +645,8 @@ export class ReplicationLog {
     // (undocumented)
     getLocalSeq(): Promise<bigint>;
     // (undocumented)
+    getLocalWriteSeq(): Promise<bigint>;
+    // (undocumented)
     getMinAckedSeq(): Promise<bigint | null>;
     // (undocumented)
     getPeerAckedSeq(peerNodeId: string): Promise<bigint>;
@@ -647,7 +662,7 @@ export class ReplicationLog {
     // (undocumented)
     isSyncCompleted(): Promise<boolean>;
     // (undocumented)
-    readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null>;
+    readBatch(afterSeq: bigint, batchSize: number, origins?: readonly string[]): Promise<ReplicationBatch | null>;
     // (undocumented)
     recoverMaxObservedHlc(): Promise<string | null>;
     // (undocumented)
@@ -755,9 +770,11 @@ export interface SyncBatch {
 // @public
 export interface SyncComplete {
     groupId?: string;
+    historyPoint?: SyncHistoryPoint;
     manifests: SyncTableManifest[];
     primaryTerm?: bigint;
     requestId: string;
+    resumed?: boolean;
     snapshotSeq: bigint;
 }
 
@@ -769,12 +786,19 @@ export class SyncError extends ReplicationError {
 }
 
 // @public
+export interface SyncHistoryPoint {
+    hlc: string;
+    txId: string;
+}
+
+// @public
 export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready';
 
 // @public
 export interface SyncRequest {
     completedTables: string[];
     groupId?: string;
+    historyTail?: SyncHistoryPoint;
     joinerNodeId: string;
     primaryTerm?: bigint;
     requestId: string;

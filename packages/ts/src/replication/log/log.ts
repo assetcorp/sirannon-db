@@ -35,10 +35,11 @@ export class ReplicationLog {
 
   constructor(
     conn: SQLiteConnection,
-    localNodeId: string,
+    private readonly localNodeId: string,
     hlc: HLC,
     private readonly changesTable: string = CHANGES_TABLE,
     tracker?: ChangeTracker,
+    logsAppliedDdl = false,
   ) {
     this.pkResolver = new PkResolver(conn)
     this.state = new StateOps(conn)
@@ -52,6 +53,8 @@ export class ReplicationLog {
       fromNodeId => this.state.getLastAppliedSeq(fromNodeId),
       tracker,
       changesTable,
+      undefined,
+      logsAppliedDdl,
     )
     this.stampOps = new StampOps(localNodeId, hlc, changesTable)
     this.dump = new DumpOps(conn, this.pkResolver)
@@ -61,8 +64,8 @@ export class ReplicationLog {
     return this.schema.ensureReplicationTables()
   }
 
-  readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null> {
-    return this.batchReader.readBatch(afterSeq, batchSize)
+  readBatch(afterSeq: bigint, batchSize: number, origins?: readonly string[]): Promise<ReplicationBatch | null> {
+    return this.batchReader.readBatch(afterSeq, batchSize, origins)
   }
 
   stampChanges(tx: SQLiteConnection, afterSeq: bigint, txId: string): Promise<void> {
@@ -94,6 +97,10 @@ export class ReplicationLog {
 
   getLocalSeq(): Promise<bigint> {
     return this.state.getLocalSeq(this.changesTable)
+  }
+
+  getLocalWriteSeq(): Promise<bigint> {
+    return this.state.getNodeChangeSeq(this.changesTable, this.localNodeId)
   }
 
   recoverMaxObservedHlc(): Promise<string | null> {

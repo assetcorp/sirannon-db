@@ -237,6 +237,7 @@ export type FieldValidation<T> = { ok: true; value: T | undefined } | { ok: fals
 
 export function decodeBoundParams(value: unknown, field: string): FieldValidation<Record<string, unknown> | unknown[]> {
   if (value === undefined || value === null) return { ok: true, value: undefined }
+  if (typeof value !== 'object') return { ok: false, message: `Field "${field}" must be an object or array` }
   try {
     return { ok: true, value: decodeTaggedValues(value) as Record<string, unknown> | unknown[] }
   } catch {

@@ -259,6 +259,25 @@ describe.skipIf(binding === null)('rows read and rows written in onQueryComplete
       expect(await db.queryOne('SELECT count(*) AS n FROM audit')).toEqual({ n: 2 })
     })
 
+    it('bills an update that changes no key column of a watched table the same as before the watch', async () => {
+      const db = await openOrders(topology)
+      await db.execute('CREATE UNIQUE INDEX orders_by_customer ON orders (customer)')
+      const updates: Array<[string, unknown[]]> = [
+        ['UPDATE orders SET total = ? WHERE id = ?', [7, 3]],
+        ['UPDATE orders SET total = total + ? WHERE customer = ?', [1, LAST_CUSTOMER]],
+        ['UPDATE OR REPLACE orders SET total = ? WHERE id <= ?', [9, 4]],
+      ]
+      for (const [sql, params] of updates) await db.execute(sql, params)
+      await db.watch('orders')
+      for (const [sql, params] of updates) await db.execute(sql, params)
+
+      for (const [sql] of updates) {
+        const [beforeWatch, afterWatch] = reportsFor(sql)
+        expect(afterWatch.rowsRead, sql).toBe(beforeWatch.rowsRead)
+        expect(afterWatch.rowsWritten, sql).toBe(beforeWatch.rowsWritten)
+      }
+    })
+
     it('counts the rows that a foreign-key cascade deletes', async () => {
       const db = await openOrders(topology)
       await db.execute('CREATE TABLE customers (id INTEGER PRIMARY KEY)')

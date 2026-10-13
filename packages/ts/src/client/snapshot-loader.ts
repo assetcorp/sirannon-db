@@ -3,8 +3,13 @@ import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import type { DeviceSyncPort } from '../core/database-sync.js'
 import { canonicaliseForChecksum } from '../core/sync/canonicalise.js'
 import { sha256Hex } from '../core/sync/sha256.js'
-import { IDENTIFIER_RE, SEQ_STRING_RE } from '../core/sync/validators.js'
-import type { SnapshotManifestResponse, SnapshotPageResponse } from '../server/snapshot-protocol.js'
+import { SEQ_STRING_RE, validateDdlSafety } from '../core/sync/validators.js'
+import {
+  isDumpableTableName,
+  SNAPSHOT_MAX_PAGE_ROWS,
+  type SnapshotManifestResponse,
+  type SnapshotPageResponse,
+} from '../server/snapshot-protocol.js'
 import { toBaseUrl } from './endpoint-urls.js'
 import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS, postJson } from './http-json.js'
 import { RemoteError } from './types.js'
@@ -41,7 +46,7 @@ export interface SnapshotDownloadOptions {
   databaseId: string
   /** Headers that `downloadDatabaseSnapshot` adds to each snapshot request. */
   headers?: Record<string, string>
-  /** The number of rows to request per page. Defaults to 500. */
+  /** The number of rows to request per page, a whole number from 1 to 1000. Defaults to 500. */
   pageSize?: number
   /** The time limit, in milliseconds, for each request. */
   requestTimeoutMs?: number
@@ -81,6 +86,11 @@ function validateManifest(raw: unknown): SnapshotManifestResponse {
   ) {
     throw new RemoteError('INVALID_RESPONSE', 'Snapshot manifest is malformed')
   }
+  for (const ddl of record.schema) {
+    if (!validateDdlSafety(ddl)) {
+      throw new RemoteError('INVALID_RESPONSE', `Snapshot manifest schema statement is unsafe: ${ddl.slice(0, 120)}`)
+    }
+  }
   for (const migration of record.migrations) {
     if (
       typeof migration !== 'object' ||
@@ -97,7 +107,7 @@ function validateManifest(raw: unknown): SnapshotManifestResponse {
     if (
       typeof table !== 'object' ||
       table === null ||
-      !IDENTIFIER_RE.test(String((table as { name?: unknown }).name)) ||
+      !isDumpableTableName((table as { name?: unknown }).name) ||
       typeof (table as { rowCount?: unknown }).rowCount !== 'number'
     ) {
       throw new RemoteError('INVALID_RESPONSE', 'Snapshot manifest table entry is malformed')
@@ -119,6 +129,25 @@ function validatePage(raw: unknown): SnapshotPageResponse {
     throw new RemoteError('INVALID_RESPONSE', 'Snapshot page is malformed')
   }
   return record as SnapshotPageResponse
+}
+
+/**
+ * Throws an `INVALID_ARGUMENT` error unless the page size is a whole number of rows that a server returns in one
+ * snapshot page, because a server refuses every page request outside that range, so the download can never finish.
+ *
+ * @param pageSize - The page size that the caller set, or undefined for the default.
+ * @param optionName - The name of the option that holds the page size, which the error message names.
+ *
+ * @internal
+ */
+export function assertSnapshotPageSize(pageSize: number | undefined, optionName: string): void {
+  if (pageSize === undefined) return
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > SNAPSHOT_MAX_PAGE_ROWS) {
+    throw new RemoteError(
+      'INVALID_ARGUMENT',
+      `'${optionName}' must be a whole number from 1 to ${SNAPSHOT_MAX_PAGE_ROWS}, the most rows that a server returns in one snapshot page`,
+    )
+  }
 }
 
 /**
@@ -152,6 +181,7 @@ export async function downloadDatabaseSnapshot(
   port: DeviceSyncPort,
   options: SnapshotDownloadOptions,
 ): Promise<SnapshotDownloadResult> {
+  assertSnapshotPageSize(options.pageSize, 'pageSize')
   const baseUrl = toBaseUrl(options.url)
   const encodedId = encodeURIComponent(options.databaseId)
   const pageSize = options.pageSize ?? DEFAULT_SNAPSHOT_PAGE_ROWS
@@ -203,6 +233,9 @@ export async function downloadDatabaseSnapshot(
         }
 
         if (page.done) break
+        if (page.rows.length === 0) {
+          throw new RemoteError('INVALID_RESPONSE', `Snapshot page for table '${table.name}' is empty and not the last`)
+        }
         if (page.nextKey === null) {
           throw new RemoteError('INVALID_RESPONSE', `Snapshot page for table '${table.name}' has no resume key`)
         }

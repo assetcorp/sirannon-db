@@ -27,7 +27,7 @@ import {
   transactionFrame,
 } from './ws-request-frames.js'
 import type { ActiveSubscription } from './ws-subscription-state.js'
-import { buildResubscribeMessage } from './ws-subscription-state.js'
+import { markSubscriptionsDisconnected, restoreSubscriptions } from './ws-subscription-state.js'
 
 const DEFAULT_REQUEST_TIMEOUT = 30_000
 
@@ -175,6 +175,7 @@ export class WebSocketTransport implements Transport {
       resumeSeq: options?.getResumeSeq,
       epoch: options?.epoch,
       stagedStream: options?.stagedStream,
+      established: false,
     })
 
     try {
@@ -263,7 +264,7 @@ export class WebSocketTransport implements Transport {
   private connect(): Promise<void> {
     return openWebSocket(
       this.url,
-      { protocols: this.protocols, headers: this.headers },
+      { protocols: this.protocols, headers: this.headers, timeoutMs: this.requestTimeout },
       {
         onConnected: ws => {
           this.ws = ws
@@ -289,6 +290,7 @@ export class WebSocketTransport implements Transport {
     this.pending.rejectAll(this.refusal ?? new RemoteError('CONNECTION_ERROR', 'WebSocket disconnected'))
 
     this.liveQueries.markDisconnected()
+    markSubscriptionsDisconnected(this.activeSubscriptions)
 
     const restorable = this.activeSubscriptions.size + this.liveQueries.size
     if (restorable > 0) {
@@ -329,17 +331,18 @@ export class WebSocketTransport implements Transport {
 
   private async resubscribeAll(): Promise<void> {
     this.subscriptionsRestored = true
-    const entries = [...this.activeSubscriptions.entries()]
-    for (const [id, sub] of entries) {
-      if (this.closed) break
-      try {
-        await this.request<void>(buildResubscribeMessage(id, sub))
-      } catch {
-        this.activeSubscriptions.delete(id)
-      }
+    try {
+      const unreachable = await restoreSubscriptions(
+        this.activeSubscriptions,
+        message => this.request<void>(message),
+        () => this.closed,
+      )
+      await this.liveQueries.restart()
+      if (unreachable !== null && !this.closed) throw unreachable
+    } catch (err) {
+      this.subscriptionsRestored = false
+      throw err
     }
-
-    await this.liveQueries.restart()
   }
 
   private request<T>(msg: WSClientMessage): Promise<T> {

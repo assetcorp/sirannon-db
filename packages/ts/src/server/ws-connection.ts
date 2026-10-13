@@ -43,3 +43,7 @@ export interface WSConnection {
 }
 
 export const WS_CLOSE_OVERLOADED = 4290
+
+export const WS_CLOSE_GOING_AWAY = 1001
+
+export const WS_CLOSE_MESSAGE_TOO_BIG = 1009

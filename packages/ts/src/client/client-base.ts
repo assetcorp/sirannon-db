@@ -5,7 +5,7 @@ import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS } from './http-json.js'
 import { ServerCapabilities } from './server-capabilities.js'
 import { HttpTransport } from './transport/http.js'
 import { WebSocketTransport } from './transport/ws.js'
-import { assertWebSocketCredentials } from './transport/ws-headers.js'
+import { assertHeadersSendable, assertWebSocketCredentials } from './transport/ws-headers.js'
 import type { Transport } from './types.js'
 
 export interface TransportSettings {
@@ -19,6 +19,7 @@ export interface TransportSettings {
 
 export function resolveTransportSettings(options?: ClientOptions): TransportSettings {
   const transport = options?.transport ?? 'websocket'
+  assertHeadersSendable(options?.headers)
   if (transport === 'websocket') {
     assertWebSocketCredentials(options?.headers, options?.webSocketProtocols)
   }

@@ -1,7 +1,14 @@
 import type uWS from 'uWebSockets.js'
 import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import { SIRANNON_WS_SUBPROTOCOL, selectSubprotocol } from '../core/ws-handshake.js'
-import { initAbortHandler, sendError } from './http-common.js'
+import {
+  DATABASE_ID_SEGMENT,
+  decodePathSegment,
+  initAbortHandler,
+  sendError,
+  sendUndecodablePathSegment,
+} from './http-common.js'
+import { UWS_MAX_LIMIT_BYTES } from './limits.js'
 import type { UpgradeRefusal } from './request-hook.js'
 import { authenticateUpgrade, decodeRemoteAddress } from './request-hook.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
@@ -24,23 +31,31 @@ export interface WebSocketRouteOptions {
   maxBackpressureBytes: number
 }
 
+const UWS_SEND_BACKPRESSURE = 0
+const UWS_SEND_DROPPED = 2
+const UWS_UNLIMITED_BACKPRESSURE = 0
+const OVERSIZED_MESSAGE_CEILING_FACTOR = 2
+
 function toSendOutcome(result: number): WSSendOutcome {
-  if (result === 2) return 'dropped'
-  if (result === 0) return 'buffered'
+  if (result === UWS_SEND_DROPPED) return 'dropped'
+  if (result === UWS_SEND_BACKPRESSURE) return 'buffered'
   return 'sent'
 }
 
 export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
   const { app, wsHandler, authenticateHook } = options
 
+  const { maxBackpressureBytes } = options
+
   app.ws<WSUserData>('/db/:id', {
-    maxPayloadLength: options.maxBodyBytes,
-    maxBackpressure: options.maxBackpressureBytes,
+    maxPayloadLength: Math.min(options.maxBodyBytes * OVERSIZED_MESSAGE_CEILING_FACTOR, UWS_MAX_LIMIT_BYTES),
+    maxBackpressure: UWS_UNLIMITED_BACKPRESSURE,
     idleTimeout: 120,
     sendPingsAutomatically: true,
 
     upgrade: (res, req, context) => {
-      const dbId = req.getParameter(0) ?? ''
+      const rawId = req.getParameter(0) ?? ''
+      const dbId = decodePathSegment(rawId)
       const url = req.getUrl()
       const method = req.getMethod()
       const secWebSocketKey = req.getHeader('sec-websocket-key')
@@ -66,7 +81,10 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       const selectedWebSocketProtocol = negotiated.protocol
 
       if (!authenticateHook) {
-        if (abort.claim()) {
+        if (!abort.claim()) return
+        if (dbId === null) {
+          sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+        } else {
           res.upgrade<WSUserData>(
             { databaseId: dbId },
             secWebSocketKey,
@@ -82,7 +100,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         headers,
         method,
         path: url,
-        databaseId: dbId,
+        databaseId: dbId ?? rawId,
         remoteAddress,
       }
 
@@ -90,12 +108,24 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         .then(authenticated => {
           if (!authenticated.ok && !authenticated.refusal) return
           if (!abort.claim()) return
+          if (authenticated.ok && dbId === null) {
+            sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+            return
+          }
 
           const userData: WSUserData = authenticated.ok
-            ? { databaseId: dbId, identity: authenticated.identity }
-            : { databaseId: dbId, refusal: authenticated.refusal }
+            ? { databaseId: dbId ?? rawId, identity: authenticated.identity }
+            : { databaseId: dbId ?? rawId, refusal: authenticated.refusal }
 
-          res.upgrade<WSUserData>(userData, secWebSocketKey, selectedWebSocketProtocol, secWebSocketExtensions, context)
+          res.cork(() => {
+            res.upgrade<WSUserData>(
+              userData,
+              secWebSocketKey,
+              selectedWebSocketProtocol,
+              secWebSocketExtensions,
+              context,
+            )
+          })
         })
         .catch(() => {})
     },
@@ -110,10 +140,20 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         return
       }
 
+      let closing = false
+      let backpressured = false
       const conn: WSConnection = {
         send(data: string): WSSendOutcome {
+          if (closing) return 'dropped'
           try {
-            return toSendOutcome(ws.send(data, false))
+            if (backpressured) {
+              const buffered = ws.getBufferedAmount()
+              if (buffered > maxBackpressureBytes) return 'dropped'
+              backpressured = buffered > 0
+            }
+            const result = ws.send(data, false)
+            if (result === UWS_SEND_BACKPRESSURE) backpressured = true
+            return toSendOutcome(result)
           } catch {
             return 'dropped'
           }
@@ -131,6 +171,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
           } catch {}
         },
         close(code?: number, reason?: string) {
+          closing = true
           try {
             ws.end(code, reason)
           } catch {}

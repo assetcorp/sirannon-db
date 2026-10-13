@@ -1,9 +1,5 @@
 import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
-import {
-  hasCurrentPrimaryAuthorityFor,
-  noteCoordinatorContact,
-  refreshCoordinatorState,
-} from './coordinator-authority.js'
+import { applyCoordinatorState, noteCoordinatorContact, refreshCoordinatorState } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { unrefTimer } from './timers.js'
 
@@ -35,6 +31,7 @@ export async function startControllerLoop(engine: ReplicationEngine): Promise<vo
   if (coordinator.watchControllerLease) {
     engine.controllerLeaseWatchDisposer = await coordinator.watchControllerLease(config.clusterId, lease => {
       engine.observedControllerLease = lease
+      engine.observedControllerLeaseLiveUntilMs = lease === null ? 0 : Date.now() + lease.ttlMs
       if (lease === null) {
         bidForControllerLease(engine, bid).catch((err: unknown) => reportControllerFailure(engine, err))
       }
@@ -52,6 +49,7 @@ export async function stopControllerLeaseWatch(engine: ReplicationEngine): Promi
   const dispose = engine.controllerLeaseWatchDisposer
   engine.controllerLeaseWatchDisposer = null
   engine.observedControllerLease = null
+  engine.observedControllerLeaseLiveUntilMs = 0
   if (dispose) {
     await dispose()
   }
@@ -81,8 +79,11 @@ async function controllerTick(engine: ReplicationEngine, bid: ControllerBid): Pr
 }
 
 function watchShowsLiveHolder(engine: ReplicationEngine): boolean {
-  const observed = engine.observedControllerLease
-  return engine.controllerLeaseWatchDisposer !== null && observed !== null && observed.expiresAtMs > Date.now()
+  return (
+    engine.controllerLeaseWatchDisposer !== null &&
+    engine.observedControllerLease !== null &&
+    engine.observedControllerLeaseLiveUntilMs > Date.now()
+  )
 }
 
 async function bidForControllerLease(engine: ReplicationEngine, bid: ControllerBid): Promise<void> {
@@ -144,8 +145,7 @@ async function runControllerPromotionCheck(engine: ReplicationEngine): Promise<v
       groupId: config.groupId,
       excludeNodeIds: primaryNodeId ? [primaryNodeId] : [],
     })
-    engine.coordinatorState = promoted
-    engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, promoted)
+    applyCoordinatorState(engine, promoted)
   } catch (err: unknown) {
     const wrappedErr = err instanceof Error ? err : new Error(String(err))
     engine.emitError({ error: wrappedErr, operation: 'coordinator-promotion', recoverable: true })

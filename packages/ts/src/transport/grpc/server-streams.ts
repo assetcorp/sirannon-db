@@ -13,6 +13,7 @@ import {
   fromSyncRequestPayload,
 } from './codec.js'
 import type {
+  Hello,
   ForwardRequest as ProtoForwardRequest,
   ForwardResponse as ProtoForwardResponse,
   ReplicationMessage,
@@ -69,6 +70,32 @@ export async function startServer(t: GrpcReplicationTransport): Promise<void> {
   })
 }
 
+interface RefusableStream {
+  getAuthContext(): unknown
+  emit(event: 'error', error: Error): boolean
+}
+
+function refuseStream(call: RefusableStream, code: status, details: string): false {
+  call.emit('error', Object.assign(new Error(details), { code, details }))
+  return false
+}
+
+function acceptsHello<T extends { hello?: Hello }>(
+  t: GrpcReplicationTransport,
+  call: RefusableStream,
+  msg: T,
+): msg is T & { hello: Hello } {
+  if (!msg.hello) return refuseStream(call, status.INVALID_ARGUMENT, 'First message must be Hello')
+  if (!t.validateTlsIdentity(call, msg.hello.nodeId)) {
+    return refuseStream(
+      call,
+      status.UNAUTHENTICATED,
+      `TLS certificate CN does not match claimed nodeId '${msg.hello.nodeId}'`,
+    )
+  }
+  return true
+}
+
 export function handleServerReplicateStream(
   t: GrpcReplicationTransport,
   call: ServerDuplexStream<ReplicationMessage, ReplicationMessage>,
@@ -78,15 +105,7 @@ export function handleServerReplicateStream(
 
   call.on('data', (msg: ReplicationMessage) => {
     if (peerId === null) {
-      if (!msg.hello) {
-        call.destroy(new Error('First message must be Hello'))
-        return
-      }
-
-      if (!t.validateTlsIdentity(call, msg.hello.nodeId)) {
-        call.destroy(new Error(`TLS certificate CN does not match claimed nodeId '${msg.hello.nodeId}'`))
-        return
-      }
+      if (!acceptsHello(t, call, msg)) return
 
       peerId = msg.hello.nodeId
       const peerRole = msg.hello.role as TopologyRole
@@ -168,15 +187,7 @@ export function handleServerSyncStream(
 
   call.on('data', (msg: SyncMessage) => {
     if (peerId === null) {
-      if (!msg.hello) {
-        call.destroy(new Error('First message must be Hello'))
-        return
-      }
-
-      if (!t.validateTlsIdentity(call, msg.hello.nodeId)) {
-        call.destroy(new Error(`TLS certificate CN does not match claimed nodeId '${msg.hello.nodeId}'`))
-        return
-      }
+      if (!acceptsHello(t, call, msg)) return
 
       peerId = msg.hello.nodeId
       const peerRole = msg.hello.role as TopologyRole

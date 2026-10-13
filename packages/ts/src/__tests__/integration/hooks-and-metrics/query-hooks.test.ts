@@ -125,8 +125,81 @@ describe('a before-query hook that throws', () => {
   })
 })
 
+describe.each(TOPOLOGIES)('query hooks inside a transaction callback with $label', ({ writerWorker }) => {
+  it('refuses each statement that a before-query hook refuses before SQLite executes it, reports every statement to after-query hooks, and commits only what the hooks allow', async () => {
+    const beforeCalls: QueryHookContext[] = []
+    const afterCalls: AfterQueryHookContext[] = []
+    const refusal = new HookDeniedError('beforeQuery', 'orders are frozen')
+    const sirannon = registry({
+      hooks: {
+        onBeforeQuery: ctx => {
+          beforeCalls.push(ctx)
+        },
+      },
+    })
+    const db = await sirannon.open('orders', ordersPath, { writerWorker })
+    db.onBeforeQuery(ctx => {
+      if (ctx.sql.includes('refused')) throw refusal
+    })
+    db.onAfterQuery(ctx => {
+      afterCalls.push(ctx)
+    })
+    const refusedInsert = `${INSERT_ORDER} -- refused`
+    const refusedDelete = 'DELETE FROM orders -- refused'
+    const refusedRead = 'SELECT * FROM missing_orders -- refused'
+
+    const outcomes = await db.transaction(async tx => {
+      const settled = [
+        await settle(tx.execute(refusedDelete)),
+        await settle(tx.executeBatch(refusedInsert, [['eve', 1]])),
+        await settle(tx.query(refusedRead)),
+        await settle(db.transaction(inner => inner.execute('DROP TABLE orders -- refused'))),
+        await settle(tx.execute(INSERT_ORDER, ['linus', 30])),
+      ]
+      return settled.map(outcome => (outcome.rejected ? outcome.value : 'ran'))
+    })
+
+    expect(outcomes).toEqual([refusal, refusal, refusal, refusal, 'ran'])
+    expect(beforeCalls.map(ctx => [ctx.sql, ctx.params])).toEqual([
+      [refusedDelete, undefined],
+      [refusedInsert, undefined],
+      [refusedRead, undefined],
+      ['DROP TABLE orders -- refused', undefined],
+      [INSERT_ORDER, ['linus', 30]],
+    ])
+    expect(afterCalls).toEqual([
+      { databaseId: 'orders', sql: INSERT_ORDER, params: ['linus', 30], durationMs: expect.any(Number) },
+    ])
+    expect(tablesIn(ordersPath)).toEqual(['orders'])
+    expect(readFile(ordersPath, ALL_ORDERS)).toEqual([...SEEDED_ORDERS, { id: 3, customer: 'linus', total: 30 }])
+  })
+
+  it('reports a statement that fails inside a callback to after-query hooks with the error that the call raised', async () => {
+    const afterCalls: AfterQueryHookContext[] = []
+    const db = await registry().open('orders', ordersPath, { writerWorker })
+    db.onAfterQuery(ctx => {
+      afterCalls.push(ctx)
+    })
+
+    const failure = await settle(
+      db.transaction(async tx => {
+        await tx.query(ALL_ORDERS)
+        await tx.execute(INSERT_ORDER, ['nobody', null])
+      }),
+    )
+
+    expect(failure.rejected).toBe(true)
+    expect(afterCalls.map(ctx => [ctx.sql, ctx.error])).toEqual([
+      [ALL_ORDERS, undefined],
+      [INSERT_ORDER, failure.value],
+    ])
+    expect('error' in afterCalls[0]).toBe(false)
+    expect(readFile(ordersPath, ALL_ORDERS)).toEqual(SEEDED_ORDERS)
+  })
+})
+
 describe('query hooks on many databases', () => {
-  it('calls registry hooks before database hooks in the order of registration, with the statement, its parameters, and its concerns', async () => {
+  it('calls registry hooks before database hooks in the order of registration, with the statement, its parameters, and its read or write concern', async () => {
     const calls: Array<{ hook: string; ctx: QueryHookContext | AfterQueryHookContext }> = []
     const record = (hook: string) => (ctx: QueryHookContext | AfterQueryHookContext) => {
       calls.push({ hook, ctx })
@@ -237,8 +310,10 @@ describe('hook disposers', () => {
       'SELECT 3 AS three',
     ])
   })
+})
 
-  it('take effect from the next statement when a running hook registers or disposes hooks', async () => {
+describe('a hook that registers or disposes hooks while it runs', () => {
+  it('changes which hooks run from the next statement onward', async () => {
     const order: string[] = []
     const sirannon = registry()
     const db = await sirannon.open('orders', ordersPath)
@@ -337,7 +412,13 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
     const afterCalls: AfterQueryHookContext[] = []
     const sirannon = registry({ hooks: { onAfterQuery: ctx => afterCalls.push(ctx) } })
     const db = await sirannon.open('orders', ordersPath, { writerWorker: topology.writerWorker })
-    const calls: Array<{ label: string; statements: string[]; run: () => Promise<unknown>; fails: boolean }> = [
+    const calls: Array<{
+      label: string
+      statements: string[]
+      params?: unknown[]
+      run: () => Promise<unknown>
+      fails: boolean
+    }> = [
       { label: 'a read', statements: [ALL_ORDERS], run: () => db.query(ALL_ORDERS), fails: false },
       {
         label: 'a read of a missing table',
@@ -408,6 +489,7 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
       {
         label: 'a grouped transaction',
         statements: [`${INSERT_ORDER} -- grouped`, "UPDATE orders SET total = total + 1 WHERE customer = 'ada'"],
+        params: [['edsger', 10], undefined],
         run: () =>
           db.executeTransaction([
             { sql: `${INSERT_ORDER} -- grouped`, params: ['edsger', 10] },
@@ -418,6 +500,10 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
       {
         label: 'a grouped transaction whose second statement breaks NOT NULL',
         statements: [`${INSERT_ORDER} -- failing grouped`, `${INSERT_ORDER} -- failing grouped null`],
+        params: [
+          ['tony', 11],
+          ['nobody', null],
+        ],
         run: () =>
           db.executeTransaction([
             { sql: `${INSERT_ORDER} -- failing grouped`, params: ['tony', 11] },
@@ -428,6 +514,7 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
       {
         label: 'a transaction that executes alone',
         statements: ['CREATE TABLE audit (note TEXT NOT NULL)', 'INSERT INTO audit (note) VALUES (?)'],
+        params: [undefined, ['opened']],
         run: () =>
           db.executeTransaction([
             { sql: 'CREATE TABLE audit (note TEXT NOT NULL)' },
@@ -438,6 +525,7 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
       {
         label: 'a transaction that executes alone and breaks NOT NULL',
         statements: ['CREATE TABLE audit_two (note TEXT NOT NULL)', 'INSERT INTO audit_two (note) VALUES (?)'],
+        params: [undefined, [null]],
         run: () =>
           db.executeTransaction([
             { sql: 'CREATE TABLE audit_two (note TEXT NOT NULL)' },
@@ -456,6 +544,12 @@ describe.each(TOPOLOGIES)('after-query hooks with $label', topology => {
         contexts.map(ctx => ctx.sql),
         call.label,
       ).toEqual(call.statements)
+      if (call.params) {
+        expect(
+          contexts.map(ctx => ctx.params),
+          call.label,
+        ).toEqual(call.params)
+      }
       for (const ctx of contexts) {
         if (call.fails) expect(ctx.error, call.label).toBe(outcome.value)
         else expect('error' in ctx, call.label).toBe(false)

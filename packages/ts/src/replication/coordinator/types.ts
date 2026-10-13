@@ -168,7 +168,7 @@ export interface ReplicationGroupState {
   currentPrimary: CoordinatorPrimary | null
   /** Holds the current primary's term, which rises by one with each promotion. */
   primaryTerm: bigint
-  /** Holds the change-log position up to which a majority of voting nodes stores the data durably. */
+  /** Holds the position in the current primary's change log up to which a majority of voting nodes stores the data durably. Each promotion sets it to 0, because the new primary numbers its change log on its own, and the new primary then records its own position. */
   durabilityPointSeq: bigint
   /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]
@@ -217,7 +217,7 @@ export interface SetReplicationGroupStateInput {
 /**
  * Describes a promotion that takes effect only while the group is still at the
  * term that the caller expects, so that two candidates cannot both promote
- * themselves.
+ * themselves. The promotion sets the durability point to 0.
  *
  * @public
  */
@@ -361,7 +361,7 @@ export interface ClusterCoordinator {
   renewLease(leaseId: string, ttlMs: number): Promise<boolean>
   /** Releases a lease at once, and returns whether the release succeeded. */
   releaseLease(leaseId: string): Promise<boolean>
-  /** Records one node as a live member of the cluster. */
+  /** Records one node as a live member of the cluster, and replaces any session that an earlier process of the same node left behind. */
   registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>
   /** Returns one node's session, or null once its lease expires. */
   getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>
@@ -390,7 +390,7 @@ export interface ClusterCoordinator {
   admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>
   /** Sets or clears one node's draining, repairing, and faulted flags. */
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>
-  /** Promotes an eligible in-sync replica, and throws a `NoSafePrimaryError` when no replica qualifies. */
+  /** Promotes an eligible in-sync replica while the group has no primary or its primary is one of `excludeNodeIds`, returns the group unchanged once another node holds primary duty, and throws a `NoSafePrimaryError` when no replica qualifies. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
   /** Releases every connection, watch, and lease that the coordinator keeps open. */
   close?(): Promise<void>

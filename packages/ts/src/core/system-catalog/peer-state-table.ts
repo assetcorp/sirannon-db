@@ -33,6 +33,17 @@ export async function upsertPeerAckedSeq(
   await stmt.run(peerNodeId, seq.toString(), updatedAt)
 }
 
+/** Deletes the recorded progress of every peer. */
+export async function deletePeerStates(conn: SQLiteConnection): Promise<void> {
+  await conn.exec(`DELETE FROM ${PEER_STATE_TABLE}`)
+}
+
+/** Deletes the recorded progress of one peer. */
+export async function deletePeerState(conn: SQLiteConnection, peerNodeId: string): Promise<void> {
+  const stmt = await conn.prepare(`DELETE FROM ${PEER_STATE_TABLE} WHERE peer_node_id = ?`)
+  await stmt.run(peerNodeId)
+}
+
 export async function selectPeerAckedSeq(conn: SQLiteConnection, peerNodeId: string): Promise<bigint> {
   const stmt = await conn.prepare(`SELECT last_acked_seq FROM ${PEER_STATE_TABLE} WHERE peer_node_id = ?`)
   const row = (await stmt.get(peerNodeId)) as { last_acked_seq?: SeqValue } | undefined

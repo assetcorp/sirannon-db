@@ -9,26 +9,30 @@ export function unrefTimer(timer: ReturnType<typeof setTimeout> | ReturnType<typ
 
 async function requestJson(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  unrefTimer(timer)
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined
+  if (timer !== undefined) unrefTimer(timer)
 
   let response: Response
   try {
     response = await fetch(url, { ...init, signal: controller.signal })
   } catch (err) {
+    clearTimeout(timer)
     throw new RemoteError(
       'CONNECTION_ERROR',
       `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
     )
-  } finally {
-    clearTimeout(timer)
   }
 
   let data: unknown
   try {
     data = await response.json()
   } catch {
+    if (controller.signal.aborted) {
+      throw new RemoteError('TIMEOUT', `The response from ${url} took longer than ${timeoutMs}ms to arrive`)
+    }
     throw new RemoteError('INVALID_RESPONSE', `Server returned non-JSON response (HTTP ${response.status})`)
+  } finally {
+    clearTimeout(timer)
   }
 
   if (!response.ok) {

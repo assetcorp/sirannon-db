@@ -1,6 +1,6 @@
 import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
 import type { SubscribeHookContext } from '../core/hooks/types.js'
-import { highestMigrationVersion } from '../core/system-catalog/index.js'
+import { highestMigrationVersion, selectMaxAssignedChangeSeq } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
 import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE, TABLE_SUBSCRIPTION_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { AckResponse } from './protocol.js'
@@ -129,6 +129,16 @@ export async function handleSubscribeMessage(
     return
   }
 
+  if (deviceId === undefined && msg.stagedStream !== undefined) {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" requires a "deviceId"')
+    return
+  }
+
+  if (deviceId === undefined && msg.tables !== undefined) {
+    deps.sendError(conn, id, 'INVALID_MESSAGE', '"tables" requires a "deviceId"')
+    return
+  }
+
   let schemaVersion = 0
   if (deviceId !== undefined && msg.schemaVersion !== undefined) {
     if (!isValidSchemaVersion(msg.schemaVersion)) {
@@ -180,16 +190,6 @@ export async function handleSubscribeMessage(
       deviceId,
       stagedStream: msg.stagedStream === true,
     })
-    return
-  }
-
-  if (msg.stagedStream !== undefined) {
-    deps.sendError(conn, id, 'INVALID_MESSAGE', '"stagedStream" requires a "deviceId"')
-    return
-  }
-
-  if (tables.length > 1) {
-    deps.sendError(conn, id, 'INVALID_MESSAGE', '"tables" requires a "deviceId"')
     return
   }
 
@@ -250,8 +250,7 @@ async function subscribeLive(
   let subscription: Subscription | null = null
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
-    await ctx.tracker.watch(ctx.cdcConn, table)
-    await state.database.ensureChangeStamping()
+    await state.database.watch(table)
 
     const grouper = new TransactionGrouper(event => deps.sendChange(conn, id, event) !== 'dropped')
     const boundary = ctx.tracker.cursor
@@ -299,14 +298,16 @@ async function subscribeResuming(
   let subscription: Subscription | null = null
   try {
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
-    await ctx.tracker.watch(ctx.cdcConn, table)
-    await state.database.ensureChangeStamping()
+    await state.database.watch(table)
+    const logEnd = await selectMaxAssignedChangeSeq(ctx.cdcConn, ctx.tracker.changeLogTable)
 
     const grouper = new TransactionGrouper(event => deps.sendChange(conn, id, event) !== 'dropped')
     const deliver = (event: ChangeEvent): WSSendOutcome => (grouper.receive(event) ? 'sent' : 'dropped')
     boundary = ctx.tracker.cursor
     const boundaryEndsTransaction = ctx.tracker.pollEndedAtTxBoundary
-    primed = new PrimedSubscription(sinceSeq, deliver, () => deps.handleOverload(conn))
+    const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
+    const cursorOutsideLog = foreignEpoch || sinceSeq > logEnd
+    primed = new PrimedSubscription(cursorOutsideLog ? boundary : sinceSeq, deliver, () => deps.handleOverload(conn))
     const sub = ctx.manager.subscribe(table, filter, event => primed.onLiveEvent(event))
 
     let removeBatchEnd = (): void => {}
@@ -333,8 +334,7 @@ async function subscribeResuming(
     }
 
     const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
-    const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
-    resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
+    resync = cursorOutsideLog || needsResync(sinceSeq, minSeq, boundary)
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, resync)
   } catch (err) {
     if (subscription) deps.detachSubscription(conn, id, subscription)

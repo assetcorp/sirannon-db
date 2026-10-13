@@ -7,6 +7,7 @@ import { IDENTIFIER_RE } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
 import { advanceStreamDigest } from './sync-verification.js'
+import { answerSyncFromHistory, ensurePrimaryTermStart, selectCopyHistoryPoint } from './term-history.js'
 
 /**
  * Answers a joining node's first-sync request by streaming the schema, then each table's rows in batches, and last a
@@ -42,11 +43,13 @@ export class SyncServer {
     if (engine.isCoordinatorMode()) {
       try {
         await engine.verifyPrimaryAuthority()
+        await ensurePrimaryTermStart(engine)
       } catch (err: unknown) {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))
         await this.rejectSyncRequest(fromPeerId, request, wrappedErr.message)
         return
       }
+      if (await answerSyncFromHistory(engine, request, fromPeerId)) return
     } else if (!engine.config.topology.canWrite()) {
       await this.rejectSyncRequest(fromPeerId, request, 'This node cannot serve syncs')
       return
@@ -91,6 +94,7 @@ export class SyncServer {
     await readConn.exec('BEGIN')
     const lockStmt = await readConn.prepare('SELECT 1 FROM sqlite_master LIMIT 1')
     await lockStmt.get()
+    const historyPoint = await selectCopyHistoryPoint(engine, readConn)
 
     engine.log.registerActiveSyncSeq(snapshotSeq)
 
@@ -117,6 +121,7 @@ export class SyncServer {
       aborted: false,
       streamVerification: request.supportsStreamVerification === true,
       tableDigests: new Map(),
+      historyPoint,
     }
 
     this.activeSyncs.set(request.requestId, session)
@@ -341,6 +346,7 @@ export class SyncServer {
         requestId: session.requestId,
         snapshotSeq: session.snapshotSeq,
         manifests,
+        historyPoint: session.historyPoint,
       }),
     )
 

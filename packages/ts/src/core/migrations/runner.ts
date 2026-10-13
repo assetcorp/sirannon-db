@@ -37,13 +37,19 @@ function isMigrationStep(step: unknown): boolean {
  */
 // biome-ignore lint/complexity/noStaticOnlyClass: exported as a class namespace
 export class MigrationRunner {
-  static async run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult> {
+  static async run(
+    conn: SQLiteConnection,
+    migrations: Migration[],
+    afterEachMigration?: (txConn: SQLiteConnection) => Promise<void>,
+  ): Promise<MigrationResult> {
     const validated = MigrationRunner.validateMigrations(migrations)
     const effectiveBaseline = resolveEffectiveBaseline(validated)
+    const appliedEntries: AppliedMigrationEntry[] = []
 
-    return MigrationRunner.retryOnConcurrentConflict(() =>
-      MigrationRunner.applyPending(conn, validated, effectiveBaseline),
+    await MigrationRunner.retryOnConcurrentConflict(() =>
+      MigrationRunner.applyPending(conn, validated, effectiveBaseline, appliedEntries, afterEachMigration),
     )
+    return { applied: appliedEntries, skipped: validated.length - appliedEntries.length }
   }
 
   private static async retryOnConcurrentConflict<T>(operation: () => Promise<T>): Promise<T> {
@@ -69,8 +75,10 @@ export class MigrationRunner {
     conn: SQLiteConnection,
     validated: Migration[],
     effectiveBaseline: Migration | undefined,
-  ): Promise<MigrationResult> {
-    return conn.transaction(async txConn => {
+    appliedEntries: AppliedMigrationEntry[],
+    afterEachMigration: ((txConn: SQLiteConnection) => Promise<void>) | undefined,
+  ): Promise<void> {
+    const pending = await conn.transaction(async txConn => {
       await ensureMigrationsTable(txConn)
       const applied = await MigrationRunner.getAppliedRows(txConn)
 
@@ -82,49 +90,54 @@ export class MigrationRunner {
         }
       }
 
-      const pending = planPendingMigrations(validated, effectiveBaseline, new Set(applied.keys()))
-
-      if (pending.length === 0) {
+      const planned = planPendingMigrations(validated, effectiveBaseline, new Set(applied.keys()))
+      if (planned.length === 0) {
         await syncSchemaVersion(txConn, MigrationRunner.highestVersion(applied.keys()))
-        return { applied: [], skipped: validated.length }
       }
-
-      const appliedEntries: AppliedMigrationEntry[] = []
-      const insertStmt = await prepareInsertMigration(txConn)
-
-      for (const migration of pending) {
-        try {
-          if (typeof migration.up === 'string') {
-            await txConn.exec(migration.up)
-          } else {
-            const result = migration.up(new Transaction(txConn))
-            if (result instanceof Promise) await result
-          }
-        } catch (err) {
-          if (err instanceof MigrationError) throw err
-          if (isConcurrentMigrationConflict(err)) throw err
-          throw new MigrationError(
-            `Migration ${migration.version}_${migration.name} failed: ${err instanceof Error ? err.message : String(err)}`,
-            migration.version,
-          )
-        }
-        await insertStmt.run(migration.version, migration.name, migrationContentChecksum(migration))
-        appliedEntries.push({ version: migration.version, name: migration.name })
-      }
-
-      await mirrorSchemaVersion(
-        txConn,
-        Math.max(
-          MigrationRunner.highestVersion(applied.keys()),
-          MigrationRunner.highestVersion(appliedEntries.map(e => e.version)),
-        ),
-      )
-
-      return {
-        applied: appliedEntries,
-        skipped: validated.length - pending.length,
-      }
+      return planned
     })
+
+    for (const migration of pending) {
+      const appliedHere = await conn.transaction(txConn =>
+        MigrationRunner.applyOne(txConn, migration, afterEachMigration),
+      )
+      if (appliedHere) appliedEntries.push({ version: migration.version, name: migration.name })
+    }
+  }
+
+  private static async applyOne(
+    txConn: SQLiteConnection,
+    migration: Migration,
+    afterEachMigration: ((txConn: SQLiteConnection) => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    const applied = await MigrationRunner.getAppliedRows(txConn)
+    if (applied.has(migration.version)) return false
+
+    try {
+      if (typeof migration.up === 'string') {
+        await txConn.exec(migration.up)
+      } else {
+        const tx = new Transaction(txConn)
+        try {
+          const result = migration.up(tx)
+          if (result instanceof Promise) await result
+        } finally {
+          tx.end()
+        }
+      }
+    } catch (err) {
+      if (err instanceof MigrationError) throw err
+      if (isConcurrentMigrationConflict(err)) throw err
+      throw new MigrationError(
+        `Migration ${migration.version}_${migration.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+        migration.version,
+      )
+    }
+    const insertStmt = await prepareInsertMigration(txConn)
+    await insertStmt.run(migration.version, migration.name, migrationContentChecksum(migration))
+    await mirrorSchemaVersion(txConn, Math.max(MigrationRunner.highestVersion(applied.keys()), migration.version))
+    if (afterEachMigration) await afterEachMigration(txConn)
+    return true
   }
 
   static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
@@ -184,8 +197,13 @@ export class MigrationRunner {
             if (typeof migration.down === 'string') {
               await txConn.exec(migration.down)
             } else {
-              const result = migration.down?.(new Transaction(txConn))
-              if (result instanceof Promise) await result
+              const tx = new Transaction(txConn)
+              try {
+                const result = migration.down?.(tx)
+                if (result instanceof Promise) await result
+              } finally {
+                tx.end()
+              }
             }
           } catch (err) {
             if (err instanceof MigrationError) throw err
@@ -282,7 +300,7 @@ export class MigrationRunner {
 
       if (m.down !== undefined && !isMigrationStep(m.down)) {
         throw new MigrationError(
-          `Migration ${m.version}_${m.name} must have a down that is SQL text or a function, or no down`,
+          `Migration ${m.version}_${m.name} must leave down unset or set it to SQL text or a function`,
           m.version,
           'MIGRATION_VALIDATION_ERROR',
         )
@@ -298,7 +316,7 @@ export class MigrationRunner {
 
       if (m.baseline !== undefined && (typeof m.baseline !== 'object' || m.baseline === null)) {
         throw new MigrationError(
-          `Baseline migration ${m.version}_${m.name} must mark its baseline as an object with a through version`,
+          `Migration ${m.version}_${m.name} must set baseline to an object with a through version`,
           m.version,
           'MIGRATION_VALIDATION_ERROR',
         )

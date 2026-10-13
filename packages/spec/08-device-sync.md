@@ -24,7 +24,7 @@ A device has a stable identity: a 32-character lowercase hexadecimal string, hel
 
 ## Write-Time Stamping
 
-A CDC trigger writes a change with `node_id`, `tx_id`, and `hlc` empty; such a row is an unstamped local change. Every local write path stamps its own rows in the same transaction, setting `node_id` to the device identity, `tx_id` to a fresh 32-hex transaction id, and `hlc` to a fresh timestamp, over the rows still holding an empty `node_id`. The `node_id` column is the change's origin. This stamping is what lets a device read back only its own writes and lets the server suppress echoes.
+A CDC trigger writes a change with `node_id`, `tx_id`, and `hlc` empty; such a row is an unstamped local change. Every local write path stamps its own rows in the same transaction. Before its first statement, the write path records the highest `seq` in the change log, and before it commits, it sets `node_id` to the device identity, `tx_id` to a fresh 32-hex transaction id, and `hlc` to a fresh timestamp on each row above that `seq` that still holds an empty `node_id`. A write path that joins a transaction already open records no `seq` of its own and uses the one that the open transaction recorded. A change that another process writes into the file keeps its empty stamps, so it forms a transaction of its own. The `node_id` column is the change's origin. This stamping is what lets a device read back only its own writes and lets the server suppress echoes.
 
 ---
 
@@ -32,12 +32,26 @@ A CDC trigger writes a change with `node_id`, `tx_id`, and `hlc` empty; such a r
 
 `applyChanges(batch, resolver?)` on the database applies a batch of remote changes locally, defaulting to the LWW resolver. An implementation validates and applies the batch as follows:
 
-- The recomputed checksum must match `batch.checksum`, or the batch fails with `BATCH_VALIDATION_ERROR`. Each non-DDL `table` must be a valid identifier, and one under the reserved `_sirannon` or `sqlite_` prefix fails with `BATCH_VALIDATION_ERROR`.
-- An implementation skips the whole of a batch whose `toSeq` is at or below the highest already-applied sequence for its source. It also skips a change already recorded in `_sirannon_applied_changes`, so applying the same batch twice changes nothing.
-- An implementation groups changes by `txId` and applies each group in one transaction. It inserts a change whose target row is absent directly, and it passes a change whose row exists to the resolver (see [Conflict Resolution](03-replication.md#conflict-resolution)). It records each applied change in `_sirannon_applied_changes`.
+- The recomputed checksum must match `batch.checksum`, or the batch fails with `BATCH_VALIDATION_ERROR`. Each non-DDL `table` must be a valid identifier, and one under the reserved `_sirannon` or `sqlite_` prefix fails with `BATCH_VALIDATION_ERROR`. In a batch that carries no DDL change, each `table` must exist on the receiving database, or the batch fails with `BATCH_VALIDATION_ERROR` before any write.
+- A sequence is an integer from 0 to 9,223,372,036,854,775,807, the largest integer that SQLite stores, and `fromSeq` must not exceed `toSeq`; any other value fails the batch with `BATCH_VALIDATION_ERROR`. A batch can carry `changeSeqs`, the source sequence of each change, which must hold one strictly rising sequence per change, starting at `fromSeq` and ending at `toSeq`. In a batch without `changeSeqs`, the changes take consecutive sequences from `fromSeq` when the range holds exactly one sequence per change; otherwise the first change takes `fromSeq` and the last takes `toSeq`, and the other changes take none.
+- An implementation skips the whole of a batch whose `toSeq` is at or below the highest already-applied sequence for its source. It skips each change whose sequence `_sirannon_applied_changes` records, so applying the same batch twice changes nothing. It records the sequences of each group's changes in `_sirannon_applied_changes` inside that group's transaction, and records no sequence that no change of the batch takes.
+- An implementation groups changes by `txId` and applies each group in one transaction. It settles a change whose target row is absent against the HLC of that row's latest delete, and it passes a change whose row exists to the resolver (see [Conflict Resolution](03-replication.md#conflict-resolution) for both).
+- A batch carrying `txContinues: true` ends part-way through its last transaction, and requires `changeSeqs`. An implementation holds that transaction's changes in `_sirannon_staged_push_changes` and applies none of them. When a later batch from the same source opens with more of that transaction, the implementation applies the held changes and the new ones in one transaction, records their sequences, and deletes the held rows. It deletes the held rows unapplied when the first change it has yet to apply from that source belongs to another transaction. It skips a change it already holds.
 - After a group commits, an implementation stamps the rows the applier's own triggers produced (those still holding an empty `node_id` above the pre-apply sequence) with the batch's `sourceNodeId` as origin and the highest applied `hlc`. Marking the origin as the source device is what makes the live pull suppress the echo back to that device.
 
-`applyChanges` returns `ApplyResult { applied, skipped, conflicts }`.
+`applyChanges` returns `ApplyResult { applied, skipped, conflicts }`. A change that the implementation holds for a continuing transaction counts in the result of the batch that completes the transaction.
+
+```sql
+CREATE TABLE _sirannon_staged_push_changes (
+  source_node_id TEXT NOT NULL,
+  source_seq     INTEGER NOT NULL,
+  tx_id          TEXT NOT NULL,
+  change         TEXT NOT NULL,
+  PRIMARY KEY (source_node_id, source_seq)
+)
+```
+
+`change` holds the change as JSON, with the values inside `primaryKey`, `newData`, and `oldData` under the [tagged value encoding](02-core.md#tagged-value-encoding-normative).
 
 A device applies pulled changes from the live stream under the same rules, one `txId` group per transaction, with no checksum and no batch envelope, reading the group from the staging table of [Staged Pull](#staged-pull). It writes `device_sync_pull_seq` inside the group's transaction and records nothing in `_sirannon_applied_changes`.
 
@@ -51,12 +65,12 @@ A device sends its own writes to the server.
 POST /db/{id}/changes
 { schemaVersion?, batch: {
     sourceNodeId, batchId, fromSeq, toSeq, hlcRange: { min, max },
-    changes: [ { table, operation, rowId, primaryKey, hlc, txId, nodeId, newData, oldData } ],
-    checksum } }
+    changes: [ { table, operation, rowId, primaryKey, hlc, txId, nodeId, newData, oldData, seq? } ],
+    checksum, txContinues? } }
 -> { applied, skipped, conflicts }
 ```
 
-Sequences are decimal strings (`^\d{1,19}$`) and `fromSeq` must not exceed `toSeq`. `batchId` is a non-empty string of at most 128 characters. A batch holds 1 to 1000 changes. `sourceNodeId` and every change's `nodeId` are 32-hex device ids and must be equal. Each `operation` is `insert`, `update`, or `delete`; the server rejects a DDL change, because the migration handshake is the only path for a schema change. Values inside `primaryKey`, `newData`, and `oldData` use the tagged value encoding. The server responds `400 INVALID_REQUEST` to any structural failure.
+Sequences are decimal strings (`^\d{1,19}$`) from 0 to 9223372036854775807, and `fromSeq` must not exceed `toSeq`. `seq` is the change's sequence in the device's change log: either every change carries it or none does, and the values rise strictly from `fromSeq` to `toSeq`. `txContinues` is a boolean, and true requires `seq` on every change. The server decodes `seq` into `changeSeqs`. The checksum covers neither field, so a server that ignores them verifies the batch unchanged. A device sends `seq` on every change, and sets `txContinues: true` when the next change in its outbox belongs to the batch's last transaction. `batchId` is a non-empty string of at most 128 characters. A batch holds 1 to 1000 changes. `sourceNodeId` and every change's `nodeId` are 32-hex device ids and must be equal. Each `operation` is `insert`, `update`, or `delete`; the server rejects a DDL change, because the migration handshake is the only path for a schema change. Values inside `primaryKey`, `newData`, and `oldData` use the tagged value encoding. The server responds `400 INVALID_REQUEST` to any structural failure.
 
 A server serves this route only while `acceptDeviceSync` is true (see [05-server.md](05-server.md#http-endpoints-normative)). Before it writes any row, the server must invoke the `beforePush` hook of [02-core.md](02-core.md#hooks) once for each table that the batch names, with `sourceNodeId` as the `deviceId` and the identity that the `authenticate` hook returned. The hook is where an implementation ties a device to the caller that owns it. A hook that throws refuses the whole batch with `403 HOOK_DENIED`.
 
@@ -105,6 +119,8 @@ The device acknowledges what it holds durably so that the server advances the de
 `seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
 
 A server accepts an acknowledgement only for a device for which the same connection holds a subscription, and must fail every other acknowledgement with `DEVICE_NOT_SUBSCRIBED`. A device must hold its acknowledgements until the server confirms the subscription on the connection that carries it, and must send a refused acknowledgement again once it subscribes afresh.
+
+When the server finds that it has deleted the cursor of a device whose subscription it already holds, on that device's next acknowledgement or on its next read of the change log for that subscription, it must close the connection with WebSocket close code 4410 and must deliver no further change on it. The device then subscribes again, and the resumption rules decide whether it resyncs.
 
 The server holds delivery to a device once the highest sequence sent stands more than `maxUnacknowledgedChanges` (default 1,000) ahead of that device's acknowledged cursor, and resumes on the next acknowledgement. The server measures the window per transaction, so it still delivers a transaction larger than the window whole. On a subscription carrying `stagedStream`, the server measures the window per change and may pause delivery within a transaction. Held changes remain in the change log, and the server delivers them in order. The server reports the window on `subscribed` as `maxUnacknowledgedChanges`, and a device acknowledges immediately once it holds more than half of it.
 

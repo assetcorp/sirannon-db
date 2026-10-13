@@ -40,7 +40,7 @@ export async function runWriterTransaction<T>(
 }
 
 /**
- * Executes some work inside one transaction on a writer connection and returns what that work returns.
+ * A function that executes some work inside one transaction on a writer connection and returns what that work returns.
  *
  * @internal
  */

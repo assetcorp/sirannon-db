@@ -68,7 +68,7 @@ describe('the checksum of each applied migration', () => {
     expect(readFileState(lone.path).history[0].checksum).toBe(INVOICES_SCRIPT_FNV1A)
   })
 
-  it('refuses an up whose text changed after it applied, before it applies anything else, and accepts whitespace and line-ending edits', async () => {
+  it('refuses an up whose text changed after the database applied it, and accepts whitespace and line-ending edits', async () => {
     const { db, path } = await openDatabase()
     await db.migrate([invoices()])
 
@@ -96,7 +96,7 @@ describe('the checksum of each applied migration', () => {
     expect(readFileState(path).history.map(row => row.checksum)).toEqual([INVOICES_SCRIPT_FNV1A, REFUNDS_SQL_FNV1A])
   })
 
-  it('checks no history row that the set leaves out, and no function migration', async () => {
+  it('verifies only the SQL migrations that the set still holds, and skips function migrations and rows that the set leaves out', async () => {
     const { db, path } = await openDatabase()
     await db.migrate([invoices(), seedInvoices])
     const rewrittenSeed: Migration = {
@@ -114,8 +114,8 @@ describe('the checksum of each applied migration', () => {
   })
 })
 
-describe('a migration history written before checksums', () => {
-  it('gains the checksum column on the next migrate, keeps every row, backfills each SQL hash, and enforces it', async () => {
+describe('migrate on a history from a release before checksums', () => {
+  it('adds the checksum column with every row kept, then backfills and enforces each SQL hash', async () => {
     const path = scratchPath('legacy.db')
     withRawConnection(path, raw => {
       raw.exec(LEGACY_HISTORY_TABLE)

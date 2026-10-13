@@ -1,8 +1,11 @@
 import type { ReplicationEngine } from './engine.js'
+import { ensurePrimaryTermStart, historyOrigins } from './term-history.js'
 
 /**
  * Sends the changes in this node's replication log to its peers in batches, on a timer. In coordinator mode, the
- * loop sends only while this node holds primary authority; otherwise, the topology's `shouldReplicateTo` picks the peers.
+ * loop sends only while this node holds primary authority and has recorded the start of its term, and it sends every
+ * change of the group's history that the log holds, including the changes that this node applied from earlier
+ * primaries; otherwise, the topology's `shouldReplicateTo` picks the peers.
  *
  * @internal
  */
@@ -12,11 +15,22 @@ export class SenderLoop {
   constructor(private readonly engine: ReplicationEngine) {}
 
   start(): void {
+    if (this.senderTimer !== null) return
+    this.scheduleTick()
+  }
+
+  private scheduleTick(): void {
     const engine = this.engine
-    if (!engine.running) return
+    if (!engine.running) {
+      this.senderTimer = null
+      return
+    }
 
     const timer = setTimeout(async () => {
-      if (!engine.running) return
+      if (!engine.running) {
+        this.senderTimer = null
+        return
+      }
 
       try {
         engine.lastSentSeq = await engine.log.getLocalSeq()
@@ -27,7 +41,7 @@ export class SenderLoop {
         engine.emitError({ error: wrappedErr, operation: 'sender-loop', recoverable: true })
       }
 
-      this.start()
+      this.scheduleTick()
     }, engine.batchIntervalMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
     timer.unref?.()
     this.senderTimer = timer
@@ -42,8 +56,9 @@ export class SenderLoop {
 
   private async updatePruneBoundary(): Promise<void> {
     const engine = this.engine
-    if (!engine.tracker) return
     const minAcked = await engine.log.getMinAckedSeq()
+    engine.database.holdChangeLogPruning('replication', minAcked)
+    if (!engine.tracker) return
     if (minAcked === null) {
       engine.tracker.clearPruneBoundary('replication')
     } else {
@@ -55,6 +70,8 @@ export class SenderLoop {
     const engine = this.engine
     const peers = engine.config.transport.peers()
     const nowMs = Date.now()
+    const origins = engine.isCoordinatorMode() ? historyOrigins(engine) : undefined
+    if (engine.coordinatorAuthority) await ensurePrimaryTermStart(engine)
 
     for (const [peerId, peerInfo] of peers) {
       if (!this.shouldReplicateTo(peerId, peerInfo.role)) {
@@ -71,9 +88,9 @@ export class SenderLoop {
       }
 
       const fromSeq = peerState?.lastSentSeq ?? engine.lastSentSeq
-      const rawBatch = await engine.log.readBatch(fromSeq, engine.batchSize)
+      const rawBatch = await engine.log.readBatch(fromSeq, engine.batchSize, origins)
       if (!rawBatch) continue
-      const batch = engine.decorate(rawBatch)
+      const batch = engine.decorate({ ...rawBatch, afterSeq: fromSeq })
 
       const previousSeq = peerState?.lastSentSeq ?? 0n
       if (peerState) {
@@ -119,6 +136,7 @@ export class SenderLoop {
     if (!engine.isCoordinatorMode()) {
       return engine.config.topology.shouldReplicateTo(peerId, peerRole)
     }
-    return engine.coordinatorAuthority && peerId !== engine.nodeId
+    const recordedTermStart = engine.history.termStartTerm === engine.coordinatorState?.primaryTerm
+    return engine.coordinatorAuthority && peerId !== engine.nodeId && recordedTermStart
   }
 }

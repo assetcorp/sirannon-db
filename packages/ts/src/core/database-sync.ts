@@ -1,3 +1,4 @@
+import { DEVICE_SYNC_PUSHED_SEQ_META_KEY } from './cdc/device-retention.js'
 import type { DatabaseCdcController } from './database-cdc.js'
 import type { DeviceSyncPort, DeviceSyncPullState } from './device-sync-port.js'
 import type { SQLiteConnection } from './driver/types.js'
@@ -30,6 +31,7 @@ import {
   ensureBatchApplyTables,
   ensureChangesTable,
   ensureMetaTable,
+  ensureStagedPushChangesTable,
   highestMigrationVersion,
   replaceMigrationHistory,
   selectCountOutboundChanges,
@@ -42,7 +44,6 @@ import type { ChangeEvent } from './types.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
-const PUSHED_SEQ_META_KEY = 'device_sync_pushed_seq'
 const PULL_SEQ_META_KEY = 'device_sync_pull_seq'
 const PULL_EPOCH_META_KEY = 'device_sync_pull_epoch'
 const RESYNC_REQUIRED_META_KEY = 'device_sync_resync_required'
@@ -88,8 +89,8 @@ export class DatabaseSyncController {
       recoverStagedPull: (resolver, onChange) => this.recoverStagedPullState(resolver, onChange),
       readOutboxBatch: (afterSeq, limit) => this.readOutboxBatch(afterSeq, limit),
       countOutboxPending: afterSeq => this.countOutboxPending(afterSeq),
-      getPushCursor: () => this.getMetaSeq(PUSHED_SEQ_META_KEY).then(seq => seq ?? 0n),
-      setPushCursor: seq => this.setMetaSeq(PUSHED_SEQ_META_KEY, seq),
+      getPushCursor: () => this.getMetaSeq(DEVICE_SYNC_PUSHED_SEQ_META_KEY).then(seq => seq ?? 0n),
+      setPushCursor: seq => this.setMetaSeq(DEVICE_SYNC_PUSHED_SEQ_META_KEY, seq),
       getPullState: () => this.getPullState(),
       getResyncRequired: () => this.getResyncRequired(),
       setResyncRequired: required => this.setResyncRequired(required),
@@ -310,6 +311,7 @@ export class DatabaseSyncController {
     if (!this.tablesReady) {
       await ensureChangesTable(writer, CHANGES_TABLE)
       await ensureBatchApplyTables(writer)
+      await ensureStagedPushChangesTable(writer)
       this.tablesReady = true
     }
   }
@@ -319,7 +321,7 @@ export class DatabaseSyncController {
     await this.ensureSyncTables(writer)
     const stamper = await this.cdc.ensureStamper()
     this.pkResolver ??= new PkResolver(writer)
-    this.outboxReader ??= new BatchReader(writer, stamper.nodeId, CHANGES_TABLE, this.pkResolver, true)
+    this.outboxReader ??= new BatchReader(writer, stamper.nodeId, CHANGES_TABLE, this.pkResolver, true, true)
     return this.outboxReader
   }
 

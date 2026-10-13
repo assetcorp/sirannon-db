@@ -76,6 +76,7 @@ export type {
   SyncAck,
   SyncBatch,
   SyncComplete,
+  SyncHistoryPoint,
   SyncPhase,
   SyncRequest,
   SyncState,

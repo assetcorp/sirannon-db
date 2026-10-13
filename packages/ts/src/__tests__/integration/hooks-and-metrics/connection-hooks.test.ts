@@ -44,7 +44,7 @@ afterEach(async () => {
 })
 
 describe('a before-connect hook', () => {
-  it('refuses to open a database when it throws or returns a promise, creates no file, and lets the same identifier open once it allows', async () => {
+  it('refuses to open a database when it throws or returns a promise, creates no file, and lets the same identifier open once the hook allows it', async () => {
     const unhandled = watchUnhandledRejections()
     try {
       const denied = new HookDeniedError('beforeConnect', 'the tenant is suspended')
@@ -249,8 +249,10 @@ describe('open and close hooks and the connection callbacks', () => {
       unhandled.stop()
     }
   })
+})
 
-  it('stop firing once their disposer runs, and a second call to the disposer changes nothing', async () => {
+describe('the disposer of a connection hook', () => {
+  it('stops that hook from firing, and a second call changes nothing', async () => {
     const opened: string[] = []
     const closed: string[] = []
     const sirannon = registry()

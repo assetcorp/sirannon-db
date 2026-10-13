@@ -1,4 +1,4 @@
-export type PruneBoundarySource = 'device-sync' | 'replication' | 'device-cursors'
+export type PruneBoundarySource = 'device-sync' | 'device-push-cursor' | 'replication' | 'device-cursors'
 
 export class PruneBoundaries {
   private readonly bySource = new Map<PruneBoundarySource, bigint>()

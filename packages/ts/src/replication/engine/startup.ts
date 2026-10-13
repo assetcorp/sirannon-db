@@ -4,6 +4,7 @@ import { SyncError } from '../errors.js'
 import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
+import { loadTermHistory } from './term-history.js'
 import { wireTransportHandlers } from './transport-wiring.js'
 
 async function loadAppliedSeqs(engine: ReplicationEngine): Promise<void> {
@@ -36,13 +37,19 @@ export async function recoverHlcFromDurableState(engine: ReplicationEngine): Pro
 export async function startEngine(engine: ReplicationEngine): Promise<void> {
   if (engine.running) return
   engine.running = true
+  engine.history.active = false
+  await startEngineSteps(engine)
+  engine.history.active = true
+}
 
+async function startEngineSteps(engine: ReplicationEngine): Promise<void> {
   await engine.log.ensureReplicationTables()
   await recoverHlcFromDurableState(engine)
   engine.lastSentSeq = await engine.log.getLocalSeq()
   engine.lastLocalSeq = engine.lastSentSeq
   await loadAppliedSeqs(engine)
   await startCoordinatorMode(engine)
+  await loadTermHistory(engine)
   await prepareCoordinatorRejoinIfNeeded(engine)
 
   wireTransportHandlers(engine)
@@ -140,6 +147,7 @@ export async function stopEngine(engine: ReplicationEngine): Promise<void> {
   }
 
   engine.senderLoop.stop()
+  engine.database.holdChangeLogPruning('replication', null)
   if (engine.tracker) {
     engine.tracker.clearPruneBoundary('replication')
   }

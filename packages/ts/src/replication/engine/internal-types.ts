@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import type { SyncAck, SyncState } from '../types.js'
+import type { SyncAck, SyncHistoryPoint, SyncState } from '../types.js'
 import type { TableStreamDigest } from './sync-verification.js'
 
 export interface ActiveSyncSession {
@@ -15,6 +15,7 @@ export interface ActiveSyncSession {
   aborted: boolean
   streamVerification: boolean
   tableDigests: Map<string, TableStreamDigest>
+  historyPoint: SyncHistoryPoint | undefined
 }
 
 export interface SyncAckWaiter {

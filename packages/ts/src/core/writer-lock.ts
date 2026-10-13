@@ -9,6 +9,7 @@ const UNTRACKED: WriterContext = {
 export class WriterLock {
   private tail: Promise<unknown> = Promise.resolve()
   private readonly context: WriterContext
+  private repair: (() => Promise<void>) | null = null
 
   constructor(context?: WriterContext) {
     this.context = context ?? UNTRACKED
@@ -18,10 +19,23 @@ export class WriterLock {
     if (this.context.isActive()) {
       return operation()
     }
-    const enter = () => this.context.run(operation)
+    const enter = () => this.context.run(this.repair === null ? operation : () => this.repairThen(operation))
     const ticket = this.tail.then(enter, enter)
     this.tail = ticket.then(swallow, swallow)
     return ticket
+  }
+
+  repairBeforeNextHold(repair: () => Promise<void>): void {
+    this.repair = repair
+  }
+
+  private async repairThen<T>(operation: () => Promise<T>): Promise<T> {
+    const repair = this.repair
+    if (repair !== null) {
+      await repair()
+      if (this.repair === repair) this.repair = null
+    }
+    return operation()
   }
 
   isHeld(): boolean {

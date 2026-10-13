@@ -1,6 +1,6 @@
 import { decodeTaggedValues } from '../cdc/encoding.js'
 import type { SQLiteConnection } from '../driver/types.js'
-import { selectOutboundChangesSql } from '../system-catalog/index.js'
+import { selectOutboundChangesSql, selectOutboundHistoryChangesSql } from '../system-catalog/index.js'
 import { computeChecksum } from './checksum.js'
 import { HLC } from './hlc.js'
 import type { ChangeRow } from './internal-types.js'
@@ -14,11 +14,25 @@ export class BatchReader {
     private readonly changesTable: string,
     private readonly pkResolver: PkResolver,
     private readonly excludeDdl = false,
+    private readonly describeTransactions = false,
   ) {}
 
-  async readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null> {
-    const stmt = await this.conn.prepare(selectOutboundChangesSql(this.changesTable, this.excludeDdl))
-    const rows = (await stmt.all(afterSeq.toString(), this.localNodeId, batchSize)) as ChangeRow[]
+  async readBatch(afterSeq: bigint, batchSize: number, origins?: readonly string[]): Promise<ReplicationBatch | null> {
+    const limit = this.describeTransactions ? batchSize + 1 : batchSize
+    const rows = (
+      origins
+        ? await (await this.conn.prepare(selectOutboundHistoryChangesSql(this.changesTable, origins.length))).all(
+            afterSeq.toString(),
+            ...origins,
+            limit,
+          )
+        : await (await this.conn.prepare(selectOutboundChangesSql(this.changesTable, this.excludeDdl))).all(
+            afterSeq.toString(),
+            this.localNodeId,
+            limit,
+          )
+    ) as ChangeRow[]
+    const next = rows.length > batchSize ? rows.pop() : undefined
 
     if (rows.length === 0) {
       return null
@@ -86,7 +100,7 @@ export class BatchReader {
     const toSeq = BigInt(rows[rows.length - 1].seq)
     const checksum = computeChecksum(changes)
 
-    return {
+    const batch: ReplicationBatch = {
       sourceNodeId: this.localNodeId,
       batchId: `${this.localNodeId}-${fromSeq}-${toSeq}`,
       fromSeq,
@@ -95,5 +109,12 @@ export class BatchReader {
       changes,
       checksum,
     }
+    if (this.describeTransactions) {
+      batch.changeSeqs = rows.map(row => BigInt(row.seq))
+      if (next !== undefined && next.tx_id !== '' && next.tx_id === rows[rows.length - 1].tx_id) {
+        batch.txContinues = true
+      }
+    }
+    return batch
   }
 }

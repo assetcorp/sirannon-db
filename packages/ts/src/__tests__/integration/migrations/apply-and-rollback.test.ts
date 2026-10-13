@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MigrationError } from '../../../core/errors.js'
 import type { Migration } from '../../../core/migrations/types.js'
+import type { Transaction } from '../../../core/transaction.js'
 import {
   cleanUp,
   columnsOf,
@@ -120,6 +121,50 @@ describe.each([
   })
 })
 
+describe('a migration on a watched table', () => {
+  it('records the columns that a migration adds to a watched table in every later change', async () => {
+    const { db, path } = await openDatabase()
+    await db.migrate([createCustomers])
+    await db.watch('customers')
+    const latestChange = () =>
+      withRawConnection(path, raw => {
+        const row = raw.prepare('SELECT new_data FROM _sirannon_changes ORDER BY seq DESC LIMIT 1').get() as {
+          new_data: string
+        }
+        return JSON.parse(row.new_data) as Record<string, unknown>
+      })
+
+    await db.migrate([createCustomers, addCustomerTier])
+    await db.execute("INSERT INTO customers (email, tier) VALUES ('lin@example.com', 'team')")
+    expect(latestChange()).toEqual({ id: 1, email: 'lin@example.com', tier: 'team' })
+
+    await db.migrate([createCustomers, addCustomerTier, seedCustomers])
+    expect(latestChange()).toEqual({ id: 3, email: 'grace@example.com', tier: 'free' })
+  })
+
+  it('records the column that a committed migration adds when a later migration in the same call fails', async () => {
+    const { db, path } = await openDatabase()
+    await db.migrate([createCustomers])
+    await db.watch('customers')
+    const addRegion: Migration = {
+      version: 2,
+      name: 'add_customer_region',
+      up: "ALTER TABLE customers ADD COLUMN region TEXT NOT NULL DEFAULT 'eu'",
+    }
+    const broken: Migration = { version: 3, name: 'broken', up: 'CREATE TABLE broken (id INTEGER PRIMARY KEY' }
+
+    await expect(db.migrate([createCustomers, addRegion, broken])).rejects.toMatchObject({ version: 3 })
+    await db.execute("INSERT INTO customers (email, region) VALUES ('lin@example.com', 'us')")
+
+    const latest = withRawConnection(
+      path,
+      raw =>
+        raw.prepare('SELECT new_data FROM _sirannon_changes ORDER BY seq DESC LIMIT 1').get() as { new_data: string },
+    )
+    expect(JSON.parse(latest.new_data)).toEqual({ id: 1, email: 'lin@example.com', region: 'us' })
+  })
+})
+
 describe('rollback without a down migration', () => {
   it('refuses with MIGRATION_NO_DOWN before it reverts anything, and reverts a newer version that has a down', async () => {
     const { db, path } = await openDatabase()
@@ -189,7 +234,9 @@ const failingUps: { label: string; up: Migration['up']; code: string; message: R
 ]
 
 describe('a migration that fails part-way', () => {
-  it.each(failingUps)('reports $label with the failing version and keeps the file consistent', async ({
+  it.each(
+    failingUps,
+  )('reports $label with the failing version, keeps the version before it applied and recorded, and leaves no trace of the failed one', async ({
     up,
     code,
     message,
@@ -202,20 +249,65 @@ describe('a migration that fails part-way', () => {
     await expect(outcome).rejects.toBeInstanceOf(MigrationError)
     await expect(outcome).rejects.toMatchObject({ code, version: 2, message: expect.stringMatching(message) })
     const state = readFileState(path)
-    const versions = state.history.map(row => row.version)
-    expect([[], [1]]).toContainEqual(versions)
-    expect(state.tables).toEqual(versions.length === 0 ? [] : ['customers'])
-    expect(state.userVersion).toBe(versions.at(-1) ?? 0)
+    expect(state.history.map(row => row.version)).toEqual([1])
+    expect(state.tables).toEqual(['customers'])
+    expect(state.userVersion).toBe(1)
 
     const repaired: Migration = {
       version: 2,
       name: 'create_invoices',
       up: 'CREATE TABLE invoices (id INTEGER PRIMARY KEY)',
     }
-    expect((await db.migrate([createCustomers, repaired])).applied.map(entry => entry.version)).toEqual(
-      versions.length === 0 ? [1, 2] : [2],
-    )
+    expect(await db.migrate([createCustomers, repaired])).toEqual({
+      applied: [{ version: 2, name: 'create_invoices' }],
+      skipped: 1,
+    })
     expect(readFileState(path)).toMatchObject({ userVersion: 2, tables: ['customers', 'invoices'] })
+  })
+
+  it.each([
+    { label: 'on the calling thread', writerWorker: false },
+    { label: 'on the writer worker', writerWorker: true },
+  ])('commits each migration in a transaction of its own $label, so that a failure keeps every earlier sibling and its tracking row and rolls back only its own writes', async ({
+    writerWorker,
+  }) => {
+    const { db, path } = await openDatabase('siblings', { writerWorker })
+    let leaked: Transaction | undefined
+    const halfDone: Migration = {
+      version: 4,
+      name: 'create_refunds',
+      up: async tx => {
+        leaked = tx
+        await tx.execute('CREATE TABLE refunds (id INTEGER PRIMARY KEY)')
+        await tx.execute("INSERT INTO customers (email) VALUES ('refund@example.com')")
+        await tx.execute('INSERT INTO missing_table (id) VALUES (1)')
+      },
+    }
+    const later: Migration = { version: 5, name: 'create_audit', up: 'CREATE TABLE audit (id INTEGER PRIMARY KEY)' }
+
+    await expect(db.migrate([later, halfDone, seedCustomers, createCustomers, addCustomerTier])).rejects.toMatchObject({
+      code: 'MIGRATION_ERROR',
+      version: 4,
+    })
+
+    expect(readFileState(path)).toEqual({
+      userVersion: 3,
+      history: [
+        { version: 1, name: 'create_customers', checksum: expect.any(String) },
+        { version: 2, name: 'add_customer_tier', checksum: null },
+        { version: 3, name: 'seed_customers', checksum: null },
+      ],
+      tables: ['customers'],
+    })
+    expect(customersIn(path)).toEqual([
+      { email: 'ada@example.com', tier: 'pro' },
+      { email: 'grace@example.com', tier: 'free' },
+    ])
+    expect(await db.appliedMigrations()).toHaveLength(3)
+    await expect(leaked?.execute('CREATE TABLE leaked (id INTEGER)')).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    })
+    expect(readFileState(path).tables).toEqual(['customers'])
   })
 
   it('reports a failing down with MIGRATION_ROLLBACK_ERROR and leaves every version applied', async () => {

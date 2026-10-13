@@ -30,6 +30,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `QUERY_ERROR` | SQLite failed to prepare or execute a statement. |
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, or used `ATTACH`, `DETACH`, or `PRAGMA writable_schema`. |
 | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
+| `TRANSACTION_CLOSED` | A call reached a `Transaction` after its callback returned or threw. |
 | `HOOK_DENIED` | A hook rejected the operation. |
 | `CDC_ERROR` | The change-data-capture pipeline hit an unrecoverable error. |
 | `BACKUP_ERROR` | A backup operation failed. |
@@ -48,7 +49,8 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `INVALID_SYNCHRONOUS` | An unknown `synchronous` level was supplied. |
 | `ROW_COUNTS_UNSUPPORTED` | A driver that reports `rowCounts` opened an engine that has no row counters. |
 | `INVALID_DURABILITY` | An unknown bulk-load durability was supplied. |
-| `DURABILITY_RESTORE_FAILED` | The writer durability could not be restored after a bulk load. |
+| `DURABILITY_RESTORE_FAILED` | The writer durability could not be restored after a bulk load, so the load or the write work after it failed. |
+| `BULK_LOAD_IN_TRANSACTION` | A bulk load was called inside a `transaction` callback. |
 | `SNAPSHOT_IN_PROGRESS` | A read or write was attempted while a device-sync snapshot load runs. |
 | `SHUTDOWN` | An operation was attempted after registry shutdown. |
 | `SHUTDOWN_ERROR` | One or more databases failed to close during shutdown. |
@@ -63,7 +65,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `WRITER_WORKER_UNSUPPORTED` | The writer worker was enabled with a driver that cannot run the writer this way. |
 | `WRITE_OVERLOADED` | A write was shed before starting; definite outcome, safe to retry, carries a retry-after hint. |
 | `WRITER_WORKER_TIMEOUT` | The writer gave no outcome within twice the write deadline; indeterminate, reconcile before retrying a non-idempotent write. |
-| `WRITER_WORKER_EXIT` | The writer crashed or exited and the in-flight write was rejected. |
+| `WRITER_WORKER_EXIT` | The writer crashed or exited and the in-flight write, or a later statement of the transaction that the crash rolled back, was rejected. |
 | `WRITER_WORKER_FATAL` | The writer exceeded its restart budget; writes fail permanently. |
 | `WRITER_WORKER_UNAVAILABLE` | A write was sent while no writer was available. |
 | `WRITER_WORKER_CLOSED` | A write was sent after the writer was closed. |
@@ -120,7 +122,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `EMPTY_BODY` | The request body is empty. |
 | `PAYLOAD_TOO_LARGE` | The request body or message exceeds the maximum size. |
 | `INTERNAL_ERROR` | An unexpected error occurred during request handling. |
-| `HOOK_ERROR` | The `authenticate` hook or `authorizeClusterStatus` threw. |
+| `HOOK_ERROR` | The `authenticate` hook threw an error lacking an integer `status` from 400 to 599, a non-empty string `code`, or a string `message`, or `authorizeClusterStatus` threw. |
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused. |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
@@ -166,8 +168,8 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `UNAUTHORIZED` | The server refused the WebSocket upgrade as unauthenticated and closed with 4401. |
 | `FORBIDDEN` | The server refused the WebSocket upgrade as not permitted and closed with 4403. |
 | `TIMEOUT` | A request exceeded the configured timeout. |
-| `TRANSPORT_ERROR` | The operation is not supported by the current transport. |
-| `INVALID_RESPONSE` | The server returned a response that could not be parsed. |
+| `TRANSPORT_ERROR` | The operation is not supported by the current transport, or the client closed the transport before the request finished. |
+| `INVALID_RESPONSE` | The server returned a response that could not be parsed or that lacks the shape that the protocol defines. |
 | `ROUTING_ERROR` | The client could not discover a usable primary or read endpoint. |
 | `NO_SAFE_PRIMARY` | Topology routing found no current primary for a write. |
 | `INVALID_ARGUMENT` | A client argument failed validation. |

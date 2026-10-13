@@ -38,6 +38,26 @@ export async function upsertDeviceCursor(
   await stmt.run(deviceId, ackedSeq.toString(), updatedAt)
 }
 
+export async function updateDeviceCursor(
+  conn: SQLiteConnection,
+  deviceId: string,
+  ackedSeq: bigint,
+  updatedAt: number,
+): Promise<number> {
+  const stmt = await conn.prepare(
+    `UPDATE "${DEVICE_CURSORS_TABLE}"
+     SET acked_seq = max(acked_seq, CAST(? AS INTEGER)), updated_at = ?
+     WHERE device_id = ?`,
+  )
+  const result = await stmt.run(ackedSeq.toString(), updatedAt, deviceId)
+  return result.changes
+}
+
+export async function selectDeviceCursorExists(conn: SQLiteConnection, deviceId: string): Promise<boolean> {
+  const stmt = await conn.prepare(`SELECT 1 AS present FROM "${DEVICE_CURSORS_TABLE}" WHERE device_id = ?`)
+  return (await stmt.get(deviceId)) !== undefined
+}
+
 export async function deleteDeviceCursorsUpdatedBefore(conn: SQLiteConnection, cutoff: number): Promise<number> {
   const stmt = await conn.prepare(`DELETE FROM "${DEVICE_CURSORS_TABLE}" WHERE updated_at < ?`)
   const result = await stmt.run(cutoff)

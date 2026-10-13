@@ -415,11 +415,13 @@ export class ChangeTracker {
     // @internal (undocumented)
     readSinceTables(conn: SQLiteConnection, tables: readonly string[], afterSeq: bigint, upToSeq: bigint, limit: number): Promise<ChangeEvent[]>;
     // @internal
-    refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void>;
+    refreshAllTriggersUsingConnection(conn: SQLiteConnection, rebuilt?: ReadonlySet<string>): Promise<void>;
     // @internal (undocumented)
     setPruneBoundary(source: PruneBoundarySource, seq: bigint): void;
     unwatch(conn: SQLiteConnection, table: string): Promise<void>;
     watch(conn: SQLiteConnection, table: string): Promise<void>;
+    // @internal
+    watchedTableNamed(table: string): string | undefined;
     // @internal (undocumented)
     get watchedTables(): ReadonlySet<string>;
 }
@@ -553,14 +555,14 @@ export class Database extends DatabaseBackups {
     // @internal (undocumented)
     static create(id: string, path: string, driver: SQLiteDriver, options?: DatabaseOptions, internals?: DatabaseInternals): Promise<Database>;
     deviceSync(): DeviceSyncPort;
-    // @internal (undocumented)
-    ensureChangeStamping(): Promise<void>;
     execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]>;
     executeTransaction(statements: readonly {
         sql: string;
         params?: Params;
     }[]): Promise<ExecuteResult[]>;
+    // @internal
+    holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void;
     live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
@@ -943,7 +945,7 @@ export class MigrationRunner {
     // (undocumented)
     static rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult>;
     // (undocumented)
-    static run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult>;
+    static run(conn: SQLiteConnection, migrations: Migration[], afterEachMigration?: (txConn: SQLiteConnection) => Promise<void>): Promise<MigrationResult>;
 }
 
 // @public
@@ -1350,12 +1352,14 @@ export function toSubprotocolCredential(prefix: string, credential: string): str
 // @public
 export class Transaction {
     constructor(conn: SQLiteConnection);
+    // @internal
+    end(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]>;
     get lastInsertRowId(): number | bigint;
     query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]>;
     // @internal (undocumented)
-    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>, meter?: StatementMeter | null): Promise<T>;
+    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>, meter?: StatementMeter | null, runInTransaction?: WriterTransactionRunner): Promise<T>;
     // @internal
     withMeter(meter: StatementMeter | null): this;
 }

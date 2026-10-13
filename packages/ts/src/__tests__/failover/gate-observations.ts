@@ -1,5 +1,5 @@
-import { type GateEnvironment, httpPortFor } from './gate-environment.js'
-import { waitForCondition } from './gate-support.js'
+import { type GateEnvironment, GROUP_ID, serverBaseUrlFor } from './gate-environment.js'
+import { describeValue, waitForCondition } from './gate-support.js'
 import type { FailoverNodeProcess, SerializedError } from './node-process.js'
 
 export interface FailoverStatus {
@@ -7,7 +7,7 @@ export interface FailoverStatus {
   role: string
   peers: Array<{ nodeId: string; lastAckedSeq: string; connected: boolean }>
   localSeq: string
-  replicating: boolean
+  health: { state: string; reason: string; canRead: boolean; canWrite: boolean }
   syncState?: {
     phase: string
     sourcePeerId: string | null
@@ -16,11 +16,8 @@ export interface FailoverStatus {
     currentPrimary: { nodeId: string; endpoint?: string } | null
     primaryTerm: string
     inSyncNodeIds: string[]
-    drainingNodeIds: string[]
-    repairingNodeIds: string[]
-    faultedNodeIds: string[]
-    votingDataBearingNodeIds: string[]
     authority: boolean
+    connected: boolean
     controllerState: 'disabled' | 'standby' | 'active' | 'lost'
   }
   recentErrors?: Array<{
@@ -34,12 +31,17 @@ export interface FailoverStatus {
 export interface ReadinessResponse {
   status: string
   replication?: {
+    role?: string
     primaryTerm?: string
     currentPrimary?: string
     readAvailability?: 'available' | 'unavailable'
     writeAvailability?: 'available' | 'unavailable'
     syncState?: string
+    healthReason?: string
+    inSyncReplicas?: string[]
+    laggingReplicas?: string[]
     coordinator?: {
+      connected: boolean
       authority: boolean
     }
     controller?: {
@@ -48,12 +50,25 @@ export interface ReadinessResponse {
   }
 }
 
+export interface ClusterStatusResponse {
+  databaseId: string
+  replicationGroupId?: string
+  role: string
+  currentPrimary: { nodeId: string; endpoint?: string } | null
+  primaryTerm?: string
+  readEndpoints?: Array<{ nodeId: string; endpoint: string; readConcerns: string[] }>
+  health: string
+  healthReason: string
+}
+
 export async function statusOf(node: FailoverNodeProcess): Promise<FailoverStatus> {
   return (await node.status()) as unknown as FailoverStatus
 }
 
 export async function readinessOf(environment: GateEnvironment, nodeId: string): Promise<ReadinessResponse> {
-  const response = await fetch(`http://127.0.0.1:${httpPortFor(environment, nodeId)}/health/ready`)
+  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/health/ready`, {
+    signal: AbortSignal.timeout(5_000),
+  })
   const text = await response.text()
   if (!response.ok) {
     throw new Error(`Readiness for ${nodeId} returned ${response.status}: ${text}`)
@@ -61,42 +76,27 @@ export async function readinessOf(environment: GateEnvironment, nodeId: string):
   return JSON.parse(text) as ReadinessResponse
 }
 
-export async function queryRows(
-  node: FailoverNodeProcess,
-  sql: string,
-  params?: unknown[],
-): Promise<Array<Record<string, unknown>>> {
-  const value = await node.query(sql, params, { readConcern: { level: 'local' } })
-  if (!Array.isArray(value)) {
-    throw new Error('Query did not return an array')
+export async function clusterStatusOf(environment: GateEnvironment, nodeId: string): Promise<ClusterStatusResponse> {
+  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/cluster`, {
+    signal: AbortSignal.timeout(5_000),
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    throw new Error(`Cluster status for ${nodeId} returned ${response.status}: ${text}`)
   }
-  return value as Array<Record<string, unknown>>
+  return JSON.parse(text) as ClusterStatusResponse
 }
 
-export async function queryRowsWhenReady(
-  node: FailoverNodeProcess,
-  sql: string,
-  params?: unknown[],
-): Promise<Array<Record<string, unknown>> | null> {
-  const status = await statusOf(node)
-  if (status.syncState?.phase !== 'ready') {
-    return null
-  }
-  try {
-    return await queryRows(node, sql, params)
-  } catch (err: unknown) {
-    if (isSyncPhaseReadError(err)) return null
-    throw err
-  }
-}
-
-function isSyncPhaseReadError(err: unknown): boolean {
-  const error = err as Error & { code?: string }
-  return error.code === 'SYNC_ERROR' && error.message.includes('cannot serve reads')
+export async function readableNodeIds(environment: GateEnvironment, nodeId: string): Promise<string[]> {
+  const status = await clusterStatusOf(environment, nodeId)
+  return (status.readEndpoints ?? []).map(entry => entry.nodeId).sort()
 }
 
 export async function collectNodeDiagnostics(environment: GateEnvironment): Promise<Record<string, unknown>> {
-  const diagnostics: Record<string, unknown> = {}
+  const diagnostics: Record<string, unknown> = {
+    group: await environment.etcdOracle.group().catch(err => String(err)),
+    liveNodeIds: await environment.etcdOracle.liveNodeIds().catch(err => String(err)),
+  }
   for (const [nodeId, node] of environment.nodes) {
     diagnostics[nodeId] = await statusOf(node).catch(err => ({
       error: err instanceof Error ? err.message : String(err),
@@ -120,6 +120,15 @@ export async function waitForRecentErrorCountAbove(
   await waitForCondition(async () => recentErrorCount(node, code).then(count => count > previousCount), timeoutMs)
 }
 
+export async function waitForNoSafePrimaryReport(environment: GateEnvironment, timeoutMs = 15_000): Promise<void> {
+  await waitForCondition(async () => {
+    for (const node of environment.nodes.values()) {
+      if ((await recentErrorCount(node, 'NO_SAFE_PRIMARY')) > 0) return true
+    }
+    return false
+  }, timeoutMs)
+}
+
 export async function waitForNodeReady(node: FailoverNodeProcess, timeoutMs = 20_000): Promise<void> {
   let latestStatus: FailoverStatus | null = null
   try {
@@ -128,10 +137,31 @@ export async function waitForNodeReady(node: FailoverNodeProcess, timeoutMs = 20
       return latestStatus.syncState?.phase === 'ready'
     }, timeoutMs)
   } catch (err: unknown) {
-    const statusText = JSON.stringify(latestStatus, null, 2)
     const message = err instanceof Error ? err.message : String(err)
-    throw new Error(`${node.config.nodeId} did not become ready: ${message}\nstatus=${statusText}\n${node.logs()}`)
+    throw new Error(
+      `${node.config.nodeId} did not become ready: ${message}\nstatus=${describeValue(latestStatus)}\n${node.logs()}`,
+    )
   }
+}
+
+export async function waitForStatus(
+  node: FailoverNodeProcess,
+  predicate: (status: FailoverStatus) => boolean,
+  timeoutMs: number,
+  description: string,
+): Promise<FailoverStatus> {
+  let latest: FailoverStatus | null = null
+  try {
+    await waitForCondition(async () => {
+      latest = await statusOf(node)
+      return predicate(latest)
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`${node.config.nodeId} never showed ${description}: ${message}\nstatus=${describeValue(latest)}`)
+  }
+  if (latest === null) throw new Error(`${node.config.nodeId} status was never read`)
+  return latest
 }
 
 export async function waitForPeerConnected(
@@ -146,8 +176,54 @@ export async function waitForPeerConnected(
       return latestStatus.peers.some(peer => peer.nodeId === peerId && peer.connected)
     }, timeoutMs)
   } catch (err: unknown) {
-    const statusText = JSON.stringify(latestStatus, null, 2)
     const message = err instanceof Error ? err.message : String(err)
-    throw new Error(`${node.config.nodeId} did not connect to ${peerId}: ${message}\nstatus=${statusText}`)
+    throw new Error(
+      `${node.config.nodeId} did not connect to ${peerId}: ${message}\nstatus=${describeValue(latestStatus)}`,
+    )
   }
+}
+
+export async function waitForReadiness(
+  environment: GateEnvironment,
+  nodeId: string,
+  predicate: (readiness: ReadinessResponse) => boolean,
+  timeoutMs: number,
+  description: string,
+): Promise<ReadinessResponse> {
+  let latest: ReadinessResponse | null = null
+  try {
+    await waitForCondition(async () => {
+      latest = await readinessOf(environment, nodeId)
+      return predicate(latest)
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`${nodeId} readiness never showed ${description}: ${message}\nlatest=${describeValue(latest)}`)
+  }
+  if (latest === null) throw new Error(`${nodeId} readiness was never read`)
+  return latest
+}
+
+export async function waitForReadableNodes(
+  environment: GateEnvironment,
+  askedNodeId: string,
+  expected: readonly string[],
+  timeoutMs: number,
+): Promise<ClusterStatusResponse> {
+  let latest: ClusterStatusResponse | null = null
+  const sortedExpected = [...expected].sort()
+  try {
+    await waitForCondition(async () => {
+      latest = await clusterStatusOf(environment, askedNodeId)
+      const listed = (latest.readEndpoints ?? []).map(entry => entry.nodeId).sort()
+      return listed.join(',') === sortedExpected.join(',')
+    }, timeoutMs)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `${askedNodeId} never listed exactly ${sortedExpected.join(',')} as readable: ${message}\nlatest=${describeValue(latest)}`,
+    )
+  }
+  if (latest === null) throw new Error(`${askedNodeId} cluster status was never read`)
+  return latest
 }

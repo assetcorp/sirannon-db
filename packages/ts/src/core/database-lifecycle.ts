@@ -71,11 +71,11 @@ export class DatabaseLifecycle {
   /**
    * Closes every connection that this database opened, and stops delivering changes to its subscriptions.
    *
-   * A call made while an earlier close is still under way waits for that close
-   * and settles with its result, so the file has no connection from this
-   * database open once any call returns.
+   * When you call this while an earlier close is still under way, the call
+   * waits for that close and settles with the same result, so no connection
+   * from this database remains open on the file once any call returns.
    *
-   * @returns A promise that settles once every connection is closed, and rejects with the error of a connection that failed to close.
+   * @returns A promise that resolves once every connection is closed, or rejects with the error from a connection that failed to close.
    */
   close(): Promise<void> {
     this.closing ??= closeDatabaseRuntime(this.runtime, this.closeListeners)

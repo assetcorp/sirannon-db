@@ -290,6 +290,9 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
         `Automatic promotion requires at least ${MIN_AUTOMATIC_FAILOVER_VOTERS} voting data-bearing nodes`,
       )
     }
+    if (state.currentPrimary && !excludedNodeIds.has(state.currentPrimary.nodeId)) {
+      return cloneReplicationGroupState(state)
+    }
 
     for (const nodeId of state.votingDataBearingNodeIds) {
       if (nodeId === state.currentPrimary?.nodeId || excludedNodeIds.has(nodeId)) {

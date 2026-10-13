@@ -55,7 +55,7 @@ import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
-import { installTestHooks } from './test-hooks.js'
+import { TermHistory } from './term-history.js'
 
 type CoordinatorStampedMessage =
   | ReplicationBatch
@@ -91,6 +91,8 @@ export class ReplicationEngine extends EventEmitter {
   readonly log: ReplicationLog
   /** @internal */
   readonly peerTracker = new PeerTracker()
+  /** @internal */
+  readonly history = new TermHistory()
   /** @internal */
   readonly defaultResolver: ConflictResolver
   /** @internal */
@@ -135,6 +137,8 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   coordinatorAuthority = false
   /** @internal */
+  coordinatorDemotionHandler: ((state: ReplicationGroupState) => void) | null = null
+  /** @internal */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost' = 'disabled'
   /** @internal */
   nodeSessionLeaseId: string | null = null
@@ -148,6 +152,8 @@ export class ReplicationEngine extends EventEmitter {
   controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
   observedControllerLease: CoordinatorLease | null = null
+  /** @internal */
+  observedControllerLeaseLiveUntilMs = 0
   /** @internal */
   controllerBidding = false
   /** @internal */
@@ -201,7 +207,7 @@ export class ReplicationEngine extends EventEmitter {
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
     this.tracker = config.changeTracker
-    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, CHANGES_TABLE, this.tracker)
+    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, CHANGES_TABLE, this.tracker, !!config.coordinator)
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
     this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
@@ -223,7 +229,6 @@ export class ReplicationEngine extends EventEmitter {
     this.syncServer = new SyncServer(this)
     this.syncJoiner = new SyncJoiner(this)
     this.senderLoop = new SenderLoop(this)
-    installTestHooks(this)
   }
 
   /**

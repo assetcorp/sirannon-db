@@ -7,13 +7,17 @@ import {
   insertMetaValueIfAbsent,
   selectMaxChangeHlc,
   selectMetaValue,
+  selectTableExists,
   UPSERT_META_VALUE_SQL,
-  updateUnstampedChangeStampsSql,
+  updateChangeStampsAboveMetaSeqSql,
+  upsertMetaMaxChangeSeqSql,
 } from '../system-catalog/index.js'
 import { HLC } from './hlc.js'
 import { HLC_CLOCK_META_KEY, isWellFormedHlc, loadPersistedHlc } from './hlc-store.js'
 
 export const NODE_ID_META_KEY = 'node_id'
+
+const STAMP_FLOOR_META_KEY = 'stamp_floor_seq'
 
 export interface StampStatement {
   sql: string
@@ -22,11 +26,21 @@ export interface StampStatement {
 }
 
 export class SyncStamper {
+  readonly openingStatement: StampStatement
+  private readonly stampSql: string
+
   private constructor(
     readonly nodeId: string,
     readonly hlc: HLC,
-    private readonly changesTable: string,
-  ) {}
+    changesTable: string,
+  ) {
+    this.openingStatement = {
+      sql: upsertMetaMaxChangeSeqSql(changesTable),
+      params: [STAMP_FLOOR_META_KEY],
+      trusted: true,
+    }
+    this.stampSql = updateChangeStampsAboveMetaSeqSql(changesTable)
+  }
 
   static async init(conn: SQLiteConnection, changesTable: string = CHANGES_TABLE): Promise<SyncStamper> {
     await ensureMetaTable(conn)
@@ -42,7 +56,9 @@ export class SyncStamper {
     if (persisted !== null) {
       hlc.receive(persisted)
     }
-    const persistedMax = await selectMaxChangeHlc(conn, changesTable)
+    const persistedMax = (await selectTableExists(conn, changesTable))
+      ? await selectMaxChangeHlc(conn, changesTable)
+      : null
     if (persistedMax !== null && isWellFormedHlc(persistedMax)) {
       hlc.receive(persistedMax)
     }
@@ -55,8 +71,8 @@ export class SyncStamper {
     const txId = randomHex(16)
     const statements: StampStatement[] = [
       {
-        sql: updateUnstampedChangeStampsSql(this.changesTable),
-        params: [this.nodeId, txId, hlcValue],
+        sql: this.stampSql,
+        params: [this.nodeId, txId, hlcValue, STAMP_FLOOR_META_KEY],
         trusted: true,
       },
     ]
@@ -68,6 +84,11 @@ export class SyncStamper {
       })
     }
     return statements
+  }
+
+  async openStamps(txConn: SQLiteConnection): Promise<void> {
+    const stmt = await txConn.prepare(this.openingStatement.sql)
+    await stmt.run(...this.openingStatement.params)
   }
 
   async applyStamps(txConn: SQLiteConnection): Promise<void> {

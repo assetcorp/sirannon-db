@@ -83,7 +83,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
 
   replicateStream.on('data', (msg: ReplicationMessage) => {
     if (replicatePeerId === null) {
-      if (!msg.hello) {
+      if (!msg.hello || !t.validateTlsIdentity(replicateStream, msg.hello.nodeId)) {
         teardown()
         return
       }
@@ -111,7 +111,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
 
   syncStream.on('data', (msg: SyncMessage) => {
     if (syncPeerId === null) {
-      if (!msg.hello) {
+      if (!msg.hello || !t.validateTlsIdentity(syncStream, msg.hello.nodeId)) {
         teardown()
         return
       }

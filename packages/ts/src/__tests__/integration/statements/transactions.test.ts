@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
+import type { Transaction } from '../../../core/transaction.js'
 import {
   columnRaw,
   countRaw,
@@ -244,5 +245,66 @@ describe.each(DRIVER_PLACEMENTS)('transactions with $label', ({ driver, writerWo
     expect(countRaw(path, 'customers')).toBe(0)
     expect(countRaw(path, 'orders')).toBe(0)
     await expect(db.execute('INSERT INTO customers (id) VALUES (3)')).resolves.toMatchObject({ changes: 1 })
+  })
+
+  it('refuses every call on a transaction handle that leaks out of its callback with TRANSACTION_CLOSED, even while another transaction is open', async () => {
+    const { db, path } = await openAccounts()
+    const leaked: Transaction[] = []
+    const keep = (tx: Transaction) => {
+      leaked.push(tx)
+    }
+
+    await db.transaction(async tx => keep(tx))
+    await db.transaction(async tx => keep(tx)).then(() => undefined)
+    await db
+      .transaction(async tx => {
+        keep(tx)
+        throw new Error('the callback gives up')
+      })
+      .catch(() => undefined)
+    await db.transaction(() => db.transaction(async inner => keep(inner)))
+    await db.watch('accounts')
+    await db.transaction(async tx => keep(tx))
+    await db.migrate([{ version: 1, name: 'leak_handle', up: async tx => keep(tx) }])
+    const unawaited = await db.transaction(async tx => {
+      keep(tx)
+      return () => tx.execute(OPEN_ACCOUNT, ['late', 1])
+    })
+
+    const held = deferred()
+    const open = db.transaction(async tx => {
+      await tx.execute(OPEN_ACCOUNT, ['inside the open transaction', 1])
+      await held.promise
+      throw new Error('the open transaction rolls back')
+    })
+    const codes: unknown[] = []
+    for (const tx of leaked) {
+      for (const call of [
+        () => tx.execute(OPEN_ACCOUNT, ['leaked', 1]),
+        () => tx.executeBatch(OPEN_ACCOUNT, [['leaked batch', 1]]),
+        () => tx.query(OWNERS_IN_ORDER),
+      ]) {
+        codes.push(
+          await call().then(
+            () => 'ran',
+            (err: { code?: unknown }) => err.code,
+          ),
+        )
+      }
+    }
+    codes.push(
+      await unawaited().then(
+        () => 'ran',
+        (err: { code?: unknown }) => err.code,
+      ),
+    )
+    held.resolve()
+    await expect(open).rejects.toThrow('the open transaction rolls back')
+
+    expect(leaked).toHaveLength(7)
+    expect(codes).toEqual(Array(leaked.length * 3 + 1).fill('TRANSACTION_CLOSED'))
+    expect(countRaw(path, 'accounts')).toBe(0)
+    await expect(db.execute(OPEN_ACCOUNT, ['after', 1])).resolves.toMatchObject({ changes: 1 })
+    expect(columnRaw(path, OWNERS_IN_ORDER)).toEqual(['after'])
   })
 })

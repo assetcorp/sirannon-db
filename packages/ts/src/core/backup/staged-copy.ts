@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SQLiteConnection } from '../driver/types.js'
+import { BackupError } from '../errors.js'
 import { randomHex } from '../random-hex.js'
 import { reportQuietly } from './cycle-callbacks.js'
 import { sendFileInPieces } from './pieces.js'
@@ -18,6 +19,17 @@ import { copyDatabaseStepwise } from './stepped-copy.js'
 import { readLogPosition } from './wal-log.js'
 
 const STAGED_FILE_NAME = 'copy.db'
+
+async function createStagingRoot(stagingDir: string): Promise<string> {
+  try {
+    await mkdir(stagingDir, { recursive: true })
+    return await mkdtemp(join(stagingDir, 'sirannon-backup-'))
+  } catch (err) {
+    throw new BackupError(
+      `Sirannon could not create a directory to stage the copy in under '${stagingDir}': ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+}
 
 /**
  * Copies a database to a local file and then sends that file in fixed-size
@@ -38,7 +50,7 @@ export async function copyToDestinationStaged(
   assertPieceBytes(pieceBytes)
 
   const startedAt = Date.now()
-  const stagingRoot = await mkdtemp(join(request.stagingDir ?? tmpdir(), 'sirannon-backup-'))
+  const stagingRoot = await createStagingRoot(request.stagingDir ?? tmpdir())
   const stagedPath = join(stagingRoot, STAGED_FILE_NAME)
   let firstStepSeen = false
   let copyLeftRunning: Promise<unknown> | null = null

@@ -28,6 +28,21 @@ export interface BulkLoadRun {
   checkpoint?: boolean
   capturesChangeLog?: boolean
   loadRows: () => Promise<BulkLoadResult>
+  restoreBeforeNextWrite: (restore: () => Promise<void>) => void
+}
+
+function retriedRestore(writer: SQLiteConnection, restorePragma: string): () => Promise<void> {
+  return async () => {
+    try {
+      await writer.exec(restorePragma)
+    } catch (err) {
+      if (err instanceof SirannonError) throw err
+      throw new SirannonError(
+        'Sirannon could not restore the configured synchronous level after a bulk load, so it refused this operation, which did not run',
+        'DURABILITY_RESTORE_FAILED',
+      )
+    }
+  }
 }
 
 /**
@@ -51,7 +66,12 @@ export interface BulkLoadRun {
  * path. When the restore fails after a committed load, it throws
  * 'DURABILITY_RESTORE_FAILED' so that the operator knows that the load
  * committed and must not be re-run; when the load itself failed, it rethrows
- * the load error.
+ * the load error. Either way, it hands a retry of the restore to
+ * `restoreBeforeNextWrite`, and the writer lock runs that retry before the
+ * next operation that holds it, so that no later write can commit at the
+ * relaxed level. While the retry fails, each of those operations fails with
+ * 'DURABILITY_RESTORE_FAILED', or with the writer's own coded error, and does
+ * not run.
  *
  * After a load that committed and changed rows, this function checkpoints the
  * WAL at the restored level, which copies the loaded pages into the main
@@ -95,6 +115,7 @@ export async function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult> {
   try {
     await run.writer.exec(restorePragma)
   } catch {
+    run.restoreBeforeNextWrite(retriedRestore(run.writer, restorePragma))
     if (loadError !== undefined) throw loadError
     throw new SirannonError(
       'Bulk load committed but durability could not be restored because the writer connection failed',

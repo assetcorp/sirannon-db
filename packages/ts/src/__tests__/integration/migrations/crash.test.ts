@@ -30,7 +30,7 @@ const backfillLedger: Migration = {
   down: 'DELETE FROM ledger',
 }
 
-function expectConsistent(path: string): number[] {
+function expectConsistent(path: string): void {
   const state = readFileState(path)
   const versions = state.history.map(row => row.version)
   expect([[], [1]]).toContainEqual(versions)
@@ -38,11 +38,10 @@ function expectConsistent(path: string): number[] {
   expect(state.userVersion).toBe(versions.at(-1) ?? 0)
   if (versions.length > 0) expect(countRows(path, 'ledger')).toBe(0)
   expect(integrityOf(path)).toBe('ok')
-  return versions
 }
 
 describe('a migration that stops part-way', () => {
-  it('leaves no trace of a migration whose process was killed mid-write, and applies the full set on the next open', async () => {
+  it('leaves no trace of a migration whose process dies by SIGKILL mid-write, and applies the full set on the next open', async () => {
     const path = scratchPath('ledger.db')
     const killed = spawnMigrator('kill', [path])
 
@@ -50,7 +49,7 @@ describe('a migration that stops part-way', () => {
 
     expect(exit.signal, exit.stderr).toBe('SIGKILL')
     expect(killed.reports.map(report => report.outcome)).toEqual(['writing'])
-    const before = expectConsistent(path)
+    expectConsistent(path)
 
     const reopened = await registry({ migrations: [createLedger, backfillLedger] }).open('ledger', path)
 
@@ -59,7 +58,6 @@ describe('a migration that stops part-way', () => {
     expect(withRawConnection(path, raw => raw.prepare('SELECT amount FROM ledger ORDER BY id').pluck().all())).toEqual([
       10, 20, 30,
     ])
-    expect(before.length).toBeLessThanOrEqual(1)
   }, 30_000)
 
   it('leaves the file unchanged when SQLite cannot commit a migration or a rollback, and succeeds on the next attempt', async () => {

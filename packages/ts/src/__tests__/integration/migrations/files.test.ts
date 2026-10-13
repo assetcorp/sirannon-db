@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MigrationError } from '../../../core/errors.js'
 import { migrationsFromFiles } from '../../../core/migrations/from-files.js'
-import { loadMigrations } from '../../../utils/file-migrations/index.js'
+import { loadMigrations, scanDirectory } from '../../../utils/file-migrations/index.js'
 import {
   cleanUp,
   columnsOf,
@@ -41,7 +41,7 @@ function expectMapRefused(files: Record<string, unknown>, code: string, message?
 }
 
 describe('a directory of migration files', () => {
-  it('loads the files in numeric version order, ignores every file of another form, and applies them', async () => {
+  it('loads the files in numeric version order and ignores every file of another form', async () => {
     const directory = scratchDirectory('migrations')
     writeFiles(directory, {
       '10_add_refunded.up.sql': ADD_REFUNDED,
@@ -64,6 +64,16 @@ describe('a directory of migration files', () => {
       [1, 'create_invoices', CREATE_INVOICES, undefined],
       [2, 'add_total', ADD_TOTAL, undefined],
       [10, 'add_refunded', ADD_REFUNDED, undefined],
+    ])
+    expect(scanDirectory(directory)).toEqual([
+      {
+        version: 1,
+        name: 'create_invoices',
+        upPath: join(directory, '001_create_invoices.up.sql'),
+        downPath: join(directory, '001_create_invoices.down.sql'),
+      },
+      { version: 2, name: 'add_total', upPath: join(directory, '2_add_total.up.sql'), downPath: null },
+      { version: 10, name: 'add_refunded', upPath: join(directory, '10_add_refunded.up.sql'), downPath: null },
     ])
     const { db, path } = await openDatabase()
     expect((await db.migrate(loaded)).applied.map(entry => entry.version)).toEqual([1, 2, 10])
@@ -183,7 +193,7 @@ describe('rollback from migration files', () => {
     expect((await db.migrate(set)).applied.map(entry => entry.version)).toEqual([1, 2, 3])
   })
 
-  it('refuses a version whose down file never existed, was deleted, is blank, or became a directory, and reverts nothing', async () => {
+  it('refuses a version whose down file is missing, blank, or a directory when the rollback reads it, and reverts nothing', async () => {
     const cases: { label: string; tamper: (downPath: string) => void; code: string }[] = [
       { label: 'absent', tamper: downPath => rmSync(downPath), code: 'MIGRATION_NO_DOWN' },
       { label: 'emptied', tamper: downPath => writeFileSync(downPath, ' \n '), code: 'MIGRATION_VALIDATION_ERROR' },

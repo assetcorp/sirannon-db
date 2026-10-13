@@ -38,6 +38,17 @@ export async function selectMaxColumnVersionHlcForRow(
   return row?.max_hlc ?? null
 }
 
+/** Deletes every column version stamped later than one timestamp. */
+export async function deleteColumnVersionsAfterHlc(conn: SQLiteConnection, hlc: string): Promise<void> {
+  const stmt = await conn.prepare(`DELETE FROM ${COLUMN_VERSIONS_TABLE} WHERE hlc > ?`)
+  await stmt.run(hlc)
+}
+
+/** Deletes every column version. */
+export async function deleteColumnVersions(conn: SQLiteConnection): Promise<void> {
+  await conn.exec(`DELETE FROM ${COLUMN_VERSIONS_TABLE}`)
+}
+
 export function prepareUpsertColumnVersion(conn: SQLiteConnection): Promise<PreparedStatement> {
   return conn.prepare(UPSERT_COLUMN_VERSION)
 }

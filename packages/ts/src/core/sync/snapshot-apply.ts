@@ -71,9 +71,7 @@ export async function loadSnapshotPage(
   table: string,
   rows: readonly Record<string, unknown>[],
 ): Promise<void> {
-  if (!IDENTIFIER_RE.test(table)) {
-    throw new ReplicationError(`Invalid table name: ${table}`)
-  }
+  assertTableNames([table])
   if (rows.length === 0) return
 
   const columns = Object.keys(rows[0])

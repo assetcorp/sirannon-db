@@ -1,3 +1,4 @@
+import { runWithColumnDropsPrepared } from './cdc/column-drop.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { resolveDeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ConnectionPool } from './connection-pool.js'
@@ -59,7 +60,7 @@ export async function createDatabaseRuntime(
   }
 
   if (options?.backups && !readOnly) {
-    assertChangeLogCaptureSupported(driver, id, path, options.walMode ?? true)
+    assertChangeLogCaptureSupported(driver, id, path, options.walMode ?? true, options.backups)
   }
 
   const pool = await ConnectionPool.create({
@@ -115,7 +116,9 @@ export async function createDatabaseRuntime(
   const groupCommitter = new GroupCommitter(writerLock, {
     acquireWriter: () => pool.acquireWriter(),
     afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(cdc.changeTracker, writer, sql),
+    runUngroupable: (writer, sql, run) => runWithColumnDropsPrepared(cdc.changeTracker, writer, sql, run),
     stampStatements: stampOptions => cdc.stampStatements(stampOptions),
+    stampOpening: () => cdc.stampOpening(),
   })
 
   const writes = new DatabaseWriteController({

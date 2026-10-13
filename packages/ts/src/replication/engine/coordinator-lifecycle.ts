@@ -2,13 +2,19 @@ import type { ReplicationGroupState } from '../coordinator/types.js'
 import { CoordinatorError } from '../errors.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import { startControllerLoop, stopControllerLeaseWatch } from './controller-loop.js'
-import { hasCurrentPrimaryAuthorityFor, noteCoordinatorContact } from './coordinator-authority.js'
 import {
+  applyCoordinatorState,
+  hasCurrentPrimaryAuthorityFor,
+  noteCoordinatorContact,
+} from './coordinator-authority.js'
+import {
+  admitRejoinedNodeIfReady,
   handleFormerPrimaryDemotion,
   reconcileInSyncSet,
   startCoordinatorRejoinSyncIfReady,
 } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
+import { keepTermHistoryCurrent } from './history-anchor.js'
 import { unrefTimer } from './timers.js'
 
 const IN_SYNC_RECONCILE_INTERVAL_MS = 1_000
@@ -23,6 +29,7 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
   if (!config) return
 
   const coordinator = config.coordinator
+  engine.coordinatorDemotionHandler = next => demoteFormerPrimary(engine, next)
   let state = await coordinator.getReplicationGroupState(config.clusterId, config.groupId)
   if (!state && config.votingDataBearingNodeIds) {
     state = await coordinator.setReplicationGroupState({
@@ -72,31 +79,37 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
 
 function startInSyncReconcileLoop(engine: ReplicationEngine): void {
   const timer = setInterval(() => {
+    keepTermHistoryCurrent(engine)
     reconcileInSyncSet(engine).catch((err: unknown) => {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'coordinator-in-sync-reconcile', recoverable: true })
     })
+    admitRejoinedNode(engine)
   }, IN_SYNC_RECONCILE_INTERVAL_MS)
   unrefTimer(timer)
   engine.inSyncReconcileTimer = timer
 }
 
 function handleCoordinatorStateUpdate(engine: ReplicationEngine, next: ReplicationGroupState): void {
-  const previous = engine.coordinatorState
-  const wasPrimary = previous ? hasCurrentPrimaryAuthorityFor(engine, previous) : engine.coordinatorAuthority
-  noteCoordinatorContact(engine)
-  engine.coordinatorState = next
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, next)
-
-  if (wasPrimary && !engine.coordinatorAuthority && next.primaryTerm > (previous?.primaryTerm ?? 0n)) {
-    handleFormerPrimaryDemotion(engine, next).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-former-primary-demotion', recoverable: false })
-    })
-    return
-  }
-
+  if (applyCoordinatorState(engine, next)) return
   startCoordinatorRejoinSyncIfReady(engine, next)
+  keepTermHistoryCurrent(engine)
+  admitRejoinedNode(engine)
+}
+
+function admitRejoinedNode(engine: ReplicationEngine): void {
+  admitRejoinedNodeIfReady(engine).catch((err: unknown) => {
+    const wrappedErr = err instanceof Error ? err : new Error(String(err))
+    engine.emitError({ error: wrappedErr, operation: 'coordinator-rejoin-admission', recoverable: true })
+  })
+}
+
+function demoteFormerPrimary(engine: ReplicationEngine, next: ReplicationGroupState): void {
+  if (!engine.running) return
+  handleFormerPrimaryDemotion(engine, next).catch((err: unknown) => {
+    const wrappedErr = err instanceof Error ? err : new Error(String(err))
+    engine.emitError({ error: wrappedErr, operation: 'coordinator-former-primary-demotion', recoverable: false })
+  })
 }
 
 function startCoordinatorLeaseRenewal(engine: ReplicationEngine): void {
@@ -168,9 +181,7 @@ async function restoreCoordinatorSession(engine: ReplicationEngine, ttlMs: numbe
       return
     }
     engine.nodeSessionLeaseId = session.lease.id
-    engine.coordinatorState = state
-    noteCoordinatorContact(engine)
-    applyAuthorityFromKnownState(engine)
+    applyCoordinatorState(engine, state)
   } catch (err: unknown) {
     const wrappedErr = err instanceof Error ? err : new Error(String(err))
     engine.emitError({ error: wrappedErr, operation: 'coordinator-session-restore', recoverable: true })

@@ -12,9 +12,11 @@ import {
   startEtcdCluster,
   startToxiproxyContainer,
   type ToxiproxyContainerHandle,
+  unpauseContainer,
 } from './docker.js'
+import { EtcdOracle } from './etcd-oracle.js'
 import { zip } from './gate-support.js'
-import { type FailoverNodeConfig, FailoverNodeProcess } from './node-process.js'
+import { type EtcdAccess, type FailoverNodeConfig, FailoverNodeProcess, type FailoverNodeRole } from './node-process.js'
 import { ToxiproxyClient } from './toxiproxy.js'
 
 export const NODE_A = 'failover-node-a'
@@ -31,23 +33,45 @@ export const COMPATIBILITY = {
 
 export interface GateEnvironment {
   runPrefix: string
-  tempDir: string
   certs: MtlsCerts
   etcd: EtcdClusterHandle
   toxiproxyContainer: ToxiproxyContainerHandle
   toxiproxy: ToxiproxyClient
-  coordinator: EtcdClusterCoordinator
   grpcPorts: Map<string, number>
   httpPorts: Map<string, number>
   etcdProxyPorts: Map<string, number[]>
   grpcProxyPorts: Map<string, Map<string, number>>
+  scenario: number
+  tempDir: string
+  keyPrefix: string
+  coordinator: EtcdClusterCoordinator
+  etcdOracle: EtcdOracle
   nodes: Map<string, FailoverNodeProcess>
+}
+
+export interface NodeOptions {
+  role?: FailoverNodeRole
+  dialTargets?: readonly string[]
+  seedSchema?: boolean
+  createsGroup?: boolean
+  voters?: readonly string[]
+  sessionTtlMs?: number
+  controllerLeaseTtlMs?: number
+  controllerTickIntervalMs?: number
+  controllerEnabled?: boolean
+  writeForwarding?: boolean
+  compatibility?: FailoverNodeConfig['compatibility']
+  stableNodeId?: boolean
+  etcdAccess?: EtcdAccess
+  backups?: boolean
+  clockOffsetMs?: number
+  etcd3Unresolvable?: boolean
+  awaitReady?: boolean
 }
 
 export async function startEnvironment(): Promise<GateEnvironment> {
   await ensureFailoverImages()
   const runPrefix = failoverRunPrefix()
-  const tempDir = mkdtempSync(join(tmpdir(), `${runPrefix}-`))
   const certs = await createMtlsCerts(NODE_IDS)
   const etcd = await startEtcdCluster(runPrefix)
   const grpcPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
@@ -70,11 +94,7 @@ export async function startEnvironment(): Promise<GateEnvironment> {
       if (upstreamPort === undefined || listenPort === undefined) {
         throw new Error('Invalid etcd proxy allocation')
       }
-      await toxiproxy.createProxy({
-        name: etcdProxyName(nodeId, index),
-        listenPort,
-        upstreamPort,
-      })
+      await toxiproxy.createProxy({ name: etcdProxyName(nodeId, index), listenPort, upstreamPort })
     }
   }
 
@@ -86,91 +106,122 @@ export async function startEnvironment(): Promise<GateEnvironment> {
       if (upstreamPort === undefined) {
         throw new Error(`Missing gRPC port for ${toNodeId}`)
       }
-      await toxiproxy.createProxy({
-        name: grpcProxyName(fromNodeId, toNodeId),
-        listenPort,
-        upstreamPort,
-      })
+      await toxiproxy.createProxy({ name: grpcProxyName(fromNodeId, toNodeId), listenPort, upstreamPort })
     }
   }
 
-  const coordinator = createEtcdCoordinator({
-    hosts: etcd.endpoints,
-    keyPrefix: runPrefix,
-    allowInsecure: true,
-    dialTimeoutMs: 1_000,
-    defaultCallTimeoutMs: 1_000,
-  })
-
+  const keyPrefix = `${runPrefix}/scenario-0`
   return {
     runPrefix,
-    tempDir,
     certs,
     etcd,
     toxiproxyContainer,
     toxiproxy,
-    coordinator,
     grpcPorts,
     httpPorts,
     etcdProxyPorts,
     grpcProxyPorts,
+    scenario: 0,
+    tempDir: mkdtempSync(join(tmpdir(), `${runPrefix}-`)),
+    keyPrefix,
+    coordinator: operatorCoordinator(etcd, keyPrefix),
+    etcdOracle: new EtcdOracle(etcd.endpoints, keyPrefix, CLUSTER_ID, GROUP_ID),
     nodes: new Map(),
   }
+}
+
+export async function beginScenario(environment: GateEnvironment): Promise<void> {
+  await endScenario(environment)
+  environment.scenario += 1
+  environment.keyPrefix = `${environment.runPrefix}/scenario-${environment.scenario}`
+  environment.tempDir = mkdtempSync(join(tmpdir(), `${environment.runPrefix}-${environment.scenario}-`))
+  environment.coordinator = operatorCoordinator(environment.etcd, environment.keyPrefix)
+  environment.etcdOracle = new EtcdOracle(environment.etcd.endpoints, environment.keyPrefix, CLUSTER_ID, GROUP_ID)
+}
+
+export async function endScenario(environment: GateEnvironment): Promise<void> {
+  await Promise.all([...environment.nodes.values()].map(node => node.killAndWait()))
+  environment.nodes.clear()
+  await environment.coordinator.close().catch(() => undefined)
+  for (const containerName of environment.etcd.containerNames) {
+    await unpauseContainer(containerName)
+  }
+  await environment.toxiproxy.reset()
+  rmSync(environment.tempDir, { recursive: true, force: true })
+}
+
+export async function cleanupEnvironment(environment: GateEnvironment): Promise<void> {
+  await endScenario(environment).catch(() => undefined)
+  environment.certs.cleanup()
+  await cleanupDockerResources({
+    containers: [...environment.etcd.containerNames, environment.toxiproxyContainer.containerName],
+    networks: [environment.etcd.networkName],
+  })
 }
 
 export async function startNode(
   environment: GateEnvironment,
   nodeId: string,
-  role: 'primary' | 'replica',
-  endpointTargets: string[],
-  seedSchema: boolean,
-  createsGroup: boolean,
+  options: NodeOptions = {},
 ): Promise<FailoverNodeProcess> {
   const cert = environment.certs.certForNode(nodeId)
   const grpcPort = environment.grpcPorts.get(nodeId)
   if (grpcPort === undefined) throw new Error(`Missing gRPC port for ${nodeId}`)
+  const dialTargets = options.dialTargets ?? NODE_IDS.filter(target => target !== nodeId)
 
   const config: FailoverNodeConfig = {
     nodeId,
-    dbPath: join(environment.tempDir, `${nodeId}.db`),
+    stableNodeId: options.stableNodeId ?? true,
+    dbPath: dbPathFor(environment, nodeId),
     grpcPort,
     httpPort: httpPortFor(environment, nodeId),
     certPath: cert.certPath,
     keyPath: cert.keyPath,
     caCertPath: environment.certs.caCertPath,
-    initialRole: role,
-    endpoints: endpointTargets.map(target => endpointFor(environment, nodeId, target)),
+    initialRole: options.role ?? 'replica',
+    endpoints: dialTargets.map(target => endpointFor(environment, nodeId, target)),
     httpEndpoints: Object.fromEntries(NODE_IDS.map(target => [target, httpEndpointFor(environment, target)])),
     etcdHosts: etcdEndpointsFor(environment, nodeId),
-    keyPrefix: environment.runPrefix,
+    etcdAccess: options.etcdAccess ?? 'insecure-test',
+    keyPrefix: environment.keyPrefix,
     clusterId: CLUSTER_ID,
     groupId: GROUP_ID,
-    votingDataBearingNodeIds: createsGroup ? [...NODE_IDS] : undefined,
-    seedSchema,
-    sessionTtlMs: 1_500,
-    controllerLeaseTtlMs: 1_500,
-    controllerTickIntervalMs: 200,
-    compatibility: COMPATIBILITY,
+    votingDataBearingNodeIds: options.createsGroup ? [...(options.voters ?? NODE_IDS)] : undefined,
+    seedSchema: options.seedSchema ?? false,
+    sessionTtlMs: options.sessionTtlMs ?? 1_500,
+    controllerLeaseTtlMs: options.controllerLeaseTtlMs ?? 1_500,
+    controllerTickIntervalMs: options.controllerTickIntervalMs ?? 200,
+    controllerEnabled: options.controllerEnabled ?? true,
+    writeForwarding: options.writeForwarding ?? true,
+    backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
+    compatibility: options.compatibility ?? COMPATIBILITY,
   }
 
-  const node = new FailoverNodeProcess(config)
+  const node = new FailoverNodeProcess(config, {
+    clockOffsetMs: options.clockOffsetMs,
+    etcd3Unresolvable: options.etcd3Unresolvable,
+  })
   environment.nodes.set(nodeId, node)
-  await node.ready()
+  if (options.awaitReady ?? true) {
+    await node.ready()
+  }
   return node
 }
 
-export async function cleanupEnvironment(environment: GateEnvironment): Promise<void> {
-  for (const node of environment.nodes.values()) {
-    await node.shutdown().catch(() => {
-      node.kill()
-    })
-  }
-  await environment.coordinator.close().catch(() => undefined)
-  environment.certs.cleanup()
-  rmSync(environment.tempDir, { recursive: true, force: true })
-  await cleanupDockerResources({
-    containers: [...environment.etcd.containerNames, environment.toxiproxyContainer.containerName],
-    networks: [environment.etcd.networkName],
+export async function killNode(environment: GateEnvironment, nodeId: string): Promise<void> {
+  const node = environment.nodes.get(nodeId)
+  if (!node) return
+  await node.killAndWait()
+  environment.nodes.delete(nodeId)
+}
+
+export function operatorCoordinator(etcd: EtcdClusterHandle, keyPrefix: string): EtcdClusterCoordinator {
+  return createEtcdCoordinator({
+    hosts: etcd.endpoints,
+    keyPrefix,
+    allowInsecure: true,
+    dialTimeoutMs: 1_000,
+    defaultCallTimeoutMs: 2_000,
   })
 }
 
@@ -194,10 +245,19 @@ async function allocateGrpcProxyPorts(): Promise<Map<string, Map<string, number>
 
 export async function healNodeSirannonLinks(environment: GateEnvironment, nodeId: string): Promise<void> {
   await setEtcdLink(environment, nodeId, true)
-  for (const otherNodeId of NODE_IDS) {
+  await setReplicationLinks(environment, nodeId, true)
+}
+
+export async function setReplicationLinks(
+  environment: GateEnvironment,
+  nodeId: string,
+  enabled: boolean,
+  peers: readonly string[] = NODE_IDS.filter(otherNodeId => otherNodeId !== nodeId),
+): Promise<void> {
+  for (const otherNodeId of peers) {
     if (otherNodeId === nodeId) continue
-    await environment.toxiproxy.setEnabled(grpcProxyName(nodeId, otherNodeId), true)
-    await environment.toxiproxy.setEnabled(grpcProxyName(otherNodeId, nodeId), true)
+    await environment.toxiproxy.setEnabled(grpcProxyName(nodeId, otherNodeId), enabled)
+    await environment.toxiproxy.setEnabled(grpcProxyName(otherNodeId, nodeId), enabled)
   }
 }
 
@@ -211,6 +271,14 @@ export function requireNode(environment: GateEnvironment, nodeId: string): Failo
   const node = environment.nodes.get(nodeId)
   if (!node) throw new Error(`Node ${nodeId} is not running`)
   return node
+}
+
+export function dbPathFor(environment: GateEnvironment, nodeId: string): string {
+  return join(environment.tempDir, `${nodeId}.db`)
+}
+
+export function backupDirectoryFor(environment: GateEnvironment): string {
+  return join(environment.tempDir, 'backups')
 }
 
 export function endpointFor(environment: GateEnvironment, fromNodeId: string, toNodeId: string): string {

@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../driver/types.js'
 import {
   prepareDeleteRowColumnVersions,
   prepareUpsertColumnVersion,
+  prepareUpsertNewerColumnVersion,
   selectMaxColumnVersionHlcForRow,
   selectMaxRowChangeHlc,
 } from '../system-catalog/index.js'
@@ -10,6 +11,8 @@ import type { PkResolver } from './pk.js'
 import { findRowByPk } from './row-lookup.js'
 import type { ReplicationChange } from './types.js'
 import { IDENTIFIER_RE, validateIdentifier } from './validators.js'
+
+export const ROW_TOMBSTONE_COLUMN = ''
 
 export class RowWriter {
   constructor(
@@ -39,6 +42,15 @@ export class RowWriter {
     if (versioned === null) return logged
     if (logged === null) return versioned
     return HLC.compare(logged, versioned) > 0 ? logged : versioned
+  }
+
+  getAbsentRowHlc(tx: SQLiteConnection, table: string, rowId: string): Promise<string | null> {
+    return selectMaxColumnVersionHlcForRow(tx, table, rowId)
+  }
+
+  async recordTombstone(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
+    const stmt = await prepareUpsertNewerColumnVersion(tx)
+    await stmt.run(change.table, change.rowId, ROW_TOMBSTONE_COLUMN, change.hlc, change.nodeId)
   }
 
   async insertRow(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
@@ -157,6 +169,7 @@ export class RowWriter {
     if (change.operation === 'delete') {
       const delStmt = await prepareDeleteRowColumnVersions(tx)
       await delStmt.run(change.table, change.rowId)
+      await this.recordTombstone(tx, change)
       return
     }
 

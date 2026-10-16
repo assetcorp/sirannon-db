@@ -2,12 +2,11 @@ import { EventEmitter } from 'node:events'
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
-import type { CoordinatorLease, CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
+import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError } from '../errors.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
@@ -40,6 +39,7 @@ import {
   DEFAULT_SYNC_ACK_TIMEOUT_MS,
   DEFAULT_SYNC_BATCH_SIZE,
 } from './constants.js'
+import { ControllerRuntime } from './controller-runtime.js'
 import {
   getCoordinatorMessageFields,
   getForwardingPrimaryPeerId,
@@ -50,6 +50,7 @@ import { execute, executeBatch, executeTransaction, forwardStatements, query, tr
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { nodeStatus } from './node-health.js'
+import { RejoinState } from './rejoin-state.js'
 import { SenderLoop } from './sender-loop.js'
 import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
@@ -141,29 +142,19 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost' = 'disabled'
   /** @internal */
-  nodeSessionLeaseId: string | null = null
+  readonly controller = new ControllerRuntime()
   /** @internal */
-  controllerLeaseId: string | null = null
+  readonly rejoin = new RejoinState()
+  /** @internal */
+  nodeSessionLeaseId: string | null = null
   /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
   nodeSessionWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
-  controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null = null
-  /** @internal */
-  observedControllerLease: CoordinatorLease | null = null
-  /** @internal */
-  observedControllerLeaseLiveUntilMs = 0
-  /** @internal */
-  controllerBidding = false
-  /** @internal */
   liveNodeIds: string[] | null = null
   /** @internal */
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
-  /** @internal */
-  controllerTimer: ReturnType<typeof setInterval> | null = null
-  /** @internal */
-  coordinatorRejoinSyncStarting = false
   /** @internal */
   coordinatorSessionRestoring = false
   /** @internal */
@@ -207,7 +198,10 @@ export class ReplicationEngine extends EventEmitter {
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
     this.tracker = config.changeTracker
-    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, CHANGES_TABLE, this.tracker, !!config.coordinator)
+    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, {
+      tracker: this.tracker,
+      appliedSchemaChanges: config.coordinator ? 'logged' : 'unlogged',
+    })
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
     this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS

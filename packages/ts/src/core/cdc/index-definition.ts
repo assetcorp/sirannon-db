@@ -1,4 +1,5 @@
-import { type SqlToken, tokenizeSql } from '../live/sql-tokens.js'
+import { isKeyword, type SqlToken, tokenizeSql } from '../live/sql-tokens.js'
+import { escId } from '../sql-identifiers.js'
 
 const EXPRESSION_KEYWORDS = new Set([
   'and',
@@ -99,7 +100,7 @@ export function rewriteColumnReferences(
   columns: readonly string[],
   row: string | ((column: string) => string),
 ): RewrittenExpression {
-  const replacement = typeof row === 'string' ? (column: string) => `${row}."${column.replace(/"/g, '""')}"` : row
+  const replacement = typeof row === 'string' ? (column: string) => `${row}."${escId(column)}"` : row
   const byFoldedName = new Map(columns.map(column => [column.toLowerCase(), column]))
   const tokens = tokenizeSql(expression)
   const read = new Set<string>()
@@ -159,14 +160,9 @@ function rebuild(
     if (previousEnd !== -1 && source.slice(previousEnd, token.start).length > 0 && sql.length > 0) sql += ' '
     previousEnd = token.end
     if (dropped.has(i)) continue
-    sql +=
-      replaced.get(i) ?? (token.kind === 'word' && token.quoted ? `"${token.value.replace(/"/g, '""')}"` : token.value)
+    sql += replaced.get(i) ?? (token.kind === 'word' && token.quoted ? `"${escId(token.value)}"` : token.value)
   }
   return sql
-}
-
-function isKeyword(token: SqlToken, keyword: string): boolean {
-  return token.kind === 'word' && !token.quoted && token.lower === keyword
 }
 
 function isPunct(token: SqlToken | undefined, value: string): boolean {

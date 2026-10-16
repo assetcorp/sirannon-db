@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { RawDeviceClient } from '../lib/raw-device-client.js'
 import { postJson } from '../lib/served-registry.js'
-import { changeLog, pause, releaseChangeStreams, type ServedDatabase, serveDatabase, WireSocket } from './harness.js'
+import {
+  changeLog,
+  pause,
+  readFile,
+  releaseChangeStreams,
+  type ServedDatabase,
+  serveDatabase,
+  WireSocket,
+} from './harness.js'
 
 const NOTES_SCHEMA = 'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)'
 const SMALL_LIMITS = { maxBodyBytes: 65_536, maxWebSocketBackpressureBytes: 131_072 }
@@ -16,6 +24,10 @@ const EVENTS_BEFORE_THE_DROP = 100
 const CLOSE_DEADLINE_MS = 20_000
 const DELIVERY_DEADLINE_MS = 30_000
 const WS_CLOSE_OVERLOADED = 4290
+const OVERSIZED_REPLY_ROWS = 32
+const PILED_UP_REPLIES = 40
+const PILE_UP_MS = 500
+const EVERY_NOTE = 'SELECT id, body FROM notes ORDER BY id'
 
 const rawClients: RawDeviceClient[] = []
 
@@ -126,6 +138,47 @@ describe('a reader that stops reading', () => {
     await requester.waitForClose(CLOSE_DEADLINE_MS)
 
     expect([subscriber.closeCode, requester.closeCode]).toEqual([WS_CLOSE_OVERLOADED, WS_CLOSE_OVERLOADED])
+  })
+
+  it('accepts a reply larger than the bound onto an empty buffer, and closes with 4290 only once replies pile up behind a reader that stops', async () => {
+    const served = await serveDatabase({
+      label: 'oversized-reply',
+      databaseId: 'notes',
+      schema: [NOTES_SCHEMA],
+      server: SMALL_LIMITS,
+    })
+    const body = 'y'.repeat(FLOOD_BODY_BYTES)
+    for (let row = 0; row < OVERSIZED_REPLY_ROWS; row++) {
+      await served.db.execute('INSERT INTO notes (body) VALUES (?)', [body])
+    }
+    const expected = {
+      rows: readFile<{ id: number; body: string }>(served.path, EVERY_NOTE).map(row => ({
+        id: Number(row.id),
+        body: row.body,
+      })),
+    }
+    const replyBytes = expected.rows.reduce((total, row) => total + Buffer.byteLength(row.body), 0)
+    const reading = await connectRaw(served)
+    const stopped = await connectRaw(served)
+
+    const first = await reading.request({ type: 'query', id: 'first', sql: EVERY_NOTE })
+    const second = await reading.request({ type: 'query', id: 'second', sql: EVERY_NOTE })
+    stopped.pauseReading()
+    for (let reply = 0; reply < PILED_UP_REPLIES; reply++) {
+      stopped.send({ type: 'query', id: `piled-${reply}`, sql: EVERY_NOTE })
+    }
+    await pause(PILE_UP_MS)
+    stopped.resumeReading()
+    await stopped.waitForClose(CLOSE_DEADLINE_MS)
+    const delivered = stopped.messages.filter(message => message.type === 'result')
+
+    expect(replyBytes).toBeGreaterThan(SMALL_LIMITS.maxWebSocketBackpressureBytes)
+    expect([first.data, second.data]).toEqual([expected, expected])
+    expect(reading.closeCode).toBeNull()
+    expect(stopped.closeCode).toBe(WS_CLOSE_OVERLOADED)
+    expect(delivered.length).toBeGreaterThan(0)
+    expect(delivered.length).toBeLessThan(PILED_UP_REPLIES)
+    for (const message of delivered) expect(message.data, String(message.id)).toEqual(expected)
   })
 
   it('leaves the other subscribers whole when one drops in the middle of a large transaction, and its resume delivers the rest of that transaction', async () => {

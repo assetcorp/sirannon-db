@@ -23,6 +23,7 @@ import {
   serializeError,
   stringPayload,
 } from './cluster-node-payloads.js'
+import { CoordinatorCallHold } from './coordinator-call-hold.js'
 import { directoryDestination } from './directory-destination.js'
 import type { FailoverNodeConfig, SerializedError } from './node-process.js'
 import { serializeJson } from './node-process.js'
@@ -64,6 +65,7 @@ if (!rawConfig) {
 const config = JSON.parse(rawConfig) as FailoverNodeConfig
 const databaseId = config.groupId
 const recentErrors: unknown[] = []
+const inSyncUpdateHold = new CoordinatorCallHold()
 
 let running: RunningNode | null = null
 let liveItems: LiveQuery<{ id: number }> | null = null
@@ -138,6 +140,11 @@ function databaseOptions(coordinator: EtcdClusterCoordinator): DatabaseOptions |
 
 async function startClusterNode(): Promise<RunningNode> {
   const coordinator = createCoordinator()
+  const sendInSyncUpdate = coordinator.updateInSyncSet.bind(coordinator)
+  coordinator.updateInSyncSet = async input => {
+    await inSyncUpdateHold.pass(input)
+    return sendInSyncUpdate(input)
+  }
   const conn: SQLiteConnection = await testDriver.open(config.dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
 
@@ -168,7 +175,7 @@ async function startClusterNode(): Promise<RunningNode> {
     maxBatchChanges: 1_000,
     maxPendingBatches: 4,
     ackTimeoutMs: 1_500,
-    initialSync: true,
+    initialSync: config.initialSync ?? true,
     changeTracker: tracker,
     snapshotConnectionFactory: () => testDriver.open(config.dbPath, { readonly: true }),
     syncBatchSize: 100,
@@ -300,6 +307,21 @@ async function handleMessage(message: RequestMessage): Promise<void> {
     }
     if (command === 'status') {
       sendResponse(id, true, serializeJson({ ...engine.status(), recentErrors }))
+      return
+    }
+    if (command === 'holdInSyncUpdates') {
+      const removesNodeId = payload.removesNodeId
+      inSyncUpdateHold.hold(typeof removesNodeId === 'string' ? { removesNodeId } : {})
+      sendResponse(id, true, null)
+      return
+    }
+    if (command === 'releaseInSyncUpdates') {
+      inSyncUpdateHold.release()
+      sendResponse(id, true, null)
+      return
+    }
+    if (command === 'heldInSyncUpdates') {
+      sendResponse(id, true, inSyncUpdateHold.held())
       return
     }
     if (command === 'reconnectTransport') {

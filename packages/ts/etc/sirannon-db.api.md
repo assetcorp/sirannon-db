@@ -894,7 +894,7 @@ export class MetricsCollector {
     // (undocumented)
     trackConnection(metrics: ConnectionMetrics): void;
     // (undocumented)
-    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>, measureFailure?: QueryFailureMeasure): Promise<T>;
+    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>, measureFailure?: QueryFailureMeasure, measureLate?: LateOutcomeMeasure): Promise<T>;
     // (undocumented)
     get tracksQueries(): boolean;
 }
@@ -1280,12 +1280,8 @@ export interface SQLiteConnection {
     runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>;
     runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>;
     runGroup?(units: readonly {
-        statements: readonly {
-            sql: string;
-            params?: readonly unknown[];
-            trusted?: boolean;
-        }[];
-    }[]): Promise<GroupRunOutcome[]>;
+        statements: readonly GroupRunStatement[];
+    }[], opening?: GroupRunStatement): Promise<GroupRunOutcome[]>;
     transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
 }
 
@@ -1352,6 +1348,8 @@ export function toSubprotocolCredential(prefix: string, credential: string): str
 // @public
 export class Transaction {
     constructor(conn: SQLiteConnection);
+    // @internal
+    protected assertOpen(): void;
     // @internal
     end(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResult>;

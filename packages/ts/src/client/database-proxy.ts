@@ -34,6 +34,10 @@ export interface LoadAllOptions {
   durability?: BulkLoadDurability
 }
 
+function closedDatabaseError(): RemoteError {
+  return new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+}
+
 function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is AsyncIterable<T> {
   return typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function'
 }
@@ -46,6 +50,8 @@ function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is Asy
  * @public
  */
 export class RemoteDatabase {
+  private readonly lifetime = new AbortController()
+
   constructor(
     /**
      * The identifier of the database on the server.
@@ -89,9 +95,28 @@ export class RemoteDatabase {
       )
       return named.rows
     }
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     const response = await this.transport.query(operation, params, options?.readConcern)
     return response.rows
+  }
+
+  private assertSqlAccepted(): Promise<void> {
+    const closed = this.lifetime.signal
+    if (closed.aborted) return Promise.reject(closedDatabaseError())
+    return new Promise((resolve, reject) => {
+      const refuse = (): void => reject(closedDatabaseError())
+      closed.addEventListener('abort', refuse, { once: true })
+      this.capabilities.assertSqlAccepted().then(
+        () => {
+          closed.removeEventListener('abort', refuse)
+          resolve()
+        },
+        (err: unknown) => {
+          closed.removeEventListener('abort', refuse)
+          reject(err)
+        },
+      )
+    })
   }
 
   private assertReadConcernReaches(readConcern: ReadConcern | undefined): void {
@@ -133,7 +158,7 @@ export class RemoteDatabase {
       )
       return named.results
     }
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     return this.transport.execute(operation, params)
   }
 
@@ -184,7 +209,7 @@ export class RemoteDatabase {
    * rolls it back as a unit, with no round trip between statements.
    */
   async transaction(statements: Array<{ sql: string; params?: Params }>): Promise<ExecuteResponse[]> {
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     const response = await this.transport.transaction(statements)
     return response.results
   }
@@ -196,7 +221,7 @@ export class RemoteDatabase {
    * such as an import or a bulk insert, that must all commit or all roll back.
    */
   async batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<ExecuteResponse[]> {
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     const response = await this.transport.batch(sql, paramsBatch, writeConcern)
     return response.results
   }
@@ -230,7 +255,7 @@ export class RemoteDatabase {
     if (!Number.isInteger(batchSize) || batchSize <= 0) {
       throw new RemoteError('INVALID_ARGUMENT', 'loadAll batchSize must be a positive integer')
     }
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     const durability = options?.durability
     const total: BulkLoadResult = { rowsLoaded: 0, changes: 0 }
 
@@ -287,7 +312,7 @@ export class RemoteDatabase {
     durability?: BulkLoadDurability,
     checkpoint?: boolean,
   ): Promise<BulkLoadResult> {
-    await this.capabilities.assertSqlAccepted()
+    await this.assertSqlAccepted()
     return this.transport.load(sql, paramsBatch, durability, checkpoint)
   }
 
@@ -314,10 +339,12 @@ export class RemoteDatabase {
   }
 
   /**
-   * Closes the transport for this database, so every later call throws.
-   * With the WebSocket transport, it also rejects every pending request.
+   * Closes the transport for this database, so that every pending call and every later call fails with a
+   * `RemoteError` whose code is `TRANSPORT_ERROR`, including a call that waits for the server's capability report.
    */
   close(): void {
+    this.lifetime.abort()
+    this.capabilities.close?.()
     this.transport.close()
     this.onDispose?.()
   }

@@ -1,7 +1,7 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
-import { settleResponse } from './connection-drain.js'
+import { endResponse } from './connection-drain.js'
 
 interface LivenessResponse {
   status: 'ok'
@@ -44,10 +44,9 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
   const payload = JSON.stringify({ status: 'ok' } satisfies LivenessResponse)
 
   return res => {
-    res.cork(() => {
+    endResponse(res, () => {
       res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
     })
-    settleResponse(res)
   }
 }
 
@@ -100,10 +99,9 @@ export function handleReadiness(
     }
 
     const payload = JSON.stringify(body)
-    res.cork(() => {
+    endResponse(res, () => {
       res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
     })
-    settleResponse(res)
   }
 }
 

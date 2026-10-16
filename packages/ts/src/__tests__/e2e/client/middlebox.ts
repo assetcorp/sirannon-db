@@ -1,4 +1,5 @@
 import net from 'node:net'
+import { closeListener, listenOnLoopback, relayToTarget } from '../lib/tcp-relay.js'
 
 const HEADER_END = '\r\n\r\n'
 const OPCODE_CONTINUATION = 0x0
@@ -24,7 +25,7 @@ interface FrameStream {
 interface Pair {
   readonly id: number
   readonly client: net.Socket
-  upstream: net.Socket | null
+  readonly upstream: net.Socket
   mode: 'http' | 'websocket'
   clientHeaderText: string
   upstreamHeaderText: string
@@ -130,9 +131,7 @@ export class WebSocketMiddlebox {
   async listen(): Promise<void> {
     const server = net.createServer(client => this.accept(client))
     this.server = server
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-    const address = server.address()
-    if (address !== null && typeof address === 'object') this.port = address.port
+    this.port = await listenOnLoopback(server)
   }
 
   pointAt(targetPort: number): void {
@@ -149,12 +148,12 @@ export class WebSocketMiddlebox {
 
   stallServerFrames(): void {
     this.stalled = true
-    for (const pair of this.pairs) pair.upstream?.pause()
+    for (const pair of this.pairs) pair.upstream.pause()
   }
 
   releaseServerFrames(): void {
     this.stalled = false
-    for (const pair of this.pairs) pair.upstream?.resume()
+    for (const pair of this.pairs) pair.upstream.resume()
   }
 
   inject(text: string): number {
@@ -186,7 +185,7 @@ export class WebSocketMiddlebox {
     this.killAllConnections()
     const server = this.server
     this.server = null
-    if (server !== null) await new Promise<void>(resolve => server.close(() => resolve()))
+    await closeListener(server)
   }
 
   private accept(client: net.Socket): void {
@@ -196,10 +195,11 @@ export class WebSocketMiddlebox {
       client.destroy()
       return
     }
+    const { upstream } = relayToTarget(client, this.targetPort, () => this.pairs.delete(pair))
     const pair: Pair = {
       id: ++this.connectionCount,
       client,
-      upstream: null,
+      upstream,
       mode: 'http',
       clientHeaderText: '',
       upstreamHeaderText: '',
@@ -208,12 +208,7 @@ export class WebSocketMiddlebox {
       fromServer: { buffer: Buffer.alloc(0), fragments: [] },
     }
     this.pairs.add(pair)
-    const upstream = net.connect(this.targetPort, '127.0.0.1')
-    pair.upstream = upstream
-    upstream.on('error', () => {})
     if (this.stalled) upstream.pause()
-    client.on('close', () => this.drop(pair))
-    upstream.on('close', () => this.drop(pair))
     client.on('data', (chunk: Buffer) => this.fromClient(pair, chunk))
     upstream.on('data', (chunk: Buffer) => this.fromServer(pair, chunk))
   }
@@ -221,12 +216,11 @@ export class WebSocketMiddlebox {
   private drop(pair: Pair): void {
     if (!this.pairs.delete(pair)) return
     pair.client.destroy()
-    pair.upstream?.destroy()
+    pair.upstream.destroy()
   }
 
   private fromClient(pair: Pair, chunk: Buffer): void {
     const upstream = pair.upstream
-    if (upstream === null) return
     if (pair.mode === 'http') {
       pair.clientHeaderText += chunk.toString('latin1')
       const end = pair.clientHeaderText.indexOf(HEADER_END)

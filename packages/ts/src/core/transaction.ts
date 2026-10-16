@@ -24,7 +24,7 @@ export interface StatementMeter {
 
 function transactionClosed(): SirannonError {
   return new SirannonError(
-    'This transaction has ended, so it executes no further statements; run them in a new transaction',
+    'This transaction has ended, so it executes no further statements; execute them in a new transaction',
     'TRANSACTION_CLOSED',
   )
 }
@@ -52,7 +52,7 @@ export class Transaction {
    * @throws A `SirannonError` with code `TRANSACTION_CLOSED` once the transaction has ended.
    */
   async query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]> {
-    if (this.ended) throw transactionClosed()
+    this.assertOpen()
     const read = () => queryMetered<T>(this.conn, sql, params)
     const metered = this.meter
       ? await this.meter.track(sql, read, readOutcome, failedStatementOutcome, params)
@@ -69,7 +69,7 @@ export class Transaction {
    * @throws A `SirannonError` with code `TRANSACTION_CLOSED` once the transaction has ended.
    */
   async execute(sql: string, params?: Params): Promise<ExecuteResult> {
-    if (this.ended) throw transactionClosed()
+    this.assertOpen()
     const write = () => execute(this.conn, sql, params)
     const result = this.meter
       ? await this.meter.track(sql, write, writeOutcome, failedStatementOutcome, params)
@@ -87,7 +87,7 @@ export class Transaction {
    * @throws A `SirannonError` with code `TRANSACTION_CLOSED` once the transaction has ended.
    */
   async executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
-    if (this.ended) throw transactionClosed()
+    this.assertOpen()
     const write = () => executeBatch(this.conn, sql, paramsBatch)
     const results = this.meter
       ? await this.meter.track(sql, write, batchWriteOutcome, failedStatementOutcome)
@@ -124,6 +124,17 @@ export class Transaction {
    */
   end(): void {
     this.ended = true
+  }
+
+  /**
+   * Refuses the call once this transaction has ended, so that a subclass can check the transaction before it
+   * executes any statement of its own.
+   *
+   * @throws A `SirannonError` with code `TRANSACTION_CLOSED` once the transaction has ended.
+   * @internal
+   */
+  protected assertOpen(): void {
+    if (this.ended) throw transactionClosed()
   }
 
   /** @internal */

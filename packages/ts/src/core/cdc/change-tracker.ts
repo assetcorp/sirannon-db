@@ -57,7 +57,7 @@ export class ChangeTracker {
   /**
    * Installs change-capture triggers on a table, so that every later write to it adds a row to the change log.
    *
-   * The tracker matches the name to an ordinary table as SQLite does, ignoring the case of ASCII letters, and records every change under the name that the schema stores. A name that matches no ordinary table, such as the name of a view or a virtual table, fails with `CDC_ERROR`. The tracker runs one watch at a time, so concurrent calls on one connection never open overlapping transactions.
+   * The tracker matches the name to an ordinary table as SQLite does, ignoring the case of ASCII letters, and records every change under the name that the schema stores. A name that matches no ordinary table, such as the name of a view or a virtual table, fails with `CDC_ERROR`. The tracker queues each call behind the one before it, so concurrent calls on one connection never open overlapping transactions.
    *
    * @param conn - The writer connection on which the tracker creates the triggers.
    * @param table - The name of the table to watch.

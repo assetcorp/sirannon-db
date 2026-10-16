@@ -1,3 +1,23 @@
+import type {
+  AdmitNodeToInSyncSetInput,
+  CompareAndAdvancePrimaryTermInput,
+  CompareAndAdvancePrimaryTermResult,
+  PromoteEligibleReplicaInput,
+  SetReplicationGroupStateInput,
+  UpdateInSyncSetInput,
+  UpdateNodeMaintenanceInput,
+} from './group-inputs.js'
+
+export type {
+  AdmitNodeToInSyncSetInput,
+  CompareAndAdvancePrimaryTermInput,
+  CompareAndAdvancePrimaryTermResult,
+  PromoteEligibleReplicaInput,
+  SetReplicationGroupStateInput,
+  UpdateInSyncSetInput,
+  UpdateNodeMaintenanceInput,
+}
+
 /**
  * Names what a lease grants, which is either the controller role or one node's membership session.
  *
@@ -185,142 +205,6 @@ export interface ReplicationGroupState {
 }
 
 /**
- * Describes the group state to write, which creates a new group or replaces an existing one.
- *
- * @public
- */
-export interface SetReplicationGroupStateInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Lists the nodes that count towards the majority. */
-  votingDataBearingNodeIds: string[]
-  /** Identifies the node to make primary, or null to leave the group without a primary. */
-  currentPrimary?: CoordinatorPrimary | null
-  /** Sets the term to record for that primary, which defaults to 0. */
-  primaryTerm?: bigint
-  /** Sets the change-log position up to which a majority stores the data durably. */
-  durabilityPointSeq?: bigint
-  /** Lists the nodes to record as in sync. */
-  inSyncNodeIds?: string[]
-  /** Lists the nodes to record as draining. */
-  drainingNodeIds?: string[]
-  /** Lists the nodes to record as repairing. */
-  repairingNodeIds?: string[]
-  /** Lists the nodes to record as faulted. */
-  faultedNodeIds?: string[]
-  /** Sets the versions that the group requires of its members. */
-  compatibility?: CoordinatorCompatibilityMetadata
-}
-
-/**
- * Describes a promotion that takes effect only while the group is still at the
- * term that the caller expects, so that two candidates cannot both promote
- * themselves. The promotion sets the durability point to 0.
- *
- * @public
- */
-export interface CompareAndAdvancePrimaryTermInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Holds the term that the caller last read. The promotion fails when the group's term differs. */
-  expectedPrimaryTerm: bigint
-  /** Identifies the node to promote. */
-  nextPrimary: CoordinatorPrimary
-}
-
-/**
- * Reports whether the promotion took effect, along with the group state afterwards.
- *
- * @public
- */
-export interface CompareAndAdvancePrimaryTermResult {
-  /** Is true when the group moves to the next term under the new primary. */
-  advanced: boolean
-  /** Holds the current group state, or null when the coordinator has no state for the group. */
-  state: ReplicationGroupState | null
-}
-
-/**
- * Describes a new in-sync set for the group, and optionally a new durability point. To add a node, call
- * {@link ClusterCoordinator.admitNodeToInSyncSet}, because this update throws a `RangeError` for any node outside the
- * current set.
- *
- * @public
- */
-export interface UpdateInSyncSetInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Lists the nodes to record as in sync. */
-  inSyncNodeIds: string[]
-  /** Sets the change-log position up to which a majority stores the data durably, and the coordinator keeps the higher of this value and the current one. */
-  durabilityPointSeq?: bigint
-}
-
-/**
- * Describes one caught-up node to add to the in-sync set, with the progress
- * that qualifies it. The coordinator admits the node only when `sourceNodeId`
- * is the current primary, `appliedSeq` reaches the group's durability point,
- * and the node is neither draining nor faulted.
- *
- * @public
- */
-export interface AdmitNodeToInSyncSetInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Identifies the node to admit. */
-  nodeId: string
-  /** Identifies the node whose changes the admitted node applied. */
-  sourceNodeId: string
-  /** Holds the change-log position up to which the node applied those changes. */
-  appliedSeq: bigint
-}
-
-/**
- * Sets or clears one node's draining, repairing, and faulted flags. A flag left
- * undefined keeps its current value, and when any flag turns on, the
- * coordinator removes the node from the in-sync set.
- *
- * @public
- */
-export interface UpdateNodeMaintenanceInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Identifies the node to update. */
-  nodeId: string
-  /** Sets whether the node is draining, which takes it out of service. */
-  draining?: boolean
-  /** Sets whether the node is repairing, which means that it rebuilds its copy of the data. */
-  repairing?: boolean
-  /** Sets whether the node is faulted, which keeps it out of service. */
-  faulted?: boolean
-}
-
-/**
- * Describes a request to promote an eligible in-sync replica, which is one with
- * a live, compatible session that is neither draining, repairing, nor faulted.
- *
- * @public
- */
-export interface PromoteEligibleReplicaInput {
-  /** Identifies the cluster that contains the group. */
-  clusterId: string
-  /** Identifies the group. */
-  groupId: string
-  /** Lists the nodes to skip, such as the primary that has just failed. */
-  excludeNodeIds?: string[]
-}
-
-/**
  * Receives the group state each time it changes.
  *
  * @public
@@ -384,13 +268,13 @@ export interface ClusterCoordinator {
   ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
   /** Makes a node primary and advances the term, but only while the group is still at the term that the caller expects. */
   compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult>
-  /** Replaces the group's in-sync set with a subset of it, and can advance the durability point. */
+  /** Replaces the group's in-sync set with a subset of it, and can advance the durability point. When the input names a term or a primary that the group no longer holds, the method changes nothing and returns the group as it stands. */
   updateInSyncSet(input: UpdateInSyncSetInput): Promise<ReplicationGroupState | null>
-  /** Adds one caught-up node to the in-sync set. */
+  /** Adds one caught-up node to the in-sync set. When the input names a term that the group no longer holds, the method changes nothing and returns the group as it stands. */
   admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>
   /** Sets or clears one node's draining, repairing, and faulted flags. */
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>
-  /** Promotes an eligible in-sync replica while the group has no primary or its primary is one of `excludeNodeIds`, returns the group unchanged once another node holds primary duty, and throws a `NoSafePrimaryError` when no replica qualifies. */
+  /** Promotes an eligible in-sync replica while the group has no primary or while its primary is one of `excludeNodeIds`. When another node already holds primary duty, the method returns the group unchanged. When no replica qualifies, it throws a `NoSafePrimaryError`. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
   /** Releases every connection, watch, and lease that the coordinator keeps open. */
   close?(): Promise<void>

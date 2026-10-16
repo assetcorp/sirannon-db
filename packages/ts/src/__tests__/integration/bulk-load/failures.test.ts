@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Params } from '../../../core/types.js'
@@ -142,6 +143,30 @@ describe.each(WRITER_PLACEMENTS)('bulk load failures with $label', ({ writerWork
     await db.executeBatch(RECORD_LEVEL, [[6_001, 'restored', 0]])
     expect(distinctLevels(path, 'restored')).toEqual([SQLITE_SYNCHRONOUS.full])
     expect(countRaw(path)).toBe(LOAD_SIZE + 2)
+  })
+
+  it('closes and releases the file while the configured level stays unrestorable after a bulk load, and reopens at that level', async () => {
+    const path = workspace.path('close-unrestorable')
+    const config = { statement: 'PRAGMA synchronous = FULL', armFile: `${path}.armed` }
+    const db = await workspace.open(
+      'close-unrestorable',
+      { synchronous: 'full', writerWorker },
+      { driver: armedExecFaultDriver(config) },
+    )
+    armExecFault(config)
+    await expect(db.bulkLoad(RECORD_LEVEL, rowsFrom(1, LOAD_SIZE, 'committed'))).rejects.toMatchObject({
+      code: 'DURABILITY_RESTORE_FAILED',
+    })
+
+    armExecFault(config)
+    await expect(db.close()).resolves.toBeUndefined()
+    expect(existsSync(`${path}-wal`)).toBe(false)
+    expect(db.closed).toBe(true)
+
+    const reopened = await workspace.registry().open('close-unrestorable', path, { synchronous: 'full', writerWorker })
+    await recordLevel(reopened, 7_000, 'after-reopen')
+    expect(distinctLevels(path, 'after-reopen')).toEqual([SQLITE_SYNCHRONOUS.full])
+    expect(countRaw(path)).toBe(LOAD_SIZE + 1)
   })
 
   it('refuses a load issued inside a transaction callback, a nested callback, or a migration with BULK_LOAD_IN_TRANSACTION, writes none of it, and leaves the transaction around it to commit at the configured level', async () => {

@@ -7,6 +7,7 @@ export interface CapabilityCheckOptions {
   url: string
   headers?: Record<string, string>
   requestTimeoutMs?: number
+  cancel?: AbortSignal
 }
 
 /** The capability tokens that a server announces, with the digest of the operation registry that it serves. */
@@ -33,7 +34,9 @@ function validateCapabilities(raw: unknown): CapabilityReport {
 }
 
 export async function fetchCapabilityReport(options: CapabilityCheckOptions): Promise<CapabilityReport> {
-  return validateCapabilities(await getJson(`${options.url}/capabilities`, options.headers, options.requestTimeoutMs))
+  return validateCapabilities(
+    await getJson(`${options.url}/capabilities`, options.headers, options.requestTimeoutMs, options.cancel),
+  )
 }
 
 export async function fetchServerCapabilities(options: CapabilityCheckOptions): Promise<string[]> {

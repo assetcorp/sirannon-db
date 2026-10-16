@@ -7,7 +7,8 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
-import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeWriterContext } from '../node-runtime.js'
+import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
@@ -66,7 +67,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
       return host.connection
     },
-    createWriterContext: nodeWriterContext,
+    createWriterContext: asyncLocalWriterContext,
     createBackupEngine: driver =>
       nodeBackupEngine(
         nodeStreamingSupport({

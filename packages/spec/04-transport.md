@@ -219,7 +219,7 @@ A `ColumnValue` carries the native SQLite value with no tagged envelope: null, s
 
 ### Term Fields
 
-`group_id` and `primary_term` are required when coordinator mode is enabled and may be empty in static mode. The transport carries these fields; the replication engine enforces term fencing and rejects a stale term with `STALE_PRIMARY` (see [03-replication.md](03-replication.md#term-fencing)).
+`group_id` and `primary_term` are required when coordinator mode is enabled and may be empty in static mode. The transport carries these fields; the replication engine enforces term fencing and rejects a stale term with `STALE_PRIMARY` (see [09-failover.md](09-failover.md#term-fencing)).
 
 ---
 

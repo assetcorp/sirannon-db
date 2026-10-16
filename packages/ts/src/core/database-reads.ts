@@ -53,6 +53,8 @@ async function onReadConnection<T>(
   op: (conn: SQLiteConnection) => Promise<Metered<T>>,
   measure: QueryOutcomeMeasure<Metered<T>>,
 ): Promise<T> {
+  const refusal = deps.pool.readerCount === 0 ? deps.writerLock.callerRefusal() : null
+  if (refusal !== null) throw refusal
   const metered =
     deps.pool.readerCount === 0
       ? await deps.writerLock.run(() => deps.observer.track(sql, () => op(deps.pool.acquireWriter()), measure))

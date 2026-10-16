@@ -1,11 +1,11 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { CDC_TRIGGER_PREFIX, REPLACED_ROWS_TABLE } from '../internal-tables.js'
+import { escId } from '../sql-identifiers.js'
 import { selectTriggerSql } from '../system-catalog/index.js'
 import type { CaptureShape } from './capture-shape.js'
 import {
   type ConflictSql,
   conflictSql,
-  escId,
   keyChangedCondition,
   keyUpdateColumnList,
   pkRef,

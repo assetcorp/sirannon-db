@@ -13,6 +13,24 @@ import type { WSWireChangeEvent } from './ws-server-messages.js'
  */
 export const DEVICE_FRAME_TARGET_BYTES = 65_536
 
+const FRAMES_PER_RESUME_THRESHOLD = 2
+
+/**
+ * Returns the frame size target for a connection, which is {@link DEVICE_FRAME_TARGET_BYTES} or half of the buffered
+ * byte count below which a paused stream resumes, whichever is smaller.
+ *
+ * A stream sends a frame only while its socket buffers less than that resume count, which is half of
+ * `maxWebSocketBackpressureBytes`. A frame of at most a quarter of the bound therefore leaves the buffer under the
+ * bound, so that the stream never closes its own connection with close code 4290.
+ *
+ * @param socketResumeBytes - The buffered byte count below which a paused stream resumes sending.
+ * @returns The size in bytes at which the packer sends a frame.
+ * @internal
+ */
+export function deviceFrameTargetBytes(socketResumeBytes: number): number {
+  return Math.max(1, Math.min(DEVICE_FRAME_TARGET_BYTES, Math.floor(socketResumeBytes / FRAMES_PER_RESUME_THRESHOLD)))
+}
+
 export function wireChangeEvent(event: ChangeEvent): WSWireChangeEvent {
   return {
     type: event.type,
@@ -35,7 +53,7 @@ export type FrameAppendOutcome = WSSendOutcome | 'queued'
 /**
  * Packs change events into `changes` frames up to a size target. The packer
  * serialises each event once, builds the frame from those strings, and
- * measures the frame by string length.
+ * measures the frame in UTF-8 bytes, which is what the socket buffers.
  */
 export class DeviceFramePacker {
   private parts: string[] = []
@@ -55,14 +73,15 @@ export class DeviceFramePacker {
       return 'dropped'
     }
 
+    const encodedBytes = Buffer.byteLength(encoded)
     let outcome: FrameAppendOutcome = 'queued'
-    if (this.parts.length > 0 && this.bytes + encoded.length > this.targetBytes) {
+    if (this.parts.length > 0 && this.bytes + encodedBytes > this.targetBytes) {
       outcome = this.flush()
       if (outcome === 'dropped') return outcome
     }
 
     this.parts.push(encoded)
-    this.bytes += encoded.length
+    this.bytes += encodedBytes
 
     if (this.bytes >= this.targetBytes) {
       outcome = worstOutcome(outcome, this.flush())

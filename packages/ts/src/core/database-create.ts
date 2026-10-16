@@ -1,4 +1,4 @@
-import { runWithColumnDropsPrepared } from './cdc/column-drop.js'
+import { executeAllowingColumnDrop } from './cdc/column-drop.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { resolveDeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ConnectionPool } from './connection-pool.js'
@@ -116,9 +116,10 @@ export async function createDatabaseRuntime(
   const groupCommitter = new GroupCommitter(writerLock, {
     acquireWriter: () => pool.acquireWriter(),
     afterCommit: (writer, sql) => applyDdlSideEffectsIfRelevant(cdc.changeTracker, writer, sql),
-    runUngroupable: (writer, sql, run) => runWithColumnDropsPrepared(cdc.changeTracker, writer, sql, run),
+    runUngroupable: (writer, sql, run) => executeAllowingColumnDrop(cdc.changeTracker, writer, sql, run),
     stampStatements: stampOptions => cdc.stampStatements(stampOptions),
     stampOpening: () => cdc.stampOpening(),
+    stamps: () => cdc.stamps,
   })
 
   const writes = new DatabaseWriteController({
@@ -137,6 +138,7 @@ export async function createDatabaseRuntime(
     pool,
     writerLock,
     changeTracker: () => cdc.changeTracker,
+    stamper: () => cdc.activeStamper,
   })
 
   if (options?.backups && !readOnly) backups.startCycle(options.backups)
@@ -165,15 +167,20 @@ export async function closeDatabaseRuntime(
   runtime.cdc.stop()
   runtime.backups.cancelAll()
 
-  let poolError: unknown
-  try {
-    await runtime.cdc.closeLiveConnection()
-    await runtime.writes.drain()
-    await runtime.writerLock.settle()
-    await runtime.backups.stopCycle()
-    await runtime.pool.close()
-  } catch (err) {
-    poolError = err
+  const releaseSteps = [
+    () => runtime.cdc.closeLiveConnection(),
+    () => runtime.writes.drain(),
+    () => runtime.writerLock.settle(),
+    () => runtime.backups.stopCycle(),
+    () => runtime.pool.close(),
+  ]
+  const failures: unknown[] = []
+  for (const release of releaseSteps) {
+    try {
+      await release()
+    } catch (err) {
+      failures.push(err)
+    }
   }
 
   for (const fn of closeListeners) {
@@ -182,7 +189,7 @@ export async function closeDatabaseRuntime(
     } catch {}
   }
 
-  if (poolError) {
-    throw poolError
+  if (failures.length > 0) {
+    throw failures[0]
   }
 }

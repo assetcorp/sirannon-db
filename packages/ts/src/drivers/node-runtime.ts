@@ -1,10 +1,9 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { resolve } from 'node:path'
 import { BackupManager } from '../core/backup/backup.js'
 import { createBackupCycle } from '../core/backup/cycle-factory.js'
 import { BackupScheduler } from '../core/backup/scheduler.js'
 import type { BackupStreamingSupport } from '../core/backup/streamed-copy.js'
-import type { BackupEngine, SQLiteDriver, WriterContext } from '../core/driver/types.js'
+import type { BackupEngine, SQLiteDriver } from '../core/driver/types.js'
 import { resolveVfsExtensionPath } from './vfs-library.js'
 
 /** The settings that a Node driver passes to the backup engine for a streamed copy.
@@ -17,23 +16,6 @@ export interface NodeStreamingOptions {
   uriFilenames: boolean
   /** The extension path that the operator sets, which Sirannon uses in place of the installed platform binary. */
   extensionPath?: string
-}
-
-/**
- * Returns a writer context that marks the async work inside a held write, so
- * that a driver can distinguish that work from a new caller.
- *
- * @returns The context through which a Node driver tracks its write state.
- *
- * @internal
- */
-export function nodeWriterContext(): WriterContext {
-  const held = new AsyncLocalStorage<true>()
-  return {
-    run: operation => held.run(true, operation),
-    isActive: () => held.getStore() === true,
-    exit: operation => held.exit(operation),
-  }
 }
 
 /**

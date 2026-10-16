@@ -1,9 +1,10 @@
-import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
-import { type SqlToken, tokenizeSql } from '../live/sql-tokens.js'
+import type { Counted, SQLiteConnection, SQLiteStatement } from '../driver/types.js'
+import { isKeyword, type SqlToken, tokenizeSql } from '../live/sql-tokens.js'
+import { LEADING_COMMENTS_PATTERN } from '../sql-statement-start.js'
 import type { ChangeTracker } from './change-tracker.js'
 import { dropCdcTriggers } from './trigger-sql.js'
 
-const ALTER_TABLE_START_RE = /^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*ALTER\s+TABLE\b/i
+const ALTER_TABLE_START_RE = new RegExp(`${LEADING_COMMENTS_PATTERN}ALTER\\s+TABLE\\b`, 'i')
 const DROP_WORD_RE = /\bDROP\b/i
 const COLUMN_DROP_SAVEPOINT = 'sirannon_column_drop'
 
@@ -13,38 +14,44 @@ interface ScriptStatement {
 }
 
 /**
- * Runs one statement and, when it drops a column of a watched table, drops that table's change-capture triggers first and installs them again for the new column list afterwards, all inside one savepoint.
+ * Returns what one statement returns, and lets SQLite drop a column of a watched table: before such a statement,
+ * Sirannon drops the table's change-capture triggers, and after it, Sirannon installs them again for the new column
+ * list, all inside one savepoint.
  *
- * SQLite refuses `ALTER TABLE ... DROP COLUMN` while a trigger names the column, so the triggers have to be absent while the statement runs. When the statement fails, the savepoint rolls back and the old triggers remain.
+ * SQLite refuses `ALTER TABLE ... DROP COLUMN` while a trigger names the column, so the triggers have to be absent
+ * while SQLite executes the statement. When the statement fails, the savepoint rolls back and the old triggers stay.
  *
  * @param tracker - The change tracker of the database, or `null` when it watches nothing.
- * @param conn - The writer connection that runs the statement, inside or outside a transaction.
+ * @param conn - The writer connection for the statement, inside or outside a transaction.
  * @param sql - The statement.
- * @param run - Runs the statement on `conn`.
- * @returns What `run` returns.
+ * @param execute - Executes the statement on `conn`.
+ * @returns What `execute` returns.
  */
-export function runWithColumnDropsPrepared<T>(
+export function executeAllowingColumnDrop<T>(
   tracker: ChangeTracker | null,
   conn: SQLiteConnection,
   sql: string,
-  run: () => Promise<T>,
+  execute: () => Promise<T>,
 ): Promise<T> {
-  if (tracker === null || tracker.watchedTables.size === 0 || !ALTER_TABLE_START_RE.test(sql)) return run()
+  if (tracker === null || tracker.watchedTables.size === 0 || !ALTER_TABLE_START_RE.test(sql)) return execute()
   const table = columnDropTarget(tokenizeSql(sql), tracker)
-  if (table === undefined) return run()
-  return withTriggersLifted(tracker, conn, table, run)
+  if (table === undefined) return execute()
+  return withTriggersLifted(tracker, conn, table, execute)
 }
 
 /**
- * Executes a script of statements, such as a migration, and treats each statement in it that drops a column of a watched table as {@link runWithColumnDropsPrepared} does.
+ * Executes a script of statements, such as a migration, and treats each statement in it that drops a column of a
+ * watched table as {@link executeAllowingColumnDrop} does.
  *
- * A script without such a statement runs in one call, unchanged. A script with one runs statement by statement, so that every other write in it still reaches the change log.
+ * Sirannon passes a script without such a statement to SQLite in one call, unchanged. It executes a script with one
+ * statement by statement, so that every other write in it still reaches the change log.
  *
  * @param tracker - The change tracker of the database, or `null` when it watches nothing.
- * @param conn - The writer connection that runs the script.
+ * @param conn - The writer connection for the script.
  * @param sql - The script.
+ * @returns A promise that settles once SQLite has executed the whole script.
  */
-export async function execWithColumnDropsPrepared(
+export async function execAllowingColumnDrops(
   tracker: ChangeTracker | null,
   conn: SQLiteConnection,
   sql: string,
@@ -61,22 +68,37 @@ export async function execWithColumnDropsPrepared(
 }
 
 /**
- * Returns a view of a connection that treats every statement and script dropping a column of a watched table as {@link runWithColumnDropsPrepared} and {@link execWithColumnDropsPrepared} do, for a caller such as the migration runner that runs arbitrary schema changes.
+ * Returns a view of a connection that treats every statement and script dropping a column of a watched table as
+ * {@link executeAllowingColumnDrop} and {@link execAllowingColumnDrops} do, for a caller such as the migration runner,
+ * which executes whatever schema changes a migration holds.
+ *
+ * The view keeps every member of `conn` and of each statement that it prepares, so that a batch, a grouped write, a
+ * stepped copy, an extension load, and a counted read all still reach the driver.
  *
  * @param tracker - The change tracker of the database.
  * @param conn - The writer connection to wrap.
  * @returns A connection whose statements, scripts, and transactions all pass through `conn`.
  */
 export function columnDropAwareConnection(tracker: ChangeTracker, conn: SQLiteConnection): SQLiteConnection {
-  return {
-    exec: sql => execWithColumnDropsPrepared(tracker, conn, sql),
+  const { runBatch, runBatchSummary } = conn
+  const wrapped: SQLiteConnection = {
+    ...conn,
+    exec: sql => execAllowingColumnDrops(tracker, conn, sql),
     prepare: async sql => {
       const stmt = await conn.prepare(sql)
       return ALTER_TABLE_START_RE.test(sql) ? columnDropAwareStatement(tracker, conn, sql, stmt) : stmt
     },
     transaction: fn => conn.transaction(txConn => fn(columnDropAwareConnection(tracker, txConn))),
-    close: () => conn.close(),
   }
+  if (runBatch) {
+    wrapped.runBatch = (sql, paramsBatch) =>
+      executeAllowingColumnDrop(tracker, conn, sql, () => runBatch.call(conn, sql, paramsBatch))
+  }
+  if (runBatchSummary) {
+    wrapped.runBatchSummary = (sql, paramsBatch) =>
+      executeAllowingColumnDrop(tracker, conn, sql, () => runBatchSummary.call(conn, sql, paramsBatch))
+  }
+  return wrapped
 }
 
 function columnDropAwareStatement(
@@ -85,17 +107,31 @@ function columnDropAwareStatement(
   sql: string,
   stmt: SQLiteStatement,
 ): SQLiteStatement {
-  return {
-    all<T>(...params: unknown[]) {
-      return stmt.all<T>(...params)
-    },
-    get<T>(...params: unknown[]) {
-      return stmt.get<T>(...params)
-    },
-    run(...params: unknown[]) {
-      return runWithColumnDropsPrepared(tracker, conn, sql, () => stmt.run(...params))
-    },
+  const lifted = <T>(call: () => Promise<T>): Promise<T> => executeAllowingColumnDrop(tracker, conn, sql, call)
+  const { allRaw, allCounted, getCounted, allRawCounted } = stmt
+  const wrapped: SQLiteStatement = {
+    ...stmt,
+    run: (...params) => lifted(() => stmt.run(...params)),
+    all: <T>(...params: unknown[]) => lifted(() => stmt.all<T>(...params)),
+    get: <T>(...params: unknown[]) => lifted(() => stmt.get<T>(...params)),
   }
+  if (allRaw) {
+    wrapped.allRaw = <T>(...params: unknown[]) =>
+      lifted(() => allRaw.call<SQLiteStatement, unknown[], Promise<T[]>>(stmt, ...params))
+  }
+  if (allCounted) {
+    wrapped.allCounted = <T>(...params: unknown[]) =>
+      lifted(() => allCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
+  }
+  if (getCounted) {
+    wrapped.getCounted = <T>(...params: unknown[]) =>
+      lifted(() => getCounted.call<SQLiteStatement, unknown[], Promise<Counted<T | undefined>>>(stmt, ...params))
+  }
+  if (allRawCounted) {
+    wrapped.allRawCounted = <T>(...params: unknown[]) =>
+      lifted(() => allRawCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
+  }
+  return wrapped
 }
 
 async function withTriggersLifted<T>(
@@ -128,10 +164,6 @@ function columnDropTarget(tokens: readonly SqlToken[], tracker: ChangeTracker): 
   const name = tokens[nameAt]
   if (name === undefined || name.kind !== 'word' || !isKeyword(tokens[nameAt + 1], 'drop')) return undefined
   return tracker.watchedTableNamed(name.value)
-}
-
-function isKeyword(token: SqlToken | undefined, word: string): boolean {
-  return token !== undefined && token.kind === 'word' && !token.quoted && token.lower === word
 }
 
 function splitScript(sql: string): ScriptStatement[] {

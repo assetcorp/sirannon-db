@@ -76,7 +76,7 @@ A first argument that names a registered operation runs that operation. `query` 
 
 ### Refusing SQL Before It Is Sent
 
-A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
+A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
 
 ### Live Queries
 

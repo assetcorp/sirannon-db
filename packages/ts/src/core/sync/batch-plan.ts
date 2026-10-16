@@ -10,14 +10,32 @@ import { BatchValidationError } from './errors.js'
 import type { PushEntry } from './push-staging.js'
 import type { ReplicationBatch, ReplicationChange } from './types.js'
 
+/**
+ * Names what the receiving node does with one transaction's changes: `apply` commits them now, `stage` stores them
+ * until a later batch continues the transaction, and `complete` commits them with the changes that earlier batches
+ * stored.
+ *
+ * @internal
+ */
 export type PlannedGroupKind = 'apply' | 'stage' | 'complete'
 
+/**
+ * Holds the changes of one transaction in a batch, in batch order, with what the receiving node does with them.
+ *
+ * @internal
+ */
 export interface PlannedGroup {
   kind: PlannedGroupKind
   txId: string
   entries: PushEntry[]
 }
 
+/**
+ * Holds the number of changes in a batch that the receiving node has applied already, and the groups that it
+ * applies, in order.
+ *
+ * @internal
+ */
 export interface BatchPlan {
   skipped: number
   groups: PlannedGroup[]
@@ -25,6 +43,16 @@ export interface BatchPlan {
 
 const NO_SEQS: ReadonlySet<string> = new Set()
 
+/**
+ * Checks that the receiving database holds every table that a batch's row changes name. A batch with a schema change
+ * passes unchecked, because its schema statement can create the tables that the later changes name.
+ *
+ * @param conn - The writer connection.
+ * @param changes - The batch's changes.
+ * @returns A promise that settles once every table has been found.
+ * @throws {@link BatchValidationError} naming the first table that the database does not hold.
+ * @internal
+ */
 export async function assertTablesExist(conn: SQLiteConnection, changes: readonly ReplicationChange[]): Promise<void> {
   if (changes.some(change => change.operation === 'ddl')) return
   const tables = new Set(changes.map(change => change.table))
@@ -57,18 +85,18 @@ function groupEntries(
 }
 
 /**
- * Returns the changes of a batch that the receiving node has yet to apply,
- * grouped by transaction, with each group marked to apply now, to stage until
- * its transaction continues, or to complete a transaction that earlier batches
- * staged. The plan skips a change whose sequence the ledger records as applied
- * or the staging table already holds, and it discards a staged transaction
- * that the batch does not continue, because its source has moved past it.
+ * Returns the changes of a batch that the receiving node has yet to apply, grouped by transaction, with each group
+ * marked to apply now, to stage until its transaction continues, or to complete a transaction that earlier batches
+ * staged. A change is left out when the applied-changes table records one of its sequences or the staging table
+ * already holds it. When the batch opens a transaction other than the staged one, this function deletes the staged
+ * changes, because the source has given that transaction up.
  *
  * @param conn - The writer connection.
  * @param batch - The validated batch.
  * @param seqs - The sequences of each change, from `attributeChangeSeqs`.
- * @param lastApplied - The highest sequence the ledger records for the batch's source.
- * @returns How many changes the plan skips, and the groups to apply in order.
+ * @param lastApplied - The highest sequence that the applied-changes table records for the batch's source.
+ * @returns How many changes are left out, and the groups to apply in order.
+ * @throws {@link BatchValidationError} when a batch whose transaction continues carries a schema change.
  * @internal
  */
 export async function planBatch(

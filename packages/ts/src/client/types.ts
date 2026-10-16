@@ -13,12 +13,13 @@ import type {
  */
 export interface SubscribeOptions {
   /**
-   * Receives the error when the change callback, `onReset`, or `onSubscribed` throws or
-   * rejects, the error for a change frame that the client cannot decode, and the server's
-   * refusal when the client subscribes again after a reconnect, in which case the client
-   * ends the subscription. The subscription does not await a callback, so this handler
-   * receives both a throw and a rejection. Sirannon discards any error that this handler
-   * throws itself.
+   * Receives each error that arises after the subscription opens, while the client goes on delivering changes.
+   *
+   * The client passes three kinds of error to this handler. The first is a throw or a rejection from the change
+   * callback, `onReset`, or `onSubscribed`, since the subscription calls each of them without waiting for the promise
+   * that it returns. The second is the error for a change frame that the client cannot decode. The third is the
+   * server's refusal when the client subscribes again after a reconnect, which the client passes on before it ends the
+   * subscription. Sirannon discards an error that this handler throws.
    */
   onError?: (error: Error) => void
   /**

@@ -2,35 +2,81 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import {
   deletePeerStates,
-  ensureMetaTable,
+  selectAnchoredTerm,
   selectHistoryTransaction,
   selectMaxHistoryChangeSeq,
-  selectMetaValue,
   selectNewestHistoryChange,
-  upsertMetaValue,
+  selectPrimaryTermStart,
+  upsertAnchoredTerm,
+  upsertPrimaryTermStart,
 } from '../../core/system-catalog/index.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
-import { CoordinatorError } from '../errors.js'
+import { StalePrimaryError } from '../errors.js'
 import type { SyncHistoryPoint, SyncRequest } from '../types.js'
-import {
-  applyCoordinatorState,
-  errorDetails,
-  hasCurrentPrimaryAuthorityFor,
-  refreshCoordinatorState,
-} from './coordinator-authority.js'
+import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
 import { unrefTimer } from './timers.js'
 
-const PRIMARY_TERM_START_META_KEY = 'replication_primary_term_start'
-const ANCHORED_TERM_META_KEY = 'replication_anchored_term'
-const HISTORY_BASE_META_KEY = 'replication_history_base'
-const QUARANTINED_META_KEY = 'replication_quarantined'
-const IN_SYNC_UPDATE_ATTEMPTS = 3
-const DECIMAL_DIGITS = /^\d+$/
+/**
+ * Holds the sync request in which this replica names its newest history transaction to the primary, while the
+ * replica waits for the answer.
+ *
+ * @internal
+ */
+export class ResumeRequest {
+  /** Identifies the pending request, or is null when none is pending. */
+  id: string | null = null
+  /** Holds the primary term in which this replica sent the pending request. */
+  term: bigint | null = null
+  /** Holds the time in milliseconds at which this replica sent the pending request, so that it resends a lost one. */
+  requestedAt = 0
+
+  /**
+   * Records a request that this replica sends now.
+   *
+   * @param id - The request ID.
+   * @param term - The primary term in which the replica sends it.
+   */
+  start(id: string, term: bigint): void {
+    this.id = id
+    this.term = term
+    this.requestedAt = Date.now()
+  }
+
+  /** Forgets the pending request, so that an answer to it no longer matches. */
+  clear(): void {
+    this.id = null
+    this.term = null
+    this.requestedAt = 0
+  }
+
+  /**
+   * Returns true when a message carries the ID of the pending request.
+   *
+   * @param requestId - The request ID that the message carries.
+   * @returns True while a request is pending and the IDs are equal.
+   */
+  matches(requestId: string): boolean {
+    return this.id !== null && this.id === requestId
+  }
+
+  /**
+   * Returns true when this replica sent a request in the given term less than `timeoutMs` ago, so that it waits for
+   * that answer before it sends another request.
+   *
+   * @param term - The current primary term.
+   * @param timeoutMs - How long, in milliseconds, the replica waits for an answer.
+   * @returns True while that answer can still arrive.
+   */
+  awaitsAnswerIn(term: bigint, timeoutMs: number): boolean {
+    return this.id !== null && this.term === term && Date.now() - this.requestedAt < timeoutMs
+  }
+}
 
 /**
- * Holds where this node's change log meets the replication group's history: the term whose primary this node last
- * reconciled its history with, and, while this node is primary, the log position at which its term began.
+ * Holds where this node's change log meets the replication group's history. That covers the term whose primary this
+ * node last reconciled its history with, and, while this node is primary, the log position at which its term began.
  *
  * @internal
  */
@@ -47,12 +93,8 @@ export class TermHistory {
   termStartSeq = 0n
   /** Is true from the moment this replica asks a new primary where their histories meet until it holds that history. */
   reconciling = false
-  /** Identifies the sync request that named this replica's newest history transaction, or is null when none is pending. */
-  resumeRequestId: string | null = null
-  /** Holds the primary term of the pending request that names this replica's newest history transaction. */
-  resumeRequestTerm: bigint | null = null
-  /** Holds the time in milliseconds at which this replica sent the pending request, so that it resends a lost one. */
-  resumeRequestedAt = 0
+  /** Holds the pending request in which this replica names its newest history transaction. */
+  readonly resumeRequest = new ResumeRequest()
   /** Holds the term-start recording in progress, so that concurrent callers wait for one recording. */
   pendingTermStart: Promise<void> | null = null
   private exclusiveQueue: Promise<unknown> = Promise.resolve()
@@ -76,127 +118,54 @@ export class TermHistory {
  *
  * @param engine - The engine whose group membership names the nodes.
  * @returns This node's ID and the group's voting data-bearing node IDs.
+ *
+ * @internal
  */
 export function historyOrigins(engine: ReplicationEngine): string[] {
   const voters = engine.coordinatorState?.votingDataBearingNodeIds ?? []
   return voters.includes(engine.nodeId) ? [...voters] : [engine.nodeId, ...voters]
 }
 
-function parseTermStart(raw: string | null): { term: bigint; seq: bigint } | null {
-  if (raw === null) return null
-  try {
-    const parsed = JSON.parse(raw) as { term?: unknown; seq?: unknown }
-    if (typeof parsed.term !== 'string' || typeof parsed.seq !== 'string') return null
-    if (!DECIMAL_DIGITS.test(parsed.term) || !DECIMAL_DIGITS.test(parsed.seq)) return null
-    return { term: BigInt(parsed.term), seq: BigInt(parsed.seq) }
-  } catch {
-    return null
-  }
-}
-
-function parseHistoryPoint(raw: string | null): SyncHistoryPoint | null {
-  if (raw === null) return null
-  try {
-    const parsed = JSON.parse(raw) as { hlc?: unknown; txId?: unknown }
-    if (typeof parsed.hlc !== 'string' || typeof parsed.txId !== 'string' || parsed.hlc === '') return null
-    return { hlc: parsed.hlc, txId: parsed.txId }
-  } catch {
-    return null
-  }
-}
-
 /**
- * Returns the history transaction that a full copy left this node holding without a change-log entry, or null when no
- * copy recorded one.
- *
- * @param conn - The connection to read through.
- * @returns That transaction, or null.
- */
-export async function selectHistoryBase(conn: SQLiteConnection): Promise<SyncHistoryPoint | null> {
-  await ensureMetaTable(conn)
-  return parseHistoryPoint(await selectMetaValue(conn, HISTORY_BASE_META_KEY))
-}
-
-/**
- * Records the history transaction that a full copy left this node holding, or forgets the recorded one when the copy
- * named none.
- *
- * @param conn - The connection to write through.
- * @param point - The newest history transaction in the copy, or null.
- */
-export async function upsertHistoryBase(conn: SQLiteConnection, point: SyncHistoryPoint | null): Promise<void> {
-  await ensureMetaTable(conn)
-  await upsertMetaValue(conn, HISTORY_BASE_META_KEY, point ? JSON.stringify(point) : '')
-}
-
-/**
- * Returns whether this node's database still holds the writes for which the group quarantined it, which stays true
- * from the moment the node marks itself faulted until a full copy replaces its rows.
- *
- * @param conn - The connection to read through.
- * @returns True while the quarantined writes remain.
- */
-export async function selectQuarantined(conn: SQLiteConnection): Promise<boolean> {
-  await ensureMetaTable(conn)
-  return (await selectMetaValue(conn, QUARANTINED_META_KEY)) === 'true'
-}
-
-/**
- * Records whether this node's database holds writes for which the group quarantined it.
- *
- * @param conn - The connection to write through.
- * @param quarantined - True when the node marks itself faulted, and false once a full copy replaces its rows.
- */
-export async function upsertQuarantined(conn: SQLiteConnection, quarantined: boolean): Promise<void> {
-  await ensureMetaTable(conn)
-  await upsertMetaValue(conn, QUARANTINED_META_KEY, quarantined ? 'true' : 'false')
-}
-
-/**
- * Records the primary term whose history this node has just reconciled its own with.
- *
- * @param conn - The connection to write through.
- * @param term - The reconciled term.
- */
-export async function upsertAnchoredTerm(conn: SQLiteConnection, term: bigint): Promise<void> {
-  await ensureMetaTable(conn)
-  await upsertMetaValue(conn, ANCHORED_TERM_META_KEY, term.toString())
-}
-
-/**
- * Loads the reconciled primary term from the database into the engine. A node whose copy is complete and that holds
- * no recorded term, which a node written by an earlier release does, takes the current term, so that an upgrade
- * reconciles nothing.
+ * Loads the reconciled primary term from the database into the engine. When a node holds no recorded term, the engine
+ * takes the current term if the node holds a complete copy, as a node that an earlier release wrote does, or if the
+ * node starts with `initialSync` set to false, because the operator seeded its rows. An upgrade or a seeded start
+ * therefore reconciles nothing, and the node reconciles its history at the next change of primary.
  *
  * @param engine - The engine to load into.
+ *
+ * @internal
  */
 export async function loadTermHistory(engine: ReplicationEngine): Promise<void> {
   if (!engine.isCoordinatorMode()) return
   const conn = engine.writerConn
-  await ensureMetaTable(conn)
-  const raw = await selectMetaValue(conn, ANCHORED_TERM_META_KEY)
-  if (raw !== null && DECIMAL_DIGITS.test(raw)) {
-    const anchoredTerm = BigInt(raw)
-    const termStart = parseTermStart(await selectMetaValue(conn, PRIMARY_TERM_START_META_KEY))
+  const anchoredTerm = await selectAnchoredTerm(conn)
+  if (anchoredTerm !== null) {
+    const termStart = await selectPrimaryTermStart(conn)
     engine.history.anchoredTerm = anchoredTerm
     engine.history.heldPrimaryInAnchoredTerm = termStart !== null && termStart.term === anchoredTerm
     return
   }
   const state = engine.coordinatorState
-  if (!state || !(await engine.log.isSyncCompleted())) return
+  if (!state || (engine.initialSync && !(await engine.log.isSyncCompleted()))) return
   engine.history.anchoredTerm = state.primaryTerm
   await upsertAnchoredTerm(conn, state.primaryTerm)
 }
 
 /**
- * Records, once per term, where this node's term as primary begins: it resets every peer's progress, because a
- * replica's acknowledgements from an earlier term count positions in another node's log, and it raises the group's
- * durability point to the newest history position in this node's log, so that the node admits no replica to the
- * in-sync set before the replica holds that history. The node also records the term as the one whose history it holds,
- * so that it reconciles its history with the next primary's once it loses authority.
+ * Returns a promise that settles once this node has recorded where its term as primary begins, which it does once per
+ * term.
+ *
+ * The recording resets every peer's progress, because a replica's acknowledgements from an earlier term count
+ * positions in another node's log. It also raises the group's durability point to the newest history position in this
+ * node's log, so that the node admits no replica to the in-sync set before the replica holds that history. Last, the
+ * node records the term as the one whose history it holds, so that it reconciles its history with the next primary's
+ * once it loses authority.
  *
  * @param engine - The engine of the node that holds primary authority.
  * @returns A promise that settles once the term start is recorded, or at once when this node is not primary.
+ *
+ * @internal
  */
 export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void> {
   const state = engine.coordinatorState
@@ -214,8 +183,7 @@ export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void>
 async function recordPrimaryTermStart(engine: ReplicationEngine, state: ReplicationGroupState): Promise<void> {
   const conn = engine.writerConn
   const term = state.primaryTerm
-  await ensureMetaTable(conn)
-  const recorded = parseTermStart(await selectMetaValue(conn, PRIMARY_TERM_START_META_KEY))
+  const recorded = await selectPrimaryTermStart(conn)
   let seq: bigint
   if (recorded !== null && recorded.term === term) {
     seq = recorded.seq
@@ -223,11 +191,7 @@ async function recordPrimaryTermStart(engine: ReplicationEngine, state: Replicat
     seq = await selectMaxHistoryChangeSeq(conn, CHANGES_TABLE, historyOrigins(engine))
     await deletePeerStates(conn)
     engine.peerTracker.restartProgress(seq)
-    await upsertMetaValue(
-      conn,
-      PRIMARY_TERM_START_META_KEY,
-      JSON.stringify({ term: term.toString(), seq: seq.toString() }),
-    )
+    await upsertPrimaryTermStart(conn, { term, seq })
   }
   if (!(await raiseDurabilityPoint(engine, term, seq))) return
   await upsertAnchoredTerm(conn, term)
@@ -238,31 +202,18 @@ async function recordPrimaryTermStart(engine: ReplicationEngine, state: Replicat
 }
 
 async function raiseDurabilityPoint(engine: ReplicationEngine, term: bigint, seq: bigint): Promise<boolean> {
-  const config = engine.config.coordinator
-  if (!config) return false
-  for (let attempt = 1; ; attempt++) {
-    const fresh = await refreshCoordinatorState(engine)
-    if (!fresh || fresh.primaryTerm !== term || !hasCurrentPrimaryAuthorityFor(engine, fresh)) return false
-    if (fresh.durabilityPointSeq >= seq) return true
-    try {
-      const updated = await config.coordinator.updateInSyncSet({
-        clusterId: config.clusterId,
-        groupId: config.groupId,
-        inSyncNodeIds: fresh.inSyncNodeIds,
-        durabilityPointSeq: seq,
-      })
-      if (!updated) return false
-      applyCoordinatorState(engine, updated)
-      return updated.primaryTerm === term
-    } catch (err: unknown) {
-      if (!(err instanceof RangeError)) throw err
-      if (attempt >= IN_SYNC_UPDATE_ATTEMPTS) {
-        throw new CoordinatorError('The in-sync set kept changing while this node recorded the start of its term', {
-          ...errorDetails(engine, fresh),
-          cause: err.message,
-        })
-      }
-    }
+  if (!engine.config.coordinator) return false
+  try {
+    await updateInSyncSetFromCurrent(engine, {
+      purpose: 'the start of its term',
+      primaryTerm: term,
+      change: state =>
+        state.durabilityPointSeq >= seq ? null : { inSyncNodeIds: state.inSyncNodeIds, durabilityPointSeq: seq },
+    })
+    return true
+  } catch (err: unknown) {
+    if (err instanceof StalePrimaryError) return false
+    throw err
   }
 }
 
@@ -273,6 +224,8 @@ async function raiseDurabilityPoint(engine: ReplicationEngine, term: bigint, seq
  * @param engine - The engine whose group membership names the history's nodes.
  * @param conn - The connection that holds the copy's read snapshot.
  * @returns That transaction, or undefined outside coordinator mode or when the log holds no history.
+ *
+ * @internal
  */
 export async function selectCopyHistoryPoint(
   engine: ReplicationEngine,
@@ -299,48 +252,39 @@ async function selectSharedHistoryPoint(
   return shared ? { point: { hlc: shared.hlc, txId: shared.txId }, seq: shared.seq } : null
 }
 
-async function removeFromInSyncSet(engine: ReplicationEngine, nodeId: string): Promise<void> {
-  const config = engine.config.coordinator
-  if (!config) return
-  for (let attempt = 1; ; attempt++) {
-    const fresh = await refreshCoordinatorState(engine)
-    if (!fresh || !fresh.inSyncNodeIds.includes(nodeId)) return
-    try {
-      const updated = await config.coordinator.updateInSyncSet({
-        clusterId: config.clusterId,
-        groupId: config.groupId,
-        inSyncNodeIds: fresh.inSyncNodeIds.filter(id => id !== nodeId),
-      })
-      if (updated) applyCoordinatorState(engine, updated)
-      return
-    } catch (err: unknown) {
-      if (!(err instanceof RangeError)) throw err
-      if (attempt >= IN_SYNC_UPDATE_ATTEMPTS) {
-        throw new CoordinatorError('The in-sync set kept changing while this node removed a node that needs a copy', {
-          ...errorDetails(engine, fresh),
-          cause: err.message,
-        })
-      }
-    }
-  }
+async function removeJoinerFromInSyncSet(engine: ReplicationEngine, joinerNodeId: string): Promise<void> {
+  const primaryTerm = engine.coordinatorState?.primaryTerm
+  if (primaryTerm === undefined) return
+  await updateInSyncSetFromCurrent(engine, {
+    purpose: 'the removal of a joiner that needs a full copy',
+    primaryTerm,
+    change: state =>
+      state.inSyncNodeIds.includes(joinerNodeId)
+        ? { inSyncNodeIds: state.inSyncNodeIds.filter(id => id !== joinerNodeId) }
+        : null,
+  })
 }
 
 /**
  * Answers a sync request that names the joiner's newest history transaction without streaming a copy.
  *
  * When this primary's log holds that transaction or an earlier transaction from before this node's term, the answer
- * is resumed: it names the last transaction that both nodes hold and the position after which this node resends its
+ * is resumed. It names the last transaction that both nodes hold and the position after which this node resends its
  * history, and this node keeps that history from pruning until the joiner reports its position or the sync deadline
- * passes. Otherwise the answer tells the joiner to ask for a full copy. Before it tells a joiner to copy, and before it
- * streams a copy for a request that names no transaction, this node removes the joiner from the in-sync set, because
- * the copy replaces the joiner's rows and the joiner must not be promoted while it holds part of a copy. This node
- * sends no answer to a request that names a transaction before it has recorded the start of its term, and the joiner
- * then asks again.
+ * passes. Otherwise the answer tells the joiner to ask for a full copy.
+ *
+ * Before it tells a joiner to copy, and before it streams a copy for a request that names no transaction, this node
+ * removes the joiner from the in-sync set, because the copy replaces the joiner's rows and the group must not promote
+ * the joiner while it holds part of a copy. This node sends no answer to a request that names a transaction before it
+ * has recorded the start of its term, and the joiner then asks again.
  *
  * @param engine - The engine of the primary that received the request.
  * @param request - The joiner's request.
  * @param fromPeerId - The joiner's node ID.
  * @returns True when this node sent the answer, and false when the request asks for a full copy.
+ * @throws StalePrimaryError when this node loses primary duty before it removes the joiner from the in-sync set.
+ *
+ * @internal
  */
 export async function answerSyncFromHistory(
   engine: ReplicationEngine,
@@ -350,7 +294,7 @@ export async function answerSyncFromHistory(
   if (request.historyTail && engine.history.termStartTerm !== engine.coordinatorState?.primaryTerm) return true
   const shared = await selectSharedHistoryPoint(engine, request.historyTail)
   if (shared === null) {
-    await removeFromInSyncSet(engine, fromPeerId)
+    await removeJoinerFromInSyncSet(engine, fromPeerId)
     if (!request.historyTail) return false
     await engine.config.transport.sendSyncComplete(
       fromPeerId,

@@ -70,6 +70,33 @@ const WRITE_PATHS: WritePath[] = [
         Array.from({ length: 5 }, (_, at) => [`n${at}`]),
       ),
   },
+  {
+    label: 'an INSERT that opens with a WITH clause',
+    rows: 2,
+    transactions: 1,
+    write: db => db.execute("WITH v(body) AS (VALUES ('w1'), ('w2')) INSERT INTO notes (body) SELECT body FROM v"),
+  },
+  {
+    label: 'writes that open with comments',
+    rows: 2,
+    transactions: 2,
+    write: async db => {
+      await db.execute("/* imported */ INSERT INTO notes (body) VALUES ('block comment')")
+      await db.execute("-- imported\nINSERT INTO notes (body) VALUES ('line comment')")
+    },
+  },
+  {
+    label: 'writes through the database inside a transaction callback',
+    rows: 4,
+    transactions: 1,
+    write: db =>
+      db.transaction(async tx => {
+        await tx.execute('INSERT INTO notes (body) VALUES (?)', ['through tx'])
+        await db.execute('INSERT INTO notes (body) VALUES (?)', ['nested execute'])
+        await db.executeBatch('INSERT INTO notes (body) VALUES (?)', [['nested batch']])
+        await db.executeTransaction([{ sql: 'INSERT INTO notes (body) VALUES (?)', params: ['nested statements'] }])
+      }),
+  },
 ]
 
 let workspace: Workspace
@@ -184,6 +211,72 @@ describe('stamping local writes', () => {
     expect(own[2].hlc > aheadInLog).toBe(true)
     expect(decodeHlc(own[2].hlc)?.nodeId).toBe(nodeId)
     expect(metaValue(file, 'hlc_clock')).toBe(own[2].hlc)
+  })
+
+  it('stamps the writes of a group commit whose other unit fails, and leaves nothing behind the failed unit', async () => {
+    for (const writerWorker of [false, true]) {
+      const name = `failing-unit-${writerWorker}`
+      const db = await workspace.openNotes(name, { writerWorker })
+      await db.execute("INSERT INTO notes (id, body) VALUES (1, 'taken')")
+
+      const outcomes = await Promise.allSettled([
+        db.execute("INSERT INTO notes (id, body) VALUES (2, 'first')"),
+        db.execute("INSERT INTO notes (id, body) VALUES (1, 'duplicate key')"),
+        db.execute("INSERT INTO notes (id, body) VALUES (3, 'third')"),
+      ])
+
+      const file = workspace.path(name)
+      const rows = changeLog(file)
+      const nodeId = metaValue(file, 'node_id') ?? ''
+      expect(outcomes.map(outcome => outcome.status)).toEqual(['fulfilled', 'rejected', 'fulfilled'])
+      expect(rows.map(row => row.row_id.replace(/\D/g, ''))).toEqual(['1', '2', '3'])
+      expectStampedBy(rows, nodeId, 0, Date.now())
+      expect(new Set(rows.map(row => row.tx_id)).size).toBe(3)
+    }
+  })
+
+  it('stamps the writes of another process as one transaction of their own on the next write, ordered before it', async () => {
+    for (const writerWorker of [false, true]) {
+      const name = `interleaved-${writerWorker}`
+      const db = await workspace.openNotes(name, { writerWorker })
+      const file = workspace.path(name)
+      await db.execute("INSERT INTO notes (body) VALUES ('before')")
+      writeRaw(file, "INSERT INTO notes (body) VALUES ('from another process')")
+      writeRaw(file, "UPDATE notes SET body = 'edited by another process' WHERE body = 'before'")
+      expect(changeLog(file).map(row => row.node_id)).toEqual([metaValue(file, 'node_id'), '', ''])
+      await db.transaction(async tx => {
+        await tx.execute("INSERT INTO notes (body) VALUES ('after')")
+      })
+
+      const rows = changeLog(file)
+      const nodeId = metaValue(file, 'node_id') ?? ''
+      const [before, external, edit, after] = rows
+      expect(rows).toHaveLength(4)
+      expectStampedBy(rows, nodeId, 0, Date.now())
+      expect(new Set(rows.map(row => row.tx_id)).size).toBe(3)
+      expect([external.tx_id, external.hlc]).toEqual([edit.tx_id, edit.hlc])
+      expect([before.tx_id, after.tx_id]).not.toContain(external.tx_id)
+      expect(before.hlc < external.hlc && external.hlc < after.hlc).toBe(true)
+      expect(metaValue(file, 'hlc_clock')).toBe(after.hlc)
+    }
+  })
+
+  it('leaves the changes of a migration unstamped while it stamps the writes of another process around it', async () => {
+    const db = await workspace.openNotes('migrated')
+    const file = workspace.path('migrated')
+    await db.execute("INSERT INTO notes (body) VALUES ('before')")
+    writeRaw(file, "INSERT INTO notes (body) VALUES ('external before the migration')")
+    await db.migrate([{ version: 1, name: 'seed', up: "INSERT INTO notes (body) VALUES ('seeded by a migration')" }])
+    writeRaw(file, "INSERT INTO notes (body) VALUES ('external after the migration')")
+    await db.execute("INSERT INTO notes (body) VALUES ('after')")
+
+    const nodeId = metaValue(file, 'node_id') ?? ''
+    const rows = changeLog(file)
+    expect(rows.map(row => row.node_id)).toEqual([nodeId, nodeId, '', nodeId, nodeId])
+    expect(new Set(rows.map(row => row.tx_id))).toEqual(
+      new Set([rows[0].tx_id, rows[1].tx_id, '', rows[3].tx_id, rows[4].tx_id]),
+    )
+    expect(new Set(rows.filter(row => row.node_id !== '').map(row => row.tx_id)).size).toBe(4)
   })
 
   it('creates no stamping state for a database whose tables nobody watches', async () => {

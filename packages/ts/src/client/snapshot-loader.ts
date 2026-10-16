@@ -132,8 +132,11 @@ function validatePage(raw: unknown): SnapshotPageResponse {
 }
 
 /**
- * Throws an `INVALID_ARGUMENT` error unless the page size is a whole number of rows that a server returns in one
- * snapshot page, because a server refuses every page request outside that range, so the download can never finish.
+ * Checks a snapshot page size before the client sends the first page request, and throws a `RemoteError` with code
+ * `INVALID_ARGUMENT` for a value that is not a whole number from 1 to the most rows that a server returns in one page.
+ *
+ * A server refuses every page request whose size lies outside that range, so the check reports the mistake once, in
+ * place of a download that fails on its first page.
  *
  * @param pageSize - The page size that the caller set, or undefined for the default.
  * @param optionName - The name of the option that holds the page size, which the error message names.

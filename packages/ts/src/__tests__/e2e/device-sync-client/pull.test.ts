@@ -1,7 +1,8 @@
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SyncStatus } from '../../../client/index.js'
 import type { ChangeEvent } from '../../../core/index.js'
-import { readSqlite } from '../lib/served-registry.js'
+import { readSqlite, scratchDirectory } from '../lib/served-registry.js'
 import {
   countOf,
   eventually,
@@ -14,11 +15,22 @@ import {
   sleep,
   startSyncServer,
   TAGS_TABLE,
+  writeSqlite,
 } from './harness.js'
 
 const PAIRED_ROWS = 50
+const DEVICE_NODE_IDS = ['0'.repeat(32), 'f'.repeat(32), `7${'f'.repeat(31)}`, `8${'0'.repeat(31)}`]
 
 afterEach(releaseDeviceSync)
+
+function deviceFileWithNodeId(nodeId: string): string {
+  const path = join(scratchDirectory('device-sync-device'), 'device.db')
+  writeSqlite(path, [
+    ['CREATE TABLE _sirannon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)'],
+    ["INSERT INTO _sirannon_meta (key, value) VALUES ('node_id', ?)", [nodeId]],
+  ])
+  return path
+}
 
 function serverMaxSeq(path: string): string {
   const [row] = readSqlite<{ top: bigint }>(path, 'SELECT max(seq) AS top FROM _sirannon_changes')
@@ -85,6 +97,64 @@ describe('a device pulling server writes', () => {
     await eventually(() => metaValue(device.path, 'device_sync_pull_seq') === lastServerSeq, 'the durable cursor')
     await eventually(() => ackedSeq(server.path, deviceId) === lastServerSeq, 'the acknowledged cursor')
     expect(String((await controller.status()).lastPulledSeq)).toBe(lastServerSeq)
+  })
+
+  it('receives every kind of server write, each under the transaction that the server committed it in', async () => {
+    const pairings = [false, true].flatMap(writerWorker => DEVICE_NODE_IDS.map(nodeId => ({ writerWorker, nodeId })))
+    for (const { writerWorker, nodeId } of pairings) {
+      const server = await startSyncServer({ database: { writerWorker } })
+      const device = await openDevice(server.url, { path: deviceFileWithNodeId(nodeId) })
+      await device.sync().start()
+
+      const db = server.db
+      await db.execute("INSERT INTO notes (body) VALUES ('execute')")
+      await Promise.all(
+        Array.from({ length: 6 }, (_, at) => db.execute('INSERT INTO notes (body) VALUES (?)', [`concurrent ${at}`])),
+      )
+      await db.executeTransaction([
+        { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['statements a'] },
+        { sql: "UPDATE notes SET body = 'statements a updated' WHERE body = 'statements a'" },
+        { sql: 'INSERT INTO notes (body) VALUES (?)', params: ['statements b'] },
+      ])
+      writeSqlite(server.path, [["INSERT INTO notes (body) VALUES ('from another process')"]])
+      await db.executeBatch('INSERT INTO notes (body) VALUES (?)', [['batch a'], ['batch b'], ['batch c']])
+      await db.transaction(async tx => {
+        await tx.execute("INSERT INTO notes (body) VALUES ('callback')")
+        await tx.execute("UPDATE notes SET body = 'callback updated' WHERE body = 'callback'")
+        await tx.execute("UPDATE notes SET body = 'callback updated twice' WHERE body = 'callback updated'")
+        await tx.execute("INSERT INTO notes (body) VALUES ('short-lived')")
+        await tx.execute("DELETE FROM notes WHERE body = 'short-lived'")
+        await db.execute("INSERT INTO notes (body) VALUES ('nested execute')")
+        await db.executeBatch('INSERT INTO notes (body) VALUES (?)', [['nested batch']])
+      })
+      await db.bulkLoad(
+        'INSERT INTO notes (body) VALUES (?)',
+        Array.from({ length: 4 }, (_, at) => [`bulk ${at}`]),
+      )
+      await db.execute("WITH v(body) AS (VALUES ('with a'), ('with b')) INSERT INTO notes (body) SELECT body FROM v")
+      await db.execute("/* imported */ INSERT INTO notes (body) VALUES ('block comment')")
+      await db.execute("-- imported\nINSERT INTO notes (body) VALUES ('line comment')")
+      await db.execute("UPDATE notes SET body = body || ' seen' WHERE body LIKE 'batch%'")
+      await db.execute("DELETE FROM notes WHERE body LIKE 'concurrent%' AND id % 2 = 0")
+
+      const label = `writerWorker ${writerWorker}, device ${nodeId}, server ${metaValue(server.path, 'node_id')}`
+      await eventually(() => sameRows(server.path, device.path, 'notes'), `the device holding every row, ${label}`)
+      expect(metaValue(device.path, 'node_id'), label).toBe(nodeId)
+      const serverNode = metaValue(server.path, 'node_id')
+      const transactionsOf = (path: string) =>
+        readSqlite<{ tx: string }>(
+          path,
+          "SELECT DISTINCT tx_id AS tx FROM _sirannon_changes WHERE table_name = 'notes' AND node_id = ? ORDER BY tx",
+          [serverNode],
+        ).map(row => row.tx)
+      const unstamped = readSqlite(server.path, "SELECT 1 FROM _sirannon_changes WHERE node_id = '' OR tx_id = ''")
+
+      expect(unstamped, label).toEqual([])
+      expect(countOf(server.path, 'notes'), label).toBe(21)
+      expect(transactionsOf(server.path), label).toHaveLength(17)
+      expect(transactionsOf(device.path), label).toEqual(transactionsOf(server.path))
+      await releaseDeviceSync()
+    }
   })
 
   it('converges when the device and the server write the same rows while it pulls', async () => {

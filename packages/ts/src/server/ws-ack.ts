@@ -1,5 +1,10 @@
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
-import { advanceHeldDeviceCursor, upsertDeviceAck, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
+import {
+  advanceHeldDeviceCursor,
+  DEVICE_CURSOR_DROPPED_REASON,
+  upsertDeviceAck,
+  WS_CLOSE_DEVICE_CURSOR_DROPPED,
+} from './device-cursors.js'
 import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import { isValidDeviceId } from './sync-protocol.js'
 import type { WSConnection } from './ws-connection.js'
@@ -39,7 +44,7 @@ export async function handleAckMessage(
   }
 
   const seq = BigInt(msg.seq)
-  const cursorHeld = streams.some(stream => stream.cursorHeld)
+  const cursorHeld = streams.some(stream => stream.holdsCursor)
   let cursorDropped = false
   try {
     await state.database.runCdcMaintenance(async writer => {
@@ -50,11 +55,10 @@ export async function handleAckMessage(
       cursorDropped = !(await advanceHeldDeviceCursor(writer, deviceId, seq))
     })
     if (cursorDropped) {
-      conn.close(WS_CLOSE_DEVICE_CURSOR_DROPPED, 'The server deleted this device cursor; resubscribe to resync')
+      conn.close(WS_CLOSE_DEVICE_CURSOR_DROPPED, DEVICE_CURSOR_DROPPED_REASON)
       return
     }
     for (const stream of streams) {
-      stream.cursorHeld = true
       stream.onAck(seq)
     }
     deps.sendResult(conn, id, { acked: true, seq: seq.toString() })

@@ -1,3 +1,4 @@
+import type { RowCounts } from './driver/row-counts.js'
 import {
   fireAfterQueryHooks,
   fireBeforeQueryHooks,
@@ -5,7 +6,14 @@ import {
   type StatementOutcome,
 } from './hooks/query-hooks.js'
 import type { HookRegistry } from './hooks/registry.js'
-import type { MetricsCollector, QueryFailureMeasure, QueryOutcome, QueryOutcomeMeasure } from './metrics/collector.js'
+import {
+  type MetricsCollector,
+  type QueryFailureMeasure,
+  type QueryOutcome,
+  type QueryOutcomeMeasure,
+  settleLateOutcome,
+} from './metrics/collector.js'
+import { lateRowCountsOf } from './metrics/late-row-counts.js'
 import { failedStatementOutcome, leavesOutcomeUnknown, ROW_COUNTS_UNKNOWN } from './metrics/outcomes.js'
 import type { StatementMeter } from './transaction.js'
 import type { ExecuteResult, Params, QueryMetrics, QueryOptions } from './types.js'
@@ -18,6 +26,7 @@ interface ObservedStatement {
 export interface TransactionOutcomes {
   succeeded(results: readonly ExecuteResult[]): readonly QueryOutcome[]
   failed(): readonly QueryOutcome[]
+  failedLate(counts: readonly (RowCounts | undefined)[]): readonly QueryOutcome[]
 }
 
 type QueryContext = Omit<QueryMetrics, 'durationMs' | 'error'>
@@ -89,6 +98,7 @@ export class DatabaseObserver {
       this.context(sql, source),
       result => (measure ? measure(result) : {}),
       error => this.completeFailure(measureFailure(error)),
+      (known, counts) => this.completeFailure(settleLateOutcome(known, counts)),
     )
   }
 
@@ -134,8 +144,17 @@ export class DatabaseObserver {
     try {
       results = await op()
     } catch (error) {
-      const unreported = leavesOutcomeUnknown(error) ? ROW_COUNTS_UNKNOWN : {}
-      this.reportEach(metrics, statements, outcomes.failed(), performance.now() - start, unreported)
+      const late = lateRowCountsOf(error)
+      if (late === undefined) {
+        const unreported = leavesOutcomeUnknown(error) ? ROW_COUNTS_UNKNOWN : {}
+        this.reportEach(metrics, statements, outcomes.failed(), performance.now() - start, unreported)
+      } else {
+        void late.then(counts => {
+          const perStatement = counts === null ? outcomes.failed() : outcomes.failedLate(counts)
+          const unreported = counts === null ? ROW_COUNTS_UNKNOWN : {}
+          this.reportEach(metrics, statements, perStatement, performance.now() - start, unreported)
+        })
+      }
       throw error
     }
     this.reportEach(metrics, statements, outcomes.succeeded(results), performance.now() - start, null)

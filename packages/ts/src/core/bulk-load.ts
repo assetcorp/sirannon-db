@@ -38,7 +38,7 @@ function retriedRestore(writer: SQLiteConnection, restorePragma: string): () => 
     } catch (err) {
       if (err instanceof SirannonError) throw err
       throw new SirannonError(
-        'Sirannon could not restore the configured synchronous level after a bulk load, so it refused this operation, which did not run',
+        'Sirannon could not restore the configured synchronous level after a bulk load, so it refused this operation and wrote nothing',
         'DURABILITY_RESTORE_FAILED',
       )
     }

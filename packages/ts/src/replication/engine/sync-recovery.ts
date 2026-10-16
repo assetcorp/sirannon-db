@@ -2,6 +2,7 @@ import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import type { SyncAck } from '../types.js'
 import type { ReplicationEngine } from './engine.js'
+import { positionReport } from './position-report.js'
 
 export const SYNC_RETRY_MIN_DELAY_MS = 1_000
 export const SYNC_RETRY_MAX_DELAY_MS = 30_000
@@ -144,8 +145,8 @@ export class SyncRecovery {
  * Tells the source of a finished first copy which sequence the copy holds, so that the source resends every change
  * after that sequence, including the changes that it sent while the joiner was still copying and so dropped.
  *
- * A failed send costs nothing more than a delay, because the joiner reports its position again when it reconnects to
- * the source.
+ * When the send fails, the joiner reports the failure and waits, because it reports its position again when it
+ * reconnects to the source.
  *
  * @param engine - The joining node's engine, which sends the report and records a failed send.
  * @param sourcePeerId - The node that served the copy.
@@ -159,10 +160,7 @@ export async function reportSnapshotPosition(
   snapshotSeq: bigint,
 ): Promise<void> {
   try {
-    await engine.config.transport.sendAck(
-      sourcePeerId,
-      engine.decorate({ batchId: '', ackedSeq: snapshotSeq, nodeId: engine.nodeId }),
-    )
+    await engine.config.transport.sendAck(sourcePeerId, positionReport(engine, snapshotSeq))
   } catch (err: unknown) {
     const wrappedErr = err instanceof Error ? err : new Error(String(err))
     engine.emitError({ error: wrappedErr, operation: 'sync-position-report', peerId: sourcePeerId, recoverable: true })

@@ -307,4 +307,35 @@ describe.each(DRIVER_PLACEMENTS)('transactions with $label', ({ driver, writerWo
     await expect(db.execute(OPEN_ACCOUNT, ['after', 1])).resolves.toMatchObject({ changes: 1 })
     expect(columnRaw(path, OWNERS_IN_ORDER)).toEqual(['after'])
   })
+
+  it('refuses a column drop on a leaked handle of a watched table before it touches the open transaction or the triggers', async () => {
+    const { db, path } = await openAccounts()
+    await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, draft TEXT)')
+    await db.watch('notes')
+    const triggersOf = () =>
+      columnRaw(path, "SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'notes' ORDER BY name")
+    const triggersBefore = triggersOf()
+    let leaked: Transaction | undefined
+    await db.transaction(async tx => {
+      leaked = tx
+    })
+    if (leaked === undefined) throw new Error('the callback received no transaction')
+    const handle = leaked
+
+    let code: unknown
+    await db.transaction(async tx => {
+      await tx.execute("INSERT INTO notes (body, draft) VALUES ('inside the open transaction', 'kept')")
+      code = await handle.execute('ALTER TABLE notes DROP COLUMN draft').then(
+        () => 'ran',
+        (err: { code?: unknown }) => err.code,
+      )
+    })
+
+    expect(code).toBe('TRANSACTION_CLOSED')
+    expect(triggersBefore.length).toBeGreaterThan(0)
+    expect(triggersOf()).toEqual(triggersBefore)
+    expect(columnRaw(path, "SELECT name FROM pragma_table_info('notes') ORDER BY cid")).toEqual(['id', 'body', 'draft'])
+    expect(columnRaw(path, 'SELECT draft FROM notes')).toEqual(['kept'])
+    expect(countRaw(path, '_sirannon_changes')).toBe(1)
+  })
 })

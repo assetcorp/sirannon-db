@@ -32,6 +32,7 @@ export interface FailoverNodeConfig {
   controllerTickIntervalMs: number
   controllerEnabled: boolean
   writeForwarding: boolean
+  initialSync?: boolean
   backupDirectory?: string
   compatibility: {
     packageVersion: string
@@ -163,8 +164,8 @@ export class FailoverNodeProcess {
     return this.child.exitCode === null && this.child.signalCode === null
   }
 
-  async execute(sql: string, params?: unknown[], options?: QueryOptions): Promise<JsonValue> {
-    return this.request('execute', { sql, params, options }, 20_000)
+  async execute(sql: string, params?: unknown[], options?: QueryOptions, replyTimeoutMs = 20_000): Promise<JsonValue> {
+    return this.request('execute', { sql, params, options }, replyTimeoutMs)
   }
 
   async localWriteProbe(id: number, note: string): Promise<JsonValue> {
@@ -185,6 +186,20 @@ export class FailoverNodeProcess {
 
   async liveItemIds(): Promise<number[] | null> {
     return (await this.request('liveItemIds', {}, 10_000)) as number[] | null
+  }
+
+  async holdInSyncUpdates(filter: { removesNodeId?: string } = {}): Promise<void> {
+    await this.request('holdInSyncUpdates', filter, 10_000)
+  }
+
+  async releaseInSyncUpdates(): Promise<void> {
+    await this.request('releaseInSyncUpdates', {}, 10_000)
+  }
+
+  async heldInSyncUpdates(): Promise<number> {
+    const held = await this.request('heldInSyncUpdates', {}, 10_000)
+    if (typeof held !== 'number') throw new Error(`${this.config.nodeId} reported held updates as ${String(held)}`)
+    return held
   }
 
   async reconnectTransport(): Promise<void> {

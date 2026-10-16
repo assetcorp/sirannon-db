@@ -1,7 +1,12 @@
 import type { TransactionOutcomes } from '../database-observability.js'
 import { addRowCounts, type RowCounts, rowCountsOf } from '../driver/row-counts.js'
 import type { StatementMeter } from '../transaction.js'
-import type { QueryFailureMeasure, QueryOutcome, QueryOutcomeMeasure } from './collector.js'
+import {
+  type QueryFailureMeasure,
+  type QueryOutcome,
+  type QueryOutcomeMeasure,
+  settleLateOutcome,
+} from './collector.js'
 import { ROW_COUNTS_UNKNOWN } from './outcomes.js'
 
 function rowCountsOnly(outcome: QueryOutcome): QueryOutcome {
@@ -49,7 +54,18 @@ export class StatementRecorder implements StatementMeter {
    * @returns The outcomes for a transaction that commits and for one that fails.
    */
   transactionOutcomes(): TransactionOutcomes {
-    return { succeeded: () => this.outcomes, failed: () => this.outcomes.map(rowCountsOnly) }
+    return {
+      succeeded: () => this.outcomes,
+      failed: () => this.outcomes.map(rowCountsOnly),
+      failedLate: counts => this.failedLate(counts),
+    }
+  }
+
+  private failedLate(counts: readonly (RowCounts | undefined)[]): QueryOutcome[] {
+    const outcomes = this.outcomes.map(rowCountsOnly)
+    const last = this.outcomes.length - 1
+    if (last >= 0) outcomes[last] = rowCountsOnly(settleLateOutcome(this.outcomes[last], counts))
+    return outcomes
   }
 
   /**

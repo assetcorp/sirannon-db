@@ -225,12 +225,14 @@ function readTableSet(msg: Record<string, unknown>): string[] | string {
     if (msg.tables.length > MAX_SUBSCRIBED_TABLES) {
       return `"tables" must hold at most ${MAX_SUBSCRIBED_TABLES} table names`
     }
+    const tables: string[] = []
     for (const table of msg.tables) {
       if (typeof table !== 'string' || table.length === 0) {
         return '"tables" must hold non-empty table names'
       }
+      tables.push(table)
     }
-    return msg.tables as string[]
+    return tables
   }
 
   if (typeof msg.table !== 'string') {

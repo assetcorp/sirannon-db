@@ -5,6 +5,7 @@ import { SirannonError } from '../errors.js'
 import { executeGroup } from '../group-executor.js'
 import {
   serializeError,
+  WORKER_BEGIN_FAILED_CODE,
   WORKER_CANCELLED_CODE,
   WORKER_COPY_STOPPED_CODE,
   type WorkerCancel,
@@ -138,7 +139,7 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
       return withRowCounts({ rowsLoaded: req.paramsBatch.length, changes }, counts)
     }
     case 'runGroup': {
-      const outcomes = await executeGroup(requireConnection(), req.units)
+      const outcomes = await executeGroup(requireConnection(), req.units, req.opening)
       return outcomes.map<GroupRunOutcome>(outcome => {
         if (outcome.ok) return { ok: true, results: outcome.values }
         const error = serializeError(outcome.error)
@@ -192,6 +193,17 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
   }
 }
 
+async function begin(): Promise<void> {
+  try {
+    await requireConnection().exec('BEGIN')
+  } catch (err) {
+    throw new SirannonError(
+      `SQLite could not begin the transaction: ${err instanceof Error ? err.message : String(err)}`,
+      WORKER_BEGIN_FAILED_CODE,
+    )
+  }
+}
+
 const cancelledIds = new Set<number>()
 let latestDispatchedId = 0
 
@@ -210,6 +222,7 @@ async function handle(req: WorkerRequest, queued = true): Promise<void> {
     return
   }
   try {
+    if (req.begin === true) await begin()
     const value = await dispatch(req)
     port.postMessage({ id: req.id, ok: true, value })
   } catch (err) {

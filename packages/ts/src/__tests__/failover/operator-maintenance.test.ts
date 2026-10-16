@@ -27,9 +27,10 @@ import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { waitForNoSafePrimaryReport } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
-import { type ItemRow, readHighestAppliedSeq, readHighestOwnChangeSeq } from './sqlite-oracle.js'
+import { type ItemRow, insertStrayItem, readHighestAppliedSeq, readHighestOwnChangeSeq } from './sqlite-oracle.js'
 
 const WRITE_REFUSALS = ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY', 'NODE_DRAINING', 'AUTHORITY_LOST']
+const STRAY_ITEM_ID = 999
 const STORAGE_CEILING_BYTES = 64 * 1024 * 1024
 
 async function writeRows(env: GateEnvironment, nodeId: string, ids: readonly number[], note: string) {
@@ -110,6 +111,41 @@ describe('operators changing a running group', () => {
     await expectExactlyOneWritablePrimary(env, promoted, 2n)
   })
 
+  it('rebuilds a running replica through a full copy once an operator marks it repairing, while the primary keeps writing', async () => {
+    const env = environment()
+    await startCluster(env)
+    const written = await writeRows(env, NODE_A, [1, 2], 'before-the-repair')
+    await waitForInSyncSet(env, NODE_IDS, 15_000)
+    insertStrayItem(dbPathFor(env, NODE_C), itemRow(STRAY_ITEM_ID, NODE_C, 'written-outside-sirannon'))
+
+    let writing = true
+    const writer = (async () => {
+      for (let id = 100; writing; id++) {
+        written.push(...(await writeRows(env, NODE_A, [id], 'during-the-repair')))
+      }
+    })()
+    try {
+      await env.coordinator.updateNodeMaintenance({
+        clusterId: CLUSTER_ID,
+        groupId: GROUP_ID,
+        nodeId: NODE_C,
+        repairing: true,
+      })
+      await waitForGroup(
+        env,
+        group => group.inSyncNodeIds.includes(NODE_C) && !group.repairingNodeIds.includes(NODE_C),
+        45_000,
+        `${NODE_C} rebuilt and back in the in-sync set`,
+      )
+    } finally {
+      writing = false
+      await writer
+    }
+    const files = await waitForIdenticalFiles(env, NODE_IDS, 20_000)
+    expect(files).toEqual(written)
+    expect(files.map(row => row.id)).not.toContain(STRAY_ITEM_ID)
+  })
+
   it('keeps both changes when two operators update maintenance flags on the group at the same instant', async () => {
     const env = environment()
     await startCluster(env)
@@ -174,12 +210,14 @@ describe('operators changing a running group', () => {
     await waitForSessionGone(env, NODE_A, 10_000)
     await waitForNoSafePrimaryReport(env)
     await expectGroupHolds(env, NODE_A, 1n, 3_000)
-    for (const nodeId of [NODE_B, NODE_C]) {
-      await expectRejectsWith(
-        requireNode(env, nodeId).localWriteProbe(80, 'with-every-replica-set-aside'),
-        WRITE_REFUSALS,
-      )
-    }
+    await expectRejectsWith(
+      requireNode(env, NODE_B).localWriteProbe(80, 'with-every-replica-set-aside'),
+      WRITE_REFUSALS,
+    )
+    await expectRejectsWith(requireNode(env, NODE_C).localWriteProbe(80, 'with-every-replica-set-aside'), [
+      ...WRITE_REFUSALS,
+      'SYNC_ERROR',
+    ])
 
     await env.coordinator.updateNodeMaintenance({
       clusterId: CLUSTER_ID,

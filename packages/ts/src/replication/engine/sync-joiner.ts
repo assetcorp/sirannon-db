@@ -5,6 +5,7 @@ import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
+import { leaveInSyncSetBeforeCopy } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { handleHistoryAnswer, handleHistoryCopyBatch, recordCopiedHistory } from './history-anchor.js'
 import { reportSnapshotPosition, SyncRecovery } from './sync-recovery.js'
@@ -66,6 +67,7 @@ export class SyncJoiner {
     engine.syncState.error = null
 
     try {
+      await leaveInSyncSetBeforeCopy(engine)
       const savedState = await engine.log.getSyncState()
       const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
       const requestId = randomUUID()

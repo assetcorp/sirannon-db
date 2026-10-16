@@ -2,11 +2,25 @@ import { type SqlToken, tokenizeSql } from './sql-tokens.js'
 
 const TABLE_CONSTRAINT_STARTS = new Set(['constraint', 'primary', 'unique', 'check', 'foreign'])
 
+/**
+ * Holds the parts of one column's definition that `PRAGMA table_xinfo` leaves out: its collation, and the
+ * expression of a generated column.
+ *
+ * @internal
+ */
 export interface ColumnDefinition {
   collation: string | null
   generatedAs: string | null
 }
 
+/**
+ * Returns the collation and the generated expression of every column that a `CREATE TABLE` statement declares,
+ * keyed by column name, and leaves out the table constraints.
+ *
+ * @param ddl - The `CREATE TABLE` statement, as `sqlite_schema` stores it.
+ * @returns One entry per declared column, or an empty map when the statement has no column list.
+ * @internal
+ */
 export function parseColumnDefinitions(ddl: string): Map<string, ColumnDefinition> {
   const definitions = new Map<string, ColumnDefinition>()
   const tokens = tokenizeSql(ddl)

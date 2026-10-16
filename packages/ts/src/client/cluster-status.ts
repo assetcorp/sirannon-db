@@ -1,11 +1,6 @@
-import type {
-  ClusterReadEndpointInfo,
-  ClusterStatusInfo,
-  NodeHealthReason,
-  NodeHealthState,
-  ReadConcernLevel,
-} from '../core/types.js'
+import type { ClusterReadEndpointInfo, ClusterStatusInfo, NodeHealthReason, NodeHealthState } from '../core/types.js'
 import { NODE_HEALTH_REASONS, NODE_HEALTH_STATES } from '../core/types.js'
+import { isReadConcernLevel } from '../server/protocol.js'
 import { RemoteError } from './types.js'
 
 function invalid(reason: string): RemoteError {
@@ -27,10 +22,6 @@ function readPrimary(value: unknown): ClusterStatusInfo['currentPrimary'] {
     nodeId: primary.nodeId,
     endpoint: typeof primary.endpoint === 'string' ? primary.endpoint : undefined,
   }
-}
-
-function isReadConcernLevel(value: unknown): value is ReadConcernLevel {
-  return value === 'local' || value === 'majority' || value === 'linearizable'
 }
 
 function readReadEndpoints(value: unknown): ClusterReadEndpointInfo[] | undefined {

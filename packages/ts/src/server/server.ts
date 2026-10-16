@@ -10,7 +10,7 @@ import type {
 } from '../core/types.js'
 import { BackupRestoreRuns } from './backup-restore-runs.js'
 import { handleCapabilities } from './capabilities.js'
-import { ConnectionDrain, type RouteRegistrar, settleResponse } from './connection-drain.js'
+import { ConnectionDrain, endResponse, type RouteRegistrar } from './connection-drain.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { wrapDbGetRoute, wrapDbRoute } from './db-route.js'
@@ -42,6 +42,7 @@ import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
 import {
   assertBackupRestoreAuthenticated,
   assertDeviceSyncAuthenticated,
+  resolveCloseTimeout,
   resolveMaxBodyBytes,
   resolveWsBackpressure,
 } from './limits.js'
@@ -71,6 +72,20 @@ function refuseSql(res: HttpResponse): void {
 
 function refuseDeviceSync(res: HttpResponse): void {
   sendError(res, 403, 'DEVICE_SYNC_NOT_ACCEPTED', DEVICE_SYNC_NOT_ACCEPTED_MESSAGE)
+}
+
+/**
+ * The settings for {@link SirannonServer.close}.
+ *
+ * @public
+ */
+export interface ServerCloseOptions {
+  /**
+   * How long, in milliseconds, the server waits for requests in progress before it ends every connection. The value
+   * must be a whole number from 0 to 2_147_483_647, and 0 ends every connection at once. The default is 30_000, the
+   * client's default request timeout, because a client on default settings stops waiting for a reply after that long.
+   */
+  timeoutMs?: number
 }
 
 /**
@@ -159,23 +174,36 @@ export class SirannonServer<Identity = unknown> {
   }
 
   /**
-   * Stops listening, closes every open WebSocket connection, waits for each HTTP request that is in progress to finish,
-   * and then ends every remaining connection, including idle keep-alive connections, so that a client reconnects to
-   * whichever server listens next.
+   * Resolves once the server has stopped listening and has ended every connection, after each request in progress has
+   * sent its reply, so that `sirannon.shutdown()` can close the databases next.
    *
-   * A request whose body is still arriving loses its connection at once, and a request that arrives on an open
-   * connection after closing begins finds that connection closed.
+   * The server stops listening at once and stops every subscription. It closes each WebSocket connection with close
+   * code 1001 once the requests on that connection have replied and its outbound buffer has emptied. Once no request
+   * is in progress and every WebSocket connection has closed, it ends every remaining connection, idle keep-alive
+   * connections included, so that a client reconnects to whichever server listens next.
+   *
+   * While the server closes, a request on an open HTTP connection finds that connection closed, and a WebSocket
+   * request receives the error `HANDLER_CLOSED`. An upload whose body is still arriving loses its connection at once.
+   * When `timeoutMs` passes before every request has replied, the server ends every remaining connection at that
+   * moment, and the promise resolves.
+   *
+   * @param options - How long the server waits for requests in progress.
+   * @returns A promise that resolves once the server has ended every connection.
+   * @throws A `SirannonError` with code `INVALID_CLOSE_TIMEOUT` when `timeoutMs` is not a whole number from 0 to
+   * 2_147_483_647.
    */
-  async close(): Promise<void> {
+  async close(options?: ServerCloseOptions): Promise<void> {
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), resolveCloseTimeout(options?.timeoutMs))
     const runtime = this.runtime
     if (this.listenSocket && runtime) {
       runtime.uws.us_listen_socket_close(this.listenSocket)
       this.listenSocket = null
     }
     try {
-      await this.wsHandler.close()
-      await this.drain.close()
+      await Promise.all([this.wsHandler.close(deadline.signal), this.drain.close(deadline.signal)])
     } finally {
+      clearTimeout(timer)
       runtime?.app.close()
     }
   }
@@ -213,7 +241,7 @@ export class SirannonServer<Identity = unknown> {
       const cors = this.cors
       routes.options('/*', (res, req) => {
         const requestOrigin = req.getHeader('origin')
-        res.cork(() => {
+        endResponse(res, () => {
           res.writeStatus('204 No Content')
           writeCorsOrigin(res, cors, requestOrigin)
           res
@@ -222,7 +250,6 @@ export class SirannonServer<Identity = unknown> {
             .writeHeader('Access-Control-Max-Age', '86400')
             .endWithoutBody()
         })
-        settleResponse(res)
       })
     }
 
@@ -283,6 +310,7 @@ export class SirannonServer<Identity = unknown> {
     registerWebSocketRoute({
       app,
       wsHandler: this.wsHandler,
+      drain: this.drain,
       authenticateHook: this.authenticateHook,
       maxBodyBytes: this.maxBodyBytes,
       maxBackpressureBytes: this.maxWsBackpressureBytes,

@@ -12,9 +12,10 @@ const HEADERS_UNSUPPORTED_MESSAGE =
 const SUBPROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
 const MALFORMED_SUBPROTOCOL_REASON =
-  'a subprotocol is one or more of the characters a header token allows, so it carries no space, comma, or quotation mark and is never empty'
+  'it is empty or holds a character that an HTTP header token excludes, such as a space, a comma, or a quotation mark'
 
-const REPEATED_SUBPROTOCOL_REASON = 'a handshake refuses an offer that repeats a subprotocol'
+const REPEATED_SUBPROTOCOL_REASON =
+  'it repeats an earlier entry, and a browser refuses to open a WebSocket whose offer names one subprotocol twice'
 
 const HEADER_NAME_TOKEN = SUBPROTOCOL_TOKEN
 
@@ -26,10 +27,11 @@ const CARRIAGE_RETURN_CODE = 0x0d
 
 const HIGHEST_HEADER_VALUE_CODE = 0xff
 
-const MALFORMED_HEADER_NAME_REASON = 'a header name is one or more of the characters a header token allows'
+const MALFORMED_HEADER_NAME_REASON =
+  'its name is empty or holds a character that an HTTP header name excludes, such as a space or a colon'
 
 const MALFORMED_HEADER_VALUE_REASON =
-  'a header value carries no line break, no NUL character, and no character above U+00FF'
+  'its value holds a line break, a NUL character, or a character above U+00FF, and fetch refuses to send such a value'
 
 function subprotocolMessage(index: number, reason: string): string {
   return `Entry ${index} of 'webSocketProtocols' cannot be offered, because ${reason}. The entry carries a credential, so it is left out of this message.`

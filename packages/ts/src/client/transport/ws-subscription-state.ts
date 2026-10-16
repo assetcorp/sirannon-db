@@ -36,12 +36,34 @@ export interface ActiveSubscription {
 
 const UNREACHABLE_SERVER_CODES: ReadonlySet<string> = new Set(['CONNECTION_ERROR', 'TIMEOUT'])
 
+/**
+ * Marks every subscription as not yet restored on the server, which the transport does when its connection drops, so
+ * that {@link restoreSubscriptions} subscribes each one again on the next connection.
+ *
+ * @param subscriptions - The subscriptions that the transport holds, keyed by subscription identifier.
+ * @internal
+ */
 export function markSubscriptionsDisconnected(subscriptions: Map<string, ActiveSubscription>): void {
   for (const sub of subscriptions.values()) {
     sub.established = false
   }
 }
 
+/**
+ * Subscribes again, one at a time, to every subscription that the new connection has not restored, resuming each one
+ * from the last sequence that it delivered.
+ *
+ * A subscription whose restore the server refuses leaves the map, and its `onError` handler receives the refusal. A
+ * `DUPLICATE_SUBSCRIPTION` answer means that the connection already holds the subscription, so the subscription
+ * stays. A restore that fails with `CONNECTION_ERROR` or `TIMEOUT` keeps the subscription for the next connection.
+ *
+ * @param subscriptions - The subscriptions that the transport holds, keyed by subscription identifier.
+ * @param request - Sends one subscribe message and resolves once the server confirms it.
+ * @param isClosed - Returns whether the transport has closed, which stops the restore.
+ * @returns The last `CONNECTION_ERROR` or `TIMEOUT` error, which the transport throws so that it tries the restore
+ * again, or `null` when every restore reached the server.
+ * @internal
+ */
 export async function restoreSubscriptions(
   subscriptions: Map<string, ActiveSubscription>,
   request: (message: WSClientMessage) => Promise<void>,

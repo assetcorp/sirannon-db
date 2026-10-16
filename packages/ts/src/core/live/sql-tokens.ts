@@ -24,6 +24,26 @@ function isDigit(c: string): boolean {
   return c >= '0' && c <= '9'
 }
 
+/**
+ * Returns whether a token is a keyword, written without quotes in any letter case.
+ *
+ * @param token - The token, or `undefined` past the end of the statement.
+ * @param word - The keyword in lower case.
+ * @returns `true` when the token is that unquoted word.
+ * @internal
+ */
+export function isKeyword(token: SqlToken | undefined, word: string): boolean {
+  return token !== undefined && token.kind === 'word' && !token.quoted && token.lower === word
+}
+
+/**
+ * Returns the tokens of a SQL statement, without its whitespace and comments.
+ *
+ * @param sql - The statement text.
+ * @returns One token per word, string, number, parameter, and punctuation mark, in order, each with its position in
+ * `sql` and its parenthesis depth.
+ * @internal
+ */
 export function tokenizeSql(sql: string): SqlToken[] {
   const tokens: SqlToken[] = []
   const n = sql.length
@@ -187,6 +207,14 @@ function readDelimited(sql: string, start: number, quote: string): { value: stri
   return { value, next: n }
 }
 
+/**
+ * Returns the name of a named parameter, such as `id` for `:id`, `@id`, or `$id`.
+ *
+ * @param token - The token.
+ * @returns The name without its prefix, or `null` for a positional parameter such as `?` or `?1` and for every other
+ * kind of token.
+ * @internal
+ */
 export function parameterName(token: SqlToken): string | null {
   if (token.kind !== 'param') return null
   if (token.value.startsWith('?')) return null

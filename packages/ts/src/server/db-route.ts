@@ -1,7 +1,7 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { RequestContext } from '../core/types.js'
 import { writeCorsOrigin } from './cors.js'
-import { DATABASE_ID_SEGMENT, decodePathSegment, sendUndecodablePathSegment } from './http-common.js'
+import { readDatabaseId, refuseUndecodablePathSegments } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import { initAbortHandler, readBody, sendError } from './http-handler.js'
 import type { OperationRouteDeps } from './operation-route.js'
@@ -22,8 +22,7 @@ export function wrapDbRoute<Identity>(
   const { authenticateHook, cors, maxBodyBytes } = deps
 
   return (res, req) => {
-    const rawId = req.getParameter(0) ?? ''
-    const dbId = decodePathSegment(rawId)
+    const id = readDatabaseId(req)
     const method = req.getMethod()
     const path = req.getUrl()
 
@@ -32,8 +31,9 @@ export function wrapDbRoute<Identity>(
     }
 
     if (!authenticateHook) {
+      const dbId = id.decoded
       if (dbId === null) {
-        sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+        refuseUndecodablePathSegments(res, [id])
         return
       }
       const abort = initAbortHandler(res)
@@ -59,7 +59,7 @@ export function wrapDbRoute<Identity>(
       headers: readHeaders(req),
       method,
       path,
-      databaseId: dbId ?? rawId,
+      databaseId: id.decoded ?? id.raw,
       remoteAddress: decodeRemoteAddress(res),
     }
 
@@ -68,8 +68,9 @@ export function wrapDbRoute<Identity>(
     Promise.all([bodyPromise, hookPromise])
       .then(async ([rawBody, authenticated]) => {
         if (!authenticated.ok || !abort.claim()) return
+        const dbId = id.decoded
         if (dbId === null) {
-          sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+          refuseUndecodablePathSegments(res, [id])
           return
         }
         try {
@@ -91,8 +92,7 @@ export function wrapDbGetRoute<Identity>(
   const { authenticateHook, cors } = deps
 
   return (res, req) => {
-    const rawId = req.getParameter(0) ?? ''
-    const dbId = decodePathSegment(rawId)
+    const id = readDatabaseId(req)
     const method = req.getMethod()
     const path = req.getUrl()
 
@@ -104,7 +104,7 @@ export function wrapDbGetRoute<Identity>(
       headers: readHeaders(req),
       method,
       path,
-      databaseId: dbId ?? rawId,
+      databaseId: id.decoded ?? id.raw,
       remoteAddress: decodeRemoteAddress(res),
     }
 
@@ -112,8 +112,9 @@ export function wrapDbGetRoute<Identity>(
     const run = async (): Promise<void> => {
       if (authenticateHook && !(await runAuthenticate(res, abort, ctx, authenticateHook)).ok) return
       if (!abort.claim()) return
+      const dbId = id.decoded
       if (dbId === null) {
-        sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+        refuseUndecodablePathSegments(res, [id])
         return
       }
       try {

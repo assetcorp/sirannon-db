@@ -2,16 +2,16 @@ import { needsResync } from '../core/cdc/primed-subscription.js'
 import { filteredChange } from '../core/cdc/subscription.js'
 import { selectMaxAssignedChangeSeq } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
-import { deviceCursorExists, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
+import { DEVICE_CURSOR_DROPPED_REASON, deviceCursorExists, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
 import type { WSConnection } from './ws-connection.js'
-import { DeviceFramePacker } from './ws-device-frames.js'
+import { DeviceFramePacker, deviceFrameTargetBytes } from './ws-device-frames.js'
 import { DeviceChangeStream } from './ws-device-stream.js'
 import type { ConnectionState } from './ws-handler.js'
 import { releaseUnattached, type WSSubscribeDeps } from './ws-subscribe.js'
 
 class DroppedDeviceCursor extends Error {
   constructor() {
-    super('The server deleted this device cursor; resubscribe to resync')
+    super(DEVICE_CURSOR_DROPPED_REASON)
     this.name = 'DroppedDeviceCursor'
   }
 }
@@ -44,7 +44,7 @@ export async function subscribeDevice(
     for (const table of tables) {
       await state.database.watch(table)
     }
-    const cursorHeld = await deviceCursorExists(ctx.cdcConn, deviceId)
+    const holdsCursor = await deviceCursorExists(ctx.cdcConn, deviceId)
     epoch = ctx.epoch
     const logEnd =
       sinceSeq === undefined ? 0n : await selectMaxAssignedChangeSeq(ctx.cdcConn, ctx.tracker.changeLogTable)
@@ -64,9 +64,12 @@ export async function subscribeDevice(
     stream = new DeviceChangeStream(
       {
         deviceId,
+        holdsCursor,
         maxUnacknowledgedChanges: deps.maxUnacknowledgedChanges,
         pacing: stagedStream ? 'perEvent' : 'perTransaction',
-        packer: stagedStream ? new DeviceFramePacker(id, data => deps.sendText(conn, data)) : null,
+        packer: stagedStream
+          ? new DeviceFramePacker(id, data => deps.sendText(conn, data), deviceFrameTargetBytes(deps.socketResumeBytes))
+          : null,
         sendEvent: event => deps.sendChange(conn, id, event),
         socketBuffered: () => conn.bufferedAmount(),
         socketCongested: () => conn.bufferedAmount() >= deps.socketResumeBytes,
@@ -81,7 +84,7 @@ export async function subscribeDevice(
         },
         readLog: async (afterSeq, upToSeq, limit) => {
           const events = await ctx.tracker.readSinceTables(ctx.cdcConn, tables, afterSeq, upToSeq, limit)
-          if (stream.cursorHeld && !(await deviceCursorExists(ctx.cdcConn, deviceId))) {
+          if (stream.holdsCursor && !(await deviceCursorExists(ctx.cdcConn, deviceId))) {
             throw new DroppedDeviceCursor()
           }
           return events
@@ -96,7 +99,6 @@ export async function subscribeDevice(
       resumeFrom,
       resumeFrom < boundary ? 'catchup' : 'live',
     )
-    stream.cursorHeld = cursorHeld
 
     const subscriptions = tables.map(table =>
       ctx.manager.subscribe(table, filter, event => {

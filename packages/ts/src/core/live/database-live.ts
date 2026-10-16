@@ -6,7 +6,13 @@ import { CDCError } from '../errors.js'
 import { LIVE_PROBE_TABLE_PREFIX } from '../internal-tables.js'
 import { readOutcome } from '../metrics/outcomes.js'
 import { asQueryError } from '../query-executor.js'
-import { selectTableSql, tableColumnsWithGenerated, tableIndexList } from '../system-catalog/index.js'
+import {
+  primaryKeyColumns,
+  selectTableSql,
+  TABLE_XINFO_HIDDEN,
+  tableColumnsWithGenerated,
+  tableIndexList,
+} from '../system-catalog/index.js'
 import type { ChangeEvent, Params } from '../types.js'
 import { type ColumnDefinition, parseColumnDefinitions } from './column-definitions.js'
 import type { LiveQuerySource, PositionedRead } from './live-query.js'
@@ -23,7 +29,6 @@ import type { LiveQuery, LiveQueryOptions } from './types.js'
 const DEFAULT_REREAD_JITTER_MS = 25
 const DEFAULT_MAX_TRANSACTION_CHANGES = 10_000
 const MAX_TRANSACTION_BYTES = 16 * 1_048_576
-const SQLITE_HIDDEN_VIRTUAL_TABLE_COLUMN = 1
 const PRIMARY_KEY_INDEX_ORIGIN = 'pk'
 
 let nextProbeTable = 0
@@ -77,7 +82,7 @@ async function planProbe(
 ): Promise<PlannedProbe> {
   const { conn, run } = live
   const info = (await run(() => tableColumnsWithGenerated(conn, shape.table))).filter(
-    column => column.hidden !== SQLITE_HIDDEN_VIRTUAL_TABLE_COLUMN,
+    column => column.hidden !== TABLE_XINFO_HIDDEN.virtualTableColumn,
   )
   if (info.length === 0) {
     throw new CDCError(`Cannot open a live query for '${shape.sql}': table '${shape.table}' has no columns`)
@@ -89,10 +94,7 @@ async function planProbe(
     if (definition.collation !== null) collations.set(name, definition.collation)
   }
 
-  const pkColumns = info
-    .filter(column => column.pk > 0)
-    .sort((left, right) => left.pk - right.pk)
-    .map(column => column.name)
+  const pkColumns = primaryKeyColumns(info)
   const indexes = await run(() => tableIndexList(conn, shape.table))
   const pkIsRowid = pkColumns.length === 1 && !indexes.some(index => index.origin === PRIMARY_KEY_INDEX_ORIGIN)
 
@@ -102,7 +104,8 @@ async function planProbe(
       columns: info.map(column => ({
         name: column.name,
         type: column.type,
-        generatedAs: column.hidden === 0 ? null : generatedExpression(shape, column.name, definitions),
+        generatedAs:
+          column.hidden === TABLE_XINFO_HIDDEN.ordinary ? null : generatedExpression(shape, column.name, definitions),
       })),
       collations,
       pkColumns,
@@ -113,7 +116,7 @@ async function planProbe(
 
   const probeTable = `${LIVE_PROBE_TABLE_PREFIX}${nextProbeTable++}`
   const probe = await RowProbe.open(conn, probeTable, plan, params, run, meter)
-  const captured = info.filter(column => column.hidden === 0).map(column => column.name)
+  const captured = info.filter(column => column.hidden === TABLE_XINFO_HIDDEN.ordinary).map(column => column.name)
   return { plan, probe, columns: new Set(captured) }
 }
 

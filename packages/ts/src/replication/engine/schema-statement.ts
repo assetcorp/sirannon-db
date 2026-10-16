@@ -30,7 +30,7 @@ export function replicatedSchemaChangeOf(sql: string): string | null {
   }
   if (!validateDdlSafety(statement)) {
     throw new ReplicationError(
-      `Schema change rejected, because replicas apply only CREATE TABLE, ALTER TABLE ... ADD COLUMN, DROP TABLE, CREATE INDEX, CREATE UNIQUE INDEX, and DROP INDEX: ${statement.slice(0, SCHEMA_STATEMENT_PREVIEW_LENGTH)}`,
+      `This node refuses the schema change, because replicas apply only CREATE TABLE, ALTER TABLE ... ADD COLUMN, DROP TABLE, CREATE INDEX, CREATE UNIQUE INDEX, and DROP INDEX: ${statement.slice(0, SCHEMA_STATEMENT_PREVIEW_LENGTH)}`,
     )
   }
   return statement

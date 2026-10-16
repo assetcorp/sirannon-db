@@ -1,7 +1,7 @@
 import { HLC } from '../../core/sync/hlc.js'
 import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
-import type { NodeInfo, ReplicationBatch, SyncPhase } from '../types.js'
+import type { NodeInfo, ReplicationBatch } from '../types.js'
 import { assertInboundCoordinatorMessage, resolverFor } from './coordinator-authority.js'
 import { handleCoordinatorAckProgress } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
@@ -11,6 +11,8 @@ import {
   handleHistoryRefusal,
   isAnchoredToCurrentTerm,
 } from './history-anchor.js'
+import { servesItsData } from './internal-types.js'
+import { isPositionReport, positionReport } from './position-report.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
 function clockLeadMs(remoteHlc: string): number {
@@ -24,18 +26,11 @@ function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
   return engine.config.topology.shouldAcceptFrom(peer.id, peer.role)
 }
 
-function servesItsData(phase: SyncPhase): boolean {
-  return phase === 'ready' || phase === 'catching-up'
-}
-
 async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, appliedSeq: bigint): Promise<void> {
   if (appliedSeq === 0n || !replicatesFrom(engine, peer)) return
   if (!servesItsData(engine.syncState.phase) || !isAnchoredToCurrentTerm(engine)) return
   if (!servesItsData((await engine.log.getSyncState()).phase)) return
-  await engine.config.transport.sendAck(
-    peer.id,
-    engine.decorate({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
-  )
+  await engine.config.transport.sendAck(peer.id, positionReport(engine, appliedSeq))
 }
 
 function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
@@ -84,16 +79,13 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       const lead = clockLeadMs(batch.hlcRange.max)
       if (lead > engine.maxClockDriftMs) {
         throw new BatchValidationError(
-          `Clock drift too high: the batch is stamped ${lead}ms ahead of the local clock, which exceeds max ${engine.maxClockDriftMs}ms`,
+          `Peer ${fromPeerId} stamped this batch ${lead}ms ahead of the local clock, and this node refuses a lead above its maxClockDriftMs of ${engine.maxClockDriftMs}ms`,
         )
       }
 
       const appliedSeq = await engine.log.getLastAppliedSeq(fromPeerId)
       if (batch.afterSeq !== undefined && batch.afterSeq > appliedSeq) {
-        await engine.config.transport.sendAck(
-          fromPeerId,
-          engine.decorate({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
-        )
+        await engine.config.transport.sendAck(fromPeerId, positionReport(engine, appliedSeq))
         return
       }
 
@@ -162,14 +154,14 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         })
         return
       }
-      if (ack.batchId === '') engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
+      if (isPositionReport(ack)) engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
       engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
       persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       return
     }
     assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
       .then(() => {
-        if (ack.batchId === '') engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
+        if (isPositionReport(ack)) engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
         engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
         persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       })

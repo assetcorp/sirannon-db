@@ -1,6 +1,7 @@
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
 import { SQLITE_USER_VERSION_MAX } from '../core/migrations/baseline.js'
 import { MAX_CHANGE_SEQ } from '../core/sync/change-seqs.js'
+import { BatchValidationError } from '../core/sync/errors.js'
 import type { ApplyResult, ReplicationBatch, ReplicationChange } from '../core/sync/types.js'
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
 
@@ -126,17 +127,16 @@ function isStorableSeq(candidate: unknown): candidate is string {
 }
 
 function changeSeqsValidationError(raw: { fromSeq: string; toSeq: string; changes: unknown[] }): string | null {
-  const seqs = raw.changes.map(change => (change as { seq?: string }).seq)
-  const carried = seqs.filter(seq => seq !== undefined).length
-  if (carried === 0) return null
-  if (carried !== seqs.length) return 'Either every change carries "seq" or none does'
+  const seqs = raw.changes
+    .map(change => (isPlainObject(change) ? change.seq : undefined))
+    .filter((seq): seq is string => typeof seq === 'string')
+    .map(seq => BigInt(seq))
+  if (seqs.length === 0) return null
+  if (seqs.length !== raw.changes.length) return 'Either every change carries "seq" or none does'
   for (let i = 1; i < seqs.length; i++) {
-    if (BigInt(seqs[i] as string) <= BigInt(seqs[i - 1] as string)) return 'Each change "seq" must rise strictly'
+    if (seqs[i] <= seqs[i - 1]) return 'Each change "seq" must rise strictly'
   }
-  if (
-    BigInt(seqs[0] as string) !== BigInt(raw.fromSeq) ||
-    BigInt(seqs[seqs.length - 1] as string) !== BigInt(raw.toSeq)
-  ) {
+  if (seqs[0] !== BigInt(raw.fromSeq) || seqs[seqs.length - 1] !== BigInt(raw.toSeq)) {
     return 'The first change "seq" must equal "batch.fromSeq" and the last must equal "batch.toSeq"'
   }
   return null
@@ -209,7 +209,14 @@ export function decodeSyncBatch(body: ChangesRequest['batch']): ReplicationBatch
     checksum: body.checksum,
   }
   if (body.changes[0]?.seq !== undefined) {
-    batch.changeSeqs = body.changes.map(change => BigInt(change.seq ?? '0'))
+    batch.changeSeqs = body.changes.map((change, index) => {
+      if (change.seq === undefined) {
+        throw new BatchValidationError(
+          `changes[${index}] carries no "seq", although the first change of the batch does`,
+        )
+      }
+      return BigInt(change.seq)
+    })
   }
   if (body.txContinues === true) {
     batch.txContinues = true

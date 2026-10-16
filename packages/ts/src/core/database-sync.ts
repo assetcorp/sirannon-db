@@ -337,9 +337,11 @@ export class DatabaseSyncController {
       stamper.hlc,
       this.pkResolver,
       fromNodeId => this.lastAppliedSeq(fromNodeId),
-      this.cdc.changeTracker ?? undefined,
-      CHANGES_TABLE,
-      tx => this.catchUpLocalColumnVersions(tx, stamper.nodeId),
+      {
+        tracker: this.cdc.changeTracker ?? undefined,
+        changesTable: CHANGES_TABLE,
+        beforeApply: tx => this.catchUpLocalColumnVersions(tx, stamper.nodeId),
+      },
     )
   }
 

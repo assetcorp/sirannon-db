@@ -2,6 +2,7 @@ import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { BatchApplier } from '../../core/sync/batch-applier.js'
+import type { BatchApplierOptions } from '../../core/sync/batch-applier-options.js'
 import { BatchReader } from '../../core/sync/batch-reader.js'
 import { DumpOps } from '../../core/sync/dump.js'
 import type { HLC } from '../../core/sync/hlc.js'
@@ -33,14 +34,16 @@ export class ReplicationLog {
   private readonly stampOps: StampOps
   private readonly dump: DumpOps
 
+  private readonly changesTable: string
+
   constructor(
     conn: SQLiteConnection,
     private readonly localNodeId: string,
     hlc: HLC,
-    private readonly changesTable: string = CHANGES_TABLE,
-    tracker?: ChangeTracker,
-    logsAppliedDdl = false,
+    options: Omit<BatchApplierOptions, 'beforeApply'> = {},
   ) {
+    const changesTable = options.changesTable ?? CHANGES_TABLE
+    this.changesTable = changesTable
     this.pkResolver = new PkResolver(conn)
     this.state = new StateOps(conn)
     this.schema = new SchemaOps(conn, changesTable)
@@ -51,10 +54,7 @@ export class ReplicationLog {
       hlc,
       this.pkResolver,
       fromNodeId => this.state.getLastAppliedSeq(fromNodeId),
-      tracker,
-      changesTable,
-      undefined,
-      logsAppliedDdl,
+      { ...options, changesTable },
     )
     this.stampOps = new StampOps(localNodeId, hlc, changesTable)
     this.dump = new DumpOps(conn, this.pkResolver)

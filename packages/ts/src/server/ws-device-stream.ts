@@ -21,6 +21,7 @@ export type DeviceStreamPacing = 'perTransaction' | 'perEvent'
 
 export interface DeviceStreamDeps {
   deviceId: string
+  holdsCursor: boolean
   maxUnacknowledgedChanges: number
   pacing: DeviceStreamPacing
   packer: DeviceFramePacker | null
@@ -49,7 +50,7 @@ export interface DeviceStreamDeps {
  * keeps every change that a live device has not acknowledged in the change log.
  */
 export class DeviceChangeStream {
-  cursorHeld = false
+  private cursorStored: boolean
   private mode: 'live' | 'catchup'
   private grouper: TransactionGrouper | null = null
   private catchupFrom: bigint
@@ -71,6 +72,7 @@ export class DeviceChangeStream {
     baselineSeq: bigint,
     startMode: 'live' | 'catchup',
   ) {
+    this.cursorStored = deps.holdsCursor
     this.mode = startMode
     this.catchupFrom = baselineSeq
     this.highestQueuedSeq = baselineSeq
@@ -84,6 +86,10 @@ export class DeviceChangeStream {
 
   get stopped(): boolean {
     return this.halted
+  }
+
+  get holdsCursor(): boolean {
+    return this.cursorStored
   }
 
   get catchingUp(): boolean {
@@ -113,6 +119,7 @@ export class DeviceChangeStream {
   }
 
   onAck(seq: bigint): void {
+    this.cursorStored = true
     if (this.halted) return
     if (seq > this.ackedSeq) {
       this.ackedSeq = seq

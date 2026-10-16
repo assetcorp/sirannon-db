@@ -181,7 +181,9 @@ describe('a replica receiving batches from a peer that holds a valid certificate
     const ahead = signedBatch(PRIMARY, nextSeq(), orders([order(2, 'from the future', 1)], PRIMARY, DRIFT_LIMIT_MS * 2))
     const inside = signedBatch(PRIMARY, nextSeq(), orders([order(1, 'inside', 1)], PRIMARY, DRIFT_LIMIT_MS / 2))
 
-    expect(await deliver(ahead)).toMatch(/^BATCH_VALIDATION_ERROR: Clock drift too high/)
+    expect(await deliver(ahead)).toMatch(
+      new RegExp(`^BATCH_VALIDATION_ERROR: Peer ${PRIMARY} stamped this batch \\d+ms ahead of the local clock`),
+    )
     expect(await deliver(inside)).toBe('applied')
     expect(tableRows(replica.dbPath, 'orders')).toEqual([order(1, 'inside', 1)])
   })

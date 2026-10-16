@@ -1,8 +1,9 @@
 import net from 'node:net'
+import { closeListener, listenOnLoopback, type RelayedSockets, relayToTarget } from './tcp-relay.js'
 
 export class ServerProxy {
   private server: net.Server | null = null
-  private readonly sockets = new Set<net.Socket>()
+  private readonly connections = new Set<RelayedSockets>()
   private targetPort: number
   port = 0
 
@@ -10,34 +11,15 @@ export class ServerProxy {
     this.targetPort = targetPort
   }
 
-  listen(): Promise<void> {
-    const server = net.createServer(clientSocket => {
-      const upstream = net.connect(this.targetPort, '127.0.0.1')
-      this.sockets.add(clientSocket)
-      this.sockets.add(upstream)
-      clientSocket.pipe(upstream)
-      upstream.pipe(clientSocket)
-      const drop = () => {
-        this.sockets.delete(clientSocket)
-        this.sockets.delete(upstream)
-        clientSocket.destroy()
-        upstream.destroy()
-      }
-      clientSocket.on('close', drop)
-      upstream.on('close', drop)
-      clientSocket.on('error', () => {})
-      upstream.on('error', () => {})
+  async listen(): Promise<void> {
+    const server = net.createServer(client => {
+      const relayed = relayToTarget(client, this.targetPort, ended => this.connections.delete(ended))
+      this.connections.add(relayed)
+      client.pipe(relayed.upstream)
+      relayed.upstream.pipe(client)
     })
     this.server = server
-    return new Promise(resolve => {
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address()
-        if (address !== null && typeof address === 'object') {
-          this.port = address.port
-        }
-        resolve()
-      })
-    })
+    this.port = await listenOnLoopback(server)
   }
 
   pointAt(targetPort: number): void {
@@ -45,18 +27,19 @@ export class ServerProxy {
   }
 
   killAllConnections(): number {
-    const killed = this.sockets.size
-    for (const socket of [...this.sockets]) {
-      socket.destroy()
+    const killed = this.connections.size
+    for (const { client, upstream } of [...this.connections]) {
+      client.destroy()
+      upstream.destroy()
     }
-    this.sockets.clear()
+    this.connections.clear()
     return killed
   }
 
   close(): Promise<void> {
     this.killAllConnections()
     const server = this.server
-    if (server === null) return Promise.resolve()
-    return new Promise(resolve => server.close(() => resolve()))
+    this.server = null
+    return closeListener(server)
   }
 }

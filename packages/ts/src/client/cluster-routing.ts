@@ -1,4 +1,5 @@
 import type { ReadConcernLevel } from '../core/types.js'
+import { isReadConcernLevel } from '../server/protocol.js'
 import { toServerBaseUrl } from './endpoint-urls.js'
 import { RemoteError, type Transport } from './types.js'
 
@@ -34,10 +35,6 @@ function clusterRoutingFingerprint(state: ClusterRoutingState): string {
 
 export function clusterRoutingChanged(previous: ClusterRoutingState | undefined, next: ClusterRoutingState): boolean {
   return previous === undefined || clusterRoutingFingerprint(previous) !== clusterRoutingFingerprint(next)
-}
-
-function isReadConcernLevel(value: unknown): value is ReadConcernLevel {
-  return value === 'local' || value === 'majority' || value === 'linearizable'
 }
 
 function parseDiscoveredReadConcerns(value: unknown): ReadConcernLevel[] {

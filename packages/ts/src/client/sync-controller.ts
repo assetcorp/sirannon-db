@@ -55,7 +55,7 @@ export class SyncController {
   private syncState: SyncState = 'stopped'
   private pendingPushCount = 0
   private lastError: { code: string; message: string } | null = null
-  private pullFailure: { code: string; message: string } | null = null
+  private lastErrorSource: 'pull' | 'other' | null = null
 
   constructor(
     private readonly db: Database,
@@ -84,7 +84,7 @@ export class SyncController {
         onApplyFailure: err => this.handleApplyFailure(err),
         onApplySuccess: () => {
           this.reconnect.reset()
-          if (this.lastError !== null && this.lastError === this.pullFailure) this.setError(null)
+          if (this.lastErrorSource === 'pull') this.setError(null)
           else this.statusChanges.notify()
         },
         download: () =>
@@ -115,8 +115,9 @@ export class SyncController {
     this.statusChanges.notify()
   }
 
-  private setError(failure: { code: string; message: string } | null): void {
+  private setError(failure: { code: string; message: string } | null, source: 'pull' | 'other' = 'other'): void {
     this.lastError = failure
+    this.lastErrorSource = failure === null ? null : source
     this.statusChanges.notify()
   }
 
@@ -343,8 +344,7 @@ export class SyncController {
   }
 
   private handleApplyFailure(err: unknown): void {
-    this.recordError(err)
-    this.pullFailure = this.lastError
+    this.setError(describeError(err), 'pull')
     this.pull.teardown()
     if (this.state === 'running' || this.state === 'starting') this.reconnect.schedule()
   }

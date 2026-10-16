@@ -27,7 +27,7 @@ pnpm typecheck   # run the TypeScript compiler
 pnpm format      # apply Biome formatting
 ```
 
-The replication end-to-end, failover, and soak suites run from the TypeScript package. The end-to-end and soak suites need no Docker: they run two nodes in one process over loopback gRPC. Only the failover suite starts Docker containers, which it uses for a three-member etcd cluster and for Toxiproxy fault injection. The `Failover` workflow runs that suite on every pull request and on every push to `main`, and the workflow fails when any scenario is skipped.
+The replication end-to-end, failover, and soak suites run from the TypeScript package. The end-to-end and soak suites need no Docker: they run two nodes in one process over loopback gRPC. Only the failover suite starts Docker containers, which it uses for a three-member etcd cluster and for Toxiproxy fault injection. The `Failover` workflow runs that suite on every pull request and on every push to `main`, and the workflow fails when Vitest skips any scenario.
 
 ```bash
 cd packages/ts

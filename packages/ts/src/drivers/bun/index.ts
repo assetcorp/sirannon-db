@@ -5,6 +5,7 @@ import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 
 /**
  * Settings for the driver built on Bun's built-in SQLite.
@@ -34,10 +35,14 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
   return defineDriver({
     capabilities: { multipleConnections: true, extensions: true, steppedCopy: false, rowCounts: false },
     resolveExtensionPath: extensionPath => resolve(extensionPath),
+    createWriterContext: asyncLocalWriterContext,
     async open(path, options) {
       const { Database } = await import('bun:sqlite')
       const db = new Database(path, { readonly: options?.readonly ?? false, safeIntegers: true })
-      if (options?.walMode !== false) db.run('PRAGMA journal_mode = WAL')
+      if (options?.walMode !== false) {
+        db.run('PRAGMA journal_mode = WAL')
+        db.query('PRAGMA schema_version').get()
+      }
       db.run(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
       db.run('PRAGMA foreign_keys = ON')
       db.run(`PRAGMA busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)

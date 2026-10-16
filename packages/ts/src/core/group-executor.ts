@@ -25,31 +25,56 @@ export type GroupOutcome =
  * the group back and executes each unit inside a savepoint of its own. Each
  * outcome holds the row counts of the attempt that took effect.
  *
+ * Sirannon executes `opening` once at the start of every transaction that it
+ * begins for the group, outside every unit's savepoint, so a unit that rolls
+ * back leaves the opening's write in place. When the group falls back to one
+ * transaction per unit, each of those transactions executes the opening again.
+ *
  * @param conn - The writer connection.
  * @param units - The units to execute, each a list of statements.
- * @returns One outcome per unit, in order.
+ * @param opening - The statement to execute at the start of each transaction, or `undefined` for none.
+ * @returns One outcome per unit, in order, which leave out the opening's results.
  * @internal
  */
-export async function executeGroup(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
+export async function executeGroup(
+  conn: SQLiteConnection,
+  units: readonly GroupUnit[],
+  opening?: GroupStatement,
+): Promise<GroupOutcome[]> {
   const outcomes: GroupOutcome[] = new Array(units.length)
   try {
     await conn.exec('BEGIN')
   } catch {
     await rollbackQuietly(conn)
-    return executeGroupIsolated(conn, units)
+    return executeGroupIsolated(conn, units, opening)
+  }
+  const notOpened = await runOpening(conn, opening)
+  if (notOpened) {
+    await rollbackQuietly(conn)
+    return units.map(() => ({ ok: false, error: notOpened }))
   }
   for (let i = 0; i < units.length; i++) {
     const attempt = await runUnit(conn, units[i])
     if (!attempt.ok) {
       await rollbackQuietly(conn)
-      return executeGroupIsolated(conn, units)
+      return executeGroupIsolated(conn, units, opening)
     }
     outcomes[i] = attempt
   }
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  return settleRefusedCommit(conn, units, outcomes, failure)
+  return settleRefusedCommit(conn, units, outcomes, failure, opening)
+}
+
+async function runOpening(conn: SQLiteConnection, opening: GroupStatement | undefined): Promise<unknown> {
+  if (opening === undefined) return null
+  try {
+    await execute(conn, opening.sql, opening.params, opening.trusted === true)
+    return null
+  } catch (err) {
+    return err
+  }
 }
 
 function countsOfEach(results: readonly unknown[]): RowCounts[] | undefined {
@@ -100,18 +125,27 @@ interface UnitAttempt {
   contained: boolean
 }
 
-async function executeGroupIsolated(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
+async function executeGroupIsolated(
+  conn: SQLiteConnection,
+  units: readonly GroupUnit[],
+  opening: GroupStatement | undefined,
+): Promise<GroupOutcome[]> {
   const outcomes: GroupOutcome[] = new Array(units.length)
   await conn.exec('BEGIN')
+  const notOpened = await runOpening(conn, opening)
+  if (notOpened) {
+    await rollbackQuietly(conn)
+    return units.map(() => ({ ok: false, error: notOpened }))
+  }
   for (let i = 0; i < units.length; i++) {
     const attempt = await runIsolatedUnit(conn, units[i], `sirannon_gc_${i}`)
     outcomes[i] = attempt.outcome
-    if (!attempt.contained) return rerunSurvivorsAlone(conn, units, outcomes, i)
+    if (!attempt.contained) return rerunSurvivorsAlone(conn, units, outcomes, i, opening)
   }
 
   const failure = await execControl(conn, 'COMMIT')
   if (!failure) return outcomes
-  return settleRefusedCommit(conn, units, outcomes, failure)
+  return settleRefusedCommit(conn, units, outcomes, failure, opening)
 }
 
 async function settleRefusedCommit(
@@ -119,13 +153,14 @@ async function settleRefusedCommit(
   units: readonly GroupUnit[],
   outcomes: GroupOutcome[],
   failure: Error,
+  opening: GroupStatement | undefined,
 ): Promise<GroupOutcome[]> {
   const transactionStillOpen = (await execControl(conn, 'ROLLBACK')) === null
   const rerunEachAlone = transactionStillOpen && succeededUnitCount(outcomes) > 1
   for (let i = 0; i < units.length; i++) {
     const outcome = outcomes[i]
     if (!outcome.ok) continue
-    outcomes[i] = rerunEachAlone ? await runUnitAlone(conn, units[i]) : failedUnit(failure, outcome.values)
+    outcomes[i] = rerunEachAlone ? await runUnitAlone(conn, units[i], opening) : failedUnit(failure, outcome.values)
   }
   return outcomes
 }
@@ -158,18 +193,28 @@ async function rerunSurvivorsAlone(
   units: readonly GroupUnit[],
   outcomes: GroupOutcome[],
   failed: number,
+  opening: GroupStatement | undefined,
 ): Promise<GroupOutcome[]> {
   await rollbackQuietly(conn)
   for (let i = 0; i < units.length; i++) {
     if (i === failed) continue
-    outcomes[i] = await runUnitAlone(conn, units[i])
+    outcomes[i] = await runUnitAlone(conn, units[i], opening)
   }
   return outcomes
 }
 
-async function runUnitAlone(conn: SQLiteConnection, unit: GroupUnit): Promise<GroupOutcome> {
+async function runUnitAlone(
+  conn: SQLiteConnection,
+  unit: GroupUnit,
+  opening: GroupStatement | undefined,
+): Promise<GroupOutcome> {
   const notBegun = await execControl(conn, 'BEGIN')
   if (notBegun) return { ok: false, error: notBegun }
+  const notOpened = await runOpening(conn, opening)
+  if (notOpened) {
+    await rollbackQuietly(conn)
+    return { ok: false, error: notOpened }
+  }
 
   const attempt = await runUnit(conn, unit)
   if (!attempt.ok) {

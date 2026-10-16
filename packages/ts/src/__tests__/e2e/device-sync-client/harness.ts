@@ -3,6 +3,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { SyncController, type SyncControllerOptions } from '../../../client/index.js'
 import {
   type Database,
+  type DatabaseOptions,
   type Migration,
   Sirannon,
   type SirannonOptions,
@@ -59,6 +60,7 @@ export interface SyncServerSetup {
   options?: Partial<ServerOptions>
   hooks?: SirannonOptions['hooks']
   watch?: readonly string[]
+  database?: DatabaseOptions
 }
 
 export interface SyncServer {
@@ -77,7 +79,7 @@ export async function startSyncServer(setup: SyncServerSetup = {}): Promise<Sync
   const path = join(scratchDirectory('device-sync-server'), 'server.db')
   const sirannon = new Sirannon({ driver: betterSqlite3(), migrations: setup.migrations, hooks: setup.hooks })
   track(() => sirannon.shutdown().catch(() => {}))
-  const db = await sirannon.open(DATABASE_ID, path)
+  const db = await sirannon.open(DATABASE_ID, path, setup.database)
   for (const ddl of setup.schema ?? (setup.migrations === undefined ? [NOTES_TABLE] : [])) await db.execute(ddl)
   for (const table of setup.watch ?? ['notes']) await db.watch(table)
 

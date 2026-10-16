@@ -5,7 +5,8 @@ import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
-import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeWriterContext } from '../node-runtime.js'
+import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 import {
   countingStatement,
@@ -174,7 +175,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       const host = await WriterWorker.start(workerEntry, path, options, { ...hostOptions, countsRows: rowCounts })
       return host.connection
     },
-    createWriterContext: nodeWriterContext,
+    createWriterContext: asyncLocalWriterContext,
     createBackupEngine: driver =>
       nodeBackupEngine(
         nodeStreamingSupport({

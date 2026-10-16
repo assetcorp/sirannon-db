@@ -212,7 +212,7 @@ export interface ReplicationConfig {
   maxPendingBatches?: number
   /** Reserved, and the engine ignores it. */
   snapshotThreshold?: number
-  /** Sets how many milliseconds the newest timestamp in an incoming batch can run ahead of this node's clock. This node rejects a batch stamped further ahead, and accepts a batch stamped earlier than its clock whatever the batch's age. */
+  /** Sets the most milliseconds by which the newest timestamp in an incoming batch can exceed this node's clock. This node rejects a batch whose newest timestamp is further ahead, and accepts a batch stamped earlier than its clock whatever the batch's age. */
   maxClockDriftMs?: number
   /** Sets the most changes that this node accepts in one incoming batch. This node rejects a larger batch. */
   maxBatchChanges?: number

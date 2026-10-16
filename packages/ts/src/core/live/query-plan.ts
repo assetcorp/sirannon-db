@@ -1,9 +1,10 @@
 import { CDCError } from '../errors.js'
 import { INTERNAL_TABLE_PREFIX } from '../internal-tables.js'
+import { ROWID_ALIASES } from '../sql-identifiers.js'
 import type { LiveProbeColumn } from '../system-catalog/live-probe-table.js'
 import { selectLiveProbeMatchesSql } from '../system-catalog/live-probe-table.js'
 import type { Params } from '../types.js'
-import { parameterName, tokenizeSql } from './sql-tokens.js'
+import { isKeyword, parameterName, tokenizeSql } from './sql-tokens.js'
 import { buildSortKeyPlan, type SortKeyPlan } from './sqlite-order.js'
 import type { SelectItem, SortTerm, StatementShape, WindowBound } from './statement-shape.js'
 
@@ -11,7 +12,6 @@ export const KEY_COLUMN = '_sirannon_k'
 export const SORT_COLUMN_PREFIX = '_sirannon_s'
 
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
-const ROWID_NAMES = new Set(['rowid', 'oid', '_rowid_'])
 
 export interface LivePlan {
   shape: StatementShape
@@ -108,9 +108,9 @@ function statementNamesRowid(shape: StatementShape, table: TableShape): boolean 
   const tokens = tokenizeSql(shape.sql)
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
-    if (token.kind !== 'word' || !ROWID_NAMES.has(token.lower) || declared.has(token.lower)) continue
+    if (token.kind !== 'word' || !ROWID_ALIASES.includes(token.lower) || declared.has(token.lower)) continue
     const previous = tokens[i - 1]
-    if (previous !== undefined && previous.kind === 'word' && !previous.quoted && previous.lower === 'as') continue
+    if (isKeyword(previous, 'as')) continue
     if (tokens[i + 1]?.value === '(') continue
     return true
   }

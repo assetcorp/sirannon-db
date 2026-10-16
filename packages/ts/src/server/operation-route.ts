@@ -3,13 +3,12 @@ import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import type { ResolvedCors } from './cors.js'
 import { writeCorsOrigin } from './cors.js'
 import {
-  DATABASE_ID_SEGMENT,
-  decodePathSegment,
   initAbortHandler,
-  OPERATION_NAME_SEGMENT,
   readBody,
+  readDatabaseId,
+  readOperationName,
+  refuseUndecodablePathSegments,
   sendError,
-  sendUndecodablePathSegment,
 } from './http-common.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
@@ -20,32 +19,19 @@ export interface OperationRouteDeps<Identity> {
   authenticateHook: AuthenticateHook<Identity> | undefined
 }
 
-function sendUndecodableSegment(res: uWS.HttpResponse, rawId: string, dbId: string | null, rawName: string): void {
-  if (dbId === null) {
-    sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
-    return
-  }
-  sendUndecodablePathSegment(res, OPERATION_NAME_SEGMENT, rawName)
-}
-
 export function wrapOperationRoute<Identity>(
   deps: OperationRouteDeps<Identity>,
   handler: OperationRouteHandler,
 ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
   return (res, req) => {
-    const rawId = req.getParameter(0) ?? ''
-    const rawName = req.getParameter(1) ?? ''
-    const dbId = decodePathSegment(rawId)
-    const name = decodePathSegment(rawName)
+    const segments = [readDatabaseId(req), readOperationName(req)]
+    const [id, operation] = segments
     const method = req.getMethod()
     const path = req.getUrl()
 
     if (deps.cors) writeCorsOrigin(res, deps.cors, req.getHeader('origin'))
 
-    if (!deps.authenticateHook && (dbId === null || name === null)) {
-      sendUndecodableSegment(res, rawId, dbId, rawName)
-      return
-    }
+    if (!deps.authenticateHook && refuseUndecodablePathSegments(res, segments)) return
 
     const headers: Record<string, string> = {}
     req.forEach((key, value) => {
@@ -59,7 +45,7 @@ export function wrapOperationRoute<Identity>(
       headers,
       method,
       path,
-      databaseId: dbId ?? rawId,
+      databaseId: id.decoded ?? id.raw,
       remoteAddress: decodeRemoteAddress(res),
     }
 
@@ -74,8 +60,10 @@ export function wrapOperationRoute<Identity>(
       }
 
       if (!abort.claim()) return
+      const dbId = id.decoded
+      const name = operation.decoded
       if (dbId === null || name === null) {
-        sendUndecodableSegment(res, rawId, dbId, rawName)
+        refuseUndecodablePathSegments(res, segments)
         return
       }
       try {

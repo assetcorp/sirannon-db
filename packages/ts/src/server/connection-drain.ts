@@ -28,6 +28,22 @@ export function settleResponse(res: HttpResponse): void {
 }
 
 /**
+ * Writes a whole response in one corked batch and then records that the response ended, so that a server waiting to
+ * close stops waiting for it.
+ *
+ * Every route ends its response through this function, because a response that ends without that record holds a closing
+ * server open until the close deadline passes.
+ *
+ * @param res - The response to write.
+ * @param write - Writes the status, the headers, and the body, and ends the response, or upgrades it to a WebSocket.
+ * @internal
+ */
+export function endResponse(res: HttpResponse, write: () => void): void {
+  res.cork(write)
+  settleResponse(res)
+}
+
+/**
  * Records whether the body of a request is still arriving, so that closing the server can cut a stalled upload.
  *
  * @param res - The response of the request whose body is arriving.
@@ -50,21 +66,30 @@ export class ConnectionDrain {
   private onDrained: (() => void) | null = null
 
   /**
-   * Returns a route handler that records each request until its response ends or its client goes away, and that closes the connection of a request that arrives after closing began.
+   * Records a request until its response ends or its client goes away, or closes its connection when the request arrives
+   * after closing began.
+   *
+   * @param res - The response of the request that arrived.
+   * @returns `true` when the server answers the request, and `false` when it closed the connection instead.
+   */
+  admit(res: HttpResponse): boolean {
+    if (this.closing) {
+      res.close()
+      return false
+    }
+    this.pending++
+    ;(res as DrainedResponse)[OWNING_DRAIN] = this
+    return true
+  }
+
+  /**
+   * Returns a route handler that passes each request through {@link ConnectionDrain.admit} before it runs `handler`.
    *
    * @param handler - The route handler to record requests for.
    * @returns The handler to register with uWebSockets.js.
    */
   track(handler: RouteHandler): RouteHandler {
-    return (res, req) => {
-      if (this.closing) {
-        res.close()
-        return
-      }
-      this.pending++
-      ;(res as DrainedResponse)[OWNING_DRAIN] = this
-      return handler(res, req)
-    }
+    return (res, req) => (this.admit(res) ? handler(res, req) : undefined)
   }
 
   /**
@@ -85,14 +110,21 @@ export class ConnectionDrain {
   /**
    * Stops accepting requests, closes the connection of every request whose body is still arriving, and waits for every other request to finish.
    *
-   * @returns A promise that resolves once no request is in progress.
+   * @param deadline - The signal that ends the wait when the close deadline passes.
+   * @returns A promise that resolves once no request is in progress, or once `deadline` aborts.
    */
-  close(): Promise<void> {
+  close(deadline: AbortSignal): Promise<void> {
     this.closing = true
     for (const res of [...this.uploading]) res.close()
-    if (this.pending === 0) return Promise.resolve()
+    if (this.pending === 0 || deadline.aborted) return Promise.resolve()
     return new Promise(resolve => {
-      this.onDrained = resolve
+      const finish = (): void => {
+        deadline.removeEventListener('abort', finish)
+        this.onDrained = null
+        resolve()
+      }
+      this.onDrained = finish
+      deadline.addEventListener('abort', finish, { once: true })
     })
   }
 

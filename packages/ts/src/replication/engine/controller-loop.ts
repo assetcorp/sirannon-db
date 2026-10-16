@@ -29,9 +29,9 @@ export async function startControllerLoop(engine: ReplicationEngine): Promise<vo
 
   const coordinator = config.coordinator
   if (coordinator.watchControllerLease) {
-    engine.controllerLeaseWatchDisposer = await coordinator.watchControllerLease(config.clusterId, lease => {
-      engine.observedControllerLease = lease
-      engine.observedControllerLeaseLiveUntilMs = lease === null ? 0 : Date.now() + lease.ttlMs
+    engine.controller.leaseWatchDisposer = await coordinator.watchControllerLease(config.clusterId, lease => {
+      engine.controller.observedLease = lease
+      engine.controller.observedLeaseLiveUntilMs = lease === null ? 0 : Date.now() + lease.ttlMs
       if (lease === null) {
         bidForControllerLease(engine, bid).catch((err: unknown) => reportControllerFailure(engine, err))
       }
@@ -42,14 +42,14 @@ export async function startControllerLoop(engine: ReplicationEngine): Promise<vo
     controllerTick(engine, bid).catch((err: unknown) => reportControllerFailure(engine, err))
   }, controllerConfig.tickIntervalMs ?? DEFAULT_CONTROLLER_TICK_INTERVAL_MS)
   unrefTimer(timer)
-  engine.controllerTimer = timer
+  engine.controller.timer = timer
 }
 
 export async function stopControllerLeaseWatch(engine: ReplicationEngine): Promise<void> {
-  const dispose = engine.controllerLeaseWatchDisposer
-  engine.controllerLeaseWatchDisposer = null
-  engine.observedControllerLease = null
-  engine.observedControllerLeaseLiveUntilMs = 0
+  const dispose = engine.controller.leaseWatchDisposer
+  engine.controller.leaseWatchDisposer = null
+  engine.controller.observedLease = null
+  engine.controller.observedLeaseLiveUntilMs = 0
   if (dispose) {
     await dispose()
   }
@@ -58,10 +58,10 @@ export async function stopControllerLeaseWatch(engine: ReplicationEngine): Promi
 async function controllerTick(engine: ReplicationEngine, bid: ControllerBid): Promise<void> {
   const config = engine.config.coordinator
   if (!config) return
-  if (engine.controllerLeaseId) {
-    const renewed = await config.coordinator.renewLease(engine.controllerLeaseId, bid.ttlMs)
+  if (engine.controller.leaseId) {
+    const renewed = await config.coordinator.renewLease(engine.controller.leaseId, bid.ttlMs)
     if (!renewed) {
-      engine.controllerLeaseId = null
+      engine.controller.leaseId = null
       engine.controllerState = 'lost'
       return
     }
@@ -80,17 +80,17 @@ async function controllerTick(engine: ReplicationEngine, bid: ControllerBid): Pr
 
 function watchShowsLiveHolder(engine: ReplicationEngine): boolean {
   return (
-    engine.controllerLeaseWatchDisposer !== null &&
-    engine.observedControllerLease !== null &&
-    engine.observedControllerLeaseLiveUntilMs > Date.now()
+    engine.controller.leaseWatchDisposer !== null &&
+    engine.controller.observedLease !== null &&
+    engine.controller.observedLeaseLiveUntilMs > Date.now()
   )
 }
 
 async function bidForControllerLease(engine: ReplicationEngine, bid: ControllerBid): Promise<void> {
   const config = engine.config.coordinator
-  if (!config || !engine.running || engine.controllerLeaseId || engine.controllerBidding) return
+  if (!config || !engine.running || engine.controller.leaseId || engine.controller.bidding) return
 
-  engine.controllerBidding = true
+  engine.controller.bidding = true
   try {
     const acquired = await config.coordinator.tryAcquireControllerLease({
       clusterId: config.clusterId,
@@ -106,10 +106,10 @@ async function bidForControllerLease(engine: ReplicationEngine, bid: ControllerB
       await config.coordinator.releaseLease(acquired.lease.id)
       return
     }
-    engine.controllerLeaseId = acquired.lease.id
+    engine.controller.leaseId = acquired.lease.id
     engine.controllerState = 'active'
   } finally {
-    engine.controllerBidding = false
+    engine.controller.bidding = false
   }
   await runControllerPromotionCheck(engine)
 }

@@ -9,8 +9,10 @@ import {
   waitForPrimary,
 } from './gate-cluster-state.js'
 import {
+  CLUSTER_ID,
   dbPathFor,
   GROUP_ID,
+  httpEndpointFor,
   killNode,
   NODE_A,
   NODE_B,
@@ -114,6 +116,38 @@ describe('losing the primary', () => {
     const survivingRows = await waitForIdenticalFiles(env, [promoted, other], 20_000)
     expect(survivingRows.map(row => row.id)).toContain(1)
     expect(survivingRows.map(row => row.id)).toContain(5)
+  })
+
+  it('discards the rows of the lost primary from a replica that started without an initial sync', async () => {
+    const env = environment()
+    await startCluster(env, { perNode: { [NODE_C]: { initialSync: false, seedSchema: true } } })
+    const acknowledged = itemRow(1, NODE_A, 'acknowledged-by-majority')
+    await writeItemMajority(requireNode(env, NODE_A), acknowledged)
+    await waitForInSyncSet(env, [NODE_A, NODE_B, NODE_C], 15_000)
+
+    await setReplicationLinks(env, NODE_A, false, [NODE_B])
+    for (let id = 2; id <= 4; id++) {
+      await requireNode(env, NODE_A).execute(
+        'INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)',
+        [id, NODE_A, id, 'local-only'],
+        { writeConcern: { level: 'local' } },
+      )
+    }
+    await waitForCondition(async () => [2, 3, 4].every(id => readItemIds(dbPathFor(env, NODE_C)).includes(id)), 10_000)
+    await killNode(env, NODE_A)
+    const advanced = await env.coordinator.compareAndAdvancePrimaryTerm({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      expectedPrimaryTerm: 1n,
+      nextPrimary: { nodeId: NODE_B, endpoint: httpEndpointFor(env, NODE_B) },
+    })
+    expect(advanced.advanced).toBe(true)
+
+    const afterPromotion = itemRow(5, NODE_B, 'after-promotion')
+    await writeItemMajority(requireNode(env, NODE_B), afterPromotion)
+    const survivingRows = await waitForIdenticalFiles(env, [NODE_B, NODE_C], 30_000)
+    expect(survivingRows).toEqual([acknowledged, afterPromotion])
+    await expectExactlyOneWritablePrimary(env, NODE_B, 2n)
   })
 
   it('sends the subscribers and live queries of a replica a delete for every row that it discards after a failover', async () => {

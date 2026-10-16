@@ -160,9 +160,10 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
     const body = parseOptionalBody<BackupVerifyRequest>(res, rawBody)
     if (!body) return
 
-    const nameError = verifyNameValidationError(body.name)
-    if (nameError !== null) {
-      sendError(res, 400, 'INVALID_REQUEST', nameError)
+    const name = body.name
+    const nameError = verifyNameValidationError(name)
+    if (nameError !== null || typeof name !== 'string') {
+      sendError(res, 400, 'INVALID_REQUEST', nameError ?? 'Field "name" must be a string')
       return
     }
 
@@ -170,7 +171,7 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
     if (!database) return
 
     try {
-      const result = await database.verifyBackup(body.name as string)
+      const result = await database.verifyBackup(name)
       if (abort.aborted) return
       sendJson(res, result)
     } catch (err) {

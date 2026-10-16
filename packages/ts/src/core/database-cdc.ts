@@ -109,7 +109,15 @@ export class DatabaseCdcController {
   }
 
   stampOpening(): StampStatement | null {
-    return this.stamper ? this.stamper.openingStatement : null
+    return this.stamper ? this.stamper.openingStatement() : null
+  }
+
+  get stamps(): boolean {
+    return this.stamper !== null
+  }
+
+  get activeStamper(): SyncStamper | null {
+    return this.stamper
   }
 
   openStamps(txConn: SQLiteConnection, runInTransaction: WriterTransactionRunner): Promise<void> | null {
@@ -117,10 +125,9 @@ export class DatabaseCdcController {
     return this.stamper.openStamps(txConn)
   }
 
-  async applyStamps(txConn: SQLiteConnection): Promise<void> {
-    if (this.stamper) {
-      await this.stamper.applyStamps(txConn)
-    }
+  applyStamps(txConn: SQLiteConnection, runInTransaction: WriterTransactionRunner): Promise<void> | null {
+    if (!this.stamper || runInTransaction === runInSavepoint) return null
+    return this.stamper.applyStamps(txConn)
   }
 
   async unwatch(table: string): Promise<void> {
@@ -159,7 +166,7 @@ export class DatabaseCdcController {
         } finally {
           tx.end()
         }
-        await this.applyStamps(txConn)
+        await this.applyStamps(txConn, runInTransaction)
         return value
       })
     }
@@ -174,7 +181,7 @@ export class DatabaseCdcController {
       } finally {
         tx.end()
       }
-      await this.applyStamps(txConn)
+      await this.applyStamps(txConn, runInTransaction)
       return value
     })
 

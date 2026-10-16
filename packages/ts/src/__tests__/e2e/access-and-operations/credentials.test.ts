@@ -140,22 +140,27 @@ describe('credentials that a caller presents to the authenticate hook', () => {
       ['"quoted"; \r\nset-cookie: injected=1', 'esi'],
     ])
     const offers: string[] = []
+    const decodedTickets: Array<string | undefined> = []
     const served = await serveTyped<Caller>(sirannon, {
       operations,
       authenticate: ctx => {
         offers.push(ctx.headers['sec-websocket-protocol'] ?? '')
-        const customer = tickets.get(readSubprotocolCredential(ctx, PREFIX) ?? '')
+        const decoded = readSubprotocolCredential(ctx, PREFIX)
+        decodedTickets.push(decoded)
+        const customer = tickets.get(decoded ?? '')
         if (customer === undefined) throw new RequestDeniedError(401, 'BAD_TICKET', 'The ticket was refused')
         return { customer }
       },
     })
 
     for (const [ticket, customer] of tickets) {
-      const offered = toSubprotocolCredential(PREFIX, ticket)
+      const offered = `${PREFIX}${Buffer.from(ticket, 'utf8').toString('base64url')}`
+      expect(toSubprotocolCredential(PREFIX, ticket), ticket).toBe(offered)
       const client = new SirannonClient(served.base, { autoReconnect: false, webSocketProtocols: [offered] })
       expect(await client.database('orders').query(ORDERS_OF_CALLER, {}), ticket).toEqual(ordersOf(customer))
       client.close()
       expect(offers.at(-1), ticket).toBe(`sirannon.v1, ${offered}`)
+      expect(decodedTickets.at(-1), ticket).toBe(ticket)
 
       const upgrade = await rawUpgrade(served.port, '/db/orders', {
         'Sec-WebSocket-Protocol': `sirannon.v1, ${offered}`,
@@ -189,7 +194,7 @@ describe('credentials that a caller presents to the authenticate hook', () => {
       webSocketProtocols: [oversizedTicket],
     })
     const oversized = await failureOf(oversizedClient.database('orders').query(ORDERS_OF_CALLER, {}))
-    expect(oversized.code).toMatch(/CONNECTION_ERROR|UNAUTHORIZED/)
+    expect(oversized.code).toBe('CONNECTION_ERROR')
     oversizedClient.close()
 
     for (const unusable of [['two words'], ['comma,separated'], [''], ['dup', 'dup'], ['"quoted"']]) {

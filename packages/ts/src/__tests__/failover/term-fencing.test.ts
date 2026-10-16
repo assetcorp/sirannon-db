@@ -5,8 +5,24 @@ import {
   waitForEventOnDisk,
   waitForItemsOnDisk,
 } from './gate-assertions.js'
-import { expectExactlyOneWritablePrimary, waitForPrimary } from './gate-cluster-state.js'
-import { killNode, NODE_A, NODE_B, NODE_C, requireNode } from './gate-environment.js'
+import {
+  expectExactlyOneWritablePrimary,
+  waitForGroup,
+  waitForInSyncSet,
+  waitForPrimary,
+} from './gate-cluster-state.js'
+import {
+  CLUSTER_ID,
+  GROUP_ID,
+  httpEndpointFor,
+  killNode,
+  NODE_A,
+  NODE_B,
+  NODE_C,
+  NODE_IDS,
+  requireNode,
+  setReplicationLinks,
+} from './gate-environment.js'
 import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { waitForPeerConnected } from './gate-observations.js'
 import {
@@ -24,6 +40,7 @@ import {
   expectStaleSyncBatchRefused,
   expectStaleSyncRequestRefused,
 } from './gate-stale-messages.js'
+import { holdsThroughout, waitForCondition } from './gate-support.js'
 
 const EVENT_SQL = (id: number, kind: string) =>
   `INSERT INTO failover_events (id, item_id, kind, detail) VALUES (${id}, 1, '${kind}', 'after-failover')`
@@ -56,6 +73,54 @@ describe('the primary term on every message', () => {
 
     await waitForItemsOnDisk(env, [promoted, replica], [shared], 10_000)
     await expectExactlyOneWritablePrimary(env, promoted, 2n)
+  })
+
+  it('fails with STALE_PRIMARY a majority write whose in-sync update reaches etcd after its primary is demoted and rejoins, and leaves the new term untouched', async () => {
+    const env = environment()
+    await startCluster(env)
+    const shared = itemRow(1, NODE_A, 'before-the-cut')
+    await writeItemMajority(requireNode(env, NODE_A), shared)
+    await waitForInSyncSet(env, NODE_IDS, 15_000)
+
+    await setReplicationLinks(env, NODE_A, false, [NODE_B])
+    const demoted = requireNode(env, NODE_A)
+    await demoted.holdInSyncUpdates({ removesNodeId: NODE_B })
+    const inFlight = itemRow(2, NODE_A, 'acknowledged-by-c-during-the-demotion')
+    const write = expectRejectsWith(writeItemMajority(demoted, inFlight, 15_000, 120_000), ['STALE_PRIMARY'])
+    await waitForCondition(async () => (await demoted.heldInSyncUpdates()) > 0, 15_000)
+    await setReplicationLinks(env, NODE_A, true, [NODE_B])
+    await waitForItemsOnDisk(env, NODE_IDS, [shared, inFlight], 15_000)
+
+    const advanced = await env.coordinator.compareAndAdvancePrimaryTerm({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      expectedPrimaryTerm: 1n,
+      nextPrimary: { nodeId: NODE_B, endpoint: httpEndpointFor(env, NODE_B) },
+    })
+    expect(advanced.advanced).toBe(true)
+    await waitForGroup(
+      env,
+      group =>
+        group.primaryTerm === 2n &&
+        NODE_IDS.every(nodeId => group.inSyncNodeIds.includes(nodeId)) &&
+        !group.repairingNodeIds.includes(NODE_A),
+      60_000,
+      `${NODE_A} rebuilt and back in the in-sync set of term 2`,
+    )
+    await demoted.releaseInSyncUpdates()
+    await write
+
+    await holdsThroughout(
+      async () => {
+        const group = await env.etcdOracle.group()
+        return (
+          group?.primaryTerm === 2n && group.currentPrimary?.nodeId === NODE_B && group.inSyncNodeIds.includes(NODE_B)
+        )
+      },
+      3_000,
+      `etcd to keep ${NODE_B} as primary and in the in-sync set at term 2`,
+    )
+    await expectExactlyOneWritablePrimary(env, NODE_B, 2n)
   })
 
   it('forwards writes sent to a replica to the promoted primary over the engine, HTTP, the client, and WebSocket, and refuses a callback transaction on the replica', async () => {

@@ -1,8 +1,7 @@
 import { CDCError } from '../errors.js'
+import { escId, ROWID_ALIASES } from '../sql-identifiers.js'
 import type { CaptureShape, GeneratedColumn, UniqueKey } from './capture-shape.js'
 import { rewriteColumnReferences } from './index-definition.js'
-
-const ROWID_NAMES = ['rowid', 'oid', '_rowid_'] as const
 
 /**
  * Holds the SQL that finds the stored rows which a new row collides with: one condition per rowid or unique key, each written over the table and `NEW`, and a token built from the unique-key values of `NEW`, which the `BEFORE` and `AFTER` triggers of one write compute alike.
@@ -61,7 +60,7 @@ export function keyChangedCondition(table: string, shape: CaptureShape): string 
  */
 export function keyUpdateColumnList(table: string, shape: CaptureShape): string {
   const named = new Map<string, string>()
-  if (!shape.withoutRowid) for (const alias of ROWID_NAMES) named.set(alias, alias)
+  if (!shape.withoutRowid) for (const alias of ROWID_ALIASES) named.set(alias, alias)
   for (const column of storedKeySources(table, shape)) named.set(column.toLowerCase(), column)
   return [...named.values()].map(column => `"${escId(column)}"`).join(', ')
 }
@@ -90,17 +89,6 @@ export function pkRef(pkColumns: readonly string[], ref: string): string {
   if (pkColumns.length === 0) return `${ref}.rowid`
   if (pkColumns.length === 1) return `${ref}."${escId(pkColumns[0])}"`
   return pkColumns.map(column => `${ref}."${escId(column)}"`).join(" || '-' || ")
-}
-
-/**
- * Doubles every double quote in an identifier, so that it can sit inside double quotes in SQL.
- *
- * @param name - The identifier.
- * @returns The escaped identifier.
- * @internal
- */
-export function escId(name: string): string {
-  return name.replace(/"/g, '""')
 }
 
 function keyLookup(table: string, shape: CaptureShape, key: UniqueKey): { match: string; values: string[] } {

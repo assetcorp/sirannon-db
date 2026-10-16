@@ -153,10 +153,12 @@ export interface ServerOptions<Identity = unknown> {
   maxBodyBytes?: number
   /**
    * The most bytes that the server buffers for one WebSocket connection before
-   * it closes the connection, so that the client learns of the overflow and
-   * reconnects. The value must lie between `maxBodyBytes`, so that one frame
-   * fits, and 4_294_967_295; the server throws `INVALID_WS_BACKPRESSURE` for
-   * any other value. The default is the larger of 16 MB and `maxBodyBytes`.
+   * it closes the connection with close code 4290, so that the client learns of
+   * the overflow and reconnects. The server sends a reply onto an empty buffer
+   * whatever its size. The value must lie between `maxBodyBytes`, so that one
+   * frame fits, and 4_294_967_295; the server
+   * throws `INVALID_WS_BACKPRESSURE` for any other value. The default is the
+   * larger of 16 MB and `maxBodyBytes`.
    */
   maxWebSocketBackpressureBytes?: number
   /**

@@ -5,44 +5,26 @@ import {
   deleteColumnVersions,
   deletePeerState,
   deleteStampedChangesUpToSeq,
+  selectHistoryBase,
   selectMaxChangeSeq,
   selectNewestHistoryChange,
   setForeignKeysEnabled,
-} from '../../core/system-catalog/index.js'
-import type { ReplicationBatch, SyncAck, SyncComplete, SyncHistoryPoint, SyncPhase } from '../types.js'
-import type { ReplicationEngine } from './engine.js'
-import { rollBackToHistoryPoint } from './history-rollback.js'
-import { initialSyncState } from './internal-types.js'
-import { reportSnapshotPosition } from './sync-recovery.js'
-import {
-  ensurePrimaryTermStart,
-  historyOrigins,
-  selectHistoryBase,
   upsertAnchoredTerm,
   upsertHistoryBase,
   upsertQuarantined,
-} from './term-history.js'
+} from '../../core/system-catalog/index.js'
+import type { ReplicationBatch, SyncAck, SyncComplete, SyncHistoryPoint } from '../types.js'
+import type { ReplicationEngine } from './engine.js'
+import { rollBackToHistoryPoint } from './history-rollback.js'
+import { initialSyncState, servesItsData } from './internal-types.js'
+import { reportEngineError } from './report-error.js'
+import { reportSnapshotPosition } from './sync-recovery.js'
+import { ensurePrimaryTermStart, historyOrigins } from './term-history.js'
 
 const SCHEMA_SYNC_TABLE = '__schema__'
 
 function tracksTermHistory(engine: ReplicationEngine): boolean {
-  return engine.isCoordinatorMode() && engine.initialSync
-}
-
-function servesItsData(phase: SyncPhase): boolean {
-  return phase === 'ready' || phase === 'catching-up'
-}
-
-function reportFailure(engine: ReplicationEngine, err: unknown, operation: string): void {
-  const wrappedErr = err instanceof Error ? err : new Error(String(err))
-  engine.emitError({ error: wrappedErr, operation, recoverable: true })
-}
-
-function clearResumeRequest(engine: ReplicationEngine): void {
-  const history = engine.history
-  history.resumeRequestId = null
-  history.resumeRequestTerm = null
-  history.resumeRequestedAt = 0
+  return engine.isCoordinatorMode()
 }
 
 function reconcilesTermHistory(engine: ReplicationEngine): boolean {
@@ -60,6 +42,8 @@ function reconcilesTermHistory(engine: ReplicationEngine): boolean {
  * @param engine - The replica's engine.
  * @returns True outside coordinator mode and for a node that rejoins through its own path, and otherwise true only for
  * the current term.
+ *
+ * @internal
  */
 export function isAnchoredToCurrentTerm(engine: ReplicationEngine): boolean {
   if (!reconcilesTermHistory(engine)) return true
@@ -77,6 +61,8 @@ export function isAnchoredToCurrentTerm(engine: ReplicationEngine): boolean {
  * former-primary path, and the repair and copy paths reconcile the others.
  *
  * @param engine - The replica's engine.
+ *
+ * @internal
  */
 export function ensureAnchoredToCurrentTerm(engine: ReplicationEngine): void {
   if (!engine.running || !engine.history.active || !reconcilesTermHistory(engine)) return
@@ -86,15 +72,9 @@ export function ensureAnchoredToCurrentTerm(engine: ReplicationEngine): void {
   const primaryId = state.currentPrimary?.nodeId
   if (!primaryId || primaryId === engine.nodeId) return
   if (!servesItsData(engine.syncState.phase)) return
-  if (
-    history.resumeRequestId !== null &&
-    history.resumeRequestTerm === state.primaryTerm &&
-    Date.now() - history.resumeRequestedAt < engine.syncAckTimeoutMs
-  ) {
-    return
-  }
+  if (history.resumeRequest.awaitsAnswerIn(state.primaryTerm, engine.syncAckTimeoutMs)) return
   requestHistoryReconcile(engine, primaryId, state.primaryTerm).catch((err: unknown) =>
-    reportFailure(engine, err, 'history-reconcile-request'),
+    reportEngineError(engine, err, 'history-reconcile-request', true),
   )
 }
 
@@ -102,13 +82,11 @@ async function requestHistoryReconcile(engine: ReplicationEngine, primaryId: str
   const history = engine.history
   const requestId = randomUUID()
   history.reconciling = true
-  history.resumeRequestId = requestId
-  history.resumeRequestTerm = term
-  history.resumeRequestedAt = Date.now()
+  history.resumeRequest.start(requestId, term)
   const tail = await selectHistoryTail(engine)
-  if (history.resumeRequestId !== requestId) return
+  if (!history.resumeRequest.matches(requestId)) return
   if (tail === null) {
-    await startCopyForReconcile(engine)
+    await restartWithFullCopy(engine)
     return
   }
   await engine.config.transport.requestSync(
@@ -131,8 +109,17 @@ async function selectHistoryTail(engine: ReplicationEngine): Promise<SyncHistory
   return tail === null ? null : { hlc: tail.hlc, txId: tail.txId }
 }
 
-async function startCopyForReconcile(engine: ReplicationEngine): Promise<void> {
-  clearResumeRequest(engine)
+/**
+ * Makes a node that serves its data stop serving it and ask its source for a full copy, which replaces every row. A
+ * node that is already copying keeps its copy going.
+ *
+ * @param engine - The node's engine.
+ * @returns A promise that settles once the node has sent its sync request.
+ *
+ * @internal
+ */
+export async function restartWithFullCopy(engine: ReplicationEngine): Promise<void> {
+  engine.history.resumeRequest.clear()
   if (!servesItsData(engine.syncState.phase)) return
   engine.highestSourceSeqSeen = 0n
   engine.syncState = { ...initialSyncState(), phase: 'pending' }
@@ -154,18 +141,18 @@ function abandonReconcileOnPromotion(engine: ReplicationEngine): void {
   if (!history.reconciling || !engine.coordinatorAuthority) return
   if (servesItsData(phase)) {
     history.reconciling = false
-    clearResumeRequest(engine)
+    history.resumeRequest.clear()
     return
   }
   if ((phase !== 'pending' && phase !== 'syncing') || copyHasReplacedRows(engine)) return
   history.reconciling = false
-  clearResumeRequest(engine)
+  history.resumeRequest.clear()
   engine.expectedBatchIndex.clear()
   engine.syncTableDigests.clear()
   engine.syncState = initialSyncState()
   setForeignKeysEnabled(engine.writerConn, true)
     .then(() => engine.log.setSyncMeta('ready'))
-    .catch((err: unknown) => reportFailure(engine, err, 'history-reconcile-abandon'))
+    .catch((err: unknown) => reportEngineError(engine, err, 'history-reconcile-abandon', true))
 }
 
 /**
@@ -174,11 +161,13 @@ function abandonReconcileOnPromotion(engine: ReplicationEngine): void {
  * replaces any row stops reconciling and serves its data, because its history then becomes the group's.
  *
  * @param engine - The node's engine.
+ *
+ * @internal
  */
 export function keepTermHistoryCurrent(engine: ReplicationEngine): void {
   if (!engine.running || !engine.isCoordinatorMode()) return
   abandonReconcileOnPromotion(engine)
-  ensurePrimaryTermStart(engine).catch((err: unknown) => reportFailure(engine, err, 'primary-term-start'))
+  ensurePrimaryTermStart(engine).catch((err: unknown) => reportEngineError(engine, err, 'primary-term-start', true))
   ensureAnchoredToCurrentTerm(engine)
 }
 
@@ -191,6 +180,8 @@ export function keepTermHistoryCurrent(engine: ReplicationEngine): void {
  * @param engine - The replica's engine.
  * @param batch - The batch, which carries the term of the primary that sent it.
  * @returns True when the replica may process the batch.
+ *
+ * @internal
  */
 export function acceptsBatchTerm(engine: ReplicationEngine, batch: ReplicationBatch): boolean {
   if (engine.history.anchoredTerm === batch.primaryTerm || !reconcilesTermHistory(engine)) return true
@@ -206,6 +197,8 @@ export function acceptsBatchTerm(engine: ReplicationEngine, batch: ReplicationBa
  * @param batch - The batch to apply.
  * @param apply - The function that applies the batch.
  * @returns What `apply` returns, or null when the replica dropped the batch.
+ *
+ * @internal
  */
 export function applyInAnchoredTerm<T>(
   engine: ReplicationEngine,
@@ -231,6 +224,8 @@ export function applyInAnchoredTerm<T>(
  * @param complete - The primary's answer.
  * @param fromPeerId - The primary's node ID.
  * @returns True when the answer belongs to this replica's pending request, and false when it belongs to another sync.
+ *
+ * @internal
  */
 export async function handleHistoryAnswer(
   engine: ReplicationEngine,
@@ -238,10 +233,10 @@ export async function handleHistoryAnswer(
   fromPeerId: string,
 ): Promise<boolean> {
   const history = engine.history
-  if (history.resumeRequestId === null || complete.requestId !== history.resumeRequestId) return false
-  if (complete.primaryTerm !== history.resumeRequestTerm) return false
+  if (!history.resumeRequest.matches(complete.requestId)) return false
+  if (complete.primaryTerm !== history.resumeRequest.term) return false
   if (engine.coordinatorState?.currentPrimary?.nodeId !== fromPeerId) return false
-  clearResumeRequest(engine)
+  history.resumeRequest.clear()
   if (
     complete.resumed === true &&
     servesItsData(engine.syncState.phase) &&
@@ -255,7 +250,7 @@ export async function handleHistoryAnswer(
     await reportSnapshotPosition(engine, fromPeerId, complete.snapshotSeq)
     return true
   }
-  await startCopyForReconcile(engine)
+  await restartWithFullCopy(engine)
   return true
 }
 
@@ -268,14 +263,14 @@ export async function handleHistoryAnswer(
  * @param ack - The acknowledgement that the peer sent.
  * @param fromPeerId - The peer's node ID.
  * @returns True when the acknowledgement refuses this replica's pending request.
+ *
+ * @internal
  */
 export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fromPeerId: string): boolean {
   const history = engine.history
-  if (ack.success !== false || history.resumeRequestId === null || ack.requestId !== history.resumeRequestId) {
-    return false
-  }
+  if (ack.success !== false || !history.resumeRequest.matches(ack.requestId)) return false
   if (ack.joinerNodeId !== engine.nodeId || engine.coordinatorState?.currentPrimary?.nodeId !== fromPeerId) return false
-  clearResumeRequest(engine)
+  history.resumeRequest.clear()
   return true
 }
 
@@ -287,10 +282,12 @@ export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fr
  * @param engine - The replica's engine.
  * @param requestId - The request ID that the batch carries.
  * @returns True when the batch answers this replica's pending request.
+ *
+ * @internal
  */
 export async function handleHistoryCopyBatch(engine: ReplicationEngine, requestId: string): Promise<boolean> {
-  if (engine.history.resumeRequestId === null || requestId !== engine.history.resumeRequestId) return false
-  await startCopyForReconcile(engine)
+  if (!engine.history.resumeRequest.matches(requestId)) return false
+  await restartWithFullCopy(engine)
   return true
 }
 
@@ -301,7 +298,7 @@ async function rollBack(engine: ReplicationEngine, complete: SyncComplete, fromP
   try {
     if (!(await rollBackToHistoryPoint(engine, point, fromPeerId, complete.snapshotSeq, term))) return false
   } catch (err: unknown) {
-    reportFailure(engine, err, 'history-rollback')
+    reportEngineError(engine, err, 'history-rollback', true)
     return false
   }
   engine.history.anchoredTerm = term
@@ -310,15 +307,19 @@ async function rollBack(engine: ReplicationEngine, complete: SyncComplete, fromP
 }
 
 /**
- * Records, after a full copy in coordinator mode, that the replica's history now starts at the copy: the replica
- * forgets the change-log history and column versions from before the copy, which no longer describe its rows,
- * remembers the copy's newest history transaction, keeps only the applied positions in the source's log up to the
- * copy, takes the copy's term as its reconciled term, and records that it no longer holds writes for which the group
- * quarantined it.
+ * Records, after a verified full copy in coordinator mode, that the replica's history now starts at the copy.
+ *
+ * In one transaction the replica forgets the change-log history and column versions from before the copy, which no
+ * longer describe its rows, and remembers the copy's newest history transaction. In the same transaction it keeps only
+ * the applied positions in the source's log up to the copy, takes the copy's term as its reconciled term, and deletes
+ * its quarantine record. When the group shows the replica as repairing in the copy's term, the replica also notes
+ * that it has finished the copy that rejoins it, so that it can ask for admission to the in-sync set.
  *
  * @param engine - The replica's engine.
  * @param complete - The source's completion message.
  * @param fromPeerId - The source's node ID.
+ *
+ * @internal
  */
 export async function recordCopiedHistory(
   engine: ReplicationEngine,
@@ -327,7 +328,7 @@ export async function recordCopiedHistory(
 ): Promise<void> {
   const history = engine.history
   history.reconciling = false
-  clearResumeRequest(engine)
+  history.resumeRequest.clear()
   const term = complete.primaryTerm
   if (!tracksTermHistory(engine) || term === undefined) return
   await history.exclusive(() =>
@@ -341,6 +342,9 @@ export async function recordCopiedHistory(
       await upsertAnchoredTerm(tx, term)
     }),
   )
+  engine.rejoin.quarantineRecorded = false
+  const state = engine.coordinatorState
+  if (state?.primaryTerm === term && state.repairingNodeIds.includes(engine.nodeId)) engine.rejoin.copiedTerm = term
   history.anchoredTerm = term
   history.heldPrimaryInAnchoredTerm = false
 }

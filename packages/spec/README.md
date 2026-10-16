@@ -45,12 +45,13 @@ Sirannon is organised into layers, each depending only on the layers below it.
 |----------|----------|
 | [01-driver.md](01-driver.md) | Driver contract, connection, statement, value mapping, capabilities |
 | [02-core.md](02-core.md) | Registry, database, group commit, connection pool, writer worker, query execution, CDC, live queries, hooks, lifecycle, migrations, bulk load, backups, metrics |
-| [03-replication.md](03-replication.md) | Replication engine, HLC, replication log, primary-replica topology, coordinator failover, conflict resolution, first sync, write forwarding |
+| [03-replication.md](03-replication.md) | Replication engine, HLC, replication log, primary-replica topology, conflict resolution, first sync, write forwarding |
 | [04-transport.md](04-transport.md) | Transport interface, gRPC wire protocol, authentication |
 | [05-server.md](05-server.md) | HTTP endpoints, value encoding, WebSocket protocol, health endpoints, CORS |
 | [06-client.md](06-client.md) | Client SDK, remote database proxy, subscriptions, topology-aware routing |
 | [07-errors.md](07-errors.md) | Error taxonomy and wire protocol error codes |
 | [08-device-sync.md](08-device-sync.md) | Device identity, write stamping, change application, push, device cursors, live pull, staged pull, snapshot download, migration handshake, capability negotiation, sync controller |
+| [09-failover.md](09-failover.md) | Coordinator mode, node identity, term fencing, in-sync set and promotion, history reconciliation, node health, conformance invariants |
 
 Test vector files are in the [test-vectors/](test-vectors/) directory.
 

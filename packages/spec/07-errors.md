@@ -31,6 +31,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, or used `ATTACH`, `DETACH`, or `PRAGMA writable_schema`. |
 | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `TRANSACTION_CLOSED` | A call reached a `Transaction` after its callback returned or threw. |
+| `WRITER_HELD_BY_CALLBACK` | A call through the database needed the writer while a `transaction` callback held it, on a runtime that cannot tell the callback's own calls apart from other callers. |
 | `HOOK_DENIED` | A hook rejected the operation. |
 | `CDC_ERROR` | The change-data-capture pipeline hit an unrecoverable error. |
 | `BACKUP_ERROR` | A backup operation failed. |
@@ -126,6 +127,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused. |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer the transport can enforce exactly. |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
+| `INVALID_CLOSE_TIMEOUT` | The `timeoutMs` of a server `close` is not a non-negative integer, or exceeds what the implementation's timer can hold. |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is true and the server has no `authenticate` hook. |
 | `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is true and the server has no `authenticate` hook. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |

@@ -1,4 +1,5 @@
 import net from 'node:net'
+import { closeListener, listenOnLoopback, relayToTarget } from './tcp-relay.js'
 
 export type ProxyDirection = 'to-target' | 'to-client'
 
@@ -102,8 +103,17 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
       return
     }
 
-    const target = net.connect(currentTarget, targetHost)
-    target.on('error', () => {})
+    const { upstream: target } = relayToTarget(
+      client,
+      currentTarget,
+      () => {
+        closed += 1
+        pairings.delete(pairing)
+        pairing.toTarget.drop()
+        pairing.toClient.drop()
+      },
+      targetHost,
+    )
     const pairing: Pairing = {
       client,
       target,
@@ -126,35 +136,14 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
     }
     pairings.add(pairing)
 
-    let finished = false
-    const finish = (): void => {
-      if (finished) return
-      finished = true
-      closed += 1
-      pairings.delete(pairing)
-      pairing.toTarget.drop()
-      pairing.toClient.drop()
-      client.destroy()
-      target.destroy()
-    }
-
     client.on('data', chunk => pairing.toTarget.push(asBuffer(chunk)))
     target.on('data', chunk => pairing.toClient.push(asBuffer(chunk)))
-    client.on('close', finish)
-    target.on('close', finish)
   })
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => resolve())
-  })
-  const address = server.address()
-  if (address === null || typeof address === 'string') {
-    throw new Error('The fault proxy did not bind a TCP port')
-  }
+  const port = await listenOnLoopback(server)
 
   return {
-    port: address.port,
+    port,
     get opened() {
       return opened
     },
@@ -202,7 +191,7 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
         pairing.client.destroy()
         pairing.target.destroy()
       }
-      await new Promise<void>(resolve => server.close(() => resolve()))
+      await closeListener(server)
     },
   }
 }

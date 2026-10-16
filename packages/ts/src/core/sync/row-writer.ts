@@ -6,6 +6,7 @@ import {
   selectMaxColumnVersionHlcForRow,
   selectMaxRowChangeHlc,
 } from '../system-catalog/index.js'
+import { canonicaliseForChecksum } from './canonicalise.js'
 import { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
 import { findRowByPk } from './row-lookup.js'
@@ -105,6 +106,27 @@ export class RowWriter {
       `UPDATE "${change.table}" SET ${setClauses.join(', ')} WHERE ${whereConditions.join(' AND ')}`,
     )
     await stmt.run(...setValues, ...whereValues)
+  }
+
+  async applyAfterSameTransaction(
+    tx: SQLiteConnection,
+    change: ReplicationChange,
+    existingRow: Record<string, unknown>,
+  ): Promise<void> {
+    if (change.operation === 'delete' || !change.newData) {
+      await this.applyRemoteChange(tx, change)
+      await this.recordColumnVersions(tx, change, null)
+      return
+    }
+    const before = change.oldData
+    const changed: Record<string, unknown> = {}
+    for (const [column, value] of Object.entries(change.newData)) {
+      if (before === null || canonicaliseForChecksum(value) !== canonicaliseForChecksum(before[column])) {
+        changed[column] = value
+      }
+    }
+    await this.applyRemoteChange(tx, { ...change, newData: { ...existingRow, ...changed } })
+    await this.recordColumnVersions(tx, change, changed)
   }
 
   async applyMergedData(

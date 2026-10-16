@@ -1,13 +1,8 @@
 import type uWS from 'uWebSockets.js'
 import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import { SIRANNON_WS_SUBPROTOCOL, selectSubprotocol } from '../core/ws-handshake.js'
-import {
-  DATABASE_ID_SEGMENT,
-  decodePathSegment,
-  initAbortHandler,
-  sendError,
-  sendUndecodablePathSegment,
-} from './http-common.js'
+import { type ConnectionDrain, endResponse } from './connection-drain.js'
+import { initAbortHandler, readDatabaseId, refuseUndecodablePathSegments, sendError } from './http-common.js'
 import { UWS_MAX_LIMIT_BYTES } from './limits.js'
 import type { UpgradeRefusal } from './request-hook.js'
 import { authenticateUpgrade, decodeRemoteAddress } from './request-hook.js'
@@ -26,6 +21,7 @@ const UNSUPPORTED_SUBPROTOCOL_MESSAGE = `The upgrade offered no subprotocol this
 export interface WebSocketRouteOptions {
   app: uWS.TemplatedApp
   wsHandler: WSHandler
+  drain: ConnectionDrain
   authenticateHook: AuthenticateHook<unknown> | undefined
   maxBodyBytes: number
   maxBackpressureBytes: number
@@ -43,9 +39,7 @@ function toSendOutcome(result: number): WSSendOutcome {
 }
 
 export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
-  const { app, wsHandler, authenticateHook } = options
-
-  const { maxBackpressureBytes } = options
+  const { app, wsHandler, drain, authenticateHook, maxBackpressureBytes } = options
 
   app.ws<WSUserData>('/db/:id', {
     maxPayloadLength: Math.min(options.maxBodyBytes * OVERSIZED_MESSAGE_CEILING_FACTOR, UWS_MAX_LIMIT_BYTES),
@@ -54,8 +48,8 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
     sendPingsAutomatically: true,
 
     upgrade: (res, req, context) => {
-      const rawId = req.getParameter(0) ?? ''
-      const dbId = decodePathSegment(rawId)
+      if (!drain.admit(res)) return
+      const id = readDatabaseId(req)
       const url = req.getUrl()
       const method = req.getMethod()
       const secWebSocketKey = req.getHeader('sec-websocket-key')
@@ -79,19 +73,18 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       }
 
       const selectedWebSocketProtocol = negotiated.protocol
+      const upgrade = (userData: WSUserData): void => {
+        endResponse(res, () => {
+          res.upgrade<WSUserData>(userData, secWebSocketKey, selectedWebSocketProtocol, secWebSocketExtensions, context)
+        })
+      }
 
       if (!authenticateHook) {
         if (!abort.claim()) return
-        if (dbId === null) {
-          sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+        if (id.decoded === null) {
+          refuseUndecodablePathSegments(res, [id])
         } else {
-          res.upgrade<WSUserData>(
-            { databaseId: dbId },
-            secWebSocketKey,
-            selectedWebSocketProtocol,
-            secWebSocketExtensions,
-            context,
-          )
+          upgrade({ databaseId: id.decoded })
         }
         return
       }
@@ -100,7 +93,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         headers,
         method,
         path: url,
-        databaseId: dbId ?? rawId,
+        databaseId: id.decoded ?? id.raw,
         remoteAddress,
       }
 
@@ -108,24 +101,17 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         .then(authenticated => {
           if (!authenticated.ok && !authenticated.refusal) return
           if (!abort.claim()) return
-          if (authenticated.ok && dbId === null) {
-            sendUndecodablePathSegment(res, DATABASE_ID_SEGMENT, rawId)
+          if (authenticated.ok && id.decoded === null) {
+            refuseUndecodablePathSegments(res, [id])
             return
           }
 
-          const userData: WSUserData = authenticated.ok
-            ? { databaseId: dbId ?? rawId, identity: authenticated.identity }
-            : { databaseId: dbId ?? rawId, refusal: authenticated.refusal }
-
-          res.cork(() => {
-            res.upgrade<WSUserData>(
-              userData,
-              secWebSocketKey,
-              selectedWebSocketProtocol,
-              secWebSocketExtensions,
-              context,
-            )
-          })
+          const databaseId = id.decoded ?? id.raw
+          upgrade(
+            authenticated.ok
+              ? { databaseId, identity: authenticated.identity }
+              : { databaseId, refusal: authenticated.refusal },
+          )
         })
         .catch(() => {})
     },
@@ -148,7 +134,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
           try {
             if (backpressured) {
               const buffered = ws.getBufferedAmount()
-              if (buffered > maxBackpressureBytes) return 'dropped'
+              if (buffered > 0 && buffered + Buffer.byteLength(data) > maxBackpressureBytes) return 'dropped'
               backpressured = buffered > 0
             }
             const result = ws.send(data, false)

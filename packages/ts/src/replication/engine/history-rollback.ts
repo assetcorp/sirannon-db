@@ -9,15 +9,17 @@ import {
   deletePeerState,
   type HistoryChangeRow,
   prepareInsertAppliedChange,
+  selectHistoryBase,
   selectHistoryChangesAfterHlc,
   selectHistoryTransaction,
   tablePkColumns,
+  upsertAnchoredTerm,
   upsertPeerAckedSeq,
 } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import type { SyncHistoryPoint } from '../types.js'
 import type { ReplicationEngine } from './engine.js'
-import { historyOrigins, selectHistoryBase, upsertAnchoredTerm } from './term-history.js'
+import { historyOrigins } from './term-history.js'
 
 const INTEGER_ROW_ID = /^-?\d+$/
 
@@ -135,15 +137,18 @@ async function undoChange(
 }
 
 /**
- * Discards every change in this node's history stamped after the last transaction that it shares with the current
- * primary, and records that the node has applied the primary's log up to `sourceSeq`, all in one transaction.
+ * Returns true once this node has discarded every change in its history stamped after the last transaction that it
+ * shares with the current primary, and has recorded that it applied the primary's log up to `sourceSeq`, all in one
+ * transaction.
  *
  * The node undoes each discarded change from the row images that its change log stores, newest first, and deletes the
- * discarded changes and the column versions that they stamped. The change-log entries that the undo itself writes stay
- * unstamped, so that local subscribers and live queries receive the reverse changes while the undo replicates nowhere
- * and joins no history. It refuses, and changes nothing, when it holds no record of the shared transaction, when a full copy
- * left it holding a later transaction than the shared one, or when a discarded change is a schema change, because the
- * node can then reach the primary's history only through a full copy.
+ * discarded changes and the column versions that they stamped. The node leaves the change-log entries for its undo
+ * statements unstamped, so that local subscribers and live queries receive the reverse changes while no other node
+ * receives them and the group's history leaves them out.
+ *
+ * The node changes nothing and returns false in three cases, because it then needs a full copy to hold the primary's
+ * history. These are when it holds no record of the shared transaction, when a full copy left it holding a later
+ * transaction than the shared one, and when one of the discarded changes is a schema change.
  *
  * @param engine - The engine of the replica that reconciles its history.
  * @param point - The last transaction that the node shares with the primary.
@@ -151,6 +156,8 @@ async function undoChange(
  * @param sourceSeq - The position in the primary's log after which the primary resends its history.
  * @param term - The primary term that the reconciled history belongs to.
  * @returns True when the node reconciled its history, and false when it needs a full copy.
+ *
+ * @internal
  */
 export function rollBackToHistoryPoint(
   engine: ReplicationEngine,

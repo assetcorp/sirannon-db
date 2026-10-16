@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { type CertificateAuthority, createCertificateAuthority, expiredWindow } from '../lib/certificate-authority.js'
+import { type CertificateAuthority, createCertificateAuthority, expiredWindow } from '../lib/certs.js'
 import { eventually, ReplicationScene, tableNames } from '../lib/replication-scene.js'
 import { converged, INSERT_ORDER, INTRUDER, ORDERS_SCHEMA, order, PRIMARY, REPLICA, ready } from './harness.js'
 import { ddlChange, helloOutcome, listenAsPeer, type PeerIdentity, signedBatch, stampAt } from './peers.js'

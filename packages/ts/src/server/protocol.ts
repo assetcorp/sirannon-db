@@ -289,7 +289,14 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
+/**
+ * Returns whether a value names one of the three read concerns: `local`, `majority`, or `linearizable`.
+ *
+ * @param value - The value to check, such as a field that a request or a cluster status response carries.
+ * @returns `true` when the value is one of the three names.
+ * @internal
+ */
+export function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
   return value === 'local' || value === 'majority' || value === 'linearizable'
 }
 

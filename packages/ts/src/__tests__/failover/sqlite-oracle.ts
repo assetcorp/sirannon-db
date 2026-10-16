@@ -49,6 +49,39 @@ export function readHighestAppliedSeq(dbPath: string, sourceNodeId: string): big
   }
 }
 
+export function readMetaValue(dbPath: string, key: string): string | null {
+  const connection = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const row = connection.prepare('SELECT value FROM _sirannon_meta WHERE key = ?').get(key)
+    const value: unknown = row?.value
+    return typeof value === 'string' ? value : null
+  } finally {
+    connection.close()
+  }
+}
+
+export function holdsTable(dbPath: string, table: string): boolean {
+  if (!existsSync(dbPath)) return false
+  const connection = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").all(table).length > 0
+  } finally {
+    connection.close()
+  }
+}
+
+export function insertStrayItem(dbPath: string, row: ItemRow): void {
+  const connection = new DatabaseSync(dbPath)
+  try {
+    connection.exec('PRAGMA busy_timeout = 5000')
+    connection
+      .prepare('INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)')
+      .run(row.id, row.owner, row.value, row.note)
+  } finally {
+    connection.close()
+  }
+}
+
 export function readFile(
   dbPath: string,
   sql: string,

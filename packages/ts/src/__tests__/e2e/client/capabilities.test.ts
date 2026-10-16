@@ -1,3 +1,4 @@
+import net from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SirannonClient } from '../../../client/index.js'
 import { operationRef } from '../../../core/operation-registry.js'
@@ -23,8 +24,75 @@ const OPERATIONS: OperationRegistry = {
 }
 
 const STATEMENT_ROUTE = /^\/db\/[^/]+\/(query|execute|transaction|batch|load)$/
+const UNANSWERED_REQUEST_TIMEOUT_MS = 60_000
+const PROMPT_REFUSAL_MS = 1_000
+const SOCKET_END_DEADLINE_MS = 2_000
 
-afterEach(releaseClientServers)
+interface StallingListener {
+  readonly base: string
+  readonly requestLines: string[]
+  readonly requested: Promise<void>
+  readonly ended: Promise<void>
+  close(): Promise<void>
+}
+
+const listeners: StallingListener[] = []
+
+afterEach(async () => {
+  for (const listener of listeners.splice(0)) await listener.close()
+  await releaseClientServers()
+})
+
+async function stallingListener(): Promise<StallingListener> {
+  const sockets = new Set<net.Socket>()
+  const requestLines: string[] = []
+  let markRequested: () => void = () => {}
+  let markEnded: () => void = () => {}
+  const requested = new Promise<void>(resolve => {
+    markRequested = resolve
+  })
+  const ended = new Promise<void>(resolve => {
+    markEnded = resolve
+  })
+  const server = net.createServer(socket => {
+    sockets.add(socket)
+    let text = ''
+    socket.on('error', () => {})
+    socket.on('data', chunk => {
+      text += chunk.toString('latin1')
+      if (!text.includes('\r\n\r\n')) return
+      requestLines.push(text.slice(0, text.indexOf('\r\n')))
+      markRequested()
+    })
+    socket.on('close', () => {
+      sockets.delete(socket)
+      markEnded()
+    })
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  const port = address !== null && typeof address === 'object' ? address.port : 0
+  const listener: StallingListener = {
+    base: `http://127.0.0.1:${port}`,
+    requestLines,
+    requested,
+    ended,
+    close: async () => {
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    },
+  }
+  listeners.push(listener)
+  return listener
+}
+
+function settlesWithin(promise: Promise<unknown>, deadlineMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<boolean>(resolve => {
+    timer = setTimeout(() => resolve(false), deadlineMs)
+  })
+  return Promise.race([promise.then(() => true), expired]).finally(() => clearTimeout(timer))
+}
 
 function codeOf(promise: Promise<unknown>): Promise<string> {
   return promise.then(
@@ -106,7 +174,7 @@ describe('what a client learns from GET /capabilities', () => {
     expect(storedOrders(shop.path).map(order => order.customer)).not.toContain('after-drop')
   })
 
-  it('keeps SQL inside the client when /capabilities answers 404, while registered reads and live queries still run', async () => {
+  it('sends statements to a server that predates GET /capabilities, reading the 404 once for each client, while registered reads and live queries still run', async () => {
     const shop = await servedShop({ server: { operations: OPERATIONS } })
     const proxy = await recordingProxy(shop.served.port)
     proxy.answerWith(request =>
@@ -116,18 +184,30 @@ describe('what a client learns from GET /capabilities', () => {
     )
     const client = new SirannonClient(proxy.base, { transport: 'http' })
     const overWebSocket = new SirannonClient(proxy.base, { autoReconnect: false })
+    const before = storedOrders(shop.path)
 
-    const codes = await Promise.all(everyStatementShape(client))
+    await client.database(DATABASE_ID).execute(INSERT_ORDER, ['over-http', 3])
+    await overWebSocket.database(DATABASE_ID).execute(INSERT_ORDER, ['over-websocket', 4])
+    await client.database(DATABASE_ID).transaction([{ sql: INSERT_ORDER, params: ['in-transaction', 5] }])
+    const counted = await overWebSocket.database(DATABASE_ID).query<{ n: number }>('SELECT count(*) AS n FROM orders')
     const named = await client.database(DATABASE_ID).query(everyOrder, {})
     const live = await overWebSocket.database(DATABASE_ID).live(everyOrder, {})
     const liveState = live.getState()
     client.close()
     overWebSocket.close()
 
-    expect(codes).toEqual(Array(6).fill('SQL_NOT_ACCEPTED'))
-    expect(liveState).toEqual({ status: 'ready', revalidating: false, rows: storedOrders(shop.path) })
-    expect(proxy.requestsTo('POST', STATEMENT_ROUTE)).toEqual([])
-    expect(named).toEqual(storedOrders(shop.path))
+    const stored = storedOrders(shop.path)
+    expect(stored.map(order => order.customer)).toEqual([
+      ...before.map(order => order.customer),
+      'over-http',
+      'over-websocket',
+      'in-transaction',
+    ])
+    expect(counted).toEqual([{ n: stored.length }])
+    expect(named).toEqual(stored)
+    expect(liveState).toEqual({ status: 'ready', revalidating: false, rows: stored })
+    expect(proxy.requestsTo('POST', STATEMENT_ROUTE)).toHaveLength(2)
+    expect(proxy.requestsTo('GET', /^\/capabilities$/)).toHaveLength(2)
   })
 
   it('raises INVALID_RESPONSE for a malformed answer and CONNECTION_ERROR for one that never arrives, sending no statement', async () => {
@@ -164,5 +244,30 @@ describe('what a client learns from GET /capabilities', () => {
 
     expect(proxy.requestsTo('POST', STATEMENT_ROUTE)).toHaveLength(1)
     expect(storedOrders(shop.path).map(order => order.customer)).toEqual(['ama', 'kofi', 'kept'])
+  })
+
+  it('fails a statement that waits on an unanswered capability read with TRANSPORT_ERROR as soon as the database closes, and ends that read', async () => {
+    const stalled = await stallingListener()
+    const client = new SirannonClient(stalled.base, {
+      transport: 'http',
+      requestTimeout: UNANSWERED_REQUEST_TIMEOUT_MS,
+    })
+    const db = client.database(DATABASE_ID)
+
+    const waiting = codeOf(db.execute(INSERT_ORDER, ['lost', 1]))
+    await stalled.requested
+    const closedAt = Date.now()
+    db.close()
+    const code = await waiting
+    const refusedAfterMs = Date.now() - closedAt
+    const socketEnded = await settlesWithin(stalled.ended, SOCKET_END_DEADLINE_MS)
+    const later = await codeOf(db.query('SELECT 1 AS one'))
+    client.close()
+
+    expect(code).toBe('TRANSPORT_ERROR')
+    expect(refusedAfterMs).toBeLessThan(PROMPT_REFUSAL_MS)
+    expect(socketEnded).toBe(true)
+    expect(later).toBe('TRANSPORT_ERROR')
+    expect(stalled.requestLines).toEqual(['GET /capabilities HTTP/1.1'])
   })
 })

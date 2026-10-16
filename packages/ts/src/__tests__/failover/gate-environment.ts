@@ -67,6 +67,7 @@ export interface NodeOptions {
   clockOffsetMs?: number
   etcd3Unresolvable?: boolean
   awaitReady?: boolean
+  initialSync?: boolean
 }
 
 export async function startEnvironment(): Promise<GateEnvironment> {
@@ -193,6 +194,7 @@ export async function startNode(
     controllerTickIntervalMs: options.controllerTickIntervalMs ?? 200,
     controllerEnabled: options.controllerEnabled ?? true,
     writeForwarding: options.writeForwarding ?? true,
+    initialSync: options.initialSync ?? true,
     backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
     compatibility: options.compatibility ?? COMPATIBILITY,
   }

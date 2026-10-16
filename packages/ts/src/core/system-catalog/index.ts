@@ -1,34 +1,37 @@
 export {
   deleteAppliedChangesAfterSeq,
   ensureAppliedChangesTable,
+  insertAppliedChangesFromStagedPush,
   prepareInsertAppliedChange,
   selectAppliedSourceSeqsInRange,
   selectMaxAppliedSourceSeq,
   selectMaxAppliedSourceSeqByNode,
 } from './applied-changes-table.js'
 export {
-  deleteChangesBeforeUpToSeqSql,
   deleteHistoryChangesAfterHlc,
   deleteStampedChangesUpToSeq,
-  ensureChangesTable,
   type HistoryChangeRef,
   type HistoryChangeRow,
+  selectHistoryChangesAfterHlc,
+  selectHistoryTransaction,
+  selectMaxHistoryChangeSeq,
+  selectNewestHistoryChange,
+  selectOutboundHistoryChangesSql,
+} from './changes-history.js'
+export {
+  deleteChangesBeforeUpToSeqSql,
+  ensureChangesTable,
   insertDdlChange,
   selectChangesAfterSeqSql,
   selectCountOutboundChanges,
-  selectHistoryChangesAfterHlc,
-  selectHistoryTransaction,
   selectMaxAssignedChangeSeq,
   selectMaxChangeHlc,
   selectMaxChangeSeq,
-  selectMaxHistoryChangeSeq,
   selectMaxNodeChangeSeq,
   selectMaxRowChangeHlc,
   selectMinChangeSeqSql,
-  selectNewestHistoryChange,
   selectNodeChangesAfterSeqSql,
   selectOutboundChangesSql,
-  selectOutboundHistoryChangesSql,
   selectTablesChangesInRangeSql,
   updateChangeStampsAboveMetaSeqSql,
   updateChangeStampsAfterSeqSql,
@@ -65,6 +68,7 @@ export {
   UPSERT_META_VALUE_SQL,
   upsertMetaMaxChangeSeqSql,
   upsertMetaValue,
+  upsertMetaValueAndMaxChangeSeqSql,
 } from './meta-table.js'
 export {
   type AppliedMigrationRow,
@@ -87,11 +91,24 @@ export {
   upsertPeerAckedSeq,
 } from './peer-state-table.js'
 export { deleteAllReplacedRows, deleteReplacedRowsOfTable, ensureReplacedRowsTable } from './replaced-rows-table.js'
+export {
+  type StoredHistoryPoint,
+  type StoredTermStart,
+  selectAnchoredTerm,
+  selectHistoryBase,
+  selectPrimaryTermStart,
+  selectQuarantined,
+  upsertAnchoredTerm,
+  upsertHistoryBase,
+  upsertPrimaryTermStart,
+  upsertQuarantined,
+} from './replication-history-meta.js'
 export { ensureBatchApplyTables, ensureReplicationStateTables } from './replication-tables.js'
 export {
   type IndexColumnRow,
   type IndexListRow,
   indexColumns,
+  primaryKeyColumns,
   referencedTables,
   type SchemaObjectRow,
   selectCountTableRows,
@@ -103,6 +120,7 @@ export {
   selectUserSchemaObjects,
   selectUserTableNames,
   setForeignKeysEnabled,
+  TABLE_XINFO_HIDDEN,
   type TableColumnRow,
   type TableInfoRow,
   tableColumnNames,
@@ -124,7 +142,6 @@ export {
 export {
   deleteStagedPushChanges,
   ensureStagedPushChangesTable,
-  insertAppliedChangesFromStagedPush,
   prepareInsertStagedPushChange,
   type StagedPushChangeRow,
   type StagedPushTail,

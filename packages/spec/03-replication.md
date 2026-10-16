@@ -5,7 +5,7 @@ Replication distributes writes between Sirannon nodes. A single primary per repl
 Sirannon supports two authority modes:
 
 - **Static mode.** The primary and replicas are configured outside the engine. Static mode has no Sirannon-owned automatic failover.
-- **Coordinator mode.** A linearisable cluster coordinator owns primary authority, node liveness, safe promotion, client routing metadata, and fail-closed write behaviour.
+- **Coordinator mode.** A linearisable cluster coordinator owns primary authority, node liveness, safe promotion, client routing metadata, and fail-closed write behaviour. [09-failover.md](09-failover.md) defines coordinator mode.
 
 Conflict resolvers are batch-application primitives; a receiver uses one when an incoming change targets a row that already exists locally. They do not grant multi-writer authority and do not make failover safe.
 
@@ -117,7 +117,7 @@ shouldAcceptFrom(peer):     role == 'replica' and peer.role == 'primary'
 
 ## Conflict Resolution
 
-A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier invokes it during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. A resolver that throws fails the batch with `CONFLICT_ERROR`, which carries the change's `table` and `rowId` and keeps the resolver's error as its cause. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
+A resolver produces the outcome when an incoming change targets a row that already exists on the receiving node. The batch applier must apply the changes of one incoming transaction in `seq` order, so that a later change of a transaction always wins over an earlier one whatever the node ids. A change that targets a row which an earlier change of the same incoming transaction inserted, updated, merged, or deleted takes no resolver: a delete deletes the row, an update writes each column whose value in `newData` differs from its value in `oldData`, and an insert writes every column of `newData`. The batch applier invokes the resolver during normal replication and first-sync catch-up. All three resolvers are normative and must produce identical results across languages. A resolver that throws fails the batch with `CONFLICT_ERROR`, which carries the change's `table` and `rowId` and keeps the resolver's error as its cause. See [test-vectors/conflict-resolution.json](test-vectors/conflict-resolution.json).
 
 ```text
 ConflictContext { table, rowId, localChange or null, remoteChange, localHlc or null, remoteHlc }
@@ -249,7 +249,7 @@ Every `batchIntervalMs`, for each peer the topology replicates to (in coordinato
 
 ### Batch Reception
 
-A batch is accepted only while the node is `ready` or `catching-up`, and a receiver processes the batches from one sender one at a time, in the order in which they arrive. The receiver checks that `sourceNodeId` matches the sending peer, that the peer is known, that static-mode topology allows the sender, that the coordinator term is current, that `changes` does not exceed `maxBatchChanges`, and that the wall-clock milliseconds of `hlcRange.max` are no more than `maxClockDriftMs` ahead of the local physical clock. The clock check bounds how far a remote timestamp can advance the local HLC, so a batch stamped earlier than the local physical clock passes it whatever its age. In coordinator mode a replica that has not reconciled its history with the history of the batch's term discards the batch without applying or acknowledging it and starts that reconciliation, while a former primary and a repairing or faulted node process the batch, because they rejoin through their own paths (see [History Reconciliation](#history-reconciliation)). When `afterSeq` exceeds the highest sequence that the receiver has applied from the sender, the sequences between the two can hold changes that the receiver never received, so the receiver discards the batch without applying it and sends that applied sequence as a `ReplicationAck` with an empty `batchId`. Otherwise the receiver applies the batch, prunes tables dropped by replicated DDL, records the applied sequence, and returns a `ReplicationAck`.
+A receiver accepts a batch only while it is `ready` or `catching-up`, and it processes the batches from one sender one at a time, in the order in which they arrive. The receiver checks that `sourceNodeId` matches the sending peer, that the peer is known, that static-mode topology allows the sender, that the coordinator term is current, that `changes` does not exceed `maxBatchChanges`, and that the wall-clock milliseconds of `hlcRange.max` are no more than `maxClockDriftMs` ahead of the local physical clock. A batch whose `hlcRange.max` is earlier than the local physical clock passes the clock check whatever its age. In coordinator mode a replica that has not reconciled its history with the history of the batch's term discards the batch without applying or acknowledging it and starts that reconciliation, while a former primary and a repairing or faulted node process the batch (see [History Reconciliation](09-failover.md#history-reconciliation)). When `afterSeq` exceeds the highest sequence that the receiver has applied from the sender, the receiver discards the batch without applying it and sends that applied sequence as a `ReplicationAck` with an empty `batchId`. Otherwise the receiver applies the batch, prunes tables dropped by replicated DDL, records the applied sequence, and returns a `ReplicationAck`.
 
 ### Write Concern
 
@@ -334,7 +334,7 @@ SyncAck      { requestId, joinerNodeId, table, batchIndex, success, error?, grou
 4. The source sends `SyncComplete` with a per-table manifest.
 5. The joiner verifies each manifest, transitions to `catching-up`, and applies changes accumulated since `snapshotSeq`. When its lag falls below `maxSyncLagBeforeReady` (or the catch-up deadline passes), it becomes `ready`.
 
-The source's `maxSyncDurationMs` deadline restarts on every acknowledged batch, so the permitted duration scales with the data; the source aborts when no batch is acknowledged within it. A term change before completion restarts the sync. A `SyncRequest` that carries `historyTail` reconciles a replica's history and receives no copy (see [History Reconciliation](#history-reconciliation)).
+The source's `maxSyncDurationMs` deadline restarts on every acknowledged batch, so the permitted duration scales with the data; the source aborts when no batch is acknowledged within it. A term change before completion restarts the sync. A `SyncRequest` that carries `historyTail` reconciles a replica's history and receives no copy (see [History Reconciliation](09-failover.md#history-reconciliation)).
 
 ### Manifest Verification
 
@@ -347,74 +347,3 @@ With `supportsStreamVerification`, the source sends `batchDigest`: a chained SHA
 DDL received through replication or first sync is validated against an allowlist. Allowed statements begin with `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, `CREATE UNIQUE INDEX`, or `DROP INDEX`. A statement is rejected when it targets a table or index under the reserved `_sirannon` or `sqlite_` prefix, contains `;`, contains `AS SELECT`, or references `load_extension`, `ATTACH`, `randomblob`, `zeroblob`, `writefile`, `readfile`, or `fts3_tokenizer`. A DDL statement that fails validation fails with `BATCH_VALIDATION_ERROR`.
 
 The replication engine validates every write that it runs through `execute`, `executeBatch`, `transaction`, or write forwarding against the same allowlist before it runs the write. A statement that begins with `CREATE`, `ALTER`, or `DROP` once its leading whitespace and comments are removed is a schema change; a schema change that fails validation fails with `REPLICATION_ERROR` before SQLite runs it. The engine records an accepted schema change in the change log without its leading whitespace and comments.
-
----
-
-## Coordinator-Backed Failover
-
-Coordinator mode uses a linearisable coordinator to store authority metadata and provide watches. The first production backend is etcd; an in-memory backend is allowed for tests and local development. The coordinator stores only authority metadata (controller lease, node session leases, group configuration, current primary, primary term, in-sync set, and compact progress markers) and never user rows or the replication log.
-
-The coordinator must provide, at least: acquiring and renewing a controller lease; registering, reading, and deregistering node session leases; reading, writing, and watching replication-group state; comparing and advancing the primary term atomically; and admitting a node to the in-sync set only against a proven durability point.
-
-A coordinator may also provide a watch over the node sessions of a cluster, which calls back with every node holding a live session on each registration and each lapse. A node holding that watch serves reads only from the nodes the watch names (see [05-server.md](05-server.md#get-dbidcluster)), and a node whose coordinator provides no such watch, or that reaches no coordinator, reads from the group's membership alone.
-
-A coordinator may also provide a watch over the controller lease, which calls back with the lease on each change of holder and with none once no node holds it. A standby controller holding that watch bids for the lease only while the watch reports no live holder, while a standby whose coordinator provides no such watch bids once every `tickIntervalMs`.
-
-### Replication Group and Node Identity
-
-A replication group is the set of nodes holding copies of one database and sharing one primary authority; a process may host several groups, with no process-wide global primary. Each data-bearing node has a stable persisted identity tied to its durable database copy: a restarted process reusing that copy reuses its identity, while a new empty node receives a new identity and must sync before serving safe reads or becoming promotable. Session leases represent a running session and do not replace stable identity. A node that registers a session while an earlier session under its identity is still live replaces the earlier session, as a restarted process does before its previous lease expires. A backup cycle on any node of the group resolves its preferred backup node from the group's membership (see [02-core.md](02-core.md#preferred-backup-node)).
-
-### Term Fencing
-
-Each group has a monotonically increasing `primaryTerm`. Every coordinator-mode write path and replication message carries the current term; promotion atomically increments the term and records the new primary. A primary may accept writes only while it proves current authority, and must fail closed for new writes and for in-flight writes that cannot prove it when renewal fails. Replicas reject batches, sync messages, and forwarded writes from a stale term or a non-current primary. A former primary that observes a newer term demotes and compares its history: a safe node rejoins through sync, while a node with local-only writes is removed from the in-sync set, marked faulted, and kept out of the read, write, and promotion paths until an operator remediates it. A node that is marked faulted records that it holds quarantined writes, and once an operator clears its fault and marks it repairing, it rebuilds through a full copy without comparing its history again; the copy deletes that record.
-
-### In-Sync Set and Promotion
-
-The in-sync set holds replicas proven current enough for safe reads and promotion; a live node is not automatically in sync. The durability point is a sequence in the current primary's change log, so promotion resets it to 0. Before a new primary sends a batch, answers a sync request, admits a node, or acknowledges a write, it records the start of its term: it resets every replica's acknowledged sequence, because an acknowledgement from an earlier term counts positions in another node's log, and it raises the durability point to the newest history sequence in its own change log. A node is admitted to the set only when its applied sequence in the current primary's log reaches the group's recorded durability point, only once it has reconciled its history with that primary's, and only by the current primary. The primary admits a repairing or faulted node only once the sync that rejoins it completes, and never on its acknowledgements alone. A replica that falls behind, misses acknowledgements, or reports a storage or sync error is removed before writes that exclude it are acknowledged.
-
-Automatic promotion may choose only a replica whose session lease is alive, that is in the in-sync set, that has no storage, checksum, sync, or repair error, and whose promotion the controller can record while atomically advancing the term. A promotion proceeds only while the group has no primary or its primary is the node that the controller found unfit, so that two promotion attempts that saw the same failure advance the term once. When no replica qualifies, Sirannon fails closed with `NO_SAFE_PRIMARY` and does not promote an arbitrary node. Production-safe automatic write failover requires at least three voting data-bearing nodes in a group.
-
-### History Reconciliation
-
-Each node in coordinator mode records the primary term whose history it holds. A primary records its own term once it has recorded the start of that term, and a replica records a term once it has reconciled its history with that term's primary, through a resumed answer or a full copy. The `txId` of a transaction identifies it in the history, and the highest HLC among its changes gives its position there.
-
-When the group's term differs from the term that a replica records, the replica sends the current primary a `SyncRequest` whose `historyTail` names the newest history transaction in its change log, or the transaction that its last full copy ended with when that one is newer, and the replica keeps serving its data until the answer arrives. The replica sends the request again when no answer arrives within `syncAckTimeoutMs`, when the primary refuses it, or when the term changes. A former primary, a repairing or faulted node, and a node that is copying send no such request, because the former-primary, repair, and copy paths rejoin them, and a replica whose change log holds no history transaction asks for a full copy.
-
-The primary answers a request that carries `historyTail` only once it has recorded the start of its term. When the primary's change log holds the tail's `txId`, the shared point is that transaction; otherwise the shared point is the newest history transaction that the primary held when its term began and whose HLC is lower than the tail's. With a shared point, the primary answers with a `SyncComplete` that sets `resumed`, names the shared point in `historyPoint`, sets `snapshotSeq` to the shared transaction's highest sequence in the primary's change log, and carries no manifests, and the primary keeps its change log after that sequence from pruning until the replica reports its position or `maxSyncDurationMs` passes. Without a shared point, the primary removes the replica from the in-sync set and answers with a `SyncComplete` that leaves `resumed` false, and on that answer the replica asks for a full copy.
-
-On a resumed answer the replica runs one transaction that undoes, newest first and from the row images in its change log, every history change with an HLC higher than the shared point's; deletes those changes and the column versions stamped after the shared point; keeps the change-log entries that the undo writes without a node ID or HLC, so that local subscribers and live queries receive the reverse changes while the undo replicates to no peer and joins no history; records that it has applied the primary's change log up to `snapshotSeq`; and records the answer's term. A reader sees the replica's data from before that transaction or from after it. The replica then sends `snapshotSeq` to the primary as a `ReplicationAck` with an empty `batchId`, so that the primary resends its history after that sequence. The replica refuses a resumed answer and asks for a full copy when a change to undo is a schema change or lacks the row image that the undo needs, when it holds no record of the shared transaction, or when its last full copy ended with a later transaction than the shared one.
-
-Before the primary streams a full copy for a request that carries no `historyTail`, it removes the joiner from the in-sync set, because the copy replaces the joiner's rows. In coordinator mode the copy's `SyncComplete` names in `historyPoint` the newest history transaction that the copy holds. Once the copy is verified, the joiner deletes every stamped change and every column version that predates the copy, records that transaction as the point at which its history begins, and records the copy's term.
-
-A replica that gains primary authority while it reconciles stops reconciling and keeps its data, because its history then becomes the group's, unless a full copy has already replaced the rows of one of its tables.
-
-Only a request that reconciles a replica's history carries `historyTail`. A primary that predates these fields ignores `historyTail` and streams a copy, and a replica that receives a copy batch answering its reconciling request asks for a full copy. A replica that predates these fields never sends `historyTail`, so it reconciles no history, and every sync that it requests is a full copy.
-
-### Controller, Liveness, and Maintenance
-
-One active controller per cluster holds the controller lease and makes failover decisions; standby controllers watch the lease and take over on loss. Coordinator lease expiry or explicit deregistration is the authoritative node-death signal; a transport disconnect is connection state that may drop a replica from the in-sync set but must not by itself trigger promotion. Coordinator mode provides maintenance primitives to drain a node, move primary duty before planned work, remove replicas from safe sets, wait for in-flight work, deregister a session, and rejoin after restart. Sirannon does not provision infrastructure; it detects registration through the coordinator, assigns work, validates catch-up, and marks a node safe only once it is current.
-
-### Recovery and Rolling Upgrades
-
-When Sirannon cannot prove a safe primary, it fails closed; there is no force-promotion or unsafe-recovery API. An operator restores a backup, rebuilds a node, or repairs the deployment, then rejoins through the normal sync path. Nodes register package, spec, and protocol compatibility metadata; the controller rejects an incompatible major protocol change and allows mixed minor or patch levels only while metadata formats, wire formats, and safety semantics stay compatible. New durable metadata or new safety semantics require an explicit cluster compatibility gate before activation.
-
-### Node Health
-
-```text
-NodeHealth {
-  state:    'healthy' | 'degraded' | 'failing_over' | 'repairing' | 'syncing' | 'unavailable'
-  reason:   'in-sync' | 'lagging' | 'coordinator-unreachable' | 'draining' | 'repairing' | 'faulted' | 'sync-pending' | 'no-group-state'
-  canRead:  boolean
-  canWrite: boolean
-}
-```
-
-`canRead` is true when the sync phase is `ready` and the group's draining, repairing, and faulted sets exclude the node; `canWrite` also requires current primary authority.
-
-The first matching condition sets `state` and `reason`: a `syncing` or `catching-up` sync phase, `syncing`; no group state, `unavailable`/`no-group-state`; the repairing set holding the node, `repairing`; current primary authority without `canWrite`, `failing_over`; `canRead` false, `unavailable`; a last successful coordinator call older than the node's session lease, `degraded`/`coordinator-unreachable`; the in-sync set excluding the node, `degraded`/`lagging`; no match, `healthy`/`in-sync`. `NodeHealth` covers only the reporting node, so the state of another node in the group never changes it. A `syncing`, `failing_over`, or `unavailable` reason names the excluding condition: `sync-pending`, `draining`, or `faulted`.
-
-Outside coordinator mode the state is `syncing` during a `syncing` or `catching-up` sync phase, `unavailable`/`sync-pending` during a `pending` one, and `healthy`/`in-sync` during a `ready` one; `canRead` is true when the sync phase is `ready`, and `canWrite` also requires the primary role.
-
-### Conformance Invariants
-
-Coordinator mode conforms only when its test suite proves, with a real coordinator and real multi-node groups: at most one writable primary per group and term; no loss of a `majority`-acknowledged write when only the failed primary is lost; stale primaries reject writes, batches, forwarded transactions, and sync messages; minority partitions fail closed for writes; only in-sync replicas are promoted; clients reroute writes to the new primary or receive a clear error; returning former primaries rejoin through sync when safe and are quarantined when they hold local-only writes; a node restarted while its previous session is still live rejoins under its identity; a replica that holds history which the new primary lacks discards that history and resumes from the new primary's; a replica is readmitted to the in-sync set only once it holds every write in the new primary's history up to the durability point; and health state reports write availability, read availability, coordinator status, current primary, primary term, and repair state accurately.

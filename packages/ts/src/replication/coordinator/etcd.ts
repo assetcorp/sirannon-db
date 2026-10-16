@@ -84,7 +84,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return watchEtcdControllerLease(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
   }
 
-  /** Extends a lease, returns false for a lease that is expired or unknown to this coordinator, and throws a `CoordinatorError` when etcd gives no answer, so that a lost connection leaves the lease in place. */
+  /**
+   * Returns true once etcd extends the lease, and false when the lease has expired or this coordinator never granted
+   * it. When etcd gives no answer, the method throws a `CoordinatorError`, so that the caller keeps the lease and tries
+   * the renewal again once etcd answers.
+   */
   async renewLease(leaseId: string, ttlMs: number): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     assertPositiveTtl(ttlMs)
@@ -169,9 +173,9 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   }
 
   /**
-   * Records one node as a live member of the cluster. A session that an earlier process of the same node left behind
-   * gives way to the new one, because a node ID names one durable copy of the database and the process now running
-   * on that copy owns the ID.
+   * Returns a new session that records one node as a live member of the cluster. When an earlier process of the same
+   * node left a session behind, the coordinator replaces that session with the new one, because a node ID names one
+   * durable copy of the database and only the process that now has that copy open uses the ID.
    */
   async registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession> {
     assertNonEmpty(input.clusterId, 'clusterId')
@@ -317,7 +321,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return groups.updateNodeMaintenance(input)
   }
 
-  /** Promotes an eligible in-sync replica while the group has no primary or its primary is one of `excludeNodeIds`, returns the group unchanged once another node holds primary duty, and throws a `NoSafePrimaryError` when no replica qualifies. */
+  /**
+   * Returns the group state after a promotion. The coordinator promotes an eligible in-sync replica only while the
+   * group has no primary or its primary is one of `excludeNodeIds`, and it returns the group unchanged once another
+   * node holds primary duty. The method throws a `NoSafePrimaryError` when no replica qualifies.
+   */
   async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
     const { groups } = await this.connect()
     return groups.promoteEligibleReplica(input)

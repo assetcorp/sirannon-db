@@ -6,8 +6,10 @@ import {
   type IndexColumnRow,
   type IndexListRow,
   indexColumns,
+  primaryKeyColumns,
   selectIndexSql,
   selectTableSql,
+  TABLE_XINFO_HIDDEN,
   tableColumnsWithGenerated,
   tableIndexList,
   tableInfoRows,
@@ -16,8 +18,6 @@ import { parseIndexDefinition } from './index-definition.js'
 
 const ROWID_COLUMN = -1
 const EXPRESSION_COLUMN = -2
-const GENERATED_VIRTUAL = 2
-const GENERATED_STORED = 3
 
 /**
  * Names one part of a unique key: a column, or an expression over the columns of the row, with the collation that the key compares it with.
@@ -75,10 +75,7 @@ export interface CaptureShape {
 export async function readCaptureShape(conn: SQLiteConnection, table: string): Promise<CaptureShape> {
   const info = await tableInfoRows(conn, table)
   const columns = info.map(column => column.name)
-  const pkColumns = info
-    .filter(column => column.pk > 0)
-    .sort((a, b) => a.pk - b.pk)
-    .map(column => column.name)
+  const pkColumns = primaryKeyColumns(info)
   if (columns.length === 0) {
     return { columns, allColumns: [], pkColumns, uniqueKeys: [], generatedColumns: [], withoutRowid: false }
   }
@@ -92,7 +89,10 @@ export async function readCaptureShape(conn: SQLiteConnection, table: string): P
     if (key !== null) uniqueKeys.push(key)
   }
   const ddl = await selectTableSql(conn, table)
-  const generated = xinfo.filter(column => column.hidden === GENERATED_VIRTUAL || column.hidden === GENERATED_STORED)
+  const generated = xinfo.filter(
+    column =>
+      column.hidden === TABLE_XINFO_HIDDEN.generatedVirtual || column.hidden === TABLE_XINFO_HIDDEN.generatedStored,
+  )
   const definitions = ddl === null || generated.length === 0 ? null : parseColumnDefinitions(ddl)
   const generatedColumns = generated.map(column => ({
     name: column.name,

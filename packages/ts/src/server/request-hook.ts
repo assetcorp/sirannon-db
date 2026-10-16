@@ -28,7 +28,7 @@ type HookOutcome<I> =
 const CLOSE_REASON_MAX_BYTES = 123
 
 export const RETURNED_REFUSAL_MESSAGE =
-  'The authenticate hook returned a refusal object rather than an identity. A hook refuses a request by throwing a SirannonError; every value it returns becomes the caller identity.'
+  'The authenticate hook returned an object with a status, a code, and a message, which looks like a refusal, so the server refused the request with HOOK_ERROR. To refuse a request with a status of your own, throw a RequestDeniedError, or throw any error that carries an integer status from 400 to 599, a code, and a message.'
 
 function looksLikeRefusal(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false

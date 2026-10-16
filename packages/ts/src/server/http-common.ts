@@ -1,8 +1,9 @@
-import type { HttpResponse } from 'uWebSockets.js'
+import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import { SirannonError, WriteOverloadError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver, WriteConcern } from '../core/types.js'
-import { markBodyArriving, settleResponse } from './connection-drain.js'
+import { clientErrorMessage, sharesErrorDetails } from './client-error.js'
+import { endResponse, markBodyArriving, settleResponse } from './connection-drain.js'
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
@@ -121,10 +122,9 @@ export function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
 
 export function sendJson(res: HttpResponse, data: unknown, status = '200 OK'): void {
   const payload = JSON.stringify(data)
-  res.cork(() => {
+  endResponse(res, () => {
     res.writeStatus(status).writeHeader('Content-Type', 'application/json').end(payload)
   })
-  settleResponse(res)
 }
 
 export function sendError(
@@ -137,14 +137,13 @@ export function sendError(
 ): void {
   const body: ErrorResponse = { error: details ? { code, message, details } : { code, message } }
   const payload = JSON.stringify(body)
-  res.cork(() => {
+  endResponse(res, () => {
     res.writeStatus(`${status}`)
     if (headers) {
       for (const [name, value] of Object.entries(headers)) res.writeHeader(name, value)
     }
     res.writeHeader('Content-Type', 'application/json').end(payload)
   })
-  settleResponse(res)
 }
 
 export function httpStatusForError(err: SirannonError): number {
@@ -191,6 +190,7 @@ export function httpStatusForError(err: SirannonError): number {
 }
 
 export function errorDetails(err: SirannonError): Record<string, unknown> | undefined {
+  if (!sharesErrorDetails(err)) return undefined
   const details = (err as SirannonError & { details?: Record<string, unknown> }).details
   return details && Object.keys(details).length > 0 ? details : undefined
 }
@@ -200,27 +200,105 @@ export function sendCaughtError(res: HttpResponse, abort: ResponseAbort, err: un
   if (err instanceof SirannonError) {
     const headers =
       err instanceof WriteOverloadError ? { 'Retry-After': `${Math.ceil(err.retryAfterMs / 1000)}` } : undefined
-    sendError(res, httpStatusForError(err), err.code, err.message, errorDetails(err), headers)
+    sendError(res, httpStatusForError(err), err.code, clientErrorMessage(err), errorDetails(err), headers)
   } else {
     sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
   }
 }
 
-export const DATABASE_ID_SEGMENT = 'Database identifier'
+const DATABASE_ID_SEGMENT = 'Database identifier'
 
-export const OPERATION_NAME_SEGMENT = 'Operation name'
+const OPERATION_NAME_SEGMENT = 'Operation name'
 
-export function decodePathSegment(value: string): string | null {
-  if (!value.includes('%')) return value
+/**
+ * One named segment of a request path, such as the database identifier in `/db/{id}`, as sent and as decoded.
+ *
+ * @internal
+ */
+export interface PathSegment {
+  /** The segment as the request sent it, which the `authenticate` hook receives when the server refuses the segment. */
+  readonly raw: string
+  /** The percent-decoded segment, or `null` when the server refuses the segment. */
+  readonly decoded: string | null
+  /** The name of the segment that an error message uses, such as `Database identifier`. */
+  readonly field: string
+}
+
+const PATH_SEPARATOR = /[/\\]/
+
+const ROOTED_PATH = /^(?:[/\\]|[A-Za-z]:)/
+
+function staysInsideDirectory(value: string): boolean {
+  if (ROOTED_PATH.test(value)) return false
+  return !value.split(PATH_SEPARATOR).some(part => part === '.' || part === '..')
+}
+
+function percentDecode(raw: string): string | null {
+  if (!raw.includes('%')) return raw
   try {
-    return decodeURIComponent(value)
+    return decodeURIComponent(raw)
   } catch {
     return null
   }
 }
 
-export function sendUndecodablePathSegment(res: HttpResponse, field: string, value: string): void {
-  sendError(res, 400, 'INVALID_REQUEST', `${field} '${value}' is not valid percent-encoding`)
+/**
+ * Reads the database identifier that the first parameter of a `/db/{id}` route carries, and percent-decodes it.
+ *
+ * The decoded value is `null` when the identifier is not valid percent-encoding, when it decodes to a value that starts
+ * with a slash, a backslash, or a drive letter and a colon, or when one of the parts that a slash or a backslash
+ * separates is `.` or `..`. A route refuses such an identifier, so that an `autoOpen` resolver or an execution-target
+ * resolver that joins the identifier onto a directory can only name a file inside that directory. An identifier such
+ * as `a/b` still decodes, because the registry accepts it.
+ *
+ * @param req - The request whose route matched.
+ * @returns The identifier as sent, and the decoded identifier or `null` when the route refuses it.
+ * @internal
+ */
+export function readDatabaseId(req: HttpRequest): PathSegment {
+  const raw = req.getParameter(0) ?? ''
+  const decoded = percentDecode(raw)
+  const nameable = decoded !== null && staysInsideDirectory(decoded)
+  return { raw, decoded: nameable ? decoded : null, field: DATABASE_ID_SEGMENT }
+}
+
+/**
+ * Reads the operation name that the second parameter of a `/db/{id}/query/{name}` or `/db/{id}/execute/{name}` route
+ * carries, and percent-decodes it.
+ *
+ * The server looks a name up in its registry and never builds a path from it, so a name keeps every character that it
+ * decodes to, slashes included.
+ *
+ * @param req - The request whose route matched.
+ * @returns The name as sent, and the decoded name or `null` when the name is not valid percent-encoding.
+ * @internal
+ */
+export function readOperationName(req: HttpRequest): PathSegment {
+  const raw = req.getParameter(1) ?? ''
+  return { raw, decoded: percentDecode(raw), field: OPERATION_NAME_SEGMENT }
+}
+
+function refusalMessage(segment: PathSegment): string {
+  if (percentDecode(segment.raw) === null) return `${segment.field} '${segment.raw}' is not valid percent-encoding`
+  return `${segment.field} '${segment.raw}' decodes to a path that can leave its directory, because it starts with a slash, a backslash, or a drive letter, or because one of its parts is '.' or '..'`
+}
+
+/**
+ * Answers `400 INVALID_REQUEST` for the first segment that {@link readDatabaseId} or {@link readOperationName} refused.
+ *
+ * @param res - The response of the request.
+ * @param segments - The segments of the request path, in the order that the route pattern names them.
+ * @returns `true` when the function answered the request, and `false` when the server accepts every segment.
+ * @internal
+ */
+export function refuseUndecodablePathSegments(res: HttpResponse, segments: readonly PathSegment[]): boolean {
+  for (const segment of segments) {
+    if (segment.decoded === null) {
+      sendError(res, 400, 'INVALID_REQUEST', refusalMessage(segment))
+      return true
+    }
+  }
+  return false
 }
 
 export type ParseResult<T> = { ok: true; value: T | undefined } | { ok: false }
@@ -238,7 +316,7 @@ export async function resolveExecutionTarget(
   } catch (err) {
     if (abort.aborted) return null
     if (err instanceof SirannonError) {
-      sendError(res, httpStatusForError(err), err.code, err.message)
+      sendError(res, httpStatusForError(err), err.code, clientErrorMessage(err))
     } else {
       sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred')
     }

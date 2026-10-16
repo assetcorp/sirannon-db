@@ -27,8 +27,10 @@ export type AcquireControllerLeaseResult = {
 export interface AdmitNodeToInSyncSetInput {
     appliedSeq: bigint;
     clusterId: string;
+    expectedPrimaryTerm?: bigint;
     groupId: string;
     nodeId: string;
+    rejoinSyncCompleted?: boolean;
     sourceNodeId: string;
 }
 
@@ -458,15 +460,9 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly config: ReplicationConfig;
     // @internal (undocumented)
-    controllerBidding: boolean;
-    // @internal (undocumented)
-    controllerLeaseId: string | null;
-    // @internal (undocumented)
-    controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null;
+    readonly controller: ControllerRuntime;
     // @internal (undocumented)
     controllerState: 'disabled' | 'standby' | 'active' | 'lost';
-    // @internal (undocumented)
-    controllerTimer: ReturnType<typeof setInterval> | null;
     // @internal (undocumented)
     coordinatorAuthority: boolean;
     // @internal (undocumented)
@@ -475,8 +471,6 @@ export class ReplicationEngine extends EventEmitter {
     coordinatorLastContactMs: number;
     // @internal (undocumented)
     coordinatorLeaseTimer: ReturnType<typeof setInterval> | null;
-    // @internal (undocumented)
-    coordinatorRejoinSyncStarting: boolean;
     // @internal (undocumented)
     coordinatorSessionRestoring: boolean;
     // @internal (undocumented)
@@ -551,12 +545,10 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
-    observedControllerLease: CoordinatorLease | null;
-    // @internal (undocumented)
-    observedControllerLeaseLiveUntilMs: number;
-    // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
+    // @internal (undocumented)
+    readonly rejoin: RejoinState;
     // @internal (undocumented)
     readonly resumeFromSeq: bigint | undefined;
     // @internal (undocumented)
@@ -625,7 +617,7 @@ export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void;
 
 // @internal
 export class ReplicationLog {
-    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, changesTable?: string, tracker?: ChangeTracker, logsAppliedDdl?: boolean);
+    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, options?: Omit<BatchApplierOptions, 'beforeApply'>);
     // (undocumented)
     applyBatch(batch: ReplicationBatch, resolver: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
     // (undocumented)
@@ -874,6 +866,8 @@ export class UnsafeRecoveryRequiredError extends FailoverError {
 export interface UpdateInSyncSetInput {
     clusterId: string;
     durabilityPointSeq?: bigint;
+    expectedPrimaryNodeId?: string;
+    expectedPrimaryTerm?: bigint;
     groupId: string;
     inSyncNodeIds: string[];
 }

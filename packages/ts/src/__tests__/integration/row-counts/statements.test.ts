@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '../../../core/database.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { QueryMetrics } from '../../../core/types.js'
@@ -321,7 +321,7 @@ describe.skipIf(binding === null)('rows read and rows written in onQueryComplete
   })
 })
 
-describe.skipIf(binding === null)('a write whose outcome the writer worker never reports', () => {
+describe.skipIf(binding === null)('a write that outlives the writer worker deadline', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'sirannon-unknown-row-counts-'))
     reported = []
@@ -331,7 +331,7 @@ describe.skipIf(binding === null)('a write whose outcome the writer worker never
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('reports no row counts, because nobody knows what SQLite executed', async () => {
+  it('reports once, after the worker answers, with the rows that SQLite wrote', async () => {
     const registry = new Sirannon({
       driver: sleepingDriver({ sqliteBindingPath: binding ?? undefined }),
       metrics: { onQueryComplete: metrics => reported.push(metrics) },
@@ -345,10 +345,13 @@ describe.skipIf(binding === null)('a write whose outcome the writer worker never
       const heldInsert = heldSql('INSERT INTO marker (n) VALUES (1)', release)
 
       await expect(db.execute(heldInsert)).rejects.toMatchObject({ code: 'WRITER_WORKER_TIMEOUT' })
-      const timedOut = onlyReportFor(heldInsert)
-      expect(timedOut.error).toBe(true)
-      expect(timedOut).not.toHaveProperty('rowsRead')
-      expect(timedOut).not.toHaveProperty('rowsWritten')
+      expect(reportsFor(heldInsert)).toEqual([])
+      releaseHeldWrite(release)
+      await vi.waitFor(() => expect(reportsFor(heldInsert)).toHaveLength(1), { timeout: 10_000, interval: 20 })
+      const late = onlyReportFor(heldInsert)
+      expect([late.error, late.rowsRead, late.rowsWritten]).toEqual([true, 0, 1])
+      expect(late.durationMs).toBeGreaterThanOrEqual(HELD_WRITE_DEADLINE_MS)
+      expect(await db.query('SELECT n FROM marker')).toEqual([{ n: 1 }])
     } finally {
       releaseHeldWrite(release)
       await registry.shutdown().catch(() => {})

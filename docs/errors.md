@@ -20,6 +20,8 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 { "error": { "code": "ERROR_CODE", "message": "Human-readable description", "details": {} } }
 ```
 
+The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, and the `*_DEPENDENCY_MISSING` codes, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
+
 ## Core engine
 
 | Error | Code | When |
@@ -33,6 +35,7 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, or uses `ATTACH`, `DETACH`, or `PRAGMA writable_schema` |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
+| - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads or writes through the database while a `transaction` callback holds the writer, so make those calls through the callback's `Transaction` handle |
 | `HookDeniedError` | `HOOK_DENIED` | A before-hook throws to refuse the operation |
 | `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code of your own |
 | `CDCError` | `CDC_ERROR` | Change data capture fails, or Sirannon cannot maintain a live query for the statement |
@@ -50,9 +53,9 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `ExtensionError` | `EXTENSION_ERROR` | Sirannon cannot load a native SQLite extension |
 | - | `INVALID_DRIVER` | The driver configuration fails validation |
 | - | `INVALID_SYNCHRONOUS` | The caller supplies an unknown `synchronous` level |
-| - | `ROW_COUNTS_UNSUPPORTED` | The better-sqlite3 driver opens a database with `rowCounts: true` while `@delali/sirannon-sqlite` is missing, has no build for this platform, or loads a build that counts no rows |
+| - | `ROW_COUNTS_UNSUPPORTED` | The better-sqlite3 driver opens a database with `rowCounts: true` while `@delali/sirannon-sqlite` is missing, has no build for this platform, holds a build that fails to load, or loads a build that counts no rows. A glibc build fails to load on a musl host, for example |
 | - | `INVALID_DURABILITY` | A load names a `durability` other than `'off'` or `'normal'` |
-| - | `DURABILITY_RESTORE_FAILED` | The load commits, but the writer fails before it restores durability, or a later write arrives while Sirannon still cannot restore it, in which case that write does not run |
+| - | `DURABILITY_RESTORE_FAILED` | Sirannon fails to restore the configured durability after a load commits. After any failed restore, Sirannon tries the restore again before each later write. Whenever that try fails, the write fails with this code without running |
 | - | `BULK_LOAD_IN_TRANSACTION` | A caller calls `bulkLoad` inside a `transaction` callback, where `Transaction.executeBatch` writes the rows instead |
 | - | `SNAPSHOT_IN_PROGRESS` | A caller reads or writes while a device-sync snapshot load replaces the database |
 | - | `SHUTDOWN` | A caller uses the registry after it shuts down |
@@ -100,10 +103,11 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `EMPTY_BODY` | The request body is empty |
 | `PAYLOAD_TOO_LARGE` | The body or message exceeds `maxBodyBytes` |
 | `INTERNAL_ERROR` | An unexpected error stops the server while it handles the request |
-| `HOOK_ERROR` | The `authenticate` hook throws an error lacking an integer `status` from 400 to 599, a non-empty string `code`, or a string `message`; `authorizeClusterStatus` throws, or `authenticate` returns a refusal object |
+| `HOOK_ERROR` | The `authenticate` hook returns a refusal object, or it throws an error that lacks an integer `status` from 400 to 599, a non-empty string `code`, or a string `message`. The server returns the same code when the `authorizeClusterStatus` hook throws |
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer that the transport can enforce exactly |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes` |
+| `INVALID_CLOSE_TIMEOUT` | The `timeoutMs` passed to `server.close()` is not a whole number from 0 to 2,147,483,647 |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is on and the server has no `authenticate` hook |
 | `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is on and the server has no `authenticate` hook |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load |

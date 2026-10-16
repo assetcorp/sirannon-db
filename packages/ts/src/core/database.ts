@@ -178,14 +178,22 @@ export class Database extends DatabaseBackups {
   /**
    * Calls a function inside one transaction, and commits when the function returns or rolls back when it throws.
    *
-   * A write that the function makes through this database, with
-   * {@link Database.execute}, {@link Database.executeBatch},
-   * {@link Database.executeTransaction}, or this method, becomes part of the
-   * same transaction. Sirannon executes each batch, statement list, and nested
-   * function inside a savepoint, so that one that fails rolls back only its own
-   * writes. Sirannon fires the query hooks for each statement that the function
-   * executes through the transaction, and once the function returns or throws,
-   * the transaction refuses every further call with `TRANSACTION_CLOSED`.
+   * On the Node, better-sqlite3, and Bun drivers, a write that the function
+   * makes through this database, with {@link Database.execute},
+   * {@link Database.executeBatch}, {@link Database.executeTransaction}, or this
+   * method, becomes part of the same transaction. Sirannon executes each batch,
+   * statement list, and nested function inside a savepoint, so that one that
+   * fails rolls back only its own writes. The wa-sqlite and Expo drivers have
+   * no way to tell a call from inside the function apart from a call by
+   * another caller, and they read through the writer connection, so on those
+   * drivers every read and write through this database fails at once with
+   * `WRITER_HELD_BY_CALLBACK` while the function holds the writer, whoever
+   * makes the call, and the function has to make its reads and writes through
+   * `tx`.
+   * Sirannon fires the query hooks for each statement that the
+   * function executes through the transaction, and once the function returns
+   * or throws, the transaction refuses every further call with
+   * `TRANSACTION_CLOSED`.
    *
    * @param fn - The function to call with the transaction, which executes its statements through it.
    * @returns The value that the function returns.

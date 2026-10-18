@@ -2,6 +2,7 @@ import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { ExtensionError } from '../../core/errors.js'
+import { expoBindParams } from './bind.js'
 
 /**
  * Returns a driver that opens SQLite databases on a device through `expo-sqlite`.
@@ -15,7 +16,7 @@ import { ExtensionError } from '../../core/errors.js'
  */
 export function expoSqlite(): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false },
+    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
     async open(path, options) {
       const SQLite = await import('expo-sqlite')
       const db = await SQLite.openDatabaseAsync(path, {
@@ -38,16 +39,16 @@ export function expoSqlite(): SQLiteDriver {
         async prepare(sql: string): Promise<SQLiteStatement> {
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return dbHandle.getAllAsync(sql, params as (string | number | null)[]) as Promise<T[]>
+              return dbHandle.getAllAsync<T>(sql, expoBindParams(params))
             },
 
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              const row = await dbHandle.getFirstAsync(sql, params as (string | number | null)[])
+              const row = await dbHandle.getFirstAsync<T>(sql, expoBindParams(params))
               return (row ?? undefined) as T | undefined
             },
 
             async run(...params: unknown[]) {
-              const result = await dbHandle.runAsync(sql, params as (string | number | null)[])
+              const result = await dbHandle.runAsync(sql, expoBindParams(params))
               return {
                 changes: result.changes,
                 lastInsertRowId: result.lastInsertRowId,

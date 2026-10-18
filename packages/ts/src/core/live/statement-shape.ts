@@ -1,3 +1,4 @@
+import { CDCError } from '../errors.js'
 import { assertSqlAllowed } from '../internal-tables.js'
 import { type SqlToken, tokenizeSql } from './sql-tokens.js'
 import type { ClausePositions, SelectItem, SortTerm, WindowBound } from './statement-clauses.js'
@@ -23,8 +24,7 @@ export interface StatementShape {
   limit: WindowBound | null
   offset: WindowBound | null
   tail: string
-  selectParameters: number
-  whereParameters: number
+  probeParameters: number
   usesPositionalParameters: boolean
 }
 
@@ -70,6 +70,11 @@ const AGGREGATE_FUNCTIONS = new Set([
 ])
 
 export function analyseStatement(sql: string): StatementShape {
+  if (typeof sql !== 'string') {
+    throw new CDCError(
+      'Cannot open a live query: a local database keeps a SELECT statement current, and a registered read needs a RemoteDatabase',
+    )
+  }
   assertSqlAllowed(sql)
   const tokens = tokenizeSql(sql)
   if (tokens.length === 0 || tokens[0].lower !== 'select' || tokens[0].quoted) {
@@ -103,17 +108,33 @@ export function analyseStatement(sql: string): StatementShape {
     limit: window.limit,
     offset: window.offset,
     tail: sql.slice(clauses.tailStart, clauses.statementEnd).trim(),
-    selectParameters: countParameters(body, clauses.selectStart, clauses.fromKeyword),
-    whereParameters:
-      clauses.whereStart === null || clauses.whereEnd === null
-        ? 0
-        : countParameters(body, clauses.whereStart, clauses.whereEnd),
+    probeParameters: highestProbeParameter(body, clauses),
     usesPositionalParameters,
   }
 }
 
-function countParameters(body: SqlToken[], start: number, end: number): number {
-  return body.filter(token => token.kind === 'param' && token.start >= start && token.end <= end).length
+function highestProbeParameter(body: SqlToken[], clauses: ClausePositions): number {
+  const { whereStart, whereEnd } = clauses
+  const named = new Map<string, number>()
+  let largest = 0
+  let highest = 0
+  for (const token of body) {
+    if (token.kind !== 'param') continue
+    let index: number
+    if (token.value === '?') {
+      index = ++largest
+    } else if (token.value.startsWith('?')) {
+      index = Number(token.value.slice(1))
+      largest = Math.max(largest, index)
+    } else {
+      index = named.get(token.value) ?? ++largest
+      named.set(token.value, index)
+    }
+    const inSelectList = token.start >= clauses.selectStart && token.end <= clauses.fromKeyword
+    const inWhere = whereStart !== null && whereEnd !== null && token.start >= whereStart && token.end <= whereEnd
+    if (inSelectList || inWhere) highest = Math.max(highest, index)
+  }
+  return highest
 }
 
 function readWhere(sql: string, clauses: ClausePositions): string | null {

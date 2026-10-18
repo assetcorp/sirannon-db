@@ -2,7 +2,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params } from '../../core/types.js'
 import { ReplicationError } from '../errors.js'
-import { DDL_PREFIX_RE } from './constants.js'
+import { replicatedSchemaChangeOf } from './schema-statement.js'
 
 /**
  * Holds the DDL callback and the DDL record that {@link ReplicationTransaction} shares with `LocalExecutor` for one
@@ -28,10 +28,11 @@ export interface ReplicationTransactionHooks {
  * Gives the callback of `ReplicationEngine.transaction(fn)` a {@link Transaction} that records DDL for replication.
  *
  * `query` behaves as it does on the base class. `execute` throws a
- * `ReplicationError` for a DDL statement that contains a semicolon, and after a
- * DDL statement succeeds it awaits the `onDdl` hook, so that the executor
- * writes the synthetic `__ddl__` CDC row inside the same transaction.
- * `executeBatch` throws a `ReplicationError` for any DDL statement.
+ * `ReplicationError` for a schema change that replicas cannot replay, before
+ * SQLite runs it, and after a schema change on the replication allowlist
+ * succeeds it awaits the `onDdl` hook, so that the executor writes the
+ * synthetic `__ddl__` CDC row inside the same transaction. `executeBatch`
+ * throws a `ReplicationError` for any schema change.
  *
  * Because the class extends `Transaction`, it keeps the private
  * `_lastInsertRowId` field that TypeScript compares structurally, so a
@@ -46,23 +47,20 @@ export class ReplicationTransaction extends Transaction {
   }
 
   async execute(sql: string, params?: Params): Promise<ExecuteResult> {
-    const isDdl = DDL_PREFIX_RE.test(sql)
-    if (isDdl && sql.includes(';')) {
-      throw new ReplicationError('DDL statements containing semicolons are not allowed for replication safety')
-    }
+    const schemaChange = replicatedSchemaChangeOf(sql)
 
     const result = await super.execute(sql, params)
 
-    if (isDdl) {
+    if (schemaChange !== null) {
       this.hooks.sawDdl = true
-      await this.hooks.onDdl(sql)
+      await this.hooks.onDdl(schemaChange)
     }
 
     return result
   }
 
   async executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]> {
-    if (DDL_PREFIX_RE.test(sql)) {
+    if (replicatedSchemaChangeOf(sql) !== null) {
       throw new ReplicationError('DDL statements are not allowed via executeBatch inside a replication transaction')
     }
     return super.executeBatch(sql, paramsBatch)

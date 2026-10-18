@@ -2,18 +2,15 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { QueryOptions } from '../../core/types.js'
-import type {
-  ForwardedTransaction,
-  ReplicationBatch,
-  ReplicationStatus,
-  SyncBatch,
-  SyncRequest,
-} from '../../replication/types.js'
+import type { ForwardedTransaction, ReplicationBatch, SyncBatch, SyncRequest } from '../../replication/types.js'
 
 export type FailoverNodeRole = 'primary' | 'replica'
 
+export type EtcdAccess = 'insecure-test' | 'plain-http' | 'https-without-credentials' | 'https-with-ca-only'
+
 export interface FailoverNodeConfig {
   nodeId: string
+  stableNodeId: boolean
   dbPath: string
   grpcPort: number
   httpPort: number
@@ -24,6 +21,7 @@ export interface FailoverNodeConfig {
   endpoints: string[]
   httpEndpoints: Record<string, string>
   etcdHosts: string[]
+  etcdAccess: EtcdAccess
   keyPrefix: string
   clusterId: string
   groupId: string
@@ -32,11 +30,20 @@ export interface FailoverNodeConfig {
   sessionTtlMs: number
   controllerLeaseTtlMs: number
   controllerTickIntervalMs: number
+  controllerEnabled: boolean
+  writeForwarding: boolean
+  initialSync?: boolean
+  backupDirectory?: string
   compatibility: {
     packageVersion: string
     specVersion: string
     protocolVersion: string
   }
+}
+
+export interface FailoverNodeEnvironment {
+  clockOffsetMs?: number
+  etcd3Unresolvable?: boolean
 }
 
 export interface SerializedError {
@@ -46,13 +53,16 @@ export interface SerializedError {
   details?: Record<string, unknown>
 }
 
-export type SerializedReplicationStatus = JsonValue
-
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 interface ReadyMessage {
   type: 'ready'
   nodeId: string
+}
+
+interface StartupFailedMessage {
+  type: 'startup-failed'
+  error: SerializedError
 }
 
 interface ResponseMessage {
@@ -63,7 +73,7 @@ interface ResponseMessage {
   error?: SerializedError
 }
 
-type ChildMessage = ReadyMessage | ResponseMessage
+type ChildMessage = ReadyMessage | StartupFailedMessage | ResponseMessage
 
 interface PendingRequest {
   command: string
@@ -77,25 +87,39 @@ export class FailoverNodeProcess {
   private readonly child: ChildProcess
   private readonly pending = new Map<number, PendingRequest>()
   private requestId = 0
-  private readyPromise: Promise<void>
+  private readonly readyPromise: Promise<void>
   private readyResolve: (() => void) | null = null
   private readyReject: ((error: Error) => void) | null = null
+  private readonly exitPromise: Promise<void>
   private stdout = ''
   private stderr = ''
+  private startupError: SerializedError | null = null
 
-  constructor(readonly config: FailoverNodeConfig) {
-    const childPath = join(dirname(fileURLToPath(import.meta.url)), 'cluster-node.ts')
+  constructor(
+    readonly config: FailoverNodeConfig,
+    environment: FailoverNodeEnvironment = {},
+  ) {
+    const here = dirname(fileURLToPath(import.meta.url))
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject
     })
-    this.child = spawn(process.execPath, ['--import', 'tsx', childPath], {
+    this.readyPromise.catch(() => undefined)
+    const imports = ['--import', 'tsx', '--import', join(here, 'shifted-clock.ts')]
+    if (environment.etcd3Unresolvable) {
+      imports.push('--import', join(here, 'etcd3-unresolvable.ts'))
+    }
+    this.child = spawn(process.execPath, [...imports, join(here, 'cluster-node.ts')], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         SIRANNON_FAILOVER_NODE_CONFIG: JSON.stringify(config),
+        SIRANNON_FAILOVER_CLOCK_OFFSET_MS: String(environment.clockOffsetMs ?? 0),
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    })
+    this.exitPromise = new Promise(resolve => {
+      this.child.once('exit', () => resolve())
     })
     this.child.stdout?.on('data', chunk => {
       this.stdout = appendBounded(this.stdout, chunk.toString('utf8'))
@@ -128,12 +152,20 @@ export class FailoverNodeProcess {
     await this.readyPromise
   }
 
-  async execute(sql: string, params?: unknown[], options?: QueryOptions): Promise<JsonValue> {
-    return this.request('execute', { sql, params, options }, 20_000)
+  async startupFailure(): Promise<SerializedError> {
+    await this.exitPromise
+    if (!this.startupError) {
+      throw new Error(`failover node ${this.config.nodeId} exited without reporting a startup failure\n${this.logs()}`)
+    }
+    return this.startupError
   }
 
-  async executeBatch(sql: string, paramsBatch: unknown[][], options?: QueryOptions): Promise<JsonValue> {
-    return this.request('executeBatch', { sql, paramsBatch, options }, 20_000)
+  get running(): boolean {
+    return this.child.exitCode === null && this.child.signalCode === null
+  }
+
+  async execute(sql: string, params?: unknown[], options?: QueryOptions, replyTimeoutMs = 20_000): Promise<JsonValue> {
+    return this.request('execute', { sql, params, options }, replyTimeoutMs)
   }
 
   async localWriteProbe(id: number, note: string): Promise<JsonValue> {
@@ -144,8 +176,30 @@ export class FailoverNodeProcess {
     return this.request('query', { sql, params, options }, 20_000)
   }
 
-  async status(): Promise<SerializedReplicationStatus> {
+  async status(): Promise<JsonValue> {
     return this.request('status', {}, 10_000)
+  }
+
+  async openLiveItems(): Promise<void> {
+    await this.request('openLiveItems', {}, 10_000)
+  }
+
+  async liveItemIds(): Promise<number[] | null> {
+    return (await this.request('liveItemIds', {}, 10_000)) as number[] | null
+  }
+
+  async holdInSyncUpdates(filter: { removesNodeId?: string } = {}): Promise<void> {
+    await this.request('holdInSyncUpdates', filter, 10_000)
+  }
+
+  async releaseInSyncUpdates(): Promise<void> {
+    await this.request('releaseInSyncUpdates', {}, 10_000)
+  }
+
+  async heldInSyncUpdates(): Promise<number> {
+    const held = await this.request('heldInSyncUpdates', {}, 10_000)
+    if (typeof held !== 'number') throw new Error(`${this.config.nodeId} reported held updates as ${String(held)}`)
+    return held
   }
 
   async reconnectTransport(): Promise<void> {
@@ -169,13 +223,32 @@ export class FailoverNodeProcess {
   }
 
   async shutdown(): Promise<void> {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return
+    if (!this.running) return
     await this.request('shutdown', {}, 20_000).catch(() => undefined)
+    await this.exited(10_000).catch(() => this.kill())
+    await this.exitPromise
   }
 
   kill(): void {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return
+    if (!this.running) return
     this.child.kill('SIGKILL')
+  }
+
+  async killAndWait(): Promise<void> {
+    this.kill()
+    await this.exitPromise
+  }
+
+  async exited(timeoutMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${this.config.nodeId} did not exit within ${timeoutMs}ms`)), timeoutMs)
+    })
+    try {
+      await Promise.race([this.exitPromise, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   logs(): string {
@@ -183,7 +256,7 @@ export class FailoverNodeProcess {
   }
 
   private request(command: string, payload: Record<string, unknown>, timeoutMs: number): Promise<JsonValue> {
-    if (!this.child.send || this.child.exitCode !== null || this.child.signalCode !== null) {
+    if (!this.child.send || !this.running) {
       return Promise.reject(new Error(`failover node ${this.config.nodeId} is not running\n${this.logs()}`))
     }
 
@@ -227,6 +300,11 @@ export class FailoverNodeProcess {
   private handleMessage(message: ChildMessage): void {
     if (message.type === 'ready') {
       this.readyResolve?.()
+      return
+    }
+    if (message.type === 'startup-failed') {
+      this.startupError = message.error
+      this.readyReject?.(deserializeError(message.error))
       return
     }
     if (message.type !== 'response') return
@@ -283,10 +361,6 @@ function withRequestContext(err: Error, nodeId: string, command: string, payload
   contextual.code = withCode.code
   contextual.details = withCode.details
   return contextual
-}
-
-export function replicationStatus(value: SerializedReplicationStatus): ReplicationStatus {
-  return value as unknown as ReplicationStatus
 }
 
 function appendBounded(current: string, next: string): string {

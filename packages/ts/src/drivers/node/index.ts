@@ -4,10 +4,11 @@ import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
-import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
-import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport, nodeWriterContext } from '../node-runtime.js'
+import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
 
 /**
@@ -55,13 +56,18 @@ function carriesSteppedBackupCall(): boolean {
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: carriesSteppedBackupCall() },
+    capabilities: {
+      multipleConnections: true,
+      extensions: true,
+      steppedCopy: carriesSteppedBackupCall(),
+      rowCounts: false,
+    },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, hostOptions)
       return host.connection
     },
-    createWriterContext: nodeWriterContext,
+    createWriterContext: asyncLocalWriterContext,
     createBackupEngine: driver =>
       nodeBackupEngine(
         nodeStreamingSupport({
@@ -99,16 +105,18 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           stmt.setReadBigInts(true)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return narrowRowsIntegers(stmt.all(...(params as Parameters<typeof stmt.all>)) as T[])
+              return narrowRowsIntegers(stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[])
             },
             async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return stmt.all(...(params as Parameters<typeof stmt.all>)) as T[]
+              return stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[]
             },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              return narrowRowIntegers(stmt.get(...(params as Parameters<typeof stmt.get>)) as T | undefined)
+              return narrowRowIntegers(
+                stmt.get(...(bindableParams(params) as Parameters<typeof stmt.get>)) as T | undefined,
+              )
             },
             async run(...params: unknown[]) {
-              const result = stmt.run(...(params as Parameters<typeof stmt.run>)) as {
+              const result = stmt.run(...(bindableParams(params) as Parameters<typeof stmt.run>)) as {
                 changes: number | bigint
                 lastInsertRowid: number | bigint
               }
@@ -124,7 +132,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           const stmt = batchStatementFor(sql)
           const results = new Array(paramsBatch.length)
           for (let i = 0; i < paramsBatch.length; i++) {
-            const result = stmt.run(...(paramsBatch[i] as Parameters<typeof stmt.run>)) as {
+            const result = stmt.run(...(bindableParams(paramsBatch[i]) as Parameters<typeof stmt.run>)) as {
               changes: number | bigint
               lastInsertRowid: number | bigint
             }
@@ -140,7 +148,9 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           const stmt = batchStatementFor(sql)
           let changes = 0
           for (let i = 0; i < paramsBatch.length; i++) {
-            const result = stmt.run(...(paramsBatch[i] as Parameters<typeof stmt.run>)) as { changes: number | bigint }
+            const result = stmt.run(...(bindableParams(paramsBatch[i]) as Parameters<typeof stmt.run>)) as {
+              changes: number | bigint
+            }
             changes += Number(result.changes)
           }
           return { rowsLoaded: paramsBatch.length, changes }

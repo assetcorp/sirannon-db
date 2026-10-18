@@ -41,9 +41,17 @@ export function encodeTaggedValues(value: unknown): unknown {
   const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const k of Object.keys(obj)) {
-    out[k] = encodeTaggedValues(obj[k])
+    setOwnValue(out, k, encodeTaggedValues(obj[k]))
   }
   return out
+}
+
+function setOwnValue(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === '__proto__') {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
+    return
+  }
+  target[key] = value
 }
 
 function encodeTaggedLeaf(value: unknown): unknown {
@@ -108,7 +116,7 @@ export function decodeTaggedValues(value: unknown): unknown {
   }
   const out: Record<string, unknown> = {}
   for (const k of keys) {
-    out[k] = decodeTaggedValues(obj[k])
+    setOwnValue(out, k, decodeTaggedValues(obj[k]))
   }
   return out
 }

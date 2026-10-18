@@ -1,0 +1,35 @@
+{
+  "name": "@delali/sirannon-sqlite",
+  "version": "0.0.0",
+  "description": "better-sqlite3 built against Sirannon's build of SQLite, which counts the rows that each statement reads and writes so that Sirannon can report them for per-tenant metering.",
+  "license": "Apache-2.0 AND MIT",
+  "author": "Delali (https://sondelali.com)",
+  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/assetcorp/sirannon-db.git",
+    "directory": "native/sqlite/npm/sirannon-sqlite"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "lib",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "7.6.13"
+  }
+}

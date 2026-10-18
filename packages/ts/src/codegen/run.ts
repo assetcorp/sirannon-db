@@ -30,12 +30,14 @@ interface Options {
 
 const DEFAULT_SHARED_EXPORT = 'sharedOperations'
 
+const KNOWN_FLAGS = new Set(['registry', 'out', 'manifest', 'export', 'shared-export', 'package'])
+
 function parseOptions(argv: readonly string[]): Options {
   const values = new Map<string, string>()
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i]
     const value = argv[i + 1]
-    if (!flag.startsWith('--') || value === undefined) {
+    if (!flag.startsWith('--') || !KNOWN_FLAGS.has(flag.slice(2)) || value === undefined) {
       throw new Error(`Unrecognised argument '${flag}'\n\n${CODEGEN_USAGE}`)
     }
     values.set(flag.slice(2), value)

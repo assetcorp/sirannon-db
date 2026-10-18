@@ -150,6 +150,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     constructor(resolveUrl: () => string | Promise<string>, headers: Record<string, string> | undefined, requestTimeoutMs?: number);
     // (undocumented)
     assertSqlAccepted(): Promise<void>;
+    close(): void;
     // (undocumented)
     registryDigest(refresh?: boolean): Promise<string | undefined>;
 }
@@ -157,6 +158,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
 // @public
 export interface ServerCapabilityCheck {
     assertSqlAccepted(): Promise<void>;
+    close?(): void;
     registryDigest(refresh?: boolean): Promise<string | undefined>;
 }
 

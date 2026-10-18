@@ -1,15 +1,22 @@
 import { HLC } from '../../core/sync/hlc.js'
 import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
-import type { NodeInfo, SyncPhase } from '../types.js'
+import type { NodeInfo, ReplicationBatch } from '../types.js'
 import { assertInboundCoordinatorMessage, resolverFor } from './coordinator-authority.js'
 import { handleCoordinatorAckProgress } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
-import { delayAckIfConfigured } from './test-hooks.js'
+import {
+  acceptsBatchTerm,
+  applyInAnchoredTerm,
+  handleHistoryRefusal,
+  isAnchoredToCurrentTerm,
+} from './history-anchor.js'
+import { servesItsData } from './internal-types.js'
+import { isPositionReport, positionReport } from './position-report.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
-function clockDriftMs(remoteHlc: string): number {
-  return Math.abs(Date.now() - HLC.decode(remoteHlc).wallMs)
+function clockLeadMs(remoteHlc: string): number {
+  return HLC.decode(remoteHlc).wallMs - Date.now()
 }
 
 function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
@@ -19,18 +26,11 @@ function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
   return engine.config.topology.shouldAcceptFrom(peer.id, peer.role)
 }
 
-function servesItsData(phase: SyncPhase): boolean {
-  return phase === 'ready' || phase === 'catching-up'
-}
-
 async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, appliedSeq: bigint): Promise<void> {
   if (appliedSeq === 0n || !replicatesFrom(engine, peer)) return
-  if (!servesItsData(engine.syncState.phase)) return
+  if (!servesItsData(engine.syncState.phase) || !isAnchoredToCurrentTerm(engine)) return
   if (!servesItsData((await engine.log.getSyncState()).phase)) return
-  await engine.config.transport.sendAck(
-    peer.id,
-    engine.decorate({ batchId: '', ackedSeq: appliedSeq, nodeId: engine.nodeId }),
-  )
+  await engine.config.transport.sendAck(peer.id, positionReport(engine, appliedSeq))
 }
 
 function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
@@ -44,7 +44,7 @@ function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq:
 }
 
 export function wireTransportHandlers(engine: ReplicationEngine): void {
-  engine.config.transport.onBatchReceived(async (batch, fromPeerId) => {
+  const receiveBatch = async (batch: ReplicationBatch, fromPeerId: string): Promise<void> => {
     if (!engine.running) return
     if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') return
 
@@ -68,6 +68,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       }
 
       await assertInboundCoordinatorMessage(engine, batch, fromPeerId, 'batch')
+      if (!acceptsBatchTerm(engine, batch)) return
 
       if (batch.changes.length > engine.maxBatchChanges) {
         throw new BatchValidationError(
@@ -75,12 +76,23 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         )
       }
 
-      const drift = clockDriftMs(batch.hlcRange.max)
-      if (drift > engine.maxClockDriftMs) {
-        throw new BatchValidationError(`Clock drift too high: ${drift}ms exceeds max ${engine.maxClockDriftMs}ms`)
+      const lead = clockLeadMs(batch.hlcRange.max)
+      if (lead > engine.maxClockDriftMs) {
+        throw new BatchValidationError(
+          `Peer ${fromPeerId} stamped this batch ${lead}ms ahead of the local clock, and this node refuses a lead above its maxClockDriftMs of ${engine.maxClockDriftMs}ms`,
+        )
       }
 
-      const applyResult = await engine.log.applyBatch(batch, table => resolverFor(engine, table))
+      const appliedSeq = await engine.log.getLastAppliedSeq(fromPeerId)
+      if (batch.afterSeq !== undefined && batch.afterSeq > appliedSeq) {
+        await engine.config.transport.sendAck(fromPeerId, positionReport(engine, appliedSeq))
+        return
+      }
+
+      const applyResult = await applyInAnchoredTerm(engine, batch, () =>
+        engine.log.applyBatch(batch, table => resolverFor(engine, table)),
+      )
+      if (applyResult === null) return
 
       const batchContainedDdl = batch.changes.some(c => c.operation === 'ddl')
       if (batchContainedDdl) {
@@ -102,7 +114,6 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.highestSourceSeqSeen = batch.toSeq
       }
 
-      await delayAckIfConfigured(engine)
       await engine.config.transport.sendAck(
         fromPeerId,
         engine.decorate({
@@ -115,6 +126,16 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'batch-received', peerId: fromPeerId, recoverable: true })
     }
+  }
+
+  const batchQueues = new Map<string, Promise<void>>()
+  engine.config.transport.onBatchReceived((batch, fromPeerId) => {
+    const received = (batchQueues.get(fromPeerId) ?? Promise.resolve()).then(() => receiveBatch(batch, fromPeerId))
+    batchQueues.set(
+      fromPeerId,
+      received.catch(() => undefined),
+    )
+    return received
   })
 
   engine.config.transport.onAckReceived((ack, fromPeerId) => {
@@ -133,12 +154,14 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         })
         return
       }
+      if (isPositionReport(ack)) engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
       engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
       persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       return
     }
     assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
       .then(() => {
+        if (isPositionReport(ack)) engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
         engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
         persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
       })
@@ -237,6 +260,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       engine.syncJoiner.handleSourceRejection(ack, fromPeerId)
       return
     }
+    if (handleHistoryRefusal(engine, ack, fromPeerId)) return
     if (!engine.isCoordinatorMode()) {
       if (ack.joinerNodeId !== fromPeerId) {
         engine.emitError({

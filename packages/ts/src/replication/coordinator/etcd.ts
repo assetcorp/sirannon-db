@@ -44,6 +44,8 @@ import type {
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
 
+const SESSION_REGISTRATION_ATTEMPTS = 3
+
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
  *
@@ -56,7 +58,6 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private connection: Promise<EtcdConnection> | null = null
   private readonly onWatcherError: ((error: Error) => void) | undefined
   private readonly leases: EtcdLeaseRegistry
-  private readonly grantedNodeSessionLeaseIds = new Map<string, string>()
   private readonly watchers = new Set<Watcher>()
 
   constructor(options: EtcdClusterCoordinatorOptions) {
@@ -83,7 +84,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return watchEtcdControllerLease(namespace, clusterId, watcher, this.watchers, this.onWatcherError)
   }
 
-  /** Extends a lease, and returns false for a lease that is expired or unknown to this coordinator. */
+  /**
+   * Returns true once etcd extends the lease, and false when the lease has expired or this coordinator never granted
+   * it. When etcd gives no answer, the method throws a `CoordinatorError`, so that the caller keeps the lease and tries
+   * the renewal again once etcd answers.
+   */
   async renewLease(leaseId: string, ttlMs: number): Promise<boolean> {
     assertNonEmpty(leaseId, 'leaseId')
     assertPositiveTtl(ttlMs)
@@ -94,9 +99,16 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     try {
       await entry.lease.keepaliveOnce()
-    } catch {
-      this.leases.forget(leaseId)
-      return false
+    } catch (err: unknown) {
+      const { EtcdLeaseInvalidError } = await loadEtcd3Module()
+      if (err instanceof EtcdLeaseInvalidError) {
+        this.leases.forget(leaseId)
+        return false
+      }
+      throw new CoordinatorError('etcd did not answer the lease renewal', {
+        leaseId,
+        cause: err instanceof Error ? err.message : String(err),
+      })
     }
 
     const renewedAtMs = Date.now()
@@ -160,7 +172,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return released
   }
 
-  /** Records one node as a live member of the cluster. */
+  /**
+   * Returns a new session that records one node as a live member of the cluster. When an earlier process of the same
+   * node left a session behind, the coordinator replaces that session with the new one, because a node ID names one
+   * durable copy of the database and only the process that now has that copy open uses the ID.
+   */
   async registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession> {
     assertNonEmpty(input.clusterId, 'clusterId')
     assertNonEmpty(input.nodeId, 'nodeId')
@@ -168,15 +184,6 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
     const { namespace } = await this.connect()
     const key = nodeSessionKey(input.clusterId, input.nodeId)
-    const existingRawSession = await namespace.get(key).string()
-    if (existingRawSession) {
-      const existingSession = parseNodeSession(existingRawSession)
-      const supersedesOwnSession = this.grantedNodeSessionLeaseIds.get(key) === existingSession.lease.id
-      if (existingSession.lease.expiresAtMs > Date.now() && !supersedesOwnSession) {
-        throw new CoordinatorError(`Node session '${input.nodeId}' is already registered`)
-      }
-    }
-
     const lease = namespace.lease(ttlMsToSeconds(input.ttlMs))
     const leaseId = await lease.grant()
     const grantedAtMs = Date.now()
@@ -202,17 +209,21 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     }
 
     const rawSession = JSON.stringify(session)
-    const transaction = existingRawSession
-      ? namespace.if(key, 'Value', '==', existingRawSession)
-      : namespace.if(key, 'Create', '==', 0)
-    const result = await transaction.then(namespace.put(key).value(rawSession).lease(leaseId)).commit()
-    if (!result.succeeded) {
+    let registered = false
+    for (let attempt = 0; attempt < SESSION_REGISTRATION_ATTEMPTS && !registered; attempt++) {
+      const existingRawSession = await namespace.get(key).string()
+      const transaction = existingRawSession
+        ? namespace.if(key, 'Value', '==', existingRawSession)
+        : namespace.if(key, 'Create', '==', 0)
+      const result = await transaction.then(namespace.put(key).value(rawSession).lease(leaseId)).commit()
+      registered = result.succeeded === true
+    }
+    if (!registered) {
       await revokeLeaseQuietly(lease)
       throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
     }
 
     await this.leases.discardSuperseded(key, leaseId)
-    this.grantedNodeSessionLeaseIds.set(key, leaseId)
     this.leases.track(lease, {
       leaseId,
       key,
@@ -310,7 +321,11 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     return groups.updateNodeMaintenance(input)
   }
 
-  /** Promotes an eligible in-sync replica, and throws a `NoSafePrimaryError` when no replica qualifies. */
+  /**
+   * Returns the group state after a promotion. The coordinator promotes an eligible in-sync replica only while the
+   * group has no primary or its primary is one of `excludeNodeIds`, and it returns the group unchanged once another
+   * node holds primary duty. The method throws a `NoSafePrimaryError` when no replica qualifies.
+   */
   async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
     const { groups } = await this.connect()
     return groups.promoteEligibleReplica(input)
@@ -325,7 +340,6 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     this.watchers.clear()
     await Promise.allSettled(watcherCancels)
 
-    this.grantedNodeSessionLeaseIds.clear()
     await this.leases.revokeAll()
     const connection = this.connection
     if (!connection) return
@@ -336,8 +350,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private connect(): Promise<EtcdConnection> {
     if (!this.connection) {
       this.connection = loadEtcd3Module().then(
-        ({ Etcd3 }) => {
-          const client = new Etcd3(toEtcdOptions(this.options))
+        ({ Etcd3, isRecoverableError }) => {
+          const client = new Etcd3(toEtcdOptions(this.options, isRecoverableError))
           const namespace = client.namespace(normaliseKeyPrefix(this.options.keyPrefix))
           const groups = new EtcdGroupStore(namespace, this.watchers, this.onWatcherError)
           return { client, namespace, groups }

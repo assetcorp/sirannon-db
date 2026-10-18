@@ -1,15 +1,44 @@
 import type { DeviceSyncPort } from '../core/database-sync.js'
+import { MAX_SYNC_BATCH_CHANGES } from '../server/sync-protocol.js'
 import { toWsUrl } from './endpoint-urls.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
 import type { NetworkSignal } from './network-signal.js'
+import { assertSnapshotPageSize } from './snapshot-loader.js'
 import type { SyncControllerOptions, SyncState } from './sync-controller-types.js'
 import { PullStream } from './sync-pull-stream.js'
 import { PushLoop } from './sync-push-loop.js'
 import { ResyncScheduler } from './sync-resync-scheduler.js'
+import { RemoteError } from './types.js'
 
 export function describeError(err: unknown): { code: string; message: string } {
   const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'UNKNOWN_ERROR'
   return { code, message: err instanceof Error ? err.message : String(err) }
+}
+
+/**
+ * Throws an `INVALID_ARGUMENT` error for a setting that leaves the controller unable to sync: a table list
+ * with no table, a push batch size that a server refuses or that reads no change, or a snapshot page size that a
+ * server refuses.
+ *
+ * @param options - The settings that the application passed to the controller.
+ *
+ * @internal
+ */
+export function assertSyncControllerOptions(options: SyncControllerOptions): void {
+  if (!Array.isArray(options.tables) || options.tables.length === 0) {
+    throw new RemoteError('INVALID_ARGUMENT', "'tables' must name at least one table to sync")
+  }
+  const batchSize = options.batchSize
+  if (
+    batchSize !== undefined &&
+    (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_SYNC_BATCH_CHANGES)
+  ) {
+    throw new RemoteError(
+      'INVALID_ARGUMENT',
+      `'batchSize' must be a whole number from 1 to ${MAX_SYNC_BATCH_CHANGES}, the most changes that a server accepts in one push`,
+    )
+  }
+  assertSnapshotPageSize(options.snapshotPageSize, 'snapshotPageSize')
 }
 
 export const DEFAULT_BATCH_SIZE = 100

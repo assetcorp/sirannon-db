@@ -1,209 +1,148 @@
 import { expect } from 'vitest'
-import { CLUSTER_ID, type GateEnvironment, GROUP_ID, NODE_IDS, requireNode } from './gate-environment.js'
-import {
-  collectNodeDiagnostics,
-  type FailoverStatus,
-  readinessOf,
-  recentErrorCount,
-  statusOf,
-} from './gate-observations.js'
-import { jsonReplacer, sameMembers, waitForCondition } from './gate-support.js'
+import type { StoredGroup } from './etcd-oracle.js'
+import { dbPathFor, type GateEnvironment } from './gate-environment.js'
+import { collectNodeDiagnostics, statusOf } from './gate-observations.js'
+import { describeValue, holdsThroughout, sameMembers, waitForCondition } from './gate-support.js'
+import { readItemIds } from './sqlite-oracle.js'
 
-let writeProbeId = 1_000
+let writeProbeId = 100_000
 
-function nextWriteProbeId(): number {
-  writeProbeId += 1
-  return writeProbeId
-}
-
-export async function expectExactlyOneWritablePrimary(
+export async function waitForGroup(
   environment: GateEnvironment,
-  expectedPrimary: string,
-  expectedTerm: string,
-): Promise<void> {
-  let latestStatuses: FailoverStatus[] = []
+  predicate: (group: StoredGroup) => boolean,
+  timeoutMs: number,
+  description: string,
+): Promise<StoredGroup> {
+  let latest: StoredGroup | null = null
   try {
     await waitForCondition(async () => {
-      latestStatuses = await Promise.all([...environment.nodes.values()].map(statusOf))
-      const authoritative = latestStatuses.filter(status => status.coordinator?.authority)
-      return (
-        authoritative.length === 1 &&
-        authoritative[0]?.nodeId === expectedPrimary &&
-        authoritative[0]?.coordinator?.primaryTerm === expectedTerm
-      )
-    }, 20_000)
+      latest = await environment.etcdOracle.group()
+      return latest !== null && predicate(latest)
+    }, timeoutMs)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(
-      `Did not observe exactly one authoritative primary ${expectedPrimary} term ${expectedTerm}: ${message}\nstatuses=${JSON.stringify(
-        latestStatuses,
-        jsonReplacer,
-        2,
+      `etcd never showed ${description}: ${message}\ngroup=${describeValue(latest)}\ndiagnostics=${describeValue(
+        await collectNodeDiagnostics(environment),
       )}`,
     )
   }
-
-  const probeResults: Array<{ nodeId: string; ok: boolean; code?: string; message?: string }> = []
-  const nodes = [...environment.nodes.entries()].sort(([left], [right]) => left.localeCompare(right))
-  for (const [nodeId, node] of nodes) {
-    try {
-      await node.localWriteProbe(nextWriteProbeId(), `primary-probe-term-${expectedTerm}-${nodeId}`)
-      probeResults.push({ nodeId, ok: true })
-    } catch (err: unknown) {
-      const error = err as Error & { code?: string }
-      probeResults.push({ nodeId, ok: false, code: error.code, message: error.message })
-    }
-  }
-
-  const writable = probeResults.filter(result => result.ok)
-  expect(writable, `local write probe results=${JSON.stringify(probeResults, null, 2)}`).toEqual([
-    { nodeId: expectedPrimary, ok: true },
-  ])
-}
-
-export async function assertHealth(
-  environment: GateEnvironment,
-  expectedPrimary: string,
-  expectedTerm: string,
-  expectedReadAvailability: 'available' | 'unavailable',
-  expectedWriteAvailability: 'available' | 'unavailable',
-): Promise<void> {
-  const primaryStatus = await statusOf(requireNode(environment, expectedPrimary))
-  expect(primaryStatus.coordinator?.currentPrimary?.nodeId).toBe(expectedPrimary)
-  expect(primaryStatus.coordinator?.primaryTerm).toBe(expectedTerm)
-  const ready = await readinessOf(environment, expectedPrimary)
-  expect(ready.replication?.currentPrimary).toBe(expectedPrimary)
-  expect(ready.replication?.primaryTerm).toBe(expectedTerm)
-  expect(ready.replication?.readAvailability).toBe(expectedReadAvailability)
-  expect(ready.replication?.writeAvailability).toBe(expectedWriteAvailability)
-  expect(ready.replication?.syncState).toBe('ready')
-  expect(ready.replication?.coordinator?.authority).toBe(true)
-  expect(primaryStatus.coordinator?.repairingNodeIds ?? []).toEqual(expect.any(Array))
-  expect(primaryStatus.coordinator?.faultedNodeIds ?? []).toEqual(expect.any(Array))
+  if (latest === null) throw new Error('etcd holds no group')
+  return latest
 }
 
 export async function waitForInSyncSet(
   environment: GateEnvironment,
   expectedNodeIds: readonly string[],
   timeoutMs: number,
-): Promise<void> {
-  let latestState: unknown = null
-  try {
-    await waitForCondition(async () => {
-      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-      return sameMembers((latestState as { inSyncNodeIds?: string[] } | null)?.inSyncNodeIds ?? [], expectedNodeIds)
-    }, timeoutMs)
-  } catch (err: unknown) {
-    const statuses: Record<string, unknown> = {}
-    for (const [nodeId, node] of environment.nodes) {
-      statuses[nodeId] = await statusOf(node).catch(statusErr => ({
-        error: statusErr instanceof Error ? statusErr.message : String(statusErr),
-        logs: node.logs(),
-      }))
-    }
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `Timed out waiting for in-sync set ${expectedNodeIds.join(',')}: ${message}\nstate=${JSON.stringify(
-        latestState,
-        jsonReplacer,
-        2,
-      )}\nstatuses=${JSON.stringify(statuses, jsonReplacer, 2)}`,
-    )
-  }
+): Promise<StoredGroup> {
+  return waitForGroup(
+    environment,
+    group => sameMembers(group.inSyncNodeIds, expectedNodeIds),
+    timeoutMs,
+    `the in-sync set ${expectedNodeIds.join(',')}`,
+  )
 }
 
-export async function waitForCurrentPrimary(
+export async function waitForPrimary(
   environment: GateEnvironment,
-  expectedNodeId: string,
+  candidates: readonly string[],
   timeoutMs: number,
-): Promise<void> {
-  let latestState: unknown = null
-  try {
-    await waitForCondition(async () => {
-      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-      return (latestState as { currentPrimary?: { nodeId?: string } } | null)?.currentPrimary?.nodeId === expectedNodeId
-    }, timeoutMs)
-  } catch (err: unknown) {
-    const liveSessions: Record<string, unknown> = {}
-    for (const nodeId of NODE_IDS) {
-      liveSessions[nodeId] = await environment.coordinator.getLiveNodeSession(CLUSTER_ID, nodeId).catch(sessionErr => ({
-        error: sessionErr instanceof Error ? sessionErr.message : String(sessionErr),
-      }))
-    }
-    const nodeStatuses: Record<string, unknown> = {}
-    for (const [nodeId, node] of environment.nodes) {
-      nodeStatuses[nodeId] = await statusOf(node).catch(statusErr => ({
-        error: statusErr instanceof Error ? statusErr.message : String(statusErr),
-        logs: node.logs(),
-      }))
-    }
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `Timed out waiting for primary ${expectedNodeId}: ${message}\nstate=${JSON.stringify(
-        latestState,
-        jsonReplacer,
-        2,
-      )}\nliveSessions=${JSON.stringify(liveSessions, jsonReplacer, 2)}\nnodeStatuses=${JSON.stringify(
-        nodeStatuses,
-        jsonReplacer,
-        2,
-      )}`,
-    )
-  }
+): Promise<StoredGroup & { currentPrimary: { nodeId: string } }> {
+  const group = await waitForGroup(
+    environment,
+    stored => stored.currentPrimary !== null && candidates.includes(stored.currentPrimary.nodeId),
+    timeoutMs,
+    `a primary among ${candidates.join(',')}`,
+  )
+  const currentPrimary = group.currentPrimary
+  if (!currentPrimary) throw new Error('etcd names no primary')
+  return { ...group, currentPrimary }
 }
 
-export async function waitForAnyCurrentPrimary(
+export async function expectGroupHolds(
   environment: GateEnvironment,
-  expectedNodeIds: readonly string[],
+  primaryNodeId: string | null,
+  primaryTerm: bigint,
+  durationMs: number,
+): Promise<void> {
+  await holdsThroughout(
+    async () => {
+      const group = await environment.etcdOracle.group()
+      return (group?.currentPrimary?.nodeId ?? null) === primaryNodeId && group?.primaryTerm === primaryTerm
+    },
+    durationMs,
+    `etcd to keep ${primaryNodeId ?? 'no primary'} at term ${primaryTerm}`,
+  )
+}
+
+export async function waitForControllerHolder(
+  environment: GateEnvironment,
+  candidates: readonly string[],
   timeoutMs: number,
 ): Promise<string> {
-  let currentPrimary: string | null = null
-  let latestState: unknown = null
-  try {
-    await waitForCondition(async () => {
-      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-      currentPrimary = (latestState as { currentPrimary?: { nodeId?: string } } | null)?.currentPrimary?.nodeId ?? null
-      return currentPrimary !== null && expectedNodeIds.includes(currentPrimary)
-    }, timeoutMs)
-  } catch (err: unknown) {
-    const liveSessions: Record<string, unknown> = {}
-    for (const nodeId of NODE_IDS) {
-      liveSessions[nodeId] = await environment.coordinator.getLiveNodeSession(CLUSTER_ID, nodeId).catch(sessionErr => ({
-        error: sessionErr instanceof Error ? sessionErr.message : String(sessionErr),
-      }))
-    }
-    const diagnostics = await collectNodeDiagnostics(environment)
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `Timed out waiting for any primary in ${expectedNodeIds.join(',')}: ${message}\nstate=${JSON.stringify(
-        latestState,
-        jsonReplacer,
-        2,
-      )}\nliveSessions=${JSON.stringify(liveSessions, jsonReplacer, 2)}\ndiagnostics=${JSON.stringify(
-        diagnostics,
-        jsonReplacer,
-        2,
-      )}`,
-    )
-  }
-  if (currentPrimary === null) {
-    throw new Error(`No current primary matched ${expectedNodeIds.join(',')}`)
-  }
-  return currentPrimary
+  const seen: { holder?: string } = {}
+  await waitForCondition(async () => {
+    seen.holder = (await environment.etcdOracle.controller())?.holderId
+    return seen.holder !== undefined && candidates.includes(seen.holder)
+  }, timeoutMs)
+  if (seen.holder === undefined) throw new Error(`No controller holder among ${candidates.join(',')}`)
+  return seen.holder
 }
 
-export async function waitForNoSafePrimary(
+export async function waitForSessionGone(
   environment: GateEnvironment,
-  nodeIds: readonly string[],
+  nodeId: string,
   timeoutMs: number,
 ): Promise<void> {
-  await waitForCondition(async () => {
-    for (const nodeId of nodeIds) {
-      const node = requireNode(environment, nodeId)
-      if ((await recentErrorCount(node, 'NO_SAFE_PRIMARY')) > 0) {
-        return true
-      }
+  await waitForCondition(async () => (await environment.etcdOracle.nodeSession(nodeId)) === null, timeoutMs)
+}
+
+export async function expectExactlyOneWritablePrimary(
+  environment: GateEnvironment,
+  expectedPrimary: string,
+  expectedTerm: bigint,
+): Promise<void> {
+  const group = await waitForGroup(
+    environment,
+    stored => stored.currentPrimary?.nodeId === expectedPrimary && stored.primaryTerm === expectedTerm,
+    20_000,
+    `${expectedPrimary} as primary at term ${expectedTerm}`,
+  )
+  expect(group.currentPrimary?.nodeId).toBe(expectedPrimary)
+
+  let latestStatuses: unknown[] = []
+  try {
+    await waitForCondition(async () => {
+      const statuses = await Promise.all([...environment.nodes.values()].map(statusOf))
+      latestStatuses = statuses
+      const authoritative = statuses.filter(status => status.coordinator?.authority)
+      return authoritative.length === 1 && authoritative[0]?.nodeId === expectedPrimary
+    }, 20_000)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `More or fewer than one node claimed authority: ${message}\nstatuses=${describeValue(latestStatuses)}`,
+    )
+  }
+
+  const results: Array<{ nodeId: string; accepted: boolean; code?: string }> = []
+  const nodes = [...environment.nodes.entries()].sort(([left], [right]) => left.localeCompare(right))
+  let acceptedProbeId: number | null = null
+  for (const [nodeId, node] of nodes) {
+    writeProbeId += 1
+    try {
+      await node.localWriteProbe(writeProbeId, `probe-term-${expectedTerm}`)
+      results.push({ nodeId, accepted: true })
+      if (nodeId === expectedPrimary) acceptedProbeId = writeProbeId
+    } catch (err: unknown) {
+      results.push({ nodeId, accepted: false, code: (err as { code?: string }).code })
     }
-    return false
-  }, timeoutMs)
+  }
+  expect(
+    results.filter(result => result.accepted),
+    describeValue(results),
+  ).toEqual([{ nodeId: expectedPrimary, accepted: true }])
+  if (acceptedProbeId === null) throw new Error(`${expectedPrimary} accepted no probe`)
+  expect(readItemIds(dbPathFor(environment, expectedPrimary))).toContain(acceptedProbeId)
 }

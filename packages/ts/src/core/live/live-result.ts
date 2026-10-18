@@ -66,7 +66,7 @@ class Draft<T> {
 
     if (change.after === null) {
       if (change.before === null) return true
-      return held === undefined ? this.plan.offset === 0 : this.remove(held)
+      return held === undefined ? this.mayLieBeyondWindow() : this.remove(held)
     }
 
     const entering: HeldRow<T> = { key: change.key, row: change.after.row as T, sort: change.after.sort }
@@ -74,11 +74,15 @@ class Draft<T> {
     if (held !== undefined) {
       if (this.plan.sortPlan.compare(held.sort, entering.sort) === 0) return this.replace(held, entering)
       if (!this.remove(held)) return false
-    } else if (change.before !== null && this.plan.offset > 0) {
+    } else if (change.before !== null && (this.plan.usesRowid || !this.mayLieBeyondWindow())) {
       return false
     }
 
     return this.insert(entering)
+  }
+
+  private mayLieBeyondWindow(): boolean {
+    return this.plan.offset === 0 && this.truncated
   }
 
   windowIsWhole(): boolean {
@@ -112,7 +116,7 @@ class Draft<T> {
     }
 
     const at = placementIndex(this.rows, held.sort, this.plan.sortPlan)
-    if (this.plan.limit !== null && at >= this.plan.limit) {
+    if (this.plan.limit !== null && (at >= this.plan.limit || (this.truncated && at >= this.rows.length))) {
       this.truncated = true
       return true
     }

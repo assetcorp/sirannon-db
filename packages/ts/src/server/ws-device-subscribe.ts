@@ -1,11 +1,20 @@
 import { needsResync } from '../core/cdc/primed-subscription.js'
 import { filteredChange } from '../core/cdc/subscription.js'
+import { selectMaxAssignedChangeSeq } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
+import { DEVICE_CURSOR_DROPPED_REASON, deviceCursorExists, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
 import type { WSConnection } from './ws-connection.js'
-import { DeviceFramePacker } from './ws-device-frames.js'
+import { DeviceFramePacker, deviceFrameTargetBytes } from './ws-device-frames.js'
 import { DeviceChangeStream } from './ws-device-stream.js'
 import type { ConnectionState } from './ws-handler.js'
 import { releaseUnattached, type WSSubscribeDeps } from './ws-subscribe.js'
+
+class DroppedDeviceCursor extends Error {
+  constructor() {
+    super(DEVICE_CURSOR_DROPPED_REASON)
+    this.name = 'DroppedDeviceCursor'
+  }
+}
 
 export interface DeviceSubscribeRequest {
   id: string
@@ -33,10 +42,12 @@ export async function subscribeDevice(
   try {
     const ctx = await deps.cdc.ensure(state.databaseId, state.database)
     for (const table of tables) {
-      await ctx.tracker.watch(ctx.cdcConn, table)
+      await state.database.watch(table)
     }
-    await state.database.ensureChangeStamping()
+    const holdsCursor = await deviceCursorExists(ctx.cdcConn, deviceId)
     epoch = ctx.epoch
+    const logEnd =
+      sinceSeq === undefined ? 0n : await selectMaxAssignedChangeSeq(ctx.cdcConn, ctx.tracker.changeLogTable)
     boundary = ctx.tracker.cursor
 
     if (sinceSeq === undefined) {
@@ -44,7 +55,7 @@ export async function subscribeDevice(
     } else {
       const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
       const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
-      resync = foreignEpoch || needsResync(sinceSeq, minSeq, boundary)
+      resync = foreignEpoch || sinceSeq > logEnd || needsResync(sinceSeq, minSeq, boundary)
     }
 
     const suppress = (event: ChangeEvent): boolean => event.origin === deviceId || event.origin === undefined
@@ -53,17 +64,31 @@ export async function subscribeDevice(
     stream = new DeviceChangeStream(
       {
         deviceId,
+        holdsCursor,
         maxUnacknowledgedChanges: deps.maxUnacknowledgedChanges,
         pacing: stagedStream ? 'perEvent' : 'perTransaction',
-        packer: stagedStream ? new DeviceFramePacker(id, data => deps.sendText(conn, data)) : null,
+        packer: stagedStream
+          ? new DeviceFramePacker(id, data => deps.sendText(conn, data), deviceFrameTargetBytes(deps.socketResumeBytes))
+          : null,
         sendEvent: event => deps.sendChange(conn, id, event),
         socketBuffered: () => conn.bufferedAmount(),
         socketCongested: () => conn.bufferedAmount() >= deps.socketResumeBytes,
         flushSocket: () => conn.flush(),
         onOverload: () => deps.handleOverload(conn),
-        onFault: () => deps.closeFaulted(conn),
-        readLog: (afterSeq, upToSeq, limit) =>
-          ctx.tracker.readSinceTables(ctx.cdcConn, tables, afterSeq, upToSeq, limit),
+        onFault: err => {
+          if (err instanceof DroppedDeviceCursor) {
+            conn.close(WS_CLOSE_DEVICE_CURSOR_DROPPED, err.message)
+            return
+          }
+          deps.closeFaulted(conn)
+        },
+        readLog: async (afterSeq, upToSeq, limit) => {
+          const events = await ctx.tracker.readSinceTables(ctx.cdcConn, tables, afterSeq, upToSeq, limit)
+          if (stream.holdsCursor && !(await deviceCursorExists(ctx.cdcConn, deviceId))) {
+            throw new DroppedDeviceCursor()
+          }
+          return events
+        },
         logCursor: () => ctx.tracker.cursor,
         logCursorAtTxBoundary: () => ctx.tracker.pollEndedAtTxBoundary,
         transform: event => {

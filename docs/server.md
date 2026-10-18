@@ -17,11 +17,22 @@ const server = createServer(sirannon, { port: 9876, operations })
 await server.listen()
 ```
 
+## Stopping the server
+
+`server.close()` stops listening and stops every subscription at once. It then waits for each request in progress to send its reply before it ends the connections, and a WebSocket client receives every reply that the server has queued for it before close code 1001. Call it before `sirannon.shutdown()`, so that the shutdown closes no database that a request is still using.
+
+```ts
+await server.close({ timeoutMs: 10_000 })
+await sirannon.shutdown()
+```
+
+`timeoutMs` defaults to 30,000, which matches the client's default request timeout. Once it passes, the server ends every remaining connection, so an `authenticate` hook or a statement that never settles can't hold the process open. A `timeoutMs` that isn't a whole number from 0 to 2,147,483,647 fails with `INVALID_CLOSE_TIMEOUT`.
+
 ## What the server accepts
 
 A server refuses SQL from the network by default. Register the statements that callers may invoke by name, following the [registered operations guide](operations.md). Set `acceptSql: true` to open the five statement routes and their WebSocket messages, and when you do, authenticate every request.
 
-`GET /capabilities` returns the capability tokens of this server, along with the registry digest once you configure operations. The list holds `query.named` once you configure operations, `query.sql` once you turn SQL on, and the device-sync tokens once you turn device sync on. Before a client sends a statement, it reads that list and fails the call with `SQL_NOT_ACCEPTED` when `query.sql` is missing from it.
+`GET /capabilities` returns the capability tokens of this server, along with the registry digest once you configure operations. The list holds `query.named` once you configure operations, `query.sql` once you turn SQL on, and the device-sync tokens once you turn device sync on. Before a client sends a statement, it reads that list and fails the call with `SQL_NOT_ACCEPTED` when `query.sql` is missing from it. When the server answers `404`, because it was released before the list existed, the client sends the statement and lets that server decide.
 
 ## Authentication
 
@@ -71,7 +82,7 @@ const db = await sirannon.open('app', './data/app.db', {
 
 ## HTTP routes
 
-Clients URL-encode `{id}` and `{name}`. Until you set `acceptSql: true`, the server answers the five statement routes with `403 SQL_NOT_ACCEPTED`. Until you set `acceptDeviceSync: true`, it answers the four device-sync routes, `/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, with `403 DEVICE_SYNC_NOT_ACCEPTED`. The server serves every other route in every configuration.
+Clients URL-encode `{id}` and `{name}`, and the server decodes each one before it uses it. The server answers `400 INVALID_REQUEST` for an `{id}` that decodes to a path starting with a slash, a backslash, or a drive letter such as `C:`, and for one with a `.` or `..` part, such as `../../etc`. That rule means an `autoOpen` resolver that joins the identifier onto a directory can only name a file inside that directory, while a nested identifier such as `east/wing` still reaches its database. The `authenticate` hook runs before that refusal and receives such an identifier exactly as the client sent it. Until you set `acceptSql: true`, the server answers the five statement routes with `403 SQL_NOT_ACCEPTED`. Until you set `acceptDeviceSync: true`, it answers the four device-sync routes, `/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, with `403 DEVICE_SYNC_NOT_ACCEPTED`. The server serves every other route in every configuration.
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -183,9 +194,9 @@ A `query` or `execute` message with `name` invokes the registered operation of t
 
 The server marks the last change of each transaction with `txEnd` on every subscription, so a consumer can apply a whole transaction at once and show only states that the database held. The server treats a subscription with the `name` of a registered read as a [live query](live-queries.md), and a subscription with a `deviceId` as part of [device sync](device-sync.md).
 
-To resume a subscription, set `sinceSeq` to the highest sequence that the client has processed and `epoch` to the sequence space of that cursor. The server then replays every retained change above that sequence before it streams live changes. When the cursor is below the retained history or its epoch differs from the server's, the server skips the replay, sets `resync: true`, and streams live changes from that point.
+To resume a subscription, set `sinceSeq` to the highest sequence that the client has processed and `epoch` to the sequence space of that cursor. The server then replays every retained change above that sequence before it streams live changes. When the cursor is below the retained history, above the highest sequence that the database has assigned, or from another epoch, the server skips the replay, sets `resync: true`, and streams every live change from that point.
 
-When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290, so the client reconnects and resumes from its cursor with no frame lost. The server closes a connection with 1013 while shutting down, with 1008 when the database is absent or closed, and with 4401 or 4403 when the `authenticate` hook refuses the upgrade. A client leaves a connection closed after 4401 or 4403, because every later try with the same credential would fail too.
+When a send would push a connection's outbound buffer past `maxWebSocketBackpressureBytes`, the server closes that connection with code 4290, so the client reconnects and resumes from its cursor with no frame lost. The server applies that rule only while the buffer already holds data. It sends a reply onto an empty buffer whatever its size, so a large query result still reaches a client that keeps reading. When a client sends a message over `maxBodyBytes`, the server closes its connection with code 1009 and the reason `PAYLOAD_TOO_LARGE`. However, uWebSockets.js drops the connection without a close frame when the message is over twice `maxBodyBytes` or over 4,294,967,295 bytes, whichever limit is lower. The server closes a connection with 1001 while shutting down, with 1008 when the database is absent or closed, with 4401 or 4403 when the `authenticate` hook refuses the upgrade, and with 4410 when it has deleted the cursor of a subscribed device, which then reconnects and resyncs. When the database fails to open, the server sends an error message with the failure's code and then closes the connection with 1011. A client leaves a connection closed after 4401 or 4403, because every later try with the same credential will fail too.
 
 ## Value encoding
 

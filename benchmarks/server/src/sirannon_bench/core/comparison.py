@@ -49,6 +49,7 @@ def _operating_metrics(workload: dict) -> dict:
         "max_ms": latency.get("max"),
         "cores_used": (point.get("engine_cpu") or {}).get("cores_used"),
         "cores_allowed": (point.get("engine_cpu") or {}).get("cores_allowed"),
+        "seed_rows": (workload.get("seed") or {}).get("rows"),
     }
 
 
@@ -173,6 +174,8 @@ def build_comparison(run_dir: Path, manifest: dict) -> dict:
             "scaling": _scaling_rows(sirannon, postgres, order),
             "sirannon_engine": sirannon.get("engine", {}),
             "postgres_engine": postgres.get("engine", {}),
+            "sirannon_environment": sirannon.get("environment", {}),
+            "postgres_environment": postgres.get("environment", {}),
             "client_saturation": {
                 "sirannon": sirannon.get("client_saturation"),
                 "postgres": postgres.get("client_saturation"),

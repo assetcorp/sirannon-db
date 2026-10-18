@@ -1,16 +1,28 @@
 import { Worker } from 'node:worker_threads'
 import type {
+  BatchSummary,
+  Counted,
   DatabaseCopyStep,
   DriverWorkerEntry,
   GroupRunOutcome,
   OpenOptions,
+  RunResult,
   SQLiteConnection,
+  SQLiteStatement,
 } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
+import { LateReplies } from './late-replies.js'
 import {
-  deserializeError,
-  WORKER_CANCELLED_CODE,
-  WORKER_COPY_STOPPED_CODE,
+  clearPendingTimers,
+  copyStallDeadline,
+  failedReplyError,
+  type PendingRequest,
+  unresponsiveError,
+} from './pending-request.js'
+import {
+  canCarryBegin,
+  leftTransactionUnbegun,
+  toWorkerGroupStatement,
   type WorkerRequest,
   type WorkerRequestBody,
   type WorkerResponse,
@@ -24,17 +36,7 @@ const CLOSE_GRACE_MS = 1_000
 export interface WorkerHostOptions {
   writeTimeoutMs?: number
   maxRestarts?: number
-}
-
-interface PendingRequest {
-  resolve: (value: unknown) => void
-  reject: (reason: Error) => void
-  timer: NodeJS.Timeout | null
-  graceTimer: NodeJS.Timeout | null
-  deadlineMs: number
-  cancellable: boolean
-  kind: WorkerRequestBody['kind']
-  onStep?: (step: DatabaseCopyStep) => void
+  countsRows?: boolean
 }
 
 type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
@@ -42,11 +44,16 @@ type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
 export class WriterWorker {
   private worker: Worker | null = null
   private readonly pending = new Map<number, PendingRequest>()
+  private readonly late = new LateReplies()
   private nextId = 1
   private ready: Promise<void> = Promise.resolve()
   private starting = true
   private closed = false
   private fatal: Error | null = null
+  private transactionOpen = false
+  private beginPending = false
+  private beginCarrier: number | null = null
+  private lostTransaction: SirannonError | null = null
   private restarts = 0
   private readonly loadedExtensions: string[] = []
   readonly connection: SQLiteConnection
@@ -55,6 +62,7 @@ export class WriterWorker {
     private readonly openRequest: Omit<OpenRequest, 'id'>,
     private readonly timeoutMs: number,
     private readonly maxRestarts: number,
+    private readonly countsRows: boolean,
   ) {
     this.connection = this.makeConnection()
   }
@@ -69,6 +77,7 @@ export class WriterWorker {
       { kind: 'open', entry, path, options },
       workerOptions?.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS,
       workerOptions?.maxRestarts ?? DEFAULT_MAX_RESTARTS,
+      workerOptions?.countsRows === true,
     )
     worker.spawn()
     try {
@@ -112,27 +121,27 @@ export class WriterWorker {
       return
     }
     const entry = this.pending.get(res.id)
-    if (!entry) return
+    if (!entry) {
+      this.late.settle(res.id, res.ok ? { ok: true, value: res.value } : { ok: false, error: res.error })
+      return
+    }
     this.pending.delete(res.id)
     clearPendingTimers(entry)
     if (res.ok) {
       entry.resolve(res.value)
       return
     }
-    if (res.error.code === WORKER_CANCELLED_CODE) {
-      entry.reject(
-        new SirannonError(
-          `The writer worker could not take this operation within ${entry.deadlineMs}ms; it was not applied and is safe to retry`,
-          'WRITE_OVERLOADED',
-        ),
-      )
-      return
-    }
-    if (res.error.code === WORKER_COPY_STOPPED_CODE) {
-      entry.reject(this.unresponsiveError(entry.deadlineMs, entry.kind))
-      return
-    }
-    entry.reject(deserializeError(res.error))
+    const failure = failedReplyError(entry, res.error)
+    if (res.id === this.beginCarrier && leftTransactionUnbegun(res.error)) this.loseTransaction(failure.message)
+    entry.reject(failure)
+  }
+
+  private loseTransaction(reason: string): void {
+    if (!this.transactionOpen || this.lostTransaction) return
+    this.lostTransaction = new SirannonError(
+      `The writer worker never began this transaction, so it accepts no further statements: ${reason}`,
+      'TRANSACTION_ERROR',
+    )
   }
 
   private onCopyStep(id: number, step: DatabaseCopyStep): void {
@@ -163,17 +172,10 @@ export class WriterWorker {
     entry.reject(err)
   }
 
-  private unresponsiveError(waitedMs: number, kind?: WorkerRequestBody['kind']): SirannonError {
-    if (kind === 'copyDatabase') {
-      return new SirannonError(
-        `The writer worker moved no page of the copy for ${waitedMs}ms, so the copy was stopped and nothing it wrote is usable`,
-        'BACKUP_STALLED',
-      )
-    }
-    return new SirannonError(
-      `Writer worker did not respond within ${waitedMs}ms; the operation's outcome is unknown`,
-      'WRITER_WORKER_TIMEOUT',
-    )
+  private expirePending(id: number, waitedMs: number): void {
+    const entry = this.pending.get(id)
+    if (!entry) return
+    this.rejectPending(id, this.late.expect(id, entry.kind, unresponsiveError(waitedMs, entry.kind)))
   }
 
   private onDeadline(id: number): void {
@@ -181,17 +183,17 @@ export class WriterWorker {
     if (!entry) return
     const worker = this.worker
     if (!entry.cancellable || !worker) {
-      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs, entry.kind))
+      this.expirePending(id, entry.deadlineMs)
       return
     }
     try {
       worker.postMessage({ kind: 'cancel', id })
     } catch {
-      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs, entry.kind))
+      this.expirePending(id, entry.deadlineMs)
       return
     }
     entry.graceTimer = setTimeout(() => {
-      this.rejectPending(id, this.unresponsiveError(entry.deadlineMs * 2, entry.kind))
+      this.expirePending(id, entry.deadlineMs * 2)
     }, entry.deadlineMs)
     entry.graceTimer.unref?.()
   }
@@ -201,11 +203,18 @@ export class WriterWorker {
     const err = errLike instanceof Error ? errLike : new SirannonError(String(errLike), 'WRITER_WORKER_ERROR')
     const dead = this.worker
     this.worker = null
+    if (this.transactionOpen) {
+      this.lostTransaction = new SirannonError(
+        `The writer worker failed inside this transaction, so SQLite rolled the transaction back and it accepts no further statements: ${err.message}`,
+        'WRITER_WORKER_EXIT',
+      )
+    }
     for (const entry of this.pending.values()) {
       clearPendingTimers(entry)
       entry.reject(err)
     }
     this.pending.clear()
+    this.late.abandonAll()
     dead?.terminate().catch(() => {})
 
     if (this.starting) {
@@ -236,7 +245,12 @@ export class WriterWorker {
       )
     }
     const id = this.nextId++
-    const message = { ...request, id } as WorkerRequest
+    const carriesBegin = this.beginPending && canCarryBegin(request.kind)
+    if (carriesBegin) {
+      this.beginPending = false
+      this.beginCarrier = id
+    }
+    const message = (carriesBegin ? { ...request, id, begin: true } : { ...request, id }) as WorkerRequest
     const deadlineMs = copyStallDeadline(request) ?? this.timeoutMs
     return new Promise<unknown>((resolve, reject) => {
       let timer: NodeJS.Timeout | null = null
@@ -260,18 +274,19 @@ export class WriterWorker {
       } catch (err) {
         this.pending.delete(id)
         if (timer) clearTimeout(timer)
-        reject(
-          new SirannonError(
-            `Failed to hand work to the writer worker: ${err instanceof Error ? err.message : String(err)}`,
-            'WRITER_WORKER_POST_FAILED',
-          ),
+        const failure = new SirannonError(
+          `Failed to hand work to the writer worker: ${err instanceof Error ? err.message : String(err)}`,
+          'WRITER_WORKER_POST_FAILED',
         )
+        if (carriesBegin) this.loseTransaction(failure.message)
+        reject(failure)
       }
     })
   }
 
   private request(request: WorkerRequestBody, onStep?: (step: DatabaseCopyStep) => void): Promise<unknown> {
     if (this.fatal) return Promise.reject(this.fatal)
+    if (this.lostTransaction) return Promise.reject(this.lostTransaction)
     if (this.closed) return Promise.reject(new SirannonError('Writer worker is closed', 'WRITER_WORKER_CLOSED'))
     return this.ready
       .then(() => this.send(request, onStep))
@@ -281,6 +296,17 @@ export class WriterWorker {
       })
   }
 
+  private countedCalls(sql: string): Pick<SQLiteStatement, 'allCounted' | 'getCounted' | 'allRawCounted'> {
+    return {
+      allCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'allCounted', sql, params }) as Promise<Counted<T[]>>,
+      getCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'getCounted', sql, params }) as Promise<Counted<T | undefined>>,
+      allRawCounted: <T = unknown>(...params: unknown[]) =>
+        this.request({ kind: 'allRawCounted', sql, params }) as Promise<Counted<T[]>>,
+    }
+  }
+
   private makeConnection(): SQLiteConnection {
     const conn: SQLiteConnection = {
       exec: sql => this.request({ kind: 'exec', sql }) as Promise<void>,
@@ -288,29 +314,23 @@ export class WriterWorker {
         all: <T = unknown>(...params: unknown[]) => this.request({ kind: 'all', sql, params }) as Promise<T[]>,
         get: <T = unknown>(...params: unknown[]) =>
           this.request({ kind: 'get', sql, params }) as Promise<T | undefined>,
-        run: (...params: unknown[]) =>
-          this.request({ kind: 'run', sql, params }) as Promise<{ changes: number; lastInsertRowId: number | bigint }>,
+        run: (...params: unknown[]) => this.request({ kind: 'run', sql, params }) as Promise<RunResult>,
         allRaw: <T = unknown>(...params: unknown[]) => this.request({ kind: 'allRaw', sql, params }) as Promise<T[]>,
+        ...(this.countsRows ? this.countedCalls(sql) : {}),
       }),
       runBatch: (sql, paramsBatch) =>
-        this.request({ kind: 'runBatch', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<
-          { changes: number; lastInsertRowId: number | bigint }[]
-        >,
+        this.request({ kind: 'runBatch', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<RunResult[]>,
       runBatchSummary: (sql, paramsBatch) =>
-        this.request({ kind: 'runBatchSummary', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<{
-          rowsLoaded: number
-          changes: number
-        }>,
-      runGroup: units =>
+        this.request({
+          kind: 'runBatchSummary',
+          sql,
+          paramsBatch: paramsBatch as unknown[][],
+        }) as Promise<BatchSummary>,
+      runGroup: (units, opening) =>
         this.request({
           kind: 'runGroup',
-          units: units.map(unit => ({
-            statements: unit.statements.map(statement => ({
-              sql: statement.sql,
-              params: statement.params ? [...statement.params] : [],
-              ...(statement.trusted === true ? { trusted: true } : {}),
-            })),
-          })),
+          units: units.map(unit => ({ statements: unit.statements.map(toWorkerGroupStatement) })),
+          ...(opening === undefined ? {} : { opening: toWorkerGroupStatement(opening) }),
         }) as Promise<GroupRunOutcome[]>,
       copyRunsOffCallerThread: true,
       copyDatabase: request =>
@@ -328,16 +348,22 @@ export class WriterWorker {
         if (!this.loadedExtensions.includes(extensionPath)) this.loadedExtensions.push(extensionPath)
       },
       transaction: async fn => {
-        await conn.exec('BEGIN')
+        this.transactionOpen = true
+        this.beginPending = true
         try {
           const result = await fn(conn)
-          await conn.exec('COMMIT')
+          if (!this.beginPending) await conn.exec('COMMIT')
           return result
         } catch (err) {
           try {
-            await conn.exec('ROLLBACK')
+            if (!this.beginPending) await conn.exec('ROLLBACK')
           } catch {}
           throw err
+        } finally {
+          this.transactionOpen = false
+          this.beginPending = false
+          this.beginCarrier = null
+          this.lostTransaction = null
         }
       },
       close: () => this.close(),
@@ -361,6 +387,7 @@ export class WriterWorker {
       } catch {}
       await worker.terminate().catch(() => {})
     }
+    this.late.abandonAll()
     this.worker = null
     for (const entry of this.pending.values()) {
       clearPendingTimers(entry)
@@ -368,13 +395,4 @@ export class WriterWorker {
     }
     this.pending.clear()
   }
-}
-
-function copyStallDeadline(request: WorkerRequestBody): number | undefined {
-  return request.kind === 'copyDatabase' ? request.stallTimeoutMs : undefined
-}
-
-function clearPendingTimers(entry: PendingRequest): void {
-  if (entry.timer) clearTimeout(entry.timer)
-  if (entry.graceTimer) clearTimeout(entry.graceTimer)
 }

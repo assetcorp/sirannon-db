@@ -1,3 +1,5 @@
+import type { CaptureShape } from './capture-shape.js'
+
 export type {
   ChangeEvent,
   ChangeOperation,
@@ -38,14 +40,13 @@ export interface ColumnInfo {
 }
 
 /**
- * Describes one watched table with the columns and primary-key columns that its change-capture triggers use.
+ * Describes one watched table, by its stored name, with the capture shape that its change-capture triggers use.
  *
  * @internal
  */
 export interface WatchedTableInfo {
   table: string
-  columns: string[]
-  pkColumns: string[]
+  shape: CaptureShape
 }
 
 /**

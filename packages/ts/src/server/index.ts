@@ -38,6 +38,6 @@ export type {
   WSUnsubscribeMessage,
 } from './protocol.js'
 export { toExecuteResponse } from './protocol.js'
-export { createServer, SirannonServer } from './server.js'
+export { createServer, type ServerCloseOptions, SirannonServer } from './server.js'
 export type { WSConnection } from './ws-handler.js'
 export { createWSHandler, WSHandler } from './ws-handler.js'

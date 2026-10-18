@@ -1,5 +1,7 @@
+import type { PruneBoundarySource } from './cdc/prune-boundaries.js'
 import { DatabaseBackups } from './database-backups.js'
 import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
+import type { DatabaseObserver } from './database-observability.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
 import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
@@ -50,6 +52,7 @@ export class Database extends DatabaseBackups {
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.sync.applyChanges(batch, resolver)
   }
 
@@ -136,6 +139,10 @@ export class Database extends DatabaseBackups {
    * transaction. Whether the load succeeds or fails, Sirannon restores the
    * configured level before this method resolves. The result contains totals
    * for the whole load, so that a large load keeps no per-row results in memory.
+   * A load commits in a transaction of its own, so inside a
+   * {@link Database.transaction} callback this method fails with
+   * `BULK_LOAD_IN_TRANSACTION`, and {@link Transaction.executeBatch} writes the
+   * rows inside that transaction instead.
    *
    * Like {@link Database.execute}, this writes to the local database only. A
    * server whose execution target has no `bulkLoad` method, such as the
@@ -172,6 +179,24 @@ export class Database extends DatabaseBackups {
   /**
    * Calls a function inside one transaction, and commits when the function returns or rolls back when it throws.
    *
+   * On the Node, better-sqlite3, and Bun drivers, a write that the function
+   * makes through this database, with {@link Database.execute},
+   * {@link Database.executeBatch}, {@link Database.executeTransaction}, or this
+   * method, becomes part of the same transaction. Sirannon executes each batch,
+   * statement list, and nested function inside a savepoint, so that one that
+   * fails rolls back only its own writes. The wa-sqlite and Expo drivers have
+   * no async context to tell the function's own calls from another caller's,
+   * and they read through the writer connection. On those drivers, while the
+   * function holds the writer, every call through this database that needs
+   * the writer fails at once with `WRITER_HELD_BY_CALLBACK`, whoever makes it.
+   * The refusal applies to reads, writes, migrations, backups,
+   * {@link Database.watch}, and {@link Database.live}, so the function has to
+   * make its reads and writes through `tx`.
+   * Sirannon fires the query hooks for each statement that the
+   * function executes through the transaction, and once the function returns
+   * or throws, the transaction refuses every further call with
+   * `TRANSACTION_CLOSED`.
+   *
    * @param fn - The function to call with the transaction, which executes its statements through it.
    * @returns The value that the function returns.
    */
@@ -187,6 +212,7 @@ export class Database extends DatabaseBackups {
    */
   async watch(table: string): Promise<void> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     await this.runtime.cdc.watch(table)
   }
 
@@ -197,6 +223,7 @@ export class Database extends DatabaseBackups {
    */
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     await this.runtime.cdc.unwatch(table)
   }
 
@@ -213,10 +240,27 @@ export class Database extends DatabaseBackups {
     await this.runtime.writerLock.run(() => op(this.runtime.pool.acquireWriter()))
   }
 
-  /** @internal */
-  async ensureChangeStamping(): Promise<void> {
-    this.ensureWritable()
-    await this.runtime.cdc.ensureStamping()
+  /**
+   * Keeps the change-log entries that a component outside this database still needs, such as the changes that the replication engine's peers have yet to acknowledge, out of reach of this database's own pruning.
+   *
+   * @param source - The component that holds the entries back.
+   * @param seq - The highest change-log sequence that pruning can remove for this component, or `null` to release the hold.
+   * @internal
+   */
+  holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void {
+    const tracker = this.runtime.cdc.changeTracker
+    if (tracker === null) return
+    if (seq === null) tracker.clearPruneBoundary(source)
+    else tracker.setPruneBoundary(source, seq)
+  }
+
+  /**
+   * Returns the observer that fires this database's query hooks and reports its query metrics, for a component that executes statements on the database's behalf, such as the replication engine.
+   *
+   * @internal
+   */
+  get observer(): DatabaseObserver {
+    return this.runtime.reads.observer
   }
 
   /**
@@ -244,8 +288,14 @@ export class Database extends DatabaseBackups {
     options?: LiveQueryOptions,
   ): Promise<LiveQuery<T>> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     const cdc = this.runtime.cdc
-    return openLiveQuery<T>({ cdc, watch: table => this.watch(table) }, sql, params, options)
+    return openLiveQuery<T>(
+      { cdc, observer: this.runtime.reads.observer, watch: table => this.watch(table) },
+      sql,
+      params,
+      options,
+    )
   }
 
   /**
@@ -253,9 +303,11 @@ export class Database extends DatabaseBackups {
    *
    * @param migrations - The full set of migrations for this database.
    * @returns The migrations that this call applied, and the number that the database had already applied.
+   * @throws A `ReadOnlyError` when the database is open in read-only mode.
    */
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
-    this.ensureOpen()
+    this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.migrate(migrations)
   }
 
@@ -266,6 +318,7 @@ export class Database extends DatabaseBackups {
    */
   async appliedMigrations(): Promise<AppliedMigrationRow[]> {
     this.ensureNotClosed()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.applied()
   }
 
@@ -275,9 +328,11 @@ export class Database extends DatabaseBackups {
    * @param migrations - The full set of migrations, from which the runner takes each down statement.
    * @param version - The version to roll back to, which stays applied with every version below it; when you omit it, the runner reverts only the newest migration.
    * @returns The migrations that this call reverted.
+   * @throws A `ReadOnlyError` when the database is open in read-only mode.
    */
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
-    this.ensureOpen()
+    this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.rollback(migrations, version)
   }
 
@@ -288,6 +343,7 @@ export class Database extends DatabaseBackups {
    */
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     await this.runtime.loadExtension(extensionPath)
   }
 

@@ -1,28 +1,74 @@
+import * as v from 'valibot'
 import { expect } from 'vitest'
 import { TopologyAwareClient } from '../../client/topology.js'
 import { type GateEnvironment, GROUP_ID, httpPortFor, serverBaseUrlFor } from './gate-environment.js'
 import type { FailoverNodeProcess } from './node-process.js'
+import type { ItemRow } from './sqlite-oracle.js'
 
-export async function executeMajority(node: FailoverNodeProcess, id: number, note: string): Promise<void> {
+const HttpBodySchema = v.looseObject({
+  changes: v.optional(v.number()),
+  error: v.optional(
+    v.object({
+      code: v.optional(v.string()),
+      message: v.optional(v.string()),
+      details: v.optional(v.record(v.string(), v.unknown())),
+    }),
+  ),
+})
+
+const WebSocketReplySchema = v.object({
+  type: v.string(),
+  id: v.string(),
+  data: v.optional(v.object({ changes: v.optional(v.number()) })),
+  error: v.optional(v.object({ code: v.optional(v.string()), message: v.optional(v.string()) })),
+})
+
+export interface HttpAnswer {
+  status: number
+  body: v.InferOutput<typeof HttpBodySchema>
+}
+
+export function itemRow(id: number, owner: string, note: string): ItemRow {
+  return { id, owner, value: id, note }
+}
+
+export async function writeItemMajority(
+  node: FailoverNodeProcess,
+  row: ItemRow,
+  timeoutMs = 15_000,
+  replyTimeoutMs?: number,
+): Promise<void> {
   await node.execute(
     'INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)',
-    [id, node.config.nodeId, id, note],
-    { writeConcern: { level: 'majority', timeoutMs: 15_000 } },
+    [row.id, row.owner, row.value, row.note],
+    { writeConcern: { level: 'majority', timeoutMs } },
+    replyTimeoutMs,
   )
 }
 
-export async function executePublicHttp(environment: GateEnvironment, nodeId: string, sql: string): Promise<void> {
-  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/execute`, {
+export async function postSql(
+  environment: GateEnvironment,
+  nodeId: string,
+  route: 'execute' | 'query' | 'transaction',
+  body: Record<string, unknown>,
+): Promise<HttpAnswer> {
+  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/${route}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      sql,
-      writeConcern: { level: 'majority', timeoutMs: 15_000 },
-    }),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
   })
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`Public HTTP execute on ${nodeId} returned ${response.status}: ${body}`)
+  const text = await response.text()
+  return { status: response.status, body: v.parse(HttpBodySchema, text === '' ? {} : JSON.parse(text)) }
+}
+
+export async function executePublicHttp(environment: GateEnvironment, nodeId: string, sql: string): Promise<void> {
+  const answer = await postSql(environment, nodeId, 'execute', {
+    sql,
+    writeConcern: { level: 'majority', timeoutMs: 15_000 },
+  })
+  if (answer.status !== 200) {
+    throw new Error(`Public HTTP execute on ${nodeId} returned ${answer.status}: ${JSON.stringify(answer.body)}`)
   }
 }
 
@@ -30,19 +76,15 @@ export async function expectPublicHttpRejectsWith(
   environment: GateEnvironment,
   nodeId: string,
   sql: string,
-  codes: string[],
-): Promise<void> {
-  const response = await fetch(`${serverBaseUrlFor(environment, nodeId)}/db/${GROUP_ID}/execute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      sql,
-      writeConcern: { level: 'majority', timeoutMs: 15_000 },
-    }),
+  codes: readonly string[],
+): Promise<HttpAnswer> {
+  const answer = await postSql(environment, nodeId, 'execute', {
+    sql,
+    writeConcern: { level: 'majority', timeoutMs: 15_000 },
   })
-  const data = (await response.json()) as { error?: { code?: string } }
-  expect(response.ok).toBe(false)
-  expect(codes).toContain(data.error?.code)
+  expect(answer.status).toBeGreaterThanOrEqual(400)
+  expect(codes).toContain(answer.body.error?.code)
+  return answer
 }
 
 export async function executePublicClient(
@@ -56,16 +98,14 @@ export async function executePublicClient(
     transport: 'http',
   })
   try {
-    const db = client.database(GROUP_ID)
-    await db.execute(sql)
+    await client.database(GROUP_ID).execute(sql)
   } finally {
     client.close()
   }
 }
 
 export async function executePublicWebSocket(environment: GateEnvironment, nodeId: string, sql: string): Promise<void> {
-  const wsUrl = `ws://127.0.0.1:${httpPortFor(environment, nodeId)}/db/${GROUP_ID}`
-  const ws = new WebSocket(wsUrl)
+  const ws = new WebSocket(`ws://127.0.0.1:${httpPortFor(environment, nodeId)}/db/${GROUP_ID}`)
   try {
     await waitForWebSocketOpen(ws)
     const result = await sendWebSocketExecute(ws, sql)
@@ -94,28 +134,23 @@ function sendWebSocketExecute(ws: WebSocket, sql: string): Promise<{ changes: nu
     const requestId = `public-ws-${Date.now()}`
     const timeout = setTimeout(() => reject(new Error('Timed out waiting for public WebSocket execute')), 20_000)
     const onMessage = (event: MessageEvent) => {
-      const data = JSON.parse(String(event.data)) as {
-        type: string
-        id: string
-        data?: { changes?: number }
-        error?: { code?: string; message?: string }
-      }
-      if (data.id !== requestId) return
+      const raw: unknown = JSON.parse(String(event.data))
+      if (typeof raw !== 'object' || raw === null || Reflect.get(raw, 'id') !== requestId) return
       clearTimeout(timeout)
       ws.removeEventListener('message', onMessage)
+      const parsed = v.safeParse(WebSocketReplySchema, raw)
+      if (!parsed.success) {
+        reject(new Error(`Public WebSocket reply has an unexpected shape: ${String(event.data)}`))
+        return
+      }
+      const data = parsed.output
       if (data.type === 'error') {
         reject(new Error(`Public WebSocket execute failed with ${data.error?.code}: ${data.error?.message}`))
         return
       }
-      resolve({ changes: Number(data.data?.changes ?? 0) })
+      resolve({ changes: data.data?.changes ?? 0 })
     }
     ws.addEventListener('message', onMessage)
-    ws.send(
-      JSON.stringify({
-        id: requestId,
-        type: 'execute',
-        sql,
-      }),
-    )
+    ws.send(JSON.stringify({ id: requestId, type: 'execute', sql }))
   })
 }

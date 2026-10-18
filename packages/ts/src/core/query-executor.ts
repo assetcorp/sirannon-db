@@ -1,9 +1,16 @@
 import { encodeWireRowsInPlace } from './cdc/encoding.js'
-import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
+import {
+  addRowCounts,
+  allMetered,
+  type Metered,
+  type RowCounts,
+  rowCountsOf,
+  withRowCounts,
+} from './driver/row-counts.js'
+import type { BatchSummary, SQLiteConnection, SQLiteStatement } from './driver/types.js'
 import { QueryError, SirannonError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
-import { commitFailure } from './writer-transaction.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
@@ -46,9 +53,33 @@ export function bindParams(params?: Params): unknown[] {
   return [params]
 }
 
-function asQueryError(err: unknown, sql: string): Error {
+/**
+ * Returns the error that Sirannon raises for a failed statement, keeping the row counts that the driver set on the original error.
+ *
+ * @param err - The error that the driver raised.
+ * @param sql - The statement that failed.
+ * @returns `err` itself when it is a `SirannonError`, and otherwise a `QueryError` naming the statement.
+ * @internal
+ */
+export function asQueryError(err: unknown, sql: string): Error {
   if (err instanceof SirannonError) return err
-  return new QueryError(err instanceof Error ? err.message : String(err), sql)
+  return withRowCounts(new QueryError(err instanceof Error ? err.message : String(err), sql), rowCountsOf(err))
+}
+
+/**
+ * Returns a result holding only the change count and the last inserted row id, so that row counts stay out of what a caller receives.
+ *
+ * @param result - A result that can hold row counts.
+ * @returns `result` itself when it holds no row counts, and otherwise a copy without them.
+ * @internal
+ */
+export function withoutRowCounts(result: ExecuteResult): ExecuteResult {
+  if (rowCountsOf(result) === undefined) return result
+  return { changes: result.changes, lastInsertRowId: result.lastInsertRowId }
+}
+
+function metered<V>(value: V, counts: RowCounts | undefined): Metered<V> {
+  return counts === undefined ? { value } : { value, rowsRead: counts.rowsRead, rowsWritten: counts.rowsWritten }
 }
 
 /**
@@ -61,22 +92,52 @@ export async function query<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T[]> {
+  return (await queryMetered<T>(conn, sql, params)).value
+}
+
+/**
+ * Executes a read on one connection and returns the rows, with the statement's row counts when the driver reports them.
+ *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @returns The rows, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
+ * @internal
+ */
+export async function queryMetered<T = Record<string, unknown>>(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+): Promise<Metered<T[]>> {
   assertSqlAllowed(sql)
   try {
-    const stmt = await getStatement(conn, sql)
-    return await stmt.all<T>(...bindParams(params))
+    return await allMetered<T>(await getStatement(conn, sql), bindParams(params))
   } catch (err) {
     throw asQueryError(err, sql)
   }
 }
 
-export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
+/**
+ * Executes a read on one connection and returns the rows encoded for a network response, with the statement's row counts when the driver reports them.
+ *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @returns The encoded rows, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
+ * @internal
+ */
+export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<Metered<unknown[]>> {
   assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
     const bound = bindParams(params)
+    const counted = stmt.allRaw ? stmt.allRawCounted : stmt.allCounted
+    if (counted) {
+      const result = await counted.apply(stmt, bound)
+      return metered(encodeWireRowsInPlace(result.value as unknown[]), result)
+    }
     const rows = (stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)) as unknown[]
-    return encodeWireRowsInPlace(rows)
+    return { value: encodeWireRowsInPlace(rows) }
   } catch (err) {
     throw asQueryError(err, sql)
   }
@@ -92,10 +153,29 @@ export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T | undefined> {
+  return (await queryOneMetered<T>(conn, sql, params)).value
+}
+
+/**
+ * Executes a read on one connection and returns the first row, with the statement's row counts when the driver reports them.
+ *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @returns The first row, or undefined when the read finds none, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
+ * @internal
+ */
+export async function queryOneMetered<T = Record<string, unknown>>(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+): Promise<Metered<T | undefined>> {
   assertSqlAllowed(sql)
   try {
     const stmt = await getStatement(conn, sql)
-    return await stmt.get<T>(...bindParams(params))
+    const bound = bindParams(params)
+    if (stmt.getCounted) return await stmt.getCounted<T>(...bound)
+    return { value: await stmt.get<T>(...bound) }
   } catch (err) {
     throw asQueryError(err, sql)
   }
@@ -103,6 +183,8 @@ export async function queryOne<T = Record<string, unknown>>(
 
 /**
  * Executes one write on a connection and returns the change count and the row id of the last inserted row.
+ *
+ * When the driver counts rows, the result and any error also hold `rowsRead` and `rowsWritten`.
  *
  * @internal
  */
@@ -118,180 +200,29 @@ export async function execute(
   try {
     const stmt = await getStatement(conn, sql)
     const result = await stmt.run(...bindParams(params))
-    return {
-      changes: result.changes,
-      lastInsertRowId: result.lastInsertRowId,
-    }
+    return withRowCounts({ changes: result.changes, lastInsertRowId: result.lastInsertRowId }, rowCountsOf(result))
   } catch (err) {
     throw asQueryError(err, sql)
   }
-}
-
-export interface GroupStatement {
-  sql: string
-  params?: Params
-  trusted?: boolean
-}
-
-export interface GroupUnit {
-  statements: readonly GroupStatement[]
-}
-
-export type GroupOutcome = { ok: true; values: ExecuteResult[] } | { ok: false; error: unknown }
-
-export async function executeGroup(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
-  const outcomes: GroupOutcome[] = new Array(units.length)
-  try {
-    await conn.exec('BEGIN')
-    for (let i = 0; i < units.length; i++) {
-      outcomes[i] = { ok: true, values: await runUnit(conn, units[i]) }
-    }
-  } catch {
-    await rollbackQuietly(conn)
-    return executeGroupIsolated(conn, units)
-  }
-
-  const failure = await execControl(conn, 'COMMIT')
-  if (!failure) return outcomes
-  return settleRefusedCommit(conn, units, outcomes, failure)
-}
-
-async function runUnit(conn: SQLiteConnection, unit: GroupUnit): Promise<ExecuteResult[]> {
-  const values: ExecuteResult[] = new Array(unit.statements.length)
-  for (let i = 0; i < unit.statements.length; i++) {
-    const statement = unit.statements[i]
-    values[i] = await execute(conn, statement.sql, statement.params, statement.trusted === true)
-  }
-  return values
-}
-
-function controlError(err: unknown, sql: string): Error {
-  return sql === 'COMMIT' ? commitFailure(err) : asQueryError(err, sql)
-}
-
-async function execControl(conn: SQLiteConnection, sql: string): Promise<Error | null> {
-  try {
-    await conn.exec(sql)
-    return null
-  } catch (err) {
-    return controlError(err, sql)
-  }
-}
-
-async function rollbackQuietly(conn: SQLiteConnection): Promise<void> {
-  try {
-    await conn.exec('ROLLBACK')
-  } catch {}
-}
-
-interface UnitAttempt {
-  outcome: GroupOutcome
-  contained: boolean
-}
-
-async function executeGroupIsolated(conn: SQLiteConnection, units: readonly GroupUnit[]): Promise<GroupOutcome[]> {
-  const outcomes: GroupOutcome[] = new Array(units.length)
-  await conn.exec('BEGIN')
-  for (let i = 0; i < units.length; i++) {
-    const attempt = await runIsolatedUnit(conn, units[i], `sirannon_gc_${i}`)
-    outcomes[i] = attempt.outcome
-    if (!attempt.contained) return rerunSurvivorsAlone(conn, units, outcomes, i)
-  }
-
-  const failure = await execControl(conn, 'COMMIT')
-  if (!failure) return outcomes
-  return settleRefusedCommit(conn, units, outcomes, failure)
-}
-
-async function settleRefusedCommit(
-  conn: SQLiteConnection,
-  units: readonly GroupUnit[],
-  outcomes: GroupOutcome[],
-  failure: Error,
-): Promise<GroupOutcome[]> {
-  const transactionStillOpen = (await execControl(conn, 'ROLLBACK')) === null
-  const rerunEachAlone = transactionStillOpen && succeededUnitCount(outcomes) > 1
-  for (let i = 0; i < units.length; i++) {
-    if (!outcomes[i].ok) continue
-    outcomes[i] = rerunEachAlone ? await runUnitAlone(conn, units[i]) : { ok: false, error: failure }
-  }
-  return outcomes
-}
-
-function succeededUnitCount(outcomes: readonly GroupOutcome[]): number {
-  let count = 0
-  for (const outcome of outcomes) if (outcome.ok) count++
-  return count
-}
-
-async function runIsolatedUnit(conn: SQLiteConnection, unit: GroupUnit, savepoint: string): Promise<UnitAttempt> {
-  const notOpened = await execControl(conn, `SAVEPOINT ${savepoint}`)
-  if (notOpened) return { outcome: { ok: false, error: notOpened }, contained: false }
-
-  let values: ExecuteResult[]
-  try {
-    values = await runUnit(conn, unit)
-  } catch (err) {
-    return { outcome: { ok: false, error: err }, contained: await unwind(conn, savepoint) }
-  }
-
-  const notReleased = await execControl(conn, `RELEASE ${savepoint}`)
-  if (notReleased) return { outcome: { ok: false, error: notReleased }, contained: false }
-  return { outcome: { ok: true, values }, contained: true }
-}
-
-async function unwind(conn: SQLiteConnection, savepoint: string): Promise<boolean> {
-  if (await execControl(conn, `ROLLBACK TO ${savepoint}`)) return false
-  return (await execControl(conn, `RELEASE ${savepoint}`)) === null
-}
-
-async function rerunSurvivorsAlone(
-  conn: SQLiteConnection,
-  units: readonly GroupUnit[],
-  outcomes: GroupOutcome[],
-  failed: number,
-): Promise<GroupOutcome[]> {
-  await rollbackQuietly(conn)
-  for (let i = 0; i < units.length; i++) {
-    if (i === failed) continue
-    outcomes[i] = await runUnitAlone(conn, units[i])
-  }
-  return outcomes
-}
-
-async function runUnitAlone(conn: SQLiteConnection, unit: GroupUnit): Promise<GroupOutcome> {
-  const notBegun = await execControl(conn, 'BEGIN')
-  if (notBegun) return { ok: false, error: notBegun }
-
-  let values: ExecuteResult[]
-  try {
-    values = await runUnit(conn, unit)
-  } catch (err) {
-    await rollbackQuietly(conn)
-    return { ok: false, error: err }
-  }
-
-  const notCommitted = await execControl(conn, 'COMMIT')
-  if (!notCommitted) return { ok: true, values }
-  await rollbackQuietly(conn)
-  return { ok: false, error: notCommitted }
 }
 
 async function forEachBatchRow(
   conn: SQLiteConnection,
   sql: string,
   paramsBatch: Params[],
-  sink: (changes: number, lastInsertRowId: number | bigint) => void,
+  sink: (result: ExecuteResult) => void,
 ): Promise<void> {
   assertSqlAllowed(sql)
+  let counts: RowCounts | undefined
   try {
     const stmt = await getStatement(conn, sql)
     for (const params of paramsBatch) {
       const result = await stmt.run(...bindParams(params))
-      sink(result.changes, result.lastInsertRowId)
+      counts = addRowCounts(counts, rowCountsOf(result))
+      sink(withRowCounts({ changes: result.changes, lastInsertRowId: result.lastInsertRowId }, rowCountsOf(result)))
     }
   } catch (err) {
-    throw asQueryError(err, sql)
+    throw withRowCounts(asQueryError(err, sql), addRowCounts(counts, rowCountsOf(err)))
   }
 }
 
@@ -314,17 +245,26 @@ export async function executeBatch(
     }
   }
   const results: ExecuteResult[] = []
-  await forEachBatchRow(conn, sql, paramsBatch, (changes, lastInsertRowId) => {
-    results.push({ changes, lastInsertRowId })
+  await forEachBatchRow(conn, sql, paramsBatch, result => {
+    results.push(result)
   })
   return results
 }
 
+/**
+ * Executes one statement on a connection once for each parameter set, and returns the totals with the row counts when the driver reports them.
+ *
+ * @param conn - The connection that executes the statement.
+ * @param sql - The statement to execute for each parameter set.
+ * @param paramsBatch - One parameter set for each execution.
+ * @returns The parameter sets applied and the rows changed, with the total `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
+ * @internal
+ */
 export async function executeBatchSummary(
   conn: SQLiteConnection,
   sql: string,
   paramsBatch: Params[],
-): Promise<BulkLoadResult> {
+): Promise<BulkLoadResult & Partial<RowCounts>> {
   if (conn.runBatchSummary) {
     assertSqlAllowed(sql)
     try {
@@ -334,8 +274,11 @@ export async function executeBatchSummary(
     }
   }
   let changes = 0
-  await forEachBatchRow(conn, sql, paramsBatch, rowChanges => {
-    changes += rowChanges
+  let counts: RowCounts | undefined
+  await forEachBatchRow(conn, sql, paramsBatch, result => {
+    changes += result.changes
+    counts = addRowCounts(counts, rowCountsOf(result))
   })
-  return { rowsLoaded: paramsBatch.length, changes }
+  const summary: BatchSummary = { rowsLoaded: paramsBatch.length, changes }
+  return withRowCounts(summary, counts)
 }

@@ -237,6 +237,7 @@ export type FieldValidation<T> = { ok: true; value: T | undefined } | { ok: fals
 
 export function decodeBoundParams(value: unknown, field: string): FieldValidation<Record<string, unknown> | unknown[]> {
   if (value === undefined || value === null) return { ok: true, value: undefined }
+  if (typeof value !== 'object') return { ok: false, message: `Field "${field}" must be an object or array` }
   try {
     return { ok: true, value: decodeTaggedValues(value) as Record<string, unknown> | unknown[] }
   } catch {
@@ -288,7 +289,14 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
+/**
+ * Returns whether a value names one of the three read concerns: `local`, `majority`, or `linearizable`.
+ *
+ * @param value - The value to check, such as a field that a request or a cluster status response carries.
+ * @returns `true` when the value is one of the three names.
+ * @internal
+ */
+export function isReadConcernLevel(value: unknown): value is ReadConcern['level'] {
   return value === 'local' || value === 'majority' || value === 'linearizable'
 }
 

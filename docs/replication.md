@@ -121,6 +121,8 @@ await engine.start()
 
 With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back. The replica sends your write concern with the write, and the primary waits for it, or for its own default when you state none, before it replies. When the primary raises an error, such as `WRITE_CONCERN_ERROR` or `STALE_PRIMARY`, the replica raises it to you with its code unchanged.
 
+`engine.executeTransaction` forwards a fixed list of statements in the same way, and the primary executes them in one transaction. `engine.transaction` takes a callback, so it executes only on a node that accepts writes. On the node that executes a statement, Sirannon calls the query hooks and the `onQueryComplete` callback of the registry that opened `db`. A forwarded write therefore reaches the primary's hooks and metrics, while a replica reports only the reads that it serves. To bill rows read and written, open `writerConn` through the same driver as the registry, created with `rowCounts: true`, because Sirannon reports neither count for a write on a connection that counts no rows.
+
 With `initialSync` on, which is the default, a new node copies the whole database before it serves reads. The source streams the schema and the table data in checksummed batches, and then it sends a manifest. The joining node passes through the phases `pending`, `syncing`, `catching-up`, and `ready`, and `engine.status().syncState.phase` gives the current one. For a database that is too large to copy over the network, copy the file yourself, and then start the replica with `initialSync: false` and with `resumeFromSeq` set to the sequence that your copy reached.
 
 ## Write concerns
@@ -244,7 +246,7 @@ When a receiving node applies a change to a row that already exists, it passes t
 
 | Strategy | Class | Behaviour |
 | --- | --- | --- |
-| Last-Writer-Wins | `LWWResolver` | It accepts a remote delete whatever the timestamps say, so it applies a delete over a concurrent update. For any other change, it takes the version with the higher HLC timestamp and breaks a tie by node ID. |
+| Last-Writer-Wins | `LWWResolver` | It takes the version with the higher HLC timestamp, deletes included, so a delete wins over a concurrent update only when its timestamp is the later one. It accepts a remote delete on equal timestamps and breaks any other tie by node ID. |
 | Field-Level Merge | `FieldMergeResolver` | It merges the columns that only one side changed and uses per-column HLC metadata for a column that both sides changed. Without column metadata, it resolves the whole row by last-writer-wins. |
 | Primary Wins | `PrimaryWinsResolver` | It takes the version that the configured primary node wrote, and it resolves any other conflict by last-writer-wins. |
 
@@ -290,7 +292,7 @@ In coordinator mode, Sirannon counts the configured voting data-bearing nodes in
 
 ### Does it replicate schema changes?
 
-Yes, Sirannon replicates the schema changes on its safety allowlist, which holds `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, and `DROP INDEX`. It rejects a DDL statement that contains several statements, `AS SELECT`, `ATTACH`, extension loading, or another unsafe pattern.
+Yes, Sirannon replicates the schema changes on its safety allowlist, which holds `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE`, `CREATE INDEX`, `CREATE UNIQUE INDEX`, and `DROP INDEX`. It rejects a DDL statement that contains several statements, `AS SELECT`, `ATTACH`, extension loading, or another unsafe pattern. The primary refuses every other schema change, such as a view, a trigger, or a rename, with `REPLICATION_ERROR` before it runs the statement, so every replica keeps the same schema as the primary.
 
 ### What happens with foreign keys and unique constraints?
 

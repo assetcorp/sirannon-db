@@ -1,9 +1,10 @@
 import { CDCError } from '../errors.js'
 import { INTERNAL_TABLE_PREFIX } from '../internal-tables.js'
+import { ROWID_ALIASES } from '../sql-identifiers.js'
 import type { LiveProbeColumn } from '../system-catalog/live-probe-table.js'
 import { selectLiveProbeMatchesSql } from '../system-catalog/live-probe-table.js'
 import type { Params } from '../types.js'
-import { parameterName, tokenizeSql } from './sql-tokens.js'
+import { isKeyword, parameterName, tokenizeSql } from './sql-tokens.js'
 import { buildSortKeyPlan, type SortKeyPlan } from './sqlite-order.js'
 import type { SelectItem, SortTerm, StatementShape, WindowBound } from './statement-shape.js'
 
@@ -18,6 +19,8 @@ export interface LivePlan {
   probeColumns: LiveProbeColumn[]
   keyColumns: string[]
   usesRowid: boolean
+  namesRowid: boolean
+  rowidColumn: string | null
   sortPlan: SortKeyPlan
   sortColumns: string[]
   keyColumnAliases: string[]
@@ -29,9 +32,10 @@ export interface LivePlan {
 }
 
 export interface TableShape {
-  columns: { name: string; type: string }[]
+  columns: { name: string; type: string; generatedAs: string | null }[]
   collations: Map<string, string>
   pkColumns: string[]
+  rowidAlias: string | null
 }
 
 export function buildLivePlan(shape: StatementShape, table: TableShape, params: Params | undefined): LivePlan {
@@ -46,6 +50,12 @@ export function buildLivePlan(shape: StatementShape, table: TableShape, params: 
   }
 
   const usesRowid = table.pkColumns.length === 0
+  const namesRowid = statementNamesRowid(shape, table)
+  if (namesRowid && !usesRowid && table.rowidAlias === null) {
+    throw new CDCError(
+      `Cannot open a live query for '${shape.sql}': it names the rowid of '${shape.table}', and change events carry only the primary key of a table whose primary key is not an INTEGER PRIMARY KEY, so select the primary key instead`,
+    )
+  }
   const keyColumns = usesRowid ? ['rowid'] : table.pkColumns
   const keyColumnAliases = keyColumns.map((_, index) => `${KEY_COLUMN}${index}`)
   const sortColumns = shape.sortTerms.map((_, index) => `${SORT_COLUMN_PREFIX}${index}`)
@@ -76,9 +86,12 @@ export function buildLivePlan(shape: StatementShape, table: TableShape, params: 
       name: column.name,
       type: column.type,
       collation: table.collations.get(column.name) ?? null,
+      generatedAs: column.generatedAs,
     })),
     keyColumns,
     usesRowid,
+    namesRowid,
+    rowidColumn: usesRowid ? null : table.rowidAlias,
     sortPlan,
     sortColumns,
     keyColumnAliases,
@@ -90,10 +103,24 @@ export function buildLivePlan(shape: StatementShape, table: TableShape, params: 
   }
 }
 
+function statementNamesRowid(shape: StatementShape, table: TableShape): boolean {
+  const declared = new Set(table.columns.map(column => column.name.toLowerCase()))
+  const tokens = tokenizeSql(shape.sql)
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    if (token.kind !== 'word' || !ROWID_ALIASES.includes(token.lower) || declared.has(token.lower)) continue
+    const previous = tokens[i - 1]
+    if (isKeyword(previous, 'as')) continue
+    if (tokens[i + 1]?.value === '(') continue
+    return true
+  }
+  return false
+}
+
 function sliceProbeParams(shape: StatementShape, params: Params | undefined): unknown[] {
   if (params === undefined) return []
   if (!Array.isArray(params)) return [params]
-  return params.slice(0, shape.selectParameters + shape.whereParameters)
+  return params.slice(0, shape.probeParameters)
 }
 
 export function probeNamedParams(probeSql: string, params: Params | undefined): Params | undefined {

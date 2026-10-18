@@ -4,16 +4,26 @@ export interface ToxiproxyLink {
   upstreamPort: number
 }
 
+export interface ToxiproxyHosts {
+  apiBaseUrl: string
+  listenHost: string
+  upstreamHost: string
+}
+
 export class ToxiproxyClient {
-  constructor(private readonly apiBaseUrl: string) {}
+  private readonly apiBaseUrl: string
+
+  constructor(private readonly hosts: ToxiproxyHosts) {
+    this.apiBaseUrl = hosts.apiBaseUrl
+  }
 
   async createProxy(link: ToxiproxyLink): Promise<void> {
     await this.request('/proxies', {
       method: 'POST',
       body: {
         name: link.name,
-        listen: `0.0.0.0:${link.listenPort}`,
-        upstream: `host.docker.internal:${link.upstreamPort}`,
+        listen: `${this.hosts.listenHost}:${link.listenPort}`,
+        upstream: `${this.hosts.upstreamHost}:${link.upstreamPort}`,
         enabled: true,
       },
     })
@@ -27,25 +37,34 @@ export class ToxiproxyClient {
   }
 
   async addLatency(proxyName: string, name: string, latencyMs: number): Promise<void> {
-    await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics`, {
-      method: 'POST',
-      body: {
-        name,
-        type: 'latency',
-        stream: 'downstream',
-        toxicity: 1,
-        attributes: {
-          latency: latencyMs,
-          jitter: Math.max(1, Math.floor(latencyMs / 5)),
+    for (const stream of ['downstream', 'upstream'] as const) {
+      await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics`, {
+        method: 'POST',
+        body: {
+          name: `${name}-${stream}`,
+          type: 'latency',
+          stream,
+          toxicity: 1,
+          attributes: {
+            latency: latencyMs,
+            jitter: Math.max(1, Math.floor(latencyMs / 5)),
+          },
         },
-      },
-    })
+      })
+    }
   }
 
   async clearToxic(proxyName: string, toxicName: string): Promise<void> {
-    await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics/${encodeURIComponent(toxicName)}`, {
-      method: 'DELETE',
-    })
+    for (const stream of ['downstream', 'upstream'] as const) {
+      await this.request(
+        `/proxies/${encodeURIComponent(proxyName)}/toxics/${encodeURIComponent(`${toxicName}-${stream}`)}`,
+        { method: 'DELETE' },
+      )
+    }
+  }
+
+  async reset(): Promise<void> {
+    await this.request('/reset', { method: 'POST' })
   }
 
   private async request(path: string, options: { method: string; body?: Record<string, unknown> }): Promise<unknown> {

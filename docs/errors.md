@@ -20,6 +20,8 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 { "error": { "code": "ERROR_CODE", "message": "Human-readable description", "details": {} } }
 ```
 
+The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, and the `*_DEPENDENCY_MISSING` codes, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
+
 ## Core engine
 
 | Error | Code | When |
@@ -32,6 +34,8 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `QueryError` | `QUERY_ERROR` | SQLite fails to prepare or execute a statement |
 | `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, or uses `ATTACH`, `DETACH`, or `PRAGMA writable_schema` |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
+| - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
+| - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |
 | `HookDeniedError` | `HOOK_DENIED` | A before-hook throws to refuse the operation |
 | `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code of your own |
 | `CDCError` | `CDC_ERROR` | Change data capture fails, or Sirannon cannot maintain a live query for the statement |
@@ -49,8 +53,10 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 | `ExtensionError` | `EXTENSION_ERROR` | Sirannon cannot load a native SQLite extension |
 | - | `INVALID_DRIVER` | The driver configuration fails validation |
 | - | `INVALID_SYNCHRONOUS` | The caller supplies an unknown `synchronous` level |
+| - | `ROW_COUNTS_UNSUPPORTED` | The better-sqlite3 driver opens a database with `rowCounts: true` while `@delali/sirannon-sqlite` is missing, has no build for this platform, holds a build that fails to load, or loads a build that counts no rows. A glibc build fails to load on a musl host, for example |
 | - | `INVALID_DURABILITY` | A load names a `durability` other than `'off'` or `'normal'` |
-| - | `DURABILITY_RESTORE_FAILED` | The load commits, but the writer fails before it restores durability |
+| - | `DURABILITY_RESTORE_FAILED` | Sirannon fails to restore the configured durability after a load commits. After any failed restore, Sirannon tries the restore again before each later write. Whenever that try fails, the write fails with this code without running |
+| - | `BULK_LOAD_IN_TRANSACTION` | A caller calls `bulkLoad` inside a `transaction` callback, where `Transaction.executeBatch` writes the rows instead |
 | - | `SNAPSHOT_IN_PROGRESS` | A caller reads or writes while a device-sync snapshot load replaces the database |
 | - | `SHUTDOWN` | A caller uses the registry after it shuts down |
 | - | `SHUTDOWN_ERROR` | One or more databases fail to close during shutdown |
@@ -65,7 +71,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | --- | --- | --- |
 | `WRITE_OVERLOADED` | More writes are pending than `maxPendingWrites` allows, or the writer sheds a queued write when an earlier deadline expires. The server answers 503 with `Retry-After`. | Yes, because the write never executes |
 | `WRITER_WORKER_TIMEOUT` | The writer gives no outcome within twice `writeTimeoutMs` | Only after reconciling, because the outcome is indeterminate |
-| `WRITER_WORKER_EXIT` | The writer crashes or exits, so the host rejects every write in flight | Only after reconciling, because a write in flight can commit before the crash |
+| `WRITER_WORKER_EXIT` | The writer crashes or exits, so the host rejects every write in flight, and every later statement of a `transaction` callback that the crash rolled back | Only after reconciling, because a write in flight can commit before the crash |
 | `WRITER_WORKER_FATAL` | The writer exhausts its restart budget, so every later write fails | No. Restart the process |
 | `WRITER_WORKER_UNAVAILABLE` | The host receives a write while no writer is available | Yes, because the write never reaches the writer |
 | `WRITER_WORKER_CLOSED` | The host receives a write after the writer closes, or the writer closes while the write is in flight | Reconcile first when the write is already in flight |
@@ -97,10 +103,11 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `EMPTY_BODY` | The request body is empty |
 | `PAYLOAD_TOO_LARGE` | The body or message exceeds `maxBodyBytes` |
 | `INTERNAL_ERROR` | An unexpected error stops the server while it handles the request |
-| `HOOK_ERROR` | The `authenticate` hook or `authorizeClusterStatus` throws, or `authenticate` returns a refusal object |
+| `HOOK_ERROR` | The `authenticate` hook returns a refusal object, or it throws an error that lacks an integer `status` from 400 to 599, a non-empty string `code`, or a string `message`. The server returns the same code when the `authorizeClusterStatus` hook throws |
 | `NOT_FOUND` | The route does not exist, or cluster status is absent or refused |
 | `INVALID_MAX_BODY_BYTES` | `maxBodyBytes` is not a positive integer that the transport can enforce exactly |
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes` |
+| `INVALID_CLOSE_TIMEOUT` | The `timeoutMs` passed to `server.close()` is not a whole number from 0 to 2,147,483,647 |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is on and the server has no `authenticate` hook |
 | `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is on and the server has no `authenticate` hook |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load |
@@ -167,8 +174,8 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `UNAUTHORIZED` | The server refuses the WebSocket upgrade as unauthenticated and closes with 4401 |
 | `FORBIDDEN` | The server refuses the WebSocket upgrade as not permitted and closes with 4403 |
 | `TIMEOUT` | A request exceeds the configured timeout |
-| `TRANSPORT_ERROR` | The current transport does not support this operation, such as a live query over HTTP |
-| `INVALID_RESPONSE` | The server returns a response that the client cannot parse |
+| `TRANSPORT_ERROR` | The current transport does not support this operation, such as a live query over HTTP, or you close the client before the request finishes |
+| `INVALID_RESPONSE` | The server returns a response that the client cannot parse, or one that lacks the shape that the protocol defines, such as a JSON body that is not an object |
 | `ROUTING_ERROR` | The routing metadata names no usable primary or read endpoint |
 | `NO_SAFE_PRIMARY` | The topology client has no current primary for a write |
 | `INVALID_ARGUMENT` | A client argument fails validation, such as a per-call read concern on the topology transport |

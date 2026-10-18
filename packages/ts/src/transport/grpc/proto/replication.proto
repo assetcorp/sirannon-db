@@ -51,6 +51,7 @@ message BatchPayload {
   string checksum = 7;
   string group_id = 8;
   int64 primary_term = 9;
+  int64 after_seq = 10;
 }
 
 message AckPayload {
@@ -84,6 +85,12 @@ message SyncRequestPayload {
   string group_id = 4;
   int64 primary_term = 5;
   bool supports_stream_verification = 6;
+  HistoryPointPayload history_tail = 7;
+}
+
+message HistoryPointPayload {
+  string hlc = 1;
+  string tx_id = 2;
 }
 
 message SyncBatchPayload {
@@ -105,6 +112,8 @@ message SyncCompletePayload {
   repeated SyncTableManifest manifests = 3;
   string group_id = 4;
   int64 primary_term = 5;
+  HistoryPointPayload history_point = 6;
+  bool resumed = 7;
 }
 
 message SyncTableManifest {

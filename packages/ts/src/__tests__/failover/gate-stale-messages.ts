@@ -8,61 +8,72 @@ import type {
   SyncBatch,
   SyncRequest,
 } from '../../replication/types.js'
-import { assertItemAbsent, expectRejectsWith } from './gate-assertions.js'
-import { type GateEnvironment, GROUP_ID } from './gate-environment.js'
+import { expectItemsAbsentOnDisk, expectRejectsWith } from './gate-assertions.js'
+import { type GateEnvironment, GROUP_ID, requireNode } from './gate-environment.js'
 import { recentErrorCount, waitForRecentErrorCountAbove } from './gate-observations.js'
-import type { FailoverNodeProcess } from './node-process.js'
 
-export async function expectStaleBatchRejectedWithoutMutation(
+export interface StaleMessageRoute {
+  senderNodeId: string
+  receiverNodeId: string
+  staleTerm: bigint
+}
+
+export async function expectStaleBatchRefused(
   environment: GateEnvironment,
-  sender: FailoverNodeProcess,
-  receiver: FailoverNodeProcess,
-  receiverNodeId: string,
-  senderNodeId: string,
+  route: StaleMessageRoute,
   rowId: number,
 ): Promise<void> {
+  const receiver = requireNode(environment, route.receiverNodeId)
   const previousStaleErrors = await recentErrorCount(receiver, 'STALE_PRIMARY')
-  await sender.sendRawBatch(receiverNodeId, staleBatch(senderNodeId, 1n, rowId))
+  await requireNode(environment, route.senderNodeId).sendRawBatch(
+    route.receiverNodeId,
+    staleBatch(route.senderNodeId, route.staleTerm, rowId),
+  )
   await waitForRecentErrorCountAbove(receiver, 'STALE_PRIMARY', previousStaleErrors, 10_000)
-  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+  await expectItemsAbsentOnDisk(environment, [route.receiverNodeId], [rowId], 2_000)
 }
 
-export async function expectStaleForwardRejectedWithoutMutation(
+export async function expectStaleForwardRefused(
   environment: GateEnvironment,
-  sender: FailoverNodeProcess,
-  receiverNodeId: string,
+  route: StaleMessageRoute,
   rowId: number,
 ): Promise<void> {
-  await expectRejectsWith(sender.sendRawForward(receiverNodeId, staleForwardedTransaction(rowId, 1n)), [
-    'STALE_PRIMARY',
-  ])
-  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+  await expectRejectsWith(
+    requireNode(environment, route.senderNodeId).sendRawForward(
+      route.receiverNodeId,
+      staleForwardedTransaction(rowId, route.staleTerm),
+    ),
+    ['STALE_PRIMARY'],
+  )
+  await expectItemsAbsentOnDisk(environment, [route.receiverNodeId], [rowId], 2_000)
 }
 
-export async function expectStaleSyncRequestRejectedWithoutMutation(
+export async function expectStaleSyncRequestRefused(
   environment: GateEnvironment,
-  sender: FailoverNodeProcess,
-  receiverNodeId: string,
-  senderNodeId: string,
+  route: StaleMessageRoute,
   rowId: number,
 ): Promise<void> {
-  await sender.requestRawSync(receiverNodeId, staleSyncRequest(senderNodeId, 1n))
-  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+  await requireNode(environment, route.senderNodeId).requestRawSync(
+    route.receiverNodeId,
+    staleSyncRequest(route.senderNodeId, route.staleTerm),
+  )
+  await expectItemsAbsentOnDisk(environment, [route.receiverNodeId], [rowId], 2_000)
 }
 
-export async function expectStaleSyncBatchRejectedWithoutMutation(
+export async function expectStaleSyncBatchRefused(
   environment: GateEnvironment,
-  sender: FailoverNodeProcess,
-  receiverNodeId: string,
+  route: StaleMessageRoute,
   rowId: number,
 ): Promise<void> {
-  await sender.sendRawSyncBatch(receiverNodeId, staleSyncBatch(1n, rowId))
-  await assertItemAbsent(environment, [receiverNodeId], rowId, 10_000)
+  await requireNode(environment, route.senderNodeId).sendRawSyncBatch(
+    route.receiverNodeId,
+    staleSyncBatch(route.staleTerm, rowId),
+  )
+  await expectItemsAbsentOnDisk(environment, [route.receiverNodeId], [rowId], 2_000)
 }
 
 function staleBatch(sourceNodeId: string, primaryTerm: bigint, rowId: number): ReplicationBatch {
-  const change = staleInsertChange(sourceNodeId, rowId, 'stale-batch')
-  const changes = [change]
+  const changes = [staleInsertChange(sourceNodeId, rowId, 'stale-batch')]
   return {
     sourceNodeId,
     batchId: `${sourceNodeId}-1-1`,
@@ -104,14 +115,7 @@ function staleSyncRequest(joinerNodeId: string, primaryTerm: bigint): SyncReques
 }
 
 function staleSyncBatch(primaryTerm: bigint, rowId: number): SyncBatch {
-  const rows = [
-    {
-      id: rowId,
-      owner: 'sync-stale',
-      value: rowId,
-      note: 'stale-sync-batch',
-    },
-  ]
+  const rows = [{ id: rowId, owner: 'sync-stale', value: rowId, note: 'stale-sync-batch' }]
   return {
     requestId: 'stale-sync-batch',
     table: 'failover_items',
@@ -125,21 +129,15 @@ function staleSyncBatch(primaryTerm: bigint, rowId: number): SyncBatch {
 }
 
 function staleInsertChange(sourceNodeId: string, rowId: number, note: string): ReplicationChange {
-  const hlc = HLC.encode(Date.now(), 0, sourceNodeId)
   return {
     table: 'failover_items',
     operation: 'insert',
     rowId: String(rowId),
     primaryKey: { id: rowId },
-    hlc,
+    hlc: HLC.encode(Date.now(), 0, sourceNodeId),
     txId: `${sourceNodeId}-stale-${rowId}`,
     nodeId: sourceNodeId,
-    newData: {
-      id: rowId,
-      owner: sourceNodeId,
-      value: rowId,
-      note,
-    },
+    newData: { id: rowId, owner: sourceNodeId, value: rowId, note },
     oldData: null,
   }
 }

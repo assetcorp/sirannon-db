@@ -44,7 +44,7 @@ export function toColumnValue(value: unknown): ColumnValue {
     return { intValue: value }
   }
   if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
+    if (Number.isSafeInteger(value)) {
       return { intValue: BigInt(value) }
     }
     return { floatValue: value }
@@ -134,6 +134,7 @@ export function toBatchPayload(batch: ReplicationBatch): BatchPayload {
     checksum: batch.checksum,
     groupId: batch.groupId ?? '',
     primaryTerm: batch.primaryTerm ?? 0n,
+    afterSeq: batch.afterSeq ?? 0n,
   }
 }
 
@@ -151,6 +152,7 @@ export function fromBatchPayload(payload: BatchPayload): ReplicationBatch {
     checksum: payload.checksum,
     groupId: payload.groupId || undefined,
     primaryTerm: payload.primaryTerm === 0n ? undefined : payload.primaryTerm,
+    afterSeq: payload.afterSeq === 0n ? undefined : payload.afterSeq,
   }
 }
 
@@ -182,6 +184,7 @@ export function toSyncRequestPayload(req: SyncRequest): SyncRequestPayload {
     groupId: req.groupId ?? '',
     primaryTerm: req.primaryTerm ?? 0n,
     supportsStreamVerification: req.supportsStreamVerification === true,
+    historyTail: req.historyTail ? { hlc: req.historyTail.hlc, txId: req.historyTail.txId } : undefined,
   }
 }
 
@@ -193,6 +196,7 @@ export function fromSyncRequestPayload(p: SyncRequestPayload): SyncRequest {
     supportsStreamVerification: p.supportsStreamVerification === true ? true : undefined,
     groupId: p.groupId || undefined,
     primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
+    historyTail: p.historyTail ? { hlc: p.historyTail.hlc, txId: p.historyTail.txId } : undefined,
   }
 }
 
@@ -238,6 +242,10 @@ export function toSyncCompletePayload(complete: SyncComplete): SyncCompletePaylo
     })),
     groupId: complete.groupId ?? '',
     primaryTerm: complete.primaryTerm ?? 0n,
+    historyPoint: complete.historyPoint
+      ? { hlc: complete.historyPoint.hlc, txId: complete.historyPoint.txId }
+      : undefined,
+    resumed: complete.resumed === true,
   }
 }
 
@@ -255,6 +263,8 @@ export function fromSyncCompletePayload(p: SyncCompletePayload): SyncComplete {
     ),
     groupId: p.groupId || undefined,
     primaryTerm: p.primaryTerm === 0n ? undefined : p.primaryTerm,
+    historyPoint: p.historyPoint ? { hlc: p.historyPoint.hlc, txId: p.historyPoint.txId } : undefined,
+    resumed: p.resumed === true ? true : undefined,
   }
 }
 

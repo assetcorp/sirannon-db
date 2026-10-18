@@ -96,7 +96,8 @@
             "p999_ms": 7.52704699995229,
             "max_ms": 9.282019999984186,
             "cores_used": 0.6148469405605769,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 16000,
@@ -118,7 +119,8 @@
             "p999_ms": 3.2996140000177547,
             "max_ms": 4.757591000001412,
             "cores_used": 0.7323463812635609,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -151,7 +153,8 @@
             "p999_ms": 20.038890000083484,
             "max_ms": 21.935141999972984,
             "cores_used": 0.8415485313287601,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 0
           },
           "postgres": {
             "target_rate": 16000,
@@ -173,7 +176,8 @@
             "p999_ms": 20.31223299994599,
             "max_ms": 24.312417999957688,
             "cores_used": 1.3126110190922269,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 0
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -206,7 +210,8 @@
             "p999_ms": 9.470464000012726,
             "max_ms": 11.741423999890685,
             "cores_used": 0.6836258501143719,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 16000,
@@ -228,7 +233,8 @@
             "p999_ms": 10.863690999802202,
             "max_ms": 14.877822999842465,
             "cores_used": 1.332636198861994,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -261,7 +267,8 @@
             "p999_ms": 6.771456999704242,
             "max_ms": 9.030996999703348,
             "cores_used": 0.5333002082084197,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 1000,
@@ -283,7 +290,8 @@
             "p999_ms": 2.620693000033498,
             "max_ms": 4.335210000164807,
             "cores_used": 0.09547644946860684,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": {
             "skipped": false,
@@ -1048,7 +1056,8 @@
             "p999_ms": 7.153977999463677,
             "max_ms": 11.624859999865294,
             "cores_used": 0.6882355357329509,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 1000,
@@ -1070,7 +1079,8 @@
             "p999_ms": 217.14563799928874,
             "max_ms": 391.83689799997956,
             "cores_used": 0.10221069885135489,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1103,7 +1113,8 @@
             "p999_ms": 6.303445999510586,
             "max_ms": 7.629561999812722,
             "cores_used": 0.5449365534461943,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 8000,
@@ -1125,7 +1136,8 @@
             "p999_ms": 31.91473099961877,
             "max_ms": 279.5200649993494,
             "cores_used": 0.5527910513351693,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1158,7 +1170,8 @@
             "p999_ms": 8.497328999452293,
             "max_ms": 11.835591999813914,
             "cores_used": 0.7058429370523556,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 1000,
@@ -1180,7 +1193,8 @@
             "p999_ms": 43.21000900026411,
             "max_ms": 65.93298100028187,
             "cores_used": 0.13028834711186574,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -1213,7 +1227,8 @@
             "p999_ms": 23.800827999599278,
             "max_ms": 25.575892999768257,
             "cores_used": 0.46317048133521593,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10001000
           },
           "postgres": {
             "target_rate": 8000,
@@ -1235,7 +1250,8 @@
             "p999_ms": 4.680608999915421,
             "max_ms": 9.776875999756157,
             "cores_used": 0.7246792790075917,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10001000
           },
           "sirannon_soak": {
             "skipped": false,
@@ -3686,6 +3702,46 @@
           "max_concurrent_transactions": 16
         }
       },
+      "sirannon_environment": {
+        "captured_at": "2026-08-04T22:11:29.440Z",
+        "harness_version": "0.1.0",
+        "resource_control": {
+          "mechanism": "cgroup-v2",
+          "driver_allowed_cpus": "0-3",
+          "driver_memory_max": "max",
+          "engine_allowed_cpus": "4-7",
+          "engine_memory_max": "2G"
+        },
+        "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+        "os": "Linux 6.17.0-1021-gcp",
+        "arch": "x64",
+        "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+        "logical_cpus": 8,
+        "total_memory_bytes": 33647984640,
+        "node_version": "v24.19.0",
+        "git_commit": "25365d11360767611371e0aca8ea0a015eee37f1",
+        "git_dirty": true
+      },
+      "postgres_environment": {
+        "captured_at": "2026-08-05T00:41:16.554Z",
+        "harness_version": "0.1.0",
+        "resource_control": {
+          "mechanism": "cgroup-v2",
+          "driver_allowed_cpus": "0-3",
+          "driver_memory_max": "max",
+          "engine_allowed_cpus": "4-7",
+          "engine_memory_max": "2G"
+        },
+        "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+        "os": "Linux 6.17.0-1021-gcp",
+        "arch": "x64",
+        "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+        "logical_cpus": 8,
+        "total_memory_bytes": 33647984640,
+        "node_version": "v24.19.0",
+        "git_commit": "25365d11360767611371e0aca8ea0a015eee37f1",
+        "git_dirty": true
+      },
       "client_saturation": {
         "sirannon": {
           "client": "@delali/sirannon-db SDK over its WebSocket transport",
@@ -3740,7 +3796,8 @@
             "p999_ms": 7.609253000002354,
             "max_ms": 9.60934999998426,
             "cores_used": 0.6251259251224501,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 16000,
@@ -3762,7 +3819,8 @@
             "p999_ms": 3.2258090000250377,
             "max_ms": 4.641128999995999,
             "cores_used": 0.7358737281992498,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -3795,7 +3853,8 @@
             "p999_ms": 20.34823999996297,
             "max_ms": 21.909404000034556,
             "cores_used": 0.48265071257047154,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 0
           },
           "postgres": {
             "target_rate": 16000,
@@ -3817,7 +3876,8 @@
             "p999_ms": 3.3484069999540225,
             "max_ms": 4.318421999923885,
             "cores_used": 0.8834553251789938,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 0
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -3850,7 +3910,8 @@
             "p999_ms": 14.333354000002146,
             "max_ms": 17.095412000082433,
             "cores_used": 0.6411553203290308,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 32000,
@@ -3872,7 +3933,8 @@
             "p999_ms": 8.52924000006169,
             "max_ms": 9.850093000102788,
             "cores_used": 1.7642009487925752,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -3905,7 +3967,8 @@
             "p999_ms": 11.729325000196695,
             "max_ms": 15.693605000153184,
             "cores_used": 0.5121705225377405,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 8000,
@@ -3927,7 +3990,8 @@
             "p999_ms": 3.409490999765694,
             "max_ms": 6.160759000107646,
             "cores_used": 0.5338404002515796,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": {
             "skipped": false,
@@ -4692,7 +4756,8 @@
             "p999_ms": 7.176837999373674,
             "max_ms": 16.288234000094235,
             "cores_used": 0.6796521309988875,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 8000,
@@ -4714,7 +4779,8 @@
             "p999_ms": 17.101623999886215,
             "max_ms": 405.0922419996932,
             "cores_used": 0.5638039358158269,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -4747,7 +4813,8 @@
             "p999_ms": 6.452517000027001,
             "max_ms": 8.135387999936938,
             "cores_used": 0.5342593859061078,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 8000,
@@ -4769,7 +4836,8 @@
             "p999_ms": 36.17304200027138,
             "max_ms": 349.84029999934137,
             "cores_used": 0.5528465051192221,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -4802,7 +4870,8 @@
             "p999_ms": 18.541272000409663,
             "max_ms": 23.996966999955475,
             "cores_used": 1.095389706295903,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "postgres": {
             "target_rate": 8000,
@@ -4824,7 +4893,8 @@
             "p999_ms": 4.314206000417471,
             "max_ms": 6.168445999734104,
             "cores_used": 0.7704068223490712,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10000000
           },
           "sirannon_soak": null,
           "postgres_soak": null,
@@ -4857,7 +4927,8 @@
             "p999_ms": 19.540628000162542,
             "max_ms": 21.154082000255585,
             "cores_used": 0.7060476402980662,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10001000
           },
           "postgres": {
             "target_rate": 16000,
@@ -4879,7 +4950,8 @@
             "p999_ms": 3.4846740001812577,
             "max_ms": 4.579212999902666,
             "cores_used": 0.9233177841501042,
-            "cores_allowed": 4
+            "cores_allowed": 4,
+            "seed_rows": 10001000
           },
           "sirannon_soak": {
             "skipped": false,
@@ -7329,6 +7401,46 @@
           "pool_size": 16,
           "max_concurrent_transactions": 16
         }
+      },
+      "sirannon_environment": {
+        "captured_at": "2026-08-05T03:13:32.860Z",
+        "harness_version": "0.1.0",
+        "resource_control": {
+          "mechanism": "cgroup-v2",
+          "driver_allowed_cpus": "0-3",
+          "driver_memory_max": "max",
+          "engine_allowed_cpus": "4-7",
+          "engine_memory_max": "2G"
+        },
+        "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+        "os": "Linux 6.17.0-1021-gcp",
+        "arch": "x64",
+        "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+        "logical_cpus": 8,
+        "total_memory_bytes": 33647984640,
+        "node_version": "v24.19.0",
+        "git_commit": "25365d11360767611371e0aca8ea0a015eee37f1",
+        "git_dirty": true
+      },
+      "postgres_environment": {
+        "captured_at": "2026-08-05T07:58:47.387Z",
+        "harness_version": "0.1.0",
+        "resource_control": {
+          "mechanism": "cgroup-v2",
+          "driver_allowed_cpus": "0-3",
+          "driver_memory_max": "max",
+          "engine_allowed_cpus": "4-7",
+          "engine_memory_max": "2G"
+        },
+        "machine_label": "GCP c3-standard-8-lssd, us-central1-b",
+        "os": "Linux 6.17.0-1021-gcp",
+        "arch": "x64",
+        "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+        "logical_cpus": 8,
+        "total_memory_bytes": 33647984640,
+        "node_version": "v24.19.0",
+        "git_commit": "650df41c6b3a2bf01ad91946402b9373e34f87cf",
+        "git_dirty": false
       },
       "client_saturation": {
         "sirannon": {

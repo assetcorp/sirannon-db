@@ -1,28 +1,44 @@
 export {
+  deleteAppliedChangesAfterSeq,
   ensureAppliedChangesTable,
+  insertAppliedChangesFromStagedPush,
   prepareInsertAppliedChange,
   selectAppliedSourceSeqsInRange,
   selectMaxAppliedSourceSeq,
   selectMaxAppliedSourceSeqByNode,
 } from './applied-changes-table.js'
 export {
-  deleteChangesBeforeSql,
+  deleteHistoryChangesAfterHlc,
+  deleteStampedChangesUpToSeq,
+  type HistoryChangeRef,
+  type HistoryChangeRow,
+  selectHistoryChangesAfterHlc,
+  selectHistoryTransaction,
+  selectMaxHistoryChangeSeq,
+  selectNewestHistoryChange,
+  selectOutboundHistoryChangesSql,
+} from './changes-history.js'
+export {
   deleteChangesBeforeUpToSeqSql,
   ensureChangesTable,
   insertDdlChange,
   selectChangesAfterSeqSql,
   selectCountOutboundChanges,
+  selectMaxAssignedChangeSeq,
   selectMaxChangeHlc,
   selectMaxChangeSeq,
+  selectMaxNodeChangeSeq,
   selectMaxRowChangeHlc,
   selectMinChangeSeqSql,
   selectNodeChangesAfterSeqSql,
   selectOutboundChangesSql,
   selectTablesChangesInRangeSql,
+  updateChangeStampsAboveMetaSeqSql,
   updateChangeStampsAfterSeqSql,
-  updateUnstampedChangeStampsSql,
 } from './changes-table.js'
 export {
+  deleteColumnVersions,
+  deleteColumnVersionsAfterHlc,
   ensureColumnVersionsTable,
   prepareDeleteRowColumnVersions,
   prepareDeleteRowColumnVersionsUpToHlc,
@@ -38,8 +54,10 @@ export {
   deleteExpiredDeviceCursors,
   type ExpiredDeviceCursorBounds,
   ensureDeviceCursorsTable,
+  selectDeviceCursorExists,
   selectDeviceCursors,
   selectMinDeviceCursorBoundary,
+  updateDeviceCursor,
   upsertDeviceCursor,
 } from './device-cursors-table.js'
 export {
@@ -48,7 +66,9 @@ export {
   insertMetaValueIfAbsent,
   selectMetaValue,
   UPSERT_META_VALUE_SQL,
+  upsertMetaMaxChangeSeqSql,
   upsertMetaValue,
+  upsertMetaValueAndMaxChangeSeqSql,
 } from './meta-table.js'
 export {
   type AppliedMigrationRow,
@@ -63,23 +83,49 @@ export {
   selectAppliedMigrationsNewestFirst,
 } from './migrations-table.js'
 export {
+  deletePeerState,
+  deletePeerStates,
   ensurePeerStateTable,
   selectMinPeerAckedSeq,
   selectPeerAckedSeq,
   upsertPeerAckedSeq,
 } from './peer-state-table.js'
+export { deleteAllReplacedRows, deleteReplacedRowsOfTable, ensureReplacedRowsTable } from './replaced-rows-table.js'
+export {
+  type StoredHistoryPoint,
+  type StoredTermStart,
+  selectAnchoredTerm,
+  selectHistoryBase,
+  selectPrimaryTermStart,
+  selectQuarantined,
+  upsertAnchoredTerm,
+  upsertHistoryBase,
+  upsertPrimaryTermStart,
+  upsertQuarantined,
+} from './replication-history-meta.js'
 export { ensureBatchApplyTables, ensureReplicationStateTables } from './replication-tables.js'
 export {
+  type IndexColumnRow,
+  type IndexListRow,
+  indexColumns,
+  primaryKeyColumns,
   referencedTables,
   type SchemaObjectRow,
   selectCountTableRows,
+  selectIndexSql,
+  selectOrdinaryTableName,
   selectTableExists,
   selectTableSql,
+  selectTriggerSql,
   selectUserSchemaObjects,
   selectUserTableNames,
   setForeignKeysEnabled,
+  TABLE_XINFO_HIDDEN,
+  type TableColumnRow,
   type TableInfoRow,
   tableColumnNames,
+  tableColumnsWithGenerated,
+  tableIndexList,
   tableInfoRows,
   tablePkColumns,
 } from './sqlite-catalog.js'
@@ -93,6 +139,16 @@ export {
   selectStagedChangesInRange,
   upsertStagedChangeSql,
 } from './staged-changes-table.js'
+export {
+  deleteStagedPushChanges,
+  ensureStagedPushChangesTable,
+  prepareInsertStagedPushChange,
+  type StagedPushChangeRow,
+  type StagedPushTail,
+  selectStagedPushChangesAfter,
+  selectStagedPushSeqsInRange,
+  selectStagedPushTail,
+} from './staged-push-changes-table.js'
 export {
   deleteSyncTableStates,
   ensureSyncStateTable,

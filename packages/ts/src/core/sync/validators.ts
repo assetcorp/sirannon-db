@@ -5,7 +5,7 @@ export const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 export const SEQ_STRING_RE = /^\d{1,19}$/
 
 export const SAFE_DDL_RE =
-  /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+INDEX|DROP\s+INDEX)\b/i
+  /^\s*(CREATE\s+TABLE|ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN|DROP\s+TABLE|CREATE\s+(?:UNIQUE\s+)?INDEX|DROP\s+INDEX)\b/i
 
 export const DDL_DENY_RE = /\b(load_extension|ATTACH|randomblob|zeroblob|writefile|readfile|fts3_tokenizer)\b/i
 
@@ -14,7 +14,7 @@ export function validateIdentifier(name: string): boolean {
 }
 
 const CREATE_INDEX_TARGETS_RE =
-  /^\s*CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)["`\]]?\s+ON\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i
+  /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)["`\]]?\s+ON\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i
 
 const DDL_TARGET_RE =
   /^\s*(?:CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|DROP\s+INDEX(?:\s+IF\s+EXISTS)?)\s+(?:["`[]?[A-Za-z_][A-Za-z0-9_]*["`\]]?\s*\.\s*)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/i

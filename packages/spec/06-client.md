@@ -46,7 +46,7 @@ TopologyAwareClientOptions extends ClientOptions {
 
 A browser client carries a short-lived credential in `webSocketProtocols`. A client that configures subprotocols must offer the `sirannon.v1` identifier ahead of them, and the server selects that identifier (see [05-server.md](05-server.md#subprotocol-negotiation)). A client that configures none must offer no subprotocol. Each configured subprotocol is one or more of the characters a header token allows, and no two are equal; a client given anything else must fail at construction with `INVALID_ARGUMENT`, name `webSocketProtocols`, and leave the value out of the message.
 
-`database(id)` returns a cached `RemoteDatabase` for the URL-encoded id. `close` closes every connection, cancels active subscriptions, and rejects pending requests.
+`database(id)` returns a cached `RemoteDatabase` for the URL-encoded id. `close` closes every connection, cancels active subscriptions, and fails every pending request with `TRANSPORT_ERROR`, including an HTTP request whose response has not yet arrived in full.
 
 ---
 
@@ -76,7 +76,7 @@ A first argument that names a registered operation runs that operation. `query` 
 
 ### Refusing SQL Before It Is Sent
 
-A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
+A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
 
 ### Live Queries
 
@@ -100,11 +100,11 @@ The client decodes wire values back to native representations wherever a row, ch
 
 ### HTTP Transport
 
-The base URL is the server URL with trailing slashes removed; requests are `application/json`. Statements map to `POST {baseUrl}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a registered operation maps to `POST {baseUrl}/query/{name}` or `/execute/{name}`. Subscriptions and live queries are unsupported and fail with `TRANSPORT_ERROR`. A fetch failure fails with `CONNECTION_ERROR`, a non-JSON response with `INVALID_RESPONSE`, and an error response with the server's code and message.
+The base URL is the server URL with trailing slashes removed; requests are `application/json`. Statements map to `POST {baseUrl}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a registered operation maps to `POST {baseUrl}/query/{name}` or `/execute/{name}`. Subscriptions and live queries are unsupported and fail with `TRANSPORT_ERROR`. A fetch failure fails with `CONNECTION_ERROR`, a response whose body is not a JSON object with `INVALID_RESPONSE`, and an error response with the server's code and message.
 
 ### WebSocket Transport
 
-The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. The transport reconnects automatically only while it holds active subscriptions or live queries, and a failed request of any other kind triggers no reconnection. On reconnection the transport re-establishes every active subscription, and every live query subscribes again. The transport drops a live query the server refuses, carrying that error, and it keeps one whose server is unreachable registered for the next reconnection.
+The URL scheme becomes `ws://` or `wss://`. The connection is lazy; the first operation connects. It supports query, execute, transaction, batch, load, registered operations, subscriptions, and live queries. Each request carries an id of the form `c_{counter}_{timestamp}` that the server echoes. A request that exceeds `requestTimeout` fails with `TIMEOUT`. The transport reconnects automatically only while it holds active subscriptions or live queries, and a failed request of any other kind triggers no reconnection. On reconnection the transport re-establishes every active subscription, and every live query subscribes again. The transport drops a subscription or a live query that the server refuses to restore, carrying that error, and it keeps one whose restore fails with `CONNECTION_ERROR` or `TIMEOUT` registered for the next attempt.
 
 A close code of 4401, 4403, or any code in the 4000-4099 range reports a refused connection. The transport must fail pending and later requests with `UNAUTHORIZED` for 4401 and `FORBIDDEN` for 4403, carry the close reason as the message, and must not reconnect. Every other close code fails pending requests with `CONNECTION_ERROR` and reconnects while subscriptions remain.
 
@@ -126,7 +126,7 @@ SubscribeOptions {
 
 Device sync adds further fields to `SubscribeOptions` (see [08-device-sync.md](08-device-sync.md)).
 
-Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` and `changes` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. The client removes a subscription that fails to restore and does not subscribe again for it. When routing metadata changes in topology mode, the client re-establishes active subscriptions on the new endpoint; a migrated subscription restarts live from the new endpoint, and it does not resume from its prior cursor.
+Subscriptions require WebSocket transport; over HTTP they fail with `TRANSPORT_ERROR`. The client sends a `subscribe` message and awaits a `subscribed` confirmation, then receives `change` and `changes` messages by subscription id. It tracks the highest `seq` it has processed and the reported `epoch`, and resumes from them on reconnect, re-sending the same id and filter. The client removes a subscription whose restore the server refuses, passes that refusal to `onError`, and does not subscribe again for it. A `DUPLICATE_SUBSCRIPTION` answer to a restore means that the connection already holds the subscription, so the client keeps it. When routing metadata changes in topology mode, the client re-establishes active subscriptions on the new endpoint; a migrated subscription restarts live from the new endpoint, and it does not resume from its prior cursor.
 
 A subscription must not wait for what its callback returns. An error the callback throws must not stop delivery to any other subscriber, and neither must a failure of what it returns. A client must pass each of those to `onError` where the subscription declares one, and must drop each one otherwise. A client must also pass the error raised by a change message it cannot decode to that same `onError`, and must go on delivering the messages that follow. A client must drop an error thrown by `onError`.
 
@@ -164,4 +164,4 @@ The client tracks a fingerprint of the routing metadata. A write or read that fa
 RemoteError { code: string, message: string }
 ```
 
-A remote error carries the server's code (see [07-errors.md](07-errors.md)). Client-originated codes are `CONNECTION_ERROR`, `TIMEOUT`, `TRANSPORT_ERROR` (operation unsupported by the current transport), `INVALID_RESPONSE`, `ROUTING_ERROR`, `NO_SAFE_PRIMARY`, and `INVALID_ARGUMENT`.
+A remote error carries the server's code (see [07-errors.md](07-errors.md)). Client-originated codes are `CONNECTION_ERROR`, `TIMEOUT`, `TRANSPORT_ERROR` (operation unsupported by the current transport, or transport closed), `INVALID_RESPONSE`, `ROUTING_ERROR`, `NO_SAFE_PRIMARY`, and `INVALID_ARGUMENT`.

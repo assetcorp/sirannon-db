@@ -12,9 +12,9 @@ import {
 import type { SQLiteConnection } from './driver/types.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
-import { Transaction } from './transaction.js'
+import { type StatementMeter, Transaction } from './transaction.js'
 import type { SubscriptionBuilder } from './types.js'
-import { runWriterTransaction } from './writer-transaction.js'
+import { runInSavepoint, runWriterTransaction, type WriterTransactionRunner } from './writer-transaction.js'
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
@@ -104,19 +104,30 @@ export class DatabaseCdcController {
     return this.stamper
   }
 
-  async ensureStamping(): Promise<void> {
-    if (this.stamper) return
-    await this.runExclusive(() => this.ensureStamper())
-  }
-
   stampStatements(options?: { persistClock?: boolean }): readonly StampStatement[] | null {
     return this.stamper ? this.stamper.stampStatements(options) : null
   }
 
-  async applyStamps(txConn: SQLiteConnection): Promise<void> {
-    if (this.stamper) {
-      await this.stamper.applyStamps(txConn)
-    }
+  stampOpening(): StampStatement | null {
+    return this.stamper ? this.stamper.openingStatement() : null
+  }
+
+  get stamps(): boolean {
+    return this.stamper !== null
+  }
+
+  get activeStamper(): SyncStamper | null {
+    return this.stamper
+  }
+
+  openStamps(txConn: SQLiteConnection, runInTransaction: WriterTransactionRunner): Promise<void> | null {
+    if (!this.stamper || runInTransaction === runInSavepoint) return null
+    return this.stamper.openStamps(txConn)
+  }
+
+  applyStamps(txConn: SQLiteConnection, runInTransaction: WriterTransactionRunner): Promise<void> | null {
+    if (!this.stamper || runInTransaction === runInSavepoint) return null
+    return this.stamper.applyStamps(txConn)
   }
 
   async unwatch(table: string): Promise<void> {
@@ -135,16 +146,42 @@ export class DatabaseCdcController {
     return new SubscriptionBuilderImpl(table, subscriptions)
   }
 
-  async runTransaction<T>(writer: SQLiteConnection, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  async runTransaction<T>(
+    writer: SQLiteConnection,
+    fn: (tx: Transaction) => Promise<T>,
+    meter: StatementMeter | null = null,
+    runInTransaction: WriterTransactionRunner = runWriterTransaction,
+  ): Promise<T> {
     const tracker = this.tracker
+    if (!tracker && !this.stamper) {
+      return Transaction.run(writer, fn, meter, runInTransaction)
+    }
     if (!tracker) {
-      return Transaction.run(writer, fn)
+      return runInTransaction(writer, async txConn => {
+        await this.openStamps(txConn, runInTransaction)
+        const tx = new Transaction(txConn).withMeter(meter)
+        let value: T
+        try {
+          value = await fn(tx)
+        } finally {
+          tx.end()
+        }
+        await this.applyStamps(txConn, runInTransaction)
+        return value
+      })
     }
 
     const state: CdcTransactionState = { sawDdl: false, droppedTables: [] }
-    const result = await runWriterTransaction(writer, async txConn => {
-      const value = await fn(new CdcAwareTransaction(txConn, tracker, state))
-      await this.applyStamps(txConn)
+    const result = await runInTransaction(writer, async txConn => {
+      await this.openStamps(txConn, runInTransaction)
+      const tx = new CdcAwareTransaction(txConn, tracker, state).withMeter(meter)
+      let value: T
+      try {
+        value = await fn(tx)
+      } finally {
+        tx.end()
+      }
+      await this.applyStamps(txConn, runInTransaction)
       return value
     })
 

@@ -2,12 +2,11 @@ import { EventEmitter } from 'node:events'
 import type { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
-import type { CoordinatorLease, CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
+import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError } from '../errors.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
@@ -40,24 +39,24 @@ import {
   DEFAULT_SYNC_ACK_TIMEOUT_MS,
   DEFAULT_SYNC_BATCH_SIZE,
 } from './constants.js'
+import { ControllerRuntime } from './controller-runtime.js'
 import {
-  effectiveTopologyRole,
   getCoordinatorMessageFields,
-  getCoordinatorRuntimeStatus,
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
 } from './coordinator-authority.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
-import { execute, executeBatch, forwardStatements, query, transaction } from './data-api.js'
+import { execute, executeBatch, executeTransaction, forwardStatements, query, transaction } from './data-api.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
-import { computeNodeHealth } from './node-health.js'
+import { nodeStatus } from './node-health.js'
+import { RejoinState } from './rejoin-state.js'
 import { SenderLoop } from './sender-loop.js'
 import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
-import { installTestHooks } from './test-hooks.js'
+import { TermHistory } from './term-history.js'
 
 type CoordinatorStampedMessage =
   | ReplicationBatch
@@ -93,6 +92,8 @@ export class ReplicationEngine extends EventEmitter {
   readonly log: ReplicationLog
   /** @internal */
   readonly peerTracker = new PeerTracker()
+  /** @internal */
+  readonly history = new TermHistory()
   /** @internal */
   readonly defaultResolver: ConflictResolver
   /** @internal */
@@ -137,29 +138,23 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   coordinatorAuthority = false
   /** @internal */
+  coordinatorDemotionHandler: ((state: ReplicationGroupState) => void) | null = null
+  /** @internal */
   controllerState: 'disabled' | 'standby' | 'active' | 'lost' = 'disabled'
   /** @internal */
-  nodeSessionLeaseId: string | null = null
+  readonly controller = new ControllerRuntime()
   /** @internal */
-  controllerLeaseId: string | null = null
+  readonly rejoin = new RejoinState()
+  /** @internal */
+  nodeSessionLeaseId: string | null = null
   /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
   nodeSessionWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
-  controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null = null
-  /** @internal */
-  observedControllerLease: CoordinatorLease | null = null
-  /** @internal */
-  controllerBidding = false
-  /** @internal */
   liveNodeIds: string[] | null = null
   /** @internal */
   coordinatorLeaseTimer: ReturnType<typeof setInterval> | null = null
-  /** @internal */
-  controllerTimer: ReturnType<typeof setInterval> | null = null
-  /** @internal */
-  coordinatorRejoinSyncStarting = false
   /** @internal */
   coordinatorSessionRestoring = false
   /** @internal */
@@ -203,7 +198,10 @@ export class ReplicationEngine extends EventEmitter {
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
     this.tracker = config.changeTracker
-    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, CHANGES_TABLE, this.tracker)
+    this.log = new ReplicationLog(writerConn, this.nodeId, this.hlc, {
+      tracker: this.tracker,
+      appliedSchemaChanges: config.coordinator ? 'logged' : 'unlogged',
+    })
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
     this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
     this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
@@ -225,7 +223,6 @@ export class ReplicationEngine extends EventEmitter {
     this.syncServer = new SyncServer(this)
     this.syncJoiner = new SyncJoiner(this)
     this.senderLoop = new SenderLoop(this)
-    installTestHooks(this)
   }
 
   /**
@@ -254,16 +251,7 @@ export class ReplicationEngine extends EventEmitter {
    * @returns The node's role, peers, sequence position, sync state, health, and coordinator group state.
    */
   status(): ReplicationStatus {
-    return {
-      nodeId: this.nodeId,
-      role: effectiveTopologyRole(this),
-      peers: this.peerTracker.allPeerStates(),
-      localSeq: this.lastSentSeq,
-      replicating: this.running,
-      health: computeNodeHealth(this),
-      syncState: { ...this.syncState },
-      coordinator: getCoordinatorRuntimeStatus(this),
-    }
+    return nodeStatus(this)
   }
 
   /**
@@ -324,8 +312,23 @@ export class ReplicationEngine extends EventEmitter {
   }
 
   /**
+   * Executes a fixed list of statements in one transaction on this node, or forwards them to the primary, which
+   * executes them in one transaction, when this node cannot accept writes and `writeForwarding` is on.
+   *
+   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param options - The write concern for the transaction, which the primary also applies to forwarded statements before it answers.
+   * @returns One result per statement, in order.
+   */
+  executeTransaction(
+    statements: readonly { sql: string; params?: Params }[],
+    options?: QueryOptions,
+  ): Promise<ExecuteResult[]> {
+    return executeTransaction(this, statements, options)
+  }
+
+  /**
    * Calls `fn` inside one transaction on this node. On a node that cannot accept writes, it throws a `TopologyError`,
-   * since the engine forwards only `execute` and `executeBatch` writes to the primary.
+   * since the engine forwards only the statements that `execute`, `executeBatch`, and `executeTransaction` receive.
    *
    * @param fn - The function that receives the transaction and executes statements on it.
    * @param options - The write concern to wait for after the transaction commits.

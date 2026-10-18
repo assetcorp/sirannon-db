@@ -1,0 +1,251 @@
+Do not delete: this patch starts from patches/sqlite/0001-row-counts-plain.patch in
+Cloudflare's workerd (https://github.com/cloudflare/workerd), Apache License 2.0,
+with its comments and its shell hunk removed and its other hunks applied to the
+SQLite amalgamation.
+workerd took the row-counting code from libSQL (https://github.com/tursodatabase/libsql),
+Copyright 2022 the libSQL authors, MIT licence. NOTICE at the repository root
+contains the licence text.
+Sirannon changed the patch: both counters hold 64 bits, sirannon_stmt_status64
+reads them in place of sqlite3_stmt_status, and neither counter includes the work
+of a trigger whose name begins with _sirannon_trg_ or the sqlite_sequence
+bookkeeping for a table whose name begins with _sirannon_.
+
+--- a/sqlite3.h
++++ b/sqlite3.h
+@@ -9310,6 +9310,12 @@
+ #define SQLITE_STMTSTATUS_FILTER_MISS       7
+ #define SQLITE_STMTSTATUS_FILTER_HIT        8
+ #define SQLITE_STMTSTATUS_MEMUSED           99
++
++#define LIBSQL_STMTSTATUS_BASE              1024
++#define LIBSQL_STMTSTATUS_ROWS_READ         LIBSQL_STMTSTATUS_BASE + 1
++#define LIBSQL_STMTSTATUS_ROWS_WRITTEN      LIBSQL_STMTSTATUS_BASE + 2
++
++SQLITE_API int sirannon_stmt_status64(sqlite3_stmt*, int op, sqlite3_int64 *pValue, int resetFlg);
+
+ /*
+ ** CAPI3REF: Custom Page Cache Object
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -9632,7 +9632,13 @@
+ #define SQLITE_STMTSTATUS_FILTER_MISS       7
+ #define SQLITE_STMTSTATUS_FILTER_HIT        8
+ #define SQLITE_STMTSTATUS_MEMUSED           99
++
++#define LIBSQL_STMTSTATUS_BASE              1024
++#define LIBSQL_STMTSTATUS_ROWS_READ         LIBSQL_STMTSTATUS_BASE + 1
++#define LIBSQL_STMTSTATUS_ROWS_WRITTEN      LIBSQL_STMTSTATUS_BASE + 2
+
++SQLITE_API int sirannon_stmt_status64(sqlite3_stmt*, int op, sqlite3_int64 *pValue, int resetFlg);
++
+ /*
+ ** CAPI3REF: Custom Page Cache Object
+ **
+@@ -24364,6 +24370,7 @@
+   Bool isOrdered:1;       /* True if the table is not BTREE_UNORDERED */
+   Bool noReuse:1;         /* OpenEphemeral may not reuse this cursor */
+   Bool colCache:1;        /* pCache pointer is initialized and non-NULL */
++  Bool sirannonUncounted:1;
+   u16 seekHit;            /* See the OP_SeekHit and OP_IfNoHope opcodes */
+   union {                 /* pBtx for isEphermeral.  pAltMap otherwise */
+     Btree *pBtx;            /* Separate file holding temporary table */
+@@ -24783,6 +24790,7 @@
+   yDbMask btreeMask;      /* Bitmask of db->aDb[] entries referenced */
+   yDbMask lockMask;       /* Subset of btreeMask that requires a lock */
+   u32 aCounter[9];        /* Counters used by sqlite3_stmt_status() */
++  u64 aLibsqlCounter[3];
+   char *zSql;             /* Text of the SQL statement that generated this */
+ #ifdef SQLITE_ENABLE_NORMALIZE
+   char *zNormSql;         /* Normalization of the associated SQL statement */
+@@ -24808,6 +24816,35 @@
+ #define VDBE_READY_STATE    1   /* Ready to run but not yet started */
+ #define VDBE_RUN_STATE      2   /* Run in progress */
+ #define VDBE_HALT_STATE     3   /* Finished.  Need reset() or finalize() */
++
++#define SIRANNON_CHANGE_CAPTURE_TRIGGER_PREFIX "_sirannon_trg_"
++#define SIRANNON_TABLE_PREFIX "_sirannon_"
++#define SIRANNON_OPFLAG_UNCOUNTED 0x80
++
++static int sirannonOwnsTable(const Table *pTab){
++  return pTab->zName!=0
++      && strncmp(pTab->zName, SIRANNON_TABLE_PREFIX, sizeof(SIRANNON_TABLE_PREFIX)-1)==0;
++}
++
++static SQLITE_NOINLINE int sirannonFrameCountsRows(const Vdbe *p){
++  const VdbeFrame *pFrame;
++  for(pFrame=p->pFrame; pFrame; pFrame=pFrame->pParent){
++    const Trigger *pTrigger = (const Trigger*)pFrame->token;
++    if( pTrigger && pTrigger->zName
++     && strncmp(pTrigger->zName, SIRANNON_CHANGE_CAPTURE_TRIGGER_PREFIX,
++                sizeof(SIRANNON_CHANGE_CAPTURE_TRIGGER_PREFIX)-1)==0
++    ){
++      return 0;
++    }
++  }
++  return 1;
++}
++
++static void sirannonAddRowCount(Vdbe *p, int op, u64 nRow){
++  if( p->pFrame==0 || sirannonFrameCountsRows(p) ){
++    p->aLibsqlCounter[op - LIBSQL_STMTSTATUS_BASE] += nRow;
++  }
++}
+
+ /*
+ ** Structure used to store the context required by the
+@@ -95819,6 +95856,23 @@
+     if( resetFlag ) pVdbe->aCounter[op] = 0;
+   }
+   return (int)v;
++}
++
++SQLITE_API int sirannon_stmt_status64(
++  sqlite3_stmt *pStmt,
++  int op,
++  sqlite3_int64 *pValue,
++  int resetFlag
++){
++  Vdbe *pVdbe = (Vdbe*)pStmt;
++  if( pStmt==0 || pValue==0
++   || (op!=LIBSQL_STMTSTATUS_ROWS_READ && op!=LIBSQL_STMTSTATUS_ROWS_WRITTEN)
++  ){
++    return SQLITE_MISUSE_BKPT;
++  }
++  *pValue = (sqlite3_int64)pVdbe->aLibsqlCounter[op - LIBSQL_STMTSTATUS_BASE];
++  if( resetFlag ) pVdbe->aLibsqlCounter[op - LIBSQL_STMTSTATUS_BASE] = 0;
++  return SQLITE_OK;
+ }
+
+ /*
+@@ -100413,6 +100467,7 @@
+   }else{
+     nEntry = 0;  /* Not needed.  Only used to silence a warning. */
+     rc = sqlite3BtreeCount(db, pCrsr, &nEntry);
++    sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, (u64)nEntry);
+     if( rc ) goto abort_due_to_error;
+   }
+   pOut = out2Prerelease(p, pOp);
+@@ -100993,7 +101048,8 @@
+ case OP_OpenRead:            /* ncycle */
+ case OP_OpenWrite:
+
+-  assert( pOp->opcode==OP_OpenWrite || pOp->p5==0 || pOp->p5==OPFLAG_SEEKEQ );
++  assert( pOp->opcode==OP_OpenWrite || (pOp->p5 & ~SIRANNON_OPFLAG_UNCOUNTED)==0
++       || pOp->p5==OPFLAG_SEEKEQ );
+   assert( p->bIsReader );
+   assert( pOp->opcode==OP_OpenRead || pOp->opcode==OP_ReopenIdx
+           || p->readOnly==0 );
+@@ -101054,6 +101110,7 @@
+   pCur->nullRow = 1;
+   pCur->isOrdered = 1;
+   pCur->pgnoRoot = p2;
++  pCur->sirannonUncounted = (pOp->p5 & SIRANNON_OPFLAG_UNCOUNTED)!=0;
+ #ifdef SQLITE_DEBUG
+   pCur->wrFlag = wrFlag;
+ #endif
+@@ -101578,6 +101635,7 @@
+       goto seek_not_found;
+     }
+   }
++  sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+ #ifdef SQLITE_TEST
+   sqlite3_search_count++;
+ #endif
+@@ -102148,6 +102206,7 @@
+   pC->deferredMoveto = 0;
+   VdbeBranchTaken(res!=0,2);
+   pC->seekResult = res;
++  sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+   if( res!=0 ){
+     assert( rc==SQLITE_OK );
+     if( pOp->p2==0 ){
+@@ -102405,6 +102464,9 @@
+ #endif
+
+   assert( (pOp->p5 & OPFLAG_LASTROWID)==0 || (pOp->p5 & OPFLAG_NCHANGE)!=0 );
++  if( !pC->isEphemeral && !pC->sirannonUncounted ){
++    sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_WRITTEN, 1);
++  }
+   if( pOp->p5 & OPFLAG_NCHANGE ){
+     p->nChange++;
+     if( pOp->p5 & OPFLAG_LASTROWID ) db->lastRowid = x.nKey;
+@@ -102598,6 +102660,7 @@
+
+   /* Invoke the update-hook if required. */
+   if( opflags & OPFLAG_NCHANGE ){
++    if( !pC->isEphemeral ) sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_WRITTEN, 1);
+     p->nChange++;
+     if( db->xUpdateCallback && ALWAYS(pTab!=0) && HasRowid(pTab) ){
+       db->xUpdateCallback(db->pUpdateArg, SQLITE_DELETE, zDb, pTab->zName,
+@@ -102885,6 +102948,7 @@
+   pC->deferredMoveto = 0;
+   pC->cacheStatus = CACHE_STALE;
+   if( rc ) goto abort_due_to_error;
++  sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+   if( pOp->p2>0 ){
+     VdbeBranchTaken(res!=0,2);
+     if( res ) goto jump_to_p2;
+@@ -103004,6 +103068,7 @@
+   }
+   if( rc ) goto abort_due_to_error;
+   pC->nullRow = (u8)res;
++  if( !pC->sirannonUncounted ) sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+   if( pOp->p2>0 ){
+     VdbeBranchTaken(res!=0,2);
+     if( res ) goto jump_to_p2;
+@@ -103135,6 +103200,7 @@
+   if( rc==SQLITE_OK ){
+     pC->nullRow = 0;
+     p->aCounter[pOp->p5]++;
++    if( !pC->sirannonUncounted ) sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+ #ifdef SQLITE_TEST
+     sqlite3_search_count++;
+ #endif
+@@ -103186,6 +103252,7 @@
+   pIn2 = &aMem[pOp->p2];
+   assert( (pIn2->flags & MEM_Blob) || (pOp->p5 & OPFLAG_PREFORMAT) );
+   if( pOp->p5 & OPFLAG_NCHANGE ) p->nChange++;
++  if( !pC->isEphemeral ) sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_WRITTEN, 1);
+   assert( pC->eCurType==CURTYPE_BTREE );
+   assert( pC->isTable==0 );
+   rc = ExpandBlob(pIn2);
+@@ -103592,6 +103659,7 @@
+   rc = sqlite3BtreeClearTable(db->aDb[pOp->p2].pBt, (u32)pOp->p1, &nChange);
+   if( pOp->p3 ){
+     p->nChange += nChange;
++    sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_WRITTEN, (u64)nChange);
+     if( pOp->p3>0 ){
+       assert( memIsValid(&aMem[pOp->p3]) );
+       memAboutToChange(p, &aMem[pOp->p3]);
+@@ -105239,6 +105307,7 @@
+   rc = pModule->xNext(pCur->uc.pVCur);
+   sqlite3VtabImportErrmsg(p, pVtab);
+   if( rc ) goto abort_due_to_error;
++  sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_READ, 1);
+   res = pModule->xEof(pCur->uc.pVCur);
+   VdbeBranchTaken(!res,2);
+   if( !res ){
+@@ -105361,6 +105430,7 @@
+         p->errorAction = ((pOp->p5==OE_Replace) ? OE_Abort : pOp->p5);
+       }
+     }else{
++      sirannonAddRowCount(p, LIBSQL_STMTSTATUS_ROWS_WRITTEN, 1);
+       p->nChange++;
+     }
+     if( rc ) goto abort_due_to_error;
+@@ -139395,6 +139465,7 @@
+     memId = p->regCtr;
+     assert( sqlite3SchemaMutexHeld(db, 0, pDb->pSchema) );
+     sqlite3OpenTable(pParse, 0, p->iDb, pDb->pSchema->pSeqTab, OP_OpenRead);
++    if( sirannonOwnsTable(p->pTab) ) sqlite3VdbeChangeP5(v, SIRANNON_OPFLAG_UNCOUNTED);
+     sqlite3VdbeLoadString(v, memId-1, p->pTab->zName);
+     aOp = sqlite3VdbeAddOpList(v, ArraySize(autoInc), autoInc, iLn);
+     if( aOp==0 ) break;
+@@ -139460,6 +139531,7 @@
+     sqlite3VdbeAddOp3(v, OP_Le, memId+2, sqlite3VdbeCurrentAddr(v)+7, memId);
+     VdbeCoverage(v);
+     sqlite3OpenTable(pParse, 0, p->iDb, pDb->pSchema->pSeqTab, OP_OpenWrite);
++    if( sirannonOwnsTable(p->pTab) ) sqlite3VdbeChangeP5(v, SIRANNON_OPFLAG_UNCOUNTED);
+     aOp = sqlite3VdbeAddOpList(v, ArraySize(autoIncEnd), autoIncEnd, iLn);
+     if( aOp==0 ) break;
+     aOp[0].p1 = memId+1;

@@ -139,7 +139,7 @@ jobs:
 
       - name: Run the streamed backup suites
         working-directory: packages/ts
-        run: pnpm vitest run src/core/__tests__/integration/streamed-backup
+        run: pnpm vitest run src/__tests__/integration/backups/streamed-
 
   musl:
     name: Streamed backup on linux-x64 musl
@@ -165,4 +165,4 @@ jobs:
 
       - name: Run the streamed backup suite on Node's own SQLite
         working-directory: packages/ts
-        run: pnpm vitest run src/core/__tests__/integration/streamed-backup-node-sqlite
+        run: pnpm vitest run src/__tests__/integration/backups/streamed-node-sqlite

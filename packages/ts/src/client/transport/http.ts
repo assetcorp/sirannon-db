@@ -24,6 +24,7 @@ export class HttpTransport implements Transport {
   readonly carriesReadConcern = true
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
+  private readonly inFlight = new Set<AbortController>()
   private closed = false
 
   constructor(baseUrl: string, headers?: Record<string, string>) {
@@ -121,26 +122,43 @@ export class HttpTransport implements Transport {
     )
   }
 
-  /** Closes the transport, so every later request throws a `RemoteError` with code `TRANSPORT_ERROR`. */
+  /**
+   * Closes the transport. A request still in flight and every later request throw a
+   * `RemoteError` with code `TRANSPORT_ERROR`.
+   */
   close(): void {
     this.closed = true
+    for (const request of this.inFlight) {
+      request.abort()
+    }
+    this.inFlight.clear()
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     if (this.closed) {
-      throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+      throw closedTransportError()
     }
 
-    const url = `${this.baseUrl}${path}`
+    const request = new AbortController()
+    this.inFlight.add(request)
+    try {
+      return await this.send<T>(`${this.baseUrl}${path}`, body, request.signal)
+    } finally {
+      this.inFlight.delete(request)
+    }
+  }
 
+  private async send<T>(url: string, body: unknown, signal: AbortSignal): Promise<T> {
     let response: Response
     try {
       response = await fetch(url, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(body),
+        signal,
       })
     } catch (err) {
+      if (this.closed) throw closedTransportError()
       throw new RemoteError(
         'CONNECTION_ERROR',
         `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
@@ -151,7 +169,16 @@ export class HttpTransport implements Transport {
     try {
       data = await response.json()
     } catch {
+      if (this.closed) throw closedTransportError()
       throw new RemoteError('INVALID_RESPONSE', `Server returned non-JSON response (HTTP ${response.status})`)
+    }
+    if (this.closed) throw closedTransportError()
+
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RemoteError(
+        'INVALID_RESPONSE',
+        `Server returned a JSON value that is not an object (HTTP ${response.status})`,
+      )
     }
 
     if (!response.ok) {
@@ -164,4 +191,8 @@ export class HttpTransport implements Transport {
 
     return data as T
   }
+}
+
+function closedTransportError(): RemoteError {
+  return new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
 }

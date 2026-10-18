@@ -26,6 +26,7 @@ export class SubscriptionManager {
   private nextId = 1
   private readonly subscriptions = new Map<number, InternalSubscription>()
   private readonly byTable = new Map<string, Set<number>>()
+  private readonly foldedNames = new Map<string, string>()
   private readonly batchEndListeners = new Set<(atTxBoundary: boolean) => void>()
 
   subscribe(
@@ -37,21 +38,22 @@ export class SubscriptionManager {
     const id = this.nextId++
     this.subscriptions.set(id, { id, table, filter, callback, onError: options?.onError })
 
-    let tableSet = this.byTable.get(table)
+    const key = table.toLowerCase()
+    let tableSet = this.byTable.get(key)
     if (!tableSet) {
       tableSet = new Set()
-      this.byTable.set(table, tableSet)
+      this.byTable.set(key, tableSet)
     }
     tableSet.add(id)
 
     return {
       unsubscribe: () => {
         this.subscriptions.delete(id)
-        const set = this.byTable.get(table)
+        const set = this.byTable.get(key)
         if (set) {
           set.delete(id)
           if (set.size === 0) {
-            this.byTable.delete(table)
+            this.byTable.delete(key)
           }
         }
       },
@@ -60,9 +62,11 @@ export class SubscriptionManager {
 
   dispatch(events: ChangeEvent[]): void {
     for (const event of events) {
-      const ids = this.byTable.get(event.table) ?? NO_SUBSCRIBERS
+      const ids = this.byTable.get(this.foldLoggedName(event.table)) ?? NO_SUBSCRIBERS
+      const firstIdAfterThisEvent = this.nextId
       let deliveredTo = 0
       for (const id of ids) {
+        if (id >= firstIdAfterThisEvent) continue
         const sub = this.subscriptions.get(id)
         if (!sub) continue
         const delivered = sub.filter === undefined ? event : filteredChange(event, sub.filter)
@@ -98,7 +102,16 @@ export class SubscriptionManager {
   }
 
   subscriberCount(table: string): number {
-    return this.byTable.get(table)?.size ?? 0
+    return this.byTable.get(table.toLowerCase())?.size ?? 0
+  }
+
+  private foldLoggedName(table: string): string {
+    let folded = this.foldedNames.get(table)
+    if (folded === undefined) {
+      folded = table.toLowerCase()
+      this.foldedNames.set(table, folded)
+    }
+    return folded
   }
 }
 

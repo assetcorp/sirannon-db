@@ -1,5 +1,3 @@
-import { existsSync, statSync } from 'node:fs'
-
 export function sameMembers(actual: readonly string[], expected: readonly string[]): boolean {
   if (actual.length !== expected.length) return false
   const actualSet = new Set(actual)
@@ -16,12 +14,12 @@ export function zip<T, U>(left: readonly T[], right: readonly U[]): Array<[T, U]
   })
 }
 
-export function fileSize(path: string): number {
-  return existsSync(path) ? statSync(path).size : 0
-}
-
 export function jsonReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value
+}
+
+export function describeValue(value: unknown): string {
+  return JSON.stringify(value, jsonReplacer, 2)
 }
 
 export async function waitForCondition(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
@@ -39,6 +37,20 @@ export async function waitForCondition(predicate: () => Promise<boolean>, timeou
 
   if (lastError) throw lastError
   throw new Error(`Condition was not met within ${timeoutMs}ms`)
+}
+
+export async function holdsThroughout(
+  predicate: () => Promise<boolean>,
+  durationMs: number,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + durationMs
+  while (Date.now() < deadline) {
+    if (!(await predicate())) {
+      throw new Error(`Expected ${description} to hold for ${durationMs}ms, and it stopped holding`)
+    }
+    await sleep(100)
+  }
 }
 
 export function sleep(ms: number): Promise<void> {

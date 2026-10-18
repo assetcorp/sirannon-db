@@ -85,11 +85,16 @@ function readStatus(res: HttpResponse, abort: ResponseAbort, database: Database)
  * take longer than the timeout of a proxy between the caller and the server. The
  * caller reads the result of the turn from the status route.
  *
+ * The server accepts an empty body or a JSON object on this route, and it
+ * answers any other body with `400`, as it does on every other backup route.
+ *
  * @param sirannon - The registry in which the server's databases are open.
  * @returns The handler that the server registers.
  */
 export function handleBackupTrigger(sirannon: Sirannon): DbRouteHandler {
-  return async (res, dbId, _rawBody, abort) => {
+  return async (res, dbId, rawBody, abort) => {
+    if (!parseOptionalBody<Record<string, unknown>>(res, rawBody)) return
+
     const database = await resolveBackupDatabase(res, abort, sirannon, dbId)
     if (!database) return
     if (!readStatus(res, abort, database)) return
@@ -155,9 +160,10 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
     const body = parseOptionalBody<BackupVerifyRequest>(res, rawBody)
     if (!body) return
 
-    const nameError = verifyNameValidationError(body.name)
-    if (nameError !== null) {
-      sendError(res, 400, 'INVALID_REQUEST', nameError)
+    const name = body.name
+    const nameError = verifyNameValidationError(name)
+    if (nameError !== null || typeof name !== 'string') {
+      sendError(res, 400, 'INVALID_REQUEST', nameError ?? 'Field "name" must be a string')
       return
     }
 
@@ -165,7 +171,7 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
     if (!database) return
 
     try {
-      const result = await database.verifyBackup(body.name as string)
+      const result = await database.verifyBackup(name)
       if (abort.aborted) return
       sendJson(res, result)
     } catch (err) {

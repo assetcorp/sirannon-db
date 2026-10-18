@@ -15,6 +15,8 @@ import {
 } from './harness.js'
 
 const WINDOW = 20
+const ROWS_IN_THE_LONG_TRANSACTION = WINDOW * 15
+const ACKNOWLEDGEMENT_HELD_MS = 60_000
 const BULK_ROWS = 1_500
 const DEVICE_SEED_ROWS = 200
 const PUSH_BACKLOG = 1_001
@@ -167,11 +169,15 @@ describe('a device syncing through dying connections', () => {
     const device = await openDevice(server.url)
     const seen: string[] = []
     const record = (event: ChangeEvent) => seen.push(String(event.row.id))
-    const first = device.sync({ onChange: record })
+    const first = device.sync({
+      onChange: record,
+      ackIntervalMs: ACKNOWLEDGEMENT_HELD_MS,
+      immediateAckAfterChanges: ROWS_IN_THE_LONG_TRANSACTION,
+    })
     await first.start()
 
     await server.db.transaction(async tx => {
-      for (let id = 1; id <= WINDOW * 15; id++)
+      for (let id = 1; id <= ROWS_IN_THE_LONG_TRANSACTION; id++)
         await tx.execute('INSERT INTO notes (id, body) VALUES (?, ?)', [id, 'b'])
     })
     await eventually(() => stagedCount(device.path) >= WINDOW, 'part of the transaction reaching staging')
@@ -182,6 +188,6 @@ describe('a device syncing through dying connections', () => {
     await second.start()
     await eventually(() => sameRows(server.path, device.path, 'notes'), 'the transaction finishing')
     await sleep(200)
-    expect([seen.length, new Set(seen).size]).toEqual([WINDOW * 15, WINDOW * 15])
+    expect([seen.length, new Set(seen).size]).toEqual([ROWS_IN_THE_LONG_TRANSACTION, ROWS_IN_THE_LONG_TRANSACTION])
   }, 30_000)
 })

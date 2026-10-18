@@ -194,19 +194,21 @@ describe.each(DRIVER_PLACEMENTS)('values with $label', ({ driver, writerWorker }
 
   it('stores each boolean as the integer 1 or 0 through every write path, and reads it back as that number', async () => {
     const { db, path } = await openValues()
-    const insertAmount = 'INSERT INTO amounts (id, amount) VALUES (?, ?)'
+    await db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, flag)')
+    const insertFlag = 'INSERT INTO flags (id, flag) VALUES (?, ?)'
+    const insertNamedFlag = 'INSERT INTO flags (id, flag) VALUES (:id, :flag)'
 
-    await db.execute(insertAmount, [1, true])
-    await db.execute(insertAmount, [2, false])
-    await db.executeBatch(insertAmount, [
+    await db.execute(insertFlag, [1, true])
+    await db.execute(insertFlag, [2, false])
+    await db.executeBatch(insertFlag, [
       [3, true],
       [4, false],
     ])
     await db.executeTransaction([
-      { sql: insertAmount, params: [5, true] },
-      { sql: 'INSERT INTO amounts (id, amount) VALUES (:id, :amount)', params: { id: 6, amount: false } },
+      { sql: insertFlag, params: [5, true] },
+      { sql: insertNamedFlag, params: { id: 6, flag: false } },
     ])
-    await db.executeBatch('INSERT INTO amounts (id, amount) VALUES (:id, :amount)', [{ id: 7, amount: true }])
+    await db.executeBatch(insertNamedFlag, [{ id: 7, flag: true }])
 
     const expected = [
       [1, 1],
@@ -217,15 +219,15 @@ describe.each(DRIVER_PLACEMENTS)('values with $label', ({ driver, writerWorker }
       [6, 0],
       [7, 1],
     ]
-    const raw = readRaw<{ id: bigint; amount: bigint; kind: string }>(
+    const raw = readRaw<{ id: bigint; flag: bigint; kind: string }>(
       path,
-      'SELECT id, amount, typeof(amount) AS kind FROM amounts ORDER BY id',
+      'SELECT id, flag, typeof(flag) AS kind FROM flags ORDER BY id',
     )
-    expect(raw.map(row => [Number(row.id), Number(row.amount)])).toEqual(expected)
+    expect(raw.map(row => [Number(row.id), Number(row.flag)])).toEqual(expected)
     expect(new Set(raw.map(row => row.kind))).toEqual(new Set(['integer']))
-    const read = await db.query<{ id: number; amount: number }>('SELECT id, amount FROM amounts ORDER BY id')
-    expect(read.map(row => [row.id, row.amount])).toEqual(expected)
-    expect(await db.query('SELECT id FROM amounts WHERE amount = ? ORDER BY id', [true])).toEqual([
+    const read = await db.query<{ id: number; flag: number }>('SELECT id, flag FROM flags ORDER BY id')
+    expect(read.map(row => [row.id, row.flag])).toEqual(expected)
+    expect(await db.query('SELECT id FROM flags WHERE flag = ? ORDER BY id', [true])).toEqual([
       { id: 1 },
       { id: 3 },
       { id: 5 },

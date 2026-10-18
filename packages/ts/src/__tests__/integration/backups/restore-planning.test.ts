@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { restoreBackup } from '../../../backup/index.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { addOrders, type CycleNode, changeRecords, createOrders, openCycleNode } from './cycle-harness.js'
@@ -9,7 +9,6 @@ import {
   failureOf,
   joinPieces,
   orderLabels,
-  pause,
   type StoredRecord,
   sha256,
   storedChain,
@@ -18,6 +17,7 @@ import {
 } from './harness.js'
 
 const FULL_COPY_INTERVAL_MS = 150
+const MS_BETWEEN_WRITES = 3
 
 let workspace: Workspace
 
@@ -26,8 +26,13 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.useRealTimers()
   await workspace.dispose()
 })
+
+function advanceClock(ms: number): void {
+  vi.setSystemTime(Date.now() + ms)
+}
 
 interface TwoChains {
   node: CycleNode
@@ -37,21 +42,23 @@ interface TwoChains {
 }
 
 async function twoChains(): Promise<TwoChains> {
+  vi.useFakeTimers({ toFake: ['Date'] })
   const node = await openCycleNode(workspace, 'planned', {
     backups: { fullCopyIntervalMs: FULL_COPY_INTERVAL_MS, pieceBytes: 1024 },
   })
   await node.db.captureBackupChanges()
   await createOrders(node.db)
+  advanceClock(MS_BETWEEN_WRITES)
   const written: { label: string; at: number }[] = []
   const note = async (label: string) => {
     await addOrders(node.db, [label])
     await node.db.captureBackupChanges()
     written.push({ label, at: node.runs.at(-1)?.finishedAt ?? 0 })
-    await pause(3)
+    advanceClock(MS_BETWEEN_WRITES)
   }
   await note('older-1')
   await note('older-2')
-  await pause(FULL_COPY_INTERVAL_MS + 20)
+  advanceClock(FULL_COPY_INTERVAL_MS + 20)
   await note('newer-base')
   await note('newer-1')
   await note('newer-2')

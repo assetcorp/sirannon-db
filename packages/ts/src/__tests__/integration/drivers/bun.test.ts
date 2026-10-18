@@ -7,6 +7,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const FIXTURE = fileURLToPath(new URL('./bun-fresh-open.mjs', import.meta.url))
+const VALUES_FIXTURE = fileURLToPath(new URL('./bun-values.mjs', import.meta.url))
 const bunInstalled = spawnSync('bun', ['--version']).status === 0
 
 let dir: string
@@ -40,5 +41,32 @@ describe.skipIf(!bunInstalled)('the Bun driver', () => {
     } finally {
       raw.close()
     }
+  }, 90_000)
+
+  it('binds named parameters in every prefix form, booleans as 1 or 0, and an empty BLOB, and refuses what SQLite cannot bind', () => {
+    const output = execFileSync('bun', [VALUES_FIXTURE, dir], { encoding: 'utf8', timeout: 60_000 })
+
+    const raw = new BetterSqlite3(join(dir, 'values.db'), { readonly: true, fileMustExist: true })
+    try {
+      raw.defaultSafeIntegers(true)
+      const stored = raw.prepare('SELECT id, label, typeof(value) AS kind, value FROM cells ORDER BY id').all()
+      expect(stored).toEqual([
+        { id: 1n, label: 'colon', kind: 'text', value: 'named' },
+        { id: 2n, label: 'at sign', kind: 'integer', value: 1n },
+        { id: 3n, label: 'dollar', kind: 'integer', value: 0n },
+        { id: 4n, label: 'empty blob', kind: 'blob', value: Buffer.alloc(0) },
+        { id: 5n, label: 'largest integer', kind: 'integer', value: 2n ** 63n - 1n },
+        { id: 6n, label: 'batch', kind: 'blob', value: Buffer.from([0, 255]) },
+      ])
+    } finally {
+      raw.close()
+    }
+    expect(JSON.parse(output)).toEqual({
+      refusals: { missingNamed: 'QUERY_ERROR', beyondInt64: 'QUERY_ERROR', plainObject: 'QUERY_ERROR' },
+      read: [
+        { id: 2, value: 1 },
+        { id: 5, value: `${2n ** 63n - 1n}n` },
+      ],
+    })
   }, 90_000)
 })

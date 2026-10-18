@@ -8,7 +8,7 @@ This page lists every option that the registry, the databases that it opens, the
 | --- | --- | --- | --- |
 | `driver` | `SQLiteDriver` | Yes | The SQLite driver adapter to use |
 | `hooks` | `HookConfig` | No | Hooks that Sirannon calls around queries and connections, and before a subscription, a snapshot, or a device push |
-| `metrics` | `MetricsConfig` | No | Callbacks for query timing with the rows that each statement returns or changes, for database open and close, and for each change event that Sirannon delivers to subscribers |
+| `metrics` | `MetricsConfig` | No | Callbacks for each statement's timing and row counts, for each database open and close, and for each change event that Sirannon delivers to subscribers |
 | `lifecycle` | `LifecycleConfig` | No | Auto-open resolver, idle timeout, max open databases |
 | `migrations` | `MigrationSource` | No | Migration set, or a function returning it, applied to every writable database before it registers |
 | `writerWorker` | `boolean \| WriterWorkerOptions` | No | Default writer-worker setting for every database this registry opens |
@@ -176,7 +176,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
 | `batchSize` | `number` | `100` | Changes per replication batch |
 | `batchIntervalMs` | `number` | `100` | Sender loop interval in ms |
-| `maxClockDriftMs` | `number` | `60000` | Largest HLC gap between two nodes that this node accepts before it rejects a batch |
+| `maxClockDriftMs` | `number` | `60000` | How far, in ms, the newest timestamp in an incoming batch can run ahead of this node's clock before this node rejects the batch; an older batch passes whatever its age |
 | `maxPendingBatches` | `number` | `10` | In-flight batches per peer before backpressure |
 | `maxBatchChanges` | `number` | `1000` | Maximum accepted changes in one inbound batch |
 | `ackTimeoutMs` | `number` | `5000` | Replication batch ack timeout |

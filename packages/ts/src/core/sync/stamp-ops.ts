@@ -1,7 +1,6 @@
 import { decodeTaggedValues } from '../cdc/encoding.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import {
-  prepareDeleteRowColumnVersionsUpToHlc,
   prepareUpsertNewerColumnVersion,
   selectNodeChangesAfterSeqSql,
   updateChangeStampsAfterSeqSql,
@@ -11,6 +10,7 @@ import { canonicaliseForChecksum } from './canonicalise.js'
 import type { HLC } from './hlc.js'
 import { HLC_CLOCK_META_KEY } from './hlc-store.js'
 import type { ChangeRow } from './internal-types.js'
+import { ROW_TOMBSTONE_COLUMN } from './row-writer.js'
 
 export async function recordLocalColumnVersions(
   tx: SQLiteConnection,
@@ -23,8 +23,8 @@ export async function recordLocalColumnVersions(
 
   for (const row of rows) {
     if (row.operation === 'DELETE') {
-      const delStmt = await prepareDeleteRowColumnVersionsUpToHlc(tx)
-      await delStmt.run(row.table_name, String(row.row_id), row.hlc)
+      const tombstoneStmt = await prepareUpsertNewerColumnVersion(tx)
+      await tombstoneStmt.run(row.table_name, String(row.row_id), ROW_TOMBSTONE_COLUMN, row.hlc, row.node_id)
       continue
     }
 

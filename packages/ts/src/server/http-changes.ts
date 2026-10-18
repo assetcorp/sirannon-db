@@ -2,7 +2,7 @@ import type { HttpResponse } from 'uWebSockets.js'
 import type { PushHookContext } from '../core/hooks/types.js'
 import type { Sirannon } from '../core/sirannon.js'
 import { HLC } from '../core/sync/hlc.js'
-import type { ReplicationBatch } from '../core/sync/types.js'
+import type { ReplicationBatch, ReplicationChange } from '../core/sync/types.js'
 import { highestMigrationVersion } from '../core/system-catalog/index.js'
 import type { ServerExecutionTarget, ServerExecutionTargetResolver } from '../core/types.js'
 import type { ResponseAbort } from './http-common.js'
@@ -38,6 +38,26 @@ function changeClockRefusal(batch: ReplicationBatch, nowMs: number): { code: str
     }
   }
   return null
+}
+
+function clockRangeOf(changes: readonly ReplicationChange[]): ReplicationBatch['hlcRange'] {
+  let min = changes[0].hlc
+  let max = changes[0].hlc
+  for (const change of changes) {
+    if (change.hlc < min) min = change.hlc
+    if (change.hlc > max) max = change.hlc
+  }
+  return { min, max }
+}
+
+function decodeVerifiableBatch(body: ChangesRequest['batch']): ReplicationBatch | null {
+  let decoded: ReplicationBatch
+  try {
+    decoded = decodeSyncBatch(body)
+  } catch {
+    return null
+  }
+  return { ...decoded, hlcRange: clockRangeOf(decoded.changes) }
 }
 
 async function refuseUngrantedPush(
@@ -88,11 +108,16 @@ export function handleChanges(sirannon: Sirannon, resolveTarget?: ServerExecutio
       return
     }
 
+    const batch = decodeVerifiableBatch(body.batch)
+    if (batch === null) {
+      sendError(res, 400, 'INVALID_REQUEST', '"batch.changes" carries a malformed tagged value')
+      return
+    }
+
     const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
-      const batch = decodeSyncBatch(body.batch)
       await refuseUngrantedPush(sirannon, dbId, batch, identity)
 
       const clockRefusal = changeClockRefusal(batch, Date.now())

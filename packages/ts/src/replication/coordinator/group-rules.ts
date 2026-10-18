@@ -149,6 +149,10 @@ export function nextInSyncSetState(
   input: UpdateInSyncSetInput,
   nowMs: number,
 ): ReplicationGroupState {
+  if (input.expectedPrimaryTerm !== undefined && state.primaryTerm !== input.expectedPrimaryTerm) return state
+  if (input.expectedPrimaryNodeId !== undefined && state.currentPrimary?.nodeId !== input.expectedPrimaryNodeId) {
+    return state
+  }
   const inSyncNodeIds = normaliseNodeIds(input.inSyncNodeIds, 'inSyncNodeIds')
   assertSubset(inSyncNodeIds, state.votingDataBearingNodeIds, 'inSyncNodeIds')
   assertNoInSyncAdditions(state.inSyncNodeIds, inSyncNodeIds)
@@ -170,8 +174,10 @@ export function nextAdmittedInSyncState(
   assertNodeInGroup(state, input.nodeId)
   if (
     state.currentPrimary?.nodeId !== input.sourceNodeId ||
+    (input.expectedPrimaryTerm !== undefined && state.primaryTerm !== input.expectedPrimaryTerm) ||
     state.drainingNodeIds.includes(input.nodeId) ||
     state.faultedNodeIds.includes(input.nodeId) ||
+    (state.repairingNodeIds.includes(input.nodeId) && input.rejoinSyncCompleted !== true) ||
     input.appliedSeq < state.durabilityPointSeq
   ) {
     return state

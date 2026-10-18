@@ -36,6 +36,7 @@ DriverCapabilities {
   multipleConnections: boolean
   extensions: boolean
   steppedCopy: boolean
+  rowCounts: boolean
 }
 ```
 
@@ -44,6 +45,7 @@ DriverCapabilities {
 | `multipleConnections` | The engine can open several independent connections to one database file. When `true`, Sirannon creates a pool with dedicated reader connections; when `false`, all reads and writes share one connection. |
 | `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
 | `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
+| `rowCounts` | A driver reporting `true` must expose the counted statement calls, set `rowsRead` and `rowsWritten` by the rules in [Row Counts](02-core.md#row-counts) on every `RunResult`, `BatchSummary`, and statement error, and fail `open` with `ROW_COUNTS_UNSUPPORTED` when its engine has no row counters. |
 
 ### OpenOptions
 
@@ -127,8 +129,8 @@ The optional methods let a driver accelerate bulk work:
 | `runGroup` | Runs several independent units in one transaction, returning one outcome per unit in order. A unit that fails must not disturb the others. A unit statement marked `trusted` bypasses the reserved-identifier guard. |
 
 ```text
-RunResult      { changes: number, lastInsertRowId: number or bigint }
-BatchSummary   { rowsLoaded: number, changes: number }
+RunResult      { changes: number, lastInsertRowId: number or bigint, rowsRead?: number, rowsWritten?: number }
+BatchSummary   { rowsLoaded: number, changes: number, rowsRead?: number, rowsWritten?: number }
 GroupRunOutcome = { ok: true, results: List<RunResult> }
                 or { ok: false, error: { message: string, name?: string, code?: string } }
 ```
@@ -145,7 +147,13 @@ SQLiteStatement {
   get<T>(...params: any): async -> T or null
   run(...params: any): async -> RunResult
   allRaw?<T>(...params: any): async -> List<T>
+
+  allCounted?<T>(...params: any): async -> Counted<List<T>>
+  getCounted?<T>(...params: any): async -> Counted<T or null>
+  allRawCounted?<T>(...params: any): async -> Counted<List<T>>
 }
+
+Counted<V> { value: V, rowsRead: number, rowsWritten: number }
 ```
 
 Parameters are passed as trailing arguments, not a single list.
@@ -154,6 +162,7 @@ Parameters are passed as trailing arguments, not a single list.
 - **get** returns the first matching row, or null (absent) when nothing matches.
 - **run** runs the statement for its side effects and returns a `RunResult`.
 - **allRaw** behaves like `all` but skips safe-range bigint narrowing, leaving every integer as a bigint. A driver may omit it; callers then fall back to `all`.
+- **allCounted**, **getCounted**, and **allRawCounted** must return the value of `all`, `get`, or `allRaw` together with the row counts of that call alone; a driver must expose `allRawCounted` whenever it exposes `allRaw`.
 
 ---
 

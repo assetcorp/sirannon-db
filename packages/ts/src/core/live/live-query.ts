@@ -12,10 +12,12 @@ export interface PositionedRead<T> {
 }
 
 export interface LiveQuerySource<T> {
-  plan: LivePlan
-  probe: RowProbe
+  readonly plan: LivePlan
+  readonly probe: RowProbe
   read(): Promise<PositionedRead<T>>
   start(handlers: { onEvent(event: ChangeEvent): void; onLost(): void }, sinceSeq: bigint): Promise<() => void>
+  shapeChanged(events: readonly ChangeEvent[]): boolean
+  replan(): Promise<void>
   release(): Promise<void>
   rereadJitterMs: number
   maxTransactionChanges: number
@@ -27,15 +29,18 @@ export interface LiveQuerySource<T> {
 export class MaintainedLiveQuery<T> implements LiveQuery<T> {
   private state: LiveQueryState<T> = { status: 'pending' }
   private readonly listeners = new Set<(update: LiveUpdate<T>) => void>()
-  private readonly result: LiveResult<T>
+  private result: LiveResult<T>
   private readonly batches: ChangeEvent[][] = []
   private pending: ChangeEvent[] = []
   private pendingBytes = 0
   private pendingOverflowed = false
   private stopDelivery: (() => void) | null = null
+  private deliveriesLost = 0
   private appliedThroughSeq = -1n
   private reading = false
   private readAgain = false
+  private replanBeforeRead = false
+  private rowsUnreliable = false
   private draining = false
   private closed = false
 
@@ -111,6 +116,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
 
   private deliveryLost(): void {
     if (this.closed) return
+    this.deliveriesLost++
     this.stopDelivery = null
     this.batches.length = 0
     this.pending = []
@@ -142,6 +148,17 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
     const fresh = batch.filter(event => event.seq > this.appliedThroughSeq)
     if (fresh.length === 0) return
 
+    if (this.rowsUnreliable) {
+      await this.reread()
+      return
+    }
+
+    if (this.source.shapeChanged(fresh)) {
+      this.replanBeforeRead = true
+      await this.reread()
+      return
+    }
+
     let changes: RowChange[]
     try {
       changes = await this.evaluate(fresh)
@@ -164,6 +181,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
     }
 
     this.appliedThroughSeq = highest
+    if (ops.length === 0) return
     this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false }, { kind: 'ops', ops })
   }
 
@@ -172,10 +190,10 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
     for (let i = 0; i < events.length; i++) {
       const event = events[i]
       if (event.type !== 'insert' && event.oldRow !== undefined) {
-        candidates.push({ slot: i * 2, payload: event.oldRow })
+        candidates.push({ slot: i * 2, payload: event.oldRow, rowid: this.rowidOf(event, event.oldRow) })
       }
       if (event.type !== 'delete') {
-        candidates.push({ slot: i * 2 + 1, payload: event.row })
+        candidates.push({ slot: i * 2 + 1, payload: event.row, rowid: this.rowidOf(event, event.row) })
       }
     }
 
@@ -205,6 +223,12 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
     return changes
   }
 
+  private rowidOf(event: ChangeEvent, payload: Record<string, unknown>): unknown {
+    const plan = this.source.plan
+    if (!plan.namesRowid) return null
+    return plan.rowidColumn === null ? event.rowId : payload[plan.rowidColumn]
+  }
+
   private keyOf(event: ChangeEvent, payload: Record<string, unknown>): string | null {
     if (this.source.plan.usesRowid) return event.rowId === undefined ? null : rowidKey(event.rowId)
     return encodeRowKey(this.source.plan.keyColumns.map(column => payload[column]))
@@ -231,12 +255,20 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
         }
         if (this.closed) return
 
+        if (this.replanBeforeRead) {
+          await this.source.replan()
+          if (this.closed) return
+          this.replanBeforeRead = false
+          this.result = new LiveResult<T>(this.source.plan)
+        }
+
         const refreshed = await this.source.read()
         if (this.closed) return
         this.result.reset(refreshed.rows)
         this.appliedThroughSeq = refreshed.seq
 
         if (this.stopDelivery === null) {
+          const lostBeforeStart = this.deliveriesLost
           const stop = await this.source.start(
             { onEvent: event => this.receive(event), onLost: () => this.deliveryLost() },
             refreshed.seq,
@@ -245,10 +277,16 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
             stop()
             return
           }
-          this.stopDelivery = stop
+          if (this.deliveriesLost === lostBeforeStart) {
+            this.stopDelivery = stop
+          } else {
+            stop()
+            this.readAgain = true
+          }
         }
       } while (this.readAgain && !this.closed)
 
+      this.rowsUnreliable = false
       this.publish({ status: 'ready', rows: this.result.snapshot(), revalidating: false }, { kind: 'rows' })
     } catch (err) {
       this.fail(err)
@@ -260,6 +298,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
 
   private fail(err: unknown): void {
     if (this.closed) return
+    this.rowsUnreliable = true
     this.publish({ status: 'error', error: err instanceof Error ? err : new Error(String(err)) }, { kind: 'error' })
   }
 

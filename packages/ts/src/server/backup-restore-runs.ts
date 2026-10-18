@@ -1,10 +1,11 @@
 import type { BackupRestoreProgress, BackupRestoreReport } from '../core/backup/restore-options.js'
 import { SirannonError } from '../core/errors.js'
+import { clientErrorMessage } from './client-error.js'
 
 function describeFailure(err: unknown): { code: string; message: string } {
   return {
     code: err instanceof SirannonError ? err.code : 'INTERNAL_ERROR',
-    message: err instanceof SirannonError ? err.message : 'An unexpected error occurred',
+    message: err instanceof SirannonError ? clientErrorMessage(err) : 'An unexpected error occurred',
   }
 }
 

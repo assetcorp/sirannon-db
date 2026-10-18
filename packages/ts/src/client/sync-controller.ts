@@ -6,10 +6,11 @@ import { toBaseUrl } from './endpoint-urls.js'
 import type { MigrationSyncStatus } from './migration-sync.js'
 import { syncDeviceMigrations } from './migration-sync.js'
 import { deviceNetworkSignal } from './network-signal.js'
-import { downloadDatabaseSnapshot, snapshotGateOpen } from './snapshot-loader.js'
+import { assertSnapshotPageSize, downloadDatabaseSnapshot, snapshotGateOpen } from './snapshot-loader.js'
 import { verifyDeviceSyncCapabilities } from './sync-capabilities.js'
 import type { SnapshotOptions, SyncControllerOptions, SyncState, SyncStatus } from './sync-controller-types.js'
 import {
+  assertSyncControllerOptions,
   createSyncCollaborators,
   DEFAULT_MAX_PUSH_RETRY_DELAY_MS,
   DEFAULT_PUSH_INTERVAL_MS,
@@ -54,6 +55,7 @@ export class SyncController {
   private syncState: SyncState = 'stopped'
   private pendingPushCount = 0
   private lastError: { code: string; message: string } | null = null
+  private lastErrorSource: 'pull' | 'other' | null = null
 
   constructor(
     private readonly db: Database,
@@ -61,6 +63,7 @@ export class SyncController {
   ) {
     this.baseUrl = toBaseUrl(options.url)
     assertWebSocketCredentials(options.headers, options.webSocketProtocols)
+    assertSyncControllerOptions(options)
     const network = deviceNetworkSignal()
     this.statusChanges = new SyncStatusNotifier(
       options.onStatusChange,
@@ -81,7 +84,8 @@ export class SyncController {
         onApplyFailure: err => this.handleApplyFailure(err),
         onApplySuccess: () => {
           this.reconnect.reset()
-          this.statusChanges.notify()
+          if (this.lastErrorSource === 'pull') this.setError(null)
+          else this.statusChanges.notify()
         },
         download: () =>
           this.downloadSnapshot({ pageSize: options.snapshotPageSize, onProgress: options.onSnapshotProgress }),
@@ -111,8 +115,9 @@ export class SyncController {
     this.statusChanges.notify()
   }
 
-  private setError(failure: { code: string; message: string } | null): void {
+  private setError(failure: { code: string; message: string } | null, source: 'pull' | 'other' = 'other'): void {
     this.lastError = failure
+    this.lastErrorSource = failure === null ? null : source
     this.statusChanges.notify()
   }
 
@@ -287,14 +292,12 @@ export class SyncController {
    * @param options - Page size and the progress callback for this download.
    */
   async downloadSnapshot(options?: SnapshotOptions): Promise<void> {
+    assertSnapshotPageSize(options?.pageSize, 'pageSize')
     if (this.state === 'snapshotting') {
       throw new Error('A snapshot download is already in progress')
     }
-    if (this.state !== 'running' && this.state !== 'paused') {
-      throw new Error('Snapshot download requires a started sync controller')
-    }
     const port = this.port
-    if (port === null) {
+    if ((this.state !== 'running' && this.state !== 'paused') || port === null) {
       throw new Error('Snapshot download requires a started sync controller')
     }
 
@@ -341,7 +344,7 @@ export class SyncController {
   }
 
   private handleApplyFailure(err: unknown): void {
-    this.recordError(err)
+    this.setError(describeError(err), 'pull')
     this.pull.teardown()
     if (this.state === 'running' || this.state === 'starting') this.reconnect.schedule()
   }

@@ -126,9 +126,14 @@ export interface QueryResponse {
 }
 
 // @public
+export interface ServerCloseOptions {
+    timeoutMs?: number;
+}
+
+// @public
 export class SirannonServer<Identity = unknown> {
     constructor(sirannon: Sirannon, options?: ServerOptions<Identity>);
-    close(): Promise<void>;
+    close(options?: ServerCloseOptions): Promise<void>;
     listen(): Promise<void>;
     get listeningPort(): number;
 }
@@ -204,8 +209,7 @@ export interface WSExecuteMessage {
 // @internal
 export class WSHandler<Identity = unknown> {
     constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>);
-    // (undocumented)
-    close(): Promise<void>;
+    close(deadline?: AbortSignal): Promise<void>;
     // (undocumented)
     get connectionCount(): number;
     // (undocumented)

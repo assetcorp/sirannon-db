@@ -2,7 +2,14 @@ import type uWS from 'uWebSockets.js'
 import type { AuthenticateHook, RequestContext } from '../core/types.js'
 import type { ResolvedCors } from './cors.js'
 import { writeCorsOrigin } from './cors.js'
-import { initAbortHandler, readBody, sendError } from './http-common.js'
+import {
+  initAbortHandler,
+  readBody,
+  readDatabaseId,
+  readOperationName,
+  refuseUndecodablePathSegments,
+  sendError,
+} from './http-common.js'
 import type { OperationRouteHandler } from './http-operations.js'
 import { decodeRemoteAddress, runAuthenticate } from './request-hook.js'
 
@@ -12,31 +19,19 @@ export interface OperationRouteDeps<Identity> {
   authenticateHook: AuthenticateHook<Identity> | undefined
 }
 
-function decodePathSegment(value: string): string | null {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return null
-  }
-}
-
 export function wrapOperationRoute<Identity>(
   deps: OperationRouteDeps<Identity>,
   handler: OperationRouteHandler,
 ): (res: uWS.HttpResponse, req: uWS.HttpRequest) => void {
   return (res, req) => {
-    const dbId = req.getParameter(0) ?? ''
-    const rawName = req.getParameter(1) ?? ''
+    const segments = [readDatabaseId(req), readOperationName(req)]
+    const [id, operation] = segments
     const method = req.getMethod()
     const path = req.getUrl()
 
     if (deps.cors) writeCorsOrigin(res, deps.cors, req.getHeader('origin'))
 
-    const name = decodePathSegment(rawName)
-    if (name === null) {
-      sendError(res, 400, 'INVALID_REQUEST', `Operation name '${rawName}' is not valid percent-encoding`)
-      return
-    }
+    if (!deps.authenticateHook && refuseUndecodablePathSegments(res, segments)) return
 
     const headers: Record<string, string> = {}
     req.forEach((key, value) => {
@@ -50,7 +45,7 @@ export function wrapOperationRoute<Identity>(
       headers,
       method,
       path,
-      databaseId: dbId,
+      databaseId: id.decoded ?? id.raw,
       remoteAddress: decodeRemoteAddress(res),
     }
 
@@ -65,6 +60,12 @@ export function wrapOperationRoute<Identity>(
       }
 
       if (!abort.claim()) return
+      const dbId = id.decoded
+      const name = operation.decoded
+      if (dbId === null || name === null) {
+        refuseUndecodablePathSegments(res, segments)
+        return
+      }
       try {
         await handler(res, dbId, name, identity, rawBody, abort)
       } catch {

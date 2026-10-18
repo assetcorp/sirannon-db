@@ -1,5 +1,7 @@
 # Replication chaos tests use in-process hooks, not a TCP proxy
 
+[ADR 0011](0011-replication-fault-tests-use-an-in-process-tcp-proxy.md) supersedes this decision.
+
 The chaos layer must reproduce four scenarios from the plan: connection drops mid-batch, replica restart mid-sync, primary crash and recovery, and slow acks on the CDC prune back-pressure path. We cover all four with `transport.disconnect()`/reconnect (exercises real gRPC reconnect), engine `stop()`/`start()` against persistent temp dirs (real on-disk state survives), and a debug-only `__setAckDelayMs(ms)` hook on the engine for ack throttling. No TCP proxy.
 
 ## Rejected alternatives

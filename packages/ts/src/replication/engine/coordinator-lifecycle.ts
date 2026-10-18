@@ -2,13 +2,21 @@ import type { ReplicationGroupState } from '../coordinator/types.js'
 import { CoordinatorError } from '../errors.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import { startControllerLoop, stopControllerLeaseWatch } from './controller-loop.js'
-import { hasCurrentPrimaryAuthorityFor, noteCoordinatorContact } from './coordinator-authority.js'
 import {
+  applyCoordinatorState,
+  hasCurrentPrimaryAuthorityFor,
+  noteCoordinatorContact,
+} from './coordinator-authority.js'
+import {
+  admitRejoinedNodeIfReady,
   handleFormerPrimaryDemotion,
   reconcileInSyncSet,
+  recordQuarantineIfFaulted,
   startCoordinatorRejoinSyncIfReady,
 } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
+import { keepTermHistoryCurrent } from './history-anchor.js'
+import { reportEngineError } from './report-error.js'
 import { unrefTimer } from './timers.js'
 
 const IN_SYNC_RECONCILE_INTERVAL_MS = 1_000
@@ -23,6 +31,7 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
   if (!config) return
 
   const coordinator = config.coordinator
+  engine.coordinatorDemotionHandler = next => demoteFormerPrimary(engine, next)
   let state = await coordinator.getReplicationGroupState(config.clusterId, config.groupId)
   if (!state && config.votingDataBearingNodeIds) {
     state = await coordinator.setReplicationGroupState({
@@ -72,31 +81,45 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
 
 function startInSyncReconcileLoop(engine: ReplicationEngine): void {
   const timer = setInterval(() => {
-    reconcileInSyncSet(engine).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-in-sync-reconcile', recoverable: true })
-    })
+    keepTermHistoryCurrent(engine)
+    reconcileInSyncSet(engine).catch((err: unknown) =>
+      reportEngineError(engine, err, 'coordinator-in-sync-reconcile', true),
+    )
+    keepRejoinCurrent(engine)
   }, IN_SYNC_RECONCILE_INTERVAL_MS)
   unrefTimer(timer)
   engine.inSyncReconcileTimer = timer
 }
 
 function handleCoordinatorStateUpdate(engine: ReplicationEngine, next: ReplicationGroupState): void {
-  const previous = engine.coordinatorState
-  const wasPrimary = previous ? hasCurrentPrimaryAuthorityFor(engine, previous) : engine.coordinatorAuthority
-  noteCoordinatorContact(engine)
-  engine.coordinatorState = next
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, next)
+  recordQuarantine(engine, next)
+  if (applyCoordinatorState(engine, next)) return
+  keepTermHistoryCurrent(engine)
+  keepRejoinCurrent(engine)
+}
 
-  if (wasPrimary && !engine.coordinatorAuthority && next.primaryTerm > (previous?.primaryTerm ?? 0n)) {
-    handleFormerPrimaryDemotion(engine, next).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-former-primary-demotion', recoverable: false })
-    })
-    return
-  }
+function recordQuarantine(engine: ReplicationEngine, state: ReplicationGroupState): void {
+  if (!engine.running) return
+  recordQuarantineIfFaulted(engine, state).catch((err: unknown) =>
+    reportEngineError(engine, err, 'coordinator-quarantine-record', true),
+  )
+}
 
-  startCoordinatorRejoinSyncIfReady(engine, next)
+function keepRejoinCurrent(engine: ReplicationEngine): void {
+  const state = engine.coordinatorState
+  if (!state) return
+  recordQuarantine(engine, state)
+  startCoordinatorRejoinSyncIfReady(engine, state)
+  admitRejoinedNodeIfReady(engine).catch((err: unknown) =>
+    reportEngineError(engine, err, 'coordinator-rejoin-admission', true),
+  )
+}
+
+function demoteFormerPrimary(engine: ReplicationEngine, next: ReplicationGroupState): void {
+  if (!engine.running) return
+  handleFormerPrimaryDemotion(engine, next).catch((err: unknown) =>
+    reportEngineError(engine, err, 'coordinator-former-primary-demotion', false),
+  )
 }
 
 function startCoordinatorLeaseRenewal(engine: ReplicationEngine): void {
@@ -132,8 +155,7 @@ async function keepCoordinatorSessionAlive(engine: ReplicationEngine, ttlMs: num
       }
     } catch (err: unknown) {
       engine.coordinatorAuthority = false
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-session-renew', recoverable: true })
+      reportEngineError(engine, err, 'coordinator-session-renew', true)
       return
     }
   }
@@ -168,12 +190,9 @@ async function restoreCoordinatorSession(engine: ReplicationEngine, ttlMs: numbe
       return
     }
     engine.nodeSessionLeaseId = session.lease.id
-    engine.coordinatorState = state
-    noteCoordinatorContact(engine)
-    applyAuthorityFromKnownState(engine)
+    applyCoordinatorState(engine, state)
   } catch (err: unknown) {
-    const wrappedErr = err instanceof Error ? err : new Error(String(err))
-    engine.emitError({ error: wrappedErr, operation: 'coordinator-session-restore', recoverable: true })
+    reportEngineError(engine, err, 'coordinator-session-restore', true)
   } finally {
     engine.coordinatorSessionRestoring = false
   }
@@ -188,9 +207,9 @@ export function stopCoordinatorTimers(engine: ReplicationEngine): void {
     clearInterval(engine.inSyncReconcileTimer)
     engine.inSyncReconcileTimer = null
   }
-  if (engine.controllerTimer) {
-    clearInterval(engine.controllerTimer)
-    engine.controllerTimer = null
+  if (engine.controller.timer) {
+    clearInterval(engine.controller.timer)
+    engine.controller.timer = null
   }
 }
 
@@ -207,16 +226,14 @@ export async function stopCoordinatorMode(engine: ReplicationEngine): Promise<vo
   }
   engine.liveNodeIds = null
   await stopControllerLeaseWatch(engine)
-  if (engine.controllerLeaseId) {
-    const leaseId = engine.controllerLeaseId
-    engine.controllerLeaseId = null
-    await config.coordinator.releaseLease(leaseId).catch((err: unknown) => {
-      const wrappedErr = err instanceof Error ? err : new Error(String(err))
-      engine.emitError({ error: wrappedErr, operation: 'coordinator-controller-release', recoverable: true })
-    })
+  const leaseId = engine.controller.leaseId
+  if (leaseId) {
+    engine.controller.leaseId = null
+    await config.coordinator
+      .releaseLease(leaseId)
+      .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-controller-release', true))
   }
-  await config.coordinator.deregisterNodeSession(config.clusterId, engine.nodeId).catch((err: unknown) => {
-    const wrappedErr = err instanceof Error ? err : new Error(String(err))
-    engine.emitError({ error: wrappedErr, operation: 'coordinator-session-deregister', recoverable: true })
-  })
+  await config.coordinator
+    .deregisterNodeSession(config.clusterId, engine.nodeId)
+    .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-session-deregister', true))
 }

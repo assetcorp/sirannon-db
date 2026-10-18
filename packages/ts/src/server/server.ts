@@ -1,4 +1,11 @@
-import type { HttpRequest, HttpResponse, TemplatedApp, us_listen_socket, us_socket } from 'uWebSockets.js'
+import type {
+  HttpRequest,
+  HttpResponse,
+  ListenOptions,
+  TemplatedApp,
+  us_listen_socket,
+  us_socket,
+} from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   AuthenticateHook,
@@ -10,6 +17,7 @@ import type {
 } from '../core/types.js'
 import { BackupRestoreRuns } from './backup-restore-runs.js'
 import { handleCapabilities } from './capabilities.js'
+import { ConnectionDrain, endResponse, type RouteRegistrar } from './connection-drain.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { wrapDbGetRoute, wrapDbRoute } from './db-route.js'
@@ -41,6 +49,7 @@ import { handleSnapshotManifest, handleSnapshotPage } from './http-snapshot.js'
 import {
   assertBackupRestoreAuthenticated,
   assertDeviceSyncAuthenticated,
+  resolveCloseTimeout,
   resolveMaxBodyBytes,
   resolveWsBackpressure,
 } from './limits.js'
@@ -49,6 +58,8 @@ import { type OperationRouteDeps, wrapOperationRoute } from './operation-route.j
 import { loadUWebSockets, type UWebSockets } from './uws-loader.js'
 import { WSHandler } from './ws-handler.js'
 import { registerWebSocketRoute } from './ws-route.js'
+
+const UWS_LISTEN_EXCLUSIVE_PORT = 1 as ListenOptions
 
 const SQL_ROUTES = ['/db/:id/query', '/db/:id/execute', '/db/:id/transaction', '/db/:id/batch', '/db/:id/load'] as const
 
@@ -73,6 +84,20 @@ function refuseDeviceSync(res: HttpResponse): void {
 }
 
 /**
+ * The settings for {@link SirannonServer.close}.
+ *
+ * @public
+ */
+export interface ServerCloseOptions {
+  /**
+   * How long, in milliseconds, the server waits for requests in progress before it ends every connection. The value
+   * must be a whole number from 0 to 2_147_483_647, and 0 ends every connection at once. The default is 30_000, the
+   * client's default request timeout, because a client on default settings stops waiting for a reply after that long.
+   */
+  timeoutMs?: number
+}
+
+/**
  * Serves a `Sirannon` database registry over HTTP and WebSocket.
  *
  * Build one with {@link createServer}, then call {@link SirannonServer.listen}.
@@ -91,6 +116,7 @@ export class SirannonServer<Identity = unknown> {
   private readonly acceptBackupRestore: boolean
   private readonly acceptDeviceSync: boolean
   private readonly restoreRuns = new BackupRestoreRuns()
+  private readonly drain = new ConnectionDrain()
   private readonly operations: OperationSets<Identity>
   private readonly registryDigest: string | undefined
   private readonly resolveExecutionTarget: ServerExecutionTargetResolver | undefined
@@ -145,7 +171,7 @@ export class SirannonServer<Identity = unknown> {
   async listen(): Promise<void> {
     const { app } = await this.loadRuntime()
     await new Promise<void>((resolve, reject) => {
-      app.listen(this.host, this.port, socket => {
+      app.listen(this.host, this.port, UWS_LISTEN_EXCLUSIVE_PORT, socket => {
         if (socket) {
           this.listenSocket = socket
           resolve()
@@ -157,16 +183,37 @@ export class SirannonServer<Identity = unknown> {
   }
 
   /**
-   * Stops listening for new connections and closes every open WebSocket connection.
+   * Resolves once the server has stopped listening and has ended every connection, after each request in progress has
+   * sent its reply, so that `sirannon.shutdown()` can close the databases next.
+   *
+   * The server stops listening at once and stops every subscription. It closes each WebSocket connection with close
+   * code 1001 once the requests on that connection have replied and its outbound buffer has emptied. Once no request
+   * is in progress and every WebSocket connection has closed, it ends every remaining connection, idle keep-alive
+   * connections included, so that a client reconnects to whichever server listens next.
+   *
+   * While the server closes, a request on an open HTTP connection finds that connection closed, and a WebSocket
+   * request receives the error `HANDLER_CLOSED`. An upload whose body is still arriving loses its connection at once.
+   * When `timeoutMs` passes before every request has replied, the server ends every remaining connection at that
+   * moment, and the promise resolves.
+   *
+   * @param options - How long the server waits for requests in progress.
+   * @returns A promise that resolves once the server has ended every connection.
+   * @throws A `SirannonError` with code `INVALID_CLOSE_TIMEOUT` when `timeoutMs` is not a whole number from 0 to
+   * 2_147_483_647.
    */
-  async close(): Promise<void> {
+  async close(options?: ServerCloseOptions): Promise<void> {
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), resolveCloseTimeout(options?.timeoutMs))
+    const runtime = this.runtime
+    if (this.listenSocket && runtime) {
+      runtime.uws.us_listen_socket_close(this.listenSocket)
+      this.listenSocket = null
+    }
     try {
-      await this.wsHandler.close()
+      await Promise.all([this.wsHandler.close(deadline.signal), this.drain.close(deadline.signal)])
     } finally {
-      if (this.listenSocket && this.runtime) {
-        this.runtime.uws.us_listen_socket_close(this.listenSocket)
-        this.listenSocket = null
-      }
+      clearTimeout(timer)
+      runtime?.app.close()
     }
   }
 
@@ -198,11 +245,12 @@ export class SirannonServer<Identity = unknown> {
   }
 
   private registerRoutes(app: TemplatedApp): void {
+    const routes = this.drain.routesOf(app)
     if (this.cors) {
       const cors = this.cors
-      app.options('/*', (res, req) => {
+      routes.options('/*', (res, req) => {
         const requestOrigin = req.getHeader('origin')
-        res.cork(() => {
+        endResponse(res, () => {
           res.writeStatus('204 No Content')
           writeCorsOrigin(res, cors, requestOrigin)
           res
@@ -214,7 +262,7 @@ export class SirannonServer<Identity = unknown> {
       })
     }
 
-    app.get(
+    routes.get(
       '/capabilities',
       this.withCors(
         handleCapabilities({
@@ -224,71 +272,75 @@ export class SirannonServer<Identity = unknown> {
         }),
       ),
     )
-    app.get('/health', this.withCors(handleLiveness()))
-    app.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
-    app.get(
+    routes.get('/health', this.withCors(handleLiveness()))
+    routes.get('/health/ready', this.withCors(handleReadiness(this.sirannon, this.getReplicationStatus)))
+    routes.get(
       '/db/:id/cluster',
       this.wrapDbGetRoute(handleClusterStatus(this.getClusterStatus, this.authorizeClusterStatus)),
     )
 
     if (this.acceptSql) {
-      app.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
-      app.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
-      app.post('/db/:id/transaction', this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)))
-      app.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
-      app.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
+      routes.post('/db/:id/query', this.wrapDbRoute(handleQuery(this.sirannon, this.resolveExecutionTarget)))
+      routes.post('/db/:id/execute', this.wrapDbRoute(handleExecute(this.sirannon, this.resolveExecutionTarget)))
+      routes.post(
+        '/db/:id/transaction',
+        this.wrapDbRoute(handleTransaction(this.sirannon, this.resolveExecutionTarget)),
+      )
+      routes.post('/db/:id/batch', this.wrapDbRoute(handleBatch(this.sirannon, this.resolveExecutionTarget)))
+      routes.post('/db/:id/load', this.wrapDbRoute(handleLoad(this.sirannon, this.resolveExecutionTarget)))
     } else {
       for (const route of SQL_ROUTES) {
-        app.post(route, this.withCors(refuseSql))
+        routes.post(route, this.withCors(refuseSql))
       }
     }
 
-    app.post(
+    routes.post(
       '/db/:id/query/:name',
       this.wrapOperationRoute(handleOperationQuery(this.sirannon, this.operations, this.resolveExecutionTarget)),
     )
-    app.post(
+    routes.post(
       '/db/:id/execute/:name',
       this.wrapOperationRoute(handleOperationExecute(this.sirannon, this.operations, this.resolveExecutionTarget)),
     )
 
-    this.registerBackupRoutes(app)
+    this.registerBackupRoutes(routes)
 
     if (this.acceptDeviceSync) {
-      app.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
-      app.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
-      app.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
-      app.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
+      routes.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
+      routes.post('/db/:id/migrations', this.wrapDbRoute(handleMigrationList(this.sirannon)))
+      routes.post('/db/:id/snapshot', this.wrapDbRoute(handleSnapshotManifest(this.sirannon)))
+      routes.post('/db/:id/snapshot/page', this.wrapDbRoute(handleSnapshotPage(this.sirannon)))
     } else {
       for (const route of DEVICE_SYNC_ROUTES) {
-        app.post(route, this.withCors(refuseDeviceSync))
+        routes.post(route, this.withCors(refuseDeviceSync))
       }
     }
 
     registerWebSocketRoute({
       app,
       wsHandler: this.wsHandler,
+      drain: this.drain,
       authenticateHook: this.authenticateHook,
       maxBodyBytes: this.maxBodyBytes,
       maxBackpressureBytes: this.maxWsBackpressureBytes,
     })
 
-    app.any('/*', res => {
+    routes.any('/*', res => {
       sendError(res, 404, 'NOT_FOUND', 'Route not found')
     })
   }
 
-  private registerBackupRoutes(app: TemplatedApp): void {
-    app.post('/db/:id/backup', this.wrapDbRoute(handleBackupTrigger(this.sirannon)))
-    app.get('/db/:id/backup', this.wrapDbGetRoute(handleBackupStatus(this.sirannon)))
-    app.get('/db/:id/backup/chain', this.wrapDbGetRoute(handleBackupChain(this.sirannon)))
-    app.post('/db/:id/backup/verify', this.wrapDbRoute(handleBackupVerify(this.sirannon)))
-    app.post('/db/:id/backup/safe-to-delete', this.wrapDbRoute(handleBackupSafeToDelete(this.sirannon)))
-    app.post(
+  private registerBackupRoutes(routes: RouteRegistrar): void {
+    routes.post('/db/:id/backup', this.wrapDbRoute(handleBackupTrigger(this.sirannon)))
+    routes.get('/db/:id/backup', this.wrapDbGetRoute(handleBackupStatus(this.sirannon)))
+    routes.get('/db/:id/backup/chain', this.wrapDbGetRoute(handleBackupChain(this.sirannon)))
+    routes.post('/db/:id/backup/verify', this.wrapDbRoute(handleBackupVerify(this.sirannon)))
+    routes.post('/db/:id/backup/safe-to-delete', this.wrapDbRoute(handleBackupSafeToDelete(this.sirannon)))
+    routes.post(
       '/db/:id/backup/restore',
       this.wrapDbRoute(handleBackupRestore(this.sirannon, this.acceptBackupRestore, this.restoreRuns)),
     )
-    app.get('/db/:id/backup/restore', this.wrapDbGetRoute(handleBackupRestoreStatus(this.restoreRuns)))
+    routes.get('/db/:id/backup/restore', this.wrapDbGetRoute(handleBackupRestoreStatus(this.restoreRuns)))
   }
 
   private withCors(

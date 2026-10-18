@@ -1,6 +1,8 @@
 import { encodeTaggedValues } from '../core/cdc/encoding.js'
+import { SirannonError } from '../core/errors.js'
 import type { LiveQuery, LiveUpdate } from '../core/live/types.js'
 import type { Params } from '../core/types.js'
+import { clientErrorMessage } from './client-error.js'
 import type { OperationSource } from './operation-lookup.js'
 import type { WSLiveMessage, WSLiveOp } from './protocol.js'
 import type { WSConnection } from './ws-connection.js'
@@ -155,7 +157,8 @@ function deliver(
   }
   if (state.status === 'error') {
     teardown()
-    deps.sendError(conn, id, 'CDC_ERROR', state.error.message)
+    const { error } = state
+    deps.sendError(conn, id, 'CDC_ERROR', error instanceof SirannonError ? clientErrorMessage(error) : error.message)
   }
 }
 

@@ -30,6 +30,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
    */
   async backup(destPath: string): Promise<BackupFileReport> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     return this.runtime.backups.backup(destPath)
   }
 
@@ -52,6 +53,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
    */
   async backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     return this.runtime.backups.backupTo(options)
   }
 
@@ -90,6 +92,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
    */
   async captureBackupChanges(): Promise<BackupRunReport | undefined> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     return this.runtime.backups.captureChanges()
   }
 

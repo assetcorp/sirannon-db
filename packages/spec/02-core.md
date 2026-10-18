@@ -126,9 +126,10 @@ Params        = Map<string, any> or List<any>
 - **execute** runs one write on the writer connection. A read-only database fails with `READ_ONLY`. [Group commit](#group-commit) coalesces writes.
 - **executeBatch** runs `sql` once per parameter set in one writer transaction, returning one result each; the batch is atomic.
 - **executeTransaction** runs a fixed list of statements atomically, sharing a group commit when every statement is groupable.
-- **transaction** runs `fn` inside one writer transaction, committing on success and rolling back on failure.
+- **transaction** runs `fn` inside one writer transaction, committing on success and rolling back on failure. Once `fn` returns or throws, every call on its `Transaction` fails with `TRANSACTION_CLOSED`. Where the runtime can tell the calls that `fn` makes apart from other callers, a write that `fn` makes through the database joins the transaction inside a savepoint of its own. Where it cannot, every call through the database that needs the writer must fail at once with `WRITER_HELD_BY_CALLBACK` while `fn` holds the writer, whoever makes the call, so that a call that `fn` awaits never waits for `fn` to end.
 - **bulkLoad** loads many rows at relaxed durability; see [Bulk Load](#bulk-load).
 - **watch** installs CDC triggers on the table and starts the poll loop. **unwatch** removes them and stops polling once no table is watched. **on** returns a subscription builder; a subscription receives events only for tables that are watched.
+- **watch**, **unwatch**, and **on** match the table name against the schema in any ASCII letter case, as SQLite does, and the triggers record each change under the name that the schema stores. `watch` must fail with `CDC_ERROR` when the name matches no ordinary table, so a view and a virtual table both fail.
 - **live** returns a query result that change events keep current; see [Live Queries](#live-queries).
 - **query options** carry `writeConcern` and `readConcern`. The core layer passes them to hooks and, for a replication execution target, to the replication engine, which enforces their meaning (see [03-replication.md](03-replication.md)). Plain core execution does not otherwise act on them.
 - **close** stops CDC polling, cancels scheduled backups, drains pending grouped writes, captures the change log a final time, closes the pool, and runs close listeners. Afterwards every method fails with `DATABASE_CLOSED`. While a device-sync snapshot load is in progress, reads and writes fail with `SNAPSHOT_IN_PROGRESS` (see [08-device-sync.md](08-device-sync.md)).
@@ -178,7 +179,7 @@ WriterWorkerOptions {
 
 - **Queue bound.** A write that arrives while `maxPendingWrites` writes are in flight fails with `WRITE_OVERLOADED` before it reaches the worker. The rejection is definite (the write never started, so a retry is safe) and carries a retry-after hint (recommended 1000 ms).
 - **Deadline.** A synchronous native call cannot be interrupted, so the deadline never terminates the worker. When it expires, exactly one outcome follows: the work had not started, so an implementation skips it and the call fails with `WRITE_OVERLOADED` (definite, retryable); or the result arrives within one further deadline (within twice `writeTimeoutMs`) and an implementation delivers it as a normal completion; or the work is still unresolved and the call fails with `WRITER_WORKER_TIMEOUT` (indeterminate, so a non-idempotent write must be reconciled before retry). A deadline on open or close rejects with `WRITER_WORKER_TIMEOUT`.
-- **Crash and restart.** A crash or exit rejects every in-flight write with `WRITER_WORKER_EXIT` and respawns the worker; a completed write resets the fault count; past `maxRestarts` faults, writes fail with `WRITER_WORKER_FATAL`. A write with no worker available fails with `WRITER_WORKER_UNAVAILABLE`, after close with `WRITER_WORKER_CLOSED`, and a failed handoff with `WRITER_WORKER_POST_FAILED`.
+- **Crash and restart.** A crash or exit rejects every in-flight write with `WRITER_WORKER_EXIT` and respawns the worker; a completed write resets the fault count; past `maxRestarts` faults, writes fail with `WRITER_WORKER_FATAL`. A crash inside a `transaction` callback rolls that transaction back, and every later statement of the callback and its commit fail with `WRITER_WORKER_EXIT`, so nothing from that transaction commits. A write with no worker available fails with `WRITER_WORKER_UNAVAILABLE`, after close with `WRITER_WORKER_CLOSED`, and a failed handoff with `WRITER_WORKER_POST_FAILED`.
 
 ---
 
@@ -238,12 +239,18 @@ CREATE TABLE _sirannon_changes (
 
 ### Triggers
 
-For each watched table, an implementation installs three `AFTER` triggers, named `_sirannon_trg_{table}_insert`, `_sirannon_trg_{table}_update`, and `_sirannon_trg_{table}_delete`. Each inserts a change row with:
+For each watched table, an implementation installs three `AFTER` triggers, named `_sirannon_trg_{table}_insert`, `_sirannon_trg_{table}_update`, and `_sirannon_trg_{table}_delete`, where `{table}` is the name that the schema stores. Each inserts a change row with:
 
 - `operation`: `'INSERT'`, `'UPDATE'`, or `'DELETE'` (stored upper case).
 - `row_id`: the affected row's primary key. With one key column it is that value; with several it is the values joined by `-`; with no primary key it is the SQLite `rowid`.
 - `new_data`, `old_data`: a JSON object of the row's column values, each value encoded by the [Tagged Value Encoding](#tagged-value-encoding-normative). An implementation fixes the column list when it creates the trigger, so a table altered with `ADD COLUMN` needs its triggers reinstalled.
 - `node_id`, `tx_id`, `hlc`: written empty, and each local write path stamps its own rows afterwards (see [08-device-sync.md](08-device-sync.md)).
+
+For an update that changes the `rowid` of a table with no primary key, the change log must hold a `DELETE` of the old `rowid` followed by an `INSERT` of the new one.
+
+When a `REPLACE` conflict resolution deletes a row, the change log must hold a `DELETE` for that row ahead of the change row for the write that caused the deletion. The rule applies to `INSERT OR REPLACE`, `REPLACE`, `UPDATE OR REPLACE`, and a constraint that declares `ON CONFLICT REPLACE`. SQLite fires no delete trigger for that row while `recursive_triggers` is off, which is its default, so an implementation must also install two `BEFORE` triggers, named `_sirannon_trg_{table}_insert_conflicts` and `_sirannon_trg_{table}_update_conflicts`. Before each insert, and before each update that changes the `rowid` or a column that a unique index reads, these triggers copy into `_sirannon_replaced_rows` every row that has the new row's `rowid` or its key in one of the table's unique indexes. For a unique index over an expression, the trigger computes the key from that expression. For a partial unique index, the trigger copies a row only when both rows satisfy the index's `WHERE` condition. The `AFTER` trigger of the write then logs a `DELETE` for each copied row that the write deleted, before it logs the write itself. The `AFTER DELETE` trigger deletes its row from `_sirannon_replaced_rows`, so the change log holds one `DELETE` for each deleted row on a connection that turns `recursive_triggers` on. An implementation must leave `recursive_triggers` as the caller sets it. The rule excludes a row that a user's `BEFORE` trigger inserts or updates in the same statement and that the `REPLACE` then deletes, when SQLite fires that user trigger after the two `BEFORE` triggers above, because those triggers copy the conflicting rows before that row exists.
+
+SQLite refuses `ALTER TABLE ... DROP COLUMN` while a trigger names the column, so an implementation must drop the table's CDC triggers, run the statement, and install the triggers for the new column list inside one savepoint. A statement that fails then leaves the old triggers in place.
 
 Table and column names an implementation writes into trigger SQL must match `^[a-zA-Z_][a-zA-Z0-9_]*$`, and an implementation must reject every other name.
 
@@ -360,11 +367,13 @@ The implementation must run the read a second time in three cases: a transaction
 
 A live query maintains the result of a single-table statement. `live` must fail with `CDC_ERROR` for a join, an aggregate, `GROUP BY`, `HAVING`, `DISTINCT`, a compound `SELECT`, a window function, a subquery, or `LIMIT` without `ORDER BY`.
 
+A statement can name the `rowid` as `rowid`, `oid`, or `_rowid_` wherever the table declares no column of that name. The implementation must then give each probe row the `rowid` of its base row, which it takes from the change's `rowId` for a table with no primary key and from the `INTEGER PRIMARY KEY` column otherwise. `live` must fail with `CDC_ERROR` for such a statement on a table whose primary key is not an `INTEGER PRIMARY KEY`, because the change events of that table carry no `rowid`.
+
 ---
 
 ## System Catalogue
 
-Sirannon keeps its own tables under the `_sirannon_` prefix: `_sirannon_changes` (above), `_sirannon_meta` (a `key TEXT PRIMARY KEY, value TEXT NOT NULL` store), `_sirannon_migrations` (below), and the replication and device-sync tables defined in [03-replication.md](03-replication.md) and [08-device-sync.md](08-device-sync.md). The meta table holds `cdc_epoch`, `node_id`, `hlc_clock`, and the device-sync cursor keys. A live query adds one temporary table under the same prefix and drops it when the query closes.
+Sirannon keeps its own tables under the `_sirannon_` prefix: `_sirannon_changes` (above), `_sirannon_meta` (a `key TEXT PRIMARY KEY, value TEXT NOT NULL` store), `_sirannon_migrations` (below), `_sirannon_replaced_rows` (the rows that a `REPLACE` is about to delete, described under [Triggers](#triggers)), and the replication and device-sync tables defined in [03-replication.md](03-replication.md) and [08-device-sync.md](08-device-sync.md). The meta table holds `cdc_epoch`, `node_id`, `hlc_clock`, `stamp_floor_seq`, and the device-sync cursor keys. A live query adds one temporary table under the same prefix and drops it when the query closes.
 
 ---
 
@@ -383,7 +392,7 @@ Hooks registered on the registry apply to every database and run before database
 | `beforeSnapshot` | `{ databaseId, table, identity? }` | Before a served snapshot reads a table | Yes |
 | `beforePush` | `{ databaseId, table, deviceId, identity? }` | Before a server writes a pushed device batch, once per table | Yes |
 
-A before-hook that throws aborts the operation, and its error propagates to the caller. An `afterQuery` context must hold in `error` the error that the caller receives when the statement fails, which for every statement of a failed transaction is that transaction's error, and must omit `error` when the statement succeeds. Query and connection hooks run synchronously; a hook that returns a promise fails. A failure of an `afterQuery`, `databaseOpen`, or `databaseClose` hook, whether a throw or a returned promise, leaves the operation and the other hooks for that event unaffected, and a rejection of that promise must not surface as an unhandled rejection. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
+A before-hook that throws aborts the operation, and its error propagates to the caller. Query hooks fire for each statement that a `transaction` callback executes through its `Transaction`, so a `beforeQuery` hook that throws refuses that statement. An `afterQuery` context must hold in `error` the error that the caller receives when the statement fails, which for every statement of a failed `executeTransaction` is that transaction's error and for a statement of a `transaction` callback is the error that its own call raises, and must omit `error` when the statement succeeds. Query and connection hooks run synchronously; a hook that returns a promise fails. A failure of an `afterQuery`, `databaseOpen`, or `databaseClose` hook, whether a throw or a returned promise, leaves the operation and the other hooks for that event unaffected, and a rejection of that promise must not surface as an unhandled rejection. A subscribe, snapshot, or push hook may return a promise, and a server must await it before it serves the request. Hooks are registered through the dedicated methods or a `HookConfig` object that accepts one function or a list per event; only `HookConfig` registers a subscribe, snapshot, or push hook. Each `on…` registrar returns a `DisposeFn` (a `() -> void`) that removes the hook, and disposing more than once changes nothing.
 
 ---
 
@@ -448,7 +457,7 @@ A string `up` migration carries a checksum: the 64-bit FNV-1a hash of the up SQL
 
 ### Execution
 
-An implementation validates migrations (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL) and sorts them ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. An implementation retries a concurrent run once and otherwise fails with `MIGRATION_CONCURRENT`.
+An implementation validates migrations (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL) and sorts them ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version, while every migration before it stays applied and recorded; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. An implementation retries a concurrent run once and otherwise fails with `MIGRATION_CONCURRENT`.
 
 ### Baseline
 
@@ -481,7 +490,7 @@ BulkLoadOptions {
 BulkLoadResult { rowsLoaded: number, changes: number }
 ```
 
-`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards; it retries at most three times (recommended) and leaves the remaining pages to a later checkpoint where a reader still holds them. A database opened with `backups` runs no checkpoint here, whatever the caller set.
+`bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. After any failed restore, the writer must restore the configured level before it runs further write work, and while that restore fails, the work fails with `DURABILITY_RESTORE_FAILED` without running. Inside a `transaction` callback, `bulkLoad` fails with `BULK_LOAD_IN_TRANSACTION`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards; it retries at most three times (recommended) and leaves the remaining pages to a later checkpoint where a reader still holds them. A database opened with `backups` runs no checkpoint here, whatever the caller set.
 
 ---
 
@@ -697,7 +706,7 @@ An implementation runs every turn where the options carry no `replicationGroup`.
 
 `'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary where that node is eligible, and to no node otherwise. An object resolves to the identifier it carries. An implementation reads no membership for that form.
 
-`readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator omits the nodes the group records as draining, repairing, or faulted (see [03-replication.md](03-replication.md#replication-group-and-node-identity)).
+`readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator omits the nodes the group records as draining, repairing, or faulted (see [09-failover.md](09-failover.md#replication-group-and-node-identity)).
 
 On a node other than the preferred one, an implementation sends any staged capture, deletes its cycle state, checkpoints the log, and reports a skip of `'not-preferred'`. Where the destination refuses that capture, the implementation keeps the chain, the staged capture, and the log, and stands down on a later turn. A chain continues on the node that started it and on no other, so the next turn on a node holding no cycle state starts a fresh chain with a full copy.
 
@@ -912,8 +921,34 @@ MetricsConfig {
   onConnectionClose?: (metrics: ConnectionMetrics) -> void
 }
 
-QueryMetrics       { databaseId: string, sql: string, durationMs: number, error?: boolean }
+QueryMetrics {
+  databaseId:    string
+  sql:           string
+  durationMs:    number
+  rowsReturned?: number
+  changes?:      number
+  rowsRead?:     number
+  rowsWritten?:  number
+  source?:       'live'
+  error?:        boolean
+}
+
 ConnectionMetrics  { databaseId: string, path: string, readerCount: number, event: 'open' | 'close' }
 ```
 
 Metrics callbacks are optional and configured only when `metrics` is supplied. `onConnectionClose` reports `readerCount` as 0. An error thrown by a metrics callback must not affect database operations.
+
+An implementation must set `rowsReturned` to the number of rows that each successful read returns, `changes` to the number of rows that each successful write changes, and, when the driver reports `rowCounts`, `rowsRead` and `rowsWritten` on every statement, failed or not.
+
+An implementation must report each statement exactly once. When a statement fails with `WRITER_WORKER_TIMEOUT`, an implementation must hold its report until the writer answers, then report it with `error` set to `true` and the row counts that the writer returns, and `durationMs` measured up to that answer. When the writer exits, crashes, or closes before it answers, an implementation must report the statement without `rowsRead` and `rowsWritten`.
+
+An implementation must report every read that a live query performs, including each second read and each probe, through `onQueryComplete` with `source` set to `'live'` and `sql` set to the live query's SQL, and must leave `source` unset on every other statement.
+
+### Row Counts
+
+A driver reporting `rowCounts` must keep both counts exact up to 2^53 - 1 over each statement's whole execution:
+
+- The driver must count one row read for each range seek, rowid lookup, move to the first or last row, and step to the next or previous row on a table or an index, for each step of a virtual table's cursor, and for each entry that SQLite counts to answer a `count(*)`.
+- The driver must count no row read for an equality seek on an index that finds no match, a uniqueness or membership probe on an index, or the table lookup that follows an index match.
+- The driver must count one row written for each row that the statement inserts into, updates in, or deletes from a table, for each entry that it inserts into an index, and for each row that a virtual table's update changes, excluding SQLite's ephemeral tables and indexes.
+- Both counts must include the work of every trigger that the statement fires, foreign-key actions included, except a trigger whose name begins with `_sirannon_trg_`.

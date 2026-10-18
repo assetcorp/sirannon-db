@@ -26,8 +26,9 @@ interface Waiter {
  *   `waitForConfiguredMajority`, or `waitForConfiguredAll` with a sequence
  *   number and a timeout, and the promise resolves once enough peers
  *   acknowledge that sequence. It rejects with a `WriteConcernError` when the
- *   timeout expires, and a `waitForMajority` or `waitForAll` promise also
- *   rejects early when too few peers are connected to reach the count.
+ *   timeout expires. `waitForMajority` and `waitForAll` count only the peers
+ *   connected at each check, so the peers that remain connected can meet the
+ *   concern after another peer disconnects.
  *
  * @internal
  */
@@ -36,11 +37,10 @@ export class PeerTracker {
   private readonly waiters = new Set<Waiter>()
 
   addPeer(nodeId: string): void {
-    if (this.peers.has(nodeId)) {
-      const existing = this.peers.get(nodeId)
-      if (existing) {
-        existing.connected = true
-      }
+    const existing = this.peers.get(nodeId)
+    if (existing) {
+      existing.connected = true
+      this.resumeFrom(nodeId, existing.lastAckedSeq)
       return
     }
     this.peers.set(nodeId, {
@@ -71,6 +71,23 @@ export class PeerTracker {
       peer.pendingBatches = Math.max(0, peer.pendingBatches - Math.max(1, ackedCount))
     }
     this.checkWaiters()
+  }
+
+  resumeFrom(nodeId: string, appliedSeq: bigint): void {
+    const peer = this.peers.get(nodeId)
+    if (!peer) return
+    peer.lastSentSeq = appliedSeq
+    peer.inFlightBatches = []
+    peer.pendingBatches = 0
+  }
+
+  restartProgress(sentSeq: bigint): void {
+    for (const peer of this.peers.values()) {
+      peer.lastAckedSeq = 0n
+      peer.lastSentSeq = sentSeq
+      peer.inFlightBatches = []
+      peer.pendingBatches = 0
+    }
   }
 
   onBatchApplied(nodeId: string, highestHlc: string): void {
@@ -287,28 +304,6 @@ export class PeerTracker {
         clearTimeout(waiter.timer)
         this.waiters.delete(waiter)
         waiter.resolve()
-        continue
-      }
-      if (waiter.kind === 'all' && connected < this.peers.size) {
-        clearTimeout(waiter.timer)
-        this.waiters.delete(waiter)
-        waiter.reject(
-          new WriteConcernError(
-            `Cannot satisfy 'all' write concern: only ${connected}/${this.peers.size} peers connected`,
-          ),
-        )
-        continue
-      }
-      const totalNodes = this.peers.size + 1
-      const majorityNeeded = Math.floor(totalNodes / 2) + 1
-      if (waiter.kind === 'majority' && connected + 1 < majorityNeeded) {
-        clearTimeout(waiter.timer)
-        this.waiters.delete(waiter)
-        waiter.reject(
-          new WriteConcernError(
-            `Cannot satisfy 'majority' write concern: only ${connected + 1}/${totalNodes} nodes reachable`,
-          ),
-        )
       }
     }
   }

@@ -1,46 +1,26 @@
-import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
-import {
-  prepareInsertAppliedChange,
-  selectAppliedSourceSeqsInRange,
-  selectMaxChangeSeq,
-  updateChangeStampsAfterSeqSql,
-} from '../system-catalog/index.js'
+import { insertDdlChange, selectMaxChangeSeq, updateChangeStampsAfterSeqSql } from '../system-catalog/index.js'
+import type { BatchApplierOptions } from './batch-applier-options.js'
+import { assertTablesExist, type PlannedGroup, planBatch } from './batch-plan.js'
+import { attributeChangeSeqs } from './change-seqs.js'
 import { computeChecksum } from './checksum.js'
-import { BatchValidationError, ConflictError } from './errors.js'
-import type { HLC } from './hlc.js'
+import { resolveConflict } from './conflict/resolve-conflict.js'
+import { BatchValidationError } from './errors.js'
+import { HLC } from './hlc.js'
 import { persistHlcClock } from './hlc-store.js'
 import { REMOTE_ORIGIN_NODE_ID } from './origins.js'
 import type { PkResolver } from './pk.js'
+import { completeStagedPush, recordAppliedSeqs, StagedPushSource, stagePushedChanges } from './push-staging.js'
 import { RowWriter } from './row-writer.js'
-import type {
-  ApplyResult,
-  ConflictContext,
-  ConflictResolution,
-  ConflictResolver,
-  ReplicationBatch,
-  ReplicationChange,
-} from './types.js'
+import type { ApplyResult, ConflictResolver, ReplicationBatch, ReplicationChange } from './types.js'
 import { extractDroppedTable, IDENTIFIER_RE, validateDdlSafety } from './validators.js'
 
-async function resolveConflict(
-  resolver: ConflictResolver | ((table: string) => ConflictResolver),
-  ctx: ConflictContext,
-): Promise<ConflictResolution> {
-  try {
-    const changeResolver = typeof resolver === 'function' ? resolver(ctx.table) : resolver
-    return await changeResolver.resolve(ctx)
-  } catch (err: unknown) {
-    if (err instanceof ConflictError) throw err
-    const reason = err instanceof Error ? err.message : String(err)
-    throw new ConflictError(
-      `Conflict resolution failed for table '${ctx.table}' row '${ctx.rowId}': ${reason}`,
-      ctx.table,
-      ctx.rowId,
-      err,
-    )
-  }
+interface ApplyTally {
+  applied: number
+  skipped: number
+  conflicts: number
+  writtenRows: Set<string>
 }
 
 export interface ApplyGroupOptions {
@@ -73,6 +53,7 @@ export interface StagedGroupResult extends ApplyResult {
 
 export class BatchApplier {
   private readonly rows: RowWriter
+  private readonly changesTable: string
 
   constructor(
     private readonly conn: SQLiteConnection,
@@ -80,11 +61,10 @@ export class BatchApplier {
     private readonly hlc: HLC,
     pkResolver: PkResolver,
     private readonly getLastAppliedSeq: (fromNodeId: string) => Promise<bigint>,
-    private readonly tracker?: ChangeTracker,
-    private readonly changesTable: string = CHANGES_TABLE,
-    private readonly beforeApply?: (tx: SQLiteConnection) => Promise<void>,
+    private readonly options: BatchApplierOptions = {},
   ) {
-    this.rows = new RowWriter(pkResolver, changesTable)
+    this.changesTable = options.changesTable ?? CHANGES_TABLE
+    this.rows = new RowWriter(pkResolver, this.changesTable)
   }
 
   async applyBatch(
@@ -104,56 +84,53 @@ export class BatchApplier {
       }
     }
 
+    const seqs = attributeChangeSeqs(batch)
+    await assertTablesExist(this.conn, batch.changes)
+
     const lastApplied = await this.getLastAppliedSeq(batch.sourceNodeId)
     if (batch.toSeq <= lastApplied) {
       return { applied: 0, skipped: batch.changes.length, conflicts: 0, droppedTables: [] }
     }
 
-    const needsPartialDedup = batch.fromSeq <= lastApplied
-    let appliedSeqSet: Set<string> | null = null
-    if (needsPartialDedup) {
-      appliedSeqSet = await selectAppliedSourceSeqsInRange(this.conn, batch.sourceNodeId, batch.fromSeq, batch.toSeq)
-    }
-
-    let applied = 0
-    let skipped = 0
-    let conflicts = 0
-    const droppedTables: string[] = []
-
-    const changesByTx = new Map<string, ReplicationChange[]>()
-    for (const change of batch.changes) {
-      const txGroup = changesByTx.get(change.txId)
-      if (txGroup) {
-        txGroup.push(change)
-      } else {
-        changesByTx.set(change.txId, [change])
-      }
-    }
-
-    for (const [txId, txChanges] of changesByTx) {
-      const result = await this.applyGroup({
-        sourceNodeId: batch.sourceNodeId,
-        txId,
-        changes: txChanges,
-        resolver,
-      })
-
-      applied += result.applied
-      skipped += result.skipped
-      conflicts += result.conflicts
-      droppedTables.push(...result.droppedTables)
-    }
-
-    const recordStmt = await prepareInsertAppliedChange(this.conn)
-    const nowSec = Date.now() / 1000
-    for (let seq = batch.fromSeq; seq <= batch.toSeq; seq += 1n) {
-      if (appliedSeqSet?.has(seq.toString())) continue
-      await recordStmt.run(batch.sourceNodeId, seq.toString(), nowSec)
+    const plan = await planBatch(this.conn, batch, seqs, lastApplied)
+    const total: ApplyResult = { applied: 0, skipped: plan.skipped, conflicts: 0, droppedTables: [] }
+    for (const group of plan.groups) {
+      const result = await this.applyPlannedGroup(batch.sourceNodeId, group, resolver)
+      total.applied += result.applied
+      total.skipped += result.skipped
+      total.conflicts += result.conflicts
+      total.droppedTables.push(...result.droppedTables)
     }
 
     await this.mergeHlc(batch.hlcRange.max)
 
-    return { applied, skipped, conflicts, droppedTables }
+    return total
+  }
+
+  private async applyPlannedGroup(
+    sourceNodeId: string,
+    group: PlannedGroup,
+    resolver: ConflictResolver | ((table: string) => ConflictResolver),
+  ): Promise<ApplyResult> {
+    if (group.kind === 'stage') {
+      await stagePushedChanges(this.conn, sourceNodeId, group.entries)
+      return { applied: 0, skipped: 0, conflicts: 0, droppedTables: [] }
+    }
+    const seqs = group.entries.flatMap(entry => entry.seqs)
+    if (group.kind === 'complete') {
+      return this.applyStagedGroup({
+        source: new StagedPushSource(this.conn, sourceNodeId, group.entries),
+        resolver,
+        withinTx: tx => completeStagedPush(tx, sourceNodeId, seqs),
+      })
+    }
+    return this.applyGroup({
+      sourceNodeId,
+      txId: group.txId,
+      changes: group.entries.map(entry => entry.change),
+      resolver,
+      withinTx: tx => recordAppliedSeqs(tx, sourceNodeId, seqs),
+    })
   }
 
   async applyGroup(options: ApplyGroupOptions): Promise<ApplyResult> {
@@ -162,8 +139,8 @@ export class BatchApplier {
 
     const result = await this.conn.transaction(async tx => {
       const seqBefore = await this.selectMaxChangeSeq(tx)
-      if (this.beforeApply) {
-        await this.beforeApply(tx)
+      if (this.options.beforeApply) {
+        await this.options.beforeApply(tx)
       }
       let applied = 0
       let skipped = 0
@@ -178,17 +155,25 @@ export class BatchApplier {
           throw new BatchValidationError(`Unsafe or missing DDL statement: ${ddlSql ?? 'none'}`)
         }
         await tx.exec(ddlSql)
+        if (this.options.appliedSchemaChanges === 'logged') {
+          await insertDdlChange(tx, this.changesTable, {
+            ddlStatement: ddlSql,
+            nodeId: sourceNodeId,
+            txId: ddl.txId,
+            hlc: ddl.hlc,
+          })
+        }
         const droppedTable = extractDroppedTable(ddlSql)
         if (droppedTable !== null) {
           droppedTables.push(droppedTable)
         }
-        if (this.tracker) {
-          await this.tracker.refreshAllTriggersUsingConnection(tx)
+        if (this.options.tracker) {
+          await this.options.tracker.refreshAllTriggersUsingConnection(tx)
         }
         applied += 1
       }
 
-      const tally = { applied, skipped, conflicts }
+      const tally: ApplyTally = { applied, skipped, conflicts, writtenRows: new Set() }
       for (const change of dataChanges) {
         await this.applyDataChange(tx, change, resolver, tally)
       }
@@ -219,11 +204,11 @@ export class BatchApplier {
 
     return this.conn.transaction(async tx => {
       const seqBefore = await this.selectMaxChangeSeq(tx)
-      if (this.beforeApply) {
-        await this.beforeApply(tx)
+      if (this.options.beforeApply) {
+        await this.options.beforeApply(tx)
       }
 
-      const tally = { applied: 0, skipped: 0, conflicts: 0 }
+      const tally: ApplyTally = { applied: 0, skipped: 0, conflicts: 0, writtenRows: new Set() }
       let cursor = 0n
       let lastSeq: bigint | null = null
       let txId = ''
@@ -266,7 +251,8 @@ export class BatchApplier {
         await withinTx(tx)
       }
 
-      return { ...tally, droppedTables: [], maxHlc, lastSeq }
+      const { applied, skipped, conflicts } = tally
+      return { applied, skipped, conflicts, droppedTables: [], maxHlc, lastSeq }
     })
   }
 
@@ -274,24 +260,23 @@ export class BatchApplier {
     tx: SQLiteConnection,
     change: ReplicationChange,
     resolver: ConflictResolver | ((table: string) => ConflictResolver),
-    tally: { applied: number; skipped: number; conflicts: number },
+    tally: ApplyTally,
   ): Promise<void> {
     if (isReservedIdentifier(change.table)) {
       throw new BatchValidationError(`Invalid table name: ${change.table}`)
     }
 
+    const rowKey = `${change.table}\u0000${change.rowId}`
     const existingRow = await this.rows.findExistingRow(tx, change)
 
     if (existingRow === undefined) {
-      if (change.operation === 'insert' && change.newData) {
-        await this.rows.insertRow(tx, change)
-        await this.rows.recordColumnVersions(tx, change, change.newData)
-        tally.applied += 1
-      } else if (change.operation === 'delete') {
-        tally.applied += 1
-      } else {
-        tally.skipped += 1
-      }
+      if (await this.applyToAbsentRow(tx, change, tally)) tally.writtenRows.add(rowKey)
+      return
+    }
+
+    if (tally.writtenRows.has(rowKey)) {
+      await this.rows.applyAfterSameTransaction(tx, change, existingRow)
+      tally.applied += 1
       return
     }
 
@@ -322,14 +307,33 @@ export class BatchApplier {
     if (resolution.action === 'accept_remote') {
       await this.rows.applyRemoteChange(tx, change)
       await this.rows.recordColumnVersions(tx, change, change.newData)
-      tally.applied += 1
     } else if (resolution.action === 'merge' && resolution.mergedData) {
       await this.rows.applyMergedData(tx, change, resolution.mergedData)
       await this.rows.recordColumnVersions(tx, change, resolution.mergedData)
-      tally.applied += 1
     } else {
       tally.skipped += 1
+      return
     }
+    tally.applied += 1
+    tally.writtenRows.add(rowKey)
+  }
+
+  private async applyToAbsentRow(tx: SQLiteConnection, change: ReplicationChange, tally: ApplyTally): Promise<boolean> {
+    if (change.operation === 'delete') {
+      await this.rows.recordTombstone(tx, change)
+      tally.applied += 1
+      return true
+    }
+    const deletedAt = await this.rows.getAbsentRowHlc(tx, change.table, change.rowId)
+    const wins = deletedAt === null ? change.operation === 'insert' : HLC.compare(change.hlc, deletedAt) >= 0
+    if (!wins || !change.newData) {
+      tally.skipped += 1
+      return false
+    }
+    await this.rows.insertRow(tx, change)
+    await this.rows.recordColumnVersions(tx, change, change.newData)
+    tally.applied += 1
+    return true
   }
 
   async mergeHlc(remoteHlc: string): Promise<void> {

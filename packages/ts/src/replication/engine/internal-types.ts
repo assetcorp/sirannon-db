@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import type { SyncAck, SyncState } from '../types.js'
+import type { SyncAck, SyncHistoryPoint, SyncPhase, SyncState } from '../types.js'
 import type { TableStreamDigest } from './sync-verification.js'
 
 export interface ActiveSyncSession {
@@ -15,11 +15,24 @@ export interface ActiveSyncSession {
   aborted: boolean
   streamVerification: boolean
   tableDigests: Map<string, TableStreamDigest>
+  historyPoint: SyncHistoryPoint | undefined
 }
 
 export interface SyncAckWaiter {
   resolve: (ack: SyncAck) => void
   timer: ReturnType<typeof setTimeout>
+}
+
+/**
+ * Returns true when a node in the given sync phase holds a complete copy of the group's data and serves it.
+ *
+ * @param phase - The node's sync phase.
+ * @returns True for the `ready` and `catching-up` phases.
+ *
+ * @internal
+ */
+export function servesItsData(phase: SyncPhase): boolean {
+  return phase === 'ready' || phase === 'catching-up'
 }
 
 export function initialSyncState(): SyncState {

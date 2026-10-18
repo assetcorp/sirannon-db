@@ -38,16 +38,16 @@ export function toSortValue(value: unknown, collation: Collation): SortValue {
 }
 
 function applyCollation(text: string, collation: Collation): string {
-  if (collation === 'nocase') return upperAscii(text)
+  if (collation === 'nocase') return lowerAscii(text)
   if (collation === 'rtrim') return trimTrailingSpaces(text)
   return text
 }
 
-function upperAscii(text: string): string {
+function lowerAscii(text: string): string {
   let result = ''
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i)
-    result += code >= 97 && code <= 122 ? String.fromCharCode(code - 32) : text[i]
+    result += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : text[i]
   }
   return result
 }

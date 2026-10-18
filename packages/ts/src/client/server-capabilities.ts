@@ -12,19 +12,21 @@ import { RemoteError } from './types.js'
 export const SQL_REFUSED_MESSAGE =
   'This server does not accept SQL over the network. Call a registered operation by name, or start the server with acceptSql: true.'
 
-export const SQL_UNCONFIRMED_MESSAGE =
-  'GET /capabilities returned 404, so this client cannot confirm that the server accepts SQL and refuses to send it. Check that the URL reaches a sirannon-db server and that any proxy in front of it forwards /capabilities.'
-
 /**
  * The capability checks that the client performs before a remote database sends a statement.
  *
  * @public
  */
 export interface ServerCapabilityCheck {
-  /** Throws unless the server announces that it accepts SQL over the network, so the client sends SQL only to a server that accepts it. */
+  /**
+   * Resolves when the server announces that it accepts SQL over the network, or when it serves no `GET /capabilities`
+   * because it predates the capability report, and throws `SQL_NOT_ACCEPTED` when the report leaves SQL out.
+   */
   assertSqlAccepted(): Promise<void>
   /** Returns the digest of the server's operation registry, or `undefined` when the server announces none. */
   registryDigest(refresh?: boolean): Promise<string | undefined>
+  /** Cancels the capability request in flight, which the remote database calls when it closes. */
+  close?(): void
 }
 
 /**
@@ -34,6 +36,7 @@ export interface ServerCapabilityCheck {
  */
 export class ServerCapabilities implements ServerCapabilityCheck {
   private pending: Promise<CapabilityReport> | null = null
+  private readonly lifetime = new AbortController()
 
   constructor(
     private readonly resolveUrl: () => string | Promise<string>,
@@ -41,13 +44,20 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     private readonly requestTimeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
   ) {}
 
+  /** Cancels the capability request in flight and fails every later check with `TRANSPORT_ERROR`. */
+  close(): void {
+    this.lifetime.abort()
+    this.pending = null
+  }
+
   private async read(refresh = false): Promise<CapabilityReport> {
+    if (this.lifetime.signal.aborted) throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
     if (refresh) this.pending = null
     if (this.pending === null) {
       const request = this.fetch()
       this.pending = request
-      request.catch(() => {
-        if (this.pending === request) this.pending = null
+      request.catch(err => {
+        if (this.pending === request && !isMissingEndpoint(err)) this.pending = null
       })
     }
     return this.pending
@@ -67,7 +77,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     try {
       report = await this.read()
     } catch (err) {
-      if (isMissingEndpoint(err)) throw new RemoteError('SQL_NOT_ACCEPTED', SQL_UNCONFIRMED_MESSAGE)
+      if (isMissingEndpoint(err)) return
       throw err
     }
 
@@ -78,7 +88,12 @@ export class ServerCapabilities implements ServerCapabilityCheck {
 
   private async fetch(): Promise<CapabilityReport> {
     const url = await this.resolveUrl()
-    return fetchCapabilityReport({ url, headers: this.headers, requestTimeoutMs: this.requestTimeoutMs })
+    return fetchCapabilityReport({
+      url,
+      headers: this.headers,
+      requestTimeoutMs: this.requestTimeoutMs,
+      cancel: this.lifetime.signal,
+    })
   }
 }
 

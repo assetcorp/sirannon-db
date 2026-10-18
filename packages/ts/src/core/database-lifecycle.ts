@@ -40,7 +40,7 @@ export class DatabaseLifecycle {
    * @internal
    */
   protected readonly closeListeners: (() => void | Promise<void>)[] = []
-  private closing = false
+  private closing: Promise<void> | null = null
 
   protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions) {
     this.id = id
@@ -70,18 +70,23 @@ export class DatabaseLifecycle {
 
   /**
    * Closes every connection that this database opened, and stops delivering changes to its subscriptions.
+   *
+   * When you call this while an earlier close is still under way, the call
+   * waits for that close and settles with the same result, so no connection
+   * from this database remains open on the file once any call returns.
+   *
+   * @returns A promise that resolves once every connection is closed, or rejects with the error from a connection that failed to close.
    */
-  async close(): Promise<void> {
-    if (this.closing) return
-    this.closing = true
-    await closeDatabaseRuntime(this.runtime, this.closeListeners)
+  close(): Promise<void> {
+    this.closing ??= closeDatabaseRuntime(this.runtime, this.closeListeners)
+    return this.closing
   }
 
   /**
    * True once {@link DatabaseLifecycle.close} has started on this database.
    */
   get closed(): boolean {
-    return this.closing
+    return this.closing !== null
   }
 
   /**
@@ -122,8 +127,20 @@ export class DatabaseLifecycle {
    * @internal
    */
   protected ensureNotClosed(): void {
-    if (this.closing) {
+    if (this.closing !== null) {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }
+  }
+
+  /**
+   * Throws `WRITER_HELD_BY_CALLBACK` while a transaction callback holds the writer on a driver that has no async
+   * context to tell the callback's own calls from other callers, so that a call that the callback awaits fails at once
+   * and never waits for the callback to end.
+   *
+   * @internal
+   */
+  protected ensureWriterCanWait(): void {
+    const refusal = this.runtime.writerLock.callerRefusal()
+    if (refusal !== null) throw refusal
   }
 }

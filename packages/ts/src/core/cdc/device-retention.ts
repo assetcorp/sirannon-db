@@ -1,13 +1,17 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import { CHANGES_TABLE, DEVICE_CURSORS_TABLE } from '../internal-tables.js'
+import { CHANGES_TABLE, DEVICE_CURSORS_TABLE, META_TABLE } from '../internal-tables.js'
+import { SEQ_STRING_RE } from '../sync/validators.js'
 import {
   deleteExpiredDeviceCursors,
+  selectMetaValue,
   selectMinDeviceCursorBoundary,
   selectTableExists,
 } from '../system-catalog/index.js'
 import type { ChangeTracker } from './change-tracker.js'
 
 export const DEFAULT_DEVICE_CURSOR_RETENTION_MS = 30 * 24 * 3_600_000
+
+export const DEVICE_SYNC_PUSHED_SEQ_META_KEY = 'device_sync_pushed_seq'
 
 export interface DeviceRetentionPolicy {
   cursorRetentionMs: number
@@ -62,6 +66,26 @@ export async function resolveMinDeviceCursorBoundary(
   return selectMinDeviceCursorBoundary(conn, changesTable)
 }
 
+async function selectDurablePushCursor(conn: SQLiteConnection): Promise<bigint | null> {
+  if (!(await selectTableExists(conn, META_TABLE))) return null
+  const value = await selectMetaValue(conn, DEVICE_SYNC_PUSHED_SEQ_META_KEY)
+  return value !== null && SEQ_STRING_RE.test(value) ? BigInt(value) : null
+}
+
+/**
+ * Sets the prune boundaries that device sync needs before a pruning pass
+ * deletes old changes.
+ *
+ * On a server, the function drops each device cursor that the policy has
+ * expired, then sets a boundary below every change that a remaining device has
+ * yet to acknowledge. On a device, it sets a boundary at the push position
+ * stored in the file, so that a process that restarts before its sync loop
+ * starts still holds every local change that the device has yet to push.
+ *
+ * @param conn - The writer connection that the pruning pass uses.
+ * @param tracker - The change tracker whose boundaries the function sets.
+ * @param policy - How long and how many changes a device cursor can hold back.
+ */
 export async function applyDeviceCursorBoundary(
   conn: SQLiteConnection,
   tracker: ChangeTracker,
@@ -72,7 +96,14 @@ export async function applyDeviceCursorBoundary(
   const boundary = await resolveMinDeviceCursorBoundary(conn, changesTable)
   if (boundary === null) {
     tracker.clearPruneBoundary('device-cursors')
-    return
+  } else {
+    tracker.setPruneBoundary('device-cursors', boundary)
   }
-  tracker.setPruneBoundary('device-cursors', boundary)
+
+  const pushed = await selectDurablePushCursor(conn)
+  if (pushed === null) {
+    tracker.clearPruneBoundary('device-push-cursor')
+  } else {
+    tracker.setPruneBoundary('device-push-cursor', pushed)
+  }
 }

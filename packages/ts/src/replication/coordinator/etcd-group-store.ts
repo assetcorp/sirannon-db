@@ -120,6 +120,7 @@ export class EtcdGroupStore {
       ...current,
       currentPrimary: { ...input.nextPrimary },
       primaryTerm: current.primaryTerm + 1n,
+      durabilityPointSeq: 0n,
       updatedAtMs: Date.now(),
     }
     markDisplacedPrimaryForRepair(next, current.currentPrimary?.nodeId, input.nextPrimary.nodeId)
@@ -184,6 +185,9 @@ export class EtcdGroupStore {
         throw new NoSafePrimaryError(
           `Automatic promotion requires at least ${MIN_AUTOMATIC_FAILOVER_VOTERS} voting data-bearing nodes`,
         )
+      }
+      if (state.currentPrimary && !excludedNodeIds.has(state.currentPrimary.nodeId)) {
+        return state
       }
 
       for (const nodeId of state.votingDataBearingNodeIds) {

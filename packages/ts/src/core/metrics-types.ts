@@ -14,6 +14,27 @@ export interface QueryMetrics {
   rowsReturned?: number
   /** The number of rows that a write changes, and absent for a read or a failed statement. */
   changes?: number
+  /**
+   * The number of table and index rows that SQLite read while it executed the
+   * statement, including the work of every trigger that the statement fired.
+   * Sirannon sets it on every statement, failed or not, when the driver
+   * reports `rowCounts`, as `betterSqlite3({ rowCounts: true })` does.
+   * Sirannon leaves it absent when the driver counts no rows, and when the
+   * writer worker times out, crashes, or exits while it executes the statement.
+   */
+  rowsRead?: number
+  /**
+   * The number of rows that the statement inserted, updated, or deleted, plus
+   * the index entries that it inserted, including the writes of every trigger
+   * that the statement fired. Sirannon sets it whenever it sets `rowsRead`.
+   */
+  rowsWritten?: number
+  /**
+   * `'live'` when a live query executed the statement, whether to read its
+   * first rows, to read a second time, or to check the rows that a
+   * transaction changed. Sirannon leaves it absent on every other statement.
+   */
+  source?: 'live'
   /** True when the statement threw. */
   error?: boolean
 }
@@ -46,7 +67,7 @@ export interface CDCMetrics {
   subscriberCount: number
 }
 
-/** The callbacks that receive Sirannon's metrics.
+/** The callbacks that receive Sirannon's metrics. Sirannon ignores an error that a callback throws and a promise that it returns, so a failing callback leaves the database's work unaffected.
  * @public
  */
 export interface MetricsConfig {

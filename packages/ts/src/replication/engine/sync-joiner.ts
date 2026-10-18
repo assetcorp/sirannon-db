@@ -5,10 +5,11 @@ import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
+import { leaveInSyncSetBeforeCopy } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
-import { SyncRecovery } from './sync-recovery.js'
-import { advanceStreamDigest, matchesStreamDigest } from './sync-verification.js'
-import { delayAckIfConfigured } from './test-hooks.js'
+import { handleHistoryAnswer, handleHistoryCopyBatch, recordCopiedHistory } from './history-anchor.js'
+import { reportSnapshotPosition, SyncRecovery } from './sync-recovery.js'
+import { advanceStreamDigest, copiedTables, copyMatchesManifests } from './sync-verification.js'
 
 /**
  * Copies a source node's tables onto a joining node through a first sync, then marks the node ready once its catch-up
@@ -66,6 +67,7 @@ export class SyncJoiner {
     engine.syncState.error = null
 
     try {
+      await leaveInSyncSetBeforeCopy(engine)
       const savedState = await engine.log.getSyncState()
       const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
       const requestId = randomUUID()
@@ -107,6 +109,7 @@ export class SyncJoiner {
 
   async handleSyncBatchReceived(batch: SyncBatch, fromPeerId: string): Promise<void> {
     const engine = this.engine
+    if (await handleHistoryCopyBatch(engine, batch.requestId)) return
     if (engine.syncState.phase !== 'syncing') return
     if (fromPeerId !== engine.syncState.sourcePeerId) return
 
@@ -144,7 +147,7 @@ export class SyncJoiner {
           await setForeignKeysEnabled(engine.writerConn, false)
           for (const ddl of batch.schema) {
             let saferDdl = ddl.replace(/^\s*CREATE\s+TABLE\b/i, 'CREATE TABLE IF NOT EXISTS')
-            saferDdl = saferDdl.replace(/^\s*CREATE\s+INDEX\b/i, 'CREATE INDEX IF NOT EXISTS')
+            saferDdl = saferDdl.replace(/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i, 'CREATE $1INDEX IF NOT EXISTS')
             await engine.writerConn.exec(saferDdl)
           }
         }
@@ -241,12 +244,14 @@ export class SyncJoiner {
 
   async handleSyncCompleteReceived(complete: SyncComplete, fromPeerId: string): Promise<void> {
     const engine = this.engine
+    if (await handleHistoryAnswer(engine, complete, fromPeerId)) return
     if (engine.syncState.phase !== 'syncing') return
     if (fromPeerId !== engine.syncState.sourcePeerId) return
 
     if (!engine.tracker) {
       throw new SyncError('Initial sync requires a ChangeTracker in ReplicationConfig')
     }
+    this.recovery.noteCopyReceived(complete.requestId)
 
     try {
       for (const manifest of complete.manifests) {
@@ -257,28 +262,19 @@ export class SyncJoiner {
 
       await setForeignKeysEnabled(engine.writerConn, true)
 
-      for (const manifest of complete.manifests) {
-        const valid =
-          manifest.batchDigest !== undefined
-            ? matchesStreamDigest(manifest, engine.syncTableDigests.get(manifest.table))
-            : await engine.log.verifyManifest(manifest)
-        if (!valid) {
-          await engine.log.wipeTables(
-            engine.writerConn,
-            complete.manifests.map(m => m.table).filter(t => IDENTIFIER_RE.test(t)),
-            engine.tracker,
-          )
-          engine.syncState.phase = 'pending'
-          engine.syncState.completedTables = []
-          engine.expectedBatchIndex.clear()
-          engine.syncTableDigests.clear()
-          await engine.log.setSyncMeta('pending')
-          await this.initiateSync()
-          return
-        }
+      if (!(await copyMatchesManifests(engine, complete))) {
+        await engine.log.wipeTables(engine.writerConn, copiedTables(engine, complete), engine.tracker)
+        engine.syncState.phase = 'pending'
+        engine.syncState.completedTables = []
+        engine.expectedBatchIndex.clear()
+        engine.syncTableDigests.clear()
+        await engine.log.setSyncMeta('pending')
+        await this.initiateSync()
+        return
       }
       engine.syncTableDigests.clear()
 
+      await recordCopiedHistory(engine, complete, fromPeerId)
       await engine.log.setLastAppliedSeq(fromPeerId, complete.snapshotSeq)
 
       const recordStmt = await prepareInsertAppliedChange(engine.writerConn)
@@ -292,6 +288,7 @@ export class SyncJoiner {
       engine.syncState.phase = 'catching-up'
       engine.syncState.snapshotSeq = complete.snapshotSeq
       await engine.log.setSyncMeta('catching-up', complete.snapshotSeq)
+      await reportSnapshotPosition(engine, fromPeerId, complete.snapshotSeq)
 
       engine.senderLoop.start()
       this.startCatchUpCheck()
@@ -312,6 +309,7 @@ export class SyncJoiner {
   }
 
   startCatchUpCheck(): void {
+    this.stopCatchUpCheck()
     const engine = this.engine
     const catchUpStartedAt = Date.now()
     this.catchUpCheckTimer = setInterval(async () => {
@@ -379,8 +377,8 @@ export class SyncJoiner {
   }
 
   private async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
-    await delayAckIfConfigured(this.engine)
     await this.engine.config.transport.sendSyncAck(peerId, this.engine.decorate(ack))
+    this.recovery.noteAcknowledged(ack.requestId)
   }
 
   private async finishCatchUpAsReady(): Promise<void> {

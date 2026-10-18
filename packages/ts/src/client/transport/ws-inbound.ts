@@ -18,6 +18,7 @@ export function routeServerMessage(raw: string, sinks: InboundSinks): void {
   } catch {
     return
   }
+  if (msg === null || typeof msg !== 'object') return
 
   switch (msg.type) {
     case 'result':
@@ -33,7 +34,10 @@ export function routeServerMessage(raw: string, sinks: InboundSinks): void {
     }
 
     case 'error': {
-      const failure = new RemoteError(msg.error.code, msg.error.message)
+      const failure = new RemoteError(
+        msg.error?.code ?? 'UNKNOWN_ERROR',
+        msg.error?.message ?? 'The server sent an error frame that carried no error',
+      )
       if (!sinks.pending.reject(msg.id, failure)) sinks.live.fail(msg.id, failure)
       return
     }

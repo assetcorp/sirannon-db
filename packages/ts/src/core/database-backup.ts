@@ -10,6 +10,7 @@ import type { BackupCycle } from './backup/cycle.js'
 import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
 import type { BackupDestination } from './backup/destination.js'
+import { assertDeadline } from './backup/destination-deadline.js'
 import type { BackupFileReport, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import { startCopyWithoutHoldingWriter } from './backup/start-guard.js'
 import type { BackupVerifyResult } from './backup/verify.js'
@@ -37,14 +38,17 @@ export interface BackupChainLocation {
 /**
  * Throws `BACKUP_UNSUPPORTED` when the backup cycle cannot capture this
  * database's change log, because the driver has no backup engine, the database
- * is in memory, or write-ahead logging is off. Sirannon calls this before it
- * opens any connection, so that the operator sees the error at open and not at
- * the first capture.
+ * is in memory, or write-ahead logging is off, and throws `BACKUP_ERROR` when
+ * the destination deadline in the cycle options is one that no timer can hold.
+ * Sirannon calls this before it opens any connection, so that the operator
+ * sees the error at open and not at the first capture, and so that a refused
+ * open leaves no connection to the file behind.
  *
  * @param driver - The driver that opens the database.
  * @param id - The database identifier, which the error message names.
  * @param path - The path of the database file, or `':memory:'`.
  * @param walMode - Whether the database uses write-ahead logging.
+ * @param cycle - The backup cycle options that the database opens with.
  *
  * @internal
  */
@@ -53,7 +57,9 @@ export function assertChangeLogCaptureSupported(
   id: string,
   path: string,
   walMode: boolean,
+  cycle: BackupCycleOptions,
 ): void {
+  if (cycle.destinationTimeoutMs !== undefined) assertDeadline(cycle.destinationTimeoutMs, 'The destination deadline')
   if (!driver.createBackupEngine) {
     throw new SirannonError(
       `Database '${id}' asks for backups and this driver provides no backup engine`,

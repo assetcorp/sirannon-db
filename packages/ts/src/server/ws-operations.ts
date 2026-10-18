@@ -47,8 +47,8 @@ export async function handleQueryMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  if (typeof msg.sql !== 'string') {
-    ctx.sendError(id, 'INVALID_MESSAGE', 'Query message requires a "sql" string field')
+  if (typeof msg.sql !== 'string' || msg.sql.length === 0) {
+    ctx.sendError(id, 'INVALID_MESSAGE', 'Query message requires a non-empty "sql" string field')
     return
   }
 
@@ -86,8 +86,8 @@ export async function handleExecuteMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  if (typeof msg.sql !== 'string') {
-    ctx.sendError(id, 'INVALID_MESSAGE', 'Execute message requires a "sql" string field')
+  if (typeof msg.sql !== 'string' || msg.sql.length === 0) {
+    ctx.sendError(id, 'INVALID_MESSAGE', 'Execute message requires a non-empty "sql" string field')
     return
   }
 
@@ -160,8 +160,8 @@ export async function handleBatchMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  if (typeof msg.sql !== 'string') {
-    ctx.sendError(id, 'INVALID_MESSAGE', 'Batch message requires a "sql" string field')
+  if (typeof msg.sql !== 'string' || msg.sql.length === 0) {
+    ctx.sendError(id, 'INVALID_MESSAGE', 'Batch message requires a non-empty "sql" string field')
     return
   }
 
@@ -197,8 +197,8 @@ export async function handleLoadMessage(
   msg: Record<string, unknown>,
   id: string,
 ): Promise<void> {
-  if (typeof msg.sql !== 'string') {
-    ctx.sendError(id, 'INVALID_MESSAGE', 'Load message requires a "sql" string field')
+  if (typeof msg.sql !== 'string' || msg.sql.length === 0) {
+    ctx.sendError(id, 'INVALID_MESSAGE', 'Load message requires a non-empty "sql" string field')
     return
   }
 

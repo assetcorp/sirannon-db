@@ -10,13 +10,14 @@ import { RemoteError } from './types.js'
  * @internal
  */
 export function encodeSyncBatch(batch: ReplicationBatch): ChangesRequest['batch'] {
+  const seqs = batch.changeSeqs
   return {
     sourceNodeId: batch.sourceNodeId,
     batchId: batch.batchId,
     fromSeq: batch.fromSeq.toString(),
     toSeq: batch.toSeq.toString(),
     hlcRange: { min: batch.hlcRange.min, max: batch.hlcRange.max },
-    changes: batch.changes.map(change => ({
+    changes: batch.changes.map((change, index) => ({
       table: change.table,
       operation: change.operation,
       rowId: change.rowId,
@@ -26,8 +27,10 @@ export function encodeSyncBatch(batch: ReplicationBatch): ChangesRequest['batch'
       nodeId: change.nodeId,
       newData: change.newData === null ? null : (encodeTaggedValues(change.newData) as Record<string, unknown>),
       oldData: change.oldData === null ? null : (encodeTaggedValues(change.oldData) as Record<string, unknown>),
+      ...(seqs?.[index] === undefined ? {} : { seq: seqs[index].toString() }),
     })),
     checksum: batch.checksum,
+    ...(batch.txContinues === true ? { txContinues: true } : {}),
   }
 }
 

@@ -109,6 +109,7 @@ export function cloneLease(lease: CoordinatorLease): CoordinatorLease {
 export function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {
   const displacedPrimaryId = state.currentPrimary?.nodeId
   state.primaryTerm += 1n
+  state.durabilityPointSeq = 0n
   state.currentPrimary = { ...nextPrimary }
   markDisplacedPrimaryForRepair(state, displacedPrimaryId, nextPrimary.nodeId)
 }

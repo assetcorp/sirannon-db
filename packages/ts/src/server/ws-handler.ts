@@ -1,18 +1,17 @@
 import type { Database } from '../core/database.js'
-import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { ChangeEvent, ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
+import type { ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import type { OperationSource } from './operation-lookup.js'
 import { createOperationSource } from './operation-lookup.js'
-import type { WSLiveMessage, WSServerMessage } from './protocol.js'
+import type { WSLiveMessage } from './protocol.js'
 import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry, toChangeRetentionOptions } from './ws-cdc.js'
-import type { WSConnection, WSSendOutcome } from './ws-connection.js'
-import { WS_CLOSE_OVERLOADED } from './ws-connection.js'
-import { wireChangeEvent } from './ws-device-frames.js'
+import type { WSConnection } from './ws-connection.js'
+import { WS_CLOSE_GOING_AWAY, WS_CLOSE_MESSAGE_TOO_BIG, WS_CLOSE_OVERLOADED } from './ws-connection.js'
 import type { DeviceChangeStream } from './ws-device-stream.js'
 import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
+import { WSFrameWriter } from './ws-frame-writer.js'
 import type { WSLiveDeps } from './ws-live.js'
 import { handleLiveSubscribeMessage } from './ws-live.js'
 import type { WSNamedContext } from './ws-named.js'
@@ -25,6 +24,7 @@ import {
   handleQueryMessage,
   handleTransactionMessage,
 } from './ws-operations.js'
+import { closeGoingAway, InFlightRequests, SHUTTING_DOWN_MESSAGE, SHUTTING_DOWN_REASON } from './ws-shutdown.js'
 import type { SubscriptionAttachment, WSSubscribeDeps } from './ws-subscribe.js'
 import { handleSubscribeMessage } from './ws-subscribe.js'
 
@@ -45,6 +45,7 @@ export interface ConnectionState {
   identity: unknown
   subscriptions: Map<string, Subscription>
   deviceStreams: Map<string, DeviceChangeStream>
+  requests: InFlightRequests
   overloaded: boolean
 }
 
@@ -64,6 +65,7 @@ export class WSHandler<Identity = unknown> {
   private readonly acceptSql: boolean
   private readonly acceptDeviceSync: boolean
   private readonly operations: OperationSource
+  private readonly frames = new WSFrameWriter(conn => this.handleOverload(conn))
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>) {
@@ -79,21 +81,24 @@ export class WSHandler<Identity = unknown> {
   }
 
   async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
-    if (this.closed) {
-      this.sendError(conn, '', 'HANDLER_CLOSED', 'WebSocket handler is shut down')
-      conn.close(1013, 'Handler shutting down')
+    if (this.refuseWhileClosed(conn)) return
+
+    let database: Database | undefined
+    try {
+      database = await this.sirannon.resolve(databaseId)
+    } catch (err) {
+      this.frames.sendSirannonError(conn, '', err)
+      conn.close(1011, 'Database open failed')
       return
     }
-
-    const database = await this.sirannon.resolve(databaseId)
     if (!database) {
-      this.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
+      this.frames.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
       conn.close(1008, 'Database not found')
       return
     }
 
     if (database.closed) {
-      this.sendError(conn, '', 'DATABASE_CLOSED', `Database '${databaseId}' is closed`)
+      this.frames.sendError(conn, '', 'DATABASE_CLOSED', `Database '${databaseId}' is closed`)
       conn.close(1008, 'Database closed')
       return
     }
@@ -102,15 +107,16 @@ export class WSHandler<Identity = unknown> {
     try {
       executionTarget = await this.resolveTarget(databaseId)
     } catch (err) {
-      this.sendSirannonError(conn, '', err)
+      this.frames.sendSirannonError(conn, '', err)
       conn.close(1011, 'Execution target resolution failed')
       return
     }
     if (!executionTarget) {
-      this.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
+      this.frames.sendError(conn, '', 'DATABASE_NOT_FOUND', `Database '${databaseId}' not found`)
       conn.close(1008, 'Database not found')
       return
     }
+    if (this.refuseWhileClosed(conn)) return
 
     this.connections.set(conn, {
       databaseId,
@@ -119,8 +125,16 @@ export class WSHandler<Identity = unknown> {
       identity,
       subscriptions: new Map(),
       deviceStreams: new Map(),
+      requests: new InFlightRequests(),
       overloaded: false,
     })
+  }
+
+  private refuseWhileClosed(conn: WSConnection): boolean {
+    if (!this.closed) return false
+    this.frames.sendError(conn, '', 'HANDLER_CLOSED', SHUTTING_DOWN_MESSAGE)
+    conn.close(WS_CLOSE_GOING_AWAY, SHUTTING_DOWN_REASON)
+    return true
   }
 
   /**
@@ -140,7 +154,7 @@ export class WSHandler<Identity = unknown> {
     if (!state) return
 
     if (Buffer.byteLength(data) > this.maxPayloadLength) {
-      this.sendError(conn, '', 'PAYLOAD_TOO_LARGE', 'Message exceeds maximum payload length')
+      conn.close(WS_CLOSE_MESSAGE_TOO_BIG, 'PAYLOAD_TOO_LARGE')
       return
     }
 
@@ -148,23 +162,23 @@ export class WSHandler<Identity = unknown> {
     try {
       msg = JSON.parse(data) as Record<string, unknown>
     } catch {
-      this.sendError(conn, '', 'INVALID_JSON', 'Failed to parse message as JSON')
+      this.frames.sendError(conn, '', 'INVALID_JSON', 'Failed to parse message as JSON')
       return
     }
 
     if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) {
-      this.sendError(conn, '', 'INVALID_MESSAGE', 'Message must be a JSON object')
+      this.frames.sendError(conn, '', 'INVALID_MESSAGE', 'Message must be a JSON object')
       return
     }
 
     if (typeof msg.type !== 'string') {
-      this.sendError(conn, '', 'INVALID_MESSAGE', 'Message must have a string "type" field')
+      this.frames.sendError(conn, '', 'INVALID_MESSAGE', 'Message must have a string "type" field')
       return
     }
 
     if (typeof msg.id !== 'string') {
       const echoId = typeof msg.id === 'number' || typeof msg.id === 'bigint' ? String(msg.id) : ''
-      this.sendError(conn, echoId, 'INVALID_MESSAGE', 'Message must have a string "id" field')
+      this.frames.sendError(conn, echoId, 'INVALID_MESSAGE', 'Message must have a string "id" field')
       return
     }
 
@@ -172,45 +186,56 @@ export class WSHandler<Identity = unknown> {
     const name = typeof msg.name === 'string' ? msg.name : null
 
     if (name !== null && !NAMED_MESSAGE_TYPES.has(msg.type)) {
-      this.sendError(conn, id, 'INVALID_MESSAGE', `A "${msg.type}" message names no registered operation`)
+      this.frames.sendError(conn, id, 'INVALID_MESSAGE', `A "${msg.type}" message names no registered operation`)
       return
     }
 
     if (!this.acceptSql && SQL_MESSAGE_TYPES.has(msg.type) && name === null) {
-      this.sendError(conn, id, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
+      this.frames.sendError(conn, id, 'SQL_NOT_ACCEPTED', SQL_NOT_ACCEPTED_MESSAGE)
       return
     }
 
-    switch (msg.type) {
+    if (this.closed) {
+      this.frames.sendError(conn, id, 'HANDLER_CLOSED', SHUTTING_DOWN_MESSAGE)
+      return
+    }
+
+    const request = this.dispatch(conn, state, msg, msg.type, id, name)
+    if (request !== undefined) state.requests.track(request)
+  }
+
+  private dispatch(
+    conn: WSConnection,
+    state: ConnectionState,
+    msg: Record<string, unknown>,
+    type: string,
+    id: string,
+    name: string | null,
+  ): Promise<void> | undefined {
+    switch (type) {
       case 'query':
-        if (name !== null) handleNamedQueryMessage(this.namedContext(conn, state), msg, id, name)
-        else handleQueryMessage(this.operationContext(conn, state), msg, id)
-        break
+        if (name !== null) return handleNamedQueryMessage(this.namedContext(conn, state), msg, id, name)
+        return handleQueryMessage(this.operationContext(conn, state), msg, id)
       case 'execute':
-        if (name !== null) handleNamedExecuteMessage(this.namedContext(conn, state), msg, id, name)
-        else handleExecuteMessage(this.operationContext(conn, state), msg, id)
-        break
+        if (name !== null) return handleNamedExecuteMessage(this.namedContext(conn, state), msg, id, name)
+        return handleExecuteMessage(this.operationContext(conn, state), msg, id)
       case 'transaction':
-        handleTransactionMessage(this.operationContext(conn, state), msg, id)
-        break
+        return handleTransactionMessage(this.operationContext(conn, state), msg, id)
       case 'batch':
-        handleBatchMessage(this.operationContext(conn, state), msg, id)
-        break
+        return handleBatchMessage(this.operationContext(conn, state), msg, id)
       case 'load':
-        handleLoadMessage(this.operationContext(conn, state), msg, id)
-        break
+        return handleLoadMessage(this.operationContext(conn, state), msg, id)
       case 'subscribe':
-        if (name !== null) handleLiveSubscribeMessage(this.liveDeps(), conn, state, msg, id, name)
-        else handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
-        break
+        if (name !== null) return handleLiveSubscribeMessage(this.liveDeps(), conn, state, msg, id, name)
+        return handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
       case 'unsubscribe':
         this.handleUnsubscribe(conn, state, id)
-        break
+        return undefined
       case 'ack':
-        handleAckMessage(this.subscribeDeps(), conn, state, msg, id)
-        break
+        return handleAckMessage(this.subscribeDeps(), conn, state, msg, id)
       default:
-        this.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${msg.type}'`)
+        this.frames.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${type}'`)
+        return undefined
     }
   }
 
@@ -233,23 +258,34 @@ export class WSHandler<Identity = unknown> {
 
     this.cdc.maybeCleanup(state.databaseId)
     this.connections.delete(conn)
+    state.requests.release()
   }
 
   get connectionCount(): number {
     return this.connections.size
   }
 
-  async close(): Promise<void> {
+  /**
+   * Stops every subscription, refuses every new connection and request, and closes each open connection with close
+   * code 1001 once its requests have replied and its outbound buffer has emptied.
+   *
+   * @param deadline - The signal that aborts when the close deadline passes, after which the handler closes every
+   * remaining connection at once. Without it, the handler waits for as long as the requests take.
+   * @returns A promise that resolves once the handler has closed every connection and its change feeds.
+   */
+  async close(deadline: AbortSignal = new AbortController().signal): Promise<void> {
     if (this.closed) return
     this.closed = true
 
+    const closing: Promise<void>[] = []
     for (const [conn, state] of this.connections) {
       for (const sub of state.subscriptions.values()) {
         sub.unsubscribe()
       }
       state.subscriptions.clear()
-      conn.close(1001, 'Handler shutting down')
+      closing.push(closeGoingAway(conn, state.requests, deadline))
     }
+    await Promise.all(closing)
     this.connections.clear()
 
     await this.cdc.closeAll()
@@ -258,9 +294,9 @@ export class WSHandler<Identity = unknown> {
   private operationContext(conn: WSConnection, state: ConnectionState): WSOperationContext {
     return {
       target: state.executionTarget,
-      sendResult: (id, data) => this.send(conn, { type: 'result', id, data }),
-      sendError: (id, code, message) => this.sendError(conn, id, code, message),
-      sendCaughtError: (id, err) => this.sendSirannonError(conn, id, err),
+      sendResult: (id, data) => this.frames.send(conn, { type: 'result', id, data }),
+      sendError: (id, code, message) => this.frames.sendError(conn, id, code, message),
+      sendCaughtError: (id, err) => this.frames.sendSirannonError(conn, id, err),
     }
   }
 
@@ -276,10 +312,10 @@ export class WSHandler<Identity = unknown> {
   private liveDeps(): WSLiveDeps {
     return {
       operations: this.operations,
-      sendSubscribedRows: (conn, id, rows) => this.send(conn, { type: 'subscribed', id, rows }),
-      sendLive: (conn, message: WSLiveMessage) => this.send(conn, message),
-      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
-      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
+      sendSubscribedRows: (conn, id, rows) => this.frames.send(conn, { type: 'subscribed', id, rows }),
+      sendLive: (conn, message: WSLiveMessage) => this.frames.send(conn, message),
+      sendError: (conn, id, code, message) => this.frames.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.frames.sendSirannonError(conn, id, err),
     }
   }
 
@@ -295,7 +331,7 @@ export class WSHandler<Identity = unknown> {
       detachSubscription: (conn, id, subscription) => this.detachSubscription(conn, id, subscription),
       beforeSubscribe: ctx => this.sirannon.hookRegistry.invoke('beforeSubscribe', ctx),
       sendSubscribed: (conn, id, seq, epoch, resync, maxUnacknowledgedChanges) =>
-        this.send(conn, {
+        this.frames.send(conn, {
           type: 'subscribed',
           id,
           seq,
@@ -303,11 +339,11 @@ export class WSHandler<Identity = unknown> {
           ...(resync ? { resync: true } : {}),
           ...(maxUnacknowledgedChanges !== undefined ? { maxUnacknowledgedChanges } : {}),
         }),
-      sendResult: (conn, id, data) => this.send(conn, { type: 'result', id, data }),
-      sendError: (conn, id, code, message) => this.sendError(conn, id, code, message),
-      sendSirannonError: (conn, id, err) => this.sendSirannonError(conn, id, err),
-      sendChange: (conn, id, event) => this.sendChange(conn, id, event),
-      sendText: (conn, data) => this.sendText(conn, data),
+      sendResult: (conn, id, data) => this.frames.send(conn, { type: 'result', id, data }),
+      sendError: (conn, id, code, message) => this.frames.sendError(conn, id, code, message),
+      sendSirannonError: (conn, id, err) => this.frames.sendSirannonError(conn, id, err),
+      sendChange: (conn, id, event) => this.frames.sendChange(conn, id, event),
+      sendText: (conn, data) => this.frames.sendText(conn, data),
       closeFaulted: conn => conn.close(1011, 'Device stream failed'),
       handleOverload: conn => this.handleOverload(conn),
     }
@@ -316,13 +352,13 @@ export class WSHandler<Identity = unknown> {
   private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
     const sub = state.subscriptions.get(id)
     if (!sub) {
-      this.sendError(conn, id, 'SUBSCRIPTION_NOT_FOUND', `Subscription '${id}' not found`)
+      this.frames.sendError(conn, id, 'SUBSCRIPTION_NOT_FOUND', `Subscription '${id}' not found`)
       return
     }
 
     sub.unsubscribe()
     state.subscriptions.delete(id)
-    this.send(conn, { type: 'unsubscribed', id })
+    this.frames.send(conn, { type: 'unsubscribed', id })
     this.cdc.maybeCleanup(state.databaseId)
   }
 
@@ -345,43 +381,6 @@ export class WSHandler<Identity = unknown> {
     const state = this.connections.get(conn)
     if (state?.subscriptions.get(id) === subscription) state.subscriptions.delete(id)
     subscription.unsubscribe()
-  }
-
-  private send(conn: WSConnection, msg: WSServerMessage): WSSendOutcome {
-    let data: string
-    try {
-      data = JSON.stringify(msg)
-    } catch {
-      this.handleOverload(conn)
-      return 'dropped'
-    }
-    const outcome = conn.send(data)
-    if (outcome === 'dropped') {
-      this.handleOverload(conn)
-    }
-    return outcome
-  }
-
-  private sendError(conn: WSConnection, id: string, code: string, message: string): void {
-    this.send(conn, { type: 'error', id, error: { code, message } })
-  }
-
-  private sendSirannonError(conn: WSConnection, id: string, err: unknown): void {
-    const code = err instanceof SirannonError ? err.code : 'INTERNAL_ERROR'
-    const message = err instanceof SirannonError ? err.message : 'An unexpected error occurred'
-    this.sendError(conn, id, code, message)
-  }
-
-  private sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
-    return this.send(conn, { type: 'change', id: subscriptionId, event: wireChangeEvent(event) })
-  }
-
-  private sendText(conn: WSConnection, data: string): WSSendOutcome {
-    const outcome = conn.send(data)
-    if (outcome === 'dropped') {
-      this.handleOverload(conn)
-    }
-    return outcome
   }
 }
 

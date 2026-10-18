@@ -2,20 +2,22 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { CDCError, ForbiddenSqlError } from '../errors.js'
 import { CHANGES_TABLE, isReservedIdentifier } from '../internal-tables.js'
 import {
-  deleteChangesBeforeSql,
+  deleteAllReplacedRows,
   deleteChangesBeforeUpToSeqSql,
+  deleteReplacedRowsOfTable,
   ensureChangesTable,
+  ensureReplacedRowsTable,
   selectMaxChangeSeq,
   selectMinChangeSeqSql,
+  selectOrdinaryTableName,
   selectTableExists,
-  tableColumnNames,
-  tablePkColumns,
 } from '../system-catalog/index.js'
 import type { ChangeEvent } from '../types.js'
+import { type CaptureShape, readCaptureShape, sameCaptureShape } from './capture-shape.js'
 import { pollChanges, readSinceTables } from './change-log-reader.js'
 import { PruneBoundaries, type PruneBoundarySource, seqBoundFor } from './prune-boundaries.js'
 import { StatementCache } from './statement-cache.js'
-import { dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
+import { cdcTriggersMatch, dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
 const DEFAULT_RETENTION_MS = 3_600_000
@@ -31,6 +33,7 @@ const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
  */
 export class ChangeTracker {
   private readonly watched = new Map<string, WatchedTableInfo>()
+  private readonly watchedByFoldedName = new Map<string, string>()
   private lastSeq = 0n
   private readonly retentionMs: number
   private readonly changesTable: string
@@ -41,6 +44,7 @@ export class ChangeTracker {
   private readonly stmtCache = new StatementCache()
   private readonly pruneBoundaries = new PruneBoundaries()
   private lastPollAtTxBoundary = true
+  private watchQueue: Promise<void> = Promise.resolve()
 
   constructor(options?: ChangeTrackerOptions) {
     this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
@@ -53,63 +57,79 @@ export class ChangeTracker {
   /**
    * Installs change-capture triggers on a table, so that every later write to it adds a row to the change log.
    *
+   * The tracker matches the name to an ordinary table as SQLite does, ignoring the case of ASCII letters, and records every change under the name that the schema stores. A name that matches no ordinary table, such as the name of a view or a virtual table, fails with `CDC_ERROR`. The tracker queues each call behind the one before it, so concurrent calls on one connection never open overlapping transactions.
+   *
    * @param conn - The writer connection on which the tracker creates the triggers.
    * @param table - The name of the table to watch.
    */
-  async watch(conn: SQLiteConnection, table: string): Promise<void> {
-    this.assertIdentifier(table, 'table name')
-    if (isReservedIdentifier(table)) {
-      throw new ForbiddenSqlError(`Table '${table}' is reserved for Sirannon and cannot be watched`)
+  watch(conn: SQLiteConnection, table: string): Promise<void> {
+    const watching = this.watchQueue.then(() => this.watchNow(conn, table))
+    this.watchQueue = watching.catch(() => {})
+    return watching
+  }
+
+  private async watchNow(conn: SQLiteConnection, requested: string): Promise<void> {
+    this.assertIdentifier(requested, 'table name')
+    if (isReservedIdentifier(requested)) {
+      throw new ForbiddenSqlError(`Table '${requested}' is reserved for Sirannon and cannot be watched`)
     }
     await this.ensureChangesTable(conn)
 
-    const columns = await tableColumnNames(conn, table)
-    if (columns.length === 0) {
+    const table = await selectOrdinaryTableName(conn, requested)
+    if (table === null) {
+      throw new CDCError(`Table '${requested}' does not exist or is not an ordinary table`)
+    }
+    this.assertIdentifier(table, 'table name')
+
+    const shape = await this.readShape(conn, table)
+    if (shape.columns.length === 0) {
       throw new CDCError(`Table '${table}' does not exist or has no columns`)
     }
 
-    for (const col of columns) {
-      this.assertIdentifier(col, `column name in table '${table}'`)
-    }
-
-    const pkColumns = await tablePkColumns(conn, table)
     const existing = this.watched.get(table)
-
-    if (existing) {
-      const same = existing.columns.length === columns.length && existing.columns.every((col, i) => col === columns[i])
-      if (same) {
-        return
-      }
+    if (existing && sameCaptureShape(existing.shape, shape)) {
+      return
+    }
+    if (existing || !(await cdcTriggersMatch(conn, this.changesTable, table, shape))) {
       await conn.transaction(async txConn => {
         await dropCdcTriggers(txConn, table)
-        await this.installTriggers(txConn, table, columns, pkColumns)
+        await installCdcTriggers(txConn, this.changesTable, table, shape)
       })
-    } else {
-      await this.installTriggers(conn, table, columns, pkColumns)
     }
-    this.watched.set(table, { table, columns, pkColumns })
-    this.watchedTablesCache = null
+    this.markWatched(table, shape)
   }
 
   /**
    * Drops a table's change-capture triggers and removes the table from the watched set.
    *
    * @param conn - The writer connection on which the tracker drops the triggers.
-   * @param table - The name of the table to stop watching.
+   * @param table - The name of the table to stop watching, in any letter case.
    */
   async unwatch(conn: SQLiteConnection, table: string): Promise<void> {
-    if (!this.watched.has(table)) {
+    const watched = this.watchedTableNamed(table)
+    if (watched === undefined) {
       return
     }
 
-    await dropCdcTriggers(conn, table)
-    this.watched.delete(table)
-    this.watchedTablesCache = null
+    await dropCdcTriggers(conn, watched)
+    await deleteReplacedRowsOfTable(conn, watched)
+    this.markUnwatched(watched)
+  }
+
+  /**
+   * Returns the stored name of the watched table that a name refers to, ignoring the case of ASCII letters as SQLite does.
+   *
+   * @param table - The name to look up.
+   * @returns The stored name, or `undefined` when the tracker watches no such table.
+   * @internal
+   */
+  watchedTableNamed(table: string): string | undefined {
+    return this.watched.has(table) ? table : this.watchedByFoldedName.get(table.toLowerCase())
   }
 
   /**
    * Rebuilds the change-capture triggers on `conn` for every watched table
-   * whose column list has changed, without opening a nested transaction.
+   * whose columns or unique keys have changed, without opening a nested transaction.
    *
    * Call it after a DDL statement inside an open transaction, so that the next
    * write in that transaction records the new columns in `new_data`. You can
@@ -120,37 +140,22 @@ export class ChangeTracker {
    * driver error or an invalid column name propagates to the caller, so that
    * the caller can roll back its transaction.
    *
+   * @param conn - The writer connection, which can hold an open transaction.
+   * @param rebuilt - The watched tables whose triggers the caller dropped, which the method installs again whether or not their shape changed.
    * @internal
    */
-  async refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void> {
-    const tables = Array.from(this.watched.keys())
-    let anyMutated = false
-    for (const table of tables) {
+  async refreshAllTriggersUsingConnection(conn: SQLiteConnection, rebuilt?: ReadonlySet<string>): Promise<void> {
+    for (const table of Array.from(this.watched.keys())) {
       const existing = this.watched.get(table)
       if (!existing) continue
 
-      const columns = await tableColumnNames(conn, table)
-      if (columns.length === 0) {
-        continue
-      }
+      const shape = await this.readShape(conn, table)
+      if (shape.columns.length === 0) continue
+      if (rebuilt?.has(table) !== true && sameCaptureShape(existing.shape, shape)) continue
 
-      for (const col of columns) {
-        this.assertIdentifier(col, `column name in table '${table}'`)
-      }
-
-      const same = existing.columns.length === columns.length && existing.columns.every((col, i) => col === columns[i])
-      if (same) {
-        continue
-      }
-
-      const pkColumns = await tablePkColumns(conn, table)
       await dropCdcTriggers(conn, table)
-      await this.installTriggers(conn, table, columns, pkColumns)
-      this.watched.set(table, { table, columns, pkColumns })
-      anyMutated = true
-    }
-    if (anyMutated) {
-      this.watchedTablesCache = null
+      await installCdcTriggers(conn, this.changesTable, table, shape)
+      this.watched.set(table, { table, shape })
     }
   }
 
@@ -169,17 +174,14 @@ export class ChangeTracker {
    * @internal
    */
   async pruneDroppedTables(conn: SQLiteConnection, tables: readonly string[]): Promise<void> {
-    let mutated = false
-    for (const table of tables) {
-      if (!this.watched.has(table)) {
+    for (const named of tables) {
+      const table = this.watchedTableNamed(named)
+      if (table === undefined) {
         continue
       }
       await dropCdcTriggers(conn, table)
-      this.watched.delete(table)
-      mutated = true
-    }
-    if (mutated) {
-      this.watchedTablesCache = null
+      await deleteReplacedRowsOfTable(conn, table)
+      this.markUnwatched(table)
     }
   }
 
@@ -235,7 +237,8 @@ export class ChangeTracker {
       }
     }
 
-    return readSinceTables(conn, this.stmtCache, this.changesTable, tables, afterSeq, upToSeq, limit)
+    const stored = tables.map(table => this.watchedTableNamed(table) ?? table)
+    return readSinceTables(conn, this.stmtCache, this.changesTable, stored, afterSeq, upToSeq, limit)
   }
 
   /**
@@ -286,19 +289,9 @@ export class ChangeTracker {
 
     const cutoff = Date.now() / 1000 - this.retentionMs / 1000
     const seqBound = this.computeSeqBound()
-
-    if (seqBound !== null) {
-      const stmt = await this.stmtCache.get(
-        conn,
-        'cleanup_coordinated',
-        deleteChangesBeforeUpToSeqSql(this.changesTable),
-      )
-      const result = await stmt.run(cutoff, seqBound.toString())
-      return result.changes
-    }
-
-    const stmt = await this.stmtCache.get(conn, 'cleanup', deleteChangesBeforeSql(this.changesTable))
-    const result = await stmt.run(cutoff)
+    const stmt = await this.stmtCache.get(conn, 'cleanup_coordinated', deleteChangesBeforeUpToSeqSql(this.changesTable))
+    const result = await stmt.run(cutoff, seqBound.toString())
+    if (this.watched.size > 0) await deleteAllReplacedRows(conn)
     return result.changes
   }
 
@@ -325,7 +318,7 @@ export class ChangeTracker {
     return this.watchedTablesCache
   }
 
-  private computeSeqBound(): bigint | null {
+  private computeSeqBound(): bigint {
     return seqBoundFor(this.pruneBoundaries.lowest(), this.lastSeq)
   }
 
@@ -349,16 +342,28 @@ export class ChangeTracker {
     }
 
     await ensureChangesTable(conn, this.changesTable)
+    await ensureReplacedRowsTable(conn)
     this.changesTableEnsured = true
     this.changesTableReady = true
   }
 
-  private async installTriggers(
-    conn: SQLiteConnection,
-    table: string,
-    columns: string[],
-    pkColumns: string[],
-  ): Promise<void> {
-    await installCdcTriggers(conn, this.changesTable, table, columns, pkColumns)
+  private async readShape(conn: SQLiteConnection, table: string): Promise<CaptureShape> {
+    const shape = await readCaptureShape(conn, table)
+    for (const col of shape.columns) {
+      this.assertIdentifier(col, `column name in table '${table}'`)
+    }
+    return shape
+  }
+
+  private markWatched(table: string, shape: CaptureShape): void {
+    this.watched.set(table, { table, shape })
+    this.watchedByFoldedName.set(table.toLowerCase(), table)
+    this.watchedTablesCache = null
+  }
+
+  private markUnwatched(table: string): void {
+    this.watched.delete(table)
+    this.watchedByFoldedName.delete(table.toLowerCase())
+    this.watchedTablesCache = null
   }
 }

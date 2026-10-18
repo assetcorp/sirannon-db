@@ -1,8 +1,35 @@
+import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS } from '../client/http-json.js'
 import { SirannonError } from '../core/errors.js'
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576
 const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
-const UWS_MAX_LIMIT_BYTES = 4_294_967_295
+export const UWS_MAX_LIMIT_BYTES = 4_294_967_295
+const DEFAULT_CLOSE_TIMEOUT_MS = DEFAULT_HTTP_REQUEST_TIMEOUT_MS
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+/**
+ * Returns how long, in milliseconds, closing the server waits for requests in progress before it ends every
+ * connection.
+ *
+ * The default is 30_000, the client's default request timeout, because a client on default settings stops waiting for
+ * a reply after that long.
+ *
+ * @param value - The `timeoutMs` that the caller passed to `close`, or undefined for the default.
+ * @returns The wait in milliseconds.
+ * @throws A `SirannonError` with code `INVALID_CLOSE_TIMEOUT` when the value is not a whole number from 0 to
+ * 2_147_483_647, the longest delay that a JavaScript timer holds.
+ * @internal
+ */
+export function resolveCloseTimeout(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_CLOSE_TIMEOUT_MS
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > MAX_TIMER_DELAY_MS) {
+    throw new SirannonError(
+      `close timeoutMs must be a whole number of milliseconds from 0 to ${MAX_TIMER_DELAY_MS}, the longest delay that a JavaScript timer holds`,
+      'INVALID_CLOSE_TIMEOUT',
+    )
+  }
+  return value
+}
 
 /**
  * Throws when the operator opens the restore route without an `authenticate` hook.

@@ -35,7 +35,15 @@ export type {
   PeerState,
   ReplicationAck,
 } from './peer-types.js'
-export type { SyncAck, SyncBatch, SyncComplete, SyncPhase, SyncRequest, SyncState } from './sync-types.js'
+export type {
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncHistoryPoint,
+  SyncPhase,
+  SyncRequest,
+  SyncState,
+} from './sync-types.js'
 
 /**
  * Names a node's role: 'primary' accepts writes, and 'replica' serves reads.
@@ -204,7 +212,7 @@ export interface ReplicationConfig {
   maxPendingBatches?: number
   /** Reserved, and the engine ignores it. */
   snapshotThreshold?: number
-  /** Sets the largest difference, in milliseconds, between this node's clock and the newest timestamp in an incoming batch. This node rejects a batch that exceeds it. */
+  /** Sets the most milliseconds by which the newest timestamp in an incoming batch can exceed this node's clock. This node rejects a batch whose newest timestamp is further ahead, and accepts a batch stamped earlier than its clock whatever the batch's age. */
   maxClockDriftMs?: number
   /** Sets the most changes that this node accepts in one incoming batch. This node rejects a larger batch. */
   maxBatchChanges?: number

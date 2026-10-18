@@ -12,12 +12,63 @@ const HEADERS_UNSUPPORTED_MESSAGE =
 const SUBPROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
 const MALFORMED_SUBPROTOCOL_REASON =
-  'a subprotocol is one or more of the characters a header token allows, so it carries no space, comma, or quotation mark and is never empty'
+  'it is empty or holds a character that an HTTP header token excludes, such as a space, a comma, or a quotation mark'
 
-const REPEATED_SUBPROTOCOL_REASON = 'a handshake refuses an offer that repeats a subprotocol'
+const REPEATED_SUBPROTOCOL_REASON =
+  'it repeats an earlier entry, and a browser refuses to open a WebSocket whose offer names one subprotocol twice'
+
+const HEADER_NAME_TOKEN = SUBPROTOCOL_TOKEN
+
+const NUL_CODE = 0x00
+
+const LINE_FEED_CODE = 0x0a
+
+const CARRIAGE_RETURN_CODE = 0x0d
+
+const HIGHEST_HEADER_VALUE_CODE = 0xff
+
+const MALFORMED_HEADER_NAME_REASON =
+  'its name is empty or holds a character that an HTTP header name excludes, such as a space or a colon'
+
+const MALFORMED_HEADER_VALUE_REASON =
+  'its value holds a line break, a NUL character, or a character above U+00FF, and fetch refuses to send such a value'
 
 function subprotocolMessage(index: number, reason: string): string {
   return `Entry ${index} of 'webSocketProtocols' cannot be offered, because ${reason}. The entry carries a credential, so it is left out of this message.`
+}
+
+function isSendableHeaderValue(value: string): boolean {
+  for (let position = 0; position < value.length; position++) {
+    const code = value.charCodeAt(position)
+    if (code === NUL_CODE || code === LINE_FEED_CODE || code === CARRIAGE_RETURN_CODE) return false
+    if (code > HIGHEST_HEADER_VALUE_CODE) return false
+  }
+  return true
+}
+
+function headerMessage(index: number, reason: string): string {
+  return `Entry ${index} of 'headers' cannot be sent, because ${reason}. The entry can carry a credential, so it is left out of this message.`
+}
+
+/**
+ * Throws a `RemoteError` with code `INVALID_ARGUMENT` when a configured header cannot travel in an HTTP request or a
+ * WebSocket upgrade, so that the client refuses it once at construction and never copies a credential into the error
+ * of a failed request.
+ *
+ * @param headers - The headers that the caller configured, or undefined when it configured none.
+ *
+ * @internal
+ */
+export function assertHeadersSendable(headers: Record<string, string> | undefined): void {
+  if (headers === undefined) return
+  for (const [index, [name, value]] of Object.entries(headers).entries()) {
+    if (!HEADER_NAME_TOKEN.test(name)) {
+      throw new RemoteError('INVALID_ARGUMENT', headerMessage(index, MALFORMED_HEADER_NAME_REASON))
+    }
+    if (!isSendableHeaderValue(String(value))) {
+      throw new RemoteError('INVALID_ARGUMENT', headerMessage(index, MALFORMED_HEADER_VALUE_REASON))
+    }
+  }
 }
 
 function currentRuntime(): HandshakeRuntime {

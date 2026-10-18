@@ -1,6 +1,6 @@
 import type { RequestContext } from './server-options.js'
 
-const BEARER_SCHEME = 'Bearer '
+const BEARER_SCHEME = 'bearer'
 
 function toBase64Url(bytes: Uint8Array): string {
   let binary = ''
@@ -68,6 +68,8 @@ export function readHeader(ctx: RequestContext, name: string): string | undefine
 /**
  * Returns the token from a request's `Authorization: Bearer` header.
  *
+ * Sirannon matches the scheme name in any casing and accepts one or more spaces between the scheme and the token, as HTTP allows.
+ *
  * @param ctx - The request that Sirannon passed to the `authenticate` hook.
  * @returns The token, or undefined when the request has no `Authorization` header, uses another scheme, or sends an empty token.
  *
@@ -75,9 +77,12 @@ export function readHeader(ctx: RequestContext, name: string): string | undefine
  */
 export function readBearerToken(ctx: RequestContext): string | undefined {
   const value = readHeader(ctx, 'authorization')
-  if (value === undefined || !value.startsWith(BEARER_SCHEME)) return undefined
+  if (value === undefined) return undefined
 
-  const token = value.slice(BEARER_SCHEME.length)
+  const scheme = value.slice(0, BEARER_SCHEME.length)
+  if (scheme.toLowerCase() !== BEARER_SCHEME || value[BEARER_SCHEME.length] !== ' ') return undefined
+
+  const token = value.slice(BEARER_SCHEME.length).trimStart()
   return token.length > 0 ? token : undefined
 }
 

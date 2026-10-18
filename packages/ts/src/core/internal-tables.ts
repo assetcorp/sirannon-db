@@ -11,6 +11,8 @@ export const COLUMN_VERSIONS_TABLE = '_sirannon_column_versions'
 export const SYNC_STATE_TABLE = '_sirannon_sync_state'
 export const DEVICE_CURSORS_TABLE = '_sirannon_device_cursors'
 export const STAGED_CHANGES_TABLE = '_sirannon_staged_changes'
+export const STAGED_PUSH_CHANGES_TABLE = '_sirannon_staged_push_changes'
+export const REPLACED_ROWS_TABLE = '_sirannon_replaced_rows'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
 export const LIVE_PROBE_TABLE_PREFIX = '_sirannon_live_probe_'
@@ -26,6 +28,7 @@ const ATTACH_MESSAGE = 'ATTACH and DETACH statements are not permitted'
 const WRITABLE_SCHEMA_MESSAGE = 'PRAGMA writable_schema is not permitted'
 
 const WRITE_VERBS = new Set(['insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'vacuum', 'reindex'])
+const STATEMENT_VERBS_AFTER_WITH = new Set(['select', 'insert', 'update', 'delete', 'replace'])
 
 type ReservedKind = 'sirannon' | 'sqlite' | null
 
@@ -75,11 +78,42 @@ function referenceError(kind: ReservedKind, verb: string): string | null {
   return null
 }
 
+interface StatementState {
+  verb: string
+  depth: number
+  namesCatalogue: boolean
+}
+
+function freshStatement(): StatementState {
+  return { verb: '', depth: 0, namesCatalogue: false }
+}
+
+function identifierError(name: string, state: StatementState): string | null {
+  if (state.verb === 'pragma' && name.toLowerCase() === 'writable_schema') return WRITABLE_SCHEMA_MESSAGE
+  const kind = reservedKind(name)
+  if (kind === 'sqlite') state.namesCatalogue = true
+  return referenceError(kind, state.verb)
+}
+
+function wordError(word: string, statementStart: boolean, state: StatementState): string | null {
+  const lowerWord = word.toLowerCase()
+  if (statementStart) {
+    state.verb = lowerWord
+    if (lowerWord === 'attach' || lowerWord === 'detach') return ATTACH_MESSAGE
+    return identifierError(word, state)
+  }
+  if (state.verb === 'with' && state.depth === 0 && STATEMENT_VERBS_AFTER_WITH.has(lowerWord)) {
+    state.verb = lowerWord
+    return state.namesCatalogue && WRITE_VERBS.has(lowerWord) ? SQLITE_WRITE_MESSAGE : null
+  }
+  return identifierError(word, state)
+}
+
 function scan(sql: string): string | null {
   const n = sql.length
   let i = 0
   let statementStart = true
-  let verb = ''
+  const state = freshStatement()
 
   while (i < n) {
     const c = sql[i]
@@ -110,7 +144,7 @@ function scan(sql: string): string | null {
 
     if (c === '"' || c === '`') {
       const delimited = readDelimited(sql, i, c)
-      const error = referenceError(reservedKind(delimited.value), verb)
+      const error = identifierError(delimited.value, state)
       if (error) return error
       i = delimited.next
       statementStart = false
@@ -120,7 +154,7 @@ function scan(sql: string): string | null {
     if (c === '[') {
       const end = sql.indexOf(']', i + 1)
       const stop = end === -1 ? n : end
-      const error = referenceError(reservedKind(sql.slice(i + 1, stop)), verb)
+      const error = identifierError(sql.slice(i + 1, stop), state)
       if (error) return error
       i = stop + 1
       statementStart = false
@@ -130,28 +164,22 @@ function scan(sql: string): string | null {
     if (c === ';') {
       i++
       statementStart = true
-      verb = ''
+      Object.assign(state, freshStatement())
       continue
     }
 
     if (isWordStart(c)) {
       let j = i + 1
       while (j < n && isWordPart(sql[j])) j++
-      const word = sql.slice(i, j)
-      const lowerWord = word.toLowerCase()
-      if (statementStart) {
-        verb = lowerWord
-        if (lowerWord === 'attach' || lowerWord === 'detach') return ATTACH_MESSAGE
-      } else if (verb === 'pragma' && lowerWord === 'writable_schema') {
-        return WRITABLE_SCHEMA_MESSAGE
-      }
-      const error = referenceError(reservedKind(word), verb)
+      const error = wordError(sql.slice(i, j), statementStart, state)
       if (error) return error
       i = j
       statementStart = false
       continue
     }
 
+    if (c === '(') state.depth++
+    else if (c === ')' && state.depth > 0) state.depth--
     i++
     statementStart = false
   }

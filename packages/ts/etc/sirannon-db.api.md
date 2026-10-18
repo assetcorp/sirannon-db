@@ -311,6 +311,8 @@ export interface BaselineFileOption {
 export interface BatchSummary {
     changes: number;
     rowsLoaded: number;
+    rowsRead?: number;
+    rowsWritten?: number;
 }
 
 // @public
@@ -413,11 +415,13 @@ export class ChangeTracker {
     // @internal (undocumented)
     readSinceTables(conn: SQLiteConnection, tables: readonly string[], afterSeq: bigint, upToSeq: bigint, limit: number): Promise<ChangeEvent[]>;
     // @internal
-    refreshAllTriggersUsingConnection(conn: SQLiteConnection): Promise<void>;
+    refreshAllTriggersUsingConnection(conn: SQLiteConnection, rebuilt?: ReadonlySet<string>): Promise<void>;
     // @internal (undocumented)
     setPruneBoundary(source: PruneBoundarySource, seq: bigint): void;
     unwatch(conn: SQLiteConnection, table: string): Promise<void>;
     watch(conn: SQLiteConnection, table: string): Promise<void>;
+    // @internal
+    watchedTableNamed(table: string): string | undefined;
     // @internal (undocumented)
     get watchedTables(): ReadonlySet<string>;
 }
@@ -530,6 +534,13 @@ export interface CorsOptions {
 }
 
 // @public
+export interface Counted<V> {
+    rowsRead: number;
+    rowsWritten: number;
+    value: V;
+}
+
+// @public
 export function createTenantResolver(options: TenantResolverOptions): (id: string) => {
     path: string;
     options?: DatabaseOptions;
@@ -544,17 +555,19 @@ export class Database extends DatabaseBackups {
     // @internal (undocumented)
     static create(id: string, path: string, driver: SQLiteDriver, options?: DatabaseOptions, internals?: DatabaseInternals): Promise<Database>;
     deviceSync(): DeviceSyncPort;
-    // @internal (undocumented)
-    ensureChangeStamping(): Promise<void>;
     execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]>;
     executeTransaction(statements: readonly {
         sql: string;
         params?: Params;
     }[]): Promise<ExecuteResult[]>;
+    // @internal
+    holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void;
     live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
+    // @internal
+    get observer(): DatabaseObserver;
     on(table: string): SubscriptionBuilder;
     onAfterQuery(hook: AfterQueryHook): HookDispose;
     onBeforeQuery(hook: BeforeQueryHook): HookDispose;
@@ -624,6 +637,8 @@ export class DatabaseLifecycle {
     protected ensureOpen(): void;
     // @internal
     protected ensureWritable(): void;
+    // @internal
+    protected ensureWriterCanWait(): void;
     readonly id: string;
     readonly path: string;
     get readerCount(): number;
@@ -673,6 +688,7 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver;
 export interface DriverCapabilities {
     extensions: boolean;
     multipleConnections: boolean;
+    rowCounts: boolean;
     steppedCopy: boolean;
 }
 
@@ -874,11 +890,15 @@ export class MetricsCollector {
     // (undocumented)
     observeDispatch(databaseId: string): ChangeDispatchObserver | undefined;
     // (undocumented)
+    reportQuery(context: Omit<QueryMetrics, 'durationMs' | 'error'>, outcome: QueryOutcome, durationMs: number, failed: boolean): void;
+    // (undocumented)
     trackCDCEvent(metrics: CDCMetrics): void;
     // (undocumented)
     trackConnection(metrics: ConnectionMetrics): void;
     // (undocumented)
-    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>): Promise<T>;
+    trackQuery<T>(fn: () => Promise<T>, context: Omit<QueryMetrics, 'durationMs' | 'error'>, measure?: QueryOutcomeMeasure<T>, measureFailure?: QueryFailureMeasure, measureLate?: LateOutcomeMeasure): Promise<T>;
+    // (undocumented)
+    get tracksQueries(): boolean;
 }
 
 // @public
@@ -927,7 +947,7 @@ export class MigrationRunner {
     // (undocumented)
     static rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult>;
     // (undocumented)
-    static run(conn: SQLiteConnection, migrations: Migration[]): Promise<MigrationResult>;
+    static run(conn: SQLiteConnection, migrations: Migration[], afterEachMigration?: (txConn: SQLiteConnection) => Promise<void>): Promise<MigrationResult>;
 }
 
 // @public
@@ -1041,7 +1061,10 @@ export interface QueryMetrics {
     databaseId: string;
     durationMs: number;
     error?: boolean;
+    rowsRead?: number;
     rowsReturned?: number;
+    rowsWritten?: number;
+    source?: 'live';
     sql: string;
 }
 
@@ -1150,6 +1173,8 @@ export function runBulkLoad(run: BulkLoadRun): Promise<BulkLoadResult>;
 export interface RunResult {
     changes: number;
     lastInsertRowId: number | bigint;
+    rowsRead?: number;
+    rowsWritten?: number;
 }
 
 // @public
@@ -1257,12 +1282,8 @@ export interface SQLiteConnection {
     runBatch?(sql: string, paramsBatch: readonly unknown[][]): Promise<RunResult[]>;
     runBatchSummary?(sql: string, paramsBatch: readonly unknown[][]): Promise<BatchSummary>;
     runGroup?(units: readonly {
-        statements: readonly {
-            sql: string;
-            params?: readonly unknown[];
-            trusted?: boolean;
-        }[];
-    }[]): Promise<GroupRunOutcome[]>;
+        statements: readonly GroupRunStatement[];
+    }[], opening?: GroupRunStatement): Promise<GroupRunOutcome[]>;
     transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
 }
 
@@ -1280,8 +1301,11 @@ export interface SQLiteDriver {
 // @public
 export interface SQLiteStatement {
     all<T = unknown>(...params: unknown[]): Promise<T[]>;
+    allCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
     allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>;
+    allRawCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
     get<T = unknown>(...params: unknown[]): Promise<T | undefined>;
+    getCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>>;
     run(...params: unknown[]): Promise<RunResult>;
 }
 
@@ -1326,12 +1350,18 @@ export function toSubprotocolCredential(prefix: string, credential: string): str
 // @public
 export class Transaction {
     constructor(conn: SQLiteConnection);
+    // @internal
+    protected assertOpen(): void;
+    // @internal
+    end(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[]): Promise<ExecuteResult[]>;
     get lastInsertRowId(): number | bigint;
     query<T = Record<string, unknown>>(sql: string, params?: Params): Promise<T[]>;
     // @internal (undocumented)
-    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>): Promise<T>;
+    static run<T>(conn: SQLiteConnection, fn: (tx: Transaction) => Promise<T>, meter?: StatementMeter | null, runInTransaction?: WriterTransactionRunner): Promise<T>;
+    // @internal
+    withMeter(meter: StatementMeter | null): this;
 }
 
 // @public

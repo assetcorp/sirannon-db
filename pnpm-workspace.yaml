@@ -2,6 +2,7 @@ packages:
   - packages/*
   - packages/ts
   - packages/ts/examples/*
+  - native/sqlite/npm/sirannon-sqlite
 
 onlyBuiltDependencies:
   - better-sqlite3

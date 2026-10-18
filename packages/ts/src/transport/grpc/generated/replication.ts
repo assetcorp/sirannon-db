@@ -69,6 +69,7 @@ export interface BatchPayload {
   checksum: string;
   groupId: string;
   primaryTerm: bigint;
+  afterSeq: bigint;
 }
 
 export interface AckPayload {
@@ -100,6 +101,12 @@ export interface SyncRequestPayload {
   groupId: string;
   primaryTerm: bigint;
   supportsStreamVerification: boolean;
+  historyTail: HistoryPointPayload | undefined;
+}
+
+export interface HistoryPointPayload {
+  hlc: string;
+  txId: string;
 }
 
 export interface SyncBatchPayload {
@@ -121,6 +128,8 @@ export interface SyncCompletePayload {
   manifests: SyncTableManifest[];
   groupId: string;
   primaryTerm: bigint;
+  historyPoint: HistoryPointPayload | undefined;
+  resumed: boolean;
 }
 
 export interface SyncTableManifest {
@@ -856,6 +865,7 @@ function createBaseBatchPayload(): BatchPayload {
     checksum: "",
     groupId: "",
     primaryTerm: 0n,
+    afterSeq: 0n,
   };
 }
 
@@ -896,6 +906,12 @@ export const BatchPayload: MessageFns<BatchPayload> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(72).int64(message.primaryTerm);
+    }
+    if (message.afterSeq !== 0n) {
+      if (BigInt.asIntN(64, message.afterSeq) !== message.afterSeq) {
+        throw new globalThis.Error("value provided for field message.afterSeq of type int64 too large");
+      }
+      writer.uint32(80).int64(message.afterSeq);
     }
     return writer;
   },
@@ -979,6 +995,14 @@ export const BatchPayload: MessageFns<BatchPayload> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 10: {
+          if (tag !== 80) {
+            break;
+          }
+
+          message.afterSeq = reader.int64() as bigint;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1021,6 +1045,11 @@ export const BatchPayload: MessageFns<BatchPayload> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      afterSeq: isSet(object.afterSeq)
+        ? BigInt(object.afterSeq)
+        : isSet(object.after_seq)
+        ? BigInt(object.after_seq)
+        : 0n,
     };
   },
 
@@ -1053,6 +1082,9 @@ export const BatchPayload: MessageFns<BatchPayload> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.afterSeq !== 0n) {
+      obj.afterSeq = message.afterSeq.toString();
+    }
     return obj;
   },
 
@@ -1072,6 +1104,7 @@ export const BatchPayload: MessageFns<BatchPayload> = {
     message.checksum = object.checksum ?? "";
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.afterSeq = object.afterSeq ?? 0n;
     return message;
   },
 };
@@ -1471,6 +1504,7 @@ function createBaseSyncRequestPayload(): SyncRequestPayload {
     groupId: "",
     primaryTerm: 0n,
     supportsStreamVerification: false,
+    historyTail: undefined,
   };
 }
 
@@ -1496,6 +1530,9 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     }
     if (message.supportsStreamVerification !== false) {
       writer.uint32(48).bool(message.supportsStreamVerification);
+    }
+    if (message.historyTail !== undefined) {
+      HistoryPointPayload.encode(message.historyTail, writer.uint32(58).fork()).join();
     }
     return writer;
   },
@@ -1555,6 +1592,14 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
           message.supportsStreamVerification = reader.bool();
           continue;
         }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.historyTail = HistoryPointPayload.decode(reader, reader.uint32());
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1596,6 +1641,11 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
         : isSet(object.supports_stream_verification)
         ? globalThis.Boolean(object.supports_stream_verification)
         : false,
+      historyTail: isSet(object.historyTail)
+        ? HistoryPointPayload.fromJSON(object.historyTail)
+        : isSet(object.history_tail)
+        ? HistoryPointPayload.fromJSON(object.history_tail)
+        : undefined,
     };
   },
 
@@ -1619,6 +1669,9 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     if (message.supportsStreamVerification !== false) {
       obj.supportsStreamVerification = message.supportsStreamVerification;
     }
+    if (message.historyTail !== undefined) {
+      obj.historyTail = HistoryPointPayload.toJSON(message.historyTail);
+    }
     return obj;
   },
 
@@ -1633,6 +1686,89 @@ export const SyncRequestPayload: MessageFns<SyncRequestPayload> = {
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
     message.supportsStreamVerification = object.supportsStreamVerification ?? false;
+    message.historyTail = (object.historyTail !== undefined && object.historyTail !== null)
+      ? HistoryPointPayload.fromPartial(object.historyTail)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseHistoryPointPayload(): HistoryPointPayload {
+  return { hlc: "", txId: "" };
+}
+
+export const HistoryPointPayload: MessageFns<HistoryPointPayload> = {
+  encode(message: HistoryPointPayload, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.hlc !== "") {
+      writer.uint32(10).string(message.hlc);
+    }
+    if (message.txId !== "") {
+      writer.uint32(18).string(message.txId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): HistoryPointPayload {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseHistoryPointPayload();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.hlc = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.txId = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): HistoryPointPayload {
+    return {
+      hlc: isSet(object.hlc) ? globalThis.String(object.hlc) : "",
+      txId: isSet(object.txId)
+        ? globalThis.String(object.txId)
+        : isSet(object.tx_id)
+        ? globalThis.String(object.tx_id)
+        : "",
+    };
+  },
+
+  toJSON(message: HistoryPointPayload): unknown {
+    const obj: any = {};
+    if (message.hlc !== "") {
+      obj.hlc = message.hlc;
+    }
+    if (message.txId !== "") {
+      obj.txId = message.txId;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<HistoryPointPayload>, I>>(base?: I): HistoryPointPayload {
+    return HistoryPointPayload.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<HistoryPointPayload>, I>>(object: I): HistoryPointPayload {
+    const message = createBaseHistoryPointPayload();
+    message.hlc = object.hlc ?? "";
+    message.txId = object.txId ?? "";
     return message;
   },
 };
@@ -1880,7 +2016,15 @@ export const SyncBatchPayload: MessageFns<SyncBatchPayload> = {
 };
 
 function createBaseSyncCompletePayload(): SyncCompletePayload {
-  return { requestId: "", snapshotSeq: 0n, manifests: [], groupId: "", primaryTerm: 0n };
+  return {
+    requestId: "",
+    snapshotSeq: 0n,
+    manifests: [],
+    groupId: "",
+    primaryTerm: 0n,
+    historyPoint: undefined,
+    resumed: false,
+  };
 }
 
 export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
@@ -1905,6 +2049,12 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(40).int64(message.primaryTerm);
+    }
+    if (message.historyPoint !== undefined) {
+      HistoryPointPayload.encode(message.historyPoint, writer.uint32(50).fork()).join();
+    }
+    if (message.resumed !== false) {
+      writer.uint32(56).bool(message.resumed);
     }
     return writer;
   },
@@ -1956,6 +2106,22 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.historyPoint = HistoryPointPayload.decode(reader, reader.uint32());
+          continue;
+        }
+        case 7: {
+          if (tag !== 56) {
+            break;
+          }
+
+          message.resumed = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1990,6 +2156,12 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      historyPoint: isSet(object.historyPoint)
+        ? HistoryPointPayload.fromJSON(object.historyPoint)
+        : isSet(object.history_point)
+        ? HistoryPointPayload.fromJSON(object.history_point)
+        : undefined,
+      resumed: isSet(object.resumed) ? globalThis.Boolean(object.resumed) : false,
     };
   },
 
@@ -2010,6 +2182,12 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.historyPoint !== undefined) {
+      obj.historyPoint = HistoryPointPayload.toJSON(message.historyPoint);
+    }
+    if (message.resumed !== false) {
+      obj.resumed = message.resumed;
+    }
     return obj;
   },
 
@@ -2023,6 +2201,10 @@ export const SyncCompletePayload: MessageFns<SyncCompletePayload> = {
     message.manifests = object.manifests?.map((e) => SyncTableManifest.fromPartial(e)) || [];
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.historyPoint = (object.historyPoint !== undefined && object.historyPoint !== null)
+      ? HistoryPointPayload.fromPartial(object.historyPoint)
+      : undefined;
+    message.resumed = object.resumed ?? false;
     return message;
   },
 };

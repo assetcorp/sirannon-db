@@ -1,0 +1,27 @@
+{
+  "name": "@delali/sirannon-sqlite-darwin-x64",
+  "version": "0.0.0",
+  "description": "better-sqlite3 compiled against Sirannon's build of SQLite, for macOS on Intel.",
+  "license": "Apache-2.0 AND MIT",
+  "author": "Delali (https://sondelali.com)",
+  "homepage": "https://github.com/assetcorp/sirannon-db",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/assetcorp/sirannon-db.git",
+    "directory": "native/sqlite/npm/darwin-x64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "better_sqlite3.node",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

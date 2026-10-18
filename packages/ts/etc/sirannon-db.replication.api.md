@@ -27,8 +27,10 @@ export type AcquireControllerLeaseResult = {
 export interface AdmitNodeToInSyncSetInput {
     appliedSeq: bigint;
     clusterId: string;
+    expectedPrimaryTerm?: bigint;
     groupId: string;
     nodeId: string;
+    rejoinSyncCompleted?: boolean;
     sourceNodeId: string;
 }
 
@@ -307,6 +309,10 @@ export class PeerTracker {
     // (undocumented)
     removePeer(nodeId: string): void;
     // (undocumented)
+    restartProgress(sentSeq: bigint): void;
+    // (undocumented)
+    resumeFrom(nodeId: string, appliedSeq: bigint): void;
+    // (undocumented)
     waitForAll(seq: bigint, timeoutMs: number): Promise<void>;
     // (undocumented)
     waitForConfiguredAll(seq: bigint, localNodeId: string, votingNodeIds: string[], timeoutMs: number): Promise<void>;
@@ -373,8 +379,10 @@ export interface ReplicationAck {
 
 // @public
 export interface ReplicationBatch {
+    afterSeq?: bigint;
     batchId: string;
     changes: ReplicationChange[];
+    changeSeqs?: bigint[];
     checksum: string;
     fromSeq: bigint;
     groupId?: string;
@@ -385,6 +393,7 @@ export interface ReplicationBatch {
     primaryTerm?: bigint;
     sourceNodeId: string;
     toSeq: bigint;
+    txContinues?: boolean;
 }
 
 // @public
@@ -451,23 +460,17 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly config: ReplicationConfig;
     // @internal (undocumented)
-    controllerBidding: boolean;
-    // @internal (undocumented)
-    controllerLeaseId: string | null;
-    // @internal (undocumented)
-    controllerLeaseWatchDisposer: CoordinatorWatchDisposer | null;
+    readonly controller: ControllerRuntime;
     // @internal (undocumented)
     controllerState: 'disabled' | 'standby' | 'active' | 'lost';
     // @internal (undocumented)
-    controllerTimer: ReturnType<typeof setInterval> | null;
-    // @internal (undocumented)
     coordinatorAuthority: boolean;
+    // @internal (undocumented)
+    coordinatorDemotionHandler: ((state: ReplicationGroupState) => void) | null;
     // @internal (undocumented)
     coordinatorLastContactMs: number;
     // @internal (undocumented)
     coordinatorLeaseTimer: ReturnType<typeof setInterval> | null;
-    // @internal (undocumented)
-    coordinatorRejoinSyncStarting: boolean;
     // @internal (undocumented)
     coordinatorSessionRestoring: boolean;
     // @internal (undocumented)
@@ -484,6 +487,10 @@ export class ReplicationEngine extends EventEmitter {
     emitError(event: ReplicationErrorEvent): void;
     execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>;
     executeBatch(sql: string, paramsBatch: Params[], options?: QueryOptions): Promise<ExecuteResult[]>;
+    executeTransaction(statements: readonly {
+        sql: string;
+        params?: Params;
+    }[], options?: QueryOptions): Promise<ExecuteResult[]>;
     // @internal (undocumented)
     readonly expectedBatchIndex: Map<string, number>;
     forwardStatements(statements: Array<{
@@ -496,6 +503,8 @@ export class ReplicationEngine extends EventEmitter {
     getCurrentSeq(): bigint;
     // @internal (undocumented)
     highestSourceSeqSeen: bigint;
+    // @internal (undocumented)
+    readonly history: TermHistory;
     // @internal (undocumented)
     readonly hlc: HLC;
     // @internal (undocumented)
@@ -536,10 +545,10 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
-    observedControllerLease: CoordinatorLease | null;
-    // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
+    // @internal (undocumented)
+    readonly rejoin: RejoinState;
     // @internal (undocumented)
     readonly resumeFromSeq: bigint | undefined;
     // @internal (undocumented)
@@ -608,7 +617,7 @@ export type ReplicationGroupWatcher = (state: ReplicationGroupState) => void;
 
 // @internal
 export class ReplicationLog {
-    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, changesTable?: string, tracker?: ChangeTracker);
+    constructor(conn: SQLiteConnection, localNodeId: string, hlc: HLC, options?: Omit<BatchApplierOptions, 'beforeApply'>);
     // (undocumented)
     applyBatch(batch: ReplicationBatch, resolver: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
     // (undocumented)
@@ -628,6 +637,8 @@ export class ReplicationLog {
     // (undocumented)
     getLocalSeq(): Promise<bigint>;
     // (undocumented)
+    getLocalWriteSeq(): Promise<bigint>;
+    // (undocumented)
     getMinAckedSeq(): Promise<bigint | null>;
     // (undocumented)
     getPeerAckedSeq(peerNodeId: string): Promise<bigint>;
@@ -643,7 +654,7 @@ export class ReplicationLog {
     // (undocumented)
     isSyncCompleted(): Promise<boolean>;
     // (undocumented)
-    readBatch(afterSeq: bigint, batchSize: number): Promise<ReplicationBatch | null>;
+    readBatch(afterSeq: bigint, batchSize: number, origins?: readonly string[]): Promise<ReplicationBatch | null>;
     // (undocumented)
     recoverMaxObservedHlc(): Promise<string | null>;
     // (undocumented)
@@ -751,9 +762,11 @@ export interface SyncBatch {
 // @public
 export interface SyncComplete {
     groupId?: string;
+    historyPoint?: SyncHistoryPoint;
     manifests: SyncTableManifest[];
     primaryTerm?: bigint;
     requestId: string;
+    resumed?: boolean;
     snapshotSeq: bigint;
 }
 
@@ -765,12 +778,19 @@ export class SyncError extends ReplicationError {
 }
 
 // @public
+export interface SyncHistoryPoint {
+    hlc: string;
+    txId: string;
+}
+
+// @public
 export type SyncPhase = 'pending' | 'syncing' | 'catching-up' | 'ready';
 
 // @public
 export interface SyncRequest {
     completedTables: string[];
     groupId?: string;
+    historyTail?: SyncHistoryPoint;
     joinerNodeId: string;
     primaryTerm?: bigint;
     requestId: string;
@@ -846,6 +866,8 @@ export class UnsafeRecoveryRequiredError extends FailoverError {
 export interface UpdateInSyncSetInput {
     clusterId: string;
     durabilityPointSeq?: bigint;
+    expectedPrimaryNodeId?: string;
+    expectedPrimaryTerm?: bigint;
     groupId: string;
     inSyncNodeIds: string[];
 }

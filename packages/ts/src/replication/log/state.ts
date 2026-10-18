@@ -7,6 +7,7 @@ import {
   selectMaxChangeHlc,
   selectMaxChangeSeq,
   selectMaxColumnVersionHlc,
+  selectMaxNodeChangeSeq,
   selectMinPeerAckedSeq,
   selectPeerAckedSeq,
   selectSyncMetaRow,
@@ -44,6 +45,10 @@ export class StateOps {
 
   async getLocalSeq(changesTable: string): Promise<bigint> {
     return selectMaxChangeSeq(this.conn, changesTable)
+  }
+
+  getNodeChangeSeq(changesTable: string, nodeId: string): Promise<bigint> {
+    return selectMaxNodeChangeSeq(this.conn, changesTable, nodeId)
   }
 
   async getMinAckedSeq(): Promise<bigint | null> {

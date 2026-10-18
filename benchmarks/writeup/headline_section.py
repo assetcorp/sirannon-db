@@ -52,9 +52,9 @@ def headline_block(source: Source | None) -> str:
         f"On point-select at {rows} rows, with both engines fsyncing every commit, Sirannon sustained "
         f"{ops(sirannon.get('ops_median'))} operations a second against PostgreSQL's "
         f"{ops(postgres.get('ops_median'))}.",
-        f"At those operating points, Postgres had the lower p99 latency, {ms(postgres.get('p99_ms'))} ms "
+        f"At those operating points, PostgreSQL had the lower p99 latency, {ms(postgres.get('p99_ms'))} ms "
         f"against Sirannon's {ms(sirannon.get('p99_ms'))} ms.",
-        f"Across all {measured} workloads at this durability level, Postgres had the lower p99 latency on "
+        f"Across all {measured} workloads at this durability level, PostgreSQL had the lower p99 latency on "
         f"{postgres_wins}, so read each rate together with its latency.",
         f"The harness recorded both engines in run `{source.run_id}` on {date}, on {machine}.",
         "You'll find every workload, both durability levels, and the full method in "

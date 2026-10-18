@@ -2,14 +2,18 @@ import type { SQLiteConnection } from '../driver/types.js'
 import {
   prepareDeleteRowColumnVersions,
   prepareUpsertColumnVersion,
+  prepareUpsertNewerColumnVersion,
   selectMaxColumnVersionHlcForRow,
   selectMaxRowChangeHlc,
 } from '../system-catalog/index.js'
+import { canonicaliseForChecksum } from './canonicalise.js'
 import { HLC } from './hlc.js'
 import type { PkResolver } from './pk.js'
 import { findRowByPk } from './row-lookup.js'
 import type { ReplicationChange } from './types.js'
 import { IDENTIFIER_RE, validateIdentifier } from './validators.js'
+
+export const ROW_TOMBSTONE_COLUMN = ''
 
 export class RowWriter {
   constructor(
@@ -39,6 +43,15 @@ export class RowWriter {
     if (versioned === null) return logged
     if (logged === null) return versioned
     return HLC.compare(logged, versioned) > 0 ? logged : versioned
+  }
+
+  getAbsentRowHlc(tx: SQLiteConnection, table: string, rowId: string): Promise<string | null> {
+    return selectMaxColumnVersionHlcForRow(tx, table, rowId)
+  }
+
+  async recordTombstone(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
+    const stmt = await prepareUpsertNewerColumnVersion(tx)
+    await stmt.run(change.table, change.rowId, ROW_TOMBSTONE_COLUMN, change.hlc, change.nodeId)
   }
 
   async insertRow(tx: SQLiteConnection, change: ReplicationChange): Promise<void> {
@@ -93,6 +106,27 @@ export class RowWriter {
       `UPDATE "${change.table}" SET ${setClauses.join(', ')} WHERE ${whereConditions.join(' AND ')}`,
     )
     await stmt.run(...setValues, ...whereValues)
+  }
+
+  async applyAfterSameTransaction(
+    tx: SQLiteConnection,
+    change: ReplicationChange,
+    existingRow: Record<string, unknown>,
+  ): Promise<void> {
+    if (change.operation === 'delete' || !change.newData) {
+      await this.applyRemoteChange(tx, change)
+      await this.recordColumnVersions(tx, change, null)
+      return
+    }
+    const before = change.oldData
+    const changed: Record<string, unknown> = {}
+    for (const [column, value] of Object.entries(change.newData)) {
+      if (before === null || canonicaliseForChecksum(value) !== canonicaliseForChecksum(before[column])) {
+        changed[column] = value
+      }
+    }
+    await this.applyRemoteChange(tx, { ...change, newData: { ...existingRow, ...changed } })
+    await this.recordColumnVersions(tx, change, changed)
   }
 
   async applyMergedData(
@@ -157,6 +191,7 @@ export class RowWriter {
     if (change.operation === 'delete') {
       const delStmt = await prepareDeleteRowColumnVersions(tx)
       await delStmt.run(change.table, change.rowId)
+      await this.recordTombstone(tx, change)
       return
     }
 

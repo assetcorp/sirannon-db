@@ -131,6 +131,8 @@ const subscription = db
 
 With a filter, you receive each change in a row's membership of the set that the filter matches. When an order's `status` changes from `pending` to `shipped`, the handler receives an insert, because the row joins the set. When an order's `status` changes away from `shipped`, the handler receives a delete with the previous row in `oldRow`. Read `event.type` as the row joining or leaving the set, because the handler receives the same event for a real insert and for a row that joins the set.
 
+When a `REPLACE` deletes a stored row because the new row has the same primary key or the same value in a unique column, Sirannon calls the handler with a delete for that row before it calls the handler with the write. If your own `BEFORE` trigger on the table inserts or updates a row in the same statement and the `REPLACE` then deletes that row, Sirannon may report no delete for it.
+
 A live query holds the current result of a query and updates its rows from those same events:
 
 ```ts

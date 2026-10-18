@@ -21,7 +21,7 @@ function forwardingConnection(connection: SQLiteConnection, onClose: () => void)
   if (runBatchSummary) {
     forwarding.runBatchSummary = (sql, paramsBatch) => runBatchSummary.call(connection, sql, paramsBatch)
   }
-  if (runGroup) forwarding.runGroup = units => runGroup.call(connection, units)
+  if (runGroup) forwarding.runGroup = (units, opening) => runGroup.call(connection, units, opening)
   return forwarding
 }
 

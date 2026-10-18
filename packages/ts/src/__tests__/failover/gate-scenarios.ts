@@ -1,23 +1,90 @@
-import { waitForRows } from './gate-assertions.js'
+import { waitForInSyncSet } from './gate-cluster-state.js'
 import {
   CLUSTER_ID,
   type GateEnvironment,
   GROUP_ID,
-  grpcProxyName,
   healNodeSirannonLinks,
+  killNode,
+  NODE_A,
+  NODE_B,
+  NODE_C,
   NODE_IDS,
+  type NodeOptions,
   requireNode,
   startNode,
 } from './gate-environment.js'
-import { collectNodeDiagnostics, waitForNodeReady, waitForPeerConnected } from './gate-observations.js'
-import { executeMajority } from './gate-public-api.js'
-import { jsonReplacer, waitForCondition } from './gate-support.js'
+import { waitForNodeReady, waitForPeerConnected } from './gate-observations.js'
+import { waitForCondition } from './gate-support.js'
 import type { FailoverNodeProcess } from './node-process.js'
 
-export async function restartReplicaThroughRepair(
+export interface ClusterOptions {
+  everyNode?: NodeOptions
+  perNode?: Partial<Record<string, NodeOptions>>
+  voters?: readonly string[]
+  members?: readonly string[]
+  awaitInSync?: boolean
+}
+
+export async function startCluster(environment: GateEnvironment, options: ClusterOptions = {}): Promise<void> {
+  const members = options.members ?? NODE_IDS
+  const voters = options.voters ?? NODE_IDS
+  const nodeOptions = (nodeId: string): NodeOptions => ({ ...options.everyNode, ...options.perNode?.[nodeId] })
+  const [first, ...rest] = members
+  if (first === undefined) throw new Error('A cluster needs at least one member')
+
+  const primary = await startNode(environment, first, {
+    role: 'primary',
+    seedSchema: true,
+    createsGroup: true,
+    voters,
+    dialTargets: [],
+    ...nodeOptions(first),
+  })
+  await waitForNodeReady(primary)
+
+  for (const nodeId of rest) {
+    const node = await startNode(environment, nodeId, {
+      role: 'replica',
+      dialTargets: members.filter(target => target !== nodeId),
+      ...nodeOptions(nodeId),
+    })
+    await waitForNodeReady(node, 30_000)
+  }
+
+  for (const nodeId of rest.slice(0, -1)) {
+    const node = requireNode(environment, nodeId)
+    await node.reconnectTransport()
+    for (const peerId of members) {
+      if (peerId !== nodeId) await waitForPeerConnected(node, peerId, 15_000)
+    }
+  }
+
+  if (options.awaitInSync ?? true) {
+    await waitForInSyncSet(environment, members, 30_000)
+  }
+}
+
+export async function startThreeNodeCluster(environment: GateEnvironment, everyNode: NodeOptions = {}): Promise<void> {
+  await startCluster(environment, { everyNode, members: [NODE_A, NODE_B, NODE_C] })
+}
+
+export async function restartNode(
+  environment: GateEnvironment,
+  nodeId: string,
+  options: NodeOptions = {},
+): Promise<FailoverNodeProcess> {
+  await healNodeSirannonLinks(environment, nodeId)
+  await waitForCondition(async () => (await environment.etcdOracle.nodeSession(nodeId)) === null, 15_000)
+  const node = await startNode(environment, nodeId, { role: 'replica', ...options })
+  await waitForNodeReady(node, 30_000)
+  return node
+}
+
+export async function rebuildThroughRepair(
   environment: GateEnvironment,
   nodeId: string,
   currentPrimaryNodeId: string,
+  options: NodeOptions = {},
 ): Promise<FailoverNodeProcess> {
   await environment.coordinator.updateNodeMaintenance({
     clusterId: CLUSTER_ID,
@@ -27,67 +94,8 @@ export async function restartReplicaThroughRepair(
     repairing: true,
     faulted: false,
   })
-  const existing = environment.nodes.get(nodeId)
-  if (existing) {
-    existing.kill()
-    environment.nodes.delete(nodeId)
-    await waitForCondition(async () => {
-      const session = await environment.coordinator.getLiveNodeSession(CLUSTER_ID, nodeId)
-      return session === null
-    }, 5_000)
-  }
-  await healNodeSirannonLinks(environment, nodeId)
-  const restarted = await startNode(
-    environment,
-    nodeId,
-    'replica',
-    NODE_IDS.filter(targetNodeId => targetNodeId !== nodeId),
-    false,
-    false,
-  )
-  await waitForNodeReady(restarted, 30_000)
-  await waitForPeerConnected(restarted, currentPrimaryNodeId, 10_000)
-  let latestState: unknown = null
-  try {
-    await waitForCondition(async () => {
-      latestState = await environment.coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
-      return (latestState as { inSyncNodeIds?: string[] } | null)?.inSyncNodeIds?.includes(nodeId) ?? false
-    }, 30_000)
-  } catch (err: unknown) {
-    const diagnostics = await collectNodeDiagnostics(environment)
-    const message = err instanceof Error ? err.message : String(err)
-    throw new Error(
-      `Timed out waiting for repaired replica ${nodeId} to re-enter in-sync set: ${message}\nstate=${JSON.stringify(
-        latestState,
-        jsonReplacer,
-        2,
-      )}\ndiagnostics=${JSON.stringify(diagnostics, jsonReplacer, 2)}`,
-    )
-  }
+  await killNode(environment, nodeId)
+  const restarted = await restartNode(environment, nodeId, options)
+  await waitForPeerConnected(restarted, currentPrimaryNodeId, 15_000)
   return restarted
-}
-
-export async function runSeededSoak(
-  environment: GateEnvironment,
-  primaryNodeId: string,
-  expectedNodeIds: readonly string[],
-): Promise<void> {
-  const primary = requireNode(environment, primaryNodeId)
-  const latencyNodeId = expectedNodeIds.find(nodeId => nodeId !== primaryNodeId) ?? primaryNodeId
-  const proxyName = grpcProxyName(latencyNodeId, primaryNodeId)
-  await environment.toxiproxy.addLatency(proxyName, 'seeded-soak-latency', 40)
-  try {
-    for (let index = 0; index < 12; index++) {
-      const id = 20 + index
-      await executeMajority(primary, id, `seeded-soak-${index}`)
-      if (index % 3 === 0) {
-        await primary.execute('UPDATE failover_items SET value = value + 1 WHERE id = ?', [id], {
-          writeConcern: { level: 'majority', timeoutMs: 15_000 },
-        })
-      }
-    }
-  } finally {
-    await environment.toxiproxy.clearToxic(proxyName, 'seeded-soak-latency').catch(() => undefined)
-  }
-  await waitForRows(environment, expectedNodeIds, 13, 30_000)
 }

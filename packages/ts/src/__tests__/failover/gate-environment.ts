@@ -6,6 +6,7 @@ import { createMtlsCerts, type MtlsCerts } from '../e2e/lib/certs.js'
 import {
   allocatePorts,
   cleanupDockerResources,
+  cleanupRunResources,
   type EtcdClusterHandle,
   ensureFailoverImages,
   failoverRunPrefix,
@@ -74,6 +75,18 @@ export async function startEnvironment(): Promise<GateEnvironment> {
   await ensureFailoverImages()
   const runPrefix = failoverRunPrefix()
   const certs = await createMtlsCerts(NODE_IDS)
+  try {
+    return await startEnvironmentResources(runPrefix, certs)
+  } catch (err: unknown) {
+    certs.cleanup()
+    await cleanupRunResources(runPrefix).catch((cleanupErr: unknown) => {
+      throw new AggregateError([err, cleanupErr], 'The failover environment failed to start and to clean up')
+    })
+    throw err
+  }
+}
+
+async function startEnvironmentResources(runPrefix: string, certs: MtlsCerts): Promise<GateEnvironment> {
   const etcd = await startEtcdCluster(runPrefix)
   const grpcPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
   const httpPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))

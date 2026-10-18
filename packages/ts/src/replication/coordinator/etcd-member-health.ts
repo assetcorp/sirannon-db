@@ -1,17 +1,25 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { IOptions } from 'etcd3'
 
-type MemberPolicyFactory = NonNullable<NonNullable<IOptions['faultHandling']>['host']>
+type FaultHandling = NonNullable<IOptions['faultHandling']>
+type MemberPolicyFactory = NonNullable<FaultHandling['host']>
 type MemberPolicy = ReturnType<MemberPolicyFactory>
+type CallPolicy = NonNullable<FaultHandling['global']>
 type SuccessEvent = MemberPolicy['onSuccess']
 type FailureEvent = MemberPolicy['onFailure']
 
 const FAILURES_BEFORE_MEMBER_SKIP = 3
 const MEMBER_SKIP_MS = 5_000
+const ETCD3_RETRIES_AFTER_RECOVERABLE_FAILURE = 3
 
 interface MemberHealth {
   failures: number
   skipUntilMs: number
   trialInFlight: boolean
+}
+
+interface CallSkipBudget {
+  remaining: number
 }
 
 class EtcdMemberSkippedError extends Error {
@@ -38,14 +46,12 @@ class MemberHealthPolicy implements MemberPolicy {
     private readonly member: MemberHealth,
     private readonly members: readonly MemberHealth[],
     private readonly isRecoverableError: (error: Error) => boolean,
+    private readonly callSkips: AsyncLocalStorage<CallSkipBudget>,
   ) {}
 
   async execute<T>(fn: (context: { signal: AbortSignal }) => PromiseLike<T> | T, signal?: AbortSignal): Promise<T> {
     const member = this.member
-    const nowMs = Date.now()
-    if (skips(member, nowMs) && this.members.some(other => !skips(other, nowMs))) {
-      throw new EtcdMemberSkippedError()
-    }
+    if (this.skipsMember(Date.now())) throw new EtcdMemberSkippedError()
     const trial = member.failures >= FAILURES_BEFORE_MEMBER_SKIP
     if (trial) member.trialInFlight = true
     try {
@@ -63,25 +69,69 @@ class MemberHealthPolicy implements MemberPolicy {
       if (trial) member.trialInFlight = false
     }
   }
+
+  private skipsMember(nowMs: number): boolean {
+    if (!skips(this.member, nowMs)) return false
+    if (!this.members.some(other => !skips(other, nowMs))) return false
+    const budget = this.callSkips.getStore()
+    if (budget === undefined) return true
+    if (budget.remaining === 0) return false
+    budget.remaining -= 1
+    return true
+  }
+}
+
+class CallRetryPolicy implements CallPolicy {
+  declare readonly _altReturn: never
+  readonly onSuccess = noSuccessEvents
+  readonly onFailure = noFailureEvents
+
+  constructor(
+    private readonly members: readonly MemberHealth[],
+    private readonly isRecoverableError: (error: Error) => boolean,
+    private readonly callSkips: AsyncLocalStorage<CallSkipBudget>,
+  ) {}
+
+  async execute<T>(fn: (context: { signal: AbortSignal }) => PromiseLike<T> | T, signal?: AbortSignal): Promise<T> {
+    const context = { signal: signal ?? new AbortController().signal }
+    for (let retries = 0; ; retries++) {
+      try {
+        return await this.callSkips.run({ remaining: Math.max(0, this.members.length - 1) }, () => fn(context))
+      } catch (err: unknown) {
+        const retryable =
+          err instanceof Error &&
+          this.isRecoverableError(err) &&
+          !context.signal.aborted &&
+          retries < ETCD3_RETRIES_AFTER_RECOVERABLE_FAILURE
+        if (!retryable) throw err
+      }
+    }
+  }
 }
 
 /**
- * Returns the per-member fault policy for one etcd client. After three failed calls in a row, the client skips a
- * member for five seconds and sends its calls to the members that answer. It then sends one trial call to the skipped
- * member. When every member has failed, the client calls them anyway, so that it reaches etcd as soon as a member
- * answers again.
+ * Returns the fault handling for one etcd client. After three failed calls in a row, the client skips a member for
+ * five seconds and sends its calls to the members that answer. It then sends one trial call to the skipped member.
+ * When every member has failed, the client calls them anyway, so that it reaches etcd as soon as a member answers
+ * again. A call can skip every member but the last one that etcd3 offers it, so that each try of a call reaches a
+ * member. The client retries a call three times after a failure that another member or a later call can avoid, as
+ * etcd3 does by default.
  *
  * @param isRecoverableError - The etcd3 check for a failure that another member or a later call can avoid, which is
- * the only kind of failure that counts against a member.
- * @returns The factory that etcd3 calls once for each member.
+ * the only kind of failure that counts against a member or earns a retry.
+ * @returns The per-member and per-call policies, which etcd3 takes as its `faultHandling` option.
  *
  * @internal
  */
-export function memberHealthPolicies(isRecoverableError: (error: Error) => boolean): MemberPolicyFactory {
+export function memberHealthFaultHandling(isRecoverableError: (error: Error) => boolean): FaultHandling {
   const members: MemberHealth[] = []
-  return () => {
-    const member: MemberHealth = { failures: 0, skipUntilMs: 0, trialInFlight: false }
-    members.push(member)
-    return new MemberHealthPolicy(member, members, isRecoverableError)
+  const callSkips = new AsyncLocalStorage<CallSkipBudget>()
+  return {
+    host: () => {
+      const member: MemberHealth = { failures: 0, skipUntilMs: 0, trialInFlight: false }
+      members.push(member)
+      return new MemberHealthPolicy(member, members, isRecoverableError, callSkips)
+    },
+    global: new CallRetryPolicy(members, isRecoverableError, callSkips),
   }
 }

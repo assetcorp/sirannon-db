@@ -38,7 +38,7 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
     createWriterContext: asyncLocalWriterContext,
     async open(path, options) {
       const { Database } = await import('bun:sqlite')
-      const db = new Database(path, { readonly: options?.readonly ?? false, safeIntegers: true })
+      const db = new Database(path, { readonly: options?.readonly ?? false, safeIntegers: true, strict: true })
       if (options?.walMode !== false) {
         db.run('PRAGMA journal_mode = WAL')
         db.query('PRAGMA schema_version').get()

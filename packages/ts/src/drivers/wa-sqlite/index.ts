@@ -1,8 +1,11 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
-import { bindableParams } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
+import { bindStatement } from './bind.js'
+import { readColumn } from './read.js'
+
+const SQLITE_ROW = 100
 
 /**
  * Settings for the browser driver built on wa-sqlite.
@@ -69,22 +72,17 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
         let lastRowId: number | bigint = 0
 
         for await (const stmt of sqlite3.statements(db, sql)) {
-          if (params && params.length > 0) {
-            const bound = bindableParams(params)
-            for (let i = 0; i < bound.length; i++) {
-              sqlite3.bind(stmt, i + 1, bound[i] as number | string | null)
-            }
-          }
+          if (params && params.length > 0) bindStatement(sqlite3, module, stmt, params)
 
           const cols = sqlite3.column_names(stmt)
           if (cols.length > 0 && columns.length === 0) {
             columns.push(...cols)
           }
 
-          while ((await sqlite3.step(stmt)) === 100) {
+          while ((await sqlite3.step(stmt)) === SQLITE_ROW) {
             const row: unknown[] = []
             for (let i = 0; i < cols.length; i++) {
-              row.push(sqlite3.column(stmt, i))
+              row.push(readColumn(sqlite3, module, stmt, i))
             }
             rows.push(row)
           }

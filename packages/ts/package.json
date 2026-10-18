@@ -204,6 +204,7 @@
     "better-sqlite3": "13.0.2",
     "etcd3": "1.1.2",
     "expo-sqlite": "55.0.10",
+    "fake-indexeddb": "6.2.5",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "jsdom": "29.1.1",

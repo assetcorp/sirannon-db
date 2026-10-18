@@ -1,6 +1,6 @@
 import type { Etcd3, IOptions, Namespace } from 'etcd3'
 import type { EtcdGroupStore } from './etcd-group-store.js'
-import { memberHealthPolicies } from './etcd-member-health.js'
+import { memberHealthFaultHandling } from './etcd-member-health.js'
 import { assertNonEmpty } from './group-rules.js'
 
 /**
@@ -85,7 +85,7 @@ export function toEtcdOptions(
     grpcOptions: options.grpcOptions,
     dialTimeout: options.dialTimeoutMs,
     defaultCallOptions,
-    faultHandling: { host: memberHealthPolicies(isRecoverableError) },
+    faultHandling: memberHealthFaultHandling(isRecoverableError),
   }
 }
 

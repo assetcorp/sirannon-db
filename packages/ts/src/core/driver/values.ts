@@ -29,12 +29,20 @@ export function narrowRowsIntegers<T>(rows: T[]): T[] {
 const EMPTY_BLOB_WITH_ALLOCATED_STORAGE = new Uint8Array(new ArrayBuffer(1), 0, 0)
 
 function bindableValue(value: unknown): unknown {
-  if (typeof value === 'boolean') return value ? 1 : 0
+  if (typeof value === 'boolean') return value ? 1n : 0n
   if (ArrayBuffer.isView(value) && value.byteLength === 0) return EMPTY_BLOB_WITH_ALLOCATED_STORAGE
   return value
 }
 
-function isNamedParams(value: unknown): value is Record<string, unknown> {
+/**
+ * Returns whether a parameter value is a plain object of named values, which every driver binds by name.
+ *
+ * @param value - One value from the parameters that the caller passed.
+ * @returns `true` for an object whose prototype is `Object.prototype` or `null`.
+ *
+ * @internal
+ */
+export function isNamedParams(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object') return false
   const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null

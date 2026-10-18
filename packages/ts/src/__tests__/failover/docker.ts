@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 
@@ -25,6 +26,13 @@ export interface ToxiproxyContainerHandle {
 
 const LOOPBACK_HOST = '127.0.0.1'
 const DOCKER_DESKTOP_HOST_ALIAS = 'host.docker.internal'
+const LISTEN_PORT_FLOOR = 10_000
+const LISTEN_PORT_CEILING = 32_767
+const LINUX_EPHEMERAL_PORT_RANGE_FILE = '/proc/sys/net/ipv4/ip_local_port_range'
+
+const handedOutPorts = new Set<number>()
+const ephemeralPortRange = readEphemeralPortRange()
+let nextListenPortOffset = Math.floor(Math.random() * (LISTEN_PORT_CEILING - LISTEN_PORT_FLOOR + 1))
 
 const ETCD_IMAGE = 'gcr.io/etcd-development/etcd:v3.6.0'
 const TOXIPROXY_IMAGE = 'ghcr.io/shopify/toxiproxy:2.12.0'
@@ -173,33 +181,67 @@ export async function cleanupDockerResources(handles: { containers: string[]; ne
   }
 }
 
+export async function cleanupRunResources(runPrefix: string): Promise<void> {
+  const prefix = `${runPrefix}-`
+  const [containers, networks] = await Promise.all([
+    docker(['ps', '--all', '--format', '{{.Names}}'], 15_000),
+    docker(['network', 'ls', '--format', '{{.Name}}'], 15_000),
+  ])
+  await cleanupDockerResources({
+    containers: namesStartingWith(containers.stdout, prefix),
+    networks: namesStartingWith(networks.stdout, prefix),
+  })
+}
+
+function namesStartingWith(listing: string, prefix: string): string[] {
+  return listing
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.startsWith(prefix))
+}
+
 export async function allocatePorts(count: number): Promise<number[]> {
-  const ports = new Set<number>()
-  while (ports.size < count) {
-    ports.add(await allocatePort())
+  const ports: number[] = []
+  while (ports.length < count) {
+    ports.push(await allocatePort())
   }
-  return [...ports]
+  return ports
 }
 
 export async function allocatePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+  const candidates = LISTEN_PORT_CEILING - LISTEN_PORT_FLOOR + 1
+  for (let attempt = 0; attempt < candidates; attempt++) {
+    const port = LISTEN_PORT_FLOOR + ((nextListenPortOffset + attempt) % candidates)
+    if (handedOutPorts.has(port) || ephemeralPortRange.includes(port)) continue
+    if (!(await loopbackPortIsFree(port))) continue
+    nextListenPortOffset = (port - LISTEN_PORT_FLOOR + 1) % candidates
+    handedOutPorts.add(port)
+    return port
+  }
+  throw new Error(`No free loopback port remains between ${LISTEN_PORT_FLOOR} and ${LISTEN_PORT_CEILING}`)
+}
+
+function loopbackPortIsFree(port: number): Promise<boolean> {
+  return new Promise(resolve => {
     const server = createServer()
-    server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      server.close(closeErr => {
-        if (closeErr) {
-          reject(closeErr)
-          return
-        }
-        if (typeof address === 'object' && address !== null) {
-          resolve(address.port)
-          return
-        }
-        reject(new Error('Could not allocate a loopback port'))
-      })
+    server.once('error', () => resolve(false))
+    server.listen(port, LOOPBACK_HOST, () => {
+      server.close(closeErr => resolve(closeErr === undefined))
     })
   })
+}
+
+function readEphemeralPortRange(): { includes(port: number): boolean } {
+  let first = Number.POSITIVE_INFINITY
+  let last = Number.NEGATIVE_INFINITY
+  try {
+    const [low, high] = readFileSync(LINUX_EPHEMERAL_PORT_RANGE_FILE, 'utf8').trim().split(/\s+/).map(Number)
+    if (low !== undefined && high !== undefined && Number.isInteger(low) && Number.isInteger(high)) {
+      first = low
+      last = high
+    }
+  } catch {}
+  return { includes: port => port >= first && port <= last }
 }
 
 export function failoverRunPrefix(): string {

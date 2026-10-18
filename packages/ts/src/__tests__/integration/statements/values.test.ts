@@ -170,7 +170,7 @@ describe.each(DRIVER_PLACEMENTS)('values with $label', ({ driver, writerWorker }
   it('refuses a value that SQLite cannot bind, writing nothing', async () => {
     const { db, path } = await openValues()
     const insertAmount = 'INSERT INTO amounts (amount) VALUES (?)'
-    const unbindable: unknown[] = [LARGEST_INT64 + 1n, SMALLEST_INT64 - 1n, true, { amount: 1 }]
+    const unbindable: unknown[] = [LARGEST_INT64 + 1n, SMALLEST_INT64 - 1n, { amount: 1 }]
 
     for (const value of unbindable) {
       await expect(db.execute(insertAmount, [value]), String(value)).rejects.toMatchObject({
@@ -190,6 +190,47 @@ describe.each(DRIVER_PLACEMENTS)('values with $label', ({ driver, writerWorker }
     }
 
     expect(countRaw(path, 'amounts')).toBe(0)
+  })
+
+  it('stores each boolean as the integer 1 or 0 through every write path, and reads it back as that number', async () => {
+    const { db, path } = await openValues()
+    const insertAmount = 'INSERT INTO amounts (id, amount) VALUES (?, ?)'
+
+    await db.execute(insertAmount, [1, true])
+    await db.execute(insertAmount, [2, false])
+    await db.executeBatch(insertAmount, [
+      [3, true],
+      [4, false],
+    ])
+    await db.executeTransaction([
+      { sql: insertAmount, params: [5, true] },
+      { sql: 'INSERT INTO amounts (id, amount) VALUES (:id, :amount)', params: { id: 6, amount: false } },
+    ])
+    await db.executeBatch('INSERT INTO amounts (id, amount) VALUES (:id, :amount)', [{ id: 7, amount: true }])
+
+    const expected = [
+      [1, 1],
+      [2, 0],
+      [3, 1],
+      [4, 0],
+      [5, 1],
+      [6, 0],
+      [7, 1],
+    ]
+    const raw = readRaw<{ id: bigint; amount: bigint; kind: string }>(
+      path,
+      'SELECT id, amount, typeof(amount) AS kind FROM amounts ORDER BY id',
+    )
+    expect(raw.map(row => [Number(row.id), Number(row.amount)])).toEqual(expected)
+    expect(new Set(raw.map(row => row.kind))).toEqual(new Set(['integer']))
+    const read = await db.query<{ id: number; amount: number }>('SELECT id, amount FROM amounts ORDER BY id')
+    expect(read.map(row => [row.id, row.amount])).toEqual(expected)
+    expect(await db.query('SELECT id FROM amounts WHERE amount = ? ORDER BY id', [true])).toEqual([
+      { id: 1 },
+      { id: 3 },
+      { id: 5 },
+      { id: 7 },
+    ])
   })
 
   it('binds positional and named parameters in every prefix form', async () => {

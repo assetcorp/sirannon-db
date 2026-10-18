@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RequestDeniedError, SirannonError } from '../../../core/errors.js'
 import type { RequestContext } from '../../../core/types.js'
 import {
+  connectRaw,
   errorCodeOf,
   postJson,
   RawSocket,
@@ -19,7 +20,7 @@ import {
   SEEDED_ORDERS,
   serveTyped,
   storedOrders,
-  WebSocketWithHeaders,
+  upgradeRequestText,
 } from './served-access.js'
 
 interface Caller {
@@ -240,10 +241,8 @@ describe('the authenticate hook in front of every database route', () => {
       headers: { 'x-hang': 'yes', 'x-customer': 'kofi' },
       signal: abandoned.signal,
     }).catch((err: unknown) => err)
-    const hungSocket = new WebSocketWithHeaders(`${served.wsBase}/db/orders`, {
-      headers: { 'x-hang': 'yes', 'x-customer': 'kofi' },
-    })
-    const hungSocketClosed = closeOf(hungSocket)
+    const hungUpgrade = await connectRaw(served.port)
+    hungUpgrade.socket.write(upgradeRequestText('/db/orders', { 'x-hang': 'yes', 'x-customer': 'kofi' }))
 
     const customers = SEEDED_ORDERS.map(order => order.customer)
     const answers = await Promise.all(
@@ -265,10 +264,11 @@ describe('the authenticate hook in front of every database route', () => {
     const refused = await sendRaw(served.base, 'POST', '/db/orders/query/ordersOfCaller', '')
     expect([refused.status, errorCodeOf(refused.body)]).toEqual([401, 'NO_CUSTOMER'])
 
+    expect(hungUpgrade.received()).toBe('')
     abandoned.abort()
-    hungSocket.close()
+    hungUpgrade.socket.destroy()
     expect(await hungRequest).toBeInstanceOf(Error)
-    await within(hungSocketClosed, 'the abandoned upgrade closing')
+    await within(hungUpgrade.closed, 'the abandoned upgrade closing')
     hung.open()
     await new Promise(resolve => setTimeout(resolve, 50))
 

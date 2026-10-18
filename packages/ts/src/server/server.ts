@@ -1,4 +1,11 @@
-import type { HttpRequest, HttpResponse, TemplatedApp, us_listen_socket, us_socket } from 'uWebSockets.js'
+import type {
+  HttpRequest,
+  HttpResponse,
+  ListenOptions,
+  TemplatedApp,
+  us_listen_socket,
+  us_socket,
+} from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type {
   AuthenticateHook,
@@ -51,6 +58,8 @@ import { type OperationRouteDeps, wrapOperationRoute } from './operation-route.j
 import { loadUWebSockets, type UWebSockets } from './uws-loader.js'
 import { WSHandler } from './ws-handler.js'
 import { registerWebSocketRoute } from './ws-route.js'
+
+const UWS_LISTEN_EXCLUSIVE_PORT = 1 as ListenOptions
 
 const SQL_ROUTES = ['/db/:id/query', '/db/:id/execute', '/db/:id/transaction', '/db/:id/batch', '/db/:id/load'] as const
 
@@ -162,7 +171,7 @@ export class SirannonServer<Identity = unknown> {
   async listen(): Promise<void> {
     const { app } = await this.loadRuntime()
     await new Promise<void>((resolve, reject) => {
-      app.listen(this.host, this.port, socket => {
+      app.listen(this.host, this.port, UWS_LISTEN_EXCLUSIVE_PORT, socket => {
         if (socket) {
           this.listenSocket = socket
           resolve()

@@ -23,6 +23,7 @@ const ORDERS_SCHEMA = [
 ]
 const INSERT_ORDER = 'INSERT INTO orders (customer, status, total) VALUES (?, ?, ?)'
 const CLOSING_SUBSCRIBERS = 12
+const UNSTAMPED_DELETE_INDEX = 4
 
 const operations: OperationRegistry = {
   shop: {
@@ -84,6 +85,7 @@ describe('subscriptions to a table over the WebSocket protocol', () => {
       ])
     client.close()
     writeFile(served.path, 'DELETE FROM orders WHERE id = 1')
+    await ws.waitForEvents('feed', UNSTAMPED_DELETE_INDEX + 1)
     const httpBatch = await postJson(served.served.base, '/db/shop/batch', {
       sql: INSERT_ORDER,
       paramsBatch: [
@@ -117,9 +119,20 @@ describe('subscriptions to a table over the WebSocket protocol', () => {
       contents.map((content, index) => {
         const logged = log[index]
         if (logged === undefined) throw new Error(`the change log lacks entry ${index}`)
-        return { table: 'orders', timestamp: expect.any(Number), ...content, ...stampsFromLog(logged, ends) }
+        const stamps =
+          index === UNSTAMPED_DELETE_INDEX
+            ? { seq: logged.seq.toString(), rowId: logged.row_id, txEnd: true }
+            : stampsFromLog(logged, ends)
+        return { table: 'orders', timestamp: expect.any(Number), ...content, ...stamps }
       }),
     )
+    const [beforeDelete, unstampedDelete, afterDelete] = log.slice(
+      UNSTAMPED_DELETE_INDEX - 1,
+      UNSTAMPED_DELETE_INDEX + 2,
+    )
+    expect(unstampedDelete?.node_id).toBe(beforeDelete?.node_id)
+    expect(unstampedDelete?.tx_id).toMatch(/^[0-9a-f]{32}$/)
+    expect([beforeDelete?.tx_id, afterDelete?.tx_id]).not.toContain(unstampedDelete?.tx_id)
     for (const event of events) {
       expect(event.timestamp).toBeGreaterThanOrEqual(startedAt - 1)
       expect(event.timestamp).toBeLessThanOrEqual(finishedAt + 1)

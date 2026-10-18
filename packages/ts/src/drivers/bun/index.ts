@@ -4,7 +4,7 @@ import { defineDriver } from '../../core/driver/define.js'
 import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
-import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 
 /**
@@ -59,16 +59,16 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
           const stmt = db.query(sql)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return narrowRowsIntegers(stmt.all(...params) as T[])
+              return narrowRowsIntegers(stmt.all(...bindableParams(params)) as T[])
             },
             async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return stmt.all(...params) as T[]
+              return stmt.all(...bindableParams(params)) as T[]
             },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              return narrowRowIntegers((stmt.get(...params) as T | null) ?? undefined)
+              return narrowRowIntegers((stmt.get(...bindableParams(params)) as T | null) ?? undefined)
             },
             async run(...params: unknown[]) {
-              stmt.run(...params)
+              stmt.run(...bindableParams(params))
               const changesStmt = db.query('SELECT changes() AS changes, last_insert_rowid() AS lastId')
               const info = changesStmt.get() as { changes: number | bigint; lastId: number | bigint }
               return {

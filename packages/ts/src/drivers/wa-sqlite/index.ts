@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { bindableParams } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
 
 /**
@@ -69,8 +70,9 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
 
         for await (const stmt of sqlite3.statements(db, sql)) {
           if (params && params.length > 0) {
-            for (let i = 0; i < params.length; i++) {
-              sqlite3.bind(stmt, i + 1, params[i] as number | string | null)
+            const bound = bindableParams(params)
+            for (let i = 0; i < bound.length; i++) {
+              sqlite3.bind(stmt, i + 1, bound[i] as number | string | null)
             }
           }
 

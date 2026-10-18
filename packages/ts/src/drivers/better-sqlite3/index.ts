@@ -3,7 +3,7 @@ import { loadThroughRuntime } from '../../core/driver/extension.js'
 import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
-import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
@@ -60,16 +60,16 @@ type BetterSqlite3Database = import('better-sqlite3').Database
 function plainStatement(stmt: import('better-sqlite3').Statement): SQLiteStatement {
   return {
     async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-      return narrowRowsIntegers(stmt.all(...params) as T[])
+      return narrowRowsIntegers(stmt.all(...bindableParams(params)) as T[])
     },
     async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
-      return stmt.all(...params) as T[]
+      return stmt.all(...bindableParams(params)) as T[]
     },
     async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-      return narrowRowIntegers(stmt.get(...params) as T | undefined)
+      return narrowRowIntegers(stmt.get(...bindableParams(params)) as T | undefined)
     },
     async run(...params: unknown[]) {
-      const result = stmt.run(...params)
+      const result = stmt.run(...bindableParams(params))
       return {
         changes: Number(result.changes),
         lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
@@ -95,7 +95,7 @@ function createConnection(db: BetterSqlite3Database, taker: RowCountTaker | null
       if (taker) return runCountedBatch(stmt, paramsBatch, taker)
       const results = new Array(paramsBatch.length)
       for (let i = 0; i < paramsBatch.length; i++) {
-        const result = stmt.run(...paramsBatch[i])
+        const result = stmt.run(...bindableParams(paramsBatch[i]))
         results[i] = {
           changes: Number(result.changes),
           lastInsertRowId: narrowSafeBigInt(result.lastInsertRowid) as number | bigint,
@@ -109,7 +109,7 @@ function createConnection(db: BetterSqlite3Database, taker: RowCountTaker | null
       if (taker) return runCountedBatchSummary(stmt, paramsBatch, taker)
       let changes = 0
       for (let i = 0; i < paramsBatch.length; i++) {
-        changes += Number(stmt.run(...paramsBatch[i]).changes)
+        changes += Number(stmt.run(...bindableParams(paramsBatch[i])).changes)
       }
       return { rowsLoaded: paramsBatch.length, changes }
     },

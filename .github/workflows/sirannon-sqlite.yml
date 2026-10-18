@@ -84,16 +84,22 @@ jobs:
         include:
           - target: linux-x64
             runner: ubuntu-latest
+            uwebsockets: true
           - target: linux-arm64
             runner: ubuntu-24.04-arm
+            uwebsockets: true
           - target: win32-x64
             runner: windows-latest
+            uwebsockets: true
           - target: win32-arm64
             runner: windows-11-arm
+            uwebsockets: false
           - target: darwin-arm64
             runner: macos-15
+            uwebsockets: true
           - target: darwin-x64
             runner: macos-15-intel
+            uwebsockets: true
 
     steps:
       - name: Checkout
@@ -136,11 +142,16 @@ jobs:
         working-directory: packages/ts
         run: pnpm assemble:sqlite
 
-      - name: Run the suites that need Sirannon's SQLite
+      - name: Run the library suites that need Sirannon's SQLite
         working-directory: packages/ts
-        run: |
-          pnpm vitest run src/__tests__/integration/row-counts
-          pnpm vitest run --config vitest.e2e.config.ts src/__tests__/e2e/metering
+        run: pnpm vitest run src/__tests__/integration/row-counts
+        env:
+          SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'
+
+      - name: Run the server suites that need Sirannon's SQLite
+        if: matrix.uwebsockets
+        working-directory: packages/ts
+        run: pnpm vitest run --config vitest.e2e.config.ts src/__tests__/e2e/metering
         env:
           SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'
 
@@ -204,10 +215,8 @@ jobs:
         working-directory: packages/ts
         run: pnpm assemble:sqlite
 
-      - name: Run the suites that need Sirannon's SQLite
+      - name: Run the library suites that need Sirannon's SQLite
         working-directory: packages/ts
-        run: |
-          pnpm vitest run src/__tests__/integration/row-counts
-          pnpm vitest run --config vitest.e2e.config.ts src/__tests__/e2e/metering
+        run: pnpm vitest run src/__tests__/integration/row-counts
         env:
           SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'

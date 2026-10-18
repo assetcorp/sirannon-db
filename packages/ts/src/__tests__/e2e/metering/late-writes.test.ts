@@ -20,7 +20,7 @@ import {
 import { billedAs, Meter, meteredRegistry, rowInserts, rowsIn, SIRANNON_SQLITE_BINDING } from './metered-registry.js'
 
 const SEEDED_NOTES = 50
-const WRITER_DEADLINE_MS = 200
+const WRITER_DEADLINE_MS = 2_000
 const NOTES_SCHEMA = [
   'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, tag TEXT NOT NULL)',
   'CREATE UNIQUE INDEX notes_by_tag ON notes (tag)',

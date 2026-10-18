@@ -3,7 +3,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import type { Database } from '../../../core/database.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import type { DatabaseOptions, ServerOptions, SirannonOptions } from '../../../core/types.js'
-import { createServer } from '../../../server/server.js'
+import { listenOnLoopback } from '../lib/listening-server.js'
 import {
   readSqlite,
   releaseServedRegistries,
@@ -93,8 +93,7 @@ export async function serveWithIdentity<Identity>(
   sirannon: Sirannon,
   options: ServerOptions<Identity>,
 ): Promise<ServedServer> {
-  const server = createServer<Identity>(sirannon, { ...options, port: options.port ?? 0 })
-  await server.listen()
+  const server = await listenOnLoopback<Identity>(sirannon, options)
   openServers.push(server)
   const port = server.listeningPort
   return { sirannon, server, port, base: `http://127.0.0.1:${port}`, wsBase: `ws://127.0.0.1:${port}` }

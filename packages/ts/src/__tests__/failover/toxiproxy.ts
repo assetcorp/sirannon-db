@@ -4,16 +4,26 @@ export interface ToxiproxyLink {
   upstreamPort: number
 }
 
+export interface ToxiproxyHosts {
+  apiBaseUrl: string
+  listenHost: string
+  upstreamHost: string
+}
+
 export class ToxiproxyClient {
-  constructor(private readonly apiBaseUrl: string) {}
+  private readonly apiBaseUrl: string
+
+  constructor(private readonly hosts: ToxiproxyHosts) {
+    this.apiBaseUrl = hosts.apiBaseUrl
+  }
 
   async createProxy(link: ToxiproxyLink): Promise<void> {
     await this.request('/proxies', {
       method: 'POST',
       body: {
         name: link.name,
-        listen: `0.0.0.0:${link.listenPort}`,
-        upstream: `host.docker.internal:${link.upstreamPort}`,
+        listen: `${this.hosts.listenHost}:${link.listenPort}`,
+        upstream: `${this.hosts.upstreamHost}:${link.upstreamPort}`,
         enabled: true,
       },
     })

@@ -84,7 +84,11 @@ export async function startEnvironment(): Promise<GateEnvironment> {
     ...Array.from(grpcProxyPorts.values()).flatMap(value => Array.from(value.values())),
   ]
   const toxiproxyContainer = await startToxiproxyContainer(runPrefix, allProxyPorts)
-  const toxiproxy = new ToxiproxyClient(`http://127.0.0.1:${toxiproxyContainer.apiPort}`)
+  const toxiproxy = new ToxiproxyClient({
+    apiBaseUrl: `http://127.0.0.1:${toxiproxyContainer.apiPort}`,
+    listenHost: toxiproxyContainer.listenHost,
+    upstreamHost: toxiproxyContainer.upstreamHost,
+  })
 
   for (const nodeId of NODE_IDS) {
     const ports = etcdProxyPorts.get(nodeId)

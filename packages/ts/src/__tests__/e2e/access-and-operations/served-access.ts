@@ -2,7 +2,8 @@ import { join } from 'node:path'
 import type { Database } from '../../../core/database.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import type { ServerOptions } from '../../../core/types.js'
-import { createServer, type SirannonServer } from '../../../server/server.js'
+import type { SirannonServer } from '../../../server/server.js'
+import { listenOnLoopback } from '../lib/listening-server.js'
 import { connectRaw, readSqlite, releaseServedRegistries, type ServerMessage, within } from '../lib/served-registry.js'
 
 export interface TypedServer<I> {
@@ -29,13 +30,12 @@ export const SEEDED_ORDERS: readonly Order[] = [
 
 type HeaderWebSocket = new (url: string, init: { headers: Record<string, string>; protocols?: string[] }) => WebSocket
 
-export const WebSocketWithHeaders = WebSocket as unknown as HeaderWebSocket
+const WebSocketWithHeaders = WebSocket as unknown as HeaderWebSocket
 
 const closers: Array<() => Promise<void>> = []
 
 export async function serveTyped<I>(sirannon: Sirannon, options: ServerOptions<I>): Promise<TypedServer<I>> {
-  const server = createServer<I>(sirannon, { ...options, port: options.port ?? 0 })
-  await server.listen()
+  const server = await listenOnLoopback<I>(sirannon, options)
   closers.push(() => server.close().catch(() => {}))
   const port = server.listeningPort
   return { server, port, base: `http://127.0.0.1:${port}`, wsBase: `ws://127.0.0.1:${port}` }
@@ -77,8 +77,7 @@ export interface UpgradeAnswer {
   headers: Map<string, string>
 }
 
-export async function rawUpgrade(port: number, path: string, headers: Record<string, string>): Promise<UpgradeAnswer> {
-  const connection = await connectRaw(port)
+export function upgradeRequestText(path: string, headers: Record<string, string>): string {
   const lines = [
     `GET ${path} HTTP/1.1`,
     'Host: 127.0.0.1',
@@ -88,7 +87,12 @@ export async function rawUpgrade(port: number, path: string, headers: Record<str
     'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
   ]
   for (const [name, value] of Object.entries(headers)) lines.push(`${name}: ${value}`)
-  connection.socket.write(`${lines.join('\r\n')}\r\n\r\n`)
+  return `${lines.join('\r\n')}\r\n\r\n`
+}
+
+export async function rawUpgrade(port: number, path: string, headers: Record<string, string>): Promise<UpgradeAnswer> {
+  const connection = await connectRaw(port)
+  connection.socket.write(upgradeRequestText(path, headers))
   await within(
     (async () => {
       while (!connection.received().includes('\r\n\r\n') && !connection.isClosed()) {

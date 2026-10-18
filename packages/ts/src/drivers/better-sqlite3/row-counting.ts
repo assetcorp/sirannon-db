@@ -1,7 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import { type RowCounts, withRowCounts } from '../../core/driver/row-counts.js'
 import type { BatchSummary, Counted, RunResult, SQLiteStatement } from '../../core/driver/types.js'
-import { narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import type { SirannonSqliteFeature } from './sirannon-sqlite.js'
 
 type CountingStatement = BetterSqlite3.Statement & { takeRowCounts(counts: Float64Array): void }
@@ -84,25 +84,25 @@ function toRunResult(result: BetterSqlite3.RunResult, counts: RowCounts): RunRes
 export function countingStatement(stmt: BetterSqlite3.Statement, taker: RowCountTaker): SQLiteStatement {
   return {
     async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-      return taker.measure(stmt, () => narrowRowsIntegers(stmt.all(...params) as T[])).value
+      return taker.measure(stmt, () => narrowRowsIntegers(stmt.all(...bindableParams(params)) as T[])).value
     },
     async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
-      return taker.measure(stmt, () => stmt.all(...params) as T[]).value
+      return taker.measure(stmt, () => stmt.all(...bindableParams(params)) as T[]).value
     },
     async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-      return taker.measure(stmt, () => narrowRowIntegers(stmt.get(...params) as T | undefined)).value
+      return taker.measure(stmt, () => narrowRowIntegers(stmt.get(...bindableParams(params)) as T | undefined)).value
     },
     async allCounted<T = unknown>(...params: unknown[]): Promise<Counted<T[]>> {
-      return taker.measure(stmt, () => narrowRowsIntegers(stmt.all(...params) as T[]))
+      return taker.measure(stmt, () => narrowRowsIntegers(stmt.all(...bindableParams(params)) as T[]))
     },
     async allRawCounted<T = unknown>(...params: unknown[]): Promise<Counted<T[]>> {
-      return taker.measure(stmt, () => stmt.all(...params) as T[])
+      return taker.measure(stmt, () => stmt.all(...bindableParams(params)) as T[])
     },
     async getCounted<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>> {
-      return taker.measure(stmt, () => narrowRowIntegers(stmt.get(...params) as T | undefined))
+      return taker.measure(stmt, () => narrowRowIntegers(stmt.get(...bindableParams(params)) as T | undefined))
     },
     async run(...params: unknown[]): Promise<RunResult> {
-      const measured = taker.measure(stmt, () => stmt.run(...params))
+      const measured = taker.measure(stmt, () => stmt.run(...bindableParams(params)))
       return toRunResult(measured.value, measured)
     },
   }
@@ -118,7 +118,7 @@ function runEach(
   for (let i = 0; i < paramsBatch.length; i++) {
     let measured: Counted<BetterSqlite3.RunResult>
     try {
-      measured = taker.measure(stmt, () => stmt.run(...paramsBatch[i]))
+      measured = taker.measure(stmt, () => stmt.run(...bindableParams(paramsBatch[i])))
     } catch (err) {
       const failed = err as Partial<RowCounts>
       throw withRowCounts(err, {

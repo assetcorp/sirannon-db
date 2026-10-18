@@ -25,3 +25,50 @@ export function narrowRowsIntegers<T>(rows: T[]): T[] {
   }
   return rows
 }
+
+const EMPTY_BLOB_WITH_ALLOCATED_STORAGE = new Uint8Array(new ArrayBuffer(1), 0, 0)
+
+function bindableValue(value: unknown): unknown {
+  if (typeof value === 'boolean') return value ? 1 : 0
+  if (ArrayBuffer.isView(value) && value.byteLength === 0) return EMPTY_BLOB_WITH_ALLOCATED_STORAGE
+  return value
+}
+
+function isNamedParams(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function bindableNamedParams(params: Record<string, unknown>): Record<string, unknown> {
+  let bound: Record<string, unknown> | undefined
+  for (const key of Object.keys(params)) {
+    const value = params[key]
+    const replacement = bindableValue(value)
+    if (replacement === value) continue
+    bound ??= { ...params }
+    bound[key] = replacement
+  }
+  return bound ?? params
+}
+
+/**
+ * Returns the parameters in a form that every SQLite engine binds the same way, so that SQLite stores a boolean as
+ * the integer 1 or 0 and stores an empty byte array as an empty BLOB.
+ *
+ * @param params - The positional values, or a single object of named values, that the caller passed.
+ * @returns `params` itself when no value needs a change, and otherwise a copy holding the changed values.
+ *
+ * @internal
+ */
+export function bindableParams(params: readonly unknown[]): unknown[] {
+  let bound: unknown[] | undefined
+  for (let index = 0; index < params.length; index++) {
+    const value = params[index]
+    const replacement = isNamedParams(value) ? bindableNamedParams(value) : bindableValue(value)
+    if (replacement === value) continue
+    bound ??= [...params]
+    bound[index] = replacement
+  }
+  return bound ?? (params as unknown[])
+}

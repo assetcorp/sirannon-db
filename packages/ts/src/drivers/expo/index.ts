@@ -1,6 +1,7 @@
 import { defineDriver } from '../../core/driver/define.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { bindableParams } from '../../core/driver/values.js'
 import { ExtensionError } from '../../core/errors.js'
 
 /**
@@ -38,16 +39,16 @@ export function expoSqlite(): SQLiteDriver {
         async prepare(sql: string): Promise<SQLiteStatement> {
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return dbHandle.getAllAsync(sql, params as (string | number | null)[]) as Promise<T[]>
+              return dbHandle.getAllAsync(sql, bindableParams(params) as (string | number | null)[]) as Promise<T[]>
             },
 
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
-              const row = await dbHandle.getFirstAsync(sql, params as (string | number | null)[])
+              const row = await dbHandle.getFirstAsync(sql, bindableParams(params) as (string | number | null)[])
               return (row ?? undefined) as T | undefined
             },
 
             async run(...params: unknown[]) {
-              const result = await dbHandle.runAsync(sql, params as (string | number | null)[])
+              const result = await dbHandle.runAsync(sql, bindableParams(params) as (string | number | null)[])
               return {
                 changes: result.changes,
                 lastInsertRowId: result.lastInsertRowId,

@@ -19,7 +19,12 @@ export interface EtcdClusterHandle {
 export interface ToxiproxyContainerHandle {
   containerName: string
   apiPort: number
+  listenHost: string
+  upstreamHost: string
 }
+
+const LOOPBACK_HOST = '127.0.0.1'
+const DOCKER_DESKTOP_HOST_ALIAS = 'host.docker.internal'
 
 const ETCD_IMAGE = 'gcr.io/etcd-development/etcd:v3.6.0'
 const TOXIPROXY_IMAGE = 'ghcr.io/shopify/toxiproxy:2.12.0'
@@ -115,27 +120,26 @@ export async function startToxiproxyContainer(
 ): Promise<ToxiproxyContainerHandle> {
   const apiPort = await allocatePort()
   const containerName = `${namePrefix}-toxiproxy`
-  const portArgs = ['-p', `127.0.0.1:${apiPort}:8474`]
-  for (const port of proxyPorts) {
-    portArgs.push('-p', `127.0.0.1:${port}:${port}`)
-  }
+  const sharesHostNetwork = process.platform === 'linux'
+  const placementArgs = sharesHostNetwork
+    ? ['--network', 'host', TOXIPROXY_IMAGE, `-host=${LOOPBACK_HOST}`, `-port=${apiPort}`]
+    : [
+        '--add-host',
+        `${DOCKER_DESKTOP_HOST_ALIAS}:host-gateway`,
+        '-p',
+        `${LOOPBACK_HOST}:${apiPort}:8474`,
+        ...proxyPorts.flatMap(port => ['-p', `${LOOPBACK_HOST}:${port}:${port}`]),
+        TOXIPROXY_IMAGE,
+      ]
 
-  await docker(
-    [
-      'run',
-      '--detach',
-      '--rm',
-      '--name',
-      containerName,
-      '--add-host',
-      'host.docker.internal:host-gateway',
-      ...portArgs,
-      TOXIPROXY_IMAGE,
-    ],
-    30_000,
-  )
-  await waitForHttpOk(`http://127.0.0.1:${apiPort}/version`, 30_000)
-  return { containerName, apiPort }
+  await docker(['run', '--detach', '--rm', '--name', containerName, ...placementArgs], 30_000)
+  await waitForHttpOk(`http://${LOOPBACK_HOST}:${apiPort}/version`, 30_000)
+  return {
+    containerName,
+    apiPort,
+    listenHost: sharesHostNetwork ? LOOPBACK_HOST : '0.0.0.0',
+    upstreamHost: sharesHostNetwork ? LOOPBACK_HOST : DOCKER_DESKTOP_HOST_ALIAS,
+  }
 }
 
 export async function pauseContainer(containerName: string): Promise<void> {

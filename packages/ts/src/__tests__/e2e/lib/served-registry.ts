@@ -6,7 +6,8 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { ServerOptions, SirannonOptions } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
-import { createServer, type SirannonServer } from '../../../server/server.js'
+import type { SirannonServer } from '../../../server/server.js'
+import { listenOnLoopback } from './listening-server.js'
 
 const SOCKET_DEADLINE_MS = 5_000
 const POLL_INTERVAL_MS = 5
@@ -49,8 +50,7 @@ export function trackedRegistry(options?: Partial<SirannonOptions>): Sirannon {
 }
 
 export async function serveRegistry(sirannon: Sirannon, options?: ServerOptions): Promise<ServedRegistry> {
-  const server = createServer(sirannon, { ...options, port: options?.port ?? 0 })
-  await server.listen()
+  const server = await listenOnLoopback(sirannon, options ?? {})
   cleanups.push(() => server.close().catch(() => {}))
   const port = server.listeningPort
   return {

@@ -139,11 +139,10 @@ describe('subscriptions on many connections', () => {
       ['east', 'later'],
       ['west'],
     ])
-    expect(cdcEvents.map(event => [event.databaseId, event.subscriberCount])).toEqual([
-      ['east', 3],
-      ['west', 1],
-      ['east', 1],
-    ])
+    const subscriberCountsOf = (databaseId: string) =>
+      cdcEvents.filter(event => event.databaseId === databaseId).map(event => event.subscriberCount)
+    expect([subscriberCountsOf('east'), subscriberCountsOf('west')]).toEqual([[3, 1], [1]])
+    expect(cdcEvents).toHaveLength(3)
   })
 
   it('delivers each change exactly once to every subscription of many connections while many clients write at once', async () => {

@@ -7,7 +7,8 @@ import { SirannonError } from '../../../core/errors.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { Params, QueryOptions, ServerExecutionTarget, ServerOptions } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
-import { createServer, type SirannonServer } from '../../../server/server.js'
+import type { SirannonServer } from '../../../server/server.js'
+import { listenOnLoopback } from '../lib/listening-server.js'
 import { RawDeviceClient } from '../lib/raw-device-client.js'
 import { readSqlite } from '../lib/served-registry.js'
 
@@ -64,8 +65,7 @@ async function serve(
     await db.execute('INSERT INTO minutes (body) VALUES (?)', [`item ${index}`])
   }
   const resolved = typeof options === 'function' ? options(sirannon) : options
-  const server = createServer(sirannon, { ...resolved, acceptSql: true, port })
-  await server.listen()
+  const server = await listenOnLoopback(sirannon, { ...resolved, acceptSql: true, port })
   const served = { sirannon, server, port: server.listeningPort, path }
   running.push(served)
   return served

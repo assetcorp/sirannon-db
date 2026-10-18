@@ -131,4 +131,16 @@ export class DatabaseLifecycle {
       throw new SirannonError(`Database '${this.id}' is closed`, 'DATABASE_CLOSED')
     }
   }
+
+  /**
+   * Throws `WRITER_HELD_BY_CALLBACK` while a transaction callback holds the writer on a driver that has no async
+   * context to tell the callback's own calls from other callers, so that a call that the callback awaits fails at once
+   * and never waits for the callback to end.
+   *
+   * @internal
+   */
+  protected ensureWriterCanWait(): void {
+    const refusal = this.runtime.writerLock.callerRefusal()
+    if (refusal !== null) throw refusal
+  }
 }

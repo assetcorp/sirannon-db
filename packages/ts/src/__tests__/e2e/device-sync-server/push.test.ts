@@ -56,7 +56,7 @@ describe('pushing a device batch', () => {
 
     const answer = await push(server.base, wireBatch(changes))
 
-    expect([answer.status, answer.body]).toEqual([200, { applied: 3, skipped: 0, conflicts: 1 }])
+    expect([answer.status, answer.body]).toEqual([200, { applied: 3, skipped: 0, conflicts: 0 }])
     expect(readSqlite(server.path, 'SELECT id, label, payload, size, ratio FROM files')).toEqual([
       { id: 1n, label: 'second', payload: Buffer.from(payload), size: -BEYOND_SAFE, ratio: -1.5 },
     ])

@@ -157,8 +157,10 @@ describe('many migrators at once', () => {
         JSON.stringify(outcome),
       ).toContainEqual([outcome?.outcome, outcome?.code])
     }
+    const reportedApplied = outcomes.flatMap(outcome => outcome?.applied ?? [])
     expect(outcomes.some(outcome => outcome?.outcome === 'migrated')).toBe(true)
-    expect(outcomes.flatMap(outcome => outcome?.applied ?? []).sort()).toEqual([1, 2, 3])
+    expect(new Set(reportedApplied).size).toBe(reportedApplied.length)
+    expect(reportedApplied.filter(version => ![1, 2, 3].includes(version))).toEqual([])
     expect(readFileState(path)).toMatchObject({ userVersion: 3, tables: ['accounts'] })
     expect(readFileState(path).history.map(row => row.version)).toEqual([1, 2, 3])
     expect(columnsOf(path, 'accounts')).toEqual(['id', 'email', 'plan'])

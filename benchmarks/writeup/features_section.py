@@ -19,8 +19,9 @@ def features_block(source: Source) -> str:
         body = [[engine, cell] for (engine, _), cell in zip(engines, cells, strict=True)]
         parts.append("### Cold start")
         parts.append(
-            "This is the time from the process start command to the first successful health probe, measured "
-            "the same way for both engines. Bold marks the faster start."
+            "Cold start is the time from the command that starts the engine process to the first successful "
+            "health probe, which the harness measures in the same way for both engines. Bold marks the faster "
+            "start."
         )
         parts.append(table(["Engine", "Cold start ms"], ["left", "right"], body))
 
@@ -30,10 +31,12 @@ def features_block(source: Source) -> str:
         latency = feature.get("latency_ms", {})
         parts.append("### Change-feed latency (Sirannon only)")
         parts.append(
-            "This measures the lag from a committed write to the change reaching a subscriber over Sirannon's "
-            "built-in WebSocket feed. The server polls the change log every "
-            f"{integer(feature.get('server_poll_interval_ms'))} ms, so that interval is the floor. PostgreSQL "
-            "has no built-in change feed, so these numbers describe Sirannon on its own."
+            "This table gives the delay between the client sending a write and a subscriber receiving the change "
+            "over Sirannon's built-in WebSocket feed. The server polls the change log every "
+            f"{integer(feature.get('server_poll_interval_ms'))} ms. The harness sends each probe write as soon as "
+            "the subscriber receives the previous change, so each write commits shortly after a poll and its "
+            "change waits close to one full interval for the next poll. The harness measures no PostgreSQL "
+            "equivalent, so the table gives Sirannon's figures alone."
         )
         parts.append(
             table(
@@ -50,5 +53,5 @@ def features_block(source: Source) -> str:
         )
 
     if not parts:
-        return "No Sirannon-only characterizations were recorded."
+        return "The harness recorded no cold-start or change-feed measurements."
     return "\n\n".join(parts)

@@ -1,5 +1,6 @@
 import type { Etcd3, IOptions, Namespace } from 'etcd3'
 import type { EtcdGroupStore } from './etcd-group-store.js'
+import { memberHealthPolicies } from './etcd-member-health.js'
 import { assertNonEmpty } from './group-rules.js'
 
 /**
@@ -71,7 +72,10 @@ export function assertEtcdOptions(options: EtcdClusterCoordinatorOptions): void 
   }
 }
 
-export function toEtcdOptions(options: EtcdClusterCoordinatorOptions): IOptions {
+export function toEtcdOptions(
+  options: EtcdClusterCoordinatorOptions,
+  isRecoverableError: (error: Error) => boolean,
+): IOptions {
   const defaultCallTimeoutMs = options.defaultCallTimeoutMs
   const defaultCallOptions = defaultCallTimeoutMs ? () => ({ deadline: Date.now() + defaultCallTimeoutMs }) : undefined
   return {
@@ -81,6 +85,7 @@ export function toEtcdOptions(options: EtcdClusterCoordinatorOptions): IOptions 
     grpcOptions: options.grpcOptions,
     dialTimeout: options.dialTimeoutMs,
     defaultCallOptions,
+    faultHandling: { host: memberHealthPolicies(isRecoverableError) },
   }
 }
 

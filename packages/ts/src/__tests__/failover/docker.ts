@@ -95,9 +95,18 @@ export async function startEtcdCluster(namePrefix: string): Promise<EtcdClusterH
     )
   }
 
-  const endpoints = clientPorts.map(port => `http://127.0.0.1:${port}`)
-  await Promise.all(endpoints.map(endpoint => waitForHttpOk(`${endpoint}/health`, 30_000)))
-  return { networkName, containerNames, clientPorts, endpoints }
+  const handle = {
+    networkName,
+    containerNames,
+    clientPorts,
+    endpoints: clientPorts.map(port => `http://127.0.0.1:${port}`),
+  }
+  await waitForEtcdHealthy(handle, 30_000)
+  return handle
+}
+
+export async function waitForEtcdHealthy(etcd: EtcdClusterHandle, timeoutMs: number): Promise<void> {
+  await Promise.all(etcd.endpoints.map(endpoint => waitForHttpOk(`${endpoint}/health`, timeoutMs)))
 }
 
 export async function startToxiproxyContainer(

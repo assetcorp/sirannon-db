@@ -87,12 +87,12 @@ export async function refreshCoordinatorState(engine: ReplicationEngine): Promis
     const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
     applyCoordinatorState(engine, state)
     return state
-  } catch {
+  } catch (err: unknown) {
     engine.coordinatorAuthority = false
-    throw new CoordinatorError(
-      'Coordinator is unavailable while refreshing replication-group authority',
-      errorDetails(engine, engine.coordinatorState),
-    )
+    throw new CoordinatorError('Coordinator is unavailable while refreshing replication-group authority', {
+      ...errorDetails(engine, engine.coordinatorState),
+      cause: err instanceof Error ? err.message : String(err),
+    })
   }
 }
 

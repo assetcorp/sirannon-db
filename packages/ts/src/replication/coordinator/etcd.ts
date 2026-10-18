@@ -350,8 +350,8 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private connect(): Promise<EtcdConnection> {
     if (!this.connection) {
       this.connection = loadEtcd3Module().then(
-        ({ Etcd3 }) => {
-          const client = new Etcd3(toEtcdOptions(this.options))
+        ({ Etcd3, isRecoverableError }) => {
+          const client = new Etcd3(toEtcdOptions(this.options, isRecoverableError))
           const namespace = client.namespace(normaliseKeyPrefix(this.options.keyPrefix))
           const groups = new EtcdGroupStore(namespace, this.watchers, this.onWatcherError)
           return { client, namespace, groups }

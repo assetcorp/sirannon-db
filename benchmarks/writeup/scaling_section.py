@@ -38,20 +38,20 @@ def tabled_scaling(comparison: dict, node: dict) -> list[dict]:
 def scaling_block(source: Source, chart_dir: str) -> str:
     recorded = durabilities(source.comparison)
     if not recorded:
-        return "No scaling results were recorded."
+        return "The harness recorded no scaling results."
     name, node = recorded[0]
     scaling = tabled_scaling(source.comparison, node)
     if not scaling:
-        return "No scaling results were recorded."
+        return "The harness recorded no scaling results."
     parts: list[str] = [
-        "Each figure and table below covers one workload at "
-        f"{durability_label(name).lower()}, as the offered rate climbs. PostgreSQL relies on row-level locking "
-        "and Sirannon on a single writer, so which one holds throughput as the rate rises depends on the "
-        "workload. The dotted line on the top panel is the offered rate, so a curve leaving it marks the point "
-        "where that engine stopped keeping up.",
-        "_Both engines answer the same offered rate on every row, so bold marks the better figure of the two: the "
-        "higher achieved throughput and the lower p99. Where the two figures are equal, the row carries no "
-        "mark._",
+        "Each figure and table below shows one workload at "
+        f"{durability_label(name).lower()}, at every offered rate in the sweep. PostgreSQL locks individual "
+        "rows, while Sirannon commits every write through a single writer, so which engine keeps up as the rate "
+        "rises depends on the workload. The dotted line on the top panel marks the offered rate, so the point "
+        "where an engine's curve falls below that line is the rate at which the engine stopped keeping up.",
+        "_Each row gives both engines at the same offered rate, so bold marks the better of the two figures, "
+        "which is the higher achieved throughput and the lower p99. Where the two figures are equal, neither "
+        "is bold._",
     ]
     has_gap = any(
         any(point.get(key) is None for key in ("sirannon_ops", "postgres_ops"))
@@ -60,8 +60,8 @@ def scaling_block(source: Source, chart_dir: str) -> str:
     )
     if has_gap:
         parts.append(
-            "_An n/a cell marks a rate one engine never ran: its sweep had already stopped at a lower rate it "
-            "could not sustain. Where a column ends is that engine's limit._"
+            "_An n/a cell marks a rate that the harness never offered to that engine, because the engine's sweep "
+            "had stopped after a lower rate that it could not sustain._"
         )
     for entry in scaling:
         workload = entry.get("workload", "n/a")
@@ -79,6 +79,7 @@ def scaling_block(source: Source, chart_dir: str) -> str:
         headers = ["Target ops/s", "Sirannon ops/s", "Sirannon p99 ms", "Postgres ops/s", "Postgres p99 ms"]
         parts.append(table(headers, ["right", "right", "right", "right", "right"], body))
     parts.append(
-        f"_The same three-panel figure is drawn for every workload at both durability levels, in `{chart_dir}/`._"
+        f"_The directory `{chart_dir}/` contains the same three-panel figure for every workload at both "
+        "durability levels._"
     )
     return "\n\n".join(parts)

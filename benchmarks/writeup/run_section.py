@@ -4,6 +4,13 @@ from comparison_view import durabilities, durability_label, run_date, workload_l
 from render import decimal, gigabytes, humanized_list, integer, is_number, ops, ratio
 from sources import Source
 
+SIRANNON_DEFAULT_WRITE_TIMEOUT_MS = 30000
+NODE_POSTGRES_DEFAULT_POOL_SIZE = 10
+COMMIT_DIGITS = 12
+ENGINE_NAMES = {"sirannon": "Sirannon", "postgres": "PostgreSQL"}
+CLIENT_NAMES = {"sirannon": "the Sirannon SDK", "postgres": "node-postgres"}
+PASS_NAMES = {"full": "full-durability", "matched": "matched-relaxed"}
+
 
 def _engine_versions(comparison: dict) -> tuple[str, str, str]:
     for _, node in durabilities(comparison):
@@ -17,20 +24,12 @@ def _engine_versions(comparison: dict) -> tuple[str, str, str]:
     return "n/a", "n/a", "n/a"
 
 
-SIRANNON_DEFAULT_WRITE_TIMEOUT_MS = 30000
-
-
-def _sirannon_setting(comparison: dict, key: str) -> float | None:
+def _engine_setting(comparison: dict, engine: str, key: str) -> object:
     for _, node in durabilities(comparison):
-        settings = (node.get("sirannon_engine", {}) or {}).get("settings") or {}
-        value = settings.get(key)
-        if is_number(value):
-            return float(value)
+        settings = (node.get(f"{engine}_engine", {}) or {}).get("settings") or {}
+        if settings.get(key) is not None:
+            return settings[key]
     return None
-
-
-def _writer_deadline_ms(comparison: dict) -> float | None:
-    return _sirannon_setting(comparison, "writer_worker_write_timeout_ms")
 
 
 def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
@@ -43,77 +42,245 @@ def _client_ceilings(comparison: dict) -> tuple[dict, dict]:
     return {}, {}
 
 
+def _pass_commits(comparison: dict) -> list[tuple[str, bool, list[str]]]:
+    fallback = comparison.get("environment", {})
+    groups: dict[tuple[str, bool], list[str]] = {}
+    for name, node in durabilities(comparison):
+        for engine in ("sirannon", "postgres"):
+            environment = node.get(f"{engine}_environment") or fallback
+            commit = str(environment.get("git_commit") or "")[:COMMIT_DIGITS] or "unknown"
+            pass_name = f"{ENGINE_NAMES[engine]} {PASS_NAMES.get(name, name)}"
+            groups.setdefault((commit, bool(environment.get("git_dirty"))), []).append(pass_name)
+    return [(commit, dirty, passes) for (commit, dirty), passes in groups.items()]
+
+
+def _commit_sentence(comparison: dict) -> str:
+    groups = _pass_commits(comparison)
+    if len(groups) <= 1:
+        environment = comparison.get("environment", {})
+        commit = groups[0][0] if groups else str(environment.get("git_commit") or "")[:COMMIT_DIGITS] or "unknown"
+        dirty = groups[0][1] if groups else bool(environment.get("git_dirty"))
+        changes = ", with uncommitted changes" if dirty else ""
+        return f"For every pass, the harness recorded commit `{commit}`{changes}."
+    sentences = []
+    for index, (commit, dirty, passes) in enumerate(groups):
+        changes = ", with uncommitted changes" if dirty else ""
+        noun = "passes" if len(passes) > 1 else "pass"
+        if index == 0:
+            sentences.append(f"For the {humanized_list(passes)} {noun}, the harness recorded commit `{commit}`{changes}.")
+        else:
+            sentences.append(f"For the {humanized_list(passes)} {noun}, however, it recorded commit `{commit}`{changes}.")
+    return " ".join(sentences)
+
+
+def _highest_operating_rate(comparison: dict, engine: str) -> float | None:
+    rates = [
+        float(row[engine]["target_rate"])
+        for _, node in durabilities(comparison)
+        for row in node.get("workloads", [])
+        if is_number((row.get(engine) or {}).get("target_rate"))
+    ]
+    return max(rates) if rates else None
+
+
+def _headroom_bullet(comparison: dict, top_rate: object) -> str | None:
+    sirannon_ceiling, postgres_ceiling = _client_ceilings(comparison)
+    if not (sirannon_ceiling or postgres_ceiling):
+        return None
+    sentences = [
+        "When the harness measured each client alone against its live engine, the Sirannon SDK sustained "
+        f"{ops(sirannon_ceiling.get('ceiling_ops'))} requests a second and node-postgres sustained "
+        f"{ops(postgres_ceiling.get('ceiling_ops'))}, which are {ratio(sirannon_ceiling.get('headroom_factor'))} "
+        f"and {ratio(postgres_ceiling.get('headroom_factor'))} the fastest offered rate."
+    ]
+    limited: list[str] = []
+    for engine, ceiling in (("sirannon", sirannon_ceiling), ("postgres", postgres_ceiling)):
+        highest = _highest_operating_rate(comparison, engine)
+        ceiling_ops = ceiling.get("ceiling_ops")
+        if is_number(ceiling_ops) and highest is not None and float(ceiling_ops) <= highest:
+            limited.append(engine)
+    if limited:
+        for engine in limited:
+            sentences.append(
+                f"The ceiling of {CLIENT_NAMES[engine]} is at or below the highest operating point of "
+                f"{ENGINE_NAMES[engine]}, so that client can limit {ENGINE_NAMES[engine]}'s operating points."
+            )
+    else:
+        sentences.append(
+            "Each client's ceiling is above every operating point that its engine reached, so neither client "
+            "limited a reported operating point."
+        )
+    for engine, ceiling in (("sirannon", sirannon_ceiling), ("postgres", postgres_ceiling)):
+        factor = ceiling.get("headroom_factor")
+        if is_number(factor) and float(factor) < 1 and is_number(top_rate):
+            sentences.append(
+                f"Since {CLIENT_NAMES[engine]} sustained less than the fastest offered rate, the "
+                f"{ENGINE_NAMES[engine]} figures at rates above {ops(ceiling.get('ceiling_ops'))} a second "
+                f"show the limit of {CLIENT_NAMES[engine]}."
+            )
+    return "- **Load-client headroom.** " + " ".join(sentences)
+
+
+def _seed_sentences(comparison: dict, data_size: str) -> str:
+    seeded: list[str] = []
+    empty: list[str] = []
+    recorded = durabilities(comparison)
+    for row in recorded[0][1].get("workloads", []) if recorded else []:
+        rows = (row.get("sirannon") or {}).get("seed_rows")
+        if not is_number(rows):
+            return f"Every workload draws its keys from a range of {data_size} rows."
+        (seeded if rows > 0 else empty).append(workload_label(row.get("workload", "n/a")))
+    if not empty:
+        return f"Every workload starts from a table that the harness seeds with {data_size} rows."
+    total = len(seeded) + len(empty)
+    empty_names = humanized_list(empty)
+    return (
+        f"Of the {integer(total)} workloads, {integer(len(seeded))} start from a table that the harness seeds with "
+        f"{data_size} rows. For the {empty_names} workload, the table starts empty, so every row in it comes from "
+        f"the inserts that the generator sends during the sweep, with keys between 1 and {data_size}."
+    )
+
+
+def _sweep_sentences(config: dict) -> str:
+    rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])]) or "n/a"
+    offered = f"The harness offers target rates of {rates} requests a second."
+    stop_steps = config.get("sweep_stop_steps", -1)
+    if not (is_number(stop_steps) and stop_steps >= 0):
+        return offered
+    if stop_steps == 0:
+        ending = "it stops"
+    elif stop_steps == 1:
+        ending = "it measures one more rate and stops"
+    else:
+        ending = f"it measures {integer(stop_steps)} more rates and stops"
+    return (
+        f"{offered} It raises each engine's rate along that list until the engine fails to sustain one. After "
+        f"that failure, {ending}, so the two sweeps can end at different rates."
+    )
+
+
+def _failed_requests(comparison: dict) -> bool:
+    for _, node in durabilities(comparison):
+        for entry in node.get("scaling", []):
+            for point in entry.get("curve", []):
+                for engine in ("sirannon", "postgres"):
+                    rate = (point.get(engine) or {}).get("error_rate")
+                    if is_number(rate) and rate > 0:
+                        return True
+    return False
+
+
+def _timeout_bullet(comparison: dict) -> str | None:
+    deadline_ms = _engine_setting(comparison, "sirannon", "writer_worker_write_timeout_ms")
+    statement_timeout = _engine_setting(comparison, "postgres", "statement_timeout")
+    request_timeout_ms = _engine_setting(comparison, "postgres", "request_timeout_ms")
+    schema_ms = _engine_setting(comparison, "sirannon", "schema_timeout_ms")
+    sentences: list[str] = []
+    default_seconds = integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)
+    if deadline_ms == 0:
+        sentences.append(f"Sirannon's writer deadline was off, although its default is {default_seconds} seconds.")
+    elif is_number(deadline_ms):
+        sentences.append(
+            f"Sirannon gave a single write {integer(float(deadline_ms) / 1000)} seconds before it reported the "
+            f"writer unresponsive, against a default of {default_seconds} seconds."
+        )
+    if statement_timeout is not None and is_number(request_timeout_ms):
+        sentences.append(
+            "The PostgreSQL driver set `statement_timeout` to the load generator's request timeout of "
+            f"{integer(request_timeout_ms)} ms, which PostgreSQL reported as `{statement_timeout}`, while the "
+            "PostgreSQL default of 0 turns that timeout off."
+        )
+    if not sentences:
+        return None
+    if not _failed_requests(comparison):
+        sentences.append("No request failed at any rate in either engine's sweep, so neither limit ended a request.")
+    if is_number(schema_ms) and schema_ms > 0:
+        sentences.append(
+            f"The Sirannon driver gave each schema reset between workloads a "
+            f"{integer(float(schema_ms) / 60000)}-minute request limit."
+        )
+    return "- **Timeouts.** " + " ".join(sentences)
+
+
+def _engines_bullet(comparison: dict, environment: dict, delivery: dict) -> str:
+    sirannon_version, sqlite_version, postgres_version = _engine_versions(comparison)
+    levels = humanized_list([f"at {durability_label(name).lower()}" for name, _ in durabilities(comparison)])
+    levels_text = f" {levels}" if levels else ""
+    resource_control = environment.get("resource_control") or {}
+    memory_cap = resource_control.get("engine_memory_max")
+    cap_text = f"a {memory_cap} memory ceiling" if memory_cap else "a hard memory ceiling"
+    engine_set = resource_control.get("engine_allowed_cpus")
+    driver_set = resource_control.get("driver_allowed_cpus")
+    if engine_set and driver_set:
+        pinning = f"pinned to logical CPUs {engine_set}, while the load generator had logical CPUs {driver_set}"
+    else:
+        pinning = (
+            f"pinned to {integer(delivery.get('engine_cpus'))} logical CPUs, while the load generator had "
+            f"{integer(delivery.get('driver_cpus'))} other logical CPUs"
+        )
+    return (
+        f"- **Engines.** The harness measured Sirannon {sirannon_version}, whose storage engine is SQLite "
+        f"{sqlite_version}, and PostgreSQL {postgres_version}{levels_text}. Each engine operated as a native "
+        f"process under {cap_text} that cgroup v2 enforces, {pinning} to itself."
+    )
+
+
+def _delivery_bullet(comparison: dict, config: dict) -> str:
+    pool_size = _engine_setting(comparison, "postgres", "pool_size")
+    if is_number(pool_size):
+        pool = (
+            f"a pool of {integer(pool_size)} connections, against a node-postgres default of "
+            f"{integer(NODE_POSTGRES_DEFAULT_POOL_SIZE)}"
+        )
+    else:
+        pool = "a pool of connections"
+    return (
+        "- **Delivery.** One Node load generator on the same host sent every request over loopback, through the "
+        "client that each engine provides. The Sirannon SDK sent its requests to Sirannon over one WebSocket, "
+        f"while node-postgres sent its requests to PostgreSQL over {pool}. With either client, the generator "
+        f"kept at most {integer(config.get('max_in_flight'))} requests in flight at once."
+    )
+
+
 def run_block(source: Source) -> str:
     comparison = source.comparison
     environment = comparison.get("environment", {})
     config = comparison.get("config", {})
     delivery = config.get("delivery", {})
 
-    commit = str(environment.get("git_commit") or "")[:12] or "unknown"
-    dirty = ", with uncommitted changes" if environment.get("git_dirty") else ""
     label = environment.get("machine_label")
     host = (
-        f"{environment.get('cpu_model') or 'an unspecified CPU'} with "
-        f"{integer(environment.get('logical_cpus'))} logical cores, "
-        f"{gigabytes(environment.get('total_memory_bytes'))} GB of memory, on "
-        f"{environment.get('os') or 'an unknown OS'} ({environment.get('arch') or 'unknown arch'})"
+        f"{integer(environment.get('logical_cpus'))} logical CPUs "
+        f"({environment.get('cpu_model') or 'model unrecorded'}), "
+        f"{gigabytes(environment.get('total_memory_bytes'))} GB of memory, and "
+        f"{environment.get('os') or 'an unrecorded OS'} on {environment.get('arch') or 'an unrecorded architecture'}"
     )
-    machine = f"The run executed on {label}, which reports {host}." if label else f"The run host reports {host}."
-
-    sirannon_version, sqlite_version, postgres_version = _engine_versions(comparison)
-    durability_names = humanized_list([durability_label(name) for name, _ in durabilities(comparison)])
-    rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])])
-    engine_cpus = delivery.get("engine_cpus")
-    driver_cpus = delivery.get("driver_cpus")
-    resource_control = environment.get("resource_control") or {}
-    memory_cap = resource_control.get("engine_memory_max")
-    cap_text = f"a {memory_cap} memory ceiling" if memory_cap else "a hard memory ceiling"
-    sirannon_ceiling, postgres_ceiling = _client_ceilings(comparison)
-
+    machine = (
+        f"The benchmark machine was {label}, where the harness recorded {host}."
+        if label
+        else f"The harness recorded {host}."
+    )
+    date = run_date(comparison) or "an unrecorded date"
+    data_size = integer(config.get("data_size"))
+    runs = integer(config.get("runs"))
     bullets = [
-        f"- **Run.** These figures come from run `{source.run_id}`, recorded on {run_date(comparison)} from commit "
-        f"`{commit}`{dirty}. The full per-run report is in [the run report]({source.report_link}).",
+        f"- **Run.** [The run report]({source.report_link}) gives the full results of run `{source.run_id}`, "
+        f"which the harness recorded on {date}. {_commit_sentence(comparison)}",
         f"- **Machine.** {machine}",
-        f"- **Engines.** Sirannon {sirannon_version} (storage engine SQLite {sqlite_version}); PostgreSQL "
-        f"{postgres_version}. Both run as "
-        f"native processes on dedicated cores under {cap_text} (cgroup v2), at "
-        f"{durability_names or 'the recorded durability levels'}.",
-        "- **Delivery.** One Node load generator drove both engines through the client each provides: Sirannon over "
-        "its SDK's WebSocket transport, which multiplexes every request over one persistent socket, and PostgreSQL "
-        f"over node-postgres on its binary socket protocol, both on one host over loopback. Each engine ran on "
-        f"{integer(engine_cpus)} pinned cores and the load generator on {integer(driver_cpus)} of its own.",
+        _engines_bullet(comparison, environment, delivery),
+        _delivery_bullet(comparison, config),
     ]
-    if sirannon_ceiling or postgres_ceiling:
-        bullets.append(
-            "- **Load-client headroom.** Run on its own against the live engines, the Sirannon SDK "
-            f"sustained {ops(sirannon_ceiling.get('ceiling_ops'))} and node-postgres "
-            f"{ops(postgres_ceiling.get('ceiling_ops'))}, {ratio(sirannon_ceiling.get('headroom_factor'))} and "
-            f"{ratio(postgres_ceiling.get('headroom_factor'))} the fastest rate offered. Each client stays above "
-            "the operating points its engine reached, so every reported operating point reflects the database's "
-            "speed. A client below 1.00x could not offer the very top rate of the sweep, and the rates above its "
-            "ceiling measure the client rather than the engine."
-        )
-    stop_steps = config.get("sweep_stop_steps", -1)
-    if is_number(stop_steps) and stop_steps >= 0:
-        if stop_steps == 0:
-            ending = "then stops"
-        elif stop_steps == 1:
-            ending = "runs one more rate, and stops"
-        else:
-            ending = f"runs {integer(stop_steps)} more rates, and stops"
-        sweep_text = (
-            f"sweeping target rates drawn from {rates or 'n/a'} requests per second. Each engine climbs the list "
-            f"until it fails to sustain a rate, {ending}, so the two engines can end their sweeps at different rates"
-        )
-    else:
-        sweep_text = f"sweeping target rates of {rates or 'n/a'} requests per second"
+    target_rates = config.get("target_rates") or []
+    headroom = _headroom_bullet(comparison, max(target_rates) if target_rates else None)
+    if headroom:
+        bullets.append(headroom)
     bullets.append(
-        f"- **Workloads.** Every workload ran at {integer(config.get('data_size'))} rows, {sweep_text}, with a "
-        f"{decimal(config.get('warmup_seconds'), 0)} s warmup and a "
-        f"{decimal(config.get('measure_seconds'), 0)} s measurement window under seed `{config.get('seed', 'n/a')}`. "
-        f"Every rate ran {integer(config.get('runs'))} independent times, and each figure is the median with a "
-        f"95% confidence interval. The service-level target for the operating point is a p99 under "
-        f"{decimal(config.get('slo_p99_ms'), 0)} ms."
+        f"- **Workloads.** {_seed_sentences(comparison, data_size)} {_sweep_sentences(config)} Each measurement "
+        f"has a {decimal(config.get('warmup_seconds'), 0)} s warmup and a "
+        f"{decimal(config.get('measure_seconds'), 0)} s window under seed `{config.get('seed', 'n/a')}`. The "
+        f"harness measures every rate {runs} independent times, so each figure is the median of those {runs} "
+        "repetitions with a 95% confidence interval. The service-level target for an operating point is a p99 "
+        f"of at most {decimal(config.get('slo_p99_ms'), 0)} ms."
     )
     soak_seconds = config.get("soak_seconds")
     soak_workloads = humanized_list([workload_label(name) for name in config.get("soak_workloads", [])])
@@ -123,34 +290,10 @@ def run_block(source: Source) -> str:
         else:
             duration = f"{integer(soak_seconds)}-second"
         bullets.append(
-            f"- **Soak.** After the sweep, {soak_workloads} held each engine at its operating point for one "
-            f"continuous {duration} window, reported in 30-second slices."
+            f"- **Soak.** After the sweep, the harness held each engine at its operating point on {soak_workloads} "
+            f"for one continuous {duration} window, which the page reports in 30-second slices."
         )
-    deadline_ms = _writer_deadline_ms(comparison)
-    in_flight = integer(config.get("max_in_flight"))
-    schema_ms = _sirannon_setting(comparison, "schema_timeout_ms")
-    schema_text = ""
-    if is_number(schema_ms) and schema_ms > 0:
-        schema_text = (
-            f" The schema reset between workloads ran under a {integer(float(schema_ms) / 60000)}-minute request "
-            f"limit, because dropping a table of this size takes minutes of random reads."
-        )
-    if deadline_ms == 0:
-        bullets.append(
-            "- **Writer deadline.** Sirannon ran with its writer deadline disabled, matching PostgreSQL's "
-            "`statement_timeout` default, so a slow write was never reported as a stalled one. The workload stall "
-            "deadline and the per-pass timeout still bound a wedged engine." + schema_text
-        )
-    elif deadline_ms is not None:
-        raised = ""
-        if deadline_ms > SIRANNON_DEFAULT_WRITE_TIMEOUT_MS:
-            raised = (
-                f", raised from the {integer(SIRANNON_DEFAULT_WRITE_TIMEOUT_MS / 1000)}-second default so that the "
-                f"table drop between workloads completes instead of failing"
-            )
-        bullets.append(
-            f"- **Writer deadline.** Sirannon gave a single write {integer(deadline_ms / 1000)} seconds before "
-            f"reporting the writer unresponsive{raised}. Measured operations finish in milliseconds, with at most "
-            f"{in_flight} requests in flight." + schema_text
-        )
+    timeouts = _timeout_bullet(comparison)
+    if timeouts:
+        bullets.append(timeouts)
     return "\n".join(bullets)

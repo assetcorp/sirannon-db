@@ -73,17 +73,17 @@ def soak_block(source: Source, chart_dir: str) -> str:
         parts.extend(figures)
         parts.append(table(headers, aligns, body))
     if not parts:
-        return "No soak results were recorded."
+        return "The harness recorded no soak results."
     intro = (
-        "The sweep measures in short windows, so this section holds each engine at its operating point for one "
-        "long continuous window instead. The window is long enough to cross both engines' checkpoint cycles, "
-        "and the worst-30-second column shows the slowest slice of it, which is where a checkpoint stall "
-        "appears. Each figure plots every window in order, so a periodic stall reads as a spike and a steady "
-        "cost reads as a raised floor. An engine holds when it keeps at least 95% of the rate with under 1% "
-        "errors and a p99 under "
-        "the service-level target across the whole window, so an engine that keeps the pace but misses the "
-        "latency target reads as a miss. Bold marks the higher rate of the two engines on a workload. It also "
-        "marks the engine that held where only one of the two held. Each engine ran this window at its own "
-        "operating point, so the latency columns carry no mark."
+        "Each sweep window is short, so for this section the harness held each engine at its operating point "
+        "for one long continuous window. That window is long enough to include checkpoints from both engines, "
+        "so the 'Worst 30 s p99' column, which gives the slowest 30-second slice, shows any stall that a "
+        "checkpoint causes. Each figure plots every 30-second slice in order, so a periodic stall appears as a "
+        "spike and a steady slowdown appears as a raised floor. An engine holds its operating point when it keeps at "
+        "least 95% of the rate across the whole window, with under 1% errors and a p99 at or under the "
+        "service-level target. An engine that keeps the rate with a p99 above the target therefore counts as a "
+        "miss. Bold marks the higher achieved rate of the two engines on each workload. Where one engine held "
+        "and the other missed, bold also marks the engine that held. Since each engine served its own operating "
+        "point during the window, neither latency column is bold."
     )
     return "\n\n".join([intro, *parts])

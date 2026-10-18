@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { pauseContainer, unpauseContainer } from './docker.js'
+import { createEtcdCoordinator } from '../../replication/coordinator/etcd.js'
+import { pauseContainer, unpauseContainer, waitForEtcdHealthy } from './docker.js'
 import { expectItemsAbsentOnDisk, expectRejectsWith, waitForItemsOnDisk } from './gate-assertions.js'
 import {
   expectExactlyOneWritablePrimary,
@@ -9,7 +10,17 @@ import {
   waitForPrimary,
   waitForSessionGone,
 } from './gate-cluster-state.js'
-import { type GateEnvironment, NODE_A, NODE_B, NODE_C, NODE_IDS, requireNode, setEtcdLink } from './gate-environment.js'
+import {
+  CLUSTER_ID,
+  type GateEnvironment,
+  GROUP_ID,
+  NODE_A,
+  NODE_B,
+  NODE_C,
+  NODE_IDS,
+  requireNode,
+  setEtcdLink,
+} from './gate-environment.js'
 import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { waitForReadableNodes, waitForReadiness } from './gate-observations.js'
 import { expectPublicHttpRejectsWith, itemRow, writeItemMajority } from './gate-public-api.js'
@@ -18,6 +29,8 @@ import { sleep, waitForCondition } from './gate-support.js'
 import type { ItemRow } from './sqlite-oracle.js'
 
 const COORDINATOR_REFUSALS = ['COORDINATOR_UNAVAILABLE', 'STALE_PRIMARY', 'TOPOLOGY_ERROR']
+const OUTAGE_CALL_TIMEOUT_MS = 500
+const CALLS_DURING_OUTAGE = 3
 
 async function writeToPrimaryUntilAccepted(env: GateEnvironment, row: ItemRow, timeoutMs: number): Promise<void> {
   await waitForCondition(async () => {
@@ -93,6 +106,39 @@ describe('losing contact with etcd', () => {
     await waitForItemsOnDisk(env, NODE_IDS, acknowledged, 20_000)
     await expectItemsAbsentOnDisk(env, NODE_IDS, [90, 91], 1_000)
     await expectExactlyOneWritablePrimary(env, promoted, 2n)
+  })
+
+  it('answers the first coordinator call after a full etcd outage ends, once every member has failed several calls in a row', async () => {
+    const env = environment()
+    const coordinator = createEtcdCoordinator({
+      hosts: env.etcd.endpoints,
+      keyPrefix: env.keyPrefix,
+      allowInsecure: true,
+      dialTimeoutMs: OUTAGE_CALL_TIMEOUT_MS,
+      defaultCallTimeoutMs: OUTAGE_CALL_TIMEOUT_MS,
+    })
+    try {
+      await coordinator.setReplicationGroupState({
+        clusterId: CLUSTER_ID,
+        groupId: GROUP_ID,
+        votingDataBearingNodeIds: [...NODE_IDS],
+        currentPrimary: { nodeId: NODE_A },
+        primaryTerm: 7n,
+        inSyncNodeIds: [NODE_A],
+      })
+      for (const member of env.etcd.containerNames) await pauseContainer(member)
+      for (let call = 0; call < CALLS_DURING_OUTAGE; call++) {
+        await expect(coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)).rejects.toThrow()
+      }
+      for (const member of env.etcd.containerNames) await unpauseContainer(member)
+      await waitForEtcdHealthy(env.etcd, 10_000)
+
+      const reached = await coordinator.getReplicationGroupState(CLUSTER_ID, GROUP_ID)
+      expect([reached?.primaryTerm, reached?.currentPrimary?.nodeId]).toEqual([7n, NODE_A])
+      expect((await env.etcdOracle.group())?.primaryTerm).toBe(7n)
+    } finally {
+      await coordinator.close()
+    }
   })
 
   it('keeps the primary writable with one etcd member paused, and fences every node once a second member pauses', async () => {

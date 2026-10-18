@@ -35,7 +35,7 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, or uses `ATTACH`, `DETACH`, or `PRAGMA writable_schema` |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
-| - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads or writes through the database while a `transaction` callback holds the writer, so make those calls through the callback's `Transaction` handle |
+| - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |
 | `HookDeniedError` | `HOOK_DENIED` | A before-hook throws to refuse the operation |
 | `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code of your own |
 | `CDCError` | `CDC_ERROR` | Change data capture fails, or Sirannon cannot maintain a live query for the statement |

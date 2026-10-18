@@ -637,6 +637,8 @@ export class DatabaseLifecycle {
     protected ensureOpen(): void;
     // @internal
     protected ensureWritable(): void;
+    // @internal
+    protected ensureWriterCanWait(): void;
     readonly id: string;
     readonly path: string;
     get readerCount(): number;

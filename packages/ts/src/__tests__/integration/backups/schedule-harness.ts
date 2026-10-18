@@ -3,7 +3,8 @@ import type { BackupFileReport } from '../../../core/backup/report.js'
 import type { Database } from '../../../core/database.js'
 import type { BackupScheduleOptions } from '../../../core/types.js'
 
-const REAL_TURNS_PER_STEP = 100
+const QUIET_TURNS_PER_STEP = 100
+const COPY_SETTLE_LIMIT_MS = 10_000
 const SECOND_MS = 1_000
 const MINUTE_MS = 60_000
 
@@ -12,8 +13,17 @@ export function startScheduleClock(startIso?: string): void {
   if (startIso) vi.setSystemTime(new Date(startIso))
 }
 
+function fileRequestPending(): boolean {
+  return process.getActiveResourcesInfo().some(resource => resource.startsWith('FSReq'))
+}
+
 export async function letCopiesFinish(): Promise<void> {
-  for (let turn = 0; turn < REAL_TURNS_PER_STEP; turn++) await new Promise(settle => setImmediate(settle))
+  const deadline = performance.now() + COPY_SETTLE_LIMIT_MS
+  let quietTurns = 0
+  while (quietTurns < QUIET_TURNS_PER_STEP && performance.now() < deadline) {
+    await new Promise(settle => setImmediate(settle))
+    quietTurns = fileRequestPending() ? 0 : quietTurns + 1
+  }
 }
 
 async function advanceInSteps(totalMs: number, stepMs: number): Promise<void> {

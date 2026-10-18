@@ -149,13 +149,28 @@ describe('transaction boundaries on a table subscription', () => {
     const external = log.filter(row => String(JSON.parse(row.new_data ?? '{}').region).startsWith('external'))
     const stamped = log.filter(row => !external.includes(row))
 
-    expect(external.map(row => [row.tx_id, row.node_id, row.hlc])).toEqual(external.map(() => ['', '', '']))
+    const serverNode = stamped[0]?.node_id
+    const externalSeqs = new Set(external.map(row => row.seq))
+    const hlcAfterEachExternal = log.flatMap((row, at) => (externalSeqs.has(row.seq) ? [log[at + 1]?.hlc ?? ''] : []))
+
+    expect(external).toHaveLength(sirannonWrites.length)
+    expect(serverNode).toMatch(/^[0-9a-f]{32}$/)
+    expect(stamped.every(row => row.node_id === serverNode)).toBe(true)
+    expect(external.map(row => [row.node_id, /^[0-9a-f]{32}$/.test(row.tx_id)])).toEqual(
+      external.map(() => [serverNode, true]),
+    )
+    expect(external.map((row, at) => row.hlc !== '' && row.hlc < hlcAfterEachExternal[at])).toEqual(
+      external.map(() => true),
+    )
     expect(stamped.map(row => row.tx_id).filter(id => id === '')).toEqual([])
     expect(new Set(stamped.map(row => row.tx_id)).size).toBe(sirannonWrites.length)
+    expect(new Set(log.map(row => row.tx_id)).size).toBe(sirannonWrites.length + external.length)
     expect(live.map(event => event.txEnd === true)).toEqual([true, true, true, true, true, true, true, false, true])
     const ends = lastOfEachTransaction(log)
-    expect(markers(live)).toEqual(log.map(row => [row.seq.toString(), row.tx_id || undefined, ends.has(row.seq)]))
-    expect(markers(replayed)).toEqual(markers(live))
+    expect(markers(live)).toEqual(
+      log.map(row => [row.seq.toString(), externalSeqs.has(row.seq) ? undefined : row.tx_id, ends.has(row.seq)]),
+    )
+    expect(markers(replayed)).toEqual(log.map(row => [row.seq.toString(), row.tx_id, ends.has(row.seq)]))
   })
 
   it('marks the last change that passes the filter and sends nothing for a transaction whose changes all fail it', async () => {

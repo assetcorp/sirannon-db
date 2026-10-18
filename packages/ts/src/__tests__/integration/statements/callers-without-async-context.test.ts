@@ -57,7 +57,14 @@ async function outcomeWithin(call: () => Promise<unknown>): Promise<string> {
   }
 }
 
-function callsThroughTheDatabase(db: Database): Record<string, () => Promise<unknown>> {
+const TAGS_MIGRATION = {
+  version: 1,
+  name: 'create_tags',
+  up: 'CREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT NOT NULL)',
+  down: 'DROP TABLE tags',
+}
+
+function callsThroughTheDatabase(db: Database, name: string): Record<string, () => Promise<unknown>> {
   return {
     execute: () => db.execute("INSERT INTO notes (body) VALUES ('nested execute')"),
     executeBatch: () => db.executeBatch('INSERT INTO notes (body) VALUES (?)', [['nested batch']]),
@@ -66,6 +73,29 @@ function callsThroughTheDatabase(db: Database): Record<string, () => Promise<unk
     bulkLoad: () => db.bulkLoad('INSERT INTO notes (body) VALUES (?)', [['nested load']]),
     query: () => db.query('SELECT count(*) AS n FROM notes'),
     queryOne: () => db.queryOne('SELECT count(*) AS n FROM notes'),
+    migrate: () => db.migrate([TAGS_MIGRATION]),
+    rollback: () => db.rollback([TAGS_MIGRATION], 0),
+    appliedMigrations: () => db.appliedMigrations(),
+    watch: () => db.watch('notes'),
+    unwatch: () => db.unwatch('notes'),
+    live: () => db.live('SELECT id, body FROM notes'),
+    loadExtension: () => db.loadExtension(join(dir, 'missing-extension')),
+    backup: () => db.backup(join(dir, `${name}-copy.db`)),
+    captureBackupChanges: () => db.captureBackupChanges(),
+  }
+}
+
+function tablesIn(name: string): string[] {
+  const raw = new BetterSqlite3(join(dir, `${name}.db`), { readonly: true, fileMustExist: true })
+  try {
+    return raw
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_sirannon%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
+      )
+      .all()
+      .map(row => (row as { name: string }).name)
+  } finally {
+    raw.close()
   }
 }
 
@@ -74,7 +104,7 @@ describe('a transaction callback on a driver without async context', () => {
     it(`refuses every call through the database at once and commits the writes through the handle, ${watch ? 'watched' : 'unwatched'}`, async () => {
       const name = `nested-${watch}`
       const db = await openNotes(name, watch)
-      const calls = callsThroughTheDatabase(db)
+      const calls = callsThroughTheDatabase(db, name)
 
       const outcomes = await db.transaction(async tx => {
         await tx.execute("INSERT INTO notes (body) VALUES ('through the handle')")
@@ -86,8 +116,11 @@ describe('a transaction callback on a driver without async context', () => {
 
       expect(outcomes).toEqual(Object.fromEntries(Object.keys(calls).map(label => [label, 'WRITER_HELD_BY_CALLBACK'])))
       expect(bodiesIn(name)).toEqual(['through the handle', 'after the refusals'])
+      expect(tablesIn(name)).toEqual(['notes'])
       await db.execute("INSERT INTO notes (body) VALUES ('once the callback returned')")
       expect(bodiesIn(name)).toEqual(['through the handle', 'after the refusals', 'once the callback returned'])
+      expect(await outcomeWithin(() => db.migrate([TAGS_MIGRATION]))).toBe('fulfilled')
+      expect(tablesIn(name)).toEqual(['notes', 'tags'])
     })
   }
 

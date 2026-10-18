@@ -52,6 +52,7 @@ export class Database extends DatabaseBackups {
     resolver?: ConflictResolver | ((table: string) => ConflictResolver),
   ): Promise<ApplyResult> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.sync.applyChanges(batch, resolver)
   }
 
@@ -184,12 +185,13 @@ export class Database extends DatabaseBackups {
    * method, becomes part of the same transaction. Sirannon executes each batch,
    * statement list, and nested function inside a savepoint, so that one that
    * fails rolls back only its own writes. The wa-sqlite and Expo drivers have
-   * no way to tell a call from inside the function apart from a call by
-   * another caller, and they read through the writer connection, so on those
-   * drivers every read and write through this database fails at once with
-   * `WRITER_HELD_BY_CALLBACK` while the function holds the writer, whoever
-   * makes the call, and the function has to make its reads and writes through
-   * `tx`.
+   * no async context to tell the function's own calls from another caller's,
+   * and they read through the writer connection. On those drivers, while the
+   * function holds the writer, every call through this database that needs
+   * the writer fails at once with `WRITER_HELD_BY_CALLBACK`, whoever makes it.
+   * The refusal applies to reads, writes, migrations, backups,
+   * {@link Database.watch}, and {@link Database.live}, so the function has to
+   * make its reads and writes through `tx`.
    * Sirannon fires the query hooks for each statement that the
    * function executes through the transaction, and once the function returns
    * or throws, the transaction refuses every further call with
@@ -210,6 +212,7 @@ export class Database extends DatabaseBackups {
    */
   async watch(table: string): Promise<void> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     await this.runtime.cdc.watch(table)
   }
 
@@ -220,6 +223,7 @@ export class Database extends DatabaseBackups {
    */
   async unwatch(table: string): Promise<void> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     await this.runtime.cdc.unwatch(table)
   }
 
@@ -284,6 +288,7 @@ export class Database extends DatabaseBackups {
     options?: LiveQueryOptions,
   ): Promise<LiveQuery<T>> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     const cdc = this.runtime.cdc
     return openLiveQuery<T>(
       { cdc, observer: this.runtime.reads.observer, watch: table => this.watch(table) },
@@ -302,6 +307,7 @@ export class Database extends DatabaseBackups {
    */
   async migrate(migrations: Migration[]): Promise<MigrationResult> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.migrate(migrations)
   }
 
@@ -312,6 +318,7 @@ export class Database extends DatabaseBackups {
    */
   async appliedMigrations(): Promise<AppliedMigrationRow[]> {
     this.ensureNotClosed()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.applied()
   }
 
@@ -325,6 +332,7 @@ export class Database extends DatabaseBackups {
    */
   async rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     this.ensureWritable()
+    this.ensureWriterCanWait()
     return this.runtime.migrations.rollback(migrations, version)
   }
 
@@ -335,6 +343,7 @@ export class Database extends DatabaseBackups {
    */
   async loadExtension(extensionPath: string): Promise<void> {
     this.ensureOpen()
+    this.ensureWriterCanWait()
     await this.runtime.loadExtension(extensionPath)
   }
 

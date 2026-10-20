@@ -60,6 +60,8 @@ PROVIDER=gcp ./run-cloud.sh ssh     # open a shell on the VM
 PROVIDER=gcp ./run-cloud.sh down    # delete the VM
 ```
 
+`sync` replaces the checkout on the VM. Where a run directory that you push already exists on the VM, `sync` keeps the files that only the VM holds, such as the server logs and `resource-control.log`, so that a pass you repeat into an existing run adds to that run's logs.
+
 `run` launches the benchmark detached, so it survives an SSH drop or a lost connection. Re-attach any time with `logs`.
 
 ## Configuration

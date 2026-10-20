@@ -95,7 +95,7 @@ cmd_sync() {
   log "package the working tree via git (honours .gitignore, keeps .git for the build stamp)"
   if [ "$DRY_RUN" = "1" ]; then
     prov_scp_up "<working-tree>.tgz" "sirannon.tgz"
-    prov_ssh "unpack sirannon.tgz into ~/sirannon"
+    prov_ssh "unpack sirannon.tgz into ~/sirannon, keeping VM-only files in pushed run directories"
     return 0
   fi
   local tarball filelist
@@ -110,7 +110,7 @@ cmd_sync() {
   rm -f "$filelist"
   log "upload and unpack to ~/sirannon"
   prov_scp_up "$tarball" "sirannon.tgz"
-  prov_ssh "rm -rf sirannon && mkdir -p sirannon && tar xzf sirannon.tgz -C sirannon && rm -f sirannon.tgz"
+  prov_ssh "rm -rf sirannon.next && mkdir -p sirannon.next && tar xzf sirannon.tgz -C sirannon.next && rm -f sirannon.tgz && bash sirannon.next/benchmarks/cloud/remote-swap-checkout.sh"
   rm -f "$tarball"
 }
 

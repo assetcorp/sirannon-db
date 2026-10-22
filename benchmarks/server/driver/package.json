@@ -9,13 +9,13 @@
     "bench": "node src/cli.ts"
   },
   "dependencies": {
-    "pg": "8.22.0",
-    "smol-toml": "1.7.0",
-    "undici": "8.10.0"
+    "pg": "8.23.1",
+    "smol-toml": "1.9.1",
+    "undici": "8.12.2"
   },
   "devDependencies": {
-    "@types/node": "26.1.0",
-    "@types/pg": "8.20.0",
-    "typescript": "6.0.3"
+    "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2"
   }
 }

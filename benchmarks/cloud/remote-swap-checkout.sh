@@ -4,23 +4,19 @@ set -euo pipefail
 
 NEXT="$(cd "$(dirname "$0")/../.." && pwd)"
 CURRENT="$(dirname "$NEXT")/sirannon"
-RUNS_REL="benchmarks/server/results/runs"
+RESULTS_REL="benchmarks/server/results"
 
-if [ -d "$CURRENT/$RUNS_REL" ] && [ -d "$NEXT/$RUNS_REL" ]; then
-  for pushed in "$NEXT/$RUNS_REL"/*/; do
-    pushed="${pushed%/}"
-    [ -d "$pushed" ] || continue
-    previous="$CURRENT/$RUNS_REL/$(basename "$pushed")"
-    [ -d "$previous" ] || continue
-    while IFS= read -r -d '' file; do
-      if [ ! -e "$pushed/$file" ]; then
-        mkdir -p "$(dirname "$pushed/$file")"
-        cp -p "$previous/$file" "$pushed/$file"
-        echo "kept $(basename "$pushed")/${file#./} from the previous checkout"
-      fi
-    done < <(cd "$previous" && find . -type f -print0)
+for runs_rel in runs .smoke/runs; do
+  [ -d "$CURRENT/$RESULTS_REL/$runs_rel" ] || continue
+  for kept in "$CURRENT/$RESULTS_REL/$runs_rel"/*/; do
+    kept="${kept%/}"
+    [ -d "$kept" ] || continue
+    target="$NEXT/$RESULTS_REL/$runs_rel/$(basename "$kept")"
+    mkdir -p "$target"
+    cp -Rp "$kept/." "$target/"
+    echo "kept $runs_rel/$(basename "$kept") from the previous checkout"
   done
-fi
+done
 
 rm -rf "$CURRENT"
 mv "$NEXT" "$CURRENT"

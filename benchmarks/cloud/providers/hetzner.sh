@@ -29,15 +29,27 @@ prov_init() {
   resolve_ssh_key
 }
 
+_hcloud_subnet_count() {
+  hcloud network describe "$HCLOUD_NETWORK" -o json \
+    | python3 -c 'import json, sys; print(len(json.load(sys.stdin).get("subnets") or []))'
+}
+
 prov_network_up() {
   if [ "$DRY_RUN" != "1" ] && hcloud network describe "$HCLOUD_NETWORK" >/dev/null 2>&1; then
     log "network $HCLOUD_NETWORK already exists"
-    return 0
+  else
+    log "create the private network $HCLOUD_NETWORK in $HCLOUD_NETWORK_ZONE"
+    _run hcloud network create --name "$HCLOUD_NETWORK" --ip-range 10.77.0.0/16
   fi
-  log "create the private network $HCLOUD_NETWORK in $HCLOUD_NETWORK_ZONE"
-  _run hcloud network create --name "$HCLOUD_NETWORK" --ip-range 10.77.0.0/16
-  _run hcloud network add-subnet "$HCLOUD_NETWORK" --network-zone "$HCLOUD_NETWORK_ZONE" \
-    --type cloud --ip-range 10.77.0.0/24
+  local subnets="0"
+  if [ "$DRY_RUN" != "1" ]; then
+    subnets="$(_hcloud_subnet_count)" || die "could not read the subnets of network $HCLOUD_NETWORK"
+  fi
+  if [ "$subnets" = "0" ]; then
+    log "add a subnet to $HCLOUD_NETWORK in $HCLOUD_NETWORK_ZONE"
+    _run hcloud network add-subnet "$HCLOUD_NETWORK" --network-zone "$HCLOUD_NETWORK_ZONE" \
+      --type cloud --ip-range 10.77.0.0/24
+  fi
 }
 
 prov_network_down() {

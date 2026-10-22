@@ -27,11 +27,12 @@ prov_network_up() {
     log "(dry-run) would ensure security group '$SG_NAME' and let its members reach each other on every TCP port"
     return 0
   fi
-  local sg
+  local sg covering
   sg="$(_aws_security_group)"
-  if aws ec2 describe-security-groups --group-ids "$sg" \
-    --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId=='$sg']] | length(@)" \
-    --output text 2>/dev/null | grep -qx '0'; then
+  covering="$(aws ec2 describe-security-groups --group-ids "$sg" \
+    --query "SecurityGroups[0].IpPermissions[?(IpProtocol=='-1' || (IpProtocol=='tcp' && FromPort==\`0\` && ToPort==\`65535\`)) && UserIdGroupPairs[?GroupId=='$sg']] | length(@)" \
+    --output text)" || die "could not read the rules of security group $SG_NAME"
+  if [ "$covering" = "0" ]; then
     log "let the members of $SG_NAME reach each other on every TCP port"
     aws ec2 authorize-security-group-ingress --group-id "$sg" \
       --ip-permissions "IpProtocol=tcp,FromPort=0,ToPort=65535,UserIdGroupPairs=[{GroupId=$sg}]" >/dev/null

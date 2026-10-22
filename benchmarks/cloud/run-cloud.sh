@@ -13,6 +13,7 @@ DRIVER="$SCRIPT_DIR/providers/${PROVIDER}.sh"
 
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+. "$SCRIPT_DIR/lib/load-vm.sh"
 # shellcheck source=/dev/null
 . "$DRIVER"
 

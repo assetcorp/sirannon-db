@@ -16,7 +16,23 @@ prov_init() {
   REGION="${DO_REGION:-nyc3}"
   SSH_USER="${SSH_USER:-root}"
   : "${MACHINE_LABEL:=DigitalOcean ${MACHINE_TYPE}, ${REGION}}"
+  : "${LOAD_MACHINE_TYPE:=$MACHINE_TYPE}"
+  : "${LOAD_MACHINE_LABEL:=DigitalOcean ${LOAD_MACHINE_TYPE}, ${REGION}}"
   resolve_ssh_key
+}
+
+prov_network_up() {
+  log "both droplets join the default VPC of $REGION, which connects them privately"
+}
+
+prov_network_down() { return 0; }
+
+prov_private_ip() {
+  [ "$DRY_RUN" = "1" ] && { echo "<private-ip of $VM_NAME>"; return 0; }
+  local id
+  id="$(_do_id)"
+  [ -n "$id" ] || die "droplet $VM_NAME not found"
+  doctl compute droplet get "$id" --format PrivateIPv4 --no-header
 }
 
 _do_id() {

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-PG_BINDIR="/usr/lib/postgresql/17/bin"
+POSTGRES_MAJOR=18
+PG_BINDIR="/usr/lib/postgresql/${POSTGRES_MAJOR}/bin"
 
 CPUSET_PY='
 import sys
@@ -46,7 +47,7 @@ require_supported_host() {
   done
   for required in "$PG_BINDIR/postgres" "$PG_BINDIR/initdb" "$PG_BINDIR/pg_isready" "$PG_BINDIR/createdb"; do
     if [ ! -x "$required" ]; then
-      echo "missing ${required}; install PostgreSQL 17 first (benchmarks/cloud/remote-bootstrap.sh does this on the VM)" >&2
+      echo "missing ${required}; install PostgreSQL ${POSTGRES_MAJOR} first (benchmarks/cloud/remote-bootstrap.sh does this on the VM)" >&2
       exit 2
     fi
   done

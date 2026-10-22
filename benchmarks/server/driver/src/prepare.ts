@@ -1,6 +1,6 @@
 import type { Config } from './config.ts'
 import type { Driver } from './drivers/driver.ts'
-import { engineCpuBlock, withEngineCores } from './engine-cpu.ts'
+import { engineCpuBlock, engineCpuSource, withEngineCores } from './engine-cpu.ts'
 import { progress } from './progress.ts'
 import { SeededRng } from './rng.ts'
 import type { Workload } from './workloads/workload.ts'
@@ -64,7 +64,8 @@ export async function prepare(driver: Driver, workload: Workload, config: Config
   let seconds: number
   let seedCores: number | null = null
   try {
-    seedCores = (await withEngineCores(config.engineCgroup, () => driver.seed(counted))).coresUsed
+    const cpuSource = engineCpuSource(config.engineCgroup, config.engineCpuUrl)
+    seedCores = (await withEngineCores(cpuSource, () => driver.seed(counted))).coresUsed
   } finally {
     clearInterval(ticker)
     seconds = (performance.now() - seedStart) / 1000

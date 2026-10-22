@@ -218,6 +218,12 @@ export class SirannonDriver extends Driver {
     return 1
   }
 
+  async setConcurrency(_level: number): Promise<void> {}
+
+  connectionsAt(_level: number): number {
+    return 1
+  }
+
   async close(): Promise<void> {
     if (this.client !== null) {
       this.client.close()

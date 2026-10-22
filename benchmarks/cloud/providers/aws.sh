@@ -17,7 +17,42 @@ prov_init() {
   SSH_USER="${SSH_USER:-ubuntu}"
   SG_NAME="${AWS_SG_NAME:-sirannon-bench-sg}"
   : "${MACHINE_LABEL:=AWS ${MACHINE_TYPE}, ${AWS_REGION}}"
+  : "${LOAD_MACHINE_TYPE:=m6i.2xlarge}"
+  : "${LOAD_MACHINE_LABEL:=AWS ${LOAD_MACHINE_TYPE}, ${AWS_REGION}}"
   resolve_ssh_key
+}
+
+prov_network_up() {
+  if [ "$DRY_RUN" = "1" ]; then
+    log "(dry-run) would ensure security group '$SG_NAME' and let its members reach each other on every TCP port"
+    return 0
+  fi
+  local sg
+  sg="$(_aws_security_group)"
+  if aws ec2 describe-security-groups --group-ids "$sg" \
+    --query "SecurityGroups[0].IpPermissions[?UserIdGroupPairs[?GroupId=='$sg']] | length(@)" \
+    --output text 2>/dev/null | grep -qx '0'; then
+    log "let the members of $SG_NAME reach each other on every TCP port"
+    aws ec2 authorize-security-group-ingress --group-id "$sg" \
+      --ip-permissions "IpProtocol=tcp,FromPort=0,ToPort=65535,UserIdGroupPairs=[{GroupId=$sg}]" >/dev/null
+  fi
+}
+
+prov_network_down() { return 0; }
+
+prov_private_ip() {
+  [ "$DRY_RUN" = "1" ] && { echo "<private-ip of $VM_NAME>"; return 0; }
+  local id
+  id="$(_aws_instance_id)"
+  [ -n "$id" ] || die "instance $VM_NAME not found"
+  aws ec2 describe-instances --instance-ids "$id" \
+    --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text
+}
+
+_aws_engine_subnet() {
+  aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=$ENGINE_VM_NAME" "Name=instance-state-name,Values=pending,running" \
+    --query 'Reservations[0].Instances[0].SubnetId' --output text 2>/dev/null
 }
 
 _aws_instance_id() {
@@ -98,7 +133,12 @@ prov_create() {
     run_flags+=(--instance-initiated-shutdown-behavior terminate)
     run_flags+=(--user-data "$(printf '#!/bin/sh\nshutdown -h +%s\n' $(( VM_MAX_HOURS * 60 )))")
   fi
-  [ -n "${AWS_SUBNET:-}" ] && run_flags+=(--subnet-id "$AWS_SUBNET")
+  local subnet="${AWS_SUBNET:-}"
+  if [ -z "$subnet" ] && [ "$VM_NAME" != "$ENGINE_VM_NAME" ]; then
+    subnet="$(_aws_engine_subnet)"
+    [ -n "$subnet" ] && [ "$subnet" != "None" ] || die "could not read the subnet of $ENGINE_VM_NAME, which $VM_NAME has to share"
+  fi
+  [ -n "$subnet" ] && run_flags+=(--subnet-id "$subnet")
   _run aws ec2 run-instances "${run_flags[@]}" --query 'Instances[0].InstanceId' --output text
   log "wait for instance-running"
   _run aws ec2 wait instance-running \

@@ -11,6 +11,7 @@ WORKLOAD_LABELS = {
     "ycsb-c": "YCSB-C (read-only)",
     "ycsb-f": "YCSB-F (read-modify-write)",
     "tpc-c-derived": "TPC-C-derived",
+    "tpc-c-new-order": "TPC-C new-order transaction",
 }
 
 DURABILITY_LABELS = {

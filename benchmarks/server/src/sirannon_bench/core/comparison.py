@@ -50,7 +50,30 @@ def _operating_metrics(workload: dict) -> dict:
         "cores_used": (point.get("engine_cpu") or {}).get("cores_used"),
         "cores_allowed": (point.get("engine_cpu") or {}).get("cores_allowed"),
         "seed_rows": (workload.get("seed") or {}).get("rows"),
+        "concurrency": point.get("concurrency"),
     }
+
+
+def _level_rows(workload: dict) -> list[dict] | None:
+    levels = workload.get("concurrency_levels")
+    if not isinstance(levels, list):
+        return None
+    rows: list[dict] = []
+    for level in levels:
+        point = level.get("operating_point") or {}
+        throughput = point.get("throughput") or {}
+        latency = point.get("latency_ms") or {}
+        rows.append({
+            "concurrency": level.get("concurrency"),
+            "client_connections": level.get("client_connections"),
+            "runs_per_rate": level.get("runs_per_rate"),
+            "target_rate": point.get("target_rate"),
+            "under_slo": point.get("under_slo", False),
+            "ops_median": throughput.get("median_ops"),
+            "p99_ms": latency.get("p99"),
+            "error_rate": point.get("error_rate"),
+        })
+    return rows
 
 
 def _workload_rows(sirannon: dict, postgres: dict, order: list[str], seed: int) -> list[dict]:
@@ -75,6 +98,12 @@ def _workload_rows(sirannon: dict, postgres: dict, order: list[str], seed: int) 
             "postgres": pg_metrics,
             "sirannon_soak": sir.get("soak"),
             "postgres_soak": pg.get("soak"),
+            "sirannon_operation_cost": sir.get("operation_cost"),
+            "postgres_operation_cost": pg.get("operation_cost"),
+            "sirannon_peak_concurrency": sir.get("peak_concurrency"),
+            "postgres_peak_concurrency": pg.get("peak_concurrency"),
+            "sirannon_levels": _level_rows(sir),
+            "postgres_levels": _level_rows(pg),
             "speedup": speedup,
         })
     return rows
@@ -156,6 +185,8 @@ def build_comparison(run_dir: Path, manifest: dict) -> dict:
     by_durability = _load_engine_files(run_dir)
     cold_start_path = run_dir / "cold-start.json"
     cold_start = _read_json(cold_start_path) if cold_start_path.is_file() else None
+    engine_machine_path = run_dir / "engine-machine.json"
+    engine_machine = _read_json(engine_machine_path) if engine_machine_path.is_file() else None
 
     reference_config: dict = {}
     durabilities: dict[str, dict] = {}
@@ -180,12 +211,17 @@ def build_comparison(run_dir: Path, manifest: dict) -> dict:
                 "sirannon": sirannon.get("client_saturation"),
                 "postgres": postgres.get("client_saturation"),
             },
+            "network": {
+                "sirannon": sirannon.get("network"),
+                "postgres": postgres.get("network"),
+            },
         }
 
     return {
         "run_id": manifest.get("run_id"),
         "created_at": manifest.get("created_at"),
         "environment": manifest.get("environment", {}),
+        "engine_machine": engine_machine,
         "config": reference_config,
         "durabilities": durabilities,
         "features": _collect_features(by_durability),

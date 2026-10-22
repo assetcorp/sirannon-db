@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from comparison_view import durabilities, durability_label, workload_label
+from levels_section import levels_block
+from operation_cost_section import operation_cost_table
 from render import HIGHER_IS_BETTER, emphasize_best, is_number, ms, ops, percent, ratio, table
+from run_shape import concurrency_levels
 from sources import Source
 
 from chart_paths import figure, operating_points_chart, tail_chart
 
 ERROR_RATE_CEILING = 0.01
 HELD_EVERY_RATE = "held every rate"
+NEW_ORDER_WORKLOAD = "tpc-c-new-order"
 
 
 def _held(side: dict, slo_ms: object) -> bool:
@@ -138,4 +142,13 @@ def throughput_block(source: Source, chart_dir: str) -> str:
         "shares, which are an insert into `orders` and an update of one customer's balance. Neither write is a "
         "full TPC-C transaction. The harness measures YCSB A, B, C, and F, but not D or E._"
     )
-    return "\n\n".join([*parts, note])
+    if any(row.get("workload") == NEW_ORDER_WORKLOAD for _, node in recorded for row in node.get("workloads", [])):
+        note += (
+            "\n\n_For the TPC-C new-order transaction, every operation is one transaction of six statements, which "
+            "insert an order, take stock from four products in the order that the generator drew them, and charge "
+            "the customer's balance. A PostgreSQL deadlock between two of these transactions counts as an error, "
+            "as any other error does._"
+        )
+    costs = operation_cost_table(recorded)
+    levels = levels_block(recorded, concurrency_levels(source.comparison))
+    return "\n\n".join([*parts, note, *[block for block in (costs, levels) if block]])

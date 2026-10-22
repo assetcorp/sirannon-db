@@ -4,6 +4,7 @@ set -uo pipefail
 
 LABEL="${BENCH_MACHINE_LABEL:-GCP VM}"
 REPO="$HOME/sirannon"
+POSTGRES_MAJOR=18
 status=0
 
 cd "$REPO" || { echo "repo not found at $REPO" >&2; exit 1; }
@@ -19,7 +20,7 @@ fail_early() {
 }
 
 command -v systemd-run >/dev/null 2>&1 || fail_early "systemd-run is missing; the suite pins engines with systemd cgroups"
-[ -x /usr/lib/postgresql/17/bin/postgres ] || fail_early "PostgreSQL 17 is missing; run the setup step (remote-bootstrap.sh) first"
+[ -x "/usr/lib/postgresql/${POSTGRES_MAJOR}/bin/postgres" ] || fail_early "PostgreSQL ${POSTGRES_MAJOR} is missing; run the setup step (remote-bootstrap.sh) first"
 command -v node >/dev/null 2>&1 || fail_early "Node is missing; run the setup step (remote-bootstrap.sh) first"
 command -v pnpm >/dev/null 2>&1 || fail_early "pnpm is missing; run the setup step (remote-bootstrap.sh) first"
 

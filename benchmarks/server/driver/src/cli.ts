@@ -6,6 +6,7 @@ import { buildDriver } from './drivers/registry.ts'
 import { captureEnvironment } from './environment.ts'
 import { measureCdcLatency } from './features.ts'
 import { type EngineResult, runEngine } from './harness.ts'
+import { measureNetwork } from './network.ts'
 import { buildEngineReport, clientSaturationBlock, configBlock } from './reporter.ts'
 import {
   defaultResultsDir,
@@ -57,6 +58,8 @@ async function run(
   environment: Record<string, unknown>,
   savePartial: (report: Record<string, unknown>) => void,
 ): Promise<Record<string, unknown>> {
+  const network =
+    config.networkProbe === null ? null : await measureNetwork(config.networkProbe.host, config.networkProbe.port)
   const driver = buildDriver(engine, config, durability)
   await driver.connect()
   try {
@@ -75,10 +78,11 @@ async function run(
         clientSaturation: clientSaturationBlock(
           engine,
           config,
-          result.clientCeiling,
+          result.clientCeilings,
           result.clientBoundAny,
           result.indeterminateAny,
         ),
+        network,
       })
     const engineResult = await runEngine(driver, config, snapshot =>
       savePartial({ ...reportOf(snapshot, []), partial: true }),

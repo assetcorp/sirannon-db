@@ -99,16 +99,26 @@ export class PostgresDriver extends Driver {
     }
     const previous = this.pool
     this.pool = null
+    this.poolSize = 0
     if (previous !== null) {
       await previous.end()
     }
     const pool = this.openPool(level)
+    const attempts = await Promise.allSettled(Array.from({ length: level }, () => pool.connect()))
+    const failures: unknown[] = []
+    for (const attempt of attempts) {
+      if (attempt.status === 'fulfilled') {
+        attempt.value.release()
+      } else {
+        failures.push(attempt.reason)
+      }
+    }
+    if (failures.length > 0) {
+      await pool.end()
+      throw failures[0]
+    }
     this.pool = pool
     this.poolSize = level
-    const clients = await Promise.all(Array.from({ length: level }, () => pool.connect()))
-    for (const client of clients) {
-      client.release()
-    }
   }
 
   connectionsAt(level: number): number {

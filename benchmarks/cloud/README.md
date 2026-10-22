@@ -63,7 +63,7 @@ PROVIDER=gcp ./run-cloud.sh ssh-load  # open a shell on the load VM
 PROVIDER=gcp ./run-cloud.sh down      # delete both VMs and the network
 ```
 
-`sync` replaces the checkout on the VM. Where a run directory that you push already exists on the VM, `sync` keeps the files that only the VM holds, such as the server logs and `resource-control.log`, so that a pass you repeat into an existing run adds to that run's logs.
+`sync` replaces the checkout on the VM, but it carries every run directory under `results/runs/` and `results/.smoke/runs/` on the VM into the new checkout. Where a file that you push and a file on the VM share a path, the VM's copy is the one that `sync` keeps, as `fetch` does, so a run that you haven't fetched yet survives a sync, and a pass that you repeat into an existing run adds to that run.
 
 `run` launches the benchmark detached, so it survives an SSH drop or a lost connection. Re-attach any time with `logs`.
 
@@ -99,7 +99,7 @@ Provider-specific variables: `GCP_PROJECT`, `GCP_ZONE`, `GCP_NETWORK`, `MIN_CPU_
 
 ## What each provider sets up
 
-- **GCP** connects through `gcloud`, so it manages keys. It tags both VMs and adds a firewall rule, `VM_NAME-between-vms`, that opens TCP ports 22, 5432, 9876, and 9877 between the tagged VMs on `GCP_NETWORK` (default `default`). Set `USE_IAP=1` to reach the VMs through IAP with no public IP.
+- **GCP** connects through `gcloud`, so it manages keys. It tags both VMs and adds a firewall rule, `VM_NAME-between-vms`, that opens TCP ports 22, 5432, 9876, and 9877 between the tagged VMs on `GCP_NETWORK` (default `default`). Set `USE_IAP=1` to reach the VMs through IAP with no public IP. A network other than `default` needs its own rule that allows TCP port 22 from your machine, or from `35.235.240.0/20` with `USE_IAP=1`, since [Google's IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding) connects from that range.
 - **Hetzner** registers your public key, creates a private network `VM_NAME-net` on 10.77.0.0/16, attaches both servers to it, and connects as `root` over each server's public IP. `down` deletes the network after the servers.
 - **DigitalOcean** registers your public key, creates both droplets in the region's default VPC, which connects them privately, and connects as `root` over each droplet's public IP.
 - **AWS** imports your key pair, creates a security group that allows SSH only from your current public IP and every TCP port between its own members, resolves the latest Ubuntu 24.04 AMI from Canonical, puts the load VM in the engine VM's subnet, tags the instances by name, and connects as `ubuntu`. It assumes a default VPC with a default subnet; set `AWS_SUBNET` if you have neither.

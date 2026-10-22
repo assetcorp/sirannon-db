@@ -282,9 +282,7 @@ _all_exit() {
   fi
   if [ "${TEARDOWN:-0}" = "1" ]; then
     [ "$code" -eq 0 ] || log "a step failed (status $code); tearing down $VM_NAME and $LOAD_VM_NAME because --teardown was set"
-    if any_vm_exists; then
-      cmd_down || log "automatic teardown failed; delete them manually with: PROVIDER=${PROVIDER} ./run-cloud.sh down"
-    fi
+    cmd_down || log "automatic teardown failed; delete them manually with: PROVIDER=${PROVIDER} ./run-cloud.sh down"
   elif any_vm_exists; then
     log "VMs $VM_NAME and $LOAD_VM_NAME are running and billing. Delete them with: PROVIDER=${PROVIDER} ./run-cloud.sh down"
   fi

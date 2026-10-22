@@ -46,7 +46,12 @@ def headline_block(source: Source | None) -> str:
     postgres = headline.get("postgres", {})
     postgres_wins, measured = _lower_tail_latency(workloads)
     rows = integer(comparison.get("config", {}).get("data_size"))
-    machine = comparison.get("environment", {}).get("machine_label") or "an unrecorded machine"
+    engine_machine = comparison.get("engine_machine") or {}
+    machine = (
+        engine_machine.get("machine_label")
+        or comparison.get("environment", {}).get("machine_label")
+        or "an unrecorded machine"
+    )
     date = run_date(comparison) or "an unrecorded date"
     sentences = [
         f"On point-select at {rows} rows, with both engines fsyncing every commit, Sirannon sustained "

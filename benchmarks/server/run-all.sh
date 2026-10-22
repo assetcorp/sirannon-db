@@ -8,6 +8,7 @@ cd "$(dirname "$0")" || exit 1
 . ./lib/units.sh
 . ./lib/cooldown.sh
 . ./lib/engines.sh
+. ./lib/load-host.sh
 
 PROFILE="${1:-${BENCH_PROFILE:-cloud}}"
 SMOKE=""
@@ -20,7 +21,7 @@ case "${PROFILE}" in
     : "${BENCH_MEASURE_SECONDS:=10}"
     : "${BENCH_TARGET_RATES:=1000,2000,4000,8000,16000,32000,64000}"
     : "${BENCH_SOAK_SECONDS:=1200}"
-    : "${BENCH_PASS_TIMEOUT:=14400}"
+    : "${BENCH_PASS_TIMEOUT:=18000}"
     ;;
   smoke)
     SMOKE=1
@@ -47,15 +48,34 @@ export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 require_supported_host
 
-DRIVER_CPUSET="${BENCH_DRIVER_CPUSET:-0-3}"
-ENGINE_CPUSET="${BENCH_ENGINE_CPUSET:-4-7}"
+REPO_ROOT="$(cd ../.. && pwd)"
+ENGINE_ADDRESS="${BENCH_ENGINE_ADDRESS:-127.0.0.1}"
+LOAD_ADDRESS="${BENCH_LOAD_ADDRESS:-}"
+LOAD_USER="${BENCH_LOAD_USER:-$(id -un)}"
+LOAD_SSH_KEY="${BENCH_LOAD_SSH_KEY:-$HOME/.ssh/bench_load}"
+LOAD_REPO="${BENCH_LOAD_REPO:-$REPO_ROOT}"
+if load_remote && [ "$ENGINE_ADDRESS" = "127.0.0.1" ]; then
+  echo "BENCH_LOAD_ADDRESS needs BENCH_ENGINE_ADDRESS, the private address on which the load machine reaches this one" >&2
+  exit 2
+fi
+
+if load_remote; then
+  DRIVER_CPUSET=""
+  ENGINE_CPUSET="${BENCH_ENGINE_CPUSET:-0-$(( $(nproc) - 1 ))}"
+else
+  DRIVER_CPUSET="${BENCH_DRIVER_CPUSET:-0-3}"
+  ENGINE_CPUSET="${BENCH_ENGINE_CPUSET:-4-7}"
+fi
 ENGINE_MEMORY="$(printf '%s' "${BENCH_ENGINE_MEMORY:-2G}" | tr '[:lower:]' '[:upper:]')"
 if [ -n "${BENCH_DRIVER_MEMORY:-}" ]; then
   echo "note: the load driver runs without a memory cap; BENCH_DRIVER_MEMORY is ignored"
 fi
-derived_driver_cpus="$(cpuset_count "$DRIVER_CPUSET")"
+derived_driver_cpus=""
+if [ -n "$DRIVER_CPUSET" ]; then
+  derived_driver_cpus="$(cpuset_count "$DRIVER_CPUSET")"
+fi
 derived_engine_cpus="$(cpuset_count "$ENGINE_CPUSET")"
-if [ -n "${BENCH_DRIVER_CPUS:-}" ] && [ "$BENCH_DRIVER_CPUS" != "$derived_driver_cpus" ]; then
+if [ -n "$DRIVER_CPUSET" ] && [ -n "${BENCH_DRIVER_CPUS:-}" ] && [ "$BENCH_DRIVER_CPUS" != "$derived_driver_cpus" ]; then
   echo "note: BENCH_DRIVER_CPUS is derived from BENCH_DRIVER_CPUSET (${DRIVER_CPUSET} -> ${derived_driver_cpus}); the supplied value is ignored"
 fi
 if [ -n "${BENCH_ENGINE_CPUS:-}" ] && [ "$BENCH_ENGINE_CPUS" != "$derived_engine_cpus" ]; then
@@ -68,6 +88,28 @@ export BENCH_DRIVER_CPUSET="$DRIVER_CPUSET" BENCH_ENGINE_CPUSET="$ENGINE_CPUSET"
 
 BENCH_PG_PASSWORD="${BENCH_PG_PASSWORD:-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')}"
 export BENCH_PG_PASSWORD
+
+PG_MAX_CONNECTIONS="$(python3 - config/benchmark.toml "${BENCH_CONCURRENCY_LEVELS:-}" <<'PY'
+import sys
+import tomllib
+
+POSTGRES_DEFAULT_MAX_CONNECTIONS = 100
+DEFAULT_CONCURRENCY_LEVELS = [16, 64, 256]
+
+path, override = sys.argv[1], sys.argv[2]
+if override.strip():
+    levels = [int(part) for part in override.split(",") if part.strip()]
+else:
+    with open(path, "rb") as handle:
+        levels = tomllib.load(handle).get("load", {}).get("concurrency_levels", DEFAULT_CONCURRENCY_LEVELS)
+print(max(levels) + POSTGRES_DEFAULT_MAX_CONNECTIONS)
+PY
+)" || { echo "could not read the concurrency levels to size max_connections" >&2; exit 2; }
+
+if load_remote; then
+  export BENCH_PG_HOST="$ENGINE_ADDRESS" BENCH_SIRANNON_URL="http://${ENGINE_ADDRESS}:9876"
+  export BENCH_NETWORK_PROBE="${ENGINE_ADDRESS}:${CPU_STAT_PORT}"
+fi
 
 SSD_MODE="${BENCH_LOCAL_SSD_MODE:-auto}"
 if [ -z "${BENCH_DATA_ROOT:-}" ]; then
@@ -118,7 +160,6 @@ RUN_DIR="${BENCH_RESULTS_DIR}/runs/${BENCH_RUN_ID}"
 
 RUN_AS_USER="$(id -un)"
 NODE_BIN="$(command -v node)"
-REPO_ROOT="$(cd ../.. && pwd)"
 DRIVER_DIR="$(pwd)/driver"
 
 echo "profile: ${PROFILE}"
@@ -126,17 +167,35 @@ echo "run id: ${BENCH_RUN_ID}"
 echo "durabilities: ${DURABILITIES}"
 echo "engines: ${ENGINES}"
 echo "data root: ${BENCH_DATA_ROOT} (local SSD mode: ${SSD_MODE})"
-echo "driver cores: ${DRIVER_CPUSET}; engine cores: ${ENGINE_CPUSET}; engine memory ceiling: ${ENGINE_MEMORY}"
+echo "postgres max_connections: ${PG_MAX_CONNECTIONS}"
+if load_remote; then
+  echo "load machine: ${LOAD_USER}@${LOAD_ADDRESS}; engines listen on ${ENGINE_ADDRESS}"
+  echo "engine cores: ${ENGINE_CPUSET}; engine memory ceiling: ${ENGINE_MEMORY}"
+  load_ssh true || { echo "cannot reach the load machine over SSH with ${LOAD_SSH_KEY}; run the cloud setup step first" >&2; exit 1; }
+else
+  echo "driver cores: ${DRIVER_CPUSET}; engine cores: ${ENGINE_CPUSET}; engine memory ceiling: ${ENGINE_MEMORY}"
+fi
 
 trap cleanup_units EXIT
 cleanup_units
-confine_login_sessions
+if ! load_remote; then
+  confine_login_sessions
+fi
 
-echo "building the SDK and installing driver dependencies"
+echo "building the SDK"
 (cd "$REPO_ROOT" && pnpm install --frozen-lockfile && pnpm --filter @delali/sirannon-db build) || exit 1
-(cd "$DRIVER_DIR" && pnpm install --ignore-workspace --frozen-lockfile) || exit 1
+if load_remote; then
+  prepare_load_host || exit 1
+  BENCH_DRIVER_CPUS="$LOAD_CPUS"
+  export BENCH_DRIVER_CPUS
+  start_cpu_stat_server || exit 1
+else
+  echo "installing driver dependencies"
+  (cd "$DRIVER_DIR" && pnpm install --ignore-workspace --frozen-lockfile) || exit 1
+fi
 
 mkdir -p "$RUN_DIR" || { echo "could not create ${RUN_DIR}" >&2; exit 1; }
+write_engine_machine || { echo "could not record the engine machine" >&2; exit 1; }
 sudo install -d -o "$RUN_AS_USER" "$BENCH_DATA_ROOT" || { echo "could not create ${BENCH_DATA_ROOT}" >&2; exit 1; }
 sudo install -d -o "$RUN_AS_USER" "$SIRANNON_DATA_DIR" || { echo "could not create ${SIRANNON_DATA_DIR}" >&2; exit 1; }
 sudo rm -rf "$PG_DATA_DIR" || { echo "could not clear ${PG_DATA_DIR}" >&2; exit 1; }

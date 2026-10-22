@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from comparison_view import durabilities, durability_label, workload_label
+from levels_section import levels_block
 from operation_cost_section import operation_cost_table
 from render import HIGHER_IS_BETTER, emphasize_best, is_number, ms, ops, percent, ratio, table
+from run_shape import concurrency_levels
 from sources import Source
 
 from chart_paths import figure, operating_points_chart, tail_chart
@@ -148,4 +150,5 @@ def throughput_block(source: Source, chart_dir: str) -> str:
             "as any other error does._"
         )
     costs = operation_cost_table(recorded)
-    return "\n\n".join([*parts, note, *([costs] if costs else [])])
+    levels = levels_block(recorded, concurrency_levels(source.comparison))
+    return "\n\n".join([*parts, note, *[block for block in (costs, levels) if block]])

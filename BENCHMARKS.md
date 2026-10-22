@@ -1,8 +1,10 @@
 # Sirannon benchmarks
 
+<!-- BENCH:intro START -->
 The benchmark harness measures Sirannon and PostgreSQL 17 on the same OLTP workloads. For each workload, you can read the highest rate at which each engine held a latency target, the tail latency at that rate, and the rate at which the engine stopped keeping up.
 
 Both engines operate at matched durability as native processes on one host, each pinned to its own logical CPUs under a hard memory ceiling. One open-loop load generator, which records the full tail latency, drives each engine through the client that the engine provides.
+<!-- BENCH:intro END -->
 
 The figures on this page come from the latest committed run under `benchmarks/server/results/runs/`. A generator in `benchmarks/writeup/` writes every table, and every paragraph that contains a figure, from the data that the harness recorded for that run, so the text and the numbers agree. When nobody has committed a run, the generator writes a placeholder in place of figures.
 

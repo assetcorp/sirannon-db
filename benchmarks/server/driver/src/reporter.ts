@@ -1,14 +1,42 @@
 import type { Config } from './config.ts'
 import type { ClientCeiling } from './loadgen.ts'
+import { transportOf } from './network.ts'
 
 const SIRANNON_CLIENT = '@delali/sirannon-db SDK over its WebSocket transport'
 const POSTGRES_CLIENT = 'node-postgres (pg) over a pooled binary socket'
 
+function sirannonHost(config: Config): string {
+  try {
+    return new URL(config.sirannon.baseUrl).hostname.replace(/^\[|\]$/g, '')
+  } catch {
+    return config.sirannon.baseUrl
+  }
+}
+
+function transport(config: Config): 'loopback' | 'network' {
+  return transportOf(config.postgres.host) === 'network' || transportOf(sirannonHost(config)) === 'network'
+    ? 'network'
+    : 'loopback'
+}
+
+const LOOPBACK_NOTE =
+  'Both engines and the load driver run as native processes on one host with no network between the ' +
+  'load driver and the server. The engine under test is pinned to its own CPU cores under a hard ' +
+  'memory ceiling (cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, ' +
+  'so it never competes with the engine under test.'
+
+const NETWORK_NOTE =
+  'The load driver runs on its own machine and reaches the engine over the private network between ' +
+  'the two machines, so every request crosses that network. The engine under test runs as a native ' +
+  'process under a hard memory ceiling (cgroup v2) with every CPU of its machine, and it shares that ' +
+  'machine with nothing but the harness.'
+
 export function deliveryDisclosure(config: Config): Record<string, unknown> {
+  const via = transport(config)
   return {
     sirannon: 'websocket',
     postgres: 'socket',
-    transport: 'loopback',
+    transport: via,
     sirannon_client: SIRANNON_CLIENT,
     postgres_client: POSTGRES_CLIENT,
     driver_cpus: config.driverCpus,
@@ -16,12 +44,10 @@ export function deliveryDisclosure(config: Config): Record<string, unknown> {
     note:
       "Each engine is driven through the client it provides. Sirannon runs over its SDK's " +
       'default WebSocket transport, which multiplexes every concurrent request over one persistent ' +
-      'socket, and PostgreSQL runs over node-postgres on its binary socket protocol. One Node load ' +
-      'generator drives both, so the coordinated-omission instrument behaves identically for each. ' +
-      'Both run as native processes on one host with no network between the load driver and the ' +
-      'server. The engine under test is pinned to its own CPU cores under a hard memory ceiling ' +
-      '(cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, so it ' +
-      'never competes with the engine under test.',
+      'socket, and PostgreSQL runs over node-postgres on its binary socket protocol, with one pooled ' +
+      'connection for each request that the generator allows in flight. One Node load generator ' +
+      'drives both, so the coordinated-omission instrument behaves identically for each. ' +
+      (via === 'network' ? NETWORK_NOTE : LOOPBACK_NOTE),
   }
 }
 
@@ -33,7 +59,7 @@ export function configBlock(config: Config): Record<string, unknown> {
     runs: config.runs,
     seed: config.seed,
     slo_p99_ms: config.sloP99Ms,
-    max_in_flight: config.maxInFlight,
+    concurrency_levels: config.concurrencyLevels,
     target_rates: config.targetRates,
     sweep_stop_steps: config.sweepStopSteps,
     prepare_retry_seconds: config.prepareRetrySeconds,
@@ -52,21 +78,23 @@ function clientName(engine: string): string {
 export function clientSaturationBlock(
   engine: string,
   config: Config,
-  ceiling: ClientCeiling,
+  ceilings: ClientCeiling[],
   clientBoundAny: boolean,
   indeterminateAny: boolean,
 ): Record<string, unknown> {
   const maxOfferedRate = config.targetRates.length > 0 ? Math.max(...config.targetRates) : 0
-  const headroomFactor = maxOfferedRate > 0 ? ceiling.ceilingOps / maxOfferedRate : 0
+  const first = ceilings[0]
   return {
     client: clientName(engine),
-    ceiling_ops: ceiling.ceilingOps,
-    probe_statement: ceiling.statement,
-    probe_concurrency: ceiling.concurrency,
-    probe_seconds: ceiling.seconds,
-    probe_errors: ceiling.errors,
+    probe_statement: first?.statement ?? null,
+    probe_seconds: first?.seconds ?? null,
     max_offered_rate: maxOfferedRate,
-    headroom_factor: headroomFactor,
+    levels: ceilings.map(ceiling => ({
+      concurrency: ceiling.concurrency,
+      ceiling_ops: ceiling.ceilingOps,
+      probe_errors: ceiling.errors,
+      headroom_factor: maxOfferedRate > 0 ? ceiling.ceilingOps / maxOfferedRate : 0,
+    })),
     client_bound_any: clientBoundAny,
     indeterminate_any: indeterminateAny,
     interpretation:
@@ -95,6 +123,7 @@ export function buildEngineReport(args: {
   failedWorkloads: Record<string, unknown>[]
   features: Record<string, unknown>[]
   clientSaturation: Record<string, unknown>
+  network: Record<string, unknown> | null
 }): Record<string, unknown> {
   return {
     environment: args.environment,
@@ -110,5 +139,6 @@ export function buildEngineReport(args: {
     failed_workloads: args.failedWorkloads,
     features: args.features,
     client_saturation: args.clientSaturation,
+    network: args.network,
   }
 }

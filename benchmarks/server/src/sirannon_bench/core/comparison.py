@@ -75,6 +75,8 @@ def _workload_rows(sirannon: dict, postgres: dict, order: list[str], seed: int) 
             "postgres": pg_metrics,
             "sirannon_soak": sir.get("soak"),
             "postgres_soak": pg.get("soak"),
+            "sirannon_operation_cost": sir.get("operation_cost"),
+            "postgres_operation_cost": pg.get("operation_cost"),
             "speedup": speedup,
         })
     return rows

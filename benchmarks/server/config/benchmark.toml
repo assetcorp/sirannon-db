@@ -14,6 +14,7 @@ workloads = [
   "ycsb-c",
   "ycsb-f",
   "tpc-c-derived",
+  "tpc-c-new-order",
 ]
 
 [load]

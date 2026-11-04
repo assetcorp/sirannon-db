@@ -14,6 +14,14 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 - **Rows read** is the number of table and index rows that SQLite's cursors move to while SQLite executes a statement, following the rules that Cloudflare D1 publishes, so a scan of 5,000 rows that returns five rows has 5,000 rows read. Sirannon's change-capture triggers add nothing to it.
 - **Rows written** is the number of table rows that a statement inserts, updates, or deletes, plus the index entries that it inserts, including the writes of the caller's own triggers. Sirannon's change-capture triggers add nothing to it.
 
+## Replication groups
+
+- A **voter** is one of a replication group's voting copies. Sirannon acknowledges a `majority` write once most voters hold it, and only a voter can become primary.
+- The **in-sync set** holds the voters that have proved they hold every acknowledged write, so only they serve majority reads or become primary.
+- The **durability point** is the position in the primary's change log up to which a majority of voters holds every write.
+- A copy **drains** when an operator takes it out of service. A draining copy takes no writes and leaves the in-sync set, and a draining primary hands its duty to another copy.
+- A **rebuild in place** is a copy that restarts under its own node ID with an empty or replaced file and copies the whole database from the primary. It rejoins the in-sync set only once it proves that it holds every acknowledged write.
+
 ## Clients, devices, and nodes
 
 - A **client** is an application's connection to a Sirannon server over HTTP or WebSocket, through `SirannonClient` for one server or `TopologyAwareClient` for the nodes of a replication group. A client holds no local database.

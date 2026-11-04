@@ -58,6 +58,7 @@ describe('losing contact with etcd', () => {
       acknowledged.push(row)
     }
     await waitForInSyncSet(env, NODE_IDS, 15_000)
+    await waitForReadableNodes(env, NODE_A, NODE_IDS, 10_000)
 
     await setEtcdLink(env, NODE_A, false)
     await expectRejectsWith(

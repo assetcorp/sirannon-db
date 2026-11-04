@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { waitForItemsOnDisk } from './gate-assertions.js'
-import { waitForGroup, waitForInSyncSet, waitForPrimary } from './gate-cluster-state.js'
+import { waitForGroup, waitForInSyncSet, waitForPrimary, waitForSessionGone } from './gate-cluster-state.js'
 import {
   CLUSTER_ID,
   dbPathFor,
@@ -21,14 +21,22 @@ import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { statusOf, waitForNodeReady } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
-import { sleep, waitForCondition } from './gate-support.js'
-import { type ItemRow, readItems } from './sqlite-oracle.js'
+import { holdsThroughout, sleep, waitForCondition } from './gate-support.js'
+import { type ItemRow, readHighestAppliedSeq, readItems } from './sqlite-oracle.js'
 
 function wipeDatabaseFiles(env: GateEnvironment, nodeId: string): void {
   const dbPath = dbPathFor(env, nodeId)
   for (const suffix of ['', '-wal', '-shm', '-journal']) {
     rmSync(`${dbPath}${suffix}`, { force: true })
   }
+}
+
+async function expectNeverPrimary(env: GateEnvironment, nodeId: string, durationMs: number): Promise<void> {
+  await holdsThroughout(
+    async () => (await env.etcdOracle.group())?.currentPrimary?.nodeId !== nodeId,
+    durationMs,
+    `${nodeId} to hold no primary duty`,
+  )
 }
 
 async function setDraining(env: GateEnvironment, nodeId: string, draining: boolean): Promise<void> {
@@ -120,7 +128,7 @@ async function moveCopy(env: GateEnvironment, nodeId: string, others: readonly s
 describe('moving one copy of a database to an empty disk under the same node ID', () => {
   const environment = useFailoverEnvironment()
 
-  it('never promotes a copy that restarts with an empty file while the group takes no writes', async () => {
+  it('never promotes a copy that restarts with an empty file while the group takes no writes, and rebuilds it from the replica that an operator vouches for', async () => {
     const env = environment()
     await startCluster(env)
     const written = await writeRows(env, NODE_A, [1, 2, 3])
@@ -134,26 +142,50 @@ describe('moving one copy of a database to an empty disk under the same node ID'
 
     await setDraining(env, NODE_B, true)
     await killNode(env, NODE_A)
-    await sleep(8_000)
+    await waitForSessionGone(env, NODE_A, 15_000)
+    await expectNeverPrimary(env, NODE_C, 2_000)
     await setDraining(env, NODE_B, false)
     await setReplicationLinks(env, NODE_C, true, [NODE_A])
-    await sleep(15_000)
+    await expectNeverPrimary(env, NODE_C, 15_000)
+    expect(readItems(dbPathFor(env, NODE_B))).toEqual(written)
 
-    const group = await env.etcdOracle.group()
-    const promoted = await statusOf(requireNode(env, NODE_C))
-    const write = await requireNode(env, NODE_B)
-      .execute('INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)', [9, NODE_B, 9, 'after'], {
-        writeConcern: { level: 'majority', timeoutMs: 3_000 },
-      })
-      .then(
-        () => 'accepted',
-        (err: unknown) => String(err),
-      )
-    expect.soft(readItems(dbPathFor(env, NODE_B)), 'B rows').toEqual(written)
-    expect
-      .soft(readItems(dbPathFor(env, NODE_C)), `C rows; C phase ${promoted.syncState?.phase}; write ${write}`)
-      .toEqual(written)
-    expect(group?.currentPrimary?.nodeId, 'the empty copy took primary duty').not.toBe(NODE_C)
+    await env.coordinator.admitNodeToInSyncSet({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      nodeId: NODE_B,
+      sourceNodeId: NODE_A,
+      appliedSeq: readHighestAppliedSeq(dbPathFor(env, NODE_B), NODE_A),
+    })
+    await waitForPrimary(env, [NODE_B], 15_000)
+    await waitForNodeReady(requireNode(env, NODE_C), 60_000)
+    const after = itemRow(9, NODE_B, 'after-the-move')
+    await writeItemMajority(requireNode(env, NODE_B), after, 3_000, 15_000)
+    await waitForItemsOnDisk(env, [NODE_B, NODE_C], [...written, after], 30_000)
+    expect((await env.etcdOracle.group())?.currentPrimary?.nodeId).toBe(NODE_B)
+  })
+
+  it('makes a primary that restarts with an empty file give up its duty and rebuild before its session expires', async () => {
+    const env = environment()
+    await startCluster(env, { everyNode: { sessionTtlMs: 10_000 } })
+    const written = await writeRows(env, NODE_A, [1, 2, 3])
+    await waitForInSyncSet(env, [NODE_A, NODE_B, NODE_C], 15_000)
+
+    await killNode(env, NODE_A)
+    wipeDatabaseFiles(env, NODE_A)
+    expect((await env.etcdOracle.group())?.currentPrimary?.nodeId).toBe(NODE_A)
+    await startNode(env, NODE_A, { role: 'replica', sessionTtlMs: 10_000 })
+
+    const group = await waitForGroup(
+      env,
+      candidate => candidate.currentPrimary !== null && candidate.currentPrimary.nodeId !== NODE_A,
+      15_000,
+      'another node took primary duty from the emptied primary',
+    )
+    const newPrimaryId = group.currentPrimary?.nodeId ?? ''
+    const after = itemRow(4, newPrimaryId, 'after-the-restart')
+    await writeItemMajority(requireNode(env, newPrimaryId), after, 3_000)
+    await waitForNodeReady(requireNode(env, NODE_A), 60_000)
+    await expectAcknowledgedRowsEverywhere(env, [...written, after])
   })
 
   it('keeps a copy out of the in-sync set until its full copy finishes, while the group takes no writes', async () => {

@@ -41,6 +41,17 @@ interface RunningNode {
   shutdown: () => Promise<void>
 }
 
+class ProxiedGrpcTransport extends GrpcReplicationTransport {
+  override setPeerEndpoints(endpoints: ReadonlyMap<string, string>): void {
+    const proxied = new Map<string, string>()
+    for (const nodeId of endpoints.keys()) {
+      const proxy = config.peerProxyEndpoints[nodeId]
+      if (proxy !== undefined) proxied.set(nodeId, proxy)
+    }
+    super.setPeerEndpoints(proxied)
+  }
+}
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS failover_items (
     id INTEGER PRIMARY KEY,
@@ -157,7 +168,7 @@ async function startClusterNode(): Promise<RunningNode> {
 
   const sirannon = new Sirannon({ driver: testDriver })
   const db = await sirannon.open(databaseId, config.dbPath, databaseOptions(coordinator))
-  const transport = new GrpcReplicationTransport({
+  const transport = new ProxiedGrpcTransport({
     host: '127.0.0.1',
     port: config.grpcPort,
     tlsCert: config.certPath,
@@ -186,7 +197,8 @@ async function startClusterNode(): Promise<RunningNode> {
     coordinator: {
       clusterId: config.clusterId,
       groupId: config.groupId,
-      endpoint: config.httpEndpoints[config.nodeId],
+      endpoint: config.httpEndpoint,
+      replicationEndpoint: `127.0.0.1:${config.grpcPort}`,
       coordinator,
       votingDataBearingNodeIds: config.votingDataBearingNodeIds,
       sessionTtlMs: config.sessionTtlMs,
@@ -231,10 +243,7 @@ async function startClusterNode(): Promise<RunningNode> {
       acceptSql: true,
       resolveExecutionTarget: id => (id === databaseId ? engine : null),
       getReplicationStatus: () => toReplicationStatusInfo(engine.status()),
-      getClusterStatus: id =>
-        id === databaseId
-          ? toClusterStatusInfo(engine.status(), { databaseId, endpoints: config.httpEndpoints })
-          : null,
+      getClusterStatus: id => (id === databaseId ? toClusterStatusInfo(engine.status(), { databaseId }) : null),
       authorizeClusterStatus: () => true,
     })
     await server.listen()
@@ -369,7 +378,6 @@ async function stopAndExit(): Promise<void> {
 function transportConfig() {
   return {
     localRole: config.initialRole,
-    endpoints: config.endpoints,
     groupId: config.groupId,
     protocolVersion: config.compatibility.protocolVersion,
   }

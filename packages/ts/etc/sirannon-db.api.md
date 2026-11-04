@@ -962,7 +962,7 @@ export interface MigrationsFromFilesOptions {
 export type MigrationSource = Migration[] | (() => Migration[] | Promise<Migration[]>);
 
 // @public
-export const NODE_HEALTH_REASONS: readonly ["in-sync", "lagging", "coordinator-unreachable", "draining", "repairing", "faulted", "sync-pending", "no-group-state"];
+export const NODE_HEALTH_REASONS: readonly ["in-sync", "lagging", "coordinator-unreachable", "draining", "repairing", "faulted", "not-member", "sync-pending", "no-group-state"];
 
 // @public
 export const NODE_HEALTH_STATES: readonly ["healthy", "degraded", "failing_over", "repairing", "syncing", "unavailable"];

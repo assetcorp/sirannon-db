@@ -1,12 +1,6 @@
 import type { Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
-import {
-  parseLeaseIdForEntry,
-  parseNodeSession,
-  type SerializedLease,
-  type SerializedNodeSession,
-  serializeLease,
-} from './etcd-codec.js'
+import { parseLeaseIdForEntry, parseNodeSession, type SerializedLease, serializeLease } from './etcd-codec.js'
 import {
   assertEtcdOptions,
   type EtcdClusterCoordinatorOptions,
@@ -14,17 +8,18 @@ import {
   nodeSessionKey,
   normaliseKeyPrefix,
   toEtcdOptions,
-  ttlMsToSeconds,
 } from './etcd-connection.js'
 import { acquireEtcdControllerLease, watchEtcdControllerLease } from './etcd-controller-lease.js'
 import { EtcdGroupStore } from './etcd-group-store.js'
 import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { loadEtcd3Module } from './etcd-loader.js'
+import { registerEtcdNodeSession } from './etcd-session-registration.js'
 import { watchEtcdNodeSessions } from './etcd-session-watch.js'
-import { assertNonEmpty, assertPositiveTtl, cloneCompatibility, cloneMetadata } from './group-rules.js'
+import { assertNonEmpty, assertPositiveTtl, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
+  AddVoterInput,
   AdmitNodeToInSyncSetInput,
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
@@ -32,19 +27,20 @@ import type {
   ControllerLeaseWatcher,
   CoordinatorNodeSession,
   CoordinatorWatchDisposer,
+  CreateReplicationGroupStateResult,
   NodeSessionWatcher,
   PromoteEligibleReplicaInput,
   RegisterNodeSessionInput,
+  RemoveVoterInput,
   ReplicationGroupState,
   ReplicationGroupWatcher,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
+  VoterChangeResult,
 } from './types.js'
 
 export type { EtcdClusterCoordinatorOptions } from './etcd-connection.js'
-
-const SESSION_REGISTRATION_ATTEMPTS = 3
 
 /**
  * Stores primary authority, node sessions, group state, and the in-sync set in etcd.
@@ -183,69 +179,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     assertPositiveTtl(input.ttlMs)
 
     const { namespace } = await this.connect()
-    const key = nodeSessionKey(input.clusterId, input.nodeId)
-    const lease = namespace.lease(ttlMsToSeconds(input.ttlMs))
-    const leaseId = await lease.grant()
-    const grantedAtMs = Date.now()
-    const session: SerializedNodeSession = {
-      clusterId: input.clusterId,
-      nodeId: input.nodeId,
-      lease: {
-        id: leaseId,
-        kind: 'node-session',
-        clusterId: input.clusterId,
-        holderId: input.nodeId,
-        ttlMs: input.ttlMs,
-        grantedAtMs,
-        expiresAtMs: grantedAtMs + input.ttlMs,
-        metadata: cloneMetadata(input.metadata),
-      },
-      endpoint: input.endpoint,
-      groupIds: [...(input.groupIds ?? [])],
-      dataBearing: input.dataBearing ?? true,
-      voting: input.voting ?? true,
-      compatibility: cloneCompatibility(input.compatibility),
-      metadata: cloneMetadata(input.metadata),
-    }
-
-    const rawSession = JSON.stringify(session)
-    let registered = false
-    for (let attempt = 0; attempt < SESSION_REGISTRATION_ATTEMPTS && !registered; attempt++) {
-      const existingRawSession = await namespace.get(key).string()
-      const transaction = existingRawSession
-        ? namespace.if(key, 'Value', '==', existingRawSession)
-        : namespace.if(key, 'Create', '==', 0)
-      const result = await transaction.then(namespace.put(key).value(rawSession).lease(leaseId)).commit()
-      registered = result.succeeded === true
-    }
-    if (!registered) {
-      await revokeLeaseQuietly(lease)
-      throw new CoordinatorError(`Node session '${input.nodeId}' registration conflicted with a concurrent write`)
-    }
-
-    await this.leases.discardSuperseded(key, leaseId)
-    this.leases.track(lease, {
-      leaseId,
-      key,
-      ttlMs: input.ttlMs,
-      ttlSeconds: ttlMsToSeconds(input.ttlMs),
-      kind: 'node-session',
-      clusterId: input.clusterId,
-      holderId: input.nodeId,
-      metadata: cloneMetadata(input.metadata),
-      nodeSession: {
-        clusterId: session.clusterId,
-        nodeId: session.nodeId,
-        endpoint: session.endpoint,
-        groupIds: [...session.groupIds],
-        dataBearing: session.dataBearing,
-        voting: session.voting,
-        compatibility: cloneCompatibility(session.compatibility),
-        metadata: cloneMetadata(session.metadata),
-      },
-    })
-
-    return parseNodeSession(rawSession)
+    return registerEtcdNodeSession(namespace, this.leases, input)
   }
 
   /** Returns one node's session, or null once its lease expires. */
@@ -277,6 +211,24 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
     const { groups } = await this.connect()
     return groups.setReplicationGroupState(input)
+  }
+
+  /** Writes the group's state only when etcd holds none for the group, and returns whether this call created it. */
+  async createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult> {
+    const { groups } = await this.connect()
+    return groups.createReplicationGroupState(input)
+  }
+
+  /** Records a node as a pending voter and marks it repairing, while the group's voters match the expected list. */
+  async addVoter(input: AddVoterInput): Promise<VoterChangeResult> {
+    const { groups } = await this.connect()
+    return groups.addVoter(input)
+  }
+
+  /** Removes a voter or a pending voter from the group, while the group's voters match the expected list. */
+  async removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult> {
+    const { groups } = await this.connect()
+    return groups.removeVoter(input)
   }
 
   /** Returns the group's state, or null when etcd has no state for the group. */

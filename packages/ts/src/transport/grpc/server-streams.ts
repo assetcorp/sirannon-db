@@ -23,7 +23,7 @@ import { ReplicationService } from './generated/replication.js'
 import { buildServerCreds } from './grpc-credentials.js'
 import { SERVICE_NAME } from './options.js'
 import type { PeerStreamEntry } from './peer-streams.js'
-import { registerPeer, removePeer } from './peer-streams.js'
+import { registerPeer, removePeer, restartPeerConnection } from './peer-streams.js'
 import type { GrpcReplicationTransport } from './transport.js'
 
 export async function startServer(t: GrpcReplicationTransport): Promise<void> {
@@ -111,16 +111,16 @@ export function handleServerReplicateStream(
       const peerRole = msg.hello.role as TopologyRole
 
       const existing = t.serverPeerStreams.get(peerId)
-      if (existing?.replicateStream) {
-        existing.replicateStream.end()
-      }
+      const replaced = existing?.replicateStream ?? null
+      replaced?.end()
 
-      const ps: PeerStreamEntry = t.serverPeerStreams.get(peerId) ?? {
+      const ps: PeerStreamEntry = existing ?? {
         replicateStream: null,
         syncStream: null,
       }
       ps.replicateStream = call
       t.serverPeerStreams.set(peerId, ps)
+      if (replaced) restartPeerConnection(t.connectedPeers, t.peerDisconnectedHandler, peerId)
 
       if (!helloSent) {
         call.write({
@@ -154,28 +154,26 @@ export function handleServerReplicateStream(
 
   call.on('end', () => {
     call.end()
-    if (peerId) {
-      const ps = t.serverPeerStreams.get(peerId)
-      if (ps?.replicateStream === call) {
-        ps.replicateStream = null
-      }
-      if (!ps?.syncStream) {
-        removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-      }
-    }
+    forgetServerStream(t, peerId, call, 'replicateStream')
   })
 
   call.on('error', () => {
-    if (peerId) {
-      const ps = t.serverPeerStreams.get(peerId)
-      if (ps?.replicateStream === call) {
-        ps.replicateStream = null
-      }
-      if (!ps?.syncStream) {
-        removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-      }
-    }
+    forgetServerStream(t, peerId, call, 'replicateStream')
   })
+}
+
+function forgetServerStream(
+  t: GrpcReplicationTransport,
+  peerId: string | null,
+  call: PeerStreamEntry['replicateStream'] | PeerStreamEntry['syncStream'],
+  kind: keyof PeerStreamEntry,
+): void {
+  if (peerId === null) return
+  const ps = t.serverPeerStreams.get(peerId)
+  if (!ps || ps[kind] !== call) return
+  ps[kind] = null
+  const other = kind === 'replicateStream' ? ps.syncStream : ps.replicateStream
+  if (!other) removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
 }
 
 export function handleServerSyncStream(
@@ -238,27 +236,11 @@ export function handleServerSyncStream(
 
   call.on('end', () => {
     call.end()
-    if (peerId) {
-      const ps = t.serverPeerStreams.get(peerId)
-      if (ps?.syncStream === call) {
-        ps.syncStream = null
-      }
-      if (!ps?.replicateStream) {
-        removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-      }
-    }
+    forgetServerStream(t, peerId, call, 'syncStream')
   })
 
   call.on('error', () => {
-    if (peerId) {
-      const ps = t.serverPeerStreams.get(peerId)
-      if (ps?.syncStream === call) {
-        ps.syncStream = null
-      }
-      if (!ps?.replicateStream) {
-        removePeer(t.connectedPeers, t.serverPeerStreams, t.peerDisconnectedHandler, peerId)
-      }
-    }
+    forgetServerStream(t, peerId, call, 'syncStream')
   })
 }
 

@@ -162,8 +162,12 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
  * node records the term as the one whose history it holds, so that it reconciles its history with the next primary's
  * once it loses authority.
  *
+ * A primary that the group shows as repairing or faulted records nothing, because its file may lack acknowledged
+ * writes, and a term start that it recorded would let it keep primary duty when it restarts.
+ *
  * @param engine - The engine of the node that holds primary authority.
- * @returns A promise that settles once the term start is recorded, or at once when this node is not primary.
+ * @returns A promise that settles once the term start is recorded, or at once when this node is not primary or the
+ * group shows it as repairing or faulted.
  *
  * @internal
  */
@@ -171,6 +175,9 @@ export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void>
   const state = engine.coordinatorState
   const history = engine.history
   if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return Promise.resolve()
+  if (state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
+    return Promise.resolve()
+  }
   if (history.termStartTerm === state.primaryTerm) return Promise.resolve()
   if (history.pendingTermStart) return history.pendingTermStart
   const pending = recordPrimaryTermStart(engine, state).finally(() => {

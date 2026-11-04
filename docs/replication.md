@@ -217,7 +217,6 @@ const engine = new ReplicationEngine(db, writerConn, {
   nodeId: 'orders-node-a',
   topology: new PrimaryReplicaTopology('primary'),
   transport,
-  transportConfig: { endpoints: ['orders-node-b.internal:4200', 'orders-node-c.internal:4200'] },
   changeTracker: tracker,
   snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
   writeForwarding: true,
@@ -225,6 +224,7 @@ const engine = new ReplicationEngine(db, writerConn, {
     clusterId: 'commerce-production',
     groupId: 'orders',
     endpoint: 'https://orders-node-a.internal/db/orders',
+    replicationEndpoint: 'orders-node-a.internal:4200',
     coordinator,
     votingDataBearingNodeIds: ['orders-node-a', 'orders-node-b', 'orders-node-c'],
     controller: true,
@@ -237,6 +237,20 @@ await engine.start()
 Your etcd cluster has its own certificate authority, so ask whoever operates that cluster for the three files under `credentials`.
 
 Give every coordinator-mode node a `nodeId` that stays the same across restarts. Put at least three voting data-bearing nodes in the group for automatic write failover, because when one node of a two-node group fails, the remaining node holds no majority and cannot take over writes. In production, connect to etcd over HTTPS with an authenticated identity, and keep the in-memory coordinator and `allowInsecure: true` for tests.
+
+Each node publishes two addresses in its coordinator session: `endpoint`, which clients use, and `replicationEndpoint`, which the other members of the group dial. The engine takes every member's address from that member's live session, so it refuses `transportConfig.endpoints` in coordinator mode with `TOPOLOGY_ERROR`, and `toClusterStatusInfo` refuses its `endpoints` option in the same way. A node that moves to another machine keeps its `nodeId` and publishes its new addresses when it starts.
+
+### Moving a copy to an empty disk
+
+To move one copy of a group, mark its node as draining with `updateNodeMaintenance` and wait until the coordinator names another node as primary and lists this node outside the in-sync set. Then stop the node and start it on the new disk under the same `nodeId`. Because its file holds no completed sync, the node marks itself repairing before it registers its session, and it copies the data from the primary. Once the copy finishes and you clear the drain, the node asks to rejoin the in-sync set, and the coordinator admits it only when the node has applied every write up to the group's durability point.
+
+Every restart repeats that proof, because a restarted replica leaves the in-sync set and the primary counts only the acknowledgements that arrive over the replica's current connection. A primary that restarts keeps its duty only when its file records the start of the current term and reaches the durability point. Otherwise it marks itself repairing, and the controller promotes an in-sync replica.
+
+### Adding and removing voters
+
+`addVoter` and `removeVoter` on the coordinator change the group's voters only while those voters match the list that you pass as `expectedVoterNodeIds`, and they return `changed: false` when another change commits first. `addVoter` records the node as a pending voter and marks it repairing, so the node counts towards no majority until it finishes a full copy and the coordinator admits it to the voters and the in-sync set in one write.
+
+While a node is pending, the coordinator accepts only the removal of that node. The coordinator refuses to remove the current primary, and it refuses a removal that would leave fewer in-sync voters than a majority of the voters that remain. A removed node refuses reads and writes with `TOPOLOGY_ERROR`, and the primary stops sending it changes. When a voter change commits while a write waits for its majority, the primary acknowledges the write only once a majority of the new voters holds it.
 
 [Backups in a replication group](backups.md#backups-in-a-replication-group) describes how each node uses the same coordinator to work out which node takes the group's backups.
 

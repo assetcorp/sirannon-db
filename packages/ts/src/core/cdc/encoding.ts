@@ -85,8 +85,8 @@ export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
     const obj = row as Record<string, unknown>
     for (const k of Object.keys(obj)) {
       const cell = obj[k]
-      if (typeof cell === 'bigint' || isBinaryValue(cell)) {
-        obj[k] = encodeTaggedLeaf(cell)
+      if (typeof cell === 'bigint' || (typeof cell === 'object' && cell !== null && isBinaryValue(cell))) {
+        setOwnValue(obj, k, encodeTaggedLeaf(cell))
       }
     }
   }
@@ -119,6 +119,37 @@ export function decodeTaggedValues(value: unknown): unknown {
     setOwnValue(out, k, decodeTaggedValues(obj[k]))
   }
   return out
+}
+
+/**
+ * Decodes each tagged integer and binary cell in place, in rows that the client parsed from a single response.
+ *
+ * A row that is itself one tagged value, and an entry that is not a row object, decode as
+ * {@link decodeTaggedValues} decodes them.
+ *
+ * @param rows - The rows that one response carried, which this function modifies.
+ * @returns The same rows with each tagged cell decoded, or a decoded copy when `rows` is not an array.
+ */
+export function decodeWireRowsInPlace(rows: unknown): unknown {
+  if (!Array.isArray(rows)) return decodeTaggedValues(rows)
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) {
+      rows[i] = decodeTaggedValues(row)
+      continue
+    }
+    const obj = row as Record<string, unknown>
+    const keys = Object.keys(obj)
+    if (keys.length === 1 && (keys[0] === BLOB_TAG || keys[0] === INT_TAG)) {
+      rows[i] = decodeTaggedValues(row)
+      continue
+    }
+    for (const k of keys) {
+      const cell = obj[k]
+      if (cell !== null && typeof cell === 'object') setOwnValue(obj, k, decodeTaggedValues(cell))
+    }
+  }
+  return rows
 }
 
 function isBinaryValue(value: unknown): value is Uint8Array | Buffer {

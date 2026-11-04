@@ -123,6 +123,17 @@ export function walCommitCount(path: string): number {
   return commits
 }
 
+const GARBAGE_COLLECTION_PASSES = 3
+
+export async function collectGarbage(): Promise<void> {
+  const { gc } = globalThis
+  if (gc === undefined) throw new Error('collectGarbage needs the test process to start with --expose-gc')
+  for (let pass = 0; pass < GARBAGE_COLLECTION_PASSES; pass++) {
+    gc()
+    await new Promise(resolve => setImmediate(resolve))
+  }
+}
+
 export function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => {}
   const promise = new Promise<void>(settle => {

@@ -151,6 +151,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     // (undocumented)
     assertSqlAccepted(): Promise<void>;
     close(): void;
+    knownToAcceptSql(): boolean;
     // (undocumented)
     registryDigest(refresh?: boolean): Promise<string | undefined>;
 }
@@ -159,6 +160,7 @@ export class ServerCapabilities implements ServerCapabilityCheck {
 export interface ServerCapabilityCheck {
     assertSqlAccepted(): Promise<void>;
     close?(): void;
+    knownToAcceptSql?(): boolean;
     registryDigest(refresh?: boolean): Promise<string | undefined>;
 }
 

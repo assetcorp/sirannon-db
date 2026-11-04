@@ -10,6 +10,7 @@ import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
+import { prepareStatement } from './statement-text.js'
 
 /**
  * Settings for the driver built on Node's own SQLite module.
@@ -89,11 +90,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
         db.exec(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
       }
 
-      const batchStatementFor = createStatementCache(sql => {
-        const stmt = db.prepare(sql)
-        stmt.setReadBigInts(true)
-        return stmt
-      })
+      const batchStatementFor = createStatementCache(sql => prepareStatement(db, sql))
 
       const conn: SQLiteConnection = {
         async exec(sql: string): Promise<void> {
@@ -101,8 +98,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
         },
 
         async prepare(sql: string): Promise<SQLiteStatement> {
-          const stmt = db.prepare(sql)
-          stmt.setReadBigInts(true)
+          const stmt = prepareStatement(db, sql)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
               return narrowRowsIntegers(stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[])

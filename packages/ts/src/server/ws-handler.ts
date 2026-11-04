@@ -2,6 +2,7 @@ import type { Database } from '../core/database.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ServerExecutionTarget, Subscription, WSHandlerOptions } from '../core/types.js'
 import { SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import { exceedsUtf8Bytes } from './limits.js'
 import type { OperationSource } from './operation-lookup.js'
 import { createOperationSource } from './operation-lookup.js'
 import type { WSLiveMessage } from './protocol.js'
@@ -9,7 +10,7 @@ import { handleAckMessage } from './ws-ack.js'
 import { CdcContextRegistry, toChangeRetentionOptions } from './ws-cdc.js'
 import type { WSConnection } from './ws-connection.js'
 import { WS_CLOSE_GOING_AWAY, WS_CLOSE_MESSAGE_TOO_BIG, WS_CLOSE_OVERLOADED } from './ws-connection.js'
-import type { DeviceChangeStream } from './ws-device-stream.js'
+import type { ConnectionState } from './ws-connection-state.js'
 import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
 import { WSFrameWriter } from './ws-frame-writer.js'
 import type { WSLiveDeps } from './ws-live.js'
@@ -37,17 +38,6 @@ const DEFAULT_MAX_BACKPRESSURE_BYTES = 16 * 1_048_576
 const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
 
 const NAMED_MESSAGE_TYPES = new Set(['query', 'execute', 'subscribe'])
-
-export interface ConnectionState {
-  databaseId: string
-  database: Database
-  executionTarget: ServerExecutionTarget
-  identity: unknown
-  subscriptions: Map<string, Subscription>
-  deviceStreams: Map<string, DeviceChangeStream>
-  requests: InFlightRequests
-  overloaded: boolean
-}
 
 /**
  * Serves the WebSocket protocol for one server: queries, writes, change subscriptions, and live queries.
@@ -153,7 +143,7 @@ export class WSHandler<Identity = unknown> {
     const state = this.connections.get(conn)
     if (!state) return
 
-    if (Buffer.byteLength(data) > this.maxPayloadLength) {
+    if (exceedsUtf8Bytes(data, this.maxPayloadLength)) {
       conn.close(WS_CLOSE_MESSAGE_TOO_BIG, 'PAYLOAD_TOO_LARGE')
       return
     }
@@ -292,12 +282,13 @@ export class WSHandler<Identity = unknown> {
   }
 
   private operationContext(conn: WSConnection, state: ConnectionState): WSOperationContext {
-    return {
+    state.operationContext ??= {
       target: state.executionTarget,
       sendResult: (id, data) => this.frames.send(conn, { type: 'result', id, data }),
       sendError: (id, code, message) => this.frames.sendError(conn, id, code, message),
       sendCaughtError: (id, err) => this.frames.sendSirannonError(conn, id, err),
     }
+    return state.operationContext
   }
 
   private namedContext(conn: WSConnection, state: ConnectionState): WSNamedContext {

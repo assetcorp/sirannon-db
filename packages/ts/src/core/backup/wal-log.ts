@@ -11,6 +11,7 @@ import {
 } from './wal-format.js'
 
 const READ_CHUNK_BYTES = 4 * 1024 * 1024
+const LOG_POSITION_READ_ATTEMPTS = 5
 
 /** The point in the write-ahead log where one capture stopped.
  * @internal
@@ -231,9 +232,14 @@ export function logPathFor(sourcePath: string): string {
  * The scan stops at the last frame that commits a transaction, so a restore can
  * apply every frame up to the frame that the position names.
  *
+ * A writer can restart the log while Sirannon scans it, so the header is read
+ * again after the scan, and a scan that straddles a restart is read again up to
+ * five times in all, so that the salts and the frame always come from one generation
+ * of the log.
+ *
  * A copy of every page is worth keeping without the position, so this returns
- * undefined for a log that Sirannon cannot read, and the backup still
- * succeeds. It also returns undefined for a database without a write-ahead log,
+ * undefined for a log that Sirannon cannot read, or that restarts during every
+ * attempt, and the backup still succeeds. It also returns undefined for a database without a write-ahead log,
  * and for an empty log. The capture path reads the log through
  * {@link readLogFileHeader} and {@link scanLogFrames}, where a failure stops
  * the capture, because those frames are the backup.
@@ -246,18 +252,27 @@ export function logPathFor(sourcePath: string): string {
 export async function readLogPosition(sourcePath: string): Promise<BackupLogPosition | undefined> {
   const logPath = logPathFor(sourcePath)
   try {
-    const header = await readLogFileHeader(logPath)
-    if (!header) return undefined
-    const scan = await scanLogFrames(logPath, header, { frame: 0, checksum: header.checksum })
-    return {
-      logSequence: header.logSequence,
-      salt1: header.salt1,
-      salt2: header.salt2,
-      lastFrame: scan.lastCommitFrame,
+    for (let attempt = 0; attempt < LOG_POSITION_READ_ATTEMPTS; attempt++) {
+      const header = await readLogFileHeader(logPath)
+      if (!header) return undefined
+      const scan = await scanLogFrames(logPath, header, { frame: 0, checksum: header.checksum })
+      const headerAfterScan = await readLogFileHeader(logPath)
+      if (headerAfterScan === undefined || !sameGeneration(header, headerAfterScan)) continue
+      return {
+        logSequence: header.logSequence,
+        salt1: header.salt1,
+        salt2: header.salt2,
+        lastFrame: scan.lastCommitFrame,
+      }
     }
+    return undefined
   } catch {
     return undefined
   }
+}
+
+function sameGeneration(first: LogHeader, second: LogHeader): boolean {
+  return first.logSequence === second.logSequence && first.salt1 === second.salt1 && first.salt2 === second.salt2
 }
 
 /**

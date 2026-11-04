@@ -1,3 +1,5 @@
+import * as v from 'valibot'
+import { CoordinatorError } from '../errors.js'
 import { cloneCompatibility, cloneMetadata } from './group-rules.js'
 import type {
   CoordinatorCompatibilityMetadata,
@@ -25,6 +27,7 @@ export interface SerializedNodeSession {
   nodeId: string
   lease: SerializedLease
   endpoint?: string
+  replicationEndpoint?: string
   groupIds: string[]
   dataBearing: boolean
   voting: boolean
@@ -43,6 +46,7 @@ export interface SerializedReplicationGroupState {
   drainingNodeIds: string[]
   repairingNodeIds: string[]
   faultedNodeIds: string[]
+  pendingVoterNodeIds?: string[]
   compatibility?: CoordinatorCompatibilityMetadata
   updatedAtMs: number
 }
@@ -82,8 +86,9 @@ export function parseLeaseIdForEntry(kind: LeaseKind, raw: string): string | nul
 }
 
 export function serializeGroupState(state: ReplicationGroupState): string {
+  const { pendingVoterNodeIds, ...rest } = state
   const serialized: SerializedReplicationGroupState = {
-    ...state,
+    ...rest,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
     primaryTerm: state.primaryTerm.toString(),
@@ -92,13 +97,63 @@ export function serializeGroupState(state: ReplicationGroupState): string {
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],
     faultedNodeIds: [...state.faultedNodeIds],
+    ...(pendingVoterNodeIds.length > 0 ? { pendingVoterNodeIds: [...pendingVoterNodeIds] } : {}),
     compatibility: cloneCompatibility(state.compatibility),
   }
   return JSON.stringify(serialized)
 }
 
+const NODE_IDS_SCHEMA = v.array(v.string())
+const SEQUENCE_SCHEMA = v.pipe(v.string(), v.regex(/^\d+$/))
+
+const SERIALIZED_GROUP_STATE_SCHEMA = v.object({
+  clusterId: v.string(),
+  groupId: v.string(),
+  votingDataBearingNodeIds: NODE_IDS_SCHEMA,
+  currentPrimary: v.nullable(v.object({ nodeId: v.string(), endpoint: v.optional(v.string()) })),
+  primaryTerm: SEQUENCE_SCHEMA,
+  durabilityPointSeq: v.optional(SEQUENCE_SCHEMA),
+  inSyncNodeIds: NODE_IDS_SCHEMA,
+  drainingNodeIds: NODE_IDS_SCHEMA,
+  repairingNodeIds: NODE_IDS_SCHEMA,
+  faultedNodeIds: v.optional(NODE_IDS_SCHEMA),
+  pendingVoterNodeIds: v.optional(NODE_IDS_SCHEMA),
+  compatibility: v.optional(
+    v.object({
+      packageVersion: v.optional(v.string()),
+      specVersion: v.optional(v.string()),
+      protocolVersion: v.optional(v.string()),
+    }),
+  ),
+  updatedAtMs: v.number(),
+})
+
+/**
+ * Reads a replication-group record that the etcd coordinator stored, in this release's format or an earlier one's.
+ *
+ * @param raw - The JSON text that etcd holds for the group.
+ * @returns The group state, with no pending voters, no faulted nodes, and a durability point of 0 where the record
+ * omits them.
+ * @throws CoordinatorError when the text is not a group record that this release can read.
+ *
+ * @internal
+ */
 export function parseGroupState(raw: string): ReplicationGroupState {
-  const value = JSON.parse(raw) as SerializedReplicationGroupState
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err: unknown) {
+    throw new CoordinatorError('etcd holds a replication-group record that is not JSON', {
+      cause: err instanceof Error ? err.message : String(err),
+    })
+  }
+  const result = v.safeParse(SERIALIZED_GROUP_STATE_SCHEMA, parsed)
+  if (!result.success) {
+    throw new CoordinatorError('etcd holds a replication-group record in a format that this release cannot read', {
+      issues: result.issues.map(issue => `${v.getDotPath(issue) ?? '(record)'}: ${issue.message}`),
+    })
+  }
+  const value = result.output
   return {
     ...value,
     currentPrimary: value.currentPrimary ? { ...value.currentPrimary } : null,
@@ -109,6 +164,7 @@ export function parseGroupState(raw: string): ReplicationGroupState {
     drainingNodeIds: [...value.drainingNodeIds],
     repairingNodeIds: [...value.repairingNodeIds],
     faultedNodeIds: [...(value.faultedNodeIds ?? [])],
+    pendingVoterNodeIds: [...(value.pendingVoterNodeIds ?? [])],
     compatibility: cloneCompatibility(value.compatibility),
   }
 }

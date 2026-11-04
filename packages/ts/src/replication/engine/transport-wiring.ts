@@ -198,9 +198,8 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
       .getPeerAckedSeq(peer.id)
       .then(async ackedSeq => {
         if (!engine.running) return
-        engine.peerTracker.onAckReceived(peer.id, ackedSeq)
+        if (!engine.isCoordinatorMode()) engine.peerTracker.onAckReceived(peer.id, ackedSeq)
         await engine.log.setLastAppliedSeq(peer.id, ackedSeq)
-        await handleCoordinatorAckProgress(engine, peer.id, ackedSeq)
         await reportAppliedPosition(engine, peer, ackedSeq)
       })
       .catch((err: unknown) => {

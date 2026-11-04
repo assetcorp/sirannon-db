@@ -197,8 +197,10 @@ export async function startNode(
     keyPath: cert.keyPath,
     caCertPath: environment.certs.caCertPath,
     initialRole: options.role ?? 'replica',
-    endpoints: dialTargets.map(target => endpointFor(environment, nodeId, target)),
-    httpEndpoints: Object.fromEntries(NODE_IDS.map(target => [target, httpEndpointFor(environment, target)])),
+    peerProxyEndpoints: Object.fromEntries(
+      dialTargets.map(target => [target, endpointFor(environment, nodeId, target)]),
+    ),
+    httpEndpoint: httpEndpointFor(environment, nodeId),
     etcdHosts: etcdEndpointsFor(environment, nodeId),
     etcdAccess: options.etcdAccess ?? 'insecure-test',
     keyPrefix: environment.keyPrefix,

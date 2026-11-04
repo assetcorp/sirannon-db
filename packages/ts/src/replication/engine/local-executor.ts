@@ -11,11 +11,12 @@ import { runWriterTransaction } from '../../core/writer-transaction.js'
 import { ReplicationError } from '../errors.js'
 import type { ForwardedTransactionResult } from '../types.js'
 import { extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
-import { resolveWriteConcern, waitForWriteConcern } from './coordinator-authority.js'
+import { resolveWriteConcern } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { ReplicationTransaction, type ReplicationTransactionHooks } from './replication-transaction.js'
 import { replicatedSchemaChangeOf } from './schema-statement.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
+import { waitForWriteConcern } from './write-concern.js'
 
 /**
  * Executes a write on this node and stamps the changes that it makes into the replication log inside the same SQLite

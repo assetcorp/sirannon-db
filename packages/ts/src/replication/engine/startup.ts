@@ -4,6 +4,8 @@ import { SyncError } from '../errors.js'
 import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
 import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
+import { refreshMemberAddresses } from './member-addresses.js'
+import { reportEngineError } from './report-error.js'
 import { loadTermHistory } from './term-history.js'
 import { wireTransportHandlers } from './transport-wiring.js'
 
@@ -62,6 +64,9 @@ async function startEngineSteps(engine: ReplicationEngine): Promise<void> {
       engine.config.coordinator?.compatibility?.protocolVersion ?? engine.config.transportConfig?.protocolVersion,
   }
   await engine.config.transport.connect(engine.nodeId, transportConfig)
+  await refreshMemberAddresses(engine).catch((err: unknown) =>
+    reportEngineError(engine, err, 'coordinator-member-addresses', true),
+  )
 
   const isPrimary = engine.isCoordinatorMode() ? engine.coordinatorAuthority : engine.config.topology.role === 'primary'
   const syncCompleted = await engine.log.isSyncCompleted()

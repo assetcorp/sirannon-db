@@ -43,7 +43,7 @@ const READ_EVERY_PAYLOAD = "SELECT id, json_extract(payload, '$.n') AS n FROM ev
 const ARCHIVE_EVERY_EVENT = 'INSERT INTO archive (id, payload) SELECT id, payload FROM events'
 const RETAG_FROM = 'UPDATE events SET tag = ? WHERE id >= ?'
 const INSERT_EVENT = 'INSERT INTO events (payload, tag) VALUES (?, ?)'
-const WRITER_DEADLINE_MS = 500
+const WRITER_DEADLINE_MS = 2_000
 
 let dir: string
 let meter: Meter

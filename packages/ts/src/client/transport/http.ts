@@ -1,4 +1,4 @@
-import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
+import { decodeWireRowsInPlace, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
 import type {
   BatchResponse,
@@ -42,7 +42,7 @@ export class HttpTransport implements Transport {
       params: encodeTaggedValues(params),
       readConcern,
     })
-    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+    return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   /** Sends one write. */
@@ -87,7 +87,7 @@ export class HttpTransport implements Transport {
       args: encodeTaggedValues(args),
       readConcern,
     })
-    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+    return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   /** Executes a registered write by name. */

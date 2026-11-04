@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/__tests__/**/*.test.ts', 'benchmarks/__tests__/**/*.test.ts'],
     env: { SQLITE_USE_URI: '1' },
+    execArgv: ['--expose-gc'],
     exclude: [
       'node_modules/**',
       'dist/**',

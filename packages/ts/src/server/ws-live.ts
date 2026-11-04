@@ -6,7 +6,7 @@ import { clientErrorMessage } from './client-error.js'
 import type { OperationSource } from './operation-lookup.js'
 import type { WSLiveMessage, WSLiveOp } from './protocol.js'
 import type { WSConnection } from './ws-connection.js'
-import type { ConnectionState } from './ws-handler.js'
+import type { ConnectionState } from './ws-connection-state.js'
 import { readArguments } from './ws-named.js'
 
 const LIVE_ONLY_FIELDS = ['table', 'tables', 'filter', 'sinceSeq', 'epoch', 'deviceId', 'schemaVersion'] as const

@@ -572,7 +572,7 @@ export class Database extends DatabaseBackups {
     onAfterQuery(hook: AfterQueryHook): HookDispose;
     onBeforeQuery(hook: BeforeQueryHook): HookDispose;
     query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
-    // @internal (undocumented)
+    // @internal
     queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>;
     queryOne<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T | undefined>;
     rollback(migrations: Migration[], version?: number): Promise<RollbackResult>;

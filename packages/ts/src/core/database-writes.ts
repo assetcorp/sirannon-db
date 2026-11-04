@@ -55,6 +55,14 @@ export class DatabaseWriteController {
 
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult> {
     const { observer, writeGate, writerLock, groupCommitter } = this.deps
+    if (!observer.observesQueries) {
+      const unobserved =
+        this.refusedCaller() ??
+        writeGate.run(() =>
+          writerLock.isHeld() ? groupCommitter.runUngrouped(sql, params) : groupCommitter.submit(sql, params),
+        )
+      return unobserved.then(withoutRowCounts)
+    }
     const failed: FailedWriteRowCounts = {}
     return observer
       .withQueryHooks(

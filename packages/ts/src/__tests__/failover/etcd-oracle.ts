@@ -21,6 +21,11 @@ export interface StoredNodeSession {
   compatibility?: { packageVersion?: string; specVersion?: string; protocolVersion?: string }
 }
 
+export interface StoredPrimaryTerm {
+  nodeId: string | null
+  primaryTerm: bigint
+}
+
 export interface StoredController {
   holderId: string
   leaseId: string
@@ -64,6 +69,29 @@ export class EtcdOracle {
       repairingNodeIds: stringList(raw.repairingNodeIds),
       faultedNodeIds: stringList(raw.faultedNodeIds ?? []),
       compatibility: compatibilityOf(raw.compatibility),
+    }
+  }
+
+  async primaryHistory(): Promise<StoredPrimaryTerm[]> {
+    const key = encode(
+      this.fullKey(`clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`),
+    )
+    const history: StoredPrimaryTerm[] = []
+    let atRevision: bigint | null = null
+    for (;;) {
+      const response = await this.range(atRevision === null ? { key } : { key, revision: String(atRevision) })
+      const kv = response.kvs?.[0]
+      if (!kv) return history
+      const raw = parseObject(decode(kv.value))
+      const entry = {
+        nodeId: primaryOf(raw.currentPrimary)?.nodeId ?? null,
+        primaryTerm: BigInt(String(raw.primaryTerm)),
+      }
+      const later = history[0]
+      if (!later || later.nodeId !== entry.nodeId || later.primaryTerm !== entry.primaryTerm) history.unshift(entry)
+      const modRevision = BigInt(kv.mod_revision ?? '0')
+      if (modRevision <= BigInt(kv.create_revision ?? '0')) return history
+      atRevision = modRevision - 1n
     }
   }
 

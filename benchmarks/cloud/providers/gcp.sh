@@ -14,6 +14,37 @@ prov_init() {
   IAP_FLAG=""
   [ "${USE_IAP:-0}" = "1" ] && IAP_FLAG="--tunnel-through-iap"
   : "${MACHINE_LABEL:=GCP ${MACHINE_TYPE}, ${ZONE}}"
+  : "${LOAD_MACHINE_TYPE:=c3-standard-8}"
+  : "${LOAD_MACHINE_LABEL:=GCP ${LOAD_MACHINE_TYPE}, ${ZONE}}"
+  GCP_NETWORK="${GCP_NETWORK:-default}"
+  GCP_BENCH_TAG="${ENGINE_VM_NAME}"
+  GCP_FIREWALL_RULE="${ENGINE_VM_NAME}-between-vms"
+}
+
+prov_network_up() {
+  if [ "$DRY_RUN" != "1" ] && gcloud compute firewall-rules describe "$GCP_FIREWALL_RULE" --project "$PROJECT" >/dev/null 2>&1; then
+    log "firewall rule $GCP_FIREWALL_RULE already exists"
+    return 0
+  fi
+  log "allow the benchmark ports between the two VMs on network $GCP_NETWORK"
+  _run gcloud compute firewall-rules create "$GCP_FIREWALL_RULE" --project "$PROJECT" \
+    --network "$GCP_NETWORK" --direction INGRESS \
+    --allow tcp:22,tcp:5432,tcp:9876,tcp:9877 \
+    --source-tags "$GCP_BENCH_TAG" --target-tags "$GCP_BENCH_TAG"
+}
+
+prov_network_down() {
+  if [ "$DRY_RUN" != "1" ] && ! gcloud compute firewall-rules describe "$GCP_FIREWALL_RULE" --project "$PROJECT" >/dev/null 2>&1; then
+    return 0
+  fi
+  log "delete firewall rule $GCP_FIREWALL_RULE"
+  _run gcloud compute firewall-rules delete "$GCP_FIREWALL_RULE" --project "$PROJECT" --quiet
+}
+
+prov_private_ip() {
+  [ "$DRY_RUN" = "1" ] && { echo "<private-ip of $VM_NAME>"; return 0; }
+  gcloud compute instances describe "$VM_NAME" --project "$PROJECT" --zone "$ZONE" \
+    --format='value(networkInterfaces[0].networkIP)'
 }
 
 prov_exists() {
@@ -32,6 +63,7 @@ prov_create() {
     --machine-type "$MACHINE_TYPE"
     --image-family "$IMAGE_FAMILY" --image-project "$IMAGE_PROJECT"
     --boot-disk-size "${DISK_SIZE}GB" --boot-disk-type pd-balanced
+    --network "$GCP_NETWORK" --tags "$GCP_BENCH_TAG"
   )
   [ -n "${MIN_CPU_PLATFORM:-}" ] && flags+=(--min-cpu-platform "$MIN_CPU_PLATFORM")
   if [ "$VM_MAX_HOURS" != "0" ]; then

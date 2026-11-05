@@ -83,10 +83,17 @@ describe('losing the primary', () => {
     await Promise.all([killNode(env, NODE_A), killNode(env, holder)])
 
     const promotion = await waitForPrimary(env, [remaining], 30_000)
-    expect(promotion.primaryTerm).toBe(2n)
+    const promotions = (await env.etcdOracle.primaryHistory()).filter(entry => entry.primaryTerm > 1n)
+    expect([
+      [{ nodeId: remaining, primaryTerm: 2n }],
+      [
+        { nodeId: holder, primaryTerm: 2n },
+        { nodeId: remaining, primaryTerm: 3n },
+      ],
+    ]).toContainEqual(promotions)
     await waitForCondition(async () => (await env.etcdOracle.controller())?.holderId === remaining, 10_000)
     await waitForItemsOnDisk(env, [remaining], acknowledged, 10_000)
-    await expectExactlyOneWritablePrimary(env, remaining, 2n)
+    await expectExactlyOneWritablePrimary(env, remaining, promotion.primaryTerm)
   })
 
   it('discards the rows of the lost primary that the promoted node never received', async () => {

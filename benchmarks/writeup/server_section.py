@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from comparison_view import run_date
 from features_section import features_block
-from methodology_section import METHODOLOGY
+from intro_section import intro_block
+from methodology_section import methodology_block
 from run_section import run_block
+from run_shape import over_network
 from scaling_section import scaling_block
 from soak_section import soak_block
 from sources import Source
@@ -20,18 +22,24 @@ _NO_RUN_NOTICE = (
 def comparison_document(source: Source) -> str:
     date = run_date(source.comparison) or "an unrecorded date"
     charts = run_report_chart_dir()
+    network = over_network(source.comparison)
+    placement = (
+        "on one engine machine, while a second machine sent the load"
+        if network
+        else "on the same host"
+    )
     intro = (
         f"This report gives the results of run `{source.run_id}` of the Sirannon and PostgreSQL benchmark, "
         f"which the harness recorded on {date}. For each workload, it gives the highest rate at which each engine "
         "held the latency target, the tail latency at that rate, and the rate at which the engine stopped keeping "
-        "up. Both engines served the same workloads on the same host, through the client that each engine "
+        f"up. Both engines served the same workloads {placement}, through the client that each engine "
         "provides."
     )
     sections = [
-        "# Sirannon and PostgreSQL on one host",
+        "# Sirannon and PostgreSQL over a network" if network else "# Sirannon and PostgreSQL on one host",
         intro,
         "## Methodology",
-        METHODOLOGY,
+        methodology_block(source.comparison),
         "## Run and machine",
         run_block(source),
         "## Operating points",
@@ -49,6 +57,7 @@ def comparison_document(source: Source) -> str:
 def blocks(source: Source | None) -> dict[str, str]:
     if source is None:
         return {
+            "intro": intro_block(None),
             "methodology": _NO_RUN_NOTICE,
             "setup": _NO_RUN_NOTICE,
             "comparison": _NO_RUN_NOTICE,
@@ -58,7 +67,8 @@ def blocks(source: Source | None) -> dict[str, str]:
         }
     charts = repo_chart_dir(source.run_id)
     return {
-        "methodology": METHODOLOGY,
+        "intro": intro_block(source),
+        "methodology": methodology_block(source.comparison),
         "setup": run_block(source),
         "comparison": throughput_block(source, charts),
         "scaling": scaling_block(source, charts),

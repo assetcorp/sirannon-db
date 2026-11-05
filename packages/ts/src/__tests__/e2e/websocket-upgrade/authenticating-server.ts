@@ -8,9 +8,22 @@ import { createServer } from '../../../server/server.js'
 
 const HOOK_DELAY_MS = 10
 const ACCEPTED_TOKEN = 'Bearer inspector-token'
+const SUSPENDED_TOKEN = 'Bearer suspended-inspector-token'
+const HOOK_WAIT_HEADER = 'x-hook-wait'
+const NO_HOOK_WAIT = 'none'
+const WEBCRYPTO_HOOK_WAIT = 'webcrypto'
 
 function pause(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, HOOK_DELAY_MS))
+}
+
+async function waitBeforeDeciding(wait: string | undefined, token: string | undefined): Promise<void> {
+  if (wait === NO_HOOK_WAIT) return
+  if (wait === WEBCRYPTO_HOOK_WAIT) {
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token ?? ''))
+    return
+  }
+  await pause()
 }
 
 const sirannon = new Sirannon({
@@ -31,7 +44,10 @@ const server = createServer(sirannon, {
   acceptSql: true,
   acceptDeviceSync: true,
   authenticate: async ctx => {
-    await pause()
+    await waitBeforeDeciding(ctx.headers[HOOK_WAIT_HEADER], ctx.headers.authorization)
+    if (ctx.headers.authorization === SUSPENDED_TOKEN) {
+      throw new RequestDeniedError(403, 'FORBIDDEN', 'The inspector is suspended')
+    }
     if (ctx.headers.authorization !== ACCEPTED_TOKEN) {
       throw new RequestDeniedError(401, 'UNAUTHENTICATED', 'The inspector token was refused')
     }

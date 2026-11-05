@@ -9,11 +9,30 @@ import { authenticateUpgrade, decodeRemoteAddress } from './request-hook.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
 import type { WSHandler } from './ws-handler.js'
 
+interface UpgradeState {
+  upgrading: boolean
+  endAfterUpgrade: (() => void) | undefined
+}
+
 export interface WSUserData {
   databaseId: string
   identity?: unknown
   refusal?: UpgradeRefusal
   conn?: WSConnection
+  upgradeState: UpgradeState
+}
+
+type UpgradeRequestUserData = Omit<WSUserData, 'upgradeState'>
+
+function endWebSocket(ws: uWS.WebSocket<WSUserData>, code?: number, reason?: string): void {
+  const upgradeState = ws.getUserData().upgradeState
+  if (upgradeState.upgrading) {
+    upgradeState.endAfterUpgrade ??= () => endWebSocket(ws, code, reason)
+    return
+  }
+  try {
+    ws.end(code, reason)
+  } catch {}
 }
 
 const UNSUPPORTED_SUBPROTOCOL_MESSAGE = `The upgrade offered no subprotocol this server supports. Offer '${SIRANNON_WS_SUBPROTOCOL}' alongside any credential-bearing value, or offer none at all.`
@@ -73,10 +92,24 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       }
 
       const selectedWebSocketProtocol = negotiated.protocol
-      const upgrade = (userData: WSUserData): void => {
-        endResponse(res, () => {
-          res.upgrade<WSUserData>(userData, secWebSocketKey, selectedWebSocketProtocol, secWebSocketExtensions, context)
-        })
+      const upgrade = (userData: UpgradeRequestUserData): void => {
+        const upgradeState: UpgradeState = { upgrading: true, endAfterUpgrade: undefined }
+        try {
+          endResponse(res, () => {
+            res.upgrade<WSUserData>(
+              { ...userData, upgradeState },
+              secWebSocketKey,
+              selectedWebSocketProtocol,
+              secWebSocketExtensions,
+              context,
+            )
+          })
+        } finally {
+          const endAfterUpgrade = upgradeState.endAfterUpgrade
+          upgradeState.upgrading = false
+          upgradeState.endAfterUpgrade = undefined
+          endAfterUpgrade?.()
+        }
       }
 
       if (!authenticateHook) {
@@ -120,9 +153,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
       const userData = ws.getUserData()
       const refusal = userData.refusal
       if (refusal) {
-        try {
-          ws.end(refusal.code, refusal.reason)
-        } catch {}
+        endWebSocket(ws, refusal.code, refusal.reason)
         return
       }
 
@@ -158,9 +189,7 @@ export function registerWebSocketRoute(options: WebSocketRouteOptions): void {
         },
         close(code?: number, reason?: string) {
           closing = true
-          try {
-            ws.end(code, reason)
-          } catch {}
+          endWebSocket(ws, code, reason)
         },
       }
       userData.conn = conn

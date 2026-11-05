@@ -66,7 +66,7 @@ export class DatabaseCdcController {
   async liveConnection(): Promise<{ conn: SQLiteConnection; run: RunExclusive }> {
     const open = this.openSnapshotConnection
     if (open === null) {
-      return { conn: this.acquireWriter(), run: this.runExclusive }
+      return { conn: await this.runExclusive(async () => this.acquireWriter()), run: this.runExclusive }
     }
 
     this.liveConnRequest ??= open().catch((err: unknown) => {
@@ -99,20 +99,31 @@ export class DatabaseCdcController {
 
   /**
    * Closes the live connection before a key change replaces the file, after telling every live query to plan again
-   * on the connection that the next call opens once the replacement ends.
+   * on the connection that the next call opens once the replacement ends. Where live queries read through the
+   * pool's writer, {@link DatabaseCdcController.resumeOnReopenedPool} tells them instead, once that writer exists.
    */
   async releaseLiveConnection(): Promise<void> {
+    if (this.openSnapshotConnection === null) return
     const request = this.liveConnRequest
     this.liveConnRequest = null
-    for (const listener of [...this.liveConnectionListeners]) listener()
+    this.replanLiveQueries()
     if (request !== null) await request.then(conn => conn.close()).catch(() => {})
   }
 
-  /** Starts polling again on the writer that the pool opened after a file replacement, where polling was on. */
-  restartPolling(): void {
+  /**
+   * Starts polling again where polling was on, and has every live query that reads through the pool's writer plan
+   * again, after the pool opened its connections to the file that a key change left in place. The key change calls
+   * this while it holds the writer, so no live read reaches the closed writer.
+   */
+  resumeOnReopenedPool(): void {
+    if (this.openSnapshotConnection === null) this.replanLiveQueries()
     if (this.stopPolling === null) return
     this.stop()
     this.ensurePolling()
+  }
+
+  private replanLiveQueries(): void {
+    for (const listener of [...this.liveConnectionListeners]) listener()
   }
 
   get subscriptions(): SubscriptionManager | null {
@@ -245,7 +256,7 @@ export class DatabaseCdcController {
     if (!this.tracker || !this.subscriptionManager) return
 
     this.stopPolling = startPolling(
-      this.acquireWriter(),
+      () => this.acquireWriter(),
       this.tracker,
       this.subscriptionManager,
       this.pollInterval,

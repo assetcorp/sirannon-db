@@ -6,6 +6,7 @@ import {
   backupPiecesSafeToDelete,
   planBackupRestore,
 } from './backup/chain-queries.js'
+import { BackupCopyAdmission } from './backup/copy-admission.js'
 import type { BackupCycle } from './backup/cycle.js'
 import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
@@ -79,6 +80,8 @@ export class DatabaseBackupController {
   private cycle: BackupCycle | null = null
   private cycleOptions: BackupCycleOptions | null = null
   private cycleStarted: Promise<void> = Promise.resolve()
+  private readonly copies: BackupCopyAdmission
+  private readonly copyWriter: SQLiteConnection
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -88,7 +91,10 @@ export class DatabaseBackupController {
     private readonly sourcePath: string,
     private readonly engine?: BackupEngine,
     private readonly keyId: () => string | undefined = () => undefined,
-  ) {}
+  ) {
+    this.copies = new BackupCopyAdmission(runExclusive)
+    this.copyWriter = this.copies.writer(acquireWriter)
+  }
 
   private require(): BackupEngine {
     if (!this.engine) {
@@ -120,16 +126,16 @@ export class DatabaseBackupController {
 
   async backup(destPath: string): Promise<BackupFileReport> {
     const engine = this.require()
-    const copy = await startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
-      engine.backup(this.acquireWriter(), destPath, onFirstStep),
+    const copy = await startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+      engine.backup(this.copyWriter, destPath, onFirstStep),
     )
     return { ...copy, databaseId: this.databaseId, sourcePath: this.sourcePath }
   }
 
   backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
     const engine = this.require()
-    return startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
-      engine.copyToDestination(this.acquireWriter(), {
+    return startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+      engine.copyToDestination(this.copyWriter, {
         ...options,
         databaseId: this.databaseId,
         sourcePath: this.sourcePath,
@@ -141,11 +147,11 @@ export class DatabaseBackupController {
   schedule(options: BackupScheduleOptions): void {
     const engine = this.require()
     this.cancellers.push(
-      engine.schedule(this.acquireWriter(), {
+      engine.schedule(this.copyWriter, {
         ...options,
         databaseId: this.databaseId,
         sourcePath: this.sourcePath,
-        runExclusive: this.runExclusive,
+        runExclusive: this.copies.runAdmitted,
       }),
     )
   }
@@ -233,6 +239,19 @@ export class DatabaseBackupController {
     if (!this.cycle || !this.cycleOptions) return false
     await this.stopCycle()
     return true
+  }
+
+  /**
+   * Stops new backup copies from starting ahead of a key change that replaces the file, and waits until SQLite has
+   * stopped writing every copy that started before, so that no copy reads pages from both files.
+   */
+  pauseCopies(): Promise<void> {
+    return this.copies.pause()
+  }
+
+  /** Lets backup copies start again once a key change has replaced the file or given up. */
+  resumeCopies(): void {
+    this.copies.resume()
   }
 
   /**

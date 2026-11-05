@@ -69,6 +69,13 @@ export class LoadedExtensions {
     })
   }
 
+  /** Loads every recorded extension into connections that replaced the ones that the database loaded them into. */
+  reload(connections: readonly SQLiteConnection[]): Promise<void> {
+    return this.runInTurn(async () => {
+      for (const connection of connections) await this.loadRecorded(connection)
+    })
+  }
+
   /**
    * Opens a connection, loads every recorded extension into it, and returns a
    * wrapper that forwards each call to it. Closing the wrapper stops the

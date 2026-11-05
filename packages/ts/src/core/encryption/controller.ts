@@ -197,7 +197,7 @@ export class DatabaseEncryptionController {
       const metadata = await readKeyMetadata(conn)
       return { ...metadata, ...(encrypted ? await readCipher(conn) : {}) }
     }
-    if (pool.readerCount > 0) return read(pool.acquireReader())
+    if (pool.readerCount > 0) return pool.withReader(read)
     return writerLock.run(() => read(pool.acquireReader()))
   }
 }

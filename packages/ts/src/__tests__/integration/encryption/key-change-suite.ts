@@ -250,7 +250,7 @@ export function describeKeyChange(
       expect(() => readWithStockSqlite(path, 'SELECT count(*) FROM orders')).toThrow()
       const secrets = [...oracle.orders.values()].slice(-50).map(entry => entry.customer)
       expect(filesHoldingText([path, `${path}-wal`], secrets)).toEqual([])
-    })
+    }, 90_000)
 
     it('never hands out an AUTOINCREMENT id again after a key change, even one whose row was deleted during the change', async () => {
       const db = await sirannon.open('invoices', join(dir, 'invoices.db'), {

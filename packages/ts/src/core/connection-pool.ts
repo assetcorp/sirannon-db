@@ -20,6 +20,7 @@ export interface ConnectionPoolOptions {
   useWriterWorker?: boolean
   workerHostOptions?: WorkerHostOptions
   keyring?: EncryptionKeyring
+  prepareReopened?: (connections: readonly SQLiteConnection[]) => Promise<void>
 }
 
 interface PoolConnections {
@@ -90,6 +91,8 @@ export class ConnectionPool {
   private readerIndex = 0
   private closed = false
   private isSuspended = false
+  private readsInFlight = 0
+  private readsSettled: (() => void) | null = null
 
   private constructor(
     private readonly options: ConnectionPoolOptions,
@@ -136,6 +139,24 @@ export class ConnectionPool {
     return this.writer
   }
 
+  /**
+   * Returns what a read on the next reader connection returns, and keeps that connection open until the read settles,
+   * so that {@link ConnectionPool.closeReaders} closes no reader under a read.
+   *
+   * @param read - The read to run on the reader.
+   * @returns The value of the read.
+   */
+  async withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
+    const reader = this.acquireReader()
+    this.readsInFlight++
+    try {
+      return await read(reader)
+    } finally {
+      this.readsInFlight--
+      if (this.readsInFlight === 0) this.readsSettled?.()
+    }
+  }
+
   /** Returns the writer and every reader, so that the caller can apply an operation to every connection in the pool. */
   connections(): readonly SQLiteConnection[] {
     this.ensureAvailable()
@@ -151,14 +172,43 @@ export class ConnectionPool {
   }
 
   /**
-   * Closes every reader and leaves the writer open, so that a checkpoint on the writer can reach the end of the log.
-   * Every acquire fails with `ENCRYPTION_CHANGE_IN_PROGRESS` until {@link ConnectionPool.reopen} returns.
+   * Waits for every read on a reader to settle, then closes every reader and leaves the writer open, so that a
+   * checkpoint on the writer can reach the end of the log. Every acquire fails with `ENCRYPTION_CHANGE_IN_PROGRESS`
+   * until {@link ConnectionPool.reopen} returns.
+   *
+   * @param drainTimeoutMs - How long to wait for the reads to settle.
+   * @throws An `EncryptionError` with `ENCRYPTION_CHANGE_ABORTED` when a read runs past the timeout, which leaves the
+   * readers open and the pool available.
    */
-  async closeReaders(): Promise<void> {
+  async closeReaders(drainTimeoutMs: number): Promise<void> {
     this.isSuspended = true
     const readers = this.readers
     this.readers = []
+    if (!(await this.readsDrained(drainTimeoutMs))) {
+      this.readers = readers
+      this.isSuspended = false
+      throw new EncryptionError(
+        `A read held a reader connection for longer than ${drainTimeoutMs} ms, so the key change stopped before it replaced the file`,
+        'ENCRYPTION_CHANGE_ABORTED',
+      )
+    }
     await closeAllSilently(readers)
+  }
+
+  private async readsDrained(timeoutMs: number): Promise<boolean> {
+    if (this.readsInFlight === 0) return true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const drained = await Promise.race([
+      new Promise<boolean>(resolve => {
+        this.readsSettled = () => resolve(true)
+      }),
+      new Promise<boolean>(resolve => {
+        timer = setTimeout(() => resolve(false), timeoutMs)
+      }),
+    ])
+    clearTimeout(timer)
+    this.readsSettled = null
+    return drained
   }
 
   /** Closes the writer after {@link ConnectionPool.closeReaders}. */
@@ -173,7 +223,10 @@ export class ConnectionPool {
     return this.isSuspended
   }
 
-  /** Opens the writer and the readers again, under the key that the pool's keyring holds now. */
+  /**
+   * Opens the writer and the readers again, under the key that the pool's keyring holds now, and loads into them
+   * every extension that the database loaded into the connections they replace.
+   */
   async reopen(): Promise<void> {
     if (this.closed || !this.isSuspended) return
     await closeAllSilently([...this.readers, this.writer])
@@ -183,7 +236,11 @@ export class ConnectionPool {
     this.writer = opened.writer
     this.readers = opened.readers
     this.readerIndex = 0
-    this.isSuspended = false
+    try {
+      await this.options.prepareReopened?.(opened.writer ? [opened.writer, ...opened.readers] : opened.readers)
+    } finally {
+      this.isSuspended = false
+    }
   }
 
   async close(): Promise<void> {

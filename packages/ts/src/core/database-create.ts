@@ -95,6 +95,7 @@ export async function createDatabaseRuntime(
 
   const keyring = encryptionKeyringFor(driver, options)
   const interrupted = await recoverInterruptedKeyChange(driver, path, readOnly)
+  const extensions = new LoadedExtensions(driver)
   let pool: ConnectionPool
   try {
     pool = await ConnectionPool.create({
@@ -108,6 +109,7 @@ export async function createDatabaseRuntime(
       useWriterWorker: writerWorker.enabled && !readOnly,
       workerHostOptions: writerWorker.host,
       keyring,
+      prepareReopened: connections => extensions.reload(connections),
     })
   } catch (err) {
     throw interrupted === null ? err : explainKeyAfterInterruptedChange(err, interrupted)
@@ -141,7 +143,6 @@ export async function createDatabaseRuntime(
     () => keyring.keyId,
   )
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
-  const extensions = new LoadedExtensions(driver)
   const fileConnections = new DatabaseFileConnections(driver, path, keyring, extensions)
   const openSnapshotConnection = () => fileConnections.open({ readonly: true, walMode: false })
   const cdc = new DatabaseCdcController(

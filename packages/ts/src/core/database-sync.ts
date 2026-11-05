@@ -53,6 +53,7 @@ export type { DeviceSyncPort, DeviceSyncPullState } from './device-sync-port.js'
 
 export class DatabaseSyncController {
   private pkResolver: PkResolver | null = null
+  private cachedOn: SQLiteConnection | null = null
   private tablesReady = false
   private metaReady = false
   private outboxReader: BatchReader | null = null
@@ -316,12 +317,21 @@ export class DatabaseSyncController {
     }
   }
 
+  private resolverOn(writer: SQLiteConnection): PkResolver {
+    if (this.pkResolver === null || this.cachedOn !== writer) {
+      this.pkResolver = new PkResolver(writer)
+      this.outboxReader = null
+      this.cachedOn = writer
+    }
+    return this.pkResolver
+  }
+
   private async ensureOutboxReader(): Promise<BatchReader> {
     const writer = this.acquireWriter()
     await this.ensureSyncTables(writer)
     const stamper = await this.cdc.ensureStamper()
-    this.pkResolver ??= new PkResolver(writer)
-    this.outboxReader ??= new BatchReader(writer, stamper.nodeId, CHANGES_TABLE, this.pkResolver, true, true)
+    const pkResolver = this.resolverOn(writer)
+    this.outboxReader ??= new BatchReader(writer, stamper.nodeId, CHANGES_TABLE, pkResolver, true, true)
     return this.outboxReader
   }
 
@@ -329,13 +339,12 @@ export class DatabaseSyncController {
     const writer = this.acquireWriter()
     await this.ensureSyncTables(writer)
     const stamper = await this.cdc.ensureStamper()
-    this.pkResolver ??= new PkResolver(writer)
 
     return new BatchApplier(
       writer,
       stamper.nodeId,
       stamper.hlc,
-      this.pkResolver,
+      this.resolverOn(writer),
       fromNodeId => this.lastAppliedSeq(fromNodeId),
       {
         tracker: this.cdc.changeTracker ?? undefined,

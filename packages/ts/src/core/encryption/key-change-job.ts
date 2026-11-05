@@ -55,6 +55,11 @@ export interface KeyChangeProgress {
   readonly cancelled: boolean
 }
 
+async function reopenPool(pool: ConnectionPool, cdc: DatabaseCdcController): Promise<void> {
+  await pool.reopen()
+  cdc.resumeOnReopenedPool()
+}
+
 async function assertSchemaUnchanged(writer: SQLiteConnection, expected: bigint): Promise<void> {
   if ((await readSchemaVersion(writer)) !== expected) {
     throw keyChangeAborted(
@@ -102,6 +107,7 @@ export class KeyChangeRun {
   private rounds = 0
   private connectionsClosed = false
   private cyclePaused = false
+  private copiesPaused = false
   private chainForgotten = false
   private replaced = false
   private stranded = false
@@ -239,12 +245,16 @@ export class KeyChangeRun {
     this.checkOpen()
     this.progress.update({ state: 'swapping' })
     this.cyclePaused = await backups.pauseCycle()
+    this.copiesPaused = true
+    await backups.pauseCopies()
     this.connectionsClosed = true
     await fileConnections.closeForReplacement(READ_CONNECTION_DRAIN_TIMEOUT_MS)
     this.checkOpen()
     await writerLock.run(() => this.finishWithWritesHeld())
     this.connectionsClosed = false
     await fileConnections.reopenAfterReplacement()
+    this.copiesPaused = false
+    backups.resumeCopies()
     if (this.cyclePaused) await backups.resumeCycle({ newChain: true })
   }
 
@@ -271,12 +281,12 @@ export class KeyChangeRun {
     const writer = pool.acquireWriter()
     await this.finishNewFile(writer)
     const marker = this.requireMarker()
+    await pool.closeReaders(READ_CONNECTION_DRAIN_TIMEOUT_MS)
     if (this.cyclePaused) {
       await this.deps.backups.forgetPausedChain()
       this.chainForgotten = true
     }
     await marker.recordReplacementBegun()
-    await pool.closeReaders()
     try {
       await checkpointTruncate(writer)
       await pool.closeWriter()
@@ -290,8 +300,7 @@ export class KeyChangeRun {
       throw err
     }
     keyring.replace(this.target)
-    await pool.reopen()
-    cdc.restartPolling()
+    await reopenPool(pool, cdc)
     this.marker = null
     await marker.close()
     await removeKeyChangeMarker(this.files, path)
@@ -309,8 +318,7 @@ export class KeyChangeRun {
       }
     }
     if (this.replaced) keyring.replace(this.target)
-    await pool.reopen()
-    cdc.restartPolling()
+    await reopenPool(pool, cdc)
   }
 
   private async cleanUp(): Promise<void> {
@@ -326,13 +334,15 @@ export class KeyChangeRun {
     if (capture !== null) await writerLock.run(() => capture.stop()).catch(() => undefined)
     await this.marker?.close().catch(() => undefined)
     this.marker = null
-    if (this.stranded) return
+    if (this.stranded) {
+      if (this.copiesPaused) backups.resumeCopies()
+      return
+    }
     if (this.replaced) keyring.replace(this.target)
     await writerLock
       .run(async () => {
         if (!pool.suspended) return
-        await pool.reopen()
-        cdc.restartPolling()
+        await reopenPool(pool, cdc)
       })
       .catch(() => undefined)
     if (!this.replaced) {
@@ -340,6 +350,7 @@ export class KeyChangeRun {
       await removeKeyChangeMarker(this.files, path).catch(() => undefined)
     }
     if (this.connectionsClosed) await fileConnections.reopenAfterReplacement()
+    if (this.copiesPaused) backups.resumeCopies()
     if (this.cyclePaused) {
       await backups.resumeCycle({ newChain: this.replaced || this.chainForgotten }).catch(() => undefined)
     }

@@ -31,7 +31,7 @@ export function readRows<T>(
   params?: Params,
   options?: QueryOptions,
 ): Promise<T[]> {
-  if (readsUnobserved(deps)) return query<T>(deps.pool.acquireReader(), sql, params)
+  if (readsUnobserved(deps)) return deps.pool.withReader(conn => query<T>(conn, sql, params))
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, conn => queryMetered<T>(conn, sql, params), readOutcome),
   )
@@ -54,7 +54,7 @@ export function readWireRows(
   params?: Params,
   options?: QueryOptions,
 ): Promise<unknown[]> {
-  if (readsUnobserved(deps)) return queryRowsForWire(deps.pool.acquireReader(), sql, params)
+  if (readsUnobserved(deps)) return deps.pool.withReader(conn => queryRowsForWire(conn, sql, params))
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, conn => queryForWire(conn, sql, params), readOutcome),
   )
@@ -77,7 +77,7 @@ export function readOneRow<T>(
   params?: Params,
   options?: QueryOptions,
 ): Promise<T | undefined> {
-  if (readsUnobserved(deps)) return queryOne<T>(deps.pool.acquireReader(), sql, params)
+  if (readsUnobserved(deps)) return deps.pool.withReader(conn => queryOne<T>(conn, sql, params))
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, conn => queryOneMetered<T>(conn, sql, params), readOneOutcome),
   )
@@ -98,6 +98,6 @@ async function onReadConnection<T>(
   const metered =
     deps.pool.readerCount === 0
       ? await deps.writerLock.run(() => deps.observer.track(sql, () => op(deps.pool.acquireWriter()), measure))
-      : await deps.observer.track(sql, () => op(deps.pool.acquireReader()), measure)
+      : await deps.pool.withReader(conn => deps.observer.track(sql, () => op(conn), measure))
   return metered.value
 }

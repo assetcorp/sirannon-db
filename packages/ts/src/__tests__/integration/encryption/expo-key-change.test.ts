@@ -4,6 +4,7 @@ import { Sirannon } from '../../../core/sirannon.js'
 import { expoSqlcipherBuild } from '../../helpers/expo-modules.js'
 import { readWithIndependentSqlcipher } from '../../helpers/independent-sqlcipher.js'
 import { builtExpoSqlcipherBindings } from '../../helpers/sirannon-sqlite.js'
+import { describeConnectionsAfterKeyChange } from './connections-after-key-change-suite.js'
 import { describeKeyChange } from './key-change-suite.js'
 
 vi.mock('expo-sqlite', async () => (await import('../../helpers/expo-modules.js')).expoSqliteModule())
@@ -20,10 +21,8 @@ for (const { version, binding } of builtExpoSqlcipherBindings()) {
       expoSqlcipherBuild.binding = binding
     })
 
-    describeKeyChange(
-      `the Expo driver over expo-sqlite ${version}`,
-      () => new Sirannon({ driver: expoSqlite() }),
-      readWithIndependentSqlcipher,
-    )
+    const newSirannon = () => new Sirannon({ driver: expoSqlite() })
+    describeKeyChange(`the Expo driver over expo-sqlite ${version}`, newSirannon, readWithIndependentSqlcipher)
+    describeConnectionsAfterKeyChange(`the Expo driver over expo-sqlite ${version}`, newSirannon)
   })
 }

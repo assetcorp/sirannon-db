@@ -492,7 +492,7 @@ export class ConnectionPool {
     acquireWriter(): SQLiteConnection;
     // (undocumented)
     close(): Promise<void>;
-    closeReaders(): Promise<void>;
+    closeReaders(drainTimeoutMs: number): Promise<void>;
     closeWriter(): Promise<void>;
     connections(): readonly SQLiteConnection[];
     // (undocumented)
@@ -503,6 +503,7 @@ export class ConnectionPool {
     get readerCount(): number;
     reopen(): Promise<void>;
     get suspended(): boolean;
+    withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
 }
 
 // @public
@@ -518,6 +519,8 @@ export interface ConnectionPoolOptions {
     keyring?: EncryptionKeyring;
     // (undocumented)
     path: string;
+    // (undocumented)
+    prepareReopened?: (connections: readonly SQLiteConnection[]) => Promise<void>;
     // (undocumented)
     readOnly?: boolean;
     // (undocumented)

@@ -1,4 +1,5 @@
 import { defineDriver } from '../../core/driver/define.js'
+import { assertHoldsStatement } from '../../core/driver/statement-text.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { ExtensionError } from '../../core/errors.js'
@@ -37,6 +38,7 @@ export function expoSqlite(): SQLiteDriver {
         },
 
         async prepare(sql: string): Promise<SQLiteStatement> {
+          assertHoldsStatement(sql)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
               return dbHandle.getAllAsync<T>(sql, expoBindParams(params))

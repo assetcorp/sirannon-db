@@ -2,6 +2,7 @@
 import { resolve } from 'node:path'
 import { defineDriver } from '../../core/driver/define.js'
 import { loadThroughRuntime } from '../../core/driver/extension.js'
+import { assertHoldsStatement } from '../../core/driver/statement-text.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
@@ -56,6 +57,7 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
         },
 
         async prepare(sql: string): Promise<SQLiteStatement> {
+          assertHoldsStatement(sql)
           const stmt = db.query(sql)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {

@@ -8,7 +8,7 @@ import {
 import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import { isValidDeviceId } from './sync-protocol.js'
 import type { WSConnection } from './ws-connection.js'
-import type { ConnectionState } from './ws-handler.js'
+import type { ConnectionState } from './ws-connection-state.js'
 import type { WSSubscribeDeps } from './ws-subscribe.js'
 
 export async function handleAckMessage(

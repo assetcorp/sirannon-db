@@ -28,15 +28,21 @@ interface Waiter {
  *   acknowledge that sequence. It rejects with a `WriteConcernError` when the
  *   timeout expires. `waitForMajority` and `waitForAll` count only the peers
  *   connected at each check, so the peers that remain connected can meet the
- *   concern after another peer disconnects.
+ *   concern after another peer disconnects. `waitForConfiguredMajority`,
+ *   `waitForConfiguredAll`, and `ackedConfiguredNodeIds` count only the
+ *   acknowledgements that a peer sent over its current connection, so that a
+ *   peer that reconnects, possibly with a replaced file, proves its position
+ *   again before it counts.
  *
  * @internal
  */
 export class PeerTracker {
   private readonly peers = new Map<string, PeerState>()
+  private readonly connectionAcks = new Map<string, bigint>()
   private readonly waiters = new Set<Waiter>()
 
   addPeer(nodeId: string): void {
+    this.connectionAcks.set(nodeId, 0n)
     const existing = this.peers.get(nodeId)
     if (existing) {
       existing.connected = true
@@ -59,10 +65,24 @@ export class PeerTracker {
     if (peer) {
       peer.connected = false
     }
+    this.connectionAcks.delete(nodeId)
     this.checkWaiters()
   }
 
+  /**
+   * Discards the acknowledgements that a peer sent over its current connection, so that the peer counts towards a
+   * write concern or an admission only after it acknowledges again. Call it when the peer's coordinator session
+   * changes, because a new session can belong to a process with another file.
+   *
+   * @param nodeId - The peer's node ID.
+   */
+  forgetConnectionAcks(nodeId: string): void {
+    if (this.connectionAcks.has(nodeId)) this.connectionAcks.set(nodeId, 0n)
+  }
+
   onAckReceived(nodeId: string, ackedSeq: bigint): void {
+    const connectionAcked = this.connectionAcks.get(nodeId)
+    if (connectionAcked !== undefined && ackedSeq > connectionAcked) this.connectionAcks.set(nodeId, ackedSeq)
     const peer = this.peers.get(nodeId)
     if (peer && ackedSeq > peer.lastAckedSeq) {
       peer.lastAckedSeq = ackedSeq
@@ -82,6 +102,7 @@ export class PeerTracker {
   }
 
   restartProgress(sentSeq: bigint): void {
+    for (const nodeId of this.connectionAcks.keys()) this.connectionAcks.set(nodeId, 0n)
     for (const peer of this.peers.values()) {
       peer.lastAckedSeq = 0n
       peer.lastSentSeq = sentSeq
@@ -245,8 +266,8 @@ export class PeerTracker {
       acked.add(localNodeId)
     }
     for (const nodeId of votingNodeIds) {
-      const peer = this.peers.get(nodeId)
-      if (peer && peer.lastAckedSeq >= seq) {
+      const connectionAcked = this.connectionAcks.get(nodeId)
+      if (connectionAcked !== undefined && connectionAcked >= seq) {
         acked.add(nodeId)
       }
     }

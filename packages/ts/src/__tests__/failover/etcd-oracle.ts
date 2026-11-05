@@ -1,5 +1,6 @@
 export interface StoredGroup {
   votingDataBearingNodeIds: string[]
+  pendingVoterNodeIds: string[]
   currentPrimary: { nodeId: string; endpoint?: string } | null
   primaryTerm: bigint
   durabilityPointSeq: bigint
@@ -54,6 +55,7 @@ export class EtcdOracle {
     const raw = parseObject(kv.value)
     return {
       votingDataBearingNodeIds: stringList(raw.votingDataBearingNodeIds),
+      pendingVoterNodeIds: stringList(raw.pendingVoterNodeIds ?? []),
       currentPrimary: primaryOf(raw.currentPrimary),
       primaryTerm: BigInt(String(raw.primaryTerm)),
       durabilityPointSeq: BigInt(String(raw.durabilityPointSeq ?? '0')),
@@ -96,6 +98,26 @@ export class EtcdOracle {
       leaseId: String(raw.id),
       createRevision: BigInt(kv.create_revision ?? '0'),
     }
+  }
+
+  async writeGroupRecord(groupId: string, value: string): Promise<void> {
+    const key = this.fullKey(`clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(groupId)}`)
+    const endpoint = this.endpoints[0]
+    if (endpoint === undefined) throw new Error('The etcd oracle has no endpoint')
+    const response = await fetch(`${endpoint}/v3/kv/put`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: encode(key), value: encode(value) }),
+      signal: AbortSignal.timeout(2_000),
+    })
+    if (!response.ok) throw new Error(`etcd put at ${endpoint} returned ${response.status}: ${await response.text()}`)
+  }
+
+  async groupRecord(groupId: string): Promise<Record<string, unknown> | null> {
+    const kv = await this.readKey(
+      `clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(groupId)}`,
+    )
+    return kv ? parseObject(kv.value) : null
   }
 
   async keysUnderPrefix(): Promise<string[]> {

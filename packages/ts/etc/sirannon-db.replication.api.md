@@ -54,15 +54,18 @@ export class BatchValidationError extends ReplicationError {
 
 // @public
 export interface ClusterCoordinator {
+    addVoter(input: AddVoterInput): Promise<VoterChangeResult>;
     admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>;
     close?(): Promise<void>;
     compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult>;
+    createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult>;
     deregisterNodeSession(clusterId: string, nodeId: string): Promise<void>;
     getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>;
     getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>;
     promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>;
     registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>;
     releaseLease(leaseId: string): Promise<boolean>;
+    removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>;
     renewLease(leaseId: string, ttlMs: number): Promise<boolean>;
     setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState>;
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;
@@ -76,7 +79,7 @@ export interface ClusterCoordinator {
 // @public
 export interface ClusterStatusOptions {
     databaseId: string;
-    endpoints: Readonly<Record<string, string>>;
+    endpoints?: Readonly<Record<string, string>>;
 }
 
 // @public
@@ -171,6 +174,7 @@ export interface CoordinatorNodeSession {
     lease: CoordinatorLease;
     metadata?: Record<string, unknown>;
     nodeId: string;
+    replicationEndpoint?: string;
     voting: boolean;
 }
 
@@ -298,6 +302,7 @@ export class PeerTracker {
     connectedPeerCount(): number;
     // (undocumented)
     expireTimedOutBatches(nodeId: string, nowMs: number, timeoutMs: number): boolean;
+    forgetConnectionAcks(nodeId: string): void;
     // (undocumented)
     getPeerState(nodeId: string): PeerState | undefined;
     // (undocumented)
@@ -364,6 +369,7 @@ export interface RegisterNodeSessionInput {
     groupIds?: string[];
     metadata?: Record<string, unknown>;
     nodeId: string;
+    replicationEndpoint?: string;
     ttlMs: number;
     voting?: boolean;
 }
@@ -502,6 +508,8 @@ export class ReplicationEngine extends EventEmitter {
     getCurrentPrimaryPeerId(): string | null;
     getCurrentSeq(): bigint;
     // @internal (undocumented)
+    readonly groupStateRefresh: GroupStateRefresh;
+    // @internal (undocumented)
     highestSourceSeqSeen: bigint;
     // @internal (undocumented)
     readonly history: TermHistory;
@@ -539,9 +547,13 @@ export class ReplicationEngine extends EventEmitter {
     readonly maxSyncDurationMs: number;
     // @internal (undocumented)
     readonly maxSyncLagBeforeReady: number;
+    // @internal (undocumented)
+    readonly memberAddresses: MemberAddresses;
     readonly nodeId: string;
     // @internal (undocumented)
     nodeSessionLeaseId: string | null;
+    // @internal (undocumented)
+    nodeSessionVoting: boolean | null;
     // @internal (undocumented)
     nodeSessionWatchDisposer: CoordinatorWatchDisposer | null;
     // @internal (undocumented)
@@ -606,6 +618,7 @@ export interface ReplicationGroupState {
     faultedNodeIds: string[];
     groupId: string;
     inSyncNodeIds: string[];
+    pendingVoterNodeIds: string[];
     primaryTerm: bigint;
     repairingNodeIds: string[];
     updatedAtMs: number;
@@ -711,6 +724,7 @@ export interface ReplicationTransport {
     sendSyncAck(peerId: string, ack: SyncAck): Promise<void>;
     sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void>;
     sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void>;
+    setPeerEndpoints?(endpoints: ReadonlyMap<string, string>): void;
 }
 
 // @public
@@ -723,6 +737,7 @@ export interface SetReplicationGroupStateInput {
     faultedNodeIds?: string[];
     groupId: string;
     inSyncNodeIds?: string[];
+    pendingVoterNodeIds?: string[];
     primaryTerm?: bigint;
     repairingNodeIds?: string[];
     votingDataBearingNodeIds: string[];

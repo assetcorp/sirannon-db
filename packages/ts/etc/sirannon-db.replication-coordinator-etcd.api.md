@@ -12,15 +12,18 @@ export function createEtcdCoordinator(options: EtcdClusterCoordinatorOptions): E
 // @public
 export class EtcdClusterCoordinator implements ClusterCoordinator {
     constructor(options: EtcdClusterCoordinatorOptions);
+    addVoter(input: AddVoterInput): Promise<VoterChangeResult>;
     admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>;
     close(): Promise<void>;
     compareAndAdvancePrimaryTerm(input: CompareAndAdvancePrimaryTermInput): Promise<CompareAndAdvancePrimaryTermResult>;
+    createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult>;
     deregisterNodeSession(clusterId: string, nodeId: string): Promise<void>;
     getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>;
     getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>;
     promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>;
     registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>;
     releaseLease(leaseId: string): Promise<boolean>;
+    removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>;
     renewLease(leaseId: string, ttlMs: number): Promise<boolean>;
     setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState>;
     tryAcquireControllerLease(input: AcquireControllerLeaseInput): Promise<AcquireControllerLeaseResult>;

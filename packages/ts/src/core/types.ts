@@ -50,6 +50,7 @@ export const NODE_HEALTH_REASONS = [
   'draining',
   'repairing',
   'faulted',
+  'not-member',
   'sync-pending',
   'no-group-state',
 ] as const

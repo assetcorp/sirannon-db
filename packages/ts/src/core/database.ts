@@ -81,10 +81,23 @@ export class Database extends DatabaseBackups {
     return readRows<T>(this.runtime.reads, sql, params, options)
   }
 
-  /** @internal */
-  async queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
-    this.ensureOpen()
-    return readWireRows(this.runtime.reads, sql, params, options)
+  /**
+   * Executes a read and returns its rows encoded for a network response, which the server sends without encoding
+   * them again.
+   *
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The read concern for this statement.
+   * @returns The rows with every value encoded for the wire.
+   * @internal
+   */
+  queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]> {
+    try {
+      this.ensureOpen()
+      return readWireRows(this.runtime.reads, sql, params, options)
+    } catch (err) {
+      return Promise.reject(err)
+    }
   }
 
   /**

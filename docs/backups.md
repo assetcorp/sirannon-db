@@ -205,7 +205,7 @@ const db = await sirannon.open('main', './data/main.db', {
 })
 ```
 
-By default, a replica takes the backups and leaves the primary to serve writes, and a group with no replica falls back to its primary. `preferredNode: 'primary'` puts the backups on the primary, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to the node that you name. With a pinned node, each node compares its own identifier with that name and makes no call to the coordinator, so a pinned deployment keeps backing up during a coordinator outage.
+By default, a replica takes the backups and leaves the primary to serve writes, and a group with no replica falls back to its primary. `preferredNode: 'primary'` puts the backups on the primary, and `preferredNode: { nodeId: 'orders-node-c' }` pins them to the node that you name. A pinned node takes the backups only while the coordinator lists it in the group's in-sync set and marks it neither draining, repairing, nor faulted, so a pinned node that is rebuilding its copy skips its turns until it rejoins the set.
 
 A node that takes none of the backups keeps no chain of its own, although it still checkpoints its log every turn. Before it gives up a chain, it sends any capture that it had staged. If the destination rejects that capture, the node keeps the chain, the staged capture, and the log until a later turn can send them. When a failover moves the backups to this node, its first turn copies the whole database and starts a new chain. Sirannon needs that full copy because each node stores the same rows in a physically different file, so change files captured on one node cannot extend a chain from another.
 

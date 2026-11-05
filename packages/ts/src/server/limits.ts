@@ -6,6 +6,22 @@ const DEFAULT_WS_BACKPRESSURE_BYTES = 16 * 1_048_576
 export const UWS_MAX_LIMIT_BYTES = 4_294_967_295
 const DEFAULT_CLOSE_TIMEOUT_MS = DEFAULT_HTTP_REQUEST_TIMEOUT_MS
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const MAX_UTF8_BYTES_PER_UTF16_UNIT = 3
+
+/**
+ * Returns whether a text frame encodes to more than `maxBytes` bytes of UTF-8.
+ *
+ * Each UTF-16 code unit encodes to at most three bytes, so the function counts the bytes only for a frame long enough
+ * to pass the limit.
+ *
+ * @param text - The frame that the client sent.
+ * @param maxBytes - The largest frame, in bytes, that the server accepts.
+ * @returns `true` when the frame's UTF-8 encoding is longer than `maxBytes`.
+ * @internal
+ */
+export function exceedsUtf8Bytes(text: string, maxBytes: number): boolean {
+  return text.length * MAX_UTF8_BYTES_PER_UTF16_UNIT > maxBytes && Buffer.byteLength(text) > maxBytes
+}
 
 /**
  * Returns how long, in milliseconds, closing the server waits for requests in progress before it ends every

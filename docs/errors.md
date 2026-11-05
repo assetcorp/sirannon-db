@@ -141,7 +141,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `BatchValidationError` | `BATCH_VALIDATION_ERROR` | A batch fails its checksum, breaks the schema allowlist, exceeds `maxClockDriftMs`, or contains unsafe DDL |
 | `WriteConcernError` | `WRITE_CONCERN_ERROR` | The replicas do not meet the write concern within the timeout |
 | `ReadConcernError` | `READ_CONCERN_ERROR` | The node cannot satisfy the requested read concern |
-| `TopologyError` | `TOPOLOGY_ERROR` | A replica receives a write with forwarding off, no primary is available, or a peer is unauthorised |
+| `TopologyError` | `TOPOLOGY_ERROR` | A replica receives a write with forwarding off, no primary is available, a peer is unauthorised, a node outside its group's members receives a read or a write, or coordinator mode receives a configured address list |
 | `CoordinatorError` | `COORDINATOR_UNAVAILABLE` | The node cannot reach the coordinator, or the coordinator cannot prove quorum authority |
 | `AuthorityError` | `AUTHORITY_LOST` | A node loses primary or controller authority while it handles work |
 | `StalePrimaryError` | `STALE_PRIMARY` | A request, batch, sync message, or forwarded write has a stale primary term |

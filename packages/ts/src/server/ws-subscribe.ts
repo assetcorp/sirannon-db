@@ -9,8 +9,8 @@ import { isValidDeviceId, isValidSchemaVersion, schemaVersionGateRefusal } from 
 import type { CdcContextRegistry } from './ws-cdc.js'
 import { needsResync, PrimedSubscription } from './ws-cdc-resume.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
+import type { ConnectionState } from './ws-connection-state.js'
 import { subscribeDevice } from './ws-device-subscribe.js'
-import type { ConnectionState } from './ws-handler.js'
 
 const MAX_SUBSCRIBED_TABLES = 500
 

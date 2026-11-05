@@ -23,6 +23,12 @@ export interface ServerCapabilityCheck {
    * because it predates the capability report, and throws `SQL_NOT_ACCEPTED` when the report leaves SQL out.
    */
   assertSqlAccepted(): Promise<void>
+  /**
+   * Returns `true` while the capability report that the client last read announces that the server accepts SQL, so
+   * that a remote database can send a statement without waiting on {@link ServerCapabilityCheck.assertSqlAccepted}.
+   * A check without this method makes every statement wait on that call.
+   */
+  knownToAcceptSql?(): boolean
   /** Returns the digest of the server's operation registry, or `undefined` when the server announces none. */
   registryDigest(refresh?: boolean): Promise<string | undefined>
   /** Cancels the capability request in flight, which the remote database calls when it closes. */
@@ -36,6 +42,7 @@ export interface ServerCapabilityCheck {
  */
 export class ServerCapabilities implements ServerCapabilityCheck {
   private pending: Promise<CapabilityReport> | null = null
+  private acceptsSql = false
   private readonly lifetime = new AbortController()
 
   constructor(
@@ -48,6 +55,17 @@ export class ServerCapabilities implements ServerCapabilityCheck {
   close(): void {
     this.lifetime.abort()
     this.pending = null
+    this.acceptsSql = false
+  }
+
+  /**
+   * Returns whether the report that the client last read announces SQL, which stays `false` while a report is in
+   * flight and after the client closes.
+   *
+   * @returns `true` when a statement can skip waiting on {@link ServerCapabilities.assertSqlAccepted}.
+   */
+  knownToAcceptSql(): boolean {
+    return this.acceptsSql && !this.lifetime.signal.aborted
   }
 
   private async read(refresh = false): Promise<CapabilityReport> {
@@ -56,9 +74,17 @@ export class ServerCapabilities implements ServerCapabilityCheck {
     if (this.pending === null) {
       const request = this.fetch()
       this.pending = request
-      request.catch(err => {
-        if (this.pending === request && !isMissingEndpoint(err)) this.pending = null
-      })
+      this.acceptsSql = false
+      request.then(
+        report => {
+          if (this.pending === request) this.acceptsSql = report.capabilities.includes(SQL_QUERY_CAPABILITY)
+        },
+        err => {
+          if (this.pending !== request) return
+          if (isMissingEndpoint(err)) this.acceptsSql = true
+          else this.pending = null
+        },
+      )
     }
     return this.pending
   }

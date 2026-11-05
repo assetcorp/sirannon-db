@@ -11,11 +11,20 @@ import {
   throwNotCurrentPrimary,
 } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { isLocalNodeRemoved } from './local-membership.js'
 
 function assertReadyPhase(engine: ReplicationEngine, activity: 'serve reads' | 'accept operations'): void {
+  assertGroupMember(engine)
   if (engine.syncState.phase !== 'ready') {
     throw new SyncError(`Node is in '${engine.syncState.phase}' phase and cannot ${activity}`)
   }
+}
+
+function assertGroupMember(engine: ReplicationEngine): void {
+  if (!isLocalNodeRemoved(engine)) return
+  throw new TopologyError(
+    `Node '${engine.nodeId}' is not a member of replication group '${engine.config.coordinator?.groupId}', so it serves no reads or writes`,
+  )
 }
 
 function fromForwarded(result: ForwardedTransactionResult['results'][number]): ExecuteResult {
@@ -114,6 +123,7 @@ export async function forwardStatements(
   statements: Array<{ sql: string; params?: Params }>,
   options?: QueryOptions,
 ): Promise<ForwardedTransactionResult> {
+  assertGroupMember(engine)
   const writeConcern = options?.writeConcern
   if (await canAcceptLocalWrite(engine)) {
     return engine.localExecutor.executeForwardedLocally(statements, writeConcern)

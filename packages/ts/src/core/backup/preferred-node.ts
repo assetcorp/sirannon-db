@@ -4,8 +4,8 @@
  * With `'replica'`, Sirannon picks an eligible replica, and it picks the
  * primary where the group has no eligible replica. With `'primary'`, Sirannon
  * picks the primary, and no node takes backups while the primary is not
- * eligible. An object names one node directly, and each node compares its own
- * identifier against that name without reading the membership.
+ * eligible. An object names one node directly, and that node takes backups
+ * only while the membership reports it eligible.
  *
  * @public
  */
@@ -98,7 +98,7 @@ export function preferredBackupNode(
   preference: BackupNodePreference,
 ): string | null {
   if (typeof preference !== 'string') {
-    return preference.nodeId
+    return membership.nodeIds.includes(preference.nodeId) ? preference.nodeId : null
   }
 
   const primaryNodeId = membership.primaryNodeId

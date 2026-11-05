@@ -170,7 +170,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `nodeId` | `string` | auto-generated in static mode | Unique node identifier; coordinator mode requires a stable, persisted value |
 | `topology` | `Topology` | required | `PrimaryReplicaTopology` |
 | `transport` | `ReplicationTransport` | required | Transport for inter-node communication |
-| `transportConfig` | `TransportConfig` | `{}` | Peer endpoints and transport metadata |
+| `transportConfig` | `TransportConfig` | `{}` | Peer endpoints and transport metadata; coordinator mode refuses `endpoints` with `TOPOLOGY_ERROR` |
 | `writeForwarding` | `boolean` | `false` | Forward writes from replicas to the primary |
 | `defaultConflictResolver` | `ConflictResolver` | `LWWResolver` | Default conflict resolution strategy |
 | `conflictResolvers` | `Record<string, ConflictResolver>` | - | Per-table conflict resolution overrides |
@@ -201,6 +201,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `clusterId` | `string` | required | Coordinator namespace for the cluster |
 | `groupId` | `string` | required | Replication group containing copies of one database |
 | `endpoint` | `string` | - | Application endpoint advertised for client discovery |
+| `replicationEndpoint` | `string` | - | Replication address that the other members dial, published in this node's session |
 | `votingDataBearingNodeIds` | `string[]` | - | Voter set used to create an unregistered group and calculate write concerns |
 | `coordinator` | `ClusterCoordinator` | required | Coordinator adapter, such as the etcd adapter |
 | `sessionTtlMs` | `number` | `10000` | Node-session lease lifetime |
@@ -229,7 +230,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 
 | Option | Type | Description |
 | --- | --- | --- |
-| `endpoints` | `string[]` | Peer addresses used to establish replication connections |
+| `endpoints` | `string[]` | Peer addresses used to establish replication connections in static mode; coordinator mode refuses it |
 | `localRole` | `'primary' \| 'replica'` | Local topology role; `ReplicationEngine` supplies this value |
 | `groupId` | `string` | Replication group carried in coordinator-mode handshakes |
 | `primaryTerm` | `bigint` | Current fencing term, supplied from coordinator state |

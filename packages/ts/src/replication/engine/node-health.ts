@@ -1,4 +1,5 @@
 import type { NodeHealth, NodeHealthReason } from '../../core/types.js'
+import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import type { ReplicationStatus, SyncPhase } from '../types.js'
 import { effectiveTopologyRole, getCoordinatorRuntimeStatus, isCoordinatorConnected } from './coordinator-authority.js'
@@ -46,6 +47,9 @@ export function computeNodeHealth(engine: ReplicationEngine): NodeHealth {
   }
 
   const nodeId = engine.nodeId
+  if (!isGroupMember(state, nodeId)) {
+    return { state: 'unavailable', reason: 'not-member', canRead: false, canWrite: false }
+  }
   const canRead = phase === 'ready' && !isSidelined(state, nodeId)
   const canWrite = canRead && engine.coordinatorAuthority
 

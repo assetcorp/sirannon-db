@@ -10,7 +10,6 @@ import {
   cloneCompatibility,
   cloneMetadata,
   cloneReplicationGroupState,
-  isEligiblePromotionSession,
   MIN_AUTOMATIC_FAILOVER_VOTERS,
   nextAdmittedInSyncState,
   nextInSyncSetState,
@@ -21,6 +20,8 @@ import {
   cloneLease,
   cloneNodeSession,
   findLeaseIn,
+  findPromotablePrimary,
+  isLeaseLiveAt,
   liveNodeIdsIn,
   movePrimary,
   NodeSessionWatchers,
@@ -31,6 +32,7 @@ import {
 import type {
   AcquireControllerLeaseInput,
   AcquireControllerLeaseResult,
+  AddVoterInput,
   AdmitNodeToInSyncSetInput,
   ClusterCoordinator,
   CompareAndAdvancePrimaryTermInput,
@@ -38,15 +40,19 @@ import type {
   ControllerLeaseWatcher,
   CoordinatorLease,
   CoordinatorNodeSession,
+  CreateReplicationGroupStateResult,
   NodeSessionWatcher,
   PromoteEligibleReplicaInput,
   RegisterNodeSessionInput,
+  RemoveVoterInput,
   ReplicationGroupState,
   ReplicationGroupWatcher,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
+  VoterChangeResult,
 } from './types.js'
+import { assertVoterChangeInput, nextAddVoterState, nextRemoveVoterState } from './voter-rules.js'
 
 export interface InMemoryClusterCoordinatorOptions {
   now?: () => number
@@ -162,6 +168,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
       nodeId: input.nodeId,
       lease,
       endpoint: input.endpoint,
+      replicationEndpoint: input.replicationEndpoint,
       groupIds: [...(input.groupIds ?? [])],
       dataBearing: input.dataBearing ?? true,
       voting: input.voting ?? true,
@@ -204,6 +211,25 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     this.replicationGroups.set(replicationGroupKey(input.clusterId, input.groupId), state)
     this.notifyReplicationGroupWatchers(state)
     return cloneReplicationGroupState(state)
+  }
+
+  async createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult> {
+    buildReplicationGroupState(input, this.now())
+    const existing = this.replicationGroups.get(replicationGroupKey(input.clusterId, input.groupId))
+    if (existing) {
+      return { created: false, state: cloneReplicationGroupState(existing) }
+    }
+    return { created: true, state: await this.setReplicationGroupState(input) }
+  }
+
+  async addVoter(input: AddVoterInput): Promise<VoterChangeResult> {
+    assertVoterChangeInput(input)
+    return this.transitionGroup(input.clusterId, input.groupId, state => nextAddVoterState(state, input, this.now()))
+  }
+
+  async removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult> {
+    assertVoterChangeInput(input)
+    return this.transitionGroup(input.clusterId, input.groupId, state => nextRemoveVoterState(state, input, this.now()))
   }
 
   async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
@@ -294,22 +320,19 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
       return cloneReplicationGroupState(state)
     }
 
-    for (const nodeId of state.votingDataBearingNodeIds) {
-      if (nodeId === state.currentPrimary?.nodeId || excludedNodeIds.has(nodeId)) {
-        continue
-      }
-      const session = this.nodeSessions.get(nodeSessionKey(input.clusterId, nodeId))
-      if (!this.isPromotable(state, nodeId, session)) {
-        continue
-      }
-
-      movePrimary(state, session.endpoint ? { nodeId, endpoint: session.endpoint } : { nodeId })
-      state.updatedAtMs = this.now()
-      this.notifyReplicationGroupWatchers(state)
-      return cloneReplicationGroupState(state)
+    const nextPrimary = findPromotablePrimary(
+      state,
+      excludedNodeIds,
+      nodeId => this.nodeSessions.get(nodeSessionKey(input.clusterId, nodeId)),
+      this.now(),
+    )
+    if (!nextPrimary) {
+      throw new NoSafePrimaryError(`No safe primary is available for replication group '${input.groupId}'`)
     }
-
-    throw new NoSafePrimaryError(`No safe primary is available for replication group '${input.groupId}'`)
+    movePrimary(state, nextPrimary)
+    state.updatedAtMs = this.now()
+    this.notifyReplicationGroupWatchers(state)
+    return cloneReplicationGroupState(state)
   }
 
   private applyGroupTransition(
@@ -317,22 +340,30 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     groupId: string,
     transition: (state: ReplicationGroupState) => ReplicationGroupState,
   ): ReplicationGroupState | null {
+    return this.transitionGroup(clusterId, groupId, transition).state
+  }
+
+  private transitionGroup(
+    clusterId: string,
+    groupId: string,
+    transition: (state: ReplicationGroupState) => ReplicationGroupState,
+  ): VoterChangeResult {
     const key = replicationGroupKey(clusterId, groupId)
     const state = this.replicationGroups.get(key)
     if (!state) {
-      return null
+      return { changed: false, state: null }
     }
     const next = transition(state)
     if (next === state) {
-      return cloneReplicationGroupState(state)
+      return { changed: false, state: cloneReplicationGroupState(state) }
     }
     this.replicationGroups.set(key, next)
     this.notifyReplicationGroupWatchers(next)
-    return cloneReplicationGroupState(next)
+    return { changed: true, state: cloneReplicationGroupState(next) }
   }
 
   private isLeaseLive(lease: CoordinatorLease): boolean {
-    return lease.expiresAtMs > this.now()
+    return isLeaseLiveAt(lease, this.now())
   }
 
   private liveNodeIds(clusterId: string): string[] {
@@ -358,16 +389,5 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
       state,
       this.onWatcherError,
     )
-  }
-
-  private isPromotable(
-    state: ReplicationGroupState,
-    nodeId: string,
-    session: CoordinatorNodeSession | undefined,
-  ): session is CoordinatorNodeSession {
-    if (!session || !this.isLeaseLive(session.lease)) {
-      return false
-    }
-    return isEligiblePromotionSession(state, nodeId, session)
   }
 }

@@ -18,8 +18,8 @@ export interface FailoverNodeConfig {
   keyPath: string
   caCertPath: string
   initialRole: FailoverNodeRole
-  endpoints: string[]
-  httpEndpoints: Record<string, string>
+  peerProxyEndpoints: Record<string, string>
+  httpEndpoint: string
   etcdHosts: string[]
   etcdAccess: EtcdAccess
   keyPrefix: string
@@ -34,6 +34,7 @@ export interface FailoverNodeConfig {
   writeForwarding: boolean
   initialSync?: boolean
   backupDirectory?: string
+  dieAfterGroupCreate?: boolean
   compatibility: {
     packageVersion: string
     specVersion: string

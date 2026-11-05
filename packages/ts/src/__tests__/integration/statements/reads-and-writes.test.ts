@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
 import { QueryError } from '../../../core/errors.js'
-import { columnRaw, countRaw, createWorkspace, DRIVER_PLACEMENTS, readRaw, type Workspace } from './harness.js'
+import {
+  collectGarbage,
+  columnRaw,
+  countRaw,
+  createWorkspace,
+  DRIVER_PLACEMENTS,
+  readRaw,
+  type Workspace,
+} from './harness.js'
 
 const ITEMS_SCHEMA =
   'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, qty INTEGER NOT NULL CHECK (qty >= 0))'
@@ -9,6 +17,7 @@ const INSERT_ITEM = 'INSERT INTO items (name, qty) VALUES (?, ?)'
 const SEEDED_ITEMS = 12
 const MORE_STATEMENTS_THAN_ANY_CACHE = 300
 const LARGE_BATCH = 5000
+const STATEMENT_LESS_SQL = ['', ' \t\r\n\f', ';', ' ; ;', '-- a comment', '/* a comment', '/**/;/**/', '\u0000SELECT 1']
 
 type Call = [label: string, call: (db: Database, sql: string) => Promise<unknown>]
 
@@ -94,6 +103,41 @@ describe.each(DRIVER_PLACEMENTS)('reads and writes with $label', ({ driver, writ
     }
 
     expect(readRaw(path, 'SELECT * FROM items ORDER BY id')).toEqual(before)
+  })
+
+  it('refuses text that holds no statement and shuts down cleanly once the refused statements are collected', async () => {
+    const path = workspace.path('items.db')
+    const sirannon = workspace.registry({ driver: driver() })
+    const db = await sirannon.open('items', path, { writerWorker })
+    await db.execute(ITEMS_SCHEMA)
+    await db.execute(INSERT_ITEM, ['kept', 1])
+
+    for (const sql of STATEMENT_LESS_SQL) {
+      for (const [label, call] of CALLS) {
+        await expect(call(db, sql), `${label}: ${JSON.stringify(sql)}`).rejects.toMatchObject({
+          code: 'QUERY_ERROR',
+          sql,
+        })
+      }
+    }
+    expect(await db.queryOne('-- a comment\nSELECT 1 AS n')).toEqual({ n: 1 })
+    expect(await db.queryOne('/* a comment */ SELECT 2 AS n')).toEqual({ n: 2 })
+    expect(await db.queryOne("SELECT '--' AS n")).toEqual({ n: '--' })
+    expect(await db.queryOne("SELECT '/*' AS n -- a trailing comment")).toEqual({ n: '/*' })
+    expect(await db.execute(";\n/* a comment */ INSERT INTO items (name, qty) VALUES ('after-comments', 2);")).toEqual({
+      changes: 1,
+      lastInsertRowId: 2,
+    })
+    for (let index = 0; index < MORE_STATEMENTS_THAN_ANY_CACHE; index++) {
+      expect(await db.queryOne(`SELECT ${index} AS n`)).toEqual({ n: index })
+    }
+    await collectGarbage()
+
+    await expect(sirannon.shutdown()).resolves.toBeUndefined()
+    expect(readRaw(path, 'SELECT name, qty FROM items ORDER BY id')).toEqual([
+      { name: 'kept', qty: 1n },
+      { name: 'after-comments', qty: 2n },
+    ])
   })
 
   it('returns correct results after more distinct statements than any statement cache holds', async () => {

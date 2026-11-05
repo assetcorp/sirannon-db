@@ -1,6 +1,7 @@
 import { selectQuarantined, upsertQuarantined } from '../../core/system-catalog/index.js'
+import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
-import { AuthorityError, CoordinatorError } from '../errors.js'
+import { AuthorityError } from '../errors.js'
 import {
   applyCoordinatorState,
   errorDetails,
@@ -9,7 +10,7 @@ import {
 } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { isAnchoredToCurrentTerm, restartWithFullCopy } from './history-anchor.js'
-import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
+import { keepCoordinatorState, markLocalNodeRepairing, removeLocalNodeFromInSyncSet } from './local-membership.js'
 import { reportEngineError } from './report-error.js'
 
 /**
@@ -91,15 +92,11 @@ export async function prepareCoordinatorRejoinIfNeeded(engine: ReplicationEngine
   await evaluateFormerPrimaryHistory(engine, state)
 }
 
-function keepState(engine: ReplicationEngine, state: ReplicationGroupState): void {
-  engine.coordinatorState = state
-  engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, state)
-}
-
 /**
  * Asks the coordinator to admit this replica to the in-sync set once it has applied the current primary's log up to
  * the durability point and reconciled its history with that primary's. A repairing replica asks only after it has
- * finished the full copy that rejoins it in the current term, and a draining replica leaves the in-sync set.
+ * finished, from the current primary, the full copy that rejoins it in the current term, and a draining replica leaves
+ * the in-sync set.
  *
  * @param engine - The replica's engine.
  * @returns A promise that settles once the coordinator has answered, or at once when the replica is not ready.
@@ -111,7 +108,7 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
   const config = engine.config.coordinator
   const state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
   if (!config || !state || state.currentPrimary?.nodeId === engine.nodeId) return
-  if (!state.votingDataBearingNodeIds.includes(engine.nodeId)) return
+  if (!isGroupMember(state, engine.nodeId)) return
   if (state.faultedNodeIds.includes(engine.nodeId)) return
 
   if (state.drainingNodeIds.includes(engine.nodeId)) {
@@ -121,15 +118,15 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
 
   const repairing = state.repairingNodeIds.includes(engine.nodeId)
   const sourceNodeId = state.currentPrimary?.nodeId
-  if (state.inSyncNodeIds.includes(engine.nodeId) && !repairing) return keepState(engine, state)
+  if (state.inSyncNodeIds.includes(engine.nodeId) && !repairing) return keepCoordinatorState(engine, state)
   if (!sourceNodeId || engine.syncState.sourcePeerId !== sourceNodeId || !isAnchoredToCurrentTerm(engine)) {
-    return keepState(engine, state)
+    return keepCoordinatorState(engine, state)
   }
   const rejoinSyncCompleted = engine.rejoin.copiedTerm === state.primaryTerm
-  if (repairing && !rejoinSyncCompleted) return keepState(engine, state)
+  if (repairing && !rejoinSyncCompleted) return keepCoordinatorState(engine, state)
 
   const appliedSeq = await engine.log.getLastAppliedSeq(sourceNodeId)
-  if (appliedSeq < state.durabilityPointSeq) return keepState(engine, state)
+  if (appliedSeq < state.durabilityPointSeq) return keepCoordinatorState(engine, state)
 
   const admitted = await config.coordinator.admitNodeToInSyncSet({
     clusterId: config.clusterId,
@@ -147,7 +144,8 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
 
 /**
  * Admits this node to the in-sync set once the full copy that rejoins it has finished and the node serves its data,
- * which covers a drain that outlasted the copy and an admission request that failed.
+ * which covers a drain that outlasted the copy and an admission request that failed. The current primary admits every
+ * other replica from the acknowledgements that it receives over the replica's current connection.
  *
  * @param engine - The replication engine of the local node.
  * @returns A promise that settles once the admission attempt finishes, or at once when no finished copy awaits
@@ -245,39 +243,6 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
   }
 }
 
-async function removeLocalNodeFromInSyncSet(
-  engine: ReplicationEngine,
-  state: ReplicationGroupState | undefined,
-  purpose: string,
-): Promise<ReplicationGroupState> {
-  const next = await updateInSyncSetFromCurrent(engine, {
-    purpose,
-    known: state,
-    change: current =>
-      current.inSyncNodeIds.includes(engine.nodeId) && current.currentPrimary?.nodeId !== engine.nodeId
-        ? { inSyncNodeIds: current.inSyncNodeIds.filter(nodeId => nodeId !== engine.nodeId) }
-        : null,
-  })
-  applyCoordinatorState(engine, next)
-  return next
-}
-
-/**
- * Removes this replica from the in-sync set before it asks for a full copy, so that the group never promotes the
- * replica while the copy replaces its rows, whatever release the primary runs.
- *
- * @param engine - The replica's engine.
- * @returns A promise that settles once the coordinator shows the replica outside the in-sync set, or at once outside
- * coordinator mode and on the current primary.
- * @throws CoordinatorError when the coordinator gives no answer or holds no state for the group.
- *
- * @internal
- */
-export async function leaveInSyncSetBeforeCopy(engine: ReplicationEngine): Promise<void> {
-  if (!engine.isCoordinatorMode() || engine.coordinatorState?.currentPrimary?.nodeId === engine.nodeId) return
-  await removeLocalNodeFromInSyncSet(engine, undefined, 'its departure from the in-sync set before a full copy')
-}
-
 /**
  * Starts the full copy that rebuilds a repairing node, whether the node is waiting for its first copy or serves its
  * data. A node that is copying, that is comparing its history as a demoted primary, or that has already finished the
@@ -329,29 +294,6 @@ export async function handleFormerPrimaryDemotion(
     engine.rejoin.evaluatingFormerPrimary = false
   }
   startCoordinatorRejoinSyncIfReady(engine, evaluatedState)
-}
-
-async function markLocalNodeRepairing(
-  engine: ReplicationEngine,
-  state: ReplicationGroupState,
-): Promise<ReplicationGroupState> {
-  const config = engine.config.coordinator
-  if (!config || state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
-    return state
-  }
-  const updated = await config.coordinator.updateNodeMaintenance({
-    clusterId: config.clusterId,
-    groupId: config.groupId,
-    nodeId: engine.nodeId,
-    repairing: true,
-  })
-  if (!updated) {
-    throw new CoordinatorError(
-      'The coordinator holds no state for this replication group, so this former primary cannot mark itself for repair',
-    )
-  }
-  keepState(engine, updated)
-  return updated
 }
 
 async function evaluateFormerPrimaryHistory(

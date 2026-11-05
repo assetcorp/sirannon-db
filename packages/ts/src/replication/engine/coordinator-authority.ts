@@ -1,4 +1,5 @@
 import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
+import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import {
   AuthorityError,
@@ -13,18 +14,6 @@ import {
 import type { ConflictResolver, ReplicationStatus, TopologyRole } from '../types.js'
 import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import type { ReplicationEngine } from './engine.js'
-import { assertPrimaryInTerm, updateInSyncSetFromCurrent } from './in-sync-updates.js'
-import { ensurePrimaryTermStart } from './term-history.js'
-
-const WRITE_PROGRESS_PURPOSE = 'the progress of a write that it acknowledges'
-
-export function arraysEqual(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false
-  for (let i = 0; i < left.length; i++) {
-    if (left[i] !== right[i]) return false
-  }
-  return true
-}
 
 export function errorDetails(engine: ReplicationEngine, state: ReplicationGroupState | null): Record<string, unknown> {
   return {
@@ -228,6 +217,53 @@ export async function verifyPrimaryAuthority(engine: ReplicationEngine): Promise
   return state
 }
 
+const NEWER_TERM_REFRESH_INTERVAL_MS = 250
+
+/**
+ * Holds the read of the group state that a message from a later term started, so that a burst of such messages
+ * shares one read and starts at most one read every 250 milliseconds.
+ *
+ * @internal
+ */
+export class GroupStateRefresh {
+  /** Holds the read in flight, or null while none runs. */
+  pending: Promise<ReplicationGroupState | null> | null = null
+  /** Holds the time in milliseconds at which the last read started, or 0 before the first one. */
+  startedAtMs = 0
+}
+
+function refreshForNewerTerm(engine: ReplicationEngine): Promise<ReplicationGroupState | null> {
+  const refresh = engine.groupStateRefresh
+  if (refresh.pending) return refresh.pending
+  if (Date.now() - refresh.startedAtMs < NEWER_TERM_REFRESH_INTERVAL_MS) {
+    return Promise.resolve(engine.coordinatorState)
+  }
+  refresh.startedAtMs = Date.now()
+  const pending = refreshCoordinatorState(engine).finally(() => {
+    refresh.pending = null
+  })
+  refresh.pending = pending
+  return pending
+}
+
+/**
+ * Checks that a replication message from a peer belongs to this node's group and current term, and that the peer and
+ * this node hold the roles that the message needs. A message that carries a later term than the group state that this
+ * node holds makes the node read the group state again before it checks, so that a node whose group watch lags behind
+ * a promotion answers the new primary, or serves as the new primary, without waiting for a retry.
+ *
+ * @param engine - The node's engine.
+ * @param message - The group ID and term that the message carries.
+ * @param fromPeerId - The node ID of the peer that sent the message.
+ * @param direction - The kind of message.
+ * @returns A promise that settles once the message passes every check, or at once outside coordinator mode.
+ * @throws StalePrimaryError when the message belongs to another group or term, or comes from or reaches a node
+ * without the primary duty that it needs.
+ * @throws TopologyError when a message for the primary comes from a node outside the group.
+ * @throws CoordinatorError when the node holds no group state and the coordinator gives none.
+ *
+ * @internal
+ */
 export async function assertInboundCoordinatorMessage(
   engine: ReplicationEngine,
   message: { groupId?: string; primaryTerm?: bigint },
@@ -236,7 +272,10 @@ export async function assertInboundCoordinatorMessage(
 ): Promise<void> {
   const config = engine.config.coordinator
   if (!config) return
-  const state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
+  let state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
+  if (state && message.groupId === config.groupId && (message.primaryTerm ?? 0n) > state.primaryTerm) {
+    state = await refreshForNewerTerm(engine)
+  }
   if (!state) {
     throw new CoordinatorError('Cannot validate coordinator message without replication-group state')
   }
@@ -252,108 +291,17 @@ export async function assertInboundCoordinatorMessage(
       errorDetails(engine, state),
     )
   }
-  if (
-    (direction === 'ack' || direction === 'forward' || direction === 'sync-request') &&
-    !hasCurrentPrimaryAuthorityFor(engine, state)
-  ) {
+  if (direction !== 'ack' && direction !== 'forward' && direction !== 'sync-request') return
+  if (!hasCurrentPrimaryAuthorityFor(engine, state)) {
     throw new StalePrimaryError(
       `Rejected ${direction} message because this node is not current primary`,
       errorDetails(engine, state),
     )
   }
-}
-
-/**
- * Updates the group state once a write meets its write concern. This node keeps in the in-sync set only the voters
- * that acknowledged the write and raises the durability point to the write's position. It then admits every
- * acknowledging voter outside the set, except a repairing or faulted voter, which rejoins through its own copy. Each
- * update takes effect only while this node is still the primary in the term in which it accepted the write.
- *
- * @param engine - The engine of the primary that accepted the write.
- * @param seq - The write's position in this node's change log.
- * @param state - The group state under which this node accepted the write.
- * @throws StalePrimaryError when the term or primary duty passes to another node before every update takes effect.
- *
- * @internal
- */
-export async function updateCoordinatorProgressAfterWrite(
-  engine: ReplicationEngine,
-  seq: bigint,
-  state: ReplicationGroupState,
-): Promise<void> {
-  const config = engine.config.coordinator
-  if (!config) return
-  const term = state.primaryTerm
-  const ackedNodeIds = engine.peerTracker.ackedConfiguredNodeIds(seq, engine.nodeId, state.votingDataBearingNodeIds)
-  let nextState = await updateInSyncSetFromCurrent(engine, {
-    purpose: WRITE_PROGRESS_PURPOSE,
-    known: engine.coordinatorState ?? state,
-    primaryTerm: term,
-    change: base => {
-      const retained = base.inSyncNodeIds.filter(nodeId => ackedNodeIds.includes(nodeId))
-      if (arraysEqual(retained, base.inSyncNodeIds) && base.durabilityPointSeq >= seq) return null
-      return { inSyncNodeIds: retained, durabilityPointSeq: seq }
-    },
-  })
-
-  for (const nodeId of ackedNodeIds) {
-    if (nodeId === engine.nodeId || nextState.inSyncNodeIds.includes(nodeId)) continue
-    if (nextState.repairingNodeIds.includes(nodeId) || nextState.faultedNodeIds.includes(nodeId)) continue
-    const admitted = await config.coordinator.admitNodeToInSyncSet({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      nodeId,
-      sourceNodeId: engine.nodeId,
-      appliedSeq: seq,
-      expectedPrimaryTerm: term,
-    })
-    if (!admitted) {
-      throw new CoordinatorError(
-        'The coordinator holds no state for this replication group, so this node cannot admit the voters that acknowledged a write',
-        errorDetails(engine, nextState),
-      )
-    }
-    applyCoordinatorState(engine, admitted)
-    assertPrimaryInTerm(engine, admitted, term, WRITE_PROGRESS_PURPOSE)
-    nextState = admitted
-  }
-}
-
-export async function waitForWriteConcern(
-  engine: ReplicationEngine,
-  seq: bigint,
-  wc: { level: string; timeoutMs?: number },
-): Promise<void> {
-  const timeout = wc.timeoutMs ?? 5000
-
-  if (engine.isCoordinatorMode()) {
-    const state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
-    if (!state) {
-      throw new CoordinatorError('Cannot satisfy write concern without replication-group state')
-    }
-    if (engine.history.termStartTerm !== state.primaryTerm) await ensurePrimaryTermStart(engine)
-    if (wc.level !== 'majority' && wc.level !== 'all') return
-    assertPrimaryInTerm(engine, state, state.primaryTerm, WRITE_PROGRESS_PURPOSE)
-    if (engine.history.termStartTerm !== state.primaryTerm) {
-      throw new StalePrimaryError(
-        `This node has not recorded the start of term ${state.primaryTerm}, so it cannot prove its authority for the write`,
-        errorDetails(engine, state),
-      )
-    }
-    if (wc.level === 'majority') {
-      await engine.peerTracker.waitForConfiguredMajority(seq, engine.nodeId, state.votingDataBearingNodeIds, timeout)
-    } else {
-      const eligibleVoters = state.votingDataBearingNodeIds.filter(nodeId => !state.drainingNodeIds.includes(nodeId))
-      await engine.peerTracker.waitForConfiguredAll(seq, engine.nodeId, eligibleVoters, timeout)
-    }
-    await updateCoordinatorProgressAfterWrite(engine, seq, state)
-    return
-  }
-
-  if (wc.level === 'majority') {
-    await engine.peerTracker.waitForMajority(seq, timeout)
-  } else if (wc.level === 'all') {
-    await engine.peerTracker.waitForAll(seq, timeout)
+  if (!isGroupMember(state, fromPeerId)) {
+    throw new TopologyError(
+      `Rejected ${direction} message from '${fromPeerId}', which is not a member of replication group '${config.groupId}'`,
+    )
   }
 }
 
@@ -373,6 +321,7 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
     repairingNodeIds: [...state.repairingNodeIds],
     faultedNodeIds: [...state.faultedNodeIds],
     votingDataBearingNodeIds: [...state.votingDataBearingNodeIds],
+    nodeEndpoints: { ...engine.memberAddresses.clientEndpoints },
     authority: engine.coordinatorAuthority,
     connected,
     controllerState: engine.controllerState,

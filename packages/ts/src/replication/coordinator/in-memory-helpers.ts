@@ -2,6 +2,7 @@ import {
   cloneCompatibility,
   cloneMetadata,
   cloneReplicationGroupState,
+  isEligiblePromotionSession,
   markDisplacedPrimaryForRepair,
 } from './group-rules.js'
 import type { CoordinatorLease, CoordinatorNodeSession, ReplicationGroupState } from './types.js'
@@ -79,10 +80,21 @@ export function findLeaseIn(
   return null
 }
 
+/**
+ * Returns true while a lease has not expired.
+ *
+ * @param lease - The lease to check.
+ * @param nowMs - The time to check the lease against.
+ * @returns True when the lease expires after `nowMs`.
+ */
+export function isLeaseLiveAt(lease: CoordinatorLease, nowMs: number): boolean {
+  return lease.expiresAtMs > nowMs
+}
+
 export function liveNodeIdsIn(sessions: Iterable<CoordinatorNodeSession>, clusterId: string, nowMs: number): string[] {
   const live: string[] = []
   for (const session of sessions) {
-    if (session.clusterId === clusterId && session.lease.expiresAtMs > nowMs) {
+    if (session.clusterId === clusterId && isLeaseLiveAt(session.lease, nowMs)) {
       live.push(session.nodeId)
     }
   }
@@ -104,6 +116,32 @@ export function cloneLease(lease: CoordinatorLease): CoordinatorLease {
     ...lease,
     metadata: cloneMetadata(lease.metadata),
   }
+}
+
+/**
+ * Returns the first voter that the controller may promote in place of the current primary: one outside the excluded
+ * nodes whose session is live and whose state makes it eligible.
+ *
+ * @param state - The group state to choose from.
+ * @param excludedNodeIds - The nodes to skip, such as the primary that has just failed.
+ * @param sessionFor - Returns the session that the coordinator holds for a node, if any.
+ * @param nowMs - The time against which a session's lease counts as live.
+ * @returns The voter's ID and client address, or null when no voter qualifies.
+ */
+export function findPromotablePrimary(
+  state: ReplicationGroupState,
+  excludedNodeIds: ReadonlySet<string>,
+  sessionFor: (nodeId: string) => CoordinatorNodeSession | undefined,
+  nowMs: number,
+): { nodeId: string; endpoint?: string } | null {
+  for (const nodeId of state.votingDataBearingNodeIds) {
+    if (nodeId === state.currentPrimary?.nodeId || excludedNodeIds.has(nodeId)) continue
+    const session = sessionFor(nodeId)
+    if (!session || !isLeaseLiveAt(session.lease, nowMs)) continue
+    if (!isEligiblePromotionSession(state, nodeId, session)) continue
+    return session.endpoint ? { nodeId, endpoint: session.endpoint } : { nodeId }
+  }
+  return null
 }
 
 export function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId: string; endpoint?: string }): void {

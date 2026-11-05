@@ -1,4 +1,4 @@
-import { decodeTaggedValues, encodeTaggedValues } from '../../core/cdc/encoding.js'
+import { decodeWireRowsInPlace, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
 import { withSirannonSubprotocol } from '../../core/ws-handshake.js'
 import type {
@@ -91,7 +91,7 @@ export class WebSocketTransport implements Transport {
   async query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const response = await this.request<QueryResponse>(queryFrame(this.nextId(), sql, params, readConcern))
-    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+    return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   /** Sends one write. */
@@ -127,7 +127,7 @@ export class WebSocketTransport implements Transport {
   async queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse> {
     await this.ensureConnected()
     const response = await this.request<QueryResponse>(namedQueryFrame(this.nextId(), name, args, readConcern))
-    return { rows: decodeTaggedValues(response.rows ?? []) as Record<string, unknown>[] }
+    return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
   }
 
   /** Executes a registered write by name. */

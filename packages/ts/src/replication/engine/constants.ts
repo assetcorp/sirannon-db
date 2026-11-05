@@ -11,6 +11,11 @@ export const DEFAULT_MAX_SYNC_LAG_BEFORE_READY = 100
 export const DEFAULT_SYNC_ACK_TIMEOUT_MS = 30_000
 export const DEFAULT_CATCH_UP_DEADLINE_MS = 600_000
 export const DEFAULT_COORDINATOR_SESSION_TTL_MS = 10_000
+export const DEFAULT_WRITE_CONCERN_TIMEOUT_MS = 5_000
+export const FIRST_PRIMARY_TERM = 1n
+
+export const COORDINATOR_ENDPOINTS_REFUSAL =
+  'Coordinator mode takes every member address from the coordinator sessions, so it refuses configured endpoints; set replicationEndpoint and endpoint in the coordinator config instead'
 
 export const SAFE_SQL_PREFIX_RE =
   /^\s*(INSERT|UPDATE|DELETE|SELECT|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+(?:UNIQUE\s+)?INDEX|DROP\s+INDEX)\b/i

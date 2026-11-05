@@ -4,9 +4,9 @@ import { selectMaxAssignedChangeSeq } from '../core/system-catalog/index.js'
 import type { ChangeEvent, Subscription } from '../core/types.js'
 import { DEVICE_CURSOR_DROPPED_REASON, deviceCursorExists, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
 import type { WSConnection } from './ws-connection.js'
+import type { ConnectionState } from './ws-connection-state.js'
 import { DeviceFramePacker, deviceFrameTargetBytes } from './ws-device-frames.js'
 import { DeviceChangeStream } from './ws-device-stream.js'
-import type { ConnectionState } from './ws-handler.js'
 import { releaseUnattached, type WSSubscribeDeps } from './ws-subscribe.js'
 
 class DroppedDeviceCursor extends Error {

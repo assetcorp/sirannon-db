@@ -89,6 +89,27 @@ export function registerPeer(
   peerConnectedHandler?.(peerInfo)
 }
 
+/**
+ * Reports that a connected peer opened a new replication stream in place of the one that this node held, so that the
+ * node treats the peer as disconnected and lets the next registration report it connected again. A new stream from a
+ * connected peer comes from a process that restarted or reconnected, so whatever the old stream carried no longer
+ * describes the peer.
+ *
+ * @param connectedPeers - The peers that this node holds as connected.
+ * @param peerDisconnectedHandler - The handler that this node calls when a peer disconnects.
+ * @param nodeId - The peer's node ID.
+ *
+ * @internal
+ */
+export function restartPeerConnection(
+  connectedPeers: Map<string, NodeInfo>,
+  peerDisconnectedHandler: PeerDisconnectedHandler | null,
+  nodeId: string,
+): void {
+  if (!connectedPeers.delete(nodeId)) return
+  peerDisconnectedHandler?.(nodeId)
+}
+
 export function removePeer(
   connectedPeers: Map<string, NodeInfo>,
   serverPeerStreams: Map<string, PeerStreamEntry>,

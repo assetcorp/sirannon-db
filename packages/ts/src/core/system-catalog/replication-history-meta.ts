@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import { ensureMetaTable, selectMetaValue, upsertMetaValue } from './meta-table.js'
+import { deleteMetaValue, ensureMetaTable, selectMetaValue, upsertMetaValue } from './meta-table.js'
 
 const PRIMARY_TERM_START_META_KEY = 'replication_primary_term_start'
 const ANCHORED_TERM_META_KEY = 'replication_anchored_term'
@@ -88,6 +88,18 @@ export async function upsertPrimaryTermStart(conn: SQLiteConnection, termStart: 
     PRIMARY_TERM_START_META_KEY,
     JSON.stringify({ term: termStart.term.toString(), seq: termStart.seq.toString() }),
   )
+}
+
+/**
+ * Forgets where this node's term as primary began, so that the node reads no term start until it records another.
+ *
+ * @param conn - The connection to write through.
+ *
+ * @internal
+ */
+export async function deletePrimaryTermStart(conn: SQLiteConnection): Promise<void> {
+  await ensureMetaTable(conn)
+  await deleteMetaValue(conn, PRIMARY_TERM_START_META_KEY)
 }
 
 /**

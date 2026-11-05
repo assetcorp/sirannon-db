@@ -96,6 +96,19 @@ export function arraysEqual(left: string[], right: string[]): boolean {
   return true
 }
 
+/**
+ * Returns true when two lists of distinct node IDs hold the same node IDs, in any order.
+ *
+ * @param left - One list of distinct node IDs.
+ * @param right - The other list of distinct node IDs.
+ * @returns True when both lists hold the same node IDs.
+ *
+ * @internal
+ */
+export function sameNodeIdSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every(nodeId => right.includes(nodeId))
+}
+
 export function markDisplacedPrimaryForRepair(
   state: ReplicationGroupState,
   displacedPrimaryId: string | undefined,
@@ -172,12 +185,13 @@ export function nextAdmittedInSyncState(
   nowMs: number,
 ): ReplicationGroupState {
   assertNodeInGroup(state, input.nodeId)
+  const pendingVoter = state.pendingVoterNodeIds.includes(input.nodeId)
   if (
     state.currentPrimary?.nodeId !== input.sourceNodeId ||
     (input.expectedPrimaryTerm !== undefined && state.primaryTerm !== input.expectedPrimaryTerm) ||
     state.drainingNodeIds.includes(input.nodeId) ||
     state.faultedNodeIds.includes(input.nodeId) ||
-    (state.repairingNodeIds.includes(input.nodeId) && input.rejoinSyncCompleted !== true) ||
+    ((pendingVoter || state.repairingNodeIds.includes(input.nodeId)) && input.rejoinSyncCompleted !== true) ||
     input.appliedSeq < state.durabilityPointSeq
   ) {
     return state
@@ -186,10 +200,41 @@ export function nextAdmittedInSyncState(
     ? state.inSyncNodeIds
     : [...state.inSyncNodeIds, input.nodeId]
   const repairingNodeIds = removeNodeId(state.repairingNodeIds, input.nodeId)
+  if (pendingVoter) {
+    return {
+      ...state,
+      votingDataBearingNodeIds: [...state.votingDataBearingNodeIds, input.nodeId],
+      pendingVoterNodeIds: removeNodeId(state.pendingVoterNodeIds, input.nodeId),
+      inSyncNodeIds,
+      repairingNodeIds,
+      updatedAtMs: nowMs,
+    }
+  }
   if (arraysEqual(inSyncNodeIds, state.inSyncNodeIds) && arraysEqual(repairingNodeIds, state.repairingNodeIds)) {
     return state
   }
   return { ...state, inSyncNodeIds, repairingNodeIds, updatedAtMs: nowMs }
+}
+
+/**
+ * Returns the IDs of a group's members, which are its voters followed by its pending voters.
+ *
+ * @param state - The group state to read.
+ * @returns The voters and the pending voters, in that order.
+ */
+export function groupMemberIds(state: ReplicationGroupState): string[] {
+  return [...state.votingDataBearingNodeIds, ...state.pendingVoterNodeIds]
+}
+
+/**
+ * Returns true when a node is one of a group's members, which are its voters and its pending voters.
+ *
+ * @param state - The group state to read.
+ * @param nodeId - The node to look for.
+ * @returns True for a voter or a pending voter.
+ */
+export function isGroupMember(state: ReplicationGroupState, nodeId: string): boolean {
+  return state.votingDataBearingNodeIds.includes(nodeId) || state.pendingVoterNodeIds.includes(nodeId)
 }
 
 export function nextMaintenanceState(
@@ -210,7 +255,7 @@ export function nextMaintenanceState(
 }
 
 function assertNodeInGroup(state: ReplicationGroupState, nodeId: string): void {
-  if (!state.votingDataBearingNodeIds.includes(nodeId)) {
+  if (!isGroupMember(state, nodeId)) {
     throw new RangeError(`Node '${nodeId}' is not configured for the replication group`)
   }
 }
@@ -226,13 +271,20 @@ export function buildReplicationGroupState(
   const drainingNodeIds = normaliseNodeIds(input.drainingNodeIds ?? [], 'drainingNodeIds')
   const repairingNodeIds = normaliseNodeIds(input.repairingNodeIds ?? [], 'repairingNodeIds')
   const faultedNodeIds = normaliseNodeIds(input.faultedNodeIds ?? [], 'faultedNodeIds')
+  const pendingVoterNodeIds = normaliseNodeIds(input.pendingVoterNodeIds ?? [], 'pendingVoterNodeIds')
   assertNonNegativeTerm(input.primaryTerm ?? 0n)
   assertNonNegativeSeq(input.durabilityPointSeq ?? 0n, 'durabilityPointSeq')
   assertPrimaryInGroup(input.currentPrimary ?? null, votingDataBearingNodeIds)
+  for (const nodeId of pendingVoterNodeIds) {
+    if (votingDataBearingNodeIds.includes(nodeId)) {
+      throw new RangeError(`pendingVoterNodeIds contains node id '${nodeId}' that is already a voter`)
+    }
+  }
+  const memberNodeIds = [...votingDataBearingNodeIds, ...pendingVoterNodeIds]
   assertSubset(inSyncNodeIds, votingDataBearingNodeIds, 'inSyncNodeIds')
-  assertSubset(drainingNodeIds, votingDataBearingNodeIds, 'drainingNodeIds')
-  assertSubset(repairingNodeIds, votingDataBearingNodeIds, 'repairingNodeIds')
-  assertSubset(faultedNodeIds, votingDataBearingNodeIds, 'faultedNodeIds')
+  assertSubset(drainingNodeIds, memberNodeIds, 'drainingNodeIds')
+  assertSubset(repairingNodeIds, memberNodeIds, 'repairingNodeIds')
+  assertSubset(faultedNodeIds, memberNodeIds, 'faultedNodeIds')
 
   return {
     clusterId: input.clusterId,
@@ -245,6 +297,7 @@ export function buildReplicationGroupState(
     drainingNodeIds,
     repairingNodeIds,
     faultedNodeIds,
+    pendingVoterNodeIds,
     compatibility: cloneCompatibility(input.compatibility),
     updatedAtMs: nowMs,
   }
@@ -260,6 +313,7 @@ export function cloneReplicationGroupState(state: ReplicationGroupState): Replic
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],
     faultedNodeIds: [...state.faultedNodeIds],
+    pendingVoterNodeIds: [...state.pendingVoterNodeIds],
     compatibility: cloneCompatibility(state.compatibility),
   }
 }

@@ -946,6 +946,7 @@ EncryptionChangeStatus {
   rowsCopied?: number
   rounds?:     number
   error?:      { code: string, message: string }
+  reopenError?: { code: string, message: string }
 }
 ```
 
@@ -962,6 +963,8 @@ Every full copy, change piece, and streamed copy of an encrypted database must h
 The new file must hold every row, rowid, and change-log entry that the original holds. No trigger may run on the new file while the change applies writes to it, and the new file must carry every trigger of the original before the replacement. A schema change during the copy, and a write that the change cannot apply exactly, must stop the change with `ENCRYPTION_CHANGE_ABORTED`, delete the new file, and leave the database as it was. A second change while one runs must fail with `ENCRYPTION_CHANGE_IN_PROGRESS`, and a read-only database must fail `changeEncryption` with `READ_ONLY`. A database with a running replication engine registered must fail `changeEncryption` with `REPLICATION_ACTIVE` before it touches any file, because the engine's writer connection would stay on the replaced file.
 
 The replacement must hold writes, apply the last round, record in the marker that the replacement has begun, close every connection, checkpoint the log with truncation, delete the old log and shared-memory files, put the new file in place of the old one, write to the marker again so that those deletes and that rename reach the disk, and reopen, in that order. Where the file system replaces a file in one rename, core must use that rename; where it cannot, core must delete the old file and then rename the new file. Until the new file is in place, the old key must open the database; after it, the new key must. After the reopen, core must use the change's `key` for every later connection of that open, and the next backup turn must start a new chain with a full copy, because the earlier chain holds ciphertext under the earlier key.
+
+Once the new file is in place, the change has taken effect. A failure after that point, including a key function that fails on the reopen or an extension that fails to load into a reopened connection, must report `done` with `reopenError`, must leave the change's `key` as the key for every later connection of that open, and must never report `failed`, because an operator who reads `failed` can discard the only key that opens the file.
 
 Once the new file exists, core must create a marker beside the database. The marker is a plaintext SQLite database in rollback-journal mode with `synchronous = FULL`, and it holds the new file's first 16 bytes and whether the replacement has begun. SQLite's Unix file layer syncs the directory when it first syncs a new rollback journal, so each write to the marker makes the earlier renames and deletes in that directory durable, and core needs no file sync from the driver. Core must delete the marker after the reopen.
 

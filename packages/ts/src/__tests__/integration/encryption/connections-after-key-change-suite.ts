@@ -7,8 +7,11 @@ import type { Database } from '../../../core/database.js'
 import type { LiveQuery } from '../../../core/live/types.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import type { ChangeEvent } from '../../../core/types.js'
+import type { IndependentReader } from './key-change-suite.js'
 
 const POLL_MS = 5
+const LEDGER_ROWS = 200
+const FIRST_TARGET_KEY_CALL_OF_THE_REOPEN = 3
 const WAIT_STEP_MS = 5
 const WAIT_LIMIT_MS = 8_000
 const NOTES_BEFORE_CHANGE = 20
@@ -41,7 +44,11 @@ function plainNumbers(row: Row): Row {
   )
 }
 
-export function describeConnectionsAfterKeyChange(label: string, newSirannon: () => Sirannon): void {
+export function describeConnectionsAfterKeyChange(
+  label: string,
+  newSirannon: () => Sirannon,
+  readIndependently: IndependentReader,
+): void {
   describe(`the connections that a database reopens after a key change on ${label}`, () => {
     let dir: string
     let sirannon: Sirannon
@@ -64,6 +71,45 @@ export function describeConnectionsAfterKeyChange(label: string, newSirannon: ()
       await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)')
       return db
     }
+
+    it('reports the change done with a reopen error when the new key function fails as the connections reopen, and the new key opens every row', async () => {
+      const path = join(dir, 'ledger.db')
+      const firstKey = randomBytes(32)
+      const db = await sirannon.open('ledger', path, { encryption: { key: keyFunction(firstKey, 'first') } })
+      await db.execute('CREATE TABLE ledger (id INTEGER PRIMARY KEY, entry TEXT NOT NULL)')
+      const oracle: Row[] = []
+      for (let id = 1; id <= LEDGER_ROWS; id++) {
+        const entry = `ledger-entry-${id}-confidential`
+        await db.execute('INSERT INTO ledger (id, entry) VALUES (?, ?)', [id, entry])
+        oracle.push({ id, entry })
+      }
+      const secondKey = randomBytes(32)
+      const secondKeyHex = Buffer.from(secondKey).toString('hex')
+      let calls = 0
+      const failingOnReopen = () => {
+        calls++
+        if (calls >= FIRST_TARGET_KEY_CALL_OF_THE_REOPEN) throw new Error(`the vault sealed key ${secondKeyHex}`)
+        return { key: Uint8Array.from(secondKey), id: 'second' }
+      }
+
+      const status = await db.changeEncryption({ key: failingOnReopen })
+      const queried = await db.query('SELECT count(*) AS n FROM ledger').catch((err: { code?: string }) => err.code)
+      const later = await db.encryptionStatus()
+      await sirannon.close('ledger')
+
+      expect(status.change).toMatchObject({ state: 'done', reopenError: { code: 'ENCRYPTION_KEY_UNAVAILABLE' } })
+      expect(status.change.error).toBeUndefined()
+      expect(later.change).toEqual(status.change)
+      expect(JSON.stringify([status, later])).not.toContain(secondKeyHex)
+      expect(queried).toBe('ENCRYPTION_KEY_UNAVAILABLE')
+      expect(
+        readIndependently<Row>(path, secondKey, 'SELECT id, entry FROM ledger ORDER BY id').map(plainNumbers),
+      ).toEqual(oracle)
+      expect(() => readIndependently(path, firstKey, 'SELECT count(*) FROM ledger')).toThrow()
+      const reopened = await sirannon.open('ledger', path, { encryption: { key: keyFunction(secondKey, 'second') } })
+      expect((await reopened.query<Row>('SELECT id, entry FROM ledger ORDER BY id')).map(plainNumbers)).toEqual(oracle)
+      expect(await reopened.encryptionStatus()).toMatchObject({ encrypted: true, keyId: 'second' })
+    })
 
     it('pushes every change from the device outbox after a key change, including a table that sync first meets after it', async () => {
       const db = await openNotes('device')

@@ -57,6 +57,12 @@ export interface EncryptionChangeStatus {
   rounds?: number
   /** The code and message of the error that stopped the change. */
   error?: { code: string; message: string }
+  /**
+   * The code and message of an error that came after the new file was in place, such as a key function that failed
+   * when the connections reopened. The change is `done` and the file holds ciphertext under the new key, so keep that
+   * key, and close and open the database again with it.
+   */
+  reopenError?: { code: string; message: string }
 }
 
 /**

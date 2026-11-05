@@ -12,5 +12,5 @@ describe.skipIf(binding === null)('the better-sqlite3 driver', () => {
   const newSirannon = () =>
     new Sirannon({ driver: betterSqlite3({ encryption: true, sqliteBindingPath: binding ?? undefined }) })
   describeKeyChange('the better-sqlite3 driver', newSirannon, readWithIndependentAegis)
-  describeConnectionsAfterKeyChange('the better-sqlite3 driver', newSirannon)
+  describeConnectionsAfterKeyChange('the better-sqlite3 driver', newSirannon, readWithIndependentAegis)
 })

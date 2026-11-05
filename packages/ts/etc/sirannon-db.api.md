@@ -747,6 +747,10 @@ export interface EncryptionChangeStatus {
         message: string;
     };
     finishedAt?: number;
+    reopenError?: {
+        code: string;
+        message: string;
+    };
     rounds?: number;
     rowsCopied?: number;
     startedAt?: number;

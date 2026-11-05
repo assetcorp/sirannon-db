@@ -23,6 +23,10 @@ for (const { version, binding } of builtExpoSqlcipherBindings()) {
 
     const newSirannon = () => new Sirannon({ driver: expoSqlite() })
     describeKeyChange(`the Expo driver over expo-sqlite ${version}`, newSirannon, readWithIndependentSqlcipher)
-    describeConnectionsAfterKeyChange(`the Expo driver over expo-sqlite ${version}`, newSirannon)
+    describeConnectionsAfterKeyChange(
+      `the Expo driver over expo-sqlite ${version}`,
+      newSirannon,
+      readWithIndependentSqlcipher,
+    )
   })
 }

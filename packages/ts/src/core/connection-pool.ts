@@ -93,6 +93,7 @@ export class ConnectionPool {
   private isSuspended = false
   private readsInFlight = 0
   private readsSettled: (() => void) | null = null
+  private reopenFailure: unknown = null
 
   private constructor(
     private readonly options: ConnectionPoolOptions,
@@ -109,6 +110,12 @@ export class ConnectionPool {
   private ensureAvailable(): void {
     if (this.closed) {
       throw new ConnectionPoolError('Connection pool is closed')
+    }
+    if (this.isSuspended && this.reopenFailure !== null) {
+      if (this.reopenFailure instanceof SirannonError) throw this.reopenFailure
+      throw new ConnectionPoolError(
+        'The database could not open its connections again after a key change replaced its file; close it and open it again under the new key',
+      )
     }
     if (this.isSuspended) {
       throw new EncryptionError(
@@ -225,14 +232,22 @@ export class ConnectionPool {
 
   /**
    * Opens the writer and the readers again, under the key that the pool's keyring holds now, and loads into them
-   * every extension that the database loaded into the connections they replace.
+   * every extension that the database loaded into the connections they replace. When the connections fail to open,
+   * every acquire fails with that error until a later reopen succeeds.
    */
   async reopen(): Promise<void> {
     if (this.closed || !this.isSuspended) return
     await closeAllSilently([...this.readers, this.writer])
     this.readers = []
     this.writer = null
-    const opened = await openConnections(this.options)
+    let opened: PoolConnections
+    try {
+      opened = await openConnections(this.options)
+    } catch (err) {
+      this.reopenFailure = err
+      throw err
+    }
+    this.reopenFailure = null
     this.writer = opened.writer
     this.readers = opened.readers
     this.readerIndex = 0

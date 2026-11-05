@@ -1,4 +1,5 @@
 import { isGroupMember } from '../coordinator/group-rules.js'
+import { refusePlaintextPeer, withholdsDataFrom } from './encryption-refusal.js'
 import type { ReplicationEngine } from './engine.js'
 import { ensurePrimaryTermStart, historyOrigins } from './term-history.js'
 
@@ -76,6 +77,10 @@ export class SenderLoop {
 
     for (const [peerId, peerInfo] of peers) {
       if (!this.shouldReplicateTo(peerId, peerInfo.role)) {
+        continue
+      }
+      if (withholdsDataFrom(engine, peerInfo)) {
+        refusePlaintextPeer(engine, peerId)
         continue
       }
 

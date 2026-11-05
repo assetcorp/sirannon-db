@@ -38,9 +38,25 @@ This product includes code from these projects:
   2017 Node.js API collaborators, licensed under the MIT License. Each
   @delali/sirannon-sqlite-<platform> package contains code compiled from
   node-addon-api's headers.
+- SQLite3 Multiple Ciphers
+  (https://github.com/utelle/SQLite3MultipleCiphers), Copyright (c) 2006-2026
+  Ulrich Telle, licensed under the MIT License. Each
+  @delali/sirannon-sqlite-<platform> package contains SQLite3 Multiple
+  Ciphers compiled from its amalgamation, with the patches in
+  native/sqlite/patches/sqlite applied. That amalgamation also contains the
+  code in the next three entries.
+- The AEGIS library, Copyright (c) 2023-2024 Frank Denis, licensed under the
+  MIT License, which SQLite3 Multiple Ciphers carries for its AEGIS cipher.
+- The FIPS 180-2 SHA-224/256/384/512 implementation, Copyright (C) 2005, 2007
+  Olivier Gay, licensed under the BSD 3-Clause License.
+- The Argon2 reference implementation, Copyright 2015 Daniel Dinu, Dmitry
+  Khovratovich, Jean-Philippe Aumasson, and Samuel Neves, which its authors
+  offer under CC0 1.0 or the Apache License, Version 2.0. Sirannon uses it
+  under the Apache License, Version 2.0.
 
 The MIT License grants the following permission for libSQL, node-gyp,
-better-sqlite3, and node-addon-api:
+better-sqlite3, node-addon-api, SQLite3 Multiple Ciphers, and the AEGIS
+library:
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -59,3 +75,33 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The BSD 3-Clause License grants the following permission for the FIPS 180-2
+SHA-224/256/384/512 implementation:
+
+Copyright (C) 2005, 2007 Olivier Gay <olivier.gay@a3.epfl.ch>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the project nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.

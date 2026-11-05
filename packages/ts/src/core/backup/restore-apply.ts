@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises'
-import type { SQLiteConnection, SQLiteDriver } from '../driver/types.js'
+import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import type { BackupChainChange } from './chain.js'
 import { checkpointLog } from './checkpoint.js'
@@ -8,14 +8,21 @@ import { fetchStoredFile, listStoredFilePieces } from './restore-fetch.js'
 import { type ExpectedLogHeader, RestoreLogWriter } from './restore-log.js'
 import { LOG_FRAME_HEADER_BYTES, LOG_HEADER_BYTES } from './wal-format.js'
 
+/**
+ * Opens a database that a restore rebuilds, with no write-ahead logging change and no automatic checkpoint.
+ *
+ * @internal
+ */
+export type RebuiltDatabaseOpener = (path: string) => Promise<SQLiteConnection>
+
 /** The destination, rebuilt database, and change pieces for one batch of a restore.
  * @internal
  */
 export interface ChangeBatchRequest {
   /** The destination that holds the pieces. */
   destination: BackupDestination
-  /** The driver that Sirannon opens the rebuilt database through. */
-  driver: SQLiteDriver
+  /** Opens the rebuilt database, under the key of the database that the restore rebuilds. */
+  openRebuilt: RebuiltDatabaseOpener
   /** The path of the rebuilt database. */
   destPath: string
   /** The size of one page of that database, in bytes. */
@@ -106,14 +113,14 @@ async function readPageCount(conn: SQLiteConnection): Promise<number> {
  * Opens the rebuilt database and reads its page count, which is the cheapest
  * check that SQLite accepts the file.
  *
- * @param driver - The driver to open the database through.
+ * @param openRebuilt - Opens the rebuilt database.
  * @param destPath - The path of the rebuilt database.
  * @returns The number of pages in the database.
  *
  * @internal
  */
-export async function countDatabasePages(driver: SQLiteDriver, destPath: string): Promise<number> {
-  const conn = await driver.open(destPath, { walMode: false, walAutoCheckpoint: 0 })
+export async function countDatabasePages(openRebuilt: RebuiltDatabaseOpener, destPath: string): Promise<number> {
+  const conn = await openRebuilt(destPath)
   try {
     return await readPageCount(conn)
   } finally {
@@ -121,8 +128,12 @@ export async function countDatabasePages(driver: SQLiteDriver, destPath: string)
   }
 }
 
-async function foldLogIntoDatabase(driver: SQLiteDriver, destPath: string, databasePages: number): Promise<void> {
-  const conn = await driver.open(destPath, { walMode: false, walAutoCheckpoint: 0 })
+async function foldLogIntoDatabase(
+  openRebuilt: RebuiltDatabaseOpener,
+  destPath: string,
+  databasePages: number,
+): Promise<void> {
+  const conn = await openRebuilt(destPath)
   try {
     const reached = await readPageCount(conn)
     if (reached !== databasePages) {
@@ -172,7 +183,7 @@ export async function applyChangeBatch(request: ChangeBatchRequest): Promise<num
       })
     }
     const written = await writer.finish()
-    await foldLogIntoDatabase(request.driver, request.destPath, written.databasePages)
+    await foldLogIntoDatabase(request.openRebuilt, request.destPath, written.databasePages)
     return written.frameCount
   } catch (err) {
     await writer.abandon()

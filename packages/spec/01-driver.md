@@ -37,6 +37,7 @@ DriverCapabilities {
   extensions: boolean
   steppedCopy: boolean
   rowCounts: boolean
+  encryption: boolean
 }
 ```
 
@@ -46,6 +47,7 @@ DriverCapabilities {
 | `extensions` | The engine can load native SQLite extensions; a driver reporting `true` must supply `resolveExtensionPath` and must return connections that expose `loadExtension`. |
 | `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
 | `rowCounts` | A driver reporting `true` must expose the counted statement calls, set `rowsRead` and `rowsWritten` by the rules in [Row Counts](02-core.md#row-counts) on every `RunResult`, `BatchSummary`, and statement error, and fail `open` with `ROW_COUNTS_UNSUPPORTED` when its engine has no row counters. |
+| `encryption` | The engine encrypts every page of the database file and its log under a 32-byte key. A driver reporting `true` must accept `OpenOptions.encryption`, and a driver reporting `false` must fail an open that carries a key with `ENCRYPTION_UNSUPPORTED`. |
 
 ### OpenOptions
 
@@ -55,6 +57,7 @@ OpenOptions {
   walMode?:            boolean          (default: true)
   synchronous?:        SynchronousLevel (default: 'normal')
   walAutoCheckpoint?:  number           (default: unset, leaving SQLite's own threshold in force)
+  encryption?:         { key: Bytes }   (default: unset, a plaintext database)
 }
 
 SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
@@ -66,6 +69,7 @@ SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
 | `walMode` | Enables WAL journal mode. |
 | `synchronous` | Selects the `PRAGMA synchronous` durability level. |
 | `walAutoCheckpoint` | Sets the frame count at which SQLite checkpoints the log on its own; `0` disables that. A driver applies it on every connection it opens, including one a restarted writer worker opens. |
+| `encryption` | Carries the 32-byte key that opens an encrypted database. Core supplies it on every open, and the driver must keep no reference to the key once `open` returns. |
 
 ### open(path, options?)
 
@@ -79,6 +83,8 @@ PRAGMA wal_autocheckpoint = N  -- only when walAutoCheckpoint is set
 ```
 
 The `synchronous` value maps to its pragma argument through a fixed allowlist (`off`, `normal`, `full`, `extra`); a value outside the allowlist must fail with error code `INVALID_SYNCHRONOUS`. A driver may set further pragmas the runtime needs; the reference drivers on native engines also set `PRAGMA busy_timeout = 5000`. On failure, the driver must throw an error carrying enough context to tell a missing file, a permission failure, and a corrupt database apart.
+
+When `encryption` is set, the driver must apply the key before any other statement on the connection, set `PRAGMA temp_store = MEMORY`, and confirm that the engine encrypts, failing with `ENCRYPTION_UNSUPPORTED` when it reports no version. A SQLite3 Multiple Ciphers engine reports its version through `sqlite3mc_version()`, and a SQLCipher engine reports it through `PRAGMA cipher_version`. Each driver encrypts under one scheme with the raw 32-byte key: a driver built on SQLite3 Multiple Ciphers must use AEGIS-256, and a driver built on SQLCipher must use SQLCipher 4's default scheme. A file written under the other scheme must fail to open with `ENCRYPTION_KEY_REJECTED`, and the error must state that the file can also come from another scheme. Before the keyed open, the driver must find out whether the file is new, plaintext, or encrypted. A file that does not exist or holds no pages is new, and the driver must create it encrypted when a key is set. A plaintext file starts with the SQLite header string, and an encrypted file starts with its salt. A driver that cannot read the file's bytes must instead open a separate connection without a key, read the schema, and close that connection before the keyed open, treating a read that fails as not a database as an encrypted file. A key given for a plaintext file must fail with `DATABASE_NOT_ENCRYPTED`, an open without a key of an encrypted file must fail with `ENCRYPTION_KEY_MISSING`, and a key that fails the authentication check of the first page must fail with `ENCRYPTION_KEY_REJECTED`. A statement that reads any later page that fails its authentication check must fail with `ENCRYPTED_PAGE_CORRUPT`. An in-memory database must fail an open that carries a key with `ENCRYPTION_UNSUPPORTED`.
 
 ---
 
@@ -104,7 +110,7 @@ SQLiteConnection {
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
 - **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
-- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. A driver that steps the copy on another thread must apply `stallTimeoutMs` as the deadline for the next step from that thread, in place of any deadline of its own. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`.
+- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. A driver that steps the copy on another thread must apply `stallTimeoutMs` as the deadline for the next step from that thread, in place of any deadline of its own. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`. When the connection is encrypted, `copyDatabase` must write the destination under the connection's key.
 
 ```text
 DatabaseCopyRequest {

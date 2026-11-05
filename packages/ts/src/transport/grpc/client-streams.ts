@@ -3,6 +3,8 @@ import type { TopologyRole } from '../../replication/types.js'
 import {
   claimEndpoint,
   noteEndpointReachable,
+  noteEndpointRefused,
+  noteEndpointServing,
   registerEndpointAbort,
   releaseEndpoint,
   scheduleEndpointRedial,
@@ -17,6 +19,8 @@ import {
 } from './codec.js'
 import { ReplicationClient, type ReplicationMessage, type SyncMessage } from './generated/replication.js'
 import { buildChannelCreds } from './grpc-credentials.js'
+import { localHello, peerHelloFields } from './hello.js'
+import { refusalCodeOf } from './peer-refusal.js'
 import { type ClientPeerEntry, registerPeer, removePeer } from './peer-streams.js'
 import type { GrpcReplicationTransport } from './transport.js'
 
@@ -71,13 +75,12 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
 
   registerEndpointAbort(t, endpoint, teardown)
 
-  const hello = {
-    nodeId: t.localNodeId,
-    role: t.localRole,
-    groupId: t.localGroupId ?? '',
-    primaryTerm: t.localPrimaryTerm ?? 0n,
-    protocolVersion: t.localProtocolVersion ?? '',
+  const endOnError = (err: unknown): void => {
+    if (!closed && refusalCodeOf(err) !== null) noteEndpointRefused(t, endpoint)
+    teardown()
   }
+
+  const hello = localHello(t)
   replicateStream.write({ hello })
   syncStream.write({ hello })
 
@@ -91,15 +94,12 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
       const peerRole = msg.hello.role as TopologyRole
       t.clientPeerStreams.set(replicatePeerId, entry)
       noteEndpointReachable(t, endpoint)
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole, {
-        groupId: msg.hello.groupId || undefined,
-        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
-        protocolVersion: msg.hello.protocolVersion || undefined,
-      })
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole, peerHelloFields(msg.hello))
       return
     }
 
     if (msg.batch) {
+      noteEndpointServing(t, endpoint)
       t.batchHandler?.(fromBatchPayload(msg.batch), replicatePeerId).catch(() => {})
     } else if (msg.ack) {
       t.ackHandler?.(fromAckPayload(msg.ack), replicatePeerId)
@@ -107,7 +107,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
   })
 
   replicateStream.on('end', teardown)
-  replicateStream.on('error', teardown)
+  replicateStream.on('error', endOnError)
 
   syncStream.on('data', (msg: SyncMessage) => {
     if (syncPeerId === null) {
@@ -119,6 +119,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
       return
     }
 
+    if (msg.syncBatch || msg.syncComplete) noteEndpointServing(t, endpoint)
     if (msg.syncRequest) {
       t.syncRequestHandler?.(fromSyncRequestPayload(msg.syncRequest), syncPeerId).catch(() => {})
     } else if (msg.syncBatch) {
@@ -131,5 +132,5 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
   })
 
   syncStream.on('end', teardown)
-  syncStream.on('error', teardown)
+  syncStream.on('error', endOnError)
 }

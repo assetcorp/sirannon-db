@@ -1,3 +1,4 @@
+import type { EncryptionKey } from './encryption/types.js'
 import type { DatabaseOperations, OperationRegistry } from './operation-registry.js'
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
@@ -204,6 +205,19 @@ export interface ServerOptions<Identity = unknown> {
    * hook.
    */
   acceptBackupRestore?: boolean
+  /**
+   * Enables `POST /db/{id}/encryption`, which encrypts a database, changes its key, or removes encryption while the
+   * server serves it; the default is false. The server constructor throws `INVALID_ENCRYPTION_CHANGE` when you enable
+   * it without an `authenticate` hook or without {@link ServerOptions.encryptionKeys}.
+   */
+  acceptEncryptionChange?: boolean
+  /**
+   * Returns the key that a `keyRef` in an encryption request refers to, so that the caller sends the server a name and
+   * the key stays on the server. Return 32 random bytes, or `{ key, id }` to store an identifier with the key. The
+   * server calls it once to check the key before it answers, and again each time the database opens its connections
+   * under that key.
+   */
+  encryptionKeys?: (databaseId: string, keyRef: string) => EncryptionKey | Promise<EncryptionKey>
   /** Enables device sync, which covers the push, snapshot, and migration-list routes, device subscriptions, and acknowledgements; the default is false. The server constructor throws `INVALID_DEVICE_SYNC` when you enable it without an `authenticate` hook. */
   acceptDeviceSync?: boolean
   /** Returns the target that the server executes a database's statements against; without it, the server uses the databases in its own registry. */

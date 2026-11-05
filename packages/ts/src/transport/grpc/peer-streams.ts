@@ -72,7 +72,7 @@ export function registerPeer(
   peerConnectedHandler: PeerConnectedHandler | null,
   nodeId: string,
   role: TopologyRole,
-  metadata: Pick<NodeInfo, 'groupId' | 'primaryTerm' | 'protocolVersion'> = {},
+  metadata: Partial<Pick<NodeInfo, 'groupId' | 'primaryTerm' | 'protocolVersion' | 'encrypted'>> = {},
 ): void {
   if (connectedPeers.has(nodeId)) return
   const peerInfo: NodeInfo = {
@@ -81,6 +81,7 @@ export function registerPeer(
     role,
     primaryTerm: metadata.primaryTerm,
     protocolVersion: metadata.protocolVersion,
+    encrypted: metadata.encrypted === true,
     joinedAt: Date.now(),
     lastSeenAt: Date.now(),
     lastAckedSeq: 0n,

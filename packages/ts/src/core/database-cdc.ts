@@ -25,6 +25,7 @@ export class DatabaseCdcController {
   private stopPolling: (() => void) | null = null
   private stamper: SyncStamper | null = null
   private epochRequest: Promise<string> | null = null
+  private readonly liveConnectionListeners = new Set<() => void>()
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -80,6 +81,38 @@ export class DatabaseCdcController {
     if (request === null) return
     this.liveConnRequest = null
     await request.then(conn => conn.close()).catch(() => {})
+  }
+
+  /**
+   * Registers a function that the controller calls when a key change closes the live connection to replace the file,
+   * so that each live query plans again on the connection that opens afterwards.
+   *
+   * @param listener - The function to call.
+   * @returns A function that removes the registration.
+   */
+  onLiveConnectionReplaced(listener: () => void): () => void {
+    this.liveConnectionListeners.add(listener)
+    return () => {
+      this.liveConnectionListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Closes the live connection before a key change replaces the file, after telling every live query to plan again
+   * on the connection that the next call opens once the replacement ends.
+   */
+  async releaseLiveConnection(): Promise<void> {
+    const request = this.liveConnRequest
+    this.liveConnRequest = null
+    for (const listener of [...this.liveConnectionListeners]) listener()
+    if (request !== null) await request.then(conn => conn.close()).catch(() => {})
+  }
+
+  /** Starts polling again on the writer that the pool opened after a file replacement, where polling was on. */
+  restartPolling(): void {
+    if (this.stopPolling === null) return
+    this.stop()
+    this.ensurePolling()
   }
 
   get subscriptions(): SubscriptionManager | null {

@@ -16,6 +16,7 @@ export const REPLACED_ROWS_TABLE = '_sirannon_replaced_rows'
 
 export const CDC_TRIGGER_PREFIX = '_sirannon_trg_'
 export const LIVE_PROBE_TABLE_PREFIX = '_sirannon_live_probe_'
+export const KEY_CHANGE_CAPTURE_PREFIX = '_sirannon_key_change_'
 
 const SIRANNON_PREFIX = '_sirannon'
 const SQLITE_PREFIX = 'sqlite_'

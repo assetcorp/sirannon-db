@@ -26,6 +26,7 @@ export interface PrimaryOptions {
   listenPort?: number
   driver?: SQLiteDriver
   registryOptions?: Partial<SirannonOptions>
+  encryptionKey?: Uint8Array
   initialize?: (conn: SQLiteConnection, tracker: ChangeTracker) => Promise<void>
 }
 
@@ -35,6 +36,7 @@ export interface ReplicaOptions {
   storage?: NodeStorage
   driver?: SQLiteDriver
   registryOptions?: Partial<SirannonOptions>
+  encryptionKey?: Uint8Array
 }
 
 export async function eventually(
@@ -129,7 +131,7 @@ export class ReplicationScene {
       storage: options.storage,
       listenPort: options.listenPort,
       configOverrides: options.config,
-      registry: { sirannon, driver, databaseId: nodeId },
+      registry: { sirannon, driver, databaseId: nodeId, encryptionKey: options.encryptionKey },
       initialize: async (conn, tracker) => {
         for (const statement of options.schema ?? []) await conn.exec(statement)
         for (const table of options.watch ?? []) await tracker.watch(conn, table)
@@ -150,7 +152,7 @@ export class ReplicationScene {
       primaryPort: options.port,
       storage: options.storage,
       configOverrides: options.config,
-      registry: { sirannon, driver, databaseId: nodeId },
+      registry: { sirannon, driver, databaseId: nodeId, encryptionKey: options.encryptionKey },
     })
     this.adopt(node)
     return node

@@ -11,11 +11,19 @@ import { DatabaseSyncController } from './database-sync.js'
 import { DatabaseWriteController } from './database-writes.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
 import type { SQLiteDriver } from './driver/types.js'
+import { DatabaseEncryptionController } from './encryption/controller.js'
+import { EncryptionError } from './encryption/errors.js'
+import type { EncryptionKeySource } from './encryption/key.js'
+import { explainKeyAfterInterruptedChange, recoverInterruptedKeyChange } from './encryption/key-change-recovery.js'
+import { writeKeyId } from './encryption/key-metadata.js'
+import { EncryptionKeyring } from './encryption/keyring.js'
 import { SirannonError } from './errors.js'
+import { DatabaseFileConnections } from './file-connections.js'
 import { GroupCommitter } from './group-committer.js'
 import { HookRegistry } from './hooks/registry.js'
 import { LoadedExtensions } from './loaded-extensions.js'
 import type { MetricsCollector } from './metrics/collector.js'
+import { RegisteredReplicationEngines } from './replication-engines.js'
 import { snapshotLoadPending } from './sync/snapshot-apply.js'
 import type { DatabaseOptions } from './types.js'
 import { resolveWriterWorkerConfig } from './worker/config.js'
@@ -25,9 +33,13 @@ import { WriterLock } from './writer-lock.js'
 export interface DatabaseInternals {
   parentHooks?: HookRegistry
   metrics?: MetricsCollector
+  onEncryptionChanged?: (key: EncryptionKeySource | null) => void
 }
 
 export interface DatabaseRuntime {
+  fileConnections: DatabaseFileConnections
+  encryption: DatabaseEncryptionController
+  replicationEngines: RegisteredReplicationEngines
   pool: ConnectionPool
   writeGate: WriteGate
   writerLock: WriterLock
@@ -41,6 +53,24 @@ export interface DatabaseRuntime {
   reads: DatabaseReadDeps
   migrations: DatabaseMigrationController
   loadExtension: (extensionPath: string) => Promise<void>
+}
+
+function encryptionKeyringFor(driver: SQLiteDriver, options: DatabaseOptions | undefined): EncryptionKeyring {
+  const encryption = options?.encryption
+  if (encryption === undefined) return new EncryptionKeyring(null)
+  if (typeof encryption?.key !== 'function') {
+    throw new EncryptionError(
+      'The encryption option needs a key function that returns 32 key bytes',
+      'INVALID_ENCRYPTION_KEY',
+    )
+  }
+  if (!driver.capabilities.encryption) {
+    throw new EncryptionError(
+      'The driver that this Sirannon uses cannot encrypt a database, so it cannot open one with the encryption option',
+      'ENCRYPTION_UNSUPPORTED',
+    )
+  }
+  return new EncryptionKeyring(encryption.key)
 }
 
 export async function createDatabaseRuntime(
@@ -63,17 +93,33 @@ export async function createDatabaseRuntime(
     assertChangeLogCaptureSupported(driver, id, path, options.walMode ?? true, options.backups)
   }
 
-  const pool = await ConnectionPool.create({
-    driver,
-    path,
-    readOnly: options?.readOnly,
-    readPoolSize: options?.readPoolSize ?? 4,
-    walMode: options?.walMode ?? true,
-    synchronous: options?.synchronous,
-    ...(options?.backups ? { walAutoCheckpoint: 0 } : {}),
-    useWriterWorker: writerWorker.enabled && !readOnly,
-    workerHostOptions: writerWorker.host,
-  })
+  const keyring = encryptionKeyringFor(driver, options)
+  const interrupted = await recoverInterruptedKeyChange(driver, path, readOnly)
+  let pool: ConnectionPool
+  try {
+    pool = await ConnectionPool.create({
+      driver,
+      path,
+      readOnly: options?.readOnly,
+      readPoolSize: options?.readPoolSize ?? 4,
+      walMode: options?.walMode ?? true,
+      synchronous: options?.synchronous,
+      ...(options?.backups ? { walAutoCheckpoint: 0 } : {}),
+      useWriterWorker: writerWorker.enabled && !readOnly,
+      workerHostOptions: writerWorker.host,
+      keyring,
+    })
+  } catch (err) {
+    throw interrupted === null ? err : explainKeyAfterInterruptedChange(err, interrupted)
+  }
+  if (keyring.encrypted && !readOnly) {
+    try {
+      await writeKeyId(pool.acquireWriter(), keyring.keyId)
+    } catch (err) {
+      await pool.close().catch(() => undefined)
+      throw err
+    }
+  }
 
   const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
   const writerLock = new WriterLock(driver.createWriterContext?.())
@@ -92,10 +138,12 @@ export async function createDatabaseRuntime(
     id,
     path,
     driver.createBackupEngine?.(driver),
+    () => keyring.keyId,
   )
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
   const extensions = new LoadedExtensions(driver)
-  const openSnapshotConnection = () => extensions.open(() => driver.open(path, { readonly: true, walMode: false }))
+  const fileConnections = new DatabaseFileConnections(driver, path, keyring, extensions)
+  const openSnapshotConnection = () => fileConnections.open({ readonly: true, walMode: false })
   const cdc = new DatabaseCdcController(
     op => writerLock.run(op),
     () => pool.acquireWriter(),
@@ -143,7 +191,27 @@ export async function createDatabaseRuntime(
 
   if (options?.backups && !readOnly) backups.startCycle(options.backups)
 
+  fileConnections.hold({ release: () => cdc.releaseLiveConnection(), reopen: async () => {} })
+  const replicationEngines = new RegisteredReplicationEngines(id)
+  const encryption = new DatabaseEncryptionController({
+    databaseId: id,
+    readOnly,
+    replicationEngines,
+    path,
+    driver,
+    keyring,
+    pool,
+    writerLock,
+    fileConnections,
+    cdc,
+    backups,
+    onKeyChanged: internals?.onEncryptionChanged,
+  })
+
   return {
+    fileConnections,
+    encryption,
+    replicationEngines,
     pool,
     writeGate,
     writerLock,
@@ -168,6 +236,7 @@ export async function closeDatabaseRuntime(
   runtime.backups.cancelAll()
 
   const releaseSteps = [
+    () => runtime.encryption.cancel(),
     () => runtime.cdc.closeLiveConnection(),
     () => runtime.writes.drain(),
     () => runtime.writerLock.settle(),

@@ -43,8 +43,9 @@ export function assertPieceBytes(pieceBytes: number): void {
  */
 export async function readPageSize(conn: SQLiteConnection): Promise<number> {
   const stmt = await conn.prepare('PRAGMA page_size')
-  const row = await stmt.get<{ page_size: number | bigint }>()
-  return row ? Number(row.page_size) : 0
+  const row = await stmt.get<Record<string, number | bigint | string>>()
+  const [pageSize] = row === undefined ? [] : Object.values(row)
+  return pageSize === undefined ? 0 : Number(pageSize)
 }
 
 /**

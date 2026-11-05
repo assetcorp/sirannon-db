@@ -21,6 +21,7 @@ import type {
 } from './generated/replication.js'
 import { ReplicationService } from './generated/replication.js'
 import { buildServerCreds } from './grpc-credentials.js'
+import { localHello, peerHelloFields } from './hello.js'
 import { SERVICE_NAME } from './options.js'
 import type { PeerStreamEntry } from './peer-streams.js'
 import { registerPeer, removePeer, restartPeerConnection } from './peer-streams.js'
@@ -123,23 +124,11 @@ export function handleServerReplicateStream(
       if (replaced) restartPeerConnection(t.connectedPeers, t.peerDisconnectedHandler, peerId)
 
       if (!helloSent) {
-        call.write({
-          hello: {
-            nodeId: t.localNodeId,
-            role: t.localRole,
-            groupId: t.localGroupId ?? '',
-            primaryTerm: t.localPrimaryTerm ?? 0n,
-            protocolVersion: t.localProtocolVersion ?? '',
-          },
-        })
+        call.write({ hello: localHello(t) })
         helloSent = true
       }
 
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, {
-        groupId: msg.hello.groupId || undefined,
-        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
-        protocolVersion: msg.hello.protocolVersion || undefined,
-      })
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, peerHelloFields(msg.hello))
       return
     }
 
@@ -203,23 +192,11 @@ export function handleServerSyncStream(
       t.serverPeerStreams.set(peerId, ps)
 
       if (!helloSent) {
-        call.write({
-          hello: {
-            nodeId: t.localNodeId,
-            role: t.localRole,
-            groupId: t.localGroupId ?? '',
-            primaryTerm: t.localPrimaryTerm ?? 0n,
-            protocolVersion: t.localProtocolVersion ?? '',
-          },
-        })
+        call.write({ hello: localHello(t) })
         helloSent = true
       }
 
-      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, {
-        groupId: msg.hello.groupId || undefined,
-        primaryTerm: msg.hello.primaryTerm === 0n ? undefined : msg.hello.primaryTerm,
-        protocolVersion: msg.hello.protocolVersion || undefined,
-      })
+      registerPeer(t.connectedPeers, t.peerConnectedHandler, peerId, peerRole, peerHelloFields(msg.hello))
       return
     }
 

@@ -2,7 +2,7 @@
   "name": "@delali/sirannon-sqlite-linux-arm64",
   "version": "0.0.0",
   "description": "better-sqlite3 compiled against Sirannon's build of SQLite, for Linux on 64-bit Arm.",
-  "license": "Apache-2.0 AND MIT",
+  "license": "Apache-2.0 AND MIT AND BSD-3-Clause",
   "author": "Delali (https://sondelali.com)",
   "homepage": "https://github.com/assetcorp/sirannon-db",
   "repository": {

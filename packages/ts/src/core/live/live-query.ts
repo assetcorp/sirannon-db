@@ -14,6 +14,7 @@ export interface PositionedRead<T> {
 export interface LiveQuerySource<T> {
   readonly plan: LivePlan
   readonly probe: RowProbe
+  readonly connectionReplaced: boolean
   read(): Promise<PositionedRead<T>>
   start(handlers: { onEvent(event: ChangeEvent): void; onLost(): void }, sinceSeq: bigint): Promise<() => void>
   shapeChanged(events: readonly ChangeEvent[]): boolean
@@ -255,7 +256,7 @@ export class MaintainedLiveQuery<T> implements LiveQuery<T> {
         }
         if (this.closed) return
 
-        if (this.replanBeforeRead) {
+        if (this.replanBeforeRead || this.source.connectionReplaced) {
           await this.source.replan()
           if (this.closed) return
           this.replanBeforeRead = false

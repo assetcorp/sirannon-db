@@ -87,6 +87,7 @@ export class DatabaseBackupController {
     private readonly databaseId: string,
     private readonly sourcePath: string,
     private readonly engine?: BackupEngine,
+    private readonly keyId: () => string | undefined = () => undefined,
   ) {}
 
   private require(): BackupEngine {
@@ -165,6 +166,7 @@ export class DatabaseBackupController {
       runExclusive: this.runExclusive,
       acquireWriter: this.acquireWriter,
       fullCopy: copyOptions => this.backupTo(copyOptions),
+      keyId: this.keyId,
     })
     this.cycleStarted = this.cycle.start().catch(err => {
       const onError = options.onError
@@ -220,6 +222,38 @@ export class DatabaseBackupController {
     const cycle = this.cycle
     await this.cycleStarted
     await cycle.stop()
+  }
+
+  /**
+   * Stops the backup cycle after one last capture, ahead of a key change that replaces the file.
+   *
+   * @returns `true` when a cycle was running, which {@link DatabaseBackupController.resumeCycle} starts again.
+   */
+  async pauseCycle(): Promise<boolean> {
+    if (!this.cycle || !this.cycleOptions) return false
+    await this.stopCycle()
+    return true
+  }
+
+  /**
+   * Drops the chain that the paused backup cycle extended, so that the cycle starts a new chain with a full copy
+   * whenever it starts again, including in a process that starts after a crash during the key change.
+   */
+  async forgetPausedChain(): Promise<void> {
+    await this.cycle?.forgetChain()
+  }
+
+  /**
+   * Starts the backup cycle again after a key change, on a new chain whose first piece is a full copy when the file
+   * now holds ciphertext under another key.
+   *
+   * @param options - Whether the cycle starts a new chain.
+   */
+  async resumeCycle(options: { newChain: boolean }): Promise<void> {
+    const cycleOptions = this.cycleOptions
+    if (!cycleOptions) return
+    if (options.newChain) await this.cycle?.forgetChain()
+    this.startCycle(cycleOptions)
   }
 
   cancelAll(): void {

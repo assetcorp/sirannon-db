@@ -168,8 +168,12 @@ export function httpStatusForError(err: SirannonError): number {
     case 'HOOK_DENIED':
       return 403
     case 'BACKUP_CHAIN_BROKEN':
+    case 'REPLICATION_ACTIVE':
+    case 'ENCRYPTION_CHANGE_IN_PROGRESS':
+    case 'ENCRYPTION_REQUIRED':
       return 409
     case 'BACKUP_UNSUPPORTED':
+    case 'ENCRYPTION_UNSUPPORTED':
       return 501
     case 'BACKUP_DESTINATION_ERROR':
       return 502
@@ -183,6 +187,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'NODE_DRAINING':
     case 'UNSAFE_RECOVERY_REQUIRED':
     case 'WRITE_OVERLOADED':
+    case 'ENCRYPTION_KEY_UNAVAILABLE':
       return 503
     default:
       return 500

@@ -5,6 +5,7 @@ import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
@@ -62,6 +63,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       extensions: true,
       steppedCopy: carriesSteppedBackupCall(),
       rowCounts: false,
+      encryption: false,
     },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
@@ -79,6 +81,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       ),
     resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
+      refuseEncryptedOpen('node:sqlite', options)
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false, allowExtension: true })
       db.enableLoadExtension?.(false)

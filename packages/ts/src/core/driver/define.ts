@@ -1,5 +1,14 @@
 import { SirannonError } from '../errors.js'
+import type { DatabaseFileSystem } from './file-system.js'
 import type { SQLiteDriver } from './types.js'
+
+function boundFileSystem(files: DatabaseFileSystem): DatabaseFileSystem {
+  return Object.freeze({
+    readStart: files.readStart.bind(files),
+    remove: files.remove.bind(files),
+    rename: files.rename.bind(files),
+  })
+}
 
 /**
  * Returns a frozen {@link SQLiteDriver} that holds your implementation's capabilities, its `open` function, and only the optional members that Sirannon supports.
@@ -19,12 +28,13 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver {
     throw new SirannonError('Driver worker entry must define a string specifier', 'INVALID_DRIVER')
   }
   return Object.freeze({
-    capabilities: Object.freeze({ ...config.capabilities }),
+    capabilities: Object.freeze({ ...config.capabilities, encryption: config.capabilities.encryption === true }),
     open: config.open.bind(config),
     ...(config.worker ? { worker: Object.freeze({ ...config.worker }) } : {}),
     ...(config.startWriterHost ? { startWriterHost: config.startWriterHost.bind(config) } : {}),
     ...(config.createWriterContext ? { createWriterContext: config.createWriterContext.bind(config) } : {}),
     ...(config.createBackupEngine ? { createBackupEngine: config.createBackupEngine.bind(config) } : {}),
     ...(config.resolveExtensionPath ? { resolveExtensionPath: config.resolveExtensionPath.bind(config) } : {}),
+    ...(config.files ? { files: boundFileSystem(config.files) } : {}),
   })
 }

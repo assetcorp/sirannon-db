@@ -1,5 +1,6 @@
 import type { Server } from '@grpc/grpc-js'
 import type { HealthImplementation } from 'grpc-health-check'
+import type { SirannonError } from '../../core/errors.js'
 import { TransportError } from '../../replication/errors.js'
 import type {
   ForwardedTransaction,
@@ -66,6 +67,8 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   localPrimaryTerm: bigint | undefined
   /** @internal */
   localProtocolVersion: string | undefined
+  /** @internal */
+  localEncrypted = false
   /** @internal */
   connected = false
   /** @internal */
@@ -139,6 +142,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     this.localGroupId = config.groupId
     this.localPrimaryTerm = config.primaryTerm
     this.localProtocolVersion = config.protocolVersion
+    this.localEncrypted = config.encrypted === true
     this.connected = true
 
     if (this.localRole === 'primary' || config.groupId) {
@@ -257,46 +261,34 @@ export class GrpcReplicationTransport implements ReplicationTransport {
 
   /** Asks a peer to stream a full copy of the database. */
   async requestSync(peerId: string, request: SyncRequest): Promise<void> {
-    this.ensureConnected()
-    const stream = this.getSyncWriteStream(peerId)
-    if (!stream) {
-      throw new TransportError(`Peer '${peerId}' is not connected`)
-    }
-    const msg: SyncMessage = { syncRequest: toSyncRequestPayload(request) }
-    await writeWithBackpressure(stream, msg)
+    await this.writeSync(peerId, () => ({ syncRequest: toSyncRequestPayload(request) }))
   }
 
   /** Sends one page of first-sync table data. */
   async sendSyncBatch(peerId: string, batch: SyncBatch): Promise<void> {
-    this.ensureConnected()
-    const stream = this.getSyncWriteStream(peerId)
-    if (!stream) {
-      throw new TransportError(`Peer '${peerId}' is not connected`)
-    }
-    const msg: SyncMessage = { syncBatch: toSyncBatchPayload(batch) }
-    await writeWithBackpressure(stream, msg)
+    await this.writeSync(peerId, () => ({ syncBatch: toSyncBatchPayload(batch) }))
   }
 
   /** Tells a joining node that first sync is complete, and sends the manifests that the node checks its copy against. */
   async sendSyncComplete(peerId: string, complete: SyncComplete): Promise<void> {
-    this.ensureConnected()
-    const stream = this.getSyncWriteStream(peerId)
-    if (!stream) {
-      throw new TransportError(`Peer '${peerId}' is not connected`)
-    }
-    const msg: SyncMessage = { syncComplete: toSyncCompletePayload(complete) }
-    await writeWithBackpressure(stream, msg)
+    await this.writeSync(peerId, () => ({ syncComplete: toSyncCompletePayload(complete) }))
   }
 
   /** Tells the source whether this joining node stored one first-sync page. */
   async sendSyncAck(peerId: string, ack: SyncAck): Promise<void> {
-    this.ensureConnected()
-    const stream = this.getSyncWriteStream(peerId)
-    if (!stream) {
-      throw new TransportError(`Peer '${peerId}' is not connected`)
-    }
-    const msg: SyncMessage = { syncAck: toSyncAckPayload(ack) }
-    await writeWithBackpressure(stream, msg)
+    await this.writeSync(peerId, () => ({ syncAck: toSyncAckPayload(ack) }))
+  }
+
+  /**
+   * Ends every stream with one peer, and carries the error's code to the peer in the `sirannon-error-code` trailer of
+   * each stream that the peer opened.
+   *
+   * @param peerId - The peer to refuse.
+   * @param error - The error whose code the streams carry, such as `ENCRYPTION_REQUIRED`.
+   */
+  async refusePeer(peerId: string, error: SirannonError): Promise<void> {
+    if (!this.connected || !this.runtime) return
+    this.runtime.refusePeerStreams(this, peerId, error)
   }
 
   /** Registers the handler that applies incoming change batches. */
@@ -387,7 +379,12 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return replicateWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
   }
 
-  private getSyncWriteStream(peerId: string) {
-    return syncWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
+  private async writeSync(peerId: string, message: () => SyncMessage): Promise<void> {
+    this.ensureConnected()
+    const stream = syncWriteStream(this.serverPeerStreams, this.clientPeerStreams, peerId)
+    if (!stream) {
+      throw new TransportError(`Peer '${peerId}' is not connected`)
+    }
+    await writeWithBackpressure(stream, message())
   }
 }

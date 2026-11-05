@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@delali/sirannon-sqlite-darwin-x64)](https://www.npmjs.com/package/@delali/sirannon-sqlite-darwin-x64)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-sqlite-darwin-x64)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-This package contains better-sqlite3's native module, built for macOS on Intel against Sirannon's build of SQLite, which counts the rows that each statement reads and writes.
+This package contains better-sqlite3's native module, built for macOS on Intel against Sirannon's build of SQLite, which is SQLite3 Multiple Ciphers with a patch that counts the rows that each statement reads and writes.
 
 ## Install
 
@@ -19,6 +19,8 @@ pnpm add -E @delali/sirannon-db @delali/sirannon-sqlite
 
 When you pass `rowCounts: true`, Sirannon's better-sqlite3 driver loads this module and reports the rows that each statement reads and writes through `onQueryComplete`. The counting rules are in the [core engine guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/core.md#rows-read-and-rows-written).
 
+When you create the driver with `betterSqlite3({ encryption: true })`, the driver loads this module and keeps every page of a database that you open with the `encryption` option as ciphertext. SQLite3 Multiple Ciphers encrypts each page with AEGIS-256, from code that is compiled into this module. The key rules are in the [encryption guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/encryption.md).
+
 ## Licence
 
-The Apache-2.0 and MIT licences cover this package. Each project whose code is in this package has its name and licence in the package's `NOTICE` file, and the patches, the build script, and the tests are in [assetcorp/sirannon-db](https://github.com/assetcorp/sirannon-db).
+The Apache-2.0, MIT, and BSD-3-Clause licences cover this package. Each project whose code is in this package has its name and licence in the package's `NOTICE` file, and the patches, the build script, and the tests are in [assetcorp/sirannon-db](https://github.com/assetcorp/sirannon-db).

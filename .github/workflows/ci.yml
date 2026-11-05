@@ -51,6 +51,10 @@ jobs:
         working-directory: packages/ts
         run: pnpm build:sqlite
 
+      - name: Build the SQLCipher that expo-sqlite vendors, for the Expo tests
+        working-directory: packages/ts
+        run: pnpm build:expo-sqlcipher
+
       - name: Lint
         run: pnpm lint
 
@@ -74,6 +78,7 @@ jobs:
         env:
           SIRANNON_REQUIRE_STREAMING_EXTENSION: '1'
           SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'
+          SIRANNON_REQUIRE_EXPO_SQLCIPHER: '1'
 
   benchmarks-writeup:
     name: Benchmarks writeup drift

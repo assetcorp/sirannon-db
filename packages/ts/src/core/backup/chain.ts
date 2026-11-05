@@ -48,6 +48,8 @@ export interface BackupChainBase {
   bytesWritten: number
   /** The SHA-256 of the copy, present while fingerprinting is on. */
   fingerprint?: string
+  /** The identifier that came with the key that this copy holds ciphertext under, where the key came with one. */
+  keyId?: string
 }
 
 /**
@@ -83,6 +85,8 @@ export interface BackupChainChange {
   checkpointed: boolean
   /** The SHA-256 of the frames, present while fingerprinting is on. */
   fingerprint?: string
+  /** The identifier that came with the key that these frames hold ciphertext under, where the key came with one. */
+  keyId?: string
 }
 
 /** Either the full copy at the head of a chain or one change piece along it.

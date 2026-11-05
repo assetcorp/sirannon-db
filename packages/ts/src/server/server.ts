@@ -17,21 +17,14 @@ import type {
 } from '../core/types.js'
 import { BackupRestoreRuns } from './backup-restore-runs.js'
 import { handleCapabilities } from './capabilities.js'
-import { ConnectionDrain, endResponse, type RouteRegistrar } from './connection-drain.js'
+import { ConnectionDrain, endResponse } from './connection-drain.js'
 import type { ResolvedCors } from './cors.js'
 import { resolveCors, writeCorsOrigin } from './cors.js'
 import { wrapDbGetRoute, wrapDbRoute } from './db-route.js'
 import { handleLiveness, handleReadiness } from './health.js'
-import { handleBackupRestore, handleBackupRestoreStatus } from './http-backup-restore.js'
-import {
-  handleBackupChain,
-  handleBackupSafeToDelete,
-  handleBackupStatus,
-  handleBackupTrigger,
-  handleBackupVerify,
-} from './http-backups.js'
 import { handleChanges } from './http-changes.js'
 import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE, SQL_NOT_ACCEPTED_MESSAGE } from './http-common.js'
+import { type EncryptionChangeSettings, resolveEncryptionChangeSettings } from './http-encryption.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
 import {
   handleBatch,
@@ -55,6 +48,7 @@ import {
 } from './limits.js'
 import { type OperationSets, operationRegistryDigest } from './operation-lookup.js'
 import { type OperationRouteDeps, wrapOperationRoute } from './operation-route.js'
+import { registerOperatorRoutes } from './operator-routes.js'
 import { loadUWebSockets, type UWebSockets } from './uws-loader.js'
 import { WSHandler } from './ws-handler.js'
 import { registerWebSocketRoute } from './ws-route.js'
@@ -114,6 +108,7 @@ export class SirannonServer<Identity = unknown> {
   private readonly authenticateHook: AuthenticateHook<Identity> | undefined
   private readonly acceptSql: boolean
   private readonly acceptBackupRestore: boolean
+  private readonly encryptionChange: EncryptionChangeSettings
   private readonly acceptDeviceSync: boolean
   private readonly restoreRuns = new BackupRestoreRuns()
   private readonly drain = new ConnectionDrain()
@@ -137,6 +132,7 @@ export class SirannonServer<Identity = unknown> {
     this.acceptSql = options?.acceptSql === true
     this.acceptBackupRestore = options?.acceptBackupRestore === true
     assertBackupRestoreAuthenticated(this.acceptBackupRestore, this.authenticateHook !== undefined)
+    this.encryptionChange = resolveEncryptionChangeSettings(options)
     this.acceptDeviceSync = options?.acceptDeviceSync === true
     assertDeviceSyncAuthenticated(this.acceptDeviceSync, this.authenticateHook !== undefined)
     this.operations = { registry: options?.operations, shared: options?.sharedOperations }
@@ -303,7 +299,13 @@ export class SirannonServer<Identity = unknown> {
       this.wrapOperationRoute(handleOperationExecute(this.sirannon, this.operations, this.resolveExecutionTarget)),
     )
 
-    this.registerBackupRoutes(routes)
+    registerOperatorRoutes<Identity>(routes, {
+      sirannon: this.sirannon,
+      routeDeps: this.routeDeps(),
+      acceptBackupRestore: this.acceptBackupRestore,
+      restoreRuns: this.restoreRuns,
+      encryptionChange: this.encryptionChange,
+    })
 
     if (this.acceptDeviceSync) {
       routes.post('/db/:id/changes', this.wrapDbRoute(handleChanges(this.sirannon, this.resolveExecutionTarget)))
@@ -328,19 +330,6 @@ export class SirannonServer<Identity = unknown> {
     routes.any('/*', res => {
       sendError(res, 404, 'NOT_FOUND', 'Route not found')
     })
-  }
-
-  private registerBackupRoutes(routes: RouteRegistrar): void {
-    routes.post('/db/:id/backup', this.wrapDbRoute(handleBackupTrigger(this.sirannon)))
-    routes.get('/db/:id/backup', this.wrapDbGetRoute(handleBackupStatus(this.sirannon)))
-    routes.get('/db/:id/backup/chain', this.wrapDbGetRoute(handleBackupChain(this.sirannon)))
-    routes.post('/db/:id/backup/verify', this.wrapDbRoute(handleBackupVerify(this.sirannon)))
-    routes.post('/db/:id/backup/safe-to-delete', this.wrapDbRoute(handleBackupSafeToDelete(this.sirannon)))
-    routes.post(
-      '/db/:id/backup/restore',
-      this.wrapDbRoute(handleBackupRestore(this.sirannon, this.acceptBackupRestore, this.restoreRuns)),
-    )
-    routes.get('/db/:id/backup/restore', this.wrapDbGetRoute(handleBackupRestoreStatus(this.restoreRuns)))
   }
 
   private withCors(

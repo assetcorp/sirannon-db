@@ -306,7 +306,16 @@ export function helloOutcome(
       call.write({ ack: { batchId: '', ackedSeq: 1n, nodeId: claimedNodeId, groupId: '', primaryTerm: 0n } })
       return
     }
-    call.write({ hello: { nodeId: claimedNodeId, role: 'replica', groupId: '', primaryTerm: 0n, protocolVersion: '' } })
+    call.write({
+      hello: {
+        nodeId: claimedNodeId,
+        role: 'replica',
+        groupId: '',
+        primaryTerm: 0n,
+        protocolVersion: '',
+        encrypted: false,
+      },
+    })
   })
 }
 

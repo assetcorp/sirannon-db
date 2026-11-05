@@ -15,6 +15,7 @@ import {
 import { writeFully } from './write-fully.js'
 
 const DATABASE_HEADER_BYTES = 100
+const PLAINTEXT_HEADER = 'SQLite format 3\0'
 const PAGE_SIZE_OFFSET = 16
 const PAGE_SIZE_FOR_65536 = 1
 const SMALLEST_PAGE_BYTES = 512
@@ -73,11 +74,12 @@ function restoreError(message: string): SirannonError {
  * file marks write-ahead logging.
  *
  * @param path - The path of the database file.
- * @returns The page size and journal format that the header states.
+ * @returns The page size and journal format that the header states, or `null` for an encrypted file, whose header
+ * only a connection under its key can read.
  *
  * @internal
  */
-export async function readDatabaseHeader(path: string): Promise<DatabaseHeader> {
+export async function readDatabaseHeader(path: string): Promise<DatabaseHeader | null> {
   const handle = await open(path, 'r')
   try {
     const buffer = Buffer.allocUnsafe(DATABASE_HEADER_BYTES)
@@ -85,6 +87,7 @@ export async function readDatabaseHeader(path: string): Promise<DatabaseHeader> 
     if (bytesRead < DATABASE_HEADER_BYTES) {
       throw restoreError(`The full copy assembled into '${path}' is too short to be a SQLite database`)
     }
+    if (buffer.toString('latin1', 0, PLAINTEXT_HEADER.length) !== PLAINTEXT_HEADER) return null
     const stated = buffer.readUInt16BE(PAGE_SIZE_OFFSET)
     const pageSize = stated === PAGE_SIZE_FOR_65536 ? LARGEST_PAGE_BYTES : stated
     if (pageSize < SMALLEST_PAGE_BYTES || pageSize > LARGEST_PAGE_BYTES || (pageSize & (pageSize - 1)) !== 0) {

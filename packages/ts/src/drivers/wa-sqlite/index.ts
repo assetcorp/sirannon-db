@@ -2,6 +2,7 @@ import { defineDriver } from '../../core/driver/define.js'
 import { assertHoldsStatement } from '../../core/driver/statement-text.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { bindStatement } from './bind.js'
 import { readColumn } from './read.js'
@@ -30,8 +31,15 @@ export interface WaSqliteOptions {
  */
 export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
+    capabilities: {
+      multipleConnections: false,
+      extensions: false,
+      steppedCopy: false,
+      rowCounts: false,
+      encryption: false,
+    },
     async open(path, options) {
+      refuseEncryptedOpen('wa-sqlite', options)
       const { default: SQLiteESMFactory } = await import('wa-sqlite/dist/wa-sqlite-async.mjs')
       const { Factory } = await import('wa-sqlite')
 

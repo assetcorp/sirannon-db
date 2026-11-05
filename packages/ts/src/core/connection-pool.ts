@@ -1,4 +1,6 @@
 import type { SQLiteConnection, SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import { EncryptionError } from './encryption/errors.js'
+import type { EncryptionKeyring, KeyedOpenOptions } from './encryption/keyring.js'
 import { ConnectionPoolError, SirannonError } from './errors.js'
 import type { WorkerHostOptions } from './worker/host.js'
 
@@ -17,6 +19,12 @@ export interface ConnectionPoolOptions {
   walAutoCheckpoint?: number
   useWriterWorker?: boolean
   workerHostOptions?: WorkerHostOptions
+  keyring?: EncryptionKeyring
+}
+
+interface PoolConnections {
+  writer: SQLiteConnection | null
+  readers: SQLiteConnection[]
 }
 
 async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promise<void> {
@@ -28,66 +36,87 @@ async function closeAllSilently(connections: (SQLiteConnection | null)[]): Promi
   }
 }
 
+function writerHostOptions(options: ConnectionPoolOptions): WorkerHostOptions | undefined {
+  const keyring = options.keyring
+  if (!keyring?.encrypted) return options.workerHostOptions
+  return { ...options.workerHostOptions, encryptionKey: () => keyring.freshKeyBytes() }
+}
+
+async function openWriter(options: ConnectionPoolOptions, keyed: KeyedOpenOptions): Promise<SQLiteConnection> {
+  const { driver, path, walMode = true, synchronous } = options
+  const writerOptions = {
+    walMode,
+    synchronous,
+    ...(options.walAutoCheckpoint === undefined ? {} : { walAutoCheckpoint: options.walAutoCheckpoint }),
+  }
+  if (!options.useWriterWorker) return driver.open(path, { ...writerOptions, ...keyed })
+  if (!driver.startWriterHost) {
+    throw new SirannonError(
+      'writerWorker is enabled but the driver does not carry a worker entry; use a driver that supports it or disable writerWorker',
+      'WRITER_WORKER_UNSUPPORTED',
+    )
+  }
+  return driver.startWriterHost(path, writerOptions, writerHostOptions(options))
+}
+
+async function openConnections(options: ConnectionPoolOptions): Promise<PoolConnections> {
+  const { driver, path, readOnly = false, readPoolSize = 4 } = options
+  const open = async (keyed: KeyedOpenOptions): Promise<PoolConnections> => {
+    let writer: SQLiteConnection | null = null
+    const readers: SQLiteConnection[] = []
+    try {
+      if (!readOnly) writer = await openWriter(options, keyed)
+      const poolSize = driver.capabilities.multipleConnections ? Math.max(readPoolSize, 1) : 0
+      for (let i = 0; i < poolSize; i++) {
+        readers.push(await driver.open(path, { readonly: true, walMode: false, ...keyed }))
+      }
+    } catch (err) {
+      await closeAllSilently([...readers, writer])
+      throw err
+    }
+    return { writer, readers }
+  }
+  return options.keyring ? options.keyring.openWith(open) : open({})
+}
+
 /**
  * Opens one writer connection and a set of reader connections for a single database file, and returns the readers in rotation.
  *
  * @internal
  */
 export class ConnectionPool {
-  private readonly writer: SQLiteConnection | null
-  private readonly readers: SQLiteConnection[]
+  private writer: SQLiteConnection | null
+  private readers: SQLiteConnection[]
   private readerIndex = 0
   private closed = false
+  private isSuspended = false
 
-  private constructor(writer: SQLiteConnection | null, readers: SQLiteConnection[]) {
-    this.writer = writer
-    this.readers = readers
+  private constructor(
+    private readonly options: ConnectionPoolOptions,
+    opened: PoolConnections,
+  ) {
+    this.writer = opened.writer
+    this.readers = opened.readers
   }
 
   static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
-    const { driver, path, readOnly = false, readPoolSize = 4, walMode = true, synchronous } = options
-    const writerOptions = {
-      walMode,
-      synchronous,
-      ...(options.walAutoCheckpoint === undefined ? {} : { walAutoCheckpoint: options.walAutoCheckpoint }),
-    }
-
-    let writer: SQLiteConnection | null = null
-    const readers: SQLiteConnection[] = []
-
-    try {
-      if (!readOnly) {
-        if (options.useWriterWorker) {
-          if (!driver.startWriterHost) {
-            throw new SirannonError(
-              'writerWorker is enabled but the driver does not carry a worker entry; use a driver that supports it or disable writerWorker',
-              'WRITER_WORKER_UNSUPPORTED',
-            )
-          }
-          writer = await driver.startWriterHost(path, writerOptions, options.workerHostOptions)
-        } else {
-          writer = await driver.open(path, writerOptions)
-        }
-      }
-
-      const poolSize = driver.capabilities.multipleConnections ? Math.max(readPoolSize, 1) : 0
-
-      for (let i = 0; i < poolSize; i++) {
-        const reader = await driver.open(path, { readonly: true, walMode: false })
-        readers.push(reader)
-      }
-    } catch (err) {
-      await closeAllSilently([...readers, writer])
-      throw err
-    }
-
-    return new ConnectionPool(writer, readers)
+    return new ConnectionPool(options, await openConnections(options))
   }
 
-  acquireReader(): SQLiteConnection {
+  private ensureAvailable(): void {
     if (this.closed) {
       throw new ConnectionPoolError('Connection pool is closed')
     }
+    if (this.isSuspended) {
+      throw new EncryptionError(
+        'The database is replacing its file to finish a key change, so its connections reopen once the replacement ends; retry the call',
+        'ENCRYPTION_CHANGE_IN_PROGRESS',
+      )
+    }
+  }
+
+  acquireReader(): SQLiteConnection {
+    this.ensureAvailable()
     if (this.readers.length === 0) {
       if (!this.writer) {
         throw new ConnectionPoolError('No connections available')
@@ -100,9 +129,7 @@ export class ConnectionPool {
   }
 
   acquireWriter(): SQLiteConnection {
-    if (this.closed) {
-      throw new ConnectionPoolError('Connection pool is closed')
-    }
+    this.ensureAvailable()
     if (!this.writer) {
       throw new ConnectionPoolError('No write connection available (database is read-only)')
     }
@@ -111,9 +138,7 @@ export class ConnectionPool {
 
   /** Returns the writer and every reader, so that the caller can apply an operation to every connection in the pool. */
   connections(): readonly SQLiteConnection[] {
-    if (this.closed) {
-      throw new ConnectionPoolError('Connection pool is closed')
-    }
+    this.ensureAvailable()
     return this.writer ? [this.writer, ...this.readers] : [...this.readers]
   }
 
@@ -122,7 +147,43 @@ export class ConnectionPool {
   }
 
   get isReadOnly(): boolean {
-    return this.writer === null
+    return this.options.readOnly === true
+  }
+
+  /**
+   * Closes every reader and leaves the writer open, so that a checkpoint on the writer can reach the end of the log.
+   * Every acquire fails with `ENCRYPTION_CHANGE_IN_PROGRESS` until {@link ConnectionPool.reopen} returns.
+   */
+  async closeReaders(): Promise<void> {
+    this.isSuspended = true
+    const readers = this.readers
+    this.readers = []
+    await closeAllSilently(readers)
+  }
+
+  /** Closes the writer after {@link ConnectionPool.closeReaders}. */
+  async closeWriter(): Promise<void> {
+    const writer = this.writer
+    this.writer = null
+    if (writer) await writer.close()
+  }
+
+  /** `true` from {@link ConnectionPool.closeReaders} until {@link ConnectionPool.reopen} returns. */
+  get suspended(): boolean {
+    return this.isSuspended
+  }
+
+  /** Opens the writer and the readers again, under the key that the pool's keyring holds now. */
+  async reopen(): Promise<void> {
+    if (this.closed || !this.isSuspended) return
+    await closeAllSilently([...this.readers, this.writer])
+    this.readers = []
+    this.writer = null
+    const opened = await openConnections(this.options)
+    this.writer = opened.writer
+    this.readers = opened.readers
+    this.readerIndex = 0
+    this.isSuspended = false
   }
 
   async close(): Promise<void> {

@@ -57,6 +57,8 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     // @internal (undocumented)
     healthImpl: HealthImplementation | null;
     // @internal (undocumented)
+    localEncrypted: boolean;
+    // @internal (undocumented)
     localGroupId: string | undefined;
     // @internal (undocumented)
     localNodeId: string;
@@ -82,6 +84,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     // @internal (undocumented)
     peerDisconnectedHandler: PeerDisconnectedHandler | null;
     peers(): ReadonlyMap<string, NodeInfo>;
+    refusePeer(peerId: string, error: SirannonError): Promise<void>;
     requestSync(peerId: string, request: SyncRequest): Promise<void>;
     // @internal (undocumented)
     resolveForwardPeerId(call: {

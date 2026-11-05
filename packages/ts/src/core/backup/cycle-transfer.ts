@@ -15,6 +15,11 @@ import { type BackupCycleState, type PendingCapture, writeCycleState } from './c
 import { sendFileInPieces } from './pieces.js'
 import { type BackupRunReport, DEFAULT_PIECE_BYTES } from './report.js'
 
+function keyIdField(request: BackupCycleRequest): { keyId?: string } {
+  const keyId = request.keyId?.()
+  return keyId === undefined ? {} : { keyId }
+}
+
 /** A chain that the cycle starts.
  * @internal
  */
@@ -77,6 +82,7 @@ export async function startChain(
     pieceBytes: report.pieceBytes,
     bytesWritten: report.bytesWritten,
     ...(report.fingerprint ? { fingerprint: report.fingerprint } : {}),
+    ...keyIdField(request),
   }
   await appendChainRecord(request.destination, chainName, base, 0)
 
@@ -146,6 +152,7 @@ export async function transferCapture(
     bytesWritten: sent.bytesWritten,
     checkpointed: pending.cursor.checkpointed,
     ...(sent.fingerprint ? { fingerprint: sent.fingerprint } : {}),
+    ...keyIdField(request),
   }
   await appendChainRecord(request.destination, chainName, record, recordIndex)
 

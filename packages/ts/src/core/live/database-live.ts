@@ -143,8 +143,21 @@ function buildSource<T>(
   meter: LiveReadMeter,
   initial: PlannedProbe,
 ): LiveQuerySource<T> {
-  const delivery = new PrimedLiveDelivery(deps.cdc, live.conn, live.run, shape.table)
+  let liveConnection = live
+  let delivery = new PrimedLiveDelivery(deps.cdc, live.conn, live.run, shape.table)
   let planned = initial
+  let connectionReplaced = false
+  let probeOnClosedConnection = false
+  let delivering: { stop: () => void; onLost: () => void } | null = null
+  const stopWatchingReplacement = deps.cdc.onLiveConnectionReplaced(() => {
+    connectionReplaced = true
+    probeOnClosedConnection = true
+    const current = delivering
+    delivering = null
+    if (current === null) return
+    current.stop()
+    current.onLost()
+  })
 
   return {
     get plan() {
@@ -153,24 +166,46 @@ function buildSource<T>(
     get probe() {
       return planned.probe
     },
+    get connectionReplaced() {
+      return connectionReplaced
+    },
     rereadJitterMs: options?.rereadJitterMs ?? DEFAULT_REREAD_JITTER_MS,
     maxTransactionChanges: options?.maxTransactionChanges ?? DEFAULT_MAX_TRANSACTION_CHANGES,
     maxTransactionBytes: MAX_TRANSACTION_BYTES,
     onError: options?.onError,
     wait: ms => new Promise<void>(resolve => setTimeout(resolve, ms)),
     read: () => readAtPosition<T>(deps.cdc, planned.plan, params, meter),
-    start: (handlers, sinceSeq) => delivery.start(handlers, sinceSeq),
+    async start(handlers, sinceSeq) {
+      const stop = await delivery.start(handlers, sinceSeq)
+      delivering = { stop, onLost: handlers.onLost }
+      return () => {
+        delivering = null
+        stop()
+      }
+    },
     shapeChanged: events => events.some(event => !capturedWithColumns(event, planned.columns)),
     async replan() {
       const replaced = planned
       try {
-        planned = await planProbe(live, shape, params, meter)
+        if (connectionReplaced) {
+          liveConnection = await deps.cdc.liveConnection()
+          delivery = new PrimedLiveDelivery(deps.cdc, liveConnection.conn, liveConnection.run, shape.table)
+          connectionReplaced = false
+          planned = await planProbe(liveConnection, shape, params, meter)
+          probeOnClosedConnection = false
+          await replaced.probe.close().catch(() => undefined)
+          return
+        }
+        planned = await planProbe(liveConnection, shape, params, meter)
       } catch (err) {
         throw asQueryError(err, shape.sql)
       }
       await replaced.probe.close()
     },
-    release: () => planned.probe.close(),
+    release: () => {
+      stopWatchingReplacement()
+      return probeOnClosedConnection ? Promise.resolve() : planned.probe.close()
+    },
   }
 }
 

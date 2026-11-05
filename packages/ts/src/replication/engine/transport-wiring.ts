@@ -4,6 +4,7 @@ import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { NodeInfo, ReplicationBatch } from '../types.js'
 import { assertInboundCoordinatorMessage, resolverFor } from './coordinator-authority.js'
 import { handleCoordinatorAckProgress } from './coordinator-membership.js'
+import { forgetPeerRefusal } from './encryption-refusal.js'
 import type { ReplicationEngine } from './engine.js'
 import {
   acceptsBatchTerm,
@@ -215,6 +216,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
   })
 
   engine.config.transport.onPeerDisconnected(peerId => {
+    forgetPeerRefusal(engine, peerId)
     engine.peerTracker.removePeer(peerId)
 
     engine.syncServer.abortSessionsForPeer(peerId)

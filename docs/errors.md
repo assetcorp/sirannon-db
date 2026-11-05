@@ -20,7 +20,7 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 { "error": { "code": "ERROR_CODE", "message": "Human-readable description", "details": {} } }
 ```
 
-The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, and the `*_DEPENDENCY_MISSING` codes, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
+The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, the `*_DEPENDENCY_MISSING` codes, and every code in the encryption table below, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
 
 ## Core engine
 
@@ -64,6 +64,23 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `INTERNAL_SCHEMA_ERROR` | An internal-table identifier, column type, or default fails validation, or a schema version is outside the `PRAGMA user_version` range |
 
 A dash in the class column means that Sirannon raises the base `SirannonError` with that code, so match on `err.code` there.
+
+## Encryption
+
+Sirannon raises each of these codes as an `EncryptionError`. The [encryption guide](encryption.md) describes the key and the key change that they refer to.
+
+| Code | When |
+| --- | --- |
+| `ENCRYPTION_UNSUPPORTED` | The driver cannot encrypt, the better-sqlite3 driver was created without `encryption: true`, the database is in memory, the Expo app carries no SQLCipher 4.6.0 or later, or `changeEncryption` on Expo finds no expo-file-system 19.0.0 or later |
+| `INVALID_ENCRYPTION_KEY` | The key function returns something other than exactly 32 bytes |
+| `ENCRYPTION_KEY_UNAVAILABLE` | The key function throws or rejects; the error carries that failure as its cause |
+| `ENCRYPTION_KEY_MISSING` | A caller opens an encrypted file without a key |
+| `ENCRYPTION_KEY_REJECTED` | The key fails the authentication check of the first page, because the key is wrong or because the other driver's scheme encrypted the file |
+| `DATABASE_NOT_ENCRYPTED` | A caller gives a key for a plaintext file |
+| `ENCRYPTED_PAGE_CORRUPT` | A statement reads a page after the first that fails its authentication check |
+| `ENCRYPTION_REQUIRED` | A peer that holds a plaintext database asks an encrypted node for batches or a snapshot |
+| `ENCRYPTION_CHANGE_IN_PROGRESS` | A caller starts a key change or a replication engine while a key change on that database has not finished |
+| `ENCRYPTION_CHANGE_ABORTED` | A key change meets a schema change or a write that it cannot apply exactly, and leaves the database under its current key |
 
 ## Writer worker
 
@@ -109,6 +126,8 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes` |
 | `INVALID_CLOSE_TIMEOUT` | The `timeoutMs` passed to `server.close()` is not a whole number from 0 to 2,147,483,647 |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is on and the server has no `authenticate` hook |
+| `INVALID_ENCRYPTION_CHANGE` | `acceptEncryptionChange` is on and the server has no `authenticate` hook or no `encryptionKeys` function |
+| `ENCRYPTION_CHANGE_NOT_ACCEPTED` | The server has `acceptEncryptionChange` off, so it changes no key over the network |
 | `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is on and the server has no `authenticate` hook |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load |
 | `INVALID_MESSAGE` | A WebSocket message lacks a required field or has a field of the wrong type |
@@ -150,6 +169,7 @@ A dash in the class column means that Sirannon raises the base `SirannonError` w
 | `NodeDrainingError` | `NODE_DRAINING` | The node is in maintenance drain mode |
 | `ProtocolVersionMismatchError` | `PROTOCOL_VERSION_MISMATCH` | Node compatibility metadata is incompatible with the cluster |
 | `UnsafeRecoveryRequiredError` | `UNSAFE_RECOVERY_REQUIRED` | Automatic recovery needs explicit operator action |
+| `ReplicationError` | `REPLICATION_ACTIVE` | A caller starts a key change or a restore on a database that a started replication engine writes to |
 
 `@delali/sirannon-db/replication` exports every class above. `FailoverError` is the shared base of `NoSafePrimaryError` and `UnsafeRecoveryRequiredError`.
 
@@ -207,14 +227,14 @@ A validation code such as `INVALID_WRITER_WORKER`, `INVALID_MAX_BODY_BYTES`, or 
 | --- | --- |
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED`, `ENCRYPTION_CHANGE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS`, `ENCRYPTION_CHANGE_IN_PROGRESS`, `ENCRYPTION_REQUIRED`, `REPLICATION_ACTIVE` |
 | 413 | `PAYLOAD_TOO_LARGE` |
-| 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED` |
+| 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT`, `INVALID_ENCRYPTION_KEY`, `ENCRYPTION_KEY_MISSING`, `ENCRYPTION_KEY_REJECTED`, `DATABASE_NOT_ENCRYPTED`, `ENCRYPTED_PAGE_CORRUPT`, `ENCRYPTION_CHANGE_ABORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED` |
 | 502 | `BACKUP_DESTINATION_ERROR` |
-| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
+| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED`, `ENCRYPTION_KEY_UNAVAILABLE` |
 
 A code outside the table maps to 500, and a `RequestDeniedError` uses the status that you give it.
 

@@ -1,5 +1,4 @@
 import { rename, rm, stat } from 'node:fs/promises'
-import type { SQLiteDriver } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { assembleStoredFile } from './assemble.js'
 import type { BackupChainChange } from './chain.js'
@@ -8,8 +7,13 @@ import { planBackupRestore } from './chain-queries.js'
 import { checkpointLog } from './checkpoint.js'
 import { reportQuietly } from './cycle-callbacks.js'
 import { DEFAULT_DESTINATION_TIMEOUT_MS, destinationWithDeadline } from './destination-deadline.js'
-import { applyChangeBatch, assertChangePiecesRunOn, countDatabasePages } from './restore-apply.js'
-import { readDatabaseHeader } from './restore-log.js'
+import {
+  applyChangeBatch,
+  assertChangePiecesRunOn,
+  countDatabasePages,
+  type RebuiltDatabaseOpener,
+} from './restore-apply.js'
+import { readRebuiltHeader, rebuiltDatabaseOpener } from './restore-keyed.js'
 import {
   type BackupRestoreOptions,
   type BackupRestoreProgress,
@@ -39,12 +43,12 @@ async function removeDatabaseAndLog(path: string): Promise<void> {
   await removeLogBeside(path)
 }
 
-async function foldLogIntoDatabase(driver: SQLiteDriver, path: string): Promise<boolean> {
+async function foldLogIntoDatabase(openRebuilt: RebuiltDatabaseOpener, path: string): Promise<boolean> {
   const existing = await stat(path).catch(() => undefined)
   if (!existing) return true
   const log = await stat(`${path}-wal`).catch(() => undefined)
   if (!log || log.size === 0) return true
-  const conn = await driver.open(path, { walMode: false, walAutoCheckpoint: 0 }).catch(() => undefined)
+  const conn = await openRebuilt(path).catch(() => undefined)
   if (!conn) return false
   const folded = await checkpointLog(conn).catch(() => undefined)
   await conn.close().catch(() => undefined)
@@ -124,6 +128,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
   await assertPathIsFree(destPath, options.replaceExisting === true)
   const buildPath = `${destPath}${BUILD_SUFFIX}`
   await removeDatabaseAndLog(buildPath)
+  const openRebuilt = rebuiltDatabaseOpener(options.driver, options.encryption)
 
   let piecesFetched = 0
   let bytesFetched = 0
@@ -146,7 +151,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       reportProgress('full-copy')
     })
 
-    const header = await readDatabaseHeader(buildPath)
+    const header = await readRebuiltHeader(buildPath, openRebuilt, plan.base)
     if (!header.walMode && plan.changes.length > 0) {
       throw new SirannonError(
         `The full copy assembled into '${buildPath}' records no write-ahead log, so SQLite would ignore the change pieces rather than replay them`,
@@ -159,7 +164,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       logSequence++
       framesApplied += await applyChangeBatch({
         destination,
-        driver: options.driver,
+        openRebuilt,
         destPath: buildPath,
         pageSize: header.pageSize,
         logSequence,
@@ -174,8 +179,8 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       reportProgress('changes')
     }
 
-    await countDatabasePages(options.driver, buildPath)
-    const logFoldedIn = await foldLogIntoDatabase(options.driver, destPath)
+    await countDatabasePages(openRebuilt, buildPath)
+    const logFoldedIn = await foldLogIntoDatabase(openRebuilt, destPath)
     if (logFoldedIn) await removeLogBeside(destPath)
     else await removeDatabaseAndLog(destPath)
     await rename(buildPath, destPath)

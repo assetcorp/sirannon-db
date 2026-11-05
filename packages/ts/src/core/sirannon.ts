@@ -1,5 +1,6 @@
 import { Database } from './database.js'
 import type { SQLiteDriver } from './driver/types.js'
+import type { EncryptionOptions } from './encryption/types.js'
 import { DatabaseAlreadyExistsError, DatabaseNotFoundError, ReadOnlyError, SirannonError } from './errors.js'
 import { HookRegistry } from './hooks/registry.js'
 import type { HookDispose } from './hooks/types.js'
@@ -7,7 +8,7 @@ import { LifecycleManager } from './lifecycle/manager.js'
 import { MetricsCollector } from './metrics/collector.js'
 import { RegistryMigrationSet } from './migrations/registry-set.js'
 import type { Migration } from './migrations/types.js'
-import { withRegistryDefaults } from './registry-defaults.js'
+import { rememberEncryptionKey, withRegistryDefaults } from './registry-defaults.js'
 import { type OfflineOutcome, takeDatabaseOffline } from './sirannon-offline.js'
 import { closeEveryDatabase } from './sirannon-shutdown.js'
 import type {
@@ -109,6 +110,7 @@ export class Sirannon {
       db = await Database.create(id, path, this._driver, resolvedOptions, {
         parentHooks: this._hookRegistry,
         metrics: this.metricsCollector ?? undefined,
+        onEncryptionChanged: key => rememberEncryptionKey(this.openedWith.get(id), key),
       })
     } catch (err) {
       this.opening.delete(id)
@@ -196,18 +198,22 @@ export class Sirannon {
    * Sirannon reopens the database even after a failed action.
    *
    * @param id - The identifier of the database to take offline.
-   * @param action - The function that Sirannon calls with the database file path once the database is closed.
+   * @param action - The function that Sirannon calls with the database file path and its key once the database is closed.
    * @returns Whether the action returned, the value that it returned or the error that it threw, and any error that the reopen threw.
-   * @throws A `DatabaseNotFoundError` when no database is open under the identifier, a `ReadOnlyError` when the database is read-only, or the close error when the close fails.
+   * @throws A `DatabaseNotFoundError` when no database is open under the identifier, a `ReadOnlyError` when the database is read-only, a `ReplicationError` with `REPLICATION_ACTIVE` while a replication engine writes to the database, or the close error when the close fails.
    *
    * @internal
    */
-  async withDatabaseOffline<T>(id: string, action: (path: string) => Promise<T>): Promise<OfflineOutcome<T>> {
+  async withDatabaseOffline<T>(
+    id: string,
+    action: (path: string, encryption?: EncryptionOptions) => Promise<T>,
+  ): Promise<OfflineOutcome<T>> {
     this.ensureRunning()
     const db = this.dbs.get(id)
     const opened = this.openedWith.get(id)
     if (!db || !opened) throw new DatabaseNotFoundError(id)
     if (db.readOnly) throw new ReadOnlyError(id)
+    db.assertNoReplicationEngine('restore')
 
     this.dbs.delete(id)
     this.opening.add(id)
@@ -216,7 +222,7 @@ export class Sirannon {
     const work = takeDatabaseOffline({
       database: db,
       path: opened.path,
-      action,
+      action: path => action(path, opened.options?.encryption),
       reopen: async () => {
         this.opening.delete(id)
         try {

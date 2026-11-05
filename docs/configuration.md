@@ -39,6 +39,7 @@ This page lists every option that the registry, the databases that it opens, the
 | `deviceCursorRetention` | `number` | `2_592_000_000` | How long, in ms, a device's cursor may hold changes back; Sirannon deletes the cursor once the device's last acknowledgement, or the oldest change that the cursor holds back, is older than this |
 | `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back; a device further behind resyncs from a snapshot, and `0` sets no limit |
 | `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so that a disk flush never blocks the serving thread |
+| `encryption` | `EncryptionOptions` | - | `{ key }`, where `key` returns the 32-byte key under which Sirannon keeps the file, its log, and its backups as ciphertext; see the [encryption guide](encryption.md) |
 
 `WriterWorkerOptions` accepts `maxPendingWrites` (in-flight writes before the server sheds load), `writeTimeoutMs` (per-operation deadline), and `maxRestarts` (respawns allowed after the worker crashes).
 
@@ -87,6 +88,8 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `sharedOperations` | `DatabaseOperations<Identity>` | - | Reads and writes that this server serves by name on every database, including a database that the registry opens after the server starts; for a name in both sets, the server uses the database's own entry in `operations` |
 | `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
 | `acceptBackupRestore` | `boolean` | `false` | Whether the server rebuilds a database from its backups over the network |
+| `acceptEncryptionChange` | `boolean` | `false` | Whether the server encrypts a database, changes its key, or removes encryption over the network; with it on, the server refuses to start unless you also set `authenticate` and `encryptionKeys` |
+| `encryptionKeys` | `(databaseId: string, keyRef: string) => EncryptionKey \| Promise<EncryptionKey>` | - | Returns the key that a `keyRef` in an encryption request refers to, so that no key crosses the network |
 | `acceptDeviceSync` | `boolean` | `false` | Whether the server serves device sync; with it on, the server refuses to start unless you also set `authenticate` |
 | `resolveExecutionTarget` | `ServerExecutionTargetResolver` | - | Resolves the target that executes each database's statements, which is how replication enforces authority |
 | `getReplicationStatus` | `() => ReplicationStatusInfo \| null` | - | Feeds `GET /health/ready` with replication state |

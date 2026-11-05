@@ -101,7 +101,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `BATCH_VALIDATION_ERROR` | Batch checksum mismatch, schema violation, clock drift exceeded, or unsafe DDL. |
 | `WRITE_CONCERN_ERROR` | Write concern not met within the timeout. |
 | `READ_CONCERN_ERROR` | The requested read concern cannot be satisfied. |
-| `TOPOLOGY_ERROR` | A write on a replica without forwarding, no primary available, or an unauthorised peer. |
+| `TOPOLOGY_ERROR` | A write on a replica without forwarding, no primary available, an unauthorised peer, a node outside its group's members, or an address option that coordinator mode refuses. |
 | `SYNC_ERROR` | First-sync failure (timeout, manifest mismatch, batch ordering). |
 | `COORDINATOR_UNAVAILABLE` | The coordinator cannot be reached or prove quorum authority. |
 | `AUTHORITY_LOST` | A node lost primary or controller authority while handling work. |

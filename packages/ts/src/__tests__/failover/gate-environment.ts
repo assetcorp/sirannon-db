@@ -69,6 +69,7 @@ export interface NodeOptions {
   etcd3Unresolvable?: boolean
   awaitReady?: boolean
   initialSync?: boolean
+  dieAfterGroupCreate?: boolean
 }
 
 export async function startEnvironment(): Promise<GateEnvironment> {
@@ -197,8 +198,10 @@ export async function startNode(
     keyPath: cert.keyPath,
     caCertPath: environment.certs.caCertPath,
     initialRole: options.role ?? 'replica',
-    endpoints: dialTargets.map(target => endpointFor(environment, nodeId, target)),
-    httpEndpoints: Object.fromEntries(NODE_IDS.map(target => [target, httpEndpointFor(environment, target)])),
+    peerProxyEndpoints: Object.fromEntries(
+      dialTargets.map(target => [target, endpointFor(environment, nodeId, target)]),
+    ),
+    httpEndpoint: httpEndpointFor(environment, nodeId),
     etcdHosts: etcdEndpointsFor(environment, nodeId),
     etcdAccess: options.etcdAccess ?? 'insecure-test',
     keyPrefix: environment.keyPrefix,
@@ -213,6 +216,7 @@ export async function startNode(
     writeForwarding: options.writeForwarding ?? true,
     initialSync: options.initialSync ?? true,
     backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
+    dieAfterGroupCreate: options.dieAfterGroupCreate,
     compatibility: options.compatibility ?? COMPATIBILITY,
   }
 

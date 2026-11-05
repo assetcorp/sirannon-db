@@ -94,10 +94,6 @@ export async function decideBackupTurn(
   }
 
   const nodeId = group.nodeId
-  if (typeof preference !== 'string') {
-    return decide(nodeId, preference.nodeId)
-  }
-
   let preferredNodeId: string | null
   try {
     preferredNodeId = preferredBackupNode(await group.readMembership(), preference)

@@ -97,6 +97,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     server: Server | null;
     // @internal (undocumented)
     readonly serverPeerStreams: Map<string, PeerStreamEntry>;
+    setPeerEndpoints(endpoints: ReadonlyMap<string, string>): void;
     // @internal (undocumented)
     syncAckHandler: SyncAckHandler | null;
     // @internal (undocumented)

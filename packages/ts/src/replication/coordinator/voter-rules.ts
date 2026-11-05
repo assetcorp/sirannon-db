@@ -80,7 +80,8 @@ export function nextAddVoterState(
  * @param nowMs - The time to record as the state's last change.
  * @returns The new state, or `state` itself when the voters differ.
  * @throws RangeError for a node outside the group, for a voter while another node is pending, for the current
- * primary, and for a removal after which the in-sync voters are fewer than a majority of the voters.
+ * primary, and for a voter whose removal leaves fewer in-sync voters than a majority of the voters that remain. A
+ * pending voter counts in neither list, so its removal never meets that last refusal.
  */
 export function nextRemoveVoterState(
   state: ReplicationGroupState,
@@ -104,7 +105,7 @@ export function nextRemoveVoterState(
   const votingDataBearingNodeIds = removeNodeId(state.votingDataBearingNodeIds, nodeId)
   const inSyncNodeIds = removeNodeId(state.inSyncNodeIds, nodeId)
   const majority = Math.floor(votingDataBearingNodeIds.length / 2) + 1
-  if (inSyncNodeIds.length < majority) {
+  if (!removingPendingVoter && inSyncNodeIds.length < majority) {
     throw new RangeError(
       `Removing node '${nodeId}' would leave ${inSyncNodeIds.length} in-sync voters of ${votingDataBearingNodeIds.length}, fewer than the majority of ${majority}`,
     )

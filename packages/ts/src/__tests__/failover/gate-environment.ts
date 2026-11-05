@@ -69,6 +69,7 @@ export interface NodeOptions {
   etcd3Unresolvable?: boolean
   awaitReady?: boolean
   initialSync?: boolean
+  dieAfterGroupCreate?: boolean
 }
 
 export async function startEnvironment(): Promise<GateEnvironment> {
@@ -215,6 +216,7 @@ export async function startNode(
     writeForwarding: options.writeForwarding ?? true,
     initialSync: options.initialSync ?? true,
     backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
+    dieAfterGroupCreate: options.dieAfterGroupCreate,
     compatibility: options.compatibility ?? COMPATIBILITY,
   }
 

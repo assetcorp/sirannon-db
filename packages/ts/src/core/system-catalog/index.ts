@@ -92,6 +92,7 @@ export {
 } from './peer-state-table.js'
 export { deleteAllReplacedRows, deleteReplacedRowsOfTable, ensureReplacedRowsTable } from './replaced-rows-table.js'
 export {
+  deletePrimaryTermStart,
   type StoredHistoryPoint,
   type StoredTermStart,
   selectAnchoredTerm,

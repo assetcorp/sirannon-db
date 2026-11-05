@@ -186,7 +186,7 @@ ClusterStatusInfo {
 
 `health` and `healthReason` carry `NodeHealth`, defined in [09-failover.md](09-failover.md#node-health). When no safe primary exists, `currentPrimary` is null and `health` is `unavailable`.
 
-`readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`.
+`readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`. In coordinator mode, the server uses the client address in each node's coordinator session as that node's `endpoint`.
 
 A node that watches the coordinator's node sessions must also leave out every node whose session has lapsed (see [09-failover.md](09-failover.md#cluster-coordinator)). A node that reaches no coordinator, and one whose coordinator serves no such watch, lists the group's membership alone.
 

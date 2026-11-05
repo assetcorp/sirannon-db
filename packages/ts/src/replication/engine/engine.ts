@@ -7,7 +7,6 @@ import { HLC } from '../../core/sync/hlc.js'
 import type { Transaction } from '../../core/transaction.js'
 import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
-import { AuthorityError } from '../errors.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
 import { PeerTracker } from '../peer-tracker.js'
@@ -41,14 +40,17 @@ import {
 } from './constants.js'
 import { ControllerRuntime } from './controller-runtime.js'
 import {
+  GroupStateRefresh,
   getCoordinatorMessageFields,
   getForwardingPrimaryPeerId,
   verifyPrimaryAuthority,
 } from './coordinator-authority.js'
+import { assertCoordinatorModeConfig } from './coordinator-lifecycle.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, executeTransaction, forwardStatements, query, transaction } from './data-api.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
+import { MemberAddresses } from './member-addresses.js'
 import { nodeStatus } from './node-health.js'
 import { RejoinState } from './rejoin-state.js'
 import { SenderLoop } from './sender-loop.js'
@@ -146,7 +148,13 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   readonly rejoin = new RejoinState()
   /** @internal */
+  readonly memberAddresses = new MemberAddresses()
+  /** @internal */
+  readonly groupStateRefresh = new GroupStateRefresh()
+  /** @internal */
   nodeSessionLeaseId: string | null = null
+  /** @internal */
+  nodeSessionVoting: boolean | null = null
   /** @internal */
   coordinatorWatchDisposer: CoordinatorWatchDisposer | null = null
   /** @internal */
@@ -192,9 +200,7 @@ export class ReplicationEngine extends EventEmitter {
     this.database = database
     this.writerConn = writerConn
     this.config = config
-    if (config.coordinator && !config.nodeId) {
-      throw new AuthorityError('Coordinator mode requires a stable persisted nodeId')
-    }
+    assertCoordinatorModeConfig(config)
     this.nodeId = config.nodeId ?? generateNodeId()
     this.hlc = new HLC(this.nodeId)
     this.tracker = config.changeTracker

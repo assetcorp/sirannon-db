@@ -140,6 +140,9 @@ export interface ReplicationTransport {
   onPeerDisconnected(handler: (peerId: string) => void): void
   /** Returns every connected peer, keyed by node ID. */
   peers(): ReadonlyMap<string, NodeInfo>
+
+  /** Dials the replication address of every peer in the map, keyed by node ID, and stops dialling any other address. In coordinator mode the engine calls it with the addresses in the members' sessions whenever those addresses change. */
+  setPeerEndpoints?(endpoints: ReadonlyMap<string, string>): void
 }
 
 /**
@@ -171,6 +174,8 @@ export interface CoordinatorModeConfig {
   groupId: string
   /** Sets the address that clients use to reach this node, which the coordinator stores with the node's session. */
   endpoint?: string
+  /** Sets the address at which the other members reach this node's replication transport, which the coordinator stores with the node's session so that the other members dial it. */
+  replicationEndpoint?: string
   /** Lists the nodes that count towards the majority, which the engine uses to create the group when the coordinator has no state for it. Automatic failover requires at least three. */
   votingDataBearingNodeIds?: string[]
   /** Holds the coordinator that stores primary authority, node sessions, group state, and the in-sync set. */
@@ -196,7 +201,7 @@ export interface ReplicationConfig {
   topology: Topology
   /** Sends batches, acknowledgements, forwarded writes, and first-sync messages between nodes. */
   transport: ReplicationTransport
-  /** Sets what the transport announces about this node, and the endpoints that it dials. */
+  /** Sets what the transport announces about this node, and the endpoints that it dials. Coordinator mode refuses `endpoints` with a `TopologyError`, because the engine takes each member's address from its coordinator session. */
   transportConfig?: TransportConfig
   /** Makes a node that cannot accept writes forward `execute` and `executeBatch` calls to the primary. */
   writeForwarding?: boolean
@@ -299,6 +304,8 @@ export interface CoordinatorRuntimeStatus {
   votingDataBearingNodeIds: string[]
   /** Lists the nodes that hold a live session with the coordinator. The field is present only while this node is connected to the coordinator and the coordinator supports session watches. */
   liveNodeIds?: string[]
+  /** Maps each member's node ID to the client address in its live coordinator session, which this node refreshes as the sessions change. A member without a live session or a client address has no entry. */
+  nodeEndpoints: Record<string, string>
   /** Is true when the group state names this node as the current primary. */
   authority: boolean
   /** Is true when this node heard from the coordinator within the last session TTL. */

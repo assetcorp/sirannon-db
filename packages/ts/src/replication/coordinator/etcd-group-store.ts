@@ -18,35 +18,42 @@ import {
   normaliseNodeIds,
 } from './group-rules.js'
 import type {
+  AddVoterInput,
   AdmitNodeToInSyncSetInput,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
   CoordinatorNodeSession,
   CoordinatorWatchDisposer,
+  CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RemoveVoterInput,
   ReplicationGroupState,
   ReplicationGroupWatcher,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
+  VoterChangeResult,
 } from './types.js'
+import { assertVoterChangeInput, nextAddVoterState, nextRemoveVoterState } from './voter-rules.js'
 
 const MAX_CAS_ATTEMPTS = 5
 const MAX_PROMOTION_ATTEMPTS = 3
 
-interface CasGroupStateResult {
-  updated: boolean
+interface GroupTransitionResult {
+  changed: boolean
   state: ReplicationGroupState | null
 }
 
 /**
  * Stores the replication group state in etcd for the etcd coordinator.
  * {@link EtcdGroupStore.setReplicationGroupState} overwrites the stored value.
- * Every other write commits only if the stored value still matches the value
- * that the store fetched first, so that two controllers that update one group
- * at the same time cannot overwrite each other. When etcd refuses an in-sync,
- * admission, or maintenance update, the store fetches the new state and tries
- * again, up to five times, before it throws a `CoordinatorError`.
+ * {@link EtcdGroupStore.createReplicationGroupState} writes only where etcd
+ * holds no value. Every other write commits only if the stored value still
+ * matches, byte for byte, the value that the store fetched first, so that two
+ * controllers that update one group at the same time cannot overwrite each
+ * other. When etcd refuses an in-sync, admission, maintenance, or voter update,
+ * the store fetches the new state and tries again, up to five times, before it
+ * throws a `CoordinatorError`.
  * {@link EtcdGroupStore.compareAndAdvancePrimaryTerm} returns the new state to
  * its caller without a retry.
  */
@@ -61,6 +68,33 @@ export class EtcdGroupStore {
     const state = buildReplicationGroupState(input)
     await this.namespace.put(replicationGroupKey(input.clusterId, input.groupId)).value(serializeGroupState(state))
     return cloneReplicationGroupState(state)
+  }
+
+  async createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult> {
+    const state = buildReplicationGroupState(input)
+    const key = replicationGroupKey(input.clusterId, input.groupId)
+    const result = await this.namespace
+      .if(key, 'Create', '==', 0)
+      .then(this.namespace.put(key).value(serializeGroupState(state)))
+      .commit()
+    if (result.succeeded) {
+      return { created: true, state: cloneReplicationGroupState(state) }
+    }
+    return { created: false, state: await this.getReplicationGroupState(input.clusterId, input.groupId) }
+  }
+
+  async addVoter(input: AddVoterInput): Promise<VoterChangeResult> {
+    assertVoterChangeInput(input)
+    return this.transitionGroupState(input.clusterId, input.groupId, state =>
+      nextAddVoterState(state, input, Date.now()),
+    )
+  }
+
+  async removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult> {
+    assertVoterChangeInput(input)
+    return this.transitionGroupState(input.clusterId, input.groupId, state =>
+      nextRemoveVoterState(state, input, Date.now()),
+    )
   }
 
   async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
@@ -223,37 +257,33 @@ export class EtcdGroupStore {
     groupId: string,
     mutate: (state: ReplicationGroupState) => ReplicationGroupState,
   ): Promise<ReplicationGroupState | null> {
+    return (await this.transitionGroupState(clusterId, groupId, mutate)).state
+  }
+
+  private async transitionGroupState(
+    clusterId: string,
+    groupId: string,
+    mutate: (state: ReplicationGroupState) => ReplicationGroupState,
+  ): Promise<GroupTransitionResult> {
+    const key = replicationGroupKey(clusterId, groupId)
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-      const state = await this.getReplicationGroupState(clusterId, groupId)
-      if (!state) {
-        return null
+      const storedRaw = await this.namespace.get(key).string()
+      if (!storedRaw) {
+        return { changed: false, state: null }
       }
+      const state = parseGroupState(storedRaw)
       const next = mutate(state)
       if (next === state) {
-        return cloneReplicationGroupState(state)
+        return { changed: false, state: cloneReplicationGroupState(state) }
       }
-      const result = await this.casGroupState(state, next)
-      if (result.updated) {
-        return result.state
+      const result = await this.namespace
+        .if(key, 'Value', '==', storedRaw)
+        .then(this.namespace.put(key).value(serializeGroupState(next)))
+        .commit()
+      if (result.succeeded) {
+        return { changed: true, state: cloneReplicationGroupState(next) }
       }
     }
     throw new CoordinatorError(`Failed to update replication group '${groupId}' after concurrent coordinator writes`)
-  }
-
-  private async casGroupState(
-    previous: ReplicationGroupState,
-    next: ReplicationGroupState,
-  ): Promise<CasGroupStateResult> {
-    const key = replicationGroupKey(previous.clusterId, previous.groupId)
-    const previousRaw = serializeGroupState(previous)
-    const nextRaw = serializeGroupState(next)
-    const result = await this.namespace
-      .if(key, 'Value', '==', previousRaw)
-      .then(this.namespace.put(key).value(nextRaw))
-      .commit()
-    if (result.succeeded) {
-      return { updated: true, state: cloneReplicationGroupState(next) }
-    }
-    return { updated: false, state: await this.getReplicationGroupState(previous.clusterId, previous.groupId) }
   }
 }

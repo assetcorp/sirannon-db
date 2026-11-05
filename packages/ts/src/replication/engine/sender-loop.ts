@@ -1,11 +1,12 @@
+import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationEngine } from './engine.js'
 import { ensurePrimaryTermStart, historyOrigins } from './term-history.js'
 
 /**
  * Sends the changes in this node's replication log to its peers in batches, on a timer. In coordinator mode, the
- * loop sends only while this node holds primary authority and has recorded the start of its term, and it sends every
- * change of the group's history that the log holds, including the changes that this node applied from earlier
- * primaries; otherwise, the topology's `shouldReplicateTo` picks the peers.
+ * loop sends only while this node holds primary authority and has recorded the start of its term, only to the group's
+ * members, and it sends every change of the group's history that the log holds, including the changes that this node
+ * applied from earlier primaries; otherwise, the topology's `shouldReplicateTo` picks the peers.
  *
  * @internal
  */
@@ -136,7 +137,8 @@ export class SenderLoop {
     if (!engine.isCoordinatorMode()) {
       return engine.config.topology.shouldReplicateTo(peerId, peerRole)
     }
-    const recordedTermStart = engine.history.termStartTerm === engine.coordinatorState?.primaryTerm
-    return engine.coordinatorAuthority && peerId !== engine.nodeId && recordedTermStart
+    const state = engine.coordinatorState
+    if (!state || !engine.coordinatorAuthority || peerId === engine.nodeId) return false
+    return engine.history.termStartTerm === state.primaryTerm && isGroupMember(state, peerId)
   }
 }

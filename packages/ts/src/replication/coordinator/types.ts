@@ -1,21 +1,29 @@
 import type {
+  AddVoterInput,
   AdmitNodeToInSyncSetInput,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
+  CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RemoveVoterInput,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
+  VoterChangeResult,
 } from './group-inputs.js'
 
 export type {
+  AddVoterInput,
   AdmitNodeToInSyncSetInput,
   CompareAndAdvancePrimaryTermInput,
   CompareAndAdvancePrimaryTermResult,
+  CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RemoveVoterInput,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
   UpdateNodeMaintenanceInput,
+  VoterChangeResult,
 }
 
 /**
@@ -120,6 +128,8 @@ export interface RegisterNodeSessionInput {
   ttlMs: number
   /** Sets the address that clients use to reach this node. */
   endpoint?: string
+  /** Sets the address that the other members of the node's groups dial to replicate with it. */
+  replicationEndpoint?: string
   /** Lists the replication groups that the node serves. */
   groupIds?: string[]
   /** Is true when the node stores a copy of the data. */
@@ -146,6 +156,8 @@ export interface CoordinatorNodeSession {
   lease: CoordinatorLease
   /** Holds the address that clients use to reach this node. */
   endpoint?: string
+  /** Holds the address that the other members of the node's groups dial to replicate with it. */
+  replicationEndpoint?: string
   /** Lists the replication groups that the node serves. */
   groupIds: string[]
   /** Is true when the node stores a copy of the data. */
@@ -198,6 +210,8 @@ export interface ReplicationGroupState {
   repairingNodeIds: string[]
   /** Lists the faulted nodes, which stay out of service until an `updateNodeMaintenance` call clears the flag. */
   faultedNodeIds: string[]
+  /** Lists the pending voters, which copy the data before they count towards the majority. A group state written before this list existed reads as having none. */
+  pendingVoterNodeIds: string[]
   /** Holds the versions that the group requires of its members. */
   compatibility?: CoordinatorCompatibilityMetadata
   /** Holds the time, in milliseconds since the Unix epoch, of the last change to this state. */
@@ -258,6 +272,8 @@ export interface ClusterCoordinator {
   ): CoordinatorWatchDisposer | Promise<CoordinatorWatchDisposer>
   /** Writes the group's state, which creates a new group or replaces an existing one. */
   setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState>
+  /** Writes the group's state only when the coordinator holds none for the group, so that of two nodes that create the same group together, only one creates its record. Returns whether this call created it, along with the state that the coordinator holds. */
+  createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult>
   /** Returns the group's state, or null when the coordinator has no state for the group. */
   getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>
   /** Calls `watcher` with the new state after each change to the group, and returns a function that stops the watch. */
@@ -274,6 +290,10 @@ export interface ClusterCoordinator {
   admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>
   /** Sets or clears one node's draining, repairing, and faulted flags. */
   updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null>
+  /** Records a node as a pending voter and marks it repairing, but only while the group's voters match `expectedVoterNodeIds`. Throws a `RangeError` while the group has a pending voter, or when the node is already a member. */
+  addVoter(input: AddVoterInput): Promise<VoterChangeResult>
+  /** Removes a voter or a pending voter from the group and from every set that the group records for it, but only while the group's voters match `expectedVoterNodeIds`. Throws a `RangeError` for the current primary, for a voter while another node is pending, for a node outside the group, and for a removal after which the in-sync voters are fewer than a majority of the voters. */
+  removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>
   /** Promotes an eligible in-sync replica while the group has no primary or while its primary is one of `excludeNodeIds`. When another node already holds primary duty, the method returns the group unchanged. When no replica qualifies, it throws a `NoSafePrimaryError`. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
   /** Releases every connection, watch, and lease that the coordinator keeps open. */

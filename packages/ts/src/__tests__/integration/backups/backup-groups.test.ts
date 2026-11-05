@@ -226,13 +226,11 @@ describe('backups across the nodes of one replication group', () => {
     await expectRestoresTo(workspace, node.destination, ['staged-before-standing-down'], 'stood-down')
   })
 
-  it('asks its group nothing where the operator pinned the backups to one node, so an outage stops nothing', async () => {
+  it('backs up on the pinned node only while its group reports it eligible, and on no node while the group is unreadable', async () => {
     const bucket = workspace.path('bucket')
-    const groups = ['node-a', 'node-b'].map(nodeId => {
-      const group = controlledGroup(nodeId, { primaryNodeId: 'node-a', nodeIds: ['node-a', 'node-b'] })
-      group.failure = new Error('etcd is down')
-      return group
-    })
+    const groups = ['node-a', 'node-b'].map(nodeId =>
+      controlledGroup(nodeId, { primaryNodeId: 'node-a', nodeIds: ['node-a', 'node-b'] }),
+    )
     const nodes: CycleNode[] = []
     for (const group of groups) {
       const node = await openCycleNode(workspace, group.nodeId, {
@@ -244,11 +242,26 @@ describe('backups across the nodes of one replication group', () => {
       await node.db.captureBackupChanges()
       nodes.push(node)
     }
-
-    expect(groups.map(group => group.reads)).toEqual([0, 0])
     expect(nodes.map(node => node.runs.length > 0)).toEqual([true, false])
     expect(nodes[1]?.skips.at(-1)).toMatchObject({ reason: 'not-preferred', preferredNodeId: 'node-a' })
     await expectRestoresTo(workspace, directoryDestination(bucket), ['pinned-node-a'], 'pinned')
+
+    const runsWhileEligible = nodes.map(node => node.runs.length)
+    for (const group of groups) group.membership = { primaryNodeId: 'node-a', nodeIds: ['node-b'] }
+    for (const node of nodes) await node.db.captureBackupChanges()
+    expect(nodes.map(node => node.runs.length)).toEqual(runsWhileEligible)
+    for (const node of nodes) {
+      const skip = node.skips.at(-1)
+      expect(skip).toMatchObject({ reason: 'not-preferred' })
+      expect(skip?.preferredNodeId).toBeUndefined()
+    }
+
+    const readsBeforeOutage = groups.map(group => group.reads)
+    for (const group of groups) group.failure = new Error('etcd is down')
+    for (const node of nodes) await node.db.captureBackupChanges()
+    expect(groups.map((group, index) => group.reads - (readsBeforeOutage[index] ?? 0))).toEqual([1, 1])
+    expect(nodes.map(node => node.runs.length)).toEqual(runsWhileEligible)
+    for (const node of nodes) expect(node.skips.at(-1)).toMatchObject({ reason: 'group-unavailable' })
   })
 
   it('keeps a held log at maxUncapturedLogBytes, empties one a byte past it with BACKUP_CHAIN_BROKEN, and starts afresh', async () => {

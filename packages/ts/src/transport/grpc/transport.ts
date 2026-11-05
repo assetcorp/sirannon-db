@@ -15,7 +15,7 @@ import type {
   TopologyRole,
   TransportConfig,
 } from '../../replication/types.js'
-import { stopEndpointDialling } from './client-reconnect.js'
+import { replaceWantedEndpoints, stopEndpointDialling } from './client-reconnect.js'
 import {
   toAckPayload,
   toBatchPayload,
@@ -27,6 +27,7 @@ import {
 import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
 import { type GrpcRuntime, loadGrpcRuntime } from './loader.js'
 import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
+import { peerCertificateCommonName } from './peer-identity.js'
 import {
   type AckHandler,
   type BatchHandler,
@@ -101,6 +102,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   syncAckHandler: SyncAckHandler | null = null
 
   private runtime: GrpcRuntime | null = null
+  private peerEndpoints: ReadonlyMap<string, string> | null = null
 
   constructor(options: GrpcReplicationOptions = {}) {
     this.options = options
@@ -116,7 +118,9 @@ export class GrpcReplicationTransport implements ReplicationTransport {
 
   /**
    * Loads the gRPC packages, starts the gRPC server when this node is the primary or has a group ID, and dials every
-   * configured endpoint.
+   * configured endpoint. Without configured endpoints, it dials the peer addresses from the last
+   * {@link GrpcReplicationTransport.setPeerEndpoints} call, so that a transport that reconnects reaches its peers at
+   * once.
    *
    * @throws A `SirannonError` with code `TRANSPORT_DEPENDENCY_MISSING` when this process cannot load `@grpc/grpc-js`, `@bufbuild/protobuf`, or `grpc-health-check`.
    */
@@ -145,6 +149,24 @@ export class GrpcReplicationTransport implements ReplicationTransport {
       for (const endpoint of config.endpoints) {
         runtime.connectToEndpoint(this, endpoint)
       }
+    } else if (this.peerEndpoints) {
+      this.setPeerEndpoints(this.peerEndpoints)
+    }
+  }
+
+  /**
+   * Dials the replication address of every peer in `endpoints` and closes the connections that this transport dialled
+   * to any other address, so that the transport follows the addresses in the members' coordinator sessions. The
+   * transport keeps the addresses and dials them again whenever it connects.
+   *
+   * @param endpoints - Maps each peer's node ID to the replication address to dial.
+   */
+  setPeerEndpoints(endpoints: ReadonlyMap<string, string>): void {
+    this.peerEndpoints = new Map(endpoints)
+    const runtime = this.runtime
+    if (!this.connected || !runtime) return
+    for (const endpoint of replaceWantedEndpoints(this, endpoints.values())) {
+      runtime.connectToEndpoint(this, endpoint)
     }
   }
 
@@ -327,33 +349,18 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     return this.connectedPeers
   }
 
-  private extractTlsCN(call: { getAuthContext(): unknown }): string | null {
-    if (this.options.insecure) return null
-    if (!this.options.tlsCaCert) return null
-
-    const authCtx = call.getAuthContext() as { sslPeerCertificate?: { subject?: { CN?: string | string[] } } } | null
-    if (!authCtx) return null
-    const peerCert = authCtx.sslPeerCertificate
-    if (!peerCert) return null
-    const certCN = peerCert.subject?.CN
-    if (!certCN) return null
-
-    if (Array.isArray(certCN)) return certCN[0] ?? null
-    return certCN
-  }
-
   /** @internal */
   validateTlsIdentity(call: { getAuthContext(): unknown }, claimedNodeId: string): boolean {
     if (this.options.insecure) return true
     if (!this.options.tlsCaCert) return true
 
-    const cn = this.extractTlsCN(call)
+    const cn = peerCertificateCommonName(this.options, call)
     return cn === claimedNodeId
   }
 
   /** @internal */
   resolveForwardPeerId(call: { getPeer(): string; getAuthContext(): unknown }): string | null {
-    const cn = this.extractTlsCN(call)
+    const cn = peerCertificateCommonName(this.options, call)
     if (cn) {
       return this.connectedPeers.has(cn) ? cn : null
     }

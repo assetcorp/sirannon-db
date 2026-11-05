@@ -8,6 +8,7 @@ import { type ClientCeiling, measureClientCeiling, type RunOp } from './loadgen.
 import { makeRunOp, operationCost } from './operations.ts'
 import { prepare } from './prepare.ts'
 import { progress } from './progress.ts'
+import { searchRateGap } from './rate-search.ts'
 import { SeededRng, ZipfianGenerator } from './rng.ts'
 import { runSoak } from './soak.ts'
 import { buildWorkloads } from './workloads/catalogue.ts'
@@ -66,7 +67,8 @@ async function runWorkload(
   }
   progress(`workload ${workload.name}: peak at ${peakSweep.level} in flight; repeating it to ${config.runs} runs`)
   const repeated = await repeatLevel(driver, makeOp, workload.name, peakSweep, config, cpuSource)
-  const peak = levelRecord(repeated, driver, config)
+  const searched = await searchRateGap(driver, makeOp, workload.name, repeated, config, cpuSource)
+  const peak = levelRecord(searched, driver, config)
   const levels = firstPass.map((record, index) => (index === peakIndex ? peak : record))
 
   const soak =

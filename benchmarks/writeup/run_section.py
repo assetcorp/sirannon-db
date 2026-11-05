@@ -69,6 +69,21 @@ def _seed_sentences(comparison: dict, data_size: str) -> str:
     )
 
 
+def _search_sentence(config: dict) -> str:
+    steps = config.get("rate_search_steps")
+    gap = config.get("rate_search_min_gap_ratio")
+    if not (is_number(steps) and steps > 0 and is_number(gap)):
+        return ""
+    wider = "twice" if gap == 2 else f"{gap:g} times"
+    halvings = "once" if steps == 1 else f"{integer(steps)} times"
+    return (
+        " At the engine's peak in-flight limit, when the next rate on the list of target rates is more than "
+        f"{wider} the highest rate at which the engine met the service-level target, the harness also searches the gap "
+        f"between the two. It halves that gap {halvings} and measures each searched rate as many times as each "
+        "listed rate, so the operating point can be a searched rate."
+    )
+
+
 def _sweep_sentences(config: dict) -> str:
     rates = humanized_list([integer(rate) for rate in config.get("target_rates", [])]) or "n/a"
     offered = f"The harness offers target rates of {rates} requests a second."
@@ -171,7 +186,7 @@ def run_block(source: Source) -> str:
         f"has a {decimal(config.get('warmup_seconds'), 0)} s warmup and a "
         f"{decimal(config.get('measure_seconds'), 0)} s window under seed `{config.get('seed', 'n/a')}`. "
         f"{_repetition_sentences(comparison, config)} The service-level target for an operating point is a p99 "
-        f"of at most {decimal(config.get('slo_p99_ms'), 0)} ms."
+        f"of at most {decimal(config.get('slo_p99_ms'), 0)} ms.{_search_sentence(config)}"
     )
     soak_seconds = config.get("soak_seconds")
     soak_workloads = humanized_list([workload_label(name) for name in config.get("soak_workloads", [])])

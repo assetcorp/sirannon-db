@@ -36,6 +36,7 @@ def _operating_metrics(workload: dict) -> dict:
     latency = point["latency_ms"]
     return {
         "target_rate": point["target_rate"],
+        "searched": point.get("searched", False),
         "under_slo": point.get("under_slo", False),
         "ops_median": throughput["median_ops"],
         "ops_ci_low": throughput["ci_low_ops"],
@@ -68,6 +69,7 @@ def _level_rows(workload: dict) -> list[dict] | None:
             "client_connections": level.get("client_connections"),
             "runs_per_rate": level.get("runs_per_rate"),
             "target_rate": point.get("target_rate"),
+            "searched": point.get("searched", False),
             "under_slo": point.get("under_slo", False),
             "ops_median": throughput.get("median_ops"),
             "p99_ms": latency.get("p99"),
@@ -125,6 +127,7 @@ def _curve_side(point: dict | None) -> dict:
             "cores_allowed": None,
             "sustained": None,
             "error_rate": None,
+            "searched": None,
         }
     throughput = point["throughput"]
     latency = point["latency_ms"]
@@ -139,6 +142,7 @@ def _curve_side(point: dict | None) -> dict:
         "cores_allowed": cpu.get("cores_allowed"),
         "sustained": point.get("sustained"),
         "error_rate": point.get("error_rate"),
+        "searched": point.get("searched", False),
     }
 
 

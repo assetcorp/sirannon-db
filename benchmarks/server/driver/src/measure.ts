@@ -9,6 +9,7 @@ export const ERROR_RATE_CEILING = 0.01
 
 export interface RatePasses {
   targetRate: number
+  searched: boolean
   passes: LoadResult[]
   cores: Array<number | null>
 }
@@ -55,7 +56,7 @@ export async function measurePasses(
     passes.push(measured.result)
     cores.push(measured.coresUsed)
   }
-  return { targetRate, passes, cores }
+  return { targetRate, searched: false, passes, cores }
 }
 
 export function summarizeRate(
@@ -72,6 +73,7 @@ export function summarizeRate(
 
   return {
     target_rate: measured.targetRate,
+    searched: measured.searched,
     concurrency: level,
     throughput: {
       median_ops: summary.median,
@@ -104,14 +106,16 @@ export function summarizeRate(
   }
 }
 
+export function heldWithinSlo(rate: Record<string, unknown>, sloP99Ms: number): boolean {
+  const p99 = (rate.latency_ms as { p99: number }).p99
+  return rate.sustained === true && p99 <= sloP99Ms && (rate.error_rate as number) < ERROR_RATE_CEILING
+}
+
 export function selectOperatingPoint(sweep: Record<string, unknown>[], sloP99Ms: number): Record<string, unknown> {
-  const p99 = (rate: Record<string, unknown>): number => (rate.latency_ms as { p99: number }).p99
   const errorRate = (rate: Record<string, unknown>): number => rate.error_rate as number
   const targetRate = (rate: Record<string, unknown>): number => rate.target_rate as number
 
-  const withinSlo = sweep.filter(
-    rate => rate.sustained === true && p99(rate) <= sloP99Ms && errorRate(rate) < ERROR_RATE_CEILING,
-  )
+  const withinSlo = sweep.filter(rate => heldWithinSlo(rate, sloP99Ms))
   if (withinSlo.length > 0) {
     const chosen = withinSlo.reduce((best, rate) => (targetRate(rate) > targetRate(best) ? rate : best))
     return { ...chosen, under_slo: true }

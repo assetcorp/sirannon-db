@@ -92,7 +92,10 @@ status.changedAt        // when the last change finished
 status.change.state     // 'idle', 'copying', 'catching-up', 'swapping', 'done', or 'failed'
 status.change.rowsCopied
 status.change.rounds
+status.change.reopenError // set when a step failed after the new file was in place
 ```
+
+Once the new file is in place, the change has taken effect. When a later step fails, such as a key function that throws while the connections reopen, the change still reports `done` and records that failure in `reopenError`. The file holds ciphertext under the new key at that point, so keep the new key, close the database, and open it again with the new key function.
 
 The change fails with one of these codes and leaves the database under its current key:
 

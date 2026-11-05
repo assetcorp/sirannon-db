@@ -270,12 +270,12 @@ describe('shutting a registry down', () => {
       lifecycle: { autoOpen: { resolver: id => ({ path: join(dir, `${id}.db`) }) } },
     })
 
-    const opening = sirannon.open('opening', join(dir, 'opening.db'))
-    const resolving = sirannon.resolve('resolving')
+    const opening = sirannon.open('opening', join(dir, 'opening.db')).catch((err: unknown) => err)
+    const resolving = sirannon.resolve('resolving').catch((err: unknown) => err)
     const shutdown = sirannon.shutdown()
 
-    await expect(opening).rejects.toMatchObject({ code: 'SHUTDOWN' })
-    await expect(resolving).rejects.toMatchObject({ code: 'SHUTDOWN' })
+    expect(await opening).toMatchObject({ code: 'SHUTDOWN' })
+    expect(await resolving).toMatchObject({ code: 'SHUTDOWN' })
     await shutdown
     for (const name of ['opening', 'resolving']) {
       expect(connectionsHeldOn(join(dir, `${name}.db`)), name).toBe(false)

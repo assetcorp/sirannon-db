@@ -7,6 +7,7 @@ import type { EncryptionKey } from '../../../core/encryption/types.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import { createServer } from '../../../server/server.js'
+import { readWithIndependentAegis } from '../../helpers/independent-aegis.js'
 import { builtSirannonSqliteBindingPath, SIRANNON_SQLITE_REQUIRED } from '../../helpers/sirannon-sqlite.js'
 import { gate } from '../../integration/backups/harness.js'
 import {
@@ -25,6 +26,7 @@ import {
 const binding = builtSirannonSqliteBindingPath()
 const OPERATOR = { authenticate: () => ({ operator: true }) }
 const SECRET_ROWS = 60
+const FIRST_SERVER_KEY_CALL_OF_THE_REOPEN = 4
 const secretOf = (n: number) => `payroll-entry-${n.toString().padStart(4, '0')}-confidential`
 
 let dir: string
@@ -230,6 +232,56 @@ describe.skipIf(binding === null)('a key change over the server', () => {
     expect(errorMessageOf(second.body)).toBe('A key change is running on this database')
     expect(status).toMatchObject({ encrypted: true, change: { state: 'done' } })
     expect(fileHoldsPlaintext(path)).toBe(false)
+  })
+
+  it('reports a key function that fails on the reopen as a done change with a reopen error, with no key or server path in any answer', async () => {
+    const sirannon = encryptingRegistry()
+    const path = await openPayroll(sirannon)
+    const key = randomBytes(32)
+    const keyHex = key.toString('hex')
+    let calls = 0
+    const served = await serveRegistry(sirannon, {
+      ...OPERATOR,
+      acceptSql: true,
+      acceptEncryptionChange: true,
+      encryptionKeys: (): EncryptionKey => {
+        calls++
+        if (calls >= FIRST_SERVER_KEY_CALL_OF_THE_REOPEN) {
+          throw new Error(`vault at /etc/vault/payroll.hcl sealed key ${keyHex}`)
+        }
+        return { key: Uint8Array.from(key), id: 'payroll-2026' }
+      },
+    })
+
+    const accepted = await postJson(served.base, '/db/payroll/encryption', { keyRef: 'vault/payroll' })
+    const settled = await changeSettled(served.base)
+    const statusAnswer = await sendRaw(served.base, 'GET', '/db/payroll/encryption')
+    const query = await postJson(served.base, '/db/payroll/query', { sql: 'SELECT count(*) AS n FROM payroll' })
+    await sirannon.close('payroll')
+
+    expect(accepted.status).toBe(202)
+    expect(settled).toMatchObject({
+      change: {
+        state: 'done',
+        reopenError: {
+          code: 'ENCRYPTION_KEY_UNAVAILABLE',
+          message: 'The server could not obtain the encryption key for this database',
+        },
+      },
+    })
+    expect((settled.change as { error?: unknown }).error).toBeUndefined()
+    expect(codeAndStatus(query)).toEqual([503, 'ENCRYPTION_KEY_UNAVAILABLE'])
+    for (const text of [statusAnswer.text, query.text]) {
+      expect(text).not.toContain(keyHex)
+      expect(text).not.toContain('/etc/vault')
+      expect(text).not.toContain(dir)
+    }
+    expect(fileHoldsPlaintext(path)).toBe(false)
+    expect(readWithIndependentAegis<{ entry: string }>(path, key, 'SELECT entry FROM payroll ORDER BY id')).toEqual(
+      Array.from({ length: SECRET_ROWS }, (_, at) => ({ entry: secretOf(at + 1) })),
+    )
+    const reopened = await sirannon.open('payroll', path, { encryption: { key: () => Uint8Array.from(key) } })
+    expect(await reopened.query('SELECT count(*) AS n FROM payroll')).toEqual([{ n: SECRET_ROWS }])
   })
 
   it('removes encryption with a null keyRef, after which stock SQLite reads every row', async () => {

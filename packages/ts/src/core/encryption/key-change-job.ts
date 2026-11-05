@@ -46,6 +46,15 @@ export interface KeyChangeDeps {
 }
 
 /**
+ * A failure that came after a key change put the new file in place, which leaves the change done.
+ *
+ * @internal
+ */
+export interface KeyChangeReopenFailure {
+  cause: unknown
+}
+
+/**
  * Receives the progress of a key change, and tells the change whether the database has started to close.
  *
  * @internal
@@ -133,17 +142,21 @@ export class KeyChangeRun {
   /**
    * Runs the key change to the end.
    *
+   * @returns `null` when every step succeeds, or the failure that came after the new file was in place, which leaves
+   * the change done and the file under the target key.
    * @throws An `EncryptionError` with `ENCRYPTION_CHANGE_ABORTED` when the change stops, which leaves the database
    * under the key that it had, or the error of the target key function.
    */
-  async run(): Promise<void> {
+  async run(): Promise<KeyChangeReopenFailure | null> {
     try {
       await this.copySnapshot()
       await this.markNewFile()
       await this.catchUp()
       await this.replaceFile()
+      return null
     } catch (err) {
       await this.cleanUp()
+      if (this.replaced) return { cause: err }
       if (err instanceof SirannonError) throw err
       if (this.stranded) {
         throw keyChangeAborted(

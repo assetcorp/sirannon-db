@@ -60,10 +60,20 @@ async function checkedKeySource(
   return source
 }
 
+function errorForClient(error: { code: string; message: string }): { code: string; message: string } {
+  return { code: error.code, message: clientMessageFor(error) }
+}
+
 function statusForClient(status: EncryptionStatus): EncryptionStatus {
-  const error = status.change.error
-  if (error === undefined) return status
-  return { ...status, change: { ...status.change, error: { code: error.code, message: clientMessageFor(error) } } }
+  const { error, reopenError } = status.change
+  return {
+    ...status,
+    change: {
+      ...status.change,
+      ...(error === undefined ? {} : { error: errorForClient(error) }),
+      ...(reopenError === undefined ? {} : { reopenError: errorForClient(reopenError) }),
+    },
+  }
 }
 
 /**

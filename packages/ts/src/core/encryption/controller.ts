@@ -3,7 +3,12 @@ import { ReadOnlyError, SirannonError } from '../errors.js'
 import type { RegisteredReplicationEngines } from '../replication-engines.js'
 import { EncryptionError } from './errors.js'
 import type { EncryptionKeySource } from './key.js'
-import { type KeyChangeDeps, type KeyChangeProgress, KeyChangeRun } from './key-change-job.js'
+import {
+  type KeyChangeDeps,
+  type KeyChangeProgress,
+  type KeyChangeReopenFailure,
+  KeyChangeRun,
+} from './key-change-job.js'
 import { readKeyMetadata, type StoredKeyMetadata } from './key-metadata.js'
 import type { EncryptionChange, EncryptionChangeStatus, EncryptionStatus } from './types.js'
 
@@ -41,6 +46,15 @@ function engineDuringChange(): EncryptionError {
     'A key change is replacing the file of this database, so a replication engine would stay on the replaced file; start the engine once the change ends',
     'ENCRYPTION_CHANGE_IN_PROGRESS',
   )
+}
+
+function describeReopenFailure(err: unknown): { code: string; message: string } {
+  if (err instanceof SirannonError) return { code: err.code, message: err.message }
+  return {
+    code: 'DATABASE_OPEN_FAILED',
+    message:
+      'The database could not open its connections again after the key change put the new file in place; close it and open it with the new key',
+  }
 }
 
 function invalidChange(): EncryptionError {
@@ -151,7 +165,7 @@ export class DatabaseEncryptionController {
     const run = new KeyChangeRun(this.deps, target, progress)
     this.change = { state: 'copying', target: target === null ? 'plaintext' : 'encrypted', startedAt: Date.now() }
     const outcome = run.run().then(
-      () => this.finished(target),
+      reopenFailure => this.finished(target, reopenFailure),
       (err: unknown) => this.failed(err),
     )
     this.running = outcome.then(() => undefined)
@@ -177,8 +191,13 @@ export class DatabaseEncryptionController {
     return change.key
   }
 
-  private finished(target: EncryptionKeySource | null): null {
-    this.change = { ...this.change, state: 'done', finishedAt: Date.now() }
+  private finished(target: EncryptionKeySource | null, reopenFailure: KeyChangeReopenFailure | null): null {
+    this.change = {
+      ...this.change,
+      state: 'done',
+      finishedAt: Date.now(),
+      ...(reopenFailure === null ? {} : { reopenError: describeReopenFailure(reopenFailure.cause) }),
+    }
     this.described = null
     this.deps.onKeyChanged?.(target)
     return null

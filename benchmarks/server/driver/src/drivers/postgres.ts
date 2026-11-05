@@ -55,6 +55,7 @@ export class PostgresDriver extends Driver {
   private readonly synchronousCommit: string
   private readonly requestTimeoutMs: number
   private pool: Pool | null = null
+  private poolSize = 0
   readonly failureClassifier: FailureClassifier = { codeOf: postgresCodeOf, kindOf: postgresKind }
 
   constructor(config: PostgresConfig, durability: string, requestTimeoutMs: number) {
@@ -65,14 +66,15 @@ export class PostgresDriver extends Driver {
     this.requestTimeoutMs = requestTimeoutMs
   }
 
-  async connect(): Promise<void> {
+  private openPool(size: number): Pool {
     const pool = new Pool({
       host: this.config.host,
       port: this.config.port,
       user: this.config.user,
       password: this.config.password,
       database: this.config.database,
-      max: this.config.poolSize,
+      max: size,
+      idleTimeoutMillis: 0,
       connectionTimeoutMillis: this.requestTimeoutMs,
       query_timeout: this.requestTimeoutMs + QUERY_TIMEOUT_MARGIN_MS,
       options: `-c synchronous_commit=${this.synchronousCommit} -c statement_timeout=${this.requestTimeoutMs}`,
@@ -82,8 +84,45 @@ export class PostgresDriver extends Driver {
         `postgres pool: idle connection lost (${postgresCodeOf(err)}); the pool opens a new one on the next request`,
       )
     })
-    this.pool = pool
+    return pool
+  }
+
+  async connect(): Promise<void> {
+    this.pool = this.openPool(1)
+    this.poolSize = 1
     await this.read('SELECT 1', [])
+  }
+
+  async setConcurrency(level: number): Promise<void> {
+    if (this.pool !== null && this.poolSize === level) {
+      return
+    }
+    const previous = this.pool
+    this.pool = null
+    this.poolSize = 0
+    if (previous !== null) {
+      await previous.end()
+    }
+    const pool = this.openPool(level)
+    const attempts = await Promise.allSettled(Array.from({ length: level }, () => pool.connect()))
+    const failures: unknown[] = []
+    for (const attempt of attempts) {
+      if (attempt.status === 'fulfilled') {
+        attempt.value.release()
+      } else {
+        failures.push(attempt.reason)
+      }
+    }
+    if (failures.length > 0) {
+      await pool.end()
+      throw failures[0]
+    }
+    this.pool = pool
+    this.poolSize = level
+  }
+
+  connectionsAt(level: number): number {
+    return level
   }
 
   private poolOrThrow(): Pool {
@@ -111,9 +150,15 @@ export class PostgresDriver extends Driver {
       statement_timeout: String(statementTimeout),
       request_timeout_ms: this.requestTimeoutMs,
       version: String(version),
-      pool_size: this.config.poolSize,
-      max_concurrent_transactions: this.config.poolSize,
+      max_connections: Number((await pool.query('SHOW max_connections')).rows[0].max_connections),
+      data_checksums: String((await pool.query('SHOW data_checksums')).rows[0].data_checksums),
+      io_method: await this.settingOrNull(pool, 'io_method'),
     }
+  }
+
+  private async settingOrNull(pool: Pool, name: string): Promise<string | null> {
+    const rows = (await pool.query('SELECT setting FROM pg_settings WHERE name = $1', [name])).rows
+    return rows[0] === undefined ? null : String(rows[0].setting)
   }
 
   async executeDdl(statements: string[]): Promise<void> {
@@ -235,6 +280,7 @@ export class PostgresDriver extends Driver {
     if (this.pool !== null) {
       await this.pool.end()
       this.pool = null
+      this.poolSize = 0
     }
   }
 }

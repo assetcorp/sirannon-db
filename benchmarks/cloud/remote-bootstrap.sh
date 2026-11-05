@@ -5,7 +5,9 @@ set -euo pipefail
 log() { printf '[bootstrap] %s\n' "$*"; }
 
 SSD_MODE="${BENCH_LOCAL_SSD_MODE:-auto}"
+VM_ROLE="${BENCH_VM_ROLE:-engine}"
 NVME_MOUNT="/mnt/nvme"
+POSTGRES_MAJOR=18
 
 root_disk() {
   local src
@@ -53,26 +55,34 @@ sudo systemctl disable --now \
   apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
 sudo systemctl mask apt-daily.service apt-daily-upgrade.service >/dev/null 2>&1 || true
 
-log "apt packages"
+case "$VM_ROLE" in
+  engine | load) ;;
+  *) log "unknown BENCH_VM_ROLE '$VM_ROLE' (expected engine or load)"; exit 1 ;;
+esac
+
+log "apt packages (role: $VM_ROLE)"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  ca-certificates curl gnupg git python3 build-essential postgresql-common
+  ca-certificates curl gnupg git python3 build-essential
+if [ "$VM_ROLE" = "engine" ]; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-common
 
-log "local NVMe (mode: $SSD_MODE)"
-setup_local_nvme
+  log "local NVMe (mode: $SSD_MODE)"
+  setup_local_nvme
 
-sudo mkdir -p /etc/postgresql-common/createcluster.d
-echo "create_main_cluster = false" | sudo tee /etc/postgresql-common/createcluster.d/no-main-cluster.conf >/dev/null
+  sudo mkdir -p /etc/postgresql-common/createcluster.d
+  echo "create_main_cluster = false" | sudo tee /etc/postgresql-common/createcluster.d/no-main-cluster.conf >/dev/null
 
-if [ ! -x /usr/lib/postgresql/17/bin/postgres ]; then
-  log "install PostgreSQL 17 (PGDG apt repository)"
-  sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-17
-  sudo apt-mark hold postgresql-17 >/dev/null
-fi
-if pg_lsclusters 2>/dev/null | awk '{print $1, $2}' | grep -q '^17 main$'; then
-  log "drop the packaged default cluster"
-  sudo pg_dropcluster --stop 17 main
+  if [ ! -x "/usr/lib/postgresql/${POSTGRES_MAJOR}/bin/postgres" ]; then
+    log "install PostgreSQL ${POSTGRES_MAJOR} (PGDG apt repository)"
+    sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "postgresql-${POSTGRES_MAJOR}"
+    sudo apt-mark hold "postgresql-${POSTGRES_MAJOR}" >/dev/null
+  fi
+  if pg_lsclusters 2>/dev/null | awk '{print $1, $2}' | grep -q "^${POSTGRES_MAJOR} main$"; then
+    log "drop the packaged default cluster"
+    sudo pg_dropcluster --stop "$POSTGRES_MAJOR" main
+  fi
 fi
 
 if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d. -f1)" != "v24" ]; then

@@ -22,6 +22,8 @@ export abstract class Driver {
   abstract write(sql: string, params: unknown[]): Promise<void>
   abstract transaction(statements: TransactionStatement[]): Promise<void>
   abstract transactionRoundTrips(statementCount: number): number
+  abstract setConcurrency(level: number): Promise<void>
+  abstract connectionsAt(level: number): number
   abstract close(): Promise<void>
 
   abstract readonly failureClassifier: FailureClassifier

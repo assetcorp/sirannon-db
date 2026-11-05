@@ -1,8 +1,10 @@
 # Sirannon benchmarks
 
+<!-- BENCH:intro START -->
 The benchmark harness measures Sirannon and PostgreSQL 17 on the same OLTP workloads. For each workload, you can read the highest rate at which each engine held a latency target, the tail latency at that rate, and the rate at which the engine stopped keeping up.
 
 Both engines operate at matched durability as native processes on one host, each pinned to its own logical CPUs under a hard memory ceiling. One open-loop load generator, which records the full tail latency, drives each engine through the client that the engine provides.
+<!-- BENCH:intro END -->
 
 The figures on this page come from the latest committed run under `benchmarks/server/results/runs/`. A generator in `benchmarks/writeup/` writes every table, and every paragraph that contains a figure, from the data that the harness recorded for that run, so the text and the numbers agree. When nobody has committed a run, the generator writes a placeholder in place of figures.
 
@@ -96,7 +98,7 @@ An engine's operating point is the highest offered request rate at which the eng
 
 _Bold marks the higher of the two operating points on each workload. Where both engines held the target at the same rate, neither cell is bold. Each p99 comes from its own engine's operating point, so the two p99 columns can describe different offered rates. For both engines at one offered rate, use the sweep tables below. Each 'missed at' column gives the next offered rate above the operating point at which that engine missed the target, with its p99 at that rate._
 
-_Each throughput figure is the median of the repeated measurements at the operating point, which is the highest offered rate that the engine held at or under the p99 target. The table shows each Sirannon figure with a 95% bootstrap confidence interval and the coefficient of variation across repetitions. The rate ratio is Sirannon's operating point divided by PostgreSQL's, so a ratio above one means that Sirannon held the target at a higher rate. Every ratio is approximate, because the harness doubles the offered rate at each step, so an engine's highest sustainable rate lies between its operating point and the rate in its 'missed at' column. For TPC-C-derived, the generator sends two kinds of one-statement write in equal shares, which are an insert into `orders` and an update of one customer's balance. Neither write is a full TPC-C transaction. The harness measures YCSB A, B, C, and F, but not D or E._
+_Each throughput figure is the median of the repeated measurements at the operating point, which is the highest offered rate that the engine held at or under the p99 target. The table shows each Sirannon figure with a 95% bootstrap confidence interval and the coefficient of variation across repetitions. The rate ratio is Sirannon's operating point divided by PostgreSQL's, so a ratio above one means that Sirannon held the target at a higher rate. Every ratio is approximate, because the harness measures only the listed target rates, so an engine's highest sustainable rate lies between its operating point and the rate in its 'missed at' column. For TPC-C-derived, the generator sends two kinds of one-statement write in equal shares, which are an insert into `orders` and an update of one customer's balance. Neither write is a full TPC-C transaction. The harness measures YCSB A, B, C, and F, but not D or E._
 <!-- BENCH:comparison END -->
 
 ## Throughput versus offered load

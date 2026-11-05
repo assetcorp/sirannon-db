@@ -2,13 +2,15 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 
+const DEFAULT_CONCURRENCY_LEVELS = [16, 64, 256]
+const MAX_RATE_SEARCH_STEPS = 8
+
 export interface PostgresConfig {
   host: string
   port: number
   user: string
   password: string
   database: string
-  poolSize: number
 }
 
 export interface SirannonConfig {
@@ -27,10 +29,11 @@ export interface Config {
   runs: number
   seed: number
   sloP99Ms: number
-  maxInFlight: number
+  concurrencyLevels: number[]
   workloads: string[]
   targetRates: number[]
   sweepStopSteps: number
+  rateSearchSteps: number
   prepareRetrySeconds: number
   soakSeconds: number
   soakWorkloads: string[]
@@ -38,6 +41,8 @@ export interface Config {
   driverCpus: number
   engineCpus: number
   engineCgroup: string | null
+  engineCpuUrl: string | null
+  networkProbe: { host: string; port: number } | null
   requestTimeoutMs: number
   workloadTimeoutMs: number
 }
@@ -104,6 +109,20 @@ function envStrList(name: string, fallback: string[]): string[] {
     .filter(part => part.length > 0)
 }
 
+function envHostPort(name: string): { host: string; port: number } | null {
+  const raw = present(name)
+  if (raw === undefined) {
+    return null
+  }
+  const separator = raw.lastIndexOf(':')
+  const host = separator > 0 ? raw.slice(0, separator) : ''
+  const port = separator > 0 ? Number(raw.slice(separator + 1)) : Number.NaN
+  if (host === '' || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${name} must be host:port with a port of 1-65535, got ${r(raw)}`)
+  }
+  return { host, port }
+}
+
 function r(value: string): string {
   return JSON.stringify(value)
 }
@@ -146,7 +165,6 @@ export function loadConfig(path: string): Config {
       user: envStr('BENCH_PG_USER', asString(pg.user, 'benchmark')),
       password: envStr('BENCH_PG_PASSWORD', asString(pg.password, 'benchmark')),
       database: envStr('BENCH_PG_DATABASE', asString(pg.database, 'benchmark')),
-      poolSize: envInt('BENCH_PG_POOL_SIZE', asNumber(pg.pool_size, 16)),
     },
     sirannon: {
       baseUrl: envStr('BENCH_SIRANNON_URL', asString(sir.base_url, 'http://127.0.0.1:9876')),
@@ -160,10 +178,14 @@ export function loadConfig(path: string): Config {
     runs: envInt('BENCH_RUNS', asNumber(run.runs, 5)),
     seed: envInt('BENCH_SEED', asNumber(run.seed, 42)),
     sloP99Ms: envFloat('BENCH_SLO_P99_MS', asNumber(load.slo_p99_ms, 25.0)),
-    maxInFlight: envInt('BENCH_MAX_IN_FLIGHT', asNumber(load.max_in_flight, 256)),
+    concurrencyLevels: envIntList(
+      'BENCH_CONCURRENCY_LEVELS',
+      load.concurrency_levels === undefined ? DEFAULT_CONCURRENCY_LEVELS : asNumberList(load.concurrency_levels),
+    ),
     workloads: envStrList('BENCH_WORKLOADS', asStringList(run.workloads)),
     targetRates: envIntList('BENCH_TARGET_RATES', asNumberList(load.target_rates)),
     sweepStopSteps: envInt('BENCH_SWEEP_STOP_STEPS', asNumber(load.sweep_stop_steps, -1)),
+    rateSearchSteps: envInt('BENCH_RATE_SEARCH_STEPS', asNumber(load.rate_search_steps, 0)),
     prepareRetrySeconds: envInt('BENCH_PREPARE_RETRY_SECONDS', asNumber(run.prepare_retry_seconds, 300)),
     soakSeconds: envInt('BENCH_SOAK_SECONDS', asNumber(soak.seconds, 0)),
     soakWorkloads: envStrList('BENCH_SOAK_WORKLOADS', asStringList(soak.workloads)),
@@ -171,6 +193,8 @@ export function loadConfig(path: string): Config {
     driverCpus: envFloat('BENCH_DRIVER_CPUS', asNumber(resources.driver_cpus, 2.0)),
     engineCpus: envFloat('BENCH_ENGINE_CPUS', asNumber(resources.engine_cpus, 2.0)),
     engineCgroup: present('BENCH_ENGINE_CGROUP') ?? null,
+    engineCpuUrl: present('BENCH_ENGINE_CPU_URL') ?? null,
+    networkProbe: envHostPort('BENCH_NETWORK_PROBE'),
     requestTimeoutMs: envInt('BENCH_REQUEST_TIMEOUT_MS', asNumber(run.request_timeout_ms, 60_000)),
     workloadTimeoutMs: envInt('BENCH_WORKLOAD_TIMEOUT_MS', asNumber(run.workload_timeout_ms, 0)),
   }
@@ -191,8 +215,19 @@ function validate(config: Config): void {
   if (config.dataSize < 1) {
     throw new Error(`data_size must be >= 1, got ${config.dataSize}`)
   }
-  if (config.maxInFlight < 1) {
-    throw new Error(`max_in_flight must be >= 1, got ${config.maxInFlight}`)
+  if (config.concurrencyLevels.length === 0) {
+    throw new Error('at least one concurrency level must be configured')
+  }
+  for (const level of config.concurrencyLevels) {
+    if (!Number.isInteger(level) || level < 1) {
+      throw new Error(`each concurrency level must be an integer >= 1, got ${level}`)
+    }
+  }
+  if (new Set(config.concurrencyLevels).size !== config.concurrencyLevels.length) {
+    throw new Error(`concurrency levels must be distinct, got ${config.concurrencyLevels.join(', ')}`)
+  }
+  if (config.engineCgroup !== null && config.engineCpuUrl !== null) {
+    throw new Error('set BENCH_ENGINE_CGROUP or BENCH_ENGINE_CPU_URL, not both')
   }
   if (config.workloads.length === 0) {
     throw new Error('at least one workload must be configured')
@@ -208,6 +243,17 @@ function validate(config: Config): void {
   if (!Number.isInteger(config.sweepStopSteps) || config.sweepStopSteps < -1) {
     throw new Error(
       `sweep_stop_steps must be an integer >= -1, where -1 runs every rate and 0 or more stops that many steps past the first unsustained rate, got ${config.sweepStopSteps}`,
+    )
+  }
+  if (
+    !Number.isInteger(config.rateSearchSteps) ||
+    config.rateSearchSteps < 0 ||
+    config.rateSearchSteps > MAX_RATE_SEARCH_STEPS
+  ) {
+    throw new Error(
+      `rate_search_steps must be an integer from 0 to ${MAX_RATE_SEARCH_STEPS}, where 0 reports only the listed ` +
+        'target rates and a positive value halves a wide gap above the operating point that many times, ' +
+        `got ${config.rateSearchSteps}`,
     )
   }
   if (!Number.isInteger(config.prepareRetrySeconds) || config.prepareRetrySeconds < 0) {

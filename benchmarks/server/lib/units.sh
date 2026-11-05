@@ -42,8 +42,10 @@ release_login_sessions() {
 # shellcheck disable=SC2329
 cleanup_units() {
   unit_stop bench-driver.service
+  stop_load_driver
   unit_stop bench-sirannon.service
   unit_stop bench-postgres.service
+  unit_stop bench-cpu-stat.service
   release_login_sessions
 }
 

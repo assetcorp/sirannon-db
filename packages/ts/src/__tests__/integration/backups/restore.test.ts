@@ -47,6 +47,7 @@ interface BuiltChain {
 async function buildChain(rounds: number, pieceBytes?: number): Promise<BuiltChain> {
   const node = await openCycleNode(workspace, 'source', { backups: pieceBytes ? { pieceBytes } : {} })
   await node.db.captureBackupChanges()
+  await pause(3)
   await createOrders(node.db)
   await node.db.captureBackupChanges()
   const labels: string[] = []

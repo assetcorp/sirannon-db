@@ -34,6 +34,8 @@ export interface LoadAllOptions {
   durability?: BulkLoadDurability
 }
 
+const SQL_ACCEPTED: Promise<void> = Promise.resolve()
+
 function closedDatabaseError(): RemoteError {
   return new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
 }
@@ -103,6 +105,7 @@ export class RemoteDatabase {
   private assertSqlAccepted(): Promise<void> {
     const closed = this.lifetime.signal
     if (closed.aborted) return Promise.reject(closedDatabaseError())
+    if (this.capabilities.knownToAcceptSql?.() === true) return SQL_ACCEPTED
     return new Promise((resolve, reject) => {
       const refuse = (): void => reject(closedDatabaseError())
       closed.addEventListener('abort', refuse, { once: true })

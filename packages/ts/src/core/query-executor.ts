@@ -7,45 +7,11 @@ import {
   rowCountsOf,
   withRowCounts,
 } from './driver/row-counts.js'
-import type { BatchSummary, SQLiteConnection, SQLiteStatement } from './driver/types.js'
+import type { BatchSummary, SQLiteConnection } from './driver/types.js'
 import { QueryError, SirannonError } from './errors.js'
 import { assertSqlAllowed } from './internal-tables.js'
+import { guardedStatement, trustedStatement } from './prepared-statements.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
-
-const STATEMENT_CACHE_CAPACITY = 128
-const statementCaches = new WeakMap<SQLiteConnection, Map<string, Promise<SQLiteStatement>>>()
-
-async function getStatement(conn: SQLiteConnection, sql: string): Promise<SQLiteStatement> {
-  let cache = statementCaches.get(conn)
-  if (!cache) {
-    cache = new Map()
-    statementCaches.set(conn, cache)
-  }
-
-  const cached = cache.get(sql)
-  if (cached) {
-    cache.delete(sql)
-    cache.set(sql, cached)
-    return cached
-  }
-
-  const pending = conn.prepare(sql)
-  cache.set(sql, pending)
-
-  if (cache.size > STATEMENT_CACHE_CAPACITY) {
-    const oldest = cache.keys().next().value
-    if (oldest !== undefined) {
-      cache.delete(oldest)
-    }
-  }
-
-  try {
-    return await pending
-  } catch (err) {
-    cache.delete(sql)
-    throw err
-  }
-}
 
 export function bindParams(params?: Params): unknown[] {
   if (params === undefined) return []
@@ -92,7 +58,13 @@ export async function query<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T[]> {
-  return (await queryMetered<T>(conn, sql, params)).value
+  try {
+    const handle = guardedStatement(conn, sql)
+    const stmt = handle instanceof Promise ? await handle : handle
+    return await stmt.all<T>(...bindParams(params))
+  } catch (err) {
+    throw asQueryError(err, sql)
+  }
 }
 
 /**
@@ -109,9 +81,8 @@ export async function queryMetered<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<Metered<T[]>> {
-  assertSqlAllowed(sql)
   try {
-    return await allMetered<T>(await getStatement(conn, sql), bindParams(params))
+    return await allMetered<T>(await guardedStatement(conn, sql), bindParams(params))
   } catch (err) {
     throw asQueryError(err, sql)
   }
@@ -127,9 +98,8 @@ export async function queryMetered<T = Record<string, unknown>>(
  * @internal
  */
 export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<Metered<unknown[]>> {
-  assertSqlAllowed(sql)
   try {
-    const stmt = await getStatement(conn, sql)
+    const stmt = await guardedStatement(conn, sql)
     const bound = bindParams(params)
     const counted = stmt.allRaw ? stmt.allRawCounted : stmt.allCounted
     if (counted) {
@@ -138,6 +108,28 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
     }
     const rows = (stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)) as unknown[]
     return { value: encodeWireRowsInPlace(rows) }
+  } catch (err) {
+    throw asQueryError(err, sql)
+  }
+}
+
+/**
+ * Executes a read on one connection and returns the rows encoded for a network response, for a caller that records no
+ * row counts.
+ *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @returns The encoded rows.
+ * @internal
+ */
+export async function queryRowsForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
+  try {
+    const handle = guardedStatement(conn, sql)
+    const stmt = handle instanceof Promise ? await handle : handle
+    const bound = bindParams(params)
+    const rows = (stmt.allRaw ? await stmt.allRaw(...bound) : await stmt.all(...bound)) as unknown[]
+    return encodeWireRowsInPlace(rows)
   } catch (err) {
     throw asQueryError(err, sql)
   }
@@ -153,7 +145,13 @@ export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<T | undefined> {
-  return (await queryOneMetered<T>(conn, sql, params)).value
+  try {
+    const handle = guardedStatement(conn, sql)
+    const stmt = handle instanceof Promise ? await handle : handle
+    return await stmt.get<T>(...bindParams(params))
+  } catch (err) {
+    throw asQueryError(err, sql)
+  }
 }
 
 /**
@@ -170,9 +168,8 @@ export async function queryOneMetered<T = Record<string, unknown>>(
   sql: string,
   params?: Params,
 ): Promise<Metered<T | undefined>> {
-  assertSqlAllowed(sql)
   try {
-    const stmt = await getStatement(conn, sql)
+    const stmt = await guardedStatement(conn, sql)
     const bound = bindParams(params)
     if (stmt.getCounted) return await stmt.getCounted<T>(...bound)
     return { value: await stmt.get<T>(...bound) }
@@ -194,11 +191,9 @@ export async function execute(
   params?: Params,
   trusted = false,
 ): Promise<ExecuteResult> {
-  if (!trusted) {
-    assertSqlAllowed(sql)
-  }
   try {
-    const stmt = await getStatement(conn, sql)
+    const handle = trusted ? trustedStatement(conn, sql) : guardedStatement(conn, sql)
+    const stmt = handle instanceof Promise ? await handle : handle
     const result = await stmt.run(...bindParams(params))
     return withRowCounts({ changes: result.changes, lastInsertRowId: result.lastInsertRowId }, rowCountsOf(result))
   } catch (err) {
@@ -212,10 +207,9 @@ async function forEachBatchRow(
   paramsBatch: Params[],
   sink: (result: ExecuteResult) => void,
 ): Promise<void> {
-  assertSqlAllowed(sql)
   let counts: RowCounts | undefined
   try {
-    const stmt = await getStatement(conn, sql)
+    const stmt = await guardedStatement(conn, sql)
     for (const params of paramsBatch) {
       const result = await stmt.run(...bindParams(params))
       counts = addRowCounts(counts, rowCountsOf(result))

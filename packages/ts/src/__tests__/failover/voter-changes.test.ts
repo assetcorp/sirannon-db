@@ -19,6 +19,8 @@ import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
 import type { ItemRow } from './sqlite-oracle.js'
 
+const NODE_NEVER_STARTED = 'failover-node-never-started'
+
 async function writeRows(env: GateEnvironment, ids: readonly number[], note: string): Promise<ItemRow[]> {
   const rows: ItemRow[] = []
   for (const id of ids) {
@@ -101,6 +103,33 @@ describe('voter changes', () => {
     const group = await storedGroup(env)
     expect(group.votingDataBearingNodeIds.sort()).toEqual([NODE_A, NODE_B, NODE_C].sort())
     expect(group.currentPrimary?.nodeId).toBe(NODE_A)
+  })
+
+  it('removes a dead pending voter from a group with one in-sync voter of three, and still refuses to remove a voter below the majority', async () => {
+    const env = environment()
+    await startCluster(env)
+    await writeRows(env, [1], 'all-in-sync')
+
+    for (const nodeId of [NODE_B, NODE_C]) {
+      await setReplicationLinks(env, nodeId, false)
+      await env.coordinator.updateNodeMaintenance({ clusterId: CLUSTER_ID, groupId: GROUP_ID, nodeId, repairing: true })
+    }
+    await waitForGroup(env, group => group.inSyncNodeIds.join() === NODE_A, 10_000, `only ${NODE_A} in sync`)
+
+    const addition = await env.coordinator.addVoter(voterChange(NODE_NEVER_STARTED, await votersOf(env)))
+    expect(addition.changed).toBe(true)
+    expect(addition.state?.pendingVoterNodeIds).toEqual([NODE_NEVER_STARTED])
+
+    const removal = await env.coordinator.removeVoter(voterChange(NODE_NEVER_STARTED, await votersOf(env)))
+    expect(removal.changed).toBe(true)
+    const afterRemoval = await storedGroup(env)
+    expect(afterRemoval.pendingVoterNodeIds).toEqual([])
+    expect(afterRemoval.repairingNodeIds).not.toContain(NODE_NEVER_STARTED)
+    expect(afterRemoval.votingDataBearingNodeIds.sort()).toEqual([NODE_A, NODE_B, NODE_C].sort())
+    expect(afterRemoval.inSyncNodeIds).toEqual([NODE_A])
+
+    await expect(env.coordinator.removeVoter(voterChange(NODE_B, await votersOf(env)))).rejects.toThrow(RangeError)
+    expect((await votersOf(env)).sort()).toEqual([NODE_A, NODE_B, NODE_C].sort())
   })
 
   it('creates the group record once when two nodes create it together', async () => {

@@ -1,7 +1,7 @@
 import type { RegisterNodeSessionInput, ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError, CoordinatorError, TopologyError } from '../errors.js'
 import type { CoordinatorModeConfig, ReplicationConfig } from '../types.js'
-import { COORDINATOR_ENDPOINTS_REFUSAL, DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
+import { COORDINATOR_ENDPOINTS_REFUSAL, DEFAULT_COORDINATOR_SESSION_TTL_MS, FIRST_PRIMARY_TERM } from './constants.js'
 import { startControllerLoop, stopControllerLeaseWatch } from './controller-loop.js'
 import {
   applyCoordinatorState,
@@ -20,7 +20,11 @@ import { keepTermHistoryCurrent } from './history-anchor.js'
 import { applyCoordinatorRestartRules } from './local-membership.js'
 import { refreshMemberAddresses } from './member-addresses.js'
 import { reportEngineError } from './report-error.js'
-import { ensurePrimaryTermStart } from './term-history.js'
+import {
+  ensurePrimaryTermStart,
+  forgetUnheldFirstPrimaryTermStart,
+  recordFirstPrimaryTermStart,
+} from './term-history.js'
 import { unrefTimer } from './timers.js'
 
 const IN_SYNC_RECONCILE_INTERVAL_MS = 1_000
@@ -76,18 +80,26 @@ async function openReplicationGroup(
 ): Promise<{ state: ReplicationGroupState; created: boolean }> {
   const coordinator = config.coordinator
   const existing = await coordinator.getReplicationGroupState(config.clusterId, config.groupId)
-  if (existing) return { state: existing, created: false }
+  if (existing) {
+    await forgetUnheldFirstPrimaryTermStart(engine, existing)
+    return { state: existing, created: false }
+  }
   if (config.votingDataBearingNodeIds) {
+    const createsAsPrimary = engine.config.topology.role === 'primary'
+    if (createsAsPrimary) await recordFirstPrimaryTermStart(engine, config.votingDataBearingNodeIds)
     const opened = await coordinator.createReplicationGroupState({
       clusterId: config.clusterId,
       groupId: config.groupId,
       votingDataBearingNodeIds: config.votingDataBearingNodeIds,
-      currentPrimary: engine.config.topology.role === 'primary' ? localCoordinatorPrimary(engine) : null,
-      primaryTerm: 1n,
+      currentPrimary: createsAsPrimary ? localCoordinatorPrimary(engine) : null,
+      primaryTerm: FIRST_PRIMARY_TERM,
       inSyncNodeIds: [engine.nodeId],
       compatibility: config.compatibility,
     })
-    if (opened.state) return { state: opened.state, created: opened.created }
+    if (opened.state) {
+      if (!opened.created) await forgetUnheldFirstPrimaryTermStart(engine, opened.state)
+      return { state: opened.state, created: opened.created }
+    }
   }
   throw new CoordinatorError(`Replication group '${config.groupId}' is not registered`)
 }

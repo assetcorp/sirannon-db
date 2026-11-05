@@ -156,6 +156,14 @@ async function startClusterNode(): Promise<RunningNode> {
     await inSyncUpdateHold.pass(input)
     return sendInSyncUpdate(input)
   }
+  if (config.dieAfterGroupCreate) {
+    const createGroup = coordinator.createReplicationGroupState.bind(coordinator)
+    coordinator.createReplicationGroupState = async input => {
+      const result = await createGroup(input)
+      process.kill(process.pid, 'SIGKILL')
+      return result
+    }
+  }
   const conn: SQLiteConnection = await testDriver.open(config.dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
 

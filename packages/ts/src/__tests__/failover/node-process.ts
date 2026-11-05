@@ -34,6 +34,7 @@ export interface FailoverNodeConfig {
   writeForwarding: boolean
   initialSync?: boolean
   backupDirectory?: string
+  dieAfterGroupCreate?: boolean
   compatibility: {
     packageVersion: string
     specVersion: string

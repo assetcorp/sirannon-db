@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import {
   deletePeerStates,
+  deletePrimaryTermStart,
   selectAnchoredTerm,
   selectHistoryTransaction,
   selectMaxHistoryChangeSeq,
@@ -13,6 +14,7 @@ import {
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { StalePrimaryError } from '../errors.js'
 import type { SyncHistoryPoint, SyncRequest } from '../types.js'
+import { FIRST_PRIMARY_TERM } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
@@ -122,8 +124,51 @@ export class TermHistory {
  * @internal
  */
 export function historyOrigins(engine: ReplicationEngine): string[] {
-  const voters = engine.coordinatorState?.votingDataBearingNodeIds ?? []
-  return voters.includes(engine.nodeId) ? [...voters] : [engine.nodeId, ...voters]
+  return historyOriginsFor(engine.nodeId, engine.coordinatorState?.votingDataBearingNodeIds ?? [])
+}
+
+function historyOriginsFor(nodeId: string, voters: readonly string[]): string[] {
+  return voters.includes(nodeId) ? [...voters] : [nodeId, ...voters]
+}
+
+/**
+ * Records in this node's file that its first term as primary begins at the newest history position in its log, before
+ * the node creates its group with itself as primary. A restart that finds the group named after this node then keeps
+ * primary duty, even when the node stopped before it served a write. The recording resets every peer's progress, as
+ * the start of any term does, and leaves the engine's term history unchanged, so that the first term start that the
+ * node records after creating the group reuses this position and raises the group's durability point to it.
+ *
+ * @param engine - The engine of the node that creates the group.
+ * @param voters - The voters that the node names in the group that it creates.
+ *
+ * @internal
+ */
+export async function recordFirstPrimaryTermStart(engine: ReplicationEngine, voters: readonly string[]): Promise<void> {
+  const conn = engine.writerConn
+  const seq = await selectMaxHistoryChangeSeq(conn, CHANGES_TABLE, historyOriginsFor(engine.nodeId, voters))
+  await deletePeerStates(conn)
+  engine.peerTracker.restartProgress(seq)
+  await upsertPrimaryTermStart(conn, { term: FIRST_PRIMARY_TERM, seq })
+}
+
+/**
+ * Forgets the first term start that this node recorded before it tried to create its group, once the group exists
+ * without naming this node as its first primary, so that the node never reads that record as a term in which it held
+ * primary duty.
+ *
+ * @param engine - The engine of the node that tried to create the group.
+ * @param state - The group state that the coordinator holds.
+ *
+ * @internal
+ */
+export async function forgetUnheldFirstPrimaryTermStart(
+  engine: ReplicationEngine,
+  state: ReplicationGroupState,
+): Promise<void> {
+  if (state.primaryTerm !== FIRST_PRIMARY_TERM || state.currentPrimary?.nodeId === engine.nodeId) return
+  const conn = engine.writerConn
+  const recorded = await selectPrimaryTermStart(conn)
+  if (recorded?.term === FIRST_PRIMARY_TERM) await deletePrimaryTermStart(conn)
 }
 
 /**

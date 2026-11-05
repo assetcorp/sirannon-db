@@ -21,6 +21,17 @@ DURABILITY_LABELS = {
 
 DURABILITY_ORDER = ["full", "matched"]
 
+SEARCHED_MARK = " ‡"
+SEARCHED_NOTE = (
+    "_A ‡ marks a rate that is not on the list of target rates. The harness found it by halving a wide gap in "
+    "that list at the engine's peak in-flight limit, and it measured that rate as many times as each listed "
+    "rate._"
+)
+
+
+def searched_mark(entry: object) -> str:
+    return SEARCHED_MARK if isinstance(entry, dict) and entry.get("searched") is True else ""
+
 
 def workload_label(workload: str) -> str:
     return WORKLOAD_LABELS.get(workload, workload)

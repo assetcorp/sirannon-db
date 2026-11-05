@@ -79,7 +79,7 @@ export async function repeatLevel(
     )
     const more = await measurePasses(makeOp, previous.targetRate, extraRuns, sweep.level, config, cpuSource)
     measured.push({
-      targetRate: previous.targetRate,
+      ...previous,
       passes: [...previous.passes, ...more.passes],
       cores: [...previous.cores, ...more.cores],
     })

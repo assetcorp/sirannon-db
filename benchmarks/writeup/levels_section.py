@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from comparison_view import durability_label, workload_label
+from comparison_view import SEARCHED_NOTE, durability_label, searched_mark, workload_label
 from render import integer, is_number, ms, ops, table
 
 ENGINE_NAMES = {"sirannon": "Sirannon", "postgres": "PostgreSQL"}
@@ -10,7 +10,7 @@ def _cell(entry: dict | None) -> str:
     if entry is None or not is_number(entry.get("target_rate")):
         return "n/a"
     marker = "" if entry.get("under_slo") else " †"
-    return f"{ops(entry.get('target_rate'))} ({ms(entry.get('p99_ms'))} ms){marker}"
+    return f"{ops(entry.get('target_rate'))}{searched_mark(entry)} ({ms(entry.get('p99_ms'))} ms){marker}"
 
 
 def _durability_rows(node: dict, levels: list[int]) -> list[list[str]]:
@@ -49,6 +49,14 @@ def levels_block(recorded: list[tuple[str, dict]], levels: list[int]) -> str:
         )
     if not parts:
         return ""
+    if any(
+        searched_mark(entry)
+        for _, node in recorded
+        for row in node.get("workloads", [])
+        for engine in ("sirannon", "postgres")
+        for entry in row.get(f"{engine}_levels") or []
+    ):
+        parts.append(SEARCHED_NOTE)
     lead = (
         "### Operating points at each in-flight limit\n\n"
         "_Each cell gives the operating point that an engine reached with at most that many requests in flight, "

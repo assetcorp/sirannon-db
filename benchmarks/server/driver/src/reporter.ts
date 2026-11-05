@@ -1,6 +1,7 @@
 import type { Config } from './config.ts'
 import type { ClientCeiling } from './loadgen.ts'
 import { transportOf } from './network.ts'
+import { RATE_SEARCH_MIN_GAP_RATIO } from './rate-search.ts'
 
 const SIRANNON_CLIENT = '@delali/sirannon-db SDK over its WebSocket transport'
 const POSTGRES_CLIENT = 'node-postgres (pg) over a pooled binary socket'
@@ -62,6 +63,8 @@ export function configBlock(config: Config): Record<string, unknown> {
     concurrency_levels: config.concurrencyLevels,
     target_rates: config.targetRates,
     sweep_stop_steps: config.sweepStopSteps,
+    rate_search_steps: config.rateSearchSteps,
+    rate_search_min_gap_ratio: RATE_SEARCH_MIN_GAP_RATIO,
     prepare_retry_seconds: config.prepareRetrySeconds,
     soak_seconds: config.soakSeconds,
     soak_workloads: config.soakWorkloads,

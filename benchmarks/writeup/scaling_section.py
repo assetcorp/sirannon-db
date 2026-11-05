@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from comparison_view import durabilities, durability_label, workload_label
+from comparison_view import SEARCHED_NOTE, durabilities, durability_label, searched_mark, workload_label
 from render import HIGHER_IS_BETTER, LOWER_IS_BETTER, emphasize_best, integer, ms, ops, table
 from sources import Source
 
@@ -18,8 +18,9 @@ def _curve_row(point: dict) -> list[str]:
         LOWER_IS_BETTER,
         ms,
     )
+    searched = searched_mark(point.get("sirannon")) or searched_mark(point.get("postgres"))
     return [
-        integer(point.get("target_rate")),
+        integer(point.get("target_rate")) + searched,
         sirannon_ops_cell,
         sirannon_p99_cell,
         postgres_ops_cell,
@@ -58,11 +59,25 @@ def scaling_block(source: Source, chart_dir: str) -> str:
         for entry in scaling
         for point in entry.get("curve", [])
     )
-    if has_gap:
+    has_searched = any(
+        searched_mark(point.get("sirannon")) or searched_mark(point.get("postgres"))
+        for entry in scaling
+        for point in entry.get("curve", [])
+    )
+    if has_gap and has_searched:
+        parts.append(
+            "_An n/a cell marks a rate that the harness never offered to that engine, either because the engine's "
+            "sweep had stopped after a lower rate that it could not sustain, or because the harness searched that "
+            "rate for the other engine alone._"
+        )
+    elif has_gap:
         parts.append(
             "_An n/a cell marks a rate that the harness never offered to that engine, because the engine's sweep "
             "had stopped after a lower rate that it could not sustain._"
         )
+    if has_searched:
+        parts.append(SEARCHED_NOTE)
+        parts.append("_Each figure below draws a searched rate as a hollow circle._")
     for entry in scaling:
         workload = entry.get("workload", "n/a")
         label = workload_label(workload)

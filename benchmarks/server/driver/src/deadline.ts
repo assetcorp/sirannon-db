@@ -1,4 +1,5 @@
 import type { Config } from './config.ts'
+import { ladderHasWideGap } from './rate-search.ts'
 
 const MIN_SEED_ROWS_PER_SEC = 20_000
 const WORKLOAD_DEADLINE_SAFETY = 3
@@ -12,11 +13,10 @@ export function workloadDeadlineMs(config: Config): number {
   const seedSeconds = config.dataSize / MIN_SEED_ROWS_PER_SEC
   const levelSweepSeconds = config.concurrencyLevels.length * config.targetRates.length * windowSeconds
   const peakRepeatSeconds = config.targetRates.length * (config.runs - 1) * windowSeconds
+  const rateSearchSeconds = ladderHasWideGap(config) ? config.rateSearchSteps * config.runs * windowSeconds : 0
   const soakSeconds = config.soakSeconds > 0 ? config.warmupSeconds + config.soakSeconds : 0
-  return Math.max(
-    WORKLOAD_DEADLINE_FLOOR_MS,
-    Math.ceil((seedSeconds + levelSweepSeconds + peakRepeatSeconds + soakSeconds) * WORKLOAD_DEADLINE_SAFETY) * 1000,
-  )
+  const plannedSeconds = seedSeconds + levelSweepSeconds + peakRepeatSeconds + rateSearchSeconds + soakSeconds
+  return Math.max(WORKLOAD_DEADLINE_FLOOR_MS, Math.ceil(plannedSeconds * WORKLOAD_DEADLINE_SAFETY) * 1000)
 }
 
 export class WorkloadStallError extends Error {

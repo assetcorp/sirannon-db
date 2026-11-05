@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from comparison_view import durabilities, durability_label, workload_label
+from comparison_view import SEARCHED_NOTE, durabilities, durability_label, searched_mark, workload_label
 from levels_section import levels_block
 from operation_cost_section import operation_cost_table
 from render import HIGHER_IS_BETTER, emphasize_best, is_number, ms, ops, percent, ratio, table
@@ -35,8 +35,19 @@ def _missed_cell(curve: list[dict], engine: str, operating_rate: object, slo_ms:
         if not is_number(rate) or float(rate) <= float(operating_rate) or side.get("ops") is None:
             continue
         if not _held(side, slo_ms):
-            return f"{ops(rate)} ({ms(side.get('p99_ms'))} ms)"
+            return f"{ops(rate)}{searched_mark(side)} ({ms(side.get('p99_ms'))} ms)"
     return HELD_EVERY_RATE
+
+
+def _searched_anywhere(node: dict) -> bool:
+    for row in node.get("workloads", []):
+        if searched_mark(row.get("sirannon")) or searched_mark(row.get("postgres")):
+            return True
+    for entry in node.get("scaling", []):
+        for point in entry.get("curve", []):
+            if searched_mark(point.get("sirannon")) or searched_mark(point.get("postgres")):
+                return True
+    return False
 
 
 def _durability_table(node: dict, slo_ms: object) -> str:
@@ -69,12 +80,12 @@ def _durability_table(node: dict, slo_ms: object) -> str:
         )
         body.append([
             workload_label(row.get("workload", "n/a")) + marker,
-            sirannon_ops_cell,
+            sirannon_ops_cell + searched_mark(sirannon),
             ci_cell,
             percent(sirannon.get("ops_cv")),
             ms(sirannon.get("p99_ms")),
             _missed_cell(curve, "sirannon", sirannon.get("target_rate"), slo_ms),
-            postgres_ops_cell,
+            postgres_ops_cell + searched_mark(postgres),
             ms(postgres.get("p99_ms")),
             _missed_cell(curve, "postgres", postgres.get("target_rate"), slo_ms),
             ratio_cell,
@@ -106,6 +117,12 @@ def throughput_block(source: Source, chart_dir: str) -> str:
     if not recorded:
         return "The harness recorded no engine results."
     slo_ms = source.comparison.get("config", {}).get("slo_p99_ms")
+    search_steps = source.comparison.get("config", {}).get("rate_search_steps")
+    measured_rates = (
+        "the listed target rates and the rates that it searched between them"
+        if is_number(search_steps) and search_steps > 0
+        else "the listed target rates"
+    )
     parts: list[str] = []
     for name, node in recorded:
         label = durability_label(name)
@@ -136,12 +153,14 @@ def throughput_block(source: Source, chart_dir: str) -> str:
         "figure with a 95% bootstrap confidence interval and the coefficient of variation across repetitions. "
         "The rate ratio is "
         "Sirannon's operating point divided by PostgreSQL's, so a ratio above one means that Sirannon held the "
-        "target at a higher rate. Every ratio is approximate, because the harness measures only the listed target "
-        "rates, so an engine's highest sustainable rate lies between its operating point and the rate in its "
+        f"target at a higher rate. Every ratio is approximate, because the harness measures only {measured_rates}, "
+        "so an engine's highest sustainable rate lies between its operating point and the rate in its "
         "'missed at' column. For TPC-C-derived, the generator sends two kinds of one-statement write in equal "
         "shares, which are an insert into `orders` and an update of one customer's balance. Neither write is a "
         "full TPC-C transaction. The harness measures YCSB A, B, C, and F, but not D or E._"
     )
+    if any(_searched_anywhere(node) for _, node in recorded):
+        note += f"\n\n{SEARCHED_NOTE}"
     if any(row.get("workload") == NEW_ORDER_WORKLOAD for _, node in recorded for row in node.get("workloads", [])):
         note += (
             "\n\n_For the TPC-C new-order transaction, every operation is one transaction of six statements, which "

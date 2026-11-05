@@ -79,7 +79,7 @@ Every default is an environment variable:
 | `LOAD_MACHINE_TYPE` | per provider | Load VM size |
 | `LOAD_VM_NAME` | `VM_NAME-load` | Load VM name |
 | `DISK_SIZE` | `60` | Boot disk size in GB (ignored by Hetzner, which bundles storage) |
-| `VM_MAX_HOURS` | `24` | Self-delete backstop in hours; `0` disables it (GCP and AWS only) |
+| `VM_MAX_HOURS` | `26` | Self-delete backstop in hours; `0` disables it (GCP and AWS only) |
 | `SSH_KEY` | `~/.ssh/id_ed25519` | Private key for the raw-SSH providers |
 | `BENCH_PROFILE` | `cloud` | Run profile: `cloud` (10,000,000 rows) or `smoke` (quick check) |
 | `BENCH_MACHINE_LABEL` | derived | Engine VM label recorded in results |
@@ -90,6 +90,7 @@ Every default is an environment variable:
 | `BENCH_RUN_ID` | timestamp | Run directory to write into; set it to an existing run id to add a pass to that run |
 | `BENCH_WORKLOADS` | per config | Workloads to run, comma separated |
 | `BENCH_TARGET_RATES` | per config | Offered request rates for the sweep, comma separated |
+| `BENCH_RATE_SEARCH_STEPS` | `3` in `cloud`, `0` in `smoke` | Times the harness halves a gap above the operating point that is wider than twice that point |
 | `BENCH_DATA_SIZE` | `10000` | Seed row count per workload |
 | `BENCH_RUNS` | `5` | Independent measured runs per rate |
 | `BENCH_WARMUP_SECONDS` | `3` | Discarded warmup window |
@@ -110,9 +111,9 @@ Hetzner and DigitalOcean expose port 22 on a public IP, so treat the VM as throw
 
 ## Self-delete backstop
 
-The `down` command and `--teardown` only run while `run-cloud.sh` itself is alive, so a machine that dies mid-run would leave both VMs billing forever. `VM_MAX_HOURS` (default 24) caps that for each VM: on GCP the instance is created with a termination time and the DELETE action, so Google's control plane deletes it, its boot disk, and its local SSDs at the deadline even if the guest is hung; on AWS the instance schedules an in-guest halt and terminates on shutdown, which deletes the root volume. Hetzner and DigitalOcean have no equivalent, and the toolkit says so at create time.
+The `down` command and `--teardown` only run while `run-cloud.sh` itself is alive, so a machine that dies mid-run would leave both VMs billing forever. `VM_MAX_HOURS` (default 26) caps that for each VM: on GCP the instance is created with a termination time and the DELETE action, so Google's control plane deletes it, its boot disk, and its local SSDs at the deadline even if the guest is hung; on AWS the instance schedules an in-guest halt and terminates on shutdown, which deletes the root volume. Hetzner and DigitalOcean have no equivalent, and the toolkit says so at create time.
 
-The 24-hour default clears the worst case where every timeout in a `cloud` run is fully exhausted (about 22 hours including provisioning, since the harness measures each workload at three in-flight limits). `run` refuses to start when the remaining lifetime of either VM is shorter than the profile could need, and `up` prints the exact deadline. Anything not fetched by the deadline is deleted with the VM, so after losing your connection to a run, fetch results before the printed time. Set `VM_MAX_HOURS=0` to disable the backstop, and rely on `down` alone.
+The 26-hour default clears the worst case where every timeout in a `cloud` run is fully exhausted (about 24 hours including provisioning, since the harness measures each workload at three in-flight limits and searches a wide gap in the rate list). `run` refuses to start when the remaining lifetime of either VM is shorter than the profile could need, and `up` prints the exact deadline. Anything not fetched by the deadline is deleted with the VM, so after losing your connection to a run, fetch results before the printed time. Set `VM_MAX_HOURS=0` to disable the backstop, and rely on `down` alone.
 
 ## Results
 

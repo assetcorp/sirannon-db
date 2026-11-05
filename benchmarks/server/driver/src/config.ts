@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 
 const DEFAULT_CONCURRENCY_LEVELS = [16, 64, 256]
+const MAX_RATE_SEARCH_STEPS = 8
 
 export interface PostgresConfig {
   host: string
@@ -32,6 +33,7 @@ export interface Config {
   workloads: string[]
   targetRates: number[]
   sweepStopSteps: number
+  rateSearchSteps: number
   prepareRetrySeconds: number
   soakSeconds: number
   soakWorkloads: string[]
@@ -183,6 +185,7 @@ export function loadConfig(path: string): Config {
     workloads: envStrList('BENCH_WORKLOADS', asStringList(run.workloads)),
     targetRates: envIntList('BENCH_TARGET_RATES', asNumberList(load.target_rates)),
     sweepStopSteps: envInt('BENCH_SWEEP_STOP_STEPS', asNumber(load.sweep_stop_steps, -1)),
+    rateSearchSteps: envInt('BENCH_RATE_SEARCH_STEPS', asNumber(load.rate_search_steps, 0)),
     prepareRetrySeconds: envInt('BENCH_PREPARE_RETRY_SECONDS', asNumber(run.prepare_retry_seconds, 300)),
     soakSeconds: envInt('BENCH_SOAK_SECONDS', asNumber(soak.seconds, 0)),
     soakWorkloads: envStrList('BENCH_SOAK_WORKLOADS', asStringList(soak.workloads)),
@@ -240,6 +243,17 @@ function validate(config: Config): void {
   if (!Number.isInteger(config.sweepStopSteps) || config.sweepStopSteps < -1) {
     throw new Error(
       `sweep_stop_steps must be an integer >= -1, where -1 runs every rate and 0 or more stops that many steps past the first unsustained rate, got ${config.sweepStopSteps}`,
+    )
+  }
+  if (
+    !Number.isInteger(config.rateSearchSteps) ||
+    config.rateSearchSteps < 0 ||
+    config.rateSearchSteps > MAX_RATE_SEARCH_STEPS
+  ) {
+    throw new Error(
+      `rate_search_steps must be an integer from 0 to ${MAX_RATE_SEARCH_STEPS}, where 0 reports only the listed ` +
+        'target rates and a positive value halves a wide gap above the operating point that many times, ' +
+        `got ${config.rateSearchSteps}`,
     )
   }
   if (!Number.isInteger(config.prepareRetrySeconds) || config.prepareRetrySeconds < 0) {

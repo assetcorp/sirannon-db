@@ -1,3 +1,32 @@
+## 0.3.5 (2026-11-05)
+
+### 🚀 Features
+
+- **benchmarks:** measure the TPC-C new-order transaction and publish round trips per operation ([af12a51](https://github.com/assetcorp/sirannon-db/commit/af12a51))
+- **benchmarks:** drive the engines from a second machine at several in-flight limits on PostgreSQL 18 ([2c85b5f](https://github.com/assetcorp/sirannon-db/commit/2c85b5f))
+- **benchmarks:** offer 1,000 to 64,000 a second in the full profile with finer steps above 8,000 ([d510629](https://github.com/assetcorp/sirannon-db/commit/d510629))
+- **benchmarks:** search a wide rate gap above the operating point at the peak in-flight limit ([a92378a](https://github.com/assetcorp/sirannon-db/commit/a92378a))
+- **ts:** count rows read and written per statement ([5ec1014](https://github.com/assetcorp/sirannon-db/commit/5ec1014))
+- **ts:** meter rows read and written, including late and failed writes ([1f37533](https://github.com/assetcorp/sirannon-db/commit/1f37533))
+
+### 🩹 Fixes
+
+- **benchmarks:** keep VM-only run logs when syncing the cloud checkout ([a1c0a35](https://github.com/assetcorp/sirannon-db/commit/a1c0a35))
+- **benchmarks:** keep unfetched runs on sync and clean up partial cloud setups ([2ebab52](https://github.com/assetcorp/sirannon-db/commit/2ebab52))
+- **replication:** rebuild an emptied copy under its own node ID and admit it only by proof ([ea01d1e](https://github.com/assetcorp/sirannon-db/commit/ea01d1e))
+- **replication:** always accept removing a pending voter and record the first term before creating a group ([a94dcef](https://github.com/assetcorp/sirannon-db/commit/a94dcef))
+- **server:** close a WebSocket upgrade that the authenticate hook refuses after a wait ([827a937](https://github.com/assetcorp/sirannon-db/commit/827a937))
+- **ts:** log REPLACE deletes and reject stale transaction handles ([371cf05](https://github.com/assetcorp/sirannon-db/commit/371cf05))
+- **ts:** refuse writer calls during a transaction callback ([d5f95f9](https://github.com/assetcorp/sirannon-db/commit/d5f95f9))
+- **ts:** bind booleans as 1 or 0 in every driver ([e6aa92c](https://github.com/assetcorp/sirannon-db/commit/e6aa92c))
+- **ts:** bind and read values exactly in wa-sqlite and expo drivers ([8182c21](https://github.com/assetcorp/sirannon-db/commit/8182c21))
+- **ts:** restore read and write speed under heavy load and stop the node:sqlite close crash ([b07fe93](https://github.com/assetcorp/sirannon-db/commit/b07fe93))
+- **ts:** read a backup's log position from one generation of the log ([51d80a7](https://github.com/assetcorp/sirannon-db/commit/51d80a7))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.4 (2026-09-27)
 
 ### 🚀 Features

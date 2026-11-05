@@ -704,9 +704,9 @@ BackupSkip {
 
 An implementation runs every turn where the options carry no `replicationGroup`.
 
-`'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary where that node is eligible, and to no node otherwise. An object resolves to the identifier it carries. An implementation reads no membership for that form.
+`'replica'` resolves to the lowest eligible node identifier other than the primary, and to the primary where the group offers no other eligible node. `'primary'` resolves to the node the group names primary where that node is eligible, and to no node otherwise. An object resolves to the identifier it carries where `readMembership` reports that node eligible, and to no node otherwise.
 
-`readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator omits the nodes the group records as draining, repairing, or faulted (see [09-failover.md](09-failover.md#replication-group-and-node-identity)).
+`readMembership` reports the node the group names primary and the nodes eligible to take the backup. A source backed by a cluster coordinator reports as eligible only the nodes in the group's in-sync set that the group records as neither draining, repairing, nor faulted (see [09-failover.md](09-failover.md#replication-group-and-node-identity)).
 
 On a node other than the preferred one, an implementation sends any staged capture, deletes its cycle state, checkpoints the log, and reports a skip of `'not-preferred'`. Where the destination refuses that capture, the implementation keeps the chain, the staged capture, and the log, and stands down on a later turn. A chain continues on the node that started it and on no other, so the next turn on a node holding no cycle state starts a fresh chain with a full copy.
 

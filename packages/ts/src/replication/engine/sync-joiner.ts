@@ -5,9 +5,10 @@ import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncComplete } from '../types.js'
 import { IDENTIFIER_RE, isSyncSafeDdl } from './constants.js'
-import { leaveInSyncSetBeforeCopy } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { handleHistoryAnswer, handleHistoryCopyBatch, recordCopiedHistory } from './history-anchor.js'
+import { isLocalNodeMember, markRepairingBeforeCopy } from './local-membership.js'
+import { reportEngineError } from './report-error.js'
 import { reportSnapshotPosition, SyncRecovery } from './sync-recovery.js'
 import { advanceStreamDigest, copiedTables, copyMatchesManifests } from './sync-verification.js'
 
@@ -37,7 +38,7 @@ export class SyncJoiner {
     const peers = engine.config.transport.peers()
     let sourcePeerId: string | null = engine.isCoordinatorMode() ? engine.getCurrentPrimaryPeerId() : null
 
-    if (engine.isCoordinatorMode() && sourcePeerId === null) {
+    if (engine.isCoordinatorMode() && (sourcePeerId === null || !isLocalNodeMember(engine))) {
       return
     }
 
@@ -67,7 +68,7 @@ export class SyncJoiner {
     engine.syncState.error = null
 
     try {
-      await leaveInSyncSetBeforeCopy(engine)
+      await markRepairingBeforeCopy(engine)
       const savedState = await engine.log.getSyncState()
       const completedTables = savedState.phase === 'pending' ? [] : savedState.completedTables
       const requestId = randomUUID()
@@ -384,9 +385,11 @@ export class SyncJoiner {
   private async finishCatchUpAsReady(): Promise<void> {
     const engine = this.engine
     await engine.log.setSyncMeta('ready')
-    await engine.markCoordinatorSyncReady()
     engine.syncState.phase = 'ready'
     this.recovery.markSyncReady()
     this.stopCatchUpCheck()
+    await engine
+      .markCoordinatorSyncReady()
+      .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-sync-ready', true))
   }
 }

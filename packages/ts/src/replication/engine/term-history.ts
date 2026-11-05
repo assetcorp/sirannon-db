@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import {
   deletePeerStates,
+  deletePrimaryTermStart,
   selectAnchoredTerm,
   selectHistoryTransaction,
   selectMaxHistoryChangeSeq,
@@ -13,6 +14,7 @@ import {
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { StalePrimaryError } from '../errors.js'
 import type { SyncHistoryPoint, SyncRequest } from '../types.js'
+import { FIRST_PRIMARY_TERM } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
@@ -122,8 +124,51 @@ export class TermHistory {
  * @internal
  */
 export function historyOrigins(engine: ReplicationEngine): string[] {
-  const voters = engine.coordinatorState?.votingDataBearingNodeIds ?? []
-  return voters.includes(engine.nodeId) ? [...voters] : [engine.nodeId, ...voters]
+  return historyOriginsFor(engine.nodeId, engine.coordinatorState?.votingDataBearingNodeIds ?? [])
+}
+
+function historyOriginsFor(nodeId: string, voters: readonly string[]): string[] {
+  return voters.includes(nodeId) ? [...voters] : [nodeId, ...voters]
+}
+
+/**
+ * Records in this node's file that its first term as primary begins at the newest history position in its log, before
+ * the node creates its group with itself as primary. A restart that finds the group named after this node then keeps
+ * primary duty, even when the node stopped before it served a write. The recording resets every peer's progress, as
+ * the start of any term does, and leaves the engine's term history unchanged, so that the first term start that the
+ * node records after creating the group reuses this position and raises the group's durability point to it.
+ *
+ * @param engine - The engine of the node that creates the group.
+ * @param voters - The voters that the node names in the group that it creates.
+ *
+ * @internal
+ */
+export async function recordFirstPrimaryTermStart(engine: ReplicationEngine, voters: readonly string[]): Promise<void> {
+  const conn = engine.writerConn
+  const seq = await selectMaxHistoryChangeSeq(conn, CHANGES_TABLE, historyOriginsFor(engine.nodeId, voters))
+  await deletePeerStates(conn)
+  engine.peerTracker.restartProgress(seq)
+  await upsertPrimaryTermStart(conn, { term: FIRST_PRIMARY_TERM, seq })
+}
+
+/**
+ * Forgets the first term start that this node recorded before it tried to create its group, once the group exists
+ * without naming this node as its first primary, so that the node never reads that record as a term in which it held
+ * primary duty.
+ *
+ * @param engine - The engine of the node that tried to create the group.
+ * @param state - The group state that the coordinator holds.
+ *
+ * @internal
+ */
+export async function forgetUnheldFirstPrimaryTermStart(
+  engine: ReplicationEngine,
+  state: ReplicationGroupState,
+): Promise<void> {
+  if (state.primaryTerm !== FIRST_PRIMARY_TERM || state.currentPrimary?.nodeId === engine.nodeId) return
+  const conn = engine.writerConn
+  const recorded = await selectPrimaryTermStart(conn)
+  if (recorded?.term === FIRST_PRIMARY_TERM) await deletePrimaryTermStart(conn)
 }
 
 /**
@@ -162,8 +207,12 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
  * node records the term as the one whose history it holds, so that it reconciles its history with the next primary's
  * once it loses authority.
  *
+ * A primary that the group shows as repairing or faulted records nothing, because its file may lack acknowledged
+ * writes, and a term start that it recorded would let it keep primary duty when it restarts.
+ *
  * @param engine - The engine of the node that holds primary authority.
- * @returns A promise that settles once the term start is recorded, or at once when this node is not primary.
+ * @returns A promise that settles once the term start is recorded, or at once when this node is not primary or the
+ * group shows it as repairing or faulted.
  *
  * @internal
  */
@@ -171,6 +220,9 @@ export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void>
   const state = engine.coordinatorState
   const history = engine.history
   if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return Promise.resolve()
+  if (state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
+    return Promise.resolve()
+  }
   if (history.termStartTerm === state.primaryTerm) return Promise.resolve()
   if (history.pendingTermStart) return history.pendingTermStart
   const pending = recordPrimaryTermStart(engine, state).finally(() => {

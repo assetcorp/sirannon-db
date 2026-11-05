@@ -32,6 +32,8 @@ ReplicationTransport {
   onPeerDisconnected(handler): void
 
   peers(): ReadonlyMap<string, NodeInfo>
+
+  setPeerEndpoints?(endpoints: ReadonlyMap<string, string>): void
 }
 
 TransportConfig { endpoints?: List<string>, localRole?: 'primary' | 'replica',
@@ -43,6 +45,8 @@ NodeInfo { id, groupId?, role: 'primary' | 'replica', primaryTerm?: number,
 ```
 
 The engine supplies `localRole` from the configured topology, and in coordinator mode also `groupId`, `primaryTerm`, and `protocolVersion`. Peers are addressed by node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as does a send to a peer that is not connected. `forward` is a request-response call bounded by a deadline (default 30,000 ms).
+
+In coordinator mode the engine passes no `endpoints` in `TransportConfig`. It calls `setPeerEndpoints`, where the transport provides it, with every other member's replication address keyed by node ID, whenever those addresses change. The transport then dials those addresses.
 
 ---
 

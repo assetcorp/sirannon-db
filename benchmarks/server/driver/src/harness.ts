@@ -26,8 +26,11 @@ export interface EngineResult {
   indeterminateAny: boolean
 }
 
+const FIRST_WORKLOAD_REVISION = 1
+
 export interface WorkloadResult {
   workload: string
+  revision: number
   category: string
   runs: number
   operation_cost: Record<string, unknown>
@@ -77,6 +80,7 @@ async function runWorkload(
       : null
   return {
     workload: workload.name,
+    revision: workload.revision ?? FIRST_WORKLOAD_REVISION,
     category: workload.category,
     runs: config.runs,
     operation_cost: operationCost(driver, workload),

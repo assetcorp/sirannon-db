@@ -166,6 +166,30 @@ def test_refuses_a_run_missing_a_durability_that_the_run_planned(tmp_path: Path,
     ]
 
 
+def test_refuses_a_repair_that_pairs_two_revisions_of_a_workload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full")
+    run_dir = _complete_run(tmp_path, ["full"])
+    repaired = _engine_report("postgres", 25000.0, 4.0, False)
+    repaired["workloads"][0]["revision"] = 2
+    _write(run_dir, "engine-postgres-full.json", repaired)
+
+    problems = _problems_of(run_dir)
+
+    assert problems == ["at full durability sirannon ran point-select revision 1 and postgres ran revision 2"]
+
+
+def test_a_repair_of_one_durability_still_checks_every_durability_in_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("BENCH_DURABILITIES", "matched")
+    run_dir = _complete_run(tmp_path, ["full", "matched"])
+    (run_dir / "engine-postgres-full.json").unlink()
+
+    problems = _problems_of(run_dir)
+
+    assert problems == ["postgres has no finished results at full durability"]
+
+
 def test_builds_a_run_that_holds_every_workload_from_both_engines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("BENCH_DURABILITIES", "full matched")
     run_dir = _complete_run(tmp_path, ["full", "matched"])

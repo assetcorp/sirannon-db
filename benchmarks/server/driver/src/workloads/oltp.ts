@@ -24,6 +24,7 @@ const FIXED_TIMESTAMP = '2026-01-01T00:00:00.000Z'
 const ORDER_LINES = 4
 const MAX_LINE_QUANTITY = 5
 const TPCC_2_4_2_2_RESTOCK_QUANTITY = 91
+const NEW_ORDER_REVISION_WITH_STOCK_IN_PRODUCT_ORDER = 2
 
 const INSERT_ORDER = 'INSERT INTO orders (customer_id, total, status, created_at) VALUES (?, ?, ?, ?)'
 const TAKE_STOCK = 'UPDATE products SET stock = CASE WHEN stock >= ? THEN stock - ? ELSE stock - ? + ? END WHERE id = ?'
@@ -118,6 +119,7 @@ export function oltpWorkloads(): Workload[] {
     },
     {
       name: 'tpc-c-new-order',
+      revision: NEW_ORDER_REVISION_WITH_STOCK_IN_PRODUCT_ORDER,
       category: 'oltp',
       tables: ORDER_ENTRY_TABLES,
       sqliteSchema: ORDER_ENTRY_SCHEMA_SQLITE,

@@ -194,7 +194,9 @@ export class PostgresDriver extends Driver {
   async seed(tables: SeedTable[]): Promise<void> {
     const pool = this.poolOrThrow()
     const client = await pool.connect()
+    let seedFailure: Error | undefined
     try {
+      await client.query('SET transaction_timeout = 0')
       for (const table of tables) {
         const columnCount = table.columns.length
         const rowsPerBatch = Math.max(1, Math.floor(MAX_BIND_PARAMS / columnCount))
@@ -241,8 +243,12 @@ export class PostgresDriver extends Driver {
           throw err
         }
       }
+      await client.query('RESET transaction_timeout')
+    } catch (err) {
+      seedFailure = err instanceof Error ? err : new Error(String(err))
+      throw err
     } finally {
-      client.release()
+      client.release(seedFailure)
     }
   }
 

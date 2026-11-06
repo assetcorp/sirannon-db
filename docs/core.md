@@ -180,6 +180,10 @@ const sirannon = new Sirannon({
 const db = await sirannon.resolve('tenant-42')
 ```
 
-`createTenantResolver` accepts lowercase letters, digits, underscores, and hyphens, with a letter or digit first. It appends `.db` to an accepted identifier. The resolver returns `undefined` for a path separator, a capital letter, or a file name over 255 characters. The server then answers `404 DATABASE_NOT_FOUND`, so an identifier from a request cannot select a file outside `basePath`.
+`createTenantResolver` accepts lowercase letters, digits, underscores, and hyphens, with a letter or digit first. It appends `.db` to an accepted identifier. The resolver returns `undefined` for a path separator, a capital letter, or a file name over 255 characters.
+
+An HTTP route returns `400 INVALID_REQUEST` before the resolver runs when the decoded identifier starts with a slash, a backslash, or a drive letter, or when it contains a `.` or `..` path segment. When a request reaches the resolver and the resolver returns `undefined`, the server returns `404 DATABASE_NOT_FOUND`. A client must handle both responses.
+
+`Sirannon.resolve` returns an already-open database before it consults the resolver, so the resolver's path rule applies only to a database that it opens. Register an already-open database under an identifier only when callers may reach that file. The identifier rules block path traversal through the identifier, while the filesystem can follow a symbolic link under `basePath`. Give write access to the tenant directory only to the application account. Keep every tenant database as a regular file under `basePath`.
 
 The option tables for every constructor above are in the [configuration reference](configuration.md).

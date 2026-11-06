@@ -6,7 +6,7 @@ This roadmap sets out the features that Sirannon has today and the ones that we 
 
 ## Available now
 
-- **Core engine.** Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle management work inside your process on any supported SQLite driver. The better-sqlite3 and Expo drivers can encrypt a database, change its key while the database stays open, and restore encrypted backups.
+- **Core engine.** Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle management work inside your process on any supported SQLite driver. The better-sqlite3 and Expo drivers can encrypt a database and change its key while the database stays open. On Node.js, the better-sqlite3 driver can also restore an encrypted backup.
 - **Server and client.** The server subpath serves any Sirannon instance over HTTP and WebSocket. The client SDK has the same API as the core. When its connection drops, the SDK reconnects and restores each subscription.
 - **Registered operations.** By default, a server executes only the reads and writes that you register under a name, so it accepts no SQL from the network. Code generation produces typed client references from those registered operations. A live query also works over a registered read.
 - **Primary-replica replication.** A single primary stamps each change with a Hybrid Logical Clock and groups the changes into checksummed batches. It then replicates those batches to read replicas over gRPC with mutual TLS. This replication path also includes conflict resolvers, first sync, read concerns, and write concerns.

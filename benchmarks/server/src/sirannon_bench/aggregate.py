@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .core.comparison import build_comparison
+from .core.comparison import IncompleteRunError, build_comparison
 from .core.run_store import (
     MANIFEST_NAME,
     default_results_dir,
@@ -41,7 +41,13 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"run {run_id} has no {MANIFEST_NAME}; nothing to aggregate")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    comparison = build_comparison(run_dir, manifest)
+    try:
+        comparison = build_comparison(run_dir, manifest)
+    except IncompleteRunError as err:
+        sys.stderr.write(f"run {run_id} cannot be compared, so no comparison was written:\n")
+        for problem in err.problems:
+            sys.stderr.write(f"  - {problem}\n")
+        return 1
     path = write_json(run_dir / "comparison.json", comparison)
     sys.stdout.write(f"Wrote {path}\n")
     return 0

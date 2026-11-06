@@ -8,10 +8,12 @@ import { Driver, type TransactionStatement } from './driver.ts'
 const SYNCHRONOUS_COMMIT: Record<string, string> = { full: 'on', matched: 'off' }
 const MAX_BIND_PARAMS = 60_000
 const QUERY_TIMEOUT_MARGIN_MS = 5_000
+const TRANSACTION_TIMEOUT_MARGIN_MS = 2_000
 
 const SQLSTATE_CLASS_SHED = '53'
 const SQLSTATE_CLASS_CONNECTION = '08'
 const SQLSTATE_QUERY_CANCELED = '57014'
+const SQLSTATE_TRANSACTION_TIMEOUT = '25P04'
 const SYSCALL_TIMEOUT = new Set(['ETIMEDOUT', 'ESOCKETTIMEDOUT'])
 const SYSCALL_CONNECTION = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'])
 
@@ -30,7 +32,7 @@ function postgresKind(code: string, err: unknown): FailureKind {
   if (SYSCALL_CONNECTION.has(code)) {
     return 'connection'
   }
-  if (code === SQLSTATE_QUERY_CANCELED) {
+  if (code === SQLSTATE_QUERY_CANCELED || code === SQLSTATE_TRANSACTION_TIMEOUT) {
     return 'timeout'
   }
   if (/^[0-9A-Z]{5}$/.test(code)) {
@@ -77,7 +79,9 @@ export class PostgresDriver extends Driver {
       idleTimeoutMillis: 0,
       connectionTimeoutMillis: this.requestTimeoutMs,
       query_timeout: this.requestTimeoutMs + QUERY_TIMEOUT_MARGIN_MS,
-      options: `-c synchronous_commit=${this.synchronousCommit} -c statement_timeout=${this.requestTimeoutMs}`,
+      options:
+        `-c synchronous_commit=${this.synchronousCommit} -c statement_timeout=${this.requestTimeoutMs} ` +
+        `-c transaction_timeout=${this.requestTimeoutMs + TRANSACTION_TIMEOUT_MARGIN_MS}`,
     })
     pool.on('error', err => {
       progress(
@@ -142,12 +146,14 @@ export class PostgresDriver extends Driver {
     const version = (await pool.query('SELECT version()')).rows[0].version as string
     const sync = (await pool.query('SHOW synchronous_commit')).rows[0].synchronous_commit as string
     const statementTimeout = (await pool.query('SHOW statement_timeout')).rows[0].statement_timeout as string
+    const transactionTimeout = (await pool.query('SHOW transaction_timeout')).rows[0].transaction_timeout as string
     return {
       engine: 'postgres',
       delivery: this.delivery,
       durability_requested: this.durability,
       synchronous_commit: String(sync),
       statement_timeout: String(statementTimeout),
+      transaction_timeout: String(transactionTimeout),
       request_timeout_ms: this.requestTimeoutMs,
       version: String(version),
       max_connections: Number((await pool.query('SHOW max_connections')).rows[0].max_connections),

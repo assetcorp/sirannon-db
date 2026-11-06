@@ -25,13 +25,14 @@ function generatorBlock(passes: LoadResult[], maxInFlight: number): Record<strin
     offered_fraction: median(passes.map(pass => pass.offeredFraction)),
     dispatched_in_window: median(passes.map(pass => pass.dispatchedInWindow)),
     expected_in_window: median(passes.map(pass => pass.expectedInWindow)),
+    missed_in_window: median(passes.map(pass => pass.missedInWindow)),
     note:
       'offered_fraction is the share of the target rate the generator actually offered, and it is ' +
-      'the field to read for whether the load was delivered. dispatched_in_window and ' +
-      'expected_in_window always agree and are not evidence of that: the generator walks every ' +
-      'scheduled request however late it is running, so the count comes out right even when the ' +
-      'schedule took several times its window to deliver. Only the elapsed time shows the shortfall, ' +
-      'which is what offered_rate measures. cap_occupancy is the fraction of the window, sampled off ' +
+      'the field to read for whether the load was delivered. The generator keeps sending scheduled ' +
+      'requests late while the engine falls behind, so offered_rate shows a shortfall through the ' +
+      'elapsed time. It stops sending once one further measurement window has passed after the ' +
+      'window ends, and missed_in_window counts the scheduled requests that it never sent; a pass ' +
+      'with any missed request is not sustained. cap_occupancy is the fraction of the window, sampled off ' +
       'the request path, that the generator spent with its in-flight cap full; near one means ' +
       'requests were waiting on the server rather than on the generator, and occupancy_samples is ' +
       'how many samples that fraction rests on.',

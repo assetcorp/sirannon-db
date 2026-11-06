@@ -164,9 +164,9 @@ def throughput_block(source: Source, chart_dir: str) -> str:
     if any(row.get("workload") == NEW_ORDER_WORKLOAD for _, node in recorded for row in node.get("workloads", [])):
         note += (
             "\n\n_For the TPC-C new-order transaction, every operation is one transaction of six statements, which "
-            "insert an order, take stock from four products in the order that the generator drew them, and charge "
-            "the customer's balance. A PostgreSQL deadlock between two of these transactions counts as an error, "
-            "as any other error does._"
+            "insert an order, take stock from four products in ascending product order, and charge the customer's "
+            "balance. Taking the rows in one order means that two transactions never lock the same products in "
+            "opposite orders, which is how the PostgreSQL manual says to avoid deadlocks._"
         )
     costs = operation_cost_table(recorded)
     levels = levels_block(recorded, concurrency_levels(source.comparison))

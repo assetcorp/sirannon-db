@@ -12,7 +12,7 @@ A wide gap in the rate list can understate an engine whose limit falls inside it
 
 A rate proven in short windows can still collapse under the engine's periodic housekeeping, so the harness can also hold the operating point for a long continuous window (`BENCH_SOAK_SECONDS`, on the workloads in `BENCH_SOAK_WORKLOADS`) and report the slowest 30-second slice, so a checkpoint or vacuum that spikes tail latency shows up instead of averaging away.
 
-Every measured request carries a finite timeout, each workload runs under a stall deadline sized to its expected duration, and each schema reset retries engine errors for a bounded budget. A stalled workload ends that engine's pass and keeps the workloads already measured, so one wedged engine cannot burn the machine or contaminate the next workload's numbers. The deadlines, the retry budget, and the timeout are all `BENCH_` variables.
+Every measured request carries a finite timeout, each workload runs under a stall deadline sized to its expected duration, and each schema reset retries engine errors for a bounded budget. The generator stops sending once one further measurement window has passed after a window ends, and it counts the requests that it never sent as missed, so a rate that the engine cannot keep up with ends within two windows and the request timeout. A failed or stalled workload ends the generator at once, and `run-all.sh` then stops the whole run, because a comparison needs every workload from both engines at every durability. The aggregator refuses to write a comparison for a run that lacks one. The deadlines, the retry budget, and the timeout are all `BENCH_` variables.
 
 Dropping a ten-million-row table between workloads runs for minutes of random reads, so two limits that would cut it short are lifted for the run. `BENCH_WRITE_TIMEOUT_MS` (default 0) disables the Sirannon writer thread's own deadline, matching PostgreSQL's `statement_timeout` default, and `BENCH_SCHEMA_TIMEOUT_MS` (default 1800000) bounds the schema-reset request itself, which otherwise inherits undici's 300-second header timeout. The workload stall deadline and the per-pass timeout still cap a genuinely wedged engine. Every run report states both values, and each drop's duration appears in the run log.
 
@@ -38,7 +38,7 @@ The `smoke` profile checks that the harness works end to end without spending th
 
 A profile only fills in defaults. Any `BENCH_` variable you export still overrides it, so `BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
 
-`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them:
+`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them. Each workload result records the revision of the workload that produced it, and the aggregator refuses a run whose engines ran different revisions of one workload:
 
 ```sh
 BENCH_RUN_ID=20260804T221053Z BENCH_ENGINES=postgres BENCH_DURABILITIES=matched ./run-all.sh cloud

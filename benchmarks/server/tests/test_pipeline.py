@@ -4,7 +4,10 @@ import json
 import sys
 from pathlib import Path
 
-from sirannon_bench.core.comparison import build_comparison
+import pytest
+
+from sirannon_bench.aggregate import main as aggregate_main
+from sirannon_bench.core.comparison import IncompleteRunError, build_comparison
 
 _WRITEUP_DIR = Path(__file__).resolve().parents[2] / "writeup"
 
@@ -98,3 +101,77 @@ def test_writeup_renders_numbers(tmp_path: Path):
     document = server_section.comparison_document(source)
     assert "Sirannon and PostgreSQL on one host" in document
     assert "Point-select" in document
+
+
+_RUN_ID = "20260101T000000Z"
+_MANIFEST = {"run_id": _RUN_ID, "created_at": "2026-07-08T00:00:00+00:00", "environment": {}}
+
+
+def _complete_run(tmp_path: Path, durabilities: list[str]) -> Path:
+    run_dir = tmp_path / "runs" / _RUN_ID
+    run_dir.mkdir(parents=True)
+    for durability in durabilities:
+        _write(run_dir, f"engine-sirannon-{durability}.json", _engine_report("sirannon", 50000.0, 2.0, True))
+        _write(run_dir, f"engine-postgres-{durability}.json", _engine_report("postgres", 25000.0, 4.0, False))
+    _write(run_dir, "run.json", _MANIFEST)
+    return run_dir
+
+
+def _problems_of(run_dir: Path) -> list[str]:
+    with pytest.raises(IncompleteRunError) as caught:
+        build_comparison(run_dir, _MANIFEST)
+    return caught.value.problems
+
+
+def test_refuses_a_run_whose_postgres_pass_never_finished(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("BENCH_DURABILITIES", raising=False)
+    run_dir = _complete_run(tmp_path, ["full"])
+    unfinished = _engine_report("postgres", 25000.0, 4.0, False)
+    unfinished["partial"] = True
+    (run_dir / "engine-postgres-full.json").rename(run_dir / "engine-postgres-full.partial.json")
+    _write(run_dir, "engine-postgres-full.partial.json", unfinished)
+
+    problems = _problems_of(run_dir)
+
+    assert "engine-postgres-full.partial.json holds a pass that never finished" in problems
+    assert "postgres has no finished results at full durability" in problems
+    assert aggregate_main(["--results-dir", str(tmp_path), "--run-id", _RUN_ID]) == 1
+    assert not (run_dir / "comparison.json").exists()
+
+
+def test_refuses_a_run_with_a_failed_or_missing_workload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("BENCH_DURABILITIES", raising=False)
+    run_dir = _complete_run(tmp_path, ["full"])
+    postgres = _engine_report("postgres", 25000.0, 4.0, False)
+    postgres["config"]["workloads"] = ["point-select", "tpc-c-new-order"]
+    postgres["failed_workloads"] = [{"workload": "tpc-c-new-order", "error_code": "WorkloadStallError"}]
+    _write(run_dir, "engine-postgres-full.json", postgres)
+
+    problems = _problems_of(run_dir)
+
+    assert "postgres at full durability failed tpc-c-new-order (WorkloadStallError)" in problems
+    assert "postgres at full durability recorded no result for tpc-c-new-order" in problems
+    assert any("sirannon ran ['point-select'] and postgres ran" in problem for problem in problems)
+
+
+def test_refuses_a_run_missing_a_durability_that_the_run_planned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full matched")
+    run_dir = _complete_run(tmp_path, ["full"])
+
+    problems = _problems_of(run_dir)
+
+    assert problems == [
+        "sirannon has no finished results at matched durability",
+        "postgres has no finished results at matched durability",
+    ]
+
+
+def test_builds_a_run_that_holds_every_workload_from_both_engines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full matched")
+    run_dir = _complete_run(tmp_path, ["full", "matched"])
+
+    assert aggregate_main(["--results-dir", str(tmp_path), "--run-id", _RUN_ID]) == 0
+
+    written = json.loads((run_dir / "comparison.json").read_text(encoding="utf-8"))
+    assert sorted(written["durabilities"]) == ["full", "matched"]
+    assert written["durabilities"]["full"]["workloads"][0]["postgres"]["ops_median"] == 25000.0

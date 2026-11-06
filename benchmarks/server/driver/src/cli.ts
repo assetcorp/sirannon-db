@@ -165,9 +165,9 @@ async function main(argv: string[]): Promise<number> {
 
 main(process.argv.slice(2))
   .then(code => {
-    process.exitCode = code
+    process.exit(code)
   })
   .catch((err: unknown) => {
     process.stderr.write(`${describeError(err)}\n`)
-    process.exitCode = 1
+    process.exit(1)
   })

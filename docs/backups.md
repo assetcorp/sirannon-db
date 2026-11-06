@@ -236,6 +236,19 @@ report.restoresTo      // the moment the rebuilt file reflects
 report.changesApplied  // change files replayed over the full copy
 ```
 
+For an encrypted chain, enable encryption on the driver and supply the key that encrypted that chain:
+
+```ts
+const report = await restoreBackup({
+  destination,
+  driver: betterSqlite3({ encryption: true }),
+  destPath: './data/recovered.db',
+  encryption: { key: loadLedgerKey },
+})
+```
+
+When the key function returns an identifier, each chain records it as `base.keyId`. Retain the key for every chain that you keep, because a restore needs that chain's key. After a key change, the backup cycle starts its next chain with a full copy under the new key. The [encryption guide](encryption.md#backups-and-restores) covers encrypted backups, key identifiers, and restores.
+
 Sirannon reads the chain records at your destination and takes the newest full copy that finished at or before that moment. It then replays every change file captured after that copy up to the same moment, and it applies each piece before it fetches the next. A restore therefore holds one piece in memory at a time, whatever the size of the database.
 
 Leave out `moment` to restore to the newest backup at your destination. The call needs no registry and no open database, so you can call it on a machine that has never opened this database.

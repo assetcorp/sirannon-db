@@ -39,9 +39,68 @@ This page lists every option that the registry, the databases that it opens, the
 | `deviceCursorRetention` | `number` | `2_592_000_000` | How long, in ms, a device's cursor may hold changes back; Sirannon deletes the cursor once the device's last acknowledgement, or the oldest change that the cursor holds back, is older than this |
 | `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back; a device further behind resyncs from a snapshot, and `0` sets no limit |
 | `writerWorker` | `boolean \| WriterWorkerOptions` | `false` | Run writes on a dedicated worker thread so that a disk flush never blocks the serving thread |
+| `backups` | `BackupCycleOptions` | - | Captures full copies and later write-ahead log changes to a destination; see the [backups guide](backups.md) |
 | `encryption` | `EncryptionOptions` | - | `{ key }`, where `key` returns the 32-byte key under which Sirannon keeps the file, its log, and its backups as ciphertext; see the [encryption guide](encryption.md) |
 
 `WriterWorkerOptions` accepts `maxPendingWrites` (in-flight writes before the server sheds load), `writeTimeoutMs` (per-operation deadline), and `maxRestarts` (respawns allowed after the worker crashes).
+
+## Driver options
+
+### `BetterSqlite3Options`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `busyTimeout` | `number` | `5_000` | Milliseconds that SQLite waits for a database lock before it returns a busy error |
+| `vfsExtensionPath` | `string` | Platform package, when installed | Path to a compiled streaming-backup extension |
+| `rowCounts` | `boolean` | `false` | Opens through `@delali/sirannon-sqlite` and reports rows read and written through query metrics |
+| `sqliteBindingPath` | `string` | Platform package, when installed | Path to a native binding built against Sirannon's SQLite; the driver reads it when `rowCounts` or `encryption` is on |
+| `encryption` | `boolean` | `false` | Opens through Sirannon's encrypting SQLite build, so a database can take an encryption key |
+
+### `NodeSqliteOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `busyTimeout` | `number` | `5_000` | Milliseconds that SQLite waits for a database lock before it returns a busy error |
+| `vfsExtensionPath` | `string` | Platform package, when installed | Path to a compiled streaming-backup extension |
+
+### `BunSqliteOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `busyTimeout` | `number` | `5_000` | Milliseconds that SQLite waits for a database lock before it returns a busy error |
+
+### `WaSqliteOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `vfs` | `'IDBBatchAtomicVFS' \| 'AccessHandlePoolVFS'` | `'IDBBatchAtomicVFS'` | Virtual file system that stores the database in the browser |
+
+`expoSqlite()` takes no driver options.
+
+## `BackupCycleOptions`
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `destination` | `BackupDestination` | required | Storage functions for the full copy, change pieces, and chain records |
+| `intervalMs` | `number` | `60_000` | Milliseconds between scheduled captures; `0` disables scheduled turns after the cycle's first turn |
+| `fullCopyIntervalMs` | `number` | `86_400_000` | Age of a chain in milliseconds before the cycle starts a new chain with a full copy |
+| `chainName` | `string` | `'sirannon-backup-chain'` | Name under which the destination stores the chain list |
+| `namePrefix` | `string` | `'sirannon-backup'` | Prefix for backup file names at the destination |
+| `pieceBytes` | `number` | `16_777_216` | Size of each complete destination piece in bytes |
+| `fingerprint` | `boolean` | `true` | Whether Sirannon records a SHA-256 fingerprint for each backup |
+| `stagingDir` | `string` | `<database path>-backup` | Directory that holds a capture before Sirannon sends it |
+| `pagesPerStep` | `number` | `256` | Pages that SQLite copies in one step of a full copy |
+| `restartLimit` | `number` | `3` | Restarts from page one that Sirannon allows before it fails a full copy |
+| `stallTimeoutMs` | `number` | `30_000` | Milliseconds without a completed copy step before Sirannon fails the copy; `0` removes the timer |
+| `destinationTimeoutMs` | `number` | `600_000` | Milliseconds that one destination call may take; `0` removes the deadline |
+| `maxUncapturedLogBytes` | `number` | unlimited | Write-ahead log size at which Sirannon breaks the chain and checkpoints the log after a turn captures nothing |
+| `noProgressStepLimit` | `number` | `256` | Copy steps without a newly copied page before Sirannon fails the copy |
+| `replicationGroup` | `BackupGroupSource` | - | Supplies this node's identity and the eligible members of its replication group |
+| `preferredNode` | `BackupNodePreference` | `'replica'` | Selects the replica, primary, or named node that takes backups for a replication group |
+| `onRun` | `(report: BackupRunReport) => void` | - | Receives each completed backup report |
+| `onProgress` | `(progress: BackupProgress) => void` | - | Receives each copy step and stored piece |
+| `onSkip` | `(skip: BackupSkip) => void` | - | Receives each turn that this node skips |
+| `onError` | `(error: Error) => void` | - | Receives each capture, transfer, or checkpoint failure |
 
 ## `QueryOptions`
 

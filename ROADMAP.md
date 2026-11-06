@@ -6,7 +6,7 @@ This roadmap sets out the features that Sirannon has today and the ones that we 
 
 ## Available now
 
-- **Core engine.** Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle management work inside your process on any supported SQLite driver.
+- **Core engine.** Queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and multi-tenant lifecycle management work inside your process on any supported SQLite driver. The better-sqlite3 and Expo drivers can encrypt a database, change its key while the database stays open, and restore encrypted backups.
 - **Server and client.** The server subpath serves any Sirannon instance over HTTP and WebSocket. The client SDK has the same API as the core. When its connection drops, the SDK reconnects and restores each subscription.
 - **Registered operations.** By default, a server executes only the reads and writes that you register under a name, so it accepts no SQL from the network. Code generation produces typed client references from those registered operations. A live query also works over a registered read.
 - **Primary-replica replication.** A single primary stamps each change with a Hybrid Logical Clock and groups the changes into checksummed batches. It then replicates those batches to read replicas over gRPC with mutual TLS. This replication path also includes conflict resolvers, first sync, read concerns, and write concerns.
@@ -15,7 +15,6 @@ This roadmap sets out the features that Sirannon has today and the ones that we 
 
 - **Coordinator-backed failover toward stable.** The etcd coordinator and automatic failover are the newest parts of the project. Today, a conformance test in Docker checks promotion and demotion under injected faults. Before we mark failover as stable, we will test more kinds of failure, prove recovery under sustained load, and write the guidance for operating it.
 - **Device sync toward stable.** With device sync, the app on an end user's device already works offline on a local Sirannon database. Sirannon keeps that database in step with one server database in both directions, through push, live pull, snapshot resync, and a migration handshake. We want to see device sync in production use on mobile devices and in browsers before we mark it as stable.
-- **Type declarations for every driver.** The Bun and Expo drivers work today, but they have no TypeScript declarations yet. Once we add those declarations, both drivers will match the better-sqlite3, Node, and wa-sqlite drivers.
 
 ## Planned
 

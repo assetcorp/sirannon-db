@@ -82,13 +82,14 @@ const migrations = loadMigrations('./migrations', { baseline: { version: 701, th
 Declare the set on the registry to migrate every database that it opens, including a tenant database that it resolves on first use:
 
 ```ts
-const TENANT_ID = /^[\w-]{1,64}$/
+import { createTenantResolver, Sirannon } from '@delali/sirannon-db'
+import { loadMigrations } from '@delali/sirannon-db/file-migrations'
 
 const sirannon = new Sirannon({
   driver,
   migrations: () => loadMigrations('./migrations'),
   lifecycle: {
-    autoOpen: { resolver: id => (TENANT_ID.test(id) ? { path: `/data/tenants/${id}.db` } : undefined) },
+    autoOpen: { resolver: createTenantResolver({ basePath: '/data/tenants' }) },
   },
 })
 
@@ -165,12 +166,12 @@ With `rowCounts: true`, the driver opens every database through `@delali/siranno
 ## Multi-tenant lifecycle
 
 ```ts
-const TENANT_ID = /^[\w-]{1,64}$/
+import { createTenantResolver, Sirannon } from '@delali/sirannon-db'
 
 const sirannon = new Sirannon({
   driver,
   lifecycle: {
-    autoOpen: { resolver: id => (TENANT_ID.test(id) ? { path: `/data/tenants/${id}.db` } : undefined) },
+    autoOpen: { resolver: createTenantResolver({ basePath: '/data/tenants' }) },
     idleTimeout: 300_000,
     maxOpen: 50,
   },
@@ -179,6 +180,6 @@ const sirannon = new Sirannon({
 const db = await sirannon.resolve('tenant-42')
 ```
 
-The server percent-decodes the identifier in each request path, so a caller can send an identifier that holds `/` or `..`. Check the identifier against a pattern before you build a file path from it. When the resolver returns undefined, the server answers `404 DATABASE_NOT_FOUND`.
+`createTenantResolver` accepts lowercase letters, digits, underscores, and hyphens, with a letter or digit first. It appends `.db` to an accepted identifier. The resolver returns `undefined` for a path separator, a capital letter, or a file name over 255 characters. The server then answers `404 DATABASE_NOT_FOUND`, so an identifier from a request cannot select a file outside `basePath`.
 
 The option tables for every constructor above are in the [configuration reference](configuration.md).

@@ -1,4 +1,5 @@
 import { encodeWireRowsInPlace } from './cdc/encoding.js'
+import type { ConnectionPool } from './connection-pool.js'
 import {
   addRowCounts,
   allMetered,
@@ -51,12 +52,19 @@ function metered<V>(value: V, counts: RowCounts | undefined): Metered<V> {
 /**
  * Executes a read on one connection and returns the rows with their values decoded.
  *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
+ * @returns The rows with their values decoded.
  * @internal
  */
 export async function query<T = Record<string, unknown>>(
   conn: SQLiteConnection,
   sql: string,
   params?: Params,
+  leasedFrom?: ConnectionPool,
 ): Promise<T[]> {
   try {
     const handle = guardedStatement(conn, sql)
@@ -64,6 +72,8 @@ export async function query<T = Record<string, unknown>>(
     return await stmt.all<T>(...bindParams(params))
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 
@@ -73,6 +83,8 @@ export async function query<T = Record<string, unknown>>(
  * @param conn - The connection that executes the read.
  * @param sql - The statement to execute.
  * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
  * @returns The rows, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
  * @internal
  */
@@ -80,11 +92,14 @@ export async function queryMetered<T = Record<string, unknown>>(
   conn: SQLiteConnection,
   sql: string,
   params?: Params,
+  leasedFrom?: ConnectionPool,
 ): Promise<Metered<T[]>> {
   try {
     return await allMetered<T>(await guardedStatement(conn, sql), bindParams(params))
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 
@@ -94,10 +109,17 @@ export async function queryMetered<T = Record<string, unknown>>(
  * @param conn - The connection that executes the read.
  * @param sql - The statement to execute.
  * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
  * @returns The encoded rows, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
  * @internal
  */
-export async function queryForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<Metered<unknown[]>> {
+export async function queryForWire(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+  leasedFrom?: ConnectionPool,
+): Promise<Metered<unknown[]>> {
   try {
     const stmt = await guardedStatement(conn, sql)
     const bound = bindParams(params)
@@ -110,6 +132,8 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
     return { value: encodeWireRowsInPlace(rows) }
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 
@@ -120,10 +144,17 @@ export async function queryForWire(conn: SQLiteConnection, sql: string, params?:
  * @param conn - The connection that executes the read.
  * @param sql - The statement to execute.
  * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
  * @returns The encoded rows.
  * @internal
  */
-export async function queryRowsForWire(conn: SQLiteConnection, sql: string, params?: Params): Promise<unknown[]> {
+export async function queryRowsForWire(
+  conn: SQLiteConnection,
+  sql: string,
+  params?: Params,
+  leasedFrom?: ConnectionPool,
+): Promise<unknown[]> {
   try {
     const handle = guardedStatement(conn, sql)
     const stmt = handle instanceof Promise ? await handle : handle
@@ -132,18 +163,27 @@ export async function queryRowsForWire(conn: SQLiteConnection, sql: string, para
     return encodeWireRowsInPlace(rows)
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 
 /**
  * Executes a read on one connection and returns the first row, or undefined when the read returns none.
  *
+ * @param conn - The connection that executes the read.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
+ * @returns The first row, or undefined when the read returns none.
  * @internal
  */
 export async function queryOne<T = Record<string, unknown>>(
   conn: SQLiteConnection,
   sql: string,
   params?: Params,
+  leasedFrom?: ConnectionPool,
 ): Promise<T | undefined> {
   try {
     const handle = guardedStatement(conn, sql)
@@ -151,6 +191,8 @@ export async function queryOne<T = Record<string, unknown>>(
     return await stmt.get<T>(...bindParams(params))
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 
@@ -160,6 +202,8 @@ export async function queryOne<T = Record<string, unknown>>(
  * @param conn - The connection that executes the read.
  * @param sql - The statement to execute.
  * @param params - The values to bind to the statement, named or positional.
+ * @param leasedFrom - The pool that leased `conn` through {@link ConnectionPool.leaseReader}, which gets the lease
+ * back once the read settles.
  * @returns The first row, or undefined when the read finds none, with `rowsRead` and `rowsWritten` from a driver that reports `rowCounts`.
  * @internal
  */
@@ -167,6 +211,7 @@ export async function queryOneMetered<T = Record<string, unknown>>(
   conn: SQLiteConnection,
   sql: string,
   params?: Params,
+  leasedFrom?: ConnectionPool,
 ): Promise<Metered<T | undefined>> {
   try {
     const stmt = await guardedStatement(conn, sql)
@@ -175,6 +220,8 @@ export async function queryOneMetered<T = Record<string, unknown>>(
     return { value: await stmt.get<T>(...bound) }
   } catch (err) {
     throw asQueryError(err, sql)
+  } finally {
+    leasedFrom?.releaseReader()
   }
 }
 

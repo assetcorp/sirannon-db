@@ -147,6 +147,24 @@ export class ConnectionPool {
   }
 
   /**
+   * Returns the next reader connection and keeps it open until the caller passes the lease back through
+   * {@link ConnectionPool.releaseReader}, so that {@link ConnectionPool.closeReaders} closes no reader under a read.
+   *
+   * @returns The reader connection, which the caller releases exactly once when its read settles.
+   */
+  leaseReader(): SQLiteConnection {
+    const reader = this.acquireReader()
+    this.readsInFlight++
+    return reader
+  }
+
+  /** Ends a lease that {@link ConnectionPool.leaseReader} returned. */
+  releaseReader(): void {
+    this.readsInFlight--
+    if (this.readsInFlight === 0) this.readsSettled?.()
+  }
+
+  /**
    * Returns what a read on the next reader connection returns, and keeps that connection open until the read settles,
    * so that {@link ConnectionPool.closeReaders} closes no reader under a read.
    *
@@ -154,13 +172,11 @@ export class ConnectionPool {
    * @returns The value of the read.
    */
   async withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
-    const reader = this.acquireReader()
-    this.readsInFlight++
+    const reader = this.leaseReader()
     try {
       return await read(reader)
     } finally {
-      this.readsInFlight--
-      if (this.readsInFlight === 0) this.readsSettled?.()
+      this.releaseReader()
     }
   }
 

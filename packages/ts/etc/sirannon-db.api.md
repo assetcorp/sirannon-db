@@ -499,8 +499,10 @@ export class ConnectionPool {
     static create(options: ConnectionPoolOptions): Promise<ConnectionPool>;
     // (undocumented)
     get isReadOnly(): boolean;
+    leaseReader(): SQLiteConnection;
     // (undocumented)
     get readerCount(): number;
+    releaseReader(): void;
     reopen(): Promise<void>;
     get suspended(): boolean;
     withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
@@ -1127,7 +1129,7 @@ export function planBackupRestore(chains: readonly BackupChain[], moment: number
 export type PushHookContext = Parameters<BeforePushHook>[0];
 
 // @internal
-export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T[]>;
+export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params, leasedFrom?: ConnectionPool): Promise<T[]>;
 
 // @public
 export class QueryError extends SirannonError {
@@ -1160,7 +1162,7 @@ export interface QueryMetrics {
 }
 
 // @internal
-export function queryOne<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T | undefined>;
+export function queryOne<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params, leasedFrom?: ConnectionPool): Promise<T | undefined>;
 
 // @public
 export interface QueryOptions {

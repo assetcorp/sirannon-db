@@ -1,3 +1,25 @@
+## 0.4.0 (2026-11-06)
+
+### 🚀 Features
+
+- **encryption:** encrypt databases at rest under a raw 32-byte key ([4616200](https://github.com/assetcorp/sirannon-db/commit/4616200))
+
+### 🩹 Fixes
+
+- **benchmarks:** end every overloaded rate step and refuse incomplete runs ([07f3480](https://github.com/assetcorp/sirannon-db/commit/07f3480))
+- **benchmarks:** aggregate a repaired run and refuse mixed workload revisions ([055e794](https://github.com/assetcorp/sirannon-db/commit/055e794))
+- **encryption:** carry sync, backups, extensions, and reads onto the connections that a key change reopens ([0d73a62](https://github.com/assetcorp/sirannon-db/commit/0d73a62))
+- **encryption:** report a failure after the file swap as done with reopenError ([8c64bda](https://github.com/assetcorp/sirannon-db/commit/8c64bda))
+- **expo:** preserve encryption errors, key changes, and rollback ([6cc78eb](https://github.com/assetcorp/sirannon-db/commit/6cc78eb))
+
+### 🔥 Performance
+
+- **reads:** hold the reader lease inside the read functions so a read adds no promise ([ae372e5](https://github.com/assetcorp/sirannon-db/commit/ae372e5))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.3.5 (2026-11-05)
 
 ### 🚀 Features

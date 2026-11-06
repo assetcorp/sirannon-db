@@ -33,6 +33,7 @@ export interface LoadResult {
   offeredFraction: number
   dispatchedInWindow: number
   expectedInWindow: number
+  missedInWindow: number
   sustained: boolean
   reachedCap: boolean
   failures: FailureTally
@@ -41,6 +42,7 @@ export interface LoadResult {
 
 const SUSTAINED_FRACTION = 0.95
 const OCCUPANCY_SAMPLE_INTERVAL_MS = 10
+export const DISPATCH_OVERRUN_WINDOWS = 1
 
 class Semaphore {
   private permits: number
@@ -74,6 +76,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, ms))
 }
 
+function unsentInWindow(
+  firstUnsent: number,
+  start: number,
+  intervalMs: number,
+  warmupEnd: number,
+  measureEnd: number,
+): number {
+  let unsent = 0
+  for (let index = firstUnsent; ; index++) {
+    const intended = start + index * intervalMs
+    if (intended > measureEnd) {
+      return unsent
+    }
+    if (intended >= warmupEnd) {
+      unsent += 1
+    }
+  }
+}
+
 export async function runOpenLoop(
   runOp: RunOp,
   targetRate: number,
@@ -88,6 +109,7 @@ export async function runOpenLoop(
   const start = performance.now()
   const warmupEnd = start + warmupSeconds * 1000
   const measureEnd = warmupEnd + measureSeconds * 1000
+  const dispatchCutoff = measureEnd + measureSeconds * 1000 * DISPATCH_OVERRUN_WINDOWS
 
   const bucketCount = bucketSeconds > 0 ? Math.ceil(measureSeconds / bucketSeconds) : 0
   const bucketServed = new Array<number>(bucketCount).fill(0)
@@ -162,6 +184,7 @@ export async function runOpenLoop(
   sampler.unref()
 
   let dispatchEnd = warmupEnd
+  let missedInWindow = 0
   try {
     let index = 0
     for (;;) {
@@ -174,6 +197,11 @@ export async function runOpenLoop(
         await sleep(delay)
       }
       await semaphore.acquire()
+      if (performance.now() > dispatchCutoff) {
+        semaphore.release()
+        missedInWindow = unsentInWindow(index, start, intervalMs, warmupEnd, measureEnd)
+        break
+      }
       const intendedInWindow = intended >= warmupEnd
       if (intendedInWindow) {
         dispatchedInWindow += 1
@@ -195,7 +223,7 @@ export async function runOpenLoop(
   const achievedRate = measureSeconds > 0 ? served / measureSeconds : 0.0
   const total = served + errors
   const errorRate = total > 0 ? errors / total : 0.0
-  const sustained = achievedRate >= targetRate * SUSTAINED_FRACTION
+  const sustained = achievedRate >= targetRate * SUSTAINED_FRACTION && missedInWindow === 0
   const reachedCap = maxInFlightObserved >= maxInFlight
   const expectedInWindow = Math.round(targetRate * measureSeconds)
   const offeredSpanSeconds = (dispatchEnd - warmupEnd) / 1000
@@ -238,6 +266,7 @@ export async function runOpenLoop(
     offeredFraction: targetRate > 0 ? offeredRate / targetRate : 0.0,
     dispatchedInWindow,
     expectedInWindow,
+    missedInWindow,
     sustained,
     reachedCap,
     failures,

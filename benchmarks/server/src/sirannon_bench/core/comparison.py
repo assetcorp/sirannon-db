@@ -1,13 +1,93 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 from .stats import speedup_interval
 
 _ENGINE_FILE = re.compile(r"^engine-(?P<engine>[a-z0-9]+)-(?P<durability>full|matched)\.json$")
+_UNFINISHED_ENGINE_FILE = re.compile(r"^engine-(?P<engine>[a-z0-9]+)-(?P<durability>full|matched)\.partial\.json$")
 _DURABILITY_ORDER = ["full", "matched"]
+_COMPARED_ENGINES = ("sirannon", "postgres")
+_FIRST_WORKLOAD_REVISION = 1
+
+
+class IncompleteRunError(Exception):
+    def __init__(self, problems: list[str]):
+        self.problems = problems
+        super().__init__("this run cannot be compared: " + "; ".join(problems))
+
+
+def _expected_durabilities(run_dir: Path, by_durability: dict[str, dict[str, dict]]) -> list[str]:
+    found = set(by_durability) | set(os.environ.get("BENCH_DURABILITIES", "").split())
+    for entry in run_dir.iterdir():
+        match = _UNFINISHED_ENGINE_FILE.match(entry.name)
+        if match:
+            found.add(match["durability"])
+    return [durability for durability in _DURABILITY_ORDER if durability in found]
+
+
+def _revision_problems(durability: str, sirannon: dict, postgres: dict) -> list[str]:
+    postgres_revisions = {
+        workload["workload"]: workload.get("revision", _FIRST_WORKLOAD_REVISION)
+        for workload in postgres.get("workloads", [])
+    }
+    problems: list[str] = []
+    for workload in sirannon.get("workloads", []):
+        name = workload["workload"]
+        sirannon_revision = workload.get("revision", _FIRST_WORKLOAD_REVISION)
+        postgres_revision = postgres_revisions.get(name)
+        if postgres_revision is not None and postgres_revision != sirannon_revision:
+            problems.append(
+                f"at {durability} durability sirannon ran {name} revision {sirannon_revision} "
+                f"and postgres ran revision {postgres_revision}"
+            )
+    return problems
+
+
+def _engine_problems(engine: str, durability: str, report: dict) -> list[str]:
+    problems: list[str] = []
+    for failed in report.get("failed_workloads", []):
+        problems.append(
+            f"{engine} at {durability} durability failed {failed.get('workload')} ({failed.get('error_code')})"
+        )
+    recorded = {workload["workload"] for workload in report.get("workloads", [])}
+    for name in report.get("config", {}).get("workloads", []):
+        if name not in recorded:
+            problems.append(f"{engine} at {durability} durability recorded no result for {name}")
+    return problems
+
+
+def completeness_problems(run_dir: Path, by_durability: dict[str, dict[str, dict]]) -> list[str]:
+    problems = [
+        f"{entry.name} holds a pass that never finished"
+        for entry in sorted(run_dir.iterdir())
+        if _UNFINISHED_ENGINE_FILE.match(entry.name)
+    ]
+    durabilities = _expected_durabilities(run_dir, by_durability)
+    if not durabilities:
+        problems.append("the run holds no engine results")
+    for durability in durabilities:
+        engines = by_durability.get(durability, {})
+        for engine in _COMPARED_ENGINES:
+            report = engines.get(engine)
+            if report is None:
+                problems.append(f"{engine} has no finished results at {durability} durability")
+                continue
+            problems.extend(_engine_problems(engine, durability, report))
+        sirannon = engines.get("sirannon")
+        postgres = engines.get("postgres")
+        if sirannon is not None and postgres is not None:
+            sirannon_workloads = sirannon.get("config", {}).get("workloads", [])
+            postgres_workloads = postgres.get("config", {}).get("workloads", [])
+            if sirannon_workloads != postgres_workloads:
+                problems.append(
+                    f"at {durability} durability sirannon ran {sirannon_workloads} and postgres ran {postgres_workloads}"
+                )
+            problems.extend(_revision_problems(durability, sirannon, postgres))
+    return problems
 
 
 def _read_json(path: Path) -> dict:
@@ -187,6 +267,9 @@ def _collect_features(by_durability: dict[str, dict[str, dict]]) -> list[dict]:
 
 def build_comparison(run_dir: Path, manifest: dict) -> dict:
     by_durability = _load_engine_files(run_dir)
+    problems = completeness_problems(run_dir, by_durability)
+    if problems:
+        raise IncompleteRunError(problems)
     cold_start_path = run_dir / "cold-start.json"
     cold_start = _read_json(cold_start_path) if cold_start_path.is_file() else None
     engine_machine_path = run_dir / "engine-machine.json"

@@ -38,7 +38,7 @@ The `smoke` profile checks that the harness works end to end without spending th
 
 A profile only fills in defaults. Any `BENCH_` variable you export still overrides it, so `BENCH_RUNS=1 ./run-all.sh smoke` keeps a single pass.
 
-`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them:
+`BENCH_ENGINES` and `BENCH_DURABILITIES` choose which passes run, and `BENCH_RUN_ID` chooses the run directory they land in. Together they repair a run that lost one pass, because the new pass joins the ones already recorded and the aggregate and the writeup regenerate across all of them. Each workload result records the revision of the workload that produced it, and the aggregator refuses a run whose engines ran different revisions of one workload:
 
 ```sh
 BENCH_RUN_ID=20260804T221053Z BENCH_ENGINES=postgres BENCH_DURABILITIES=matched ./run-all.sh cloud

@@ -11,6 +11,7 @@ _ENGINE_FILE = re.compile(r"^engine-(?P<engine>[a-z0-9]+)-(?P<durability>full|ma
 _UNFINISHED_ENGINE_FILE = re.compile(r"^engine-(?P<engine>[a-z0-9]+)-(?P<durability>full|matched)\.partial\.json$")
 _DURABILITY_ORDER = ["full", "matched"]
 _COMPARED_ENGINES = ("sirannon", "postgres")
+_FIRST_WORKLOAD_REVISION = 1
 
 
 class IncompleteRunError(Exception):
@@ -20,15 +21,30 @@ class IncompleteRunError(Exception):
 
 
 def _expected_durabilities(run_dir: Path, by_durability: dict[str, dict[str, dict]]) -> list[str]:
-    configured = os.environ.get("BENCH_DURABILITIES", "").split()
-    if configured:
-        return configured
-    found = set(by_durability)
+    found = set(by_durability) | set(os.environ.get("BENCH_DURABILITIES", "").split())
     for entry in run_dir.iterdir():
         match = _UNFINISHED_ENGINE_FILE.match(entry.name)
         if match:
             found.add(match["durability"])
     return [durability for durability in _DURABILITY_ORDER if durability in found]
+
+
+def _revision_problems(durability: str, sirannon: dict, postgres: dict) -> list[str]:
+    postgres_revisions = {
+        workload["workload"]: workload.get("revision", _FIRST_WORKLOAD_REVISION)
+        for workload in postgres.get("workloads", [])
+    }
+    problems: list[str] = []
+    for workload in sirannon.get("workloads", []):
+        name = workload["workload"]
+        sirannon_revision = workload.get("revision", _FIRST_WORKLOAD_REVISION)
+        postgres_revision = postgres_revisions.get(name)
+        if postgres_revision is not None and postgres_revision != sirannon_revision:
+            problems.append(
+                f"at {durability} durability sirannon ran {name} revision {sirannon_revision} "
+                f"and postgres ran revision {postgres_revision}"
+            )
+    return problems
 
 
 def _engine_problems(engine: str, durability: str, report: dict) -> list[str]:
@@ -70,6 +86,7 @@ def completeness_problems(run_dir: Path, by_durability: dict[str, dict[str, dict
                 problems.append(
                     f"at {durability} durability sirannon ran {sirannon_workloads} and postgres ran {postgres_workloads}"
                 )
+            problems.extend(_revision_problems(durability, sirannon, postgres))
     return problems
 
 

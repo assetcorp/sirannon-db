@@ -296,8 +296,12 @@ for durability in "${DURABILITY_LIST[@]}"; do
   fi
 done
 
-if ! engine_enabled sirannon || ! engine_enabled postgres; then
-  echo "================ aggregate and writeup (skipped: the comparison needs both engines) ================"
+run_holds_finished_pass() {
+  compgen -G "${RUN_DIR}/engine-$1-*.json" | grep -qv '\.partial\.json$'
+}
+
+if ! run_holds_finished_pass sirannon || ! run_holds_finished_pass postgres; then
+  echo "================ aggregate and writeup (skipped: the run holds no finished pass from one of the engines) ================"
 else
   echo "================ aggregate ================"
   run_with_deadline 600 env PYTHONPATH=src python3 -m sirannon_bench.aggregate \

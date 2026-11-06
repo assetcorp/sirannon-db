@@ -57,6 +57,7 @@ export interface SeedTable {
 
 export interface Workload {
   name: string
+  revision?: number
   category: string
   tables: string[]
   sqliteSchema: string

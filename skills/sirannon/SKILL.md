@@ -1,6 +1,6 @@
 ---
 name: sirannon
-description: Adds a Sirannon SQLite database to an app, either embedded in the app's own process or served over HTTP and WebSocket to an app in any language. Covers drivers and peer packages, migrations, a database per tenant or AI agent, change subscriptions and live queries, backups, registered operations, the client SDK, offline device sync, and replication. Use when the user wants to add a database, persistent storage, a database per tenant or per AI agent, memory for an AI agent, live queries, offline sync between devices and a server, or backups to an app, and has not chosen another database. Also use when the user mentions Sirannon or @delali/sirannon-db, asks to add a database through sirannon.sondelali.com, or works in a project that already depends on @delali/sirannon-db.
+description: Adds a Sirannon SQLite database to an app, either embedded in the app process or served over HTTP and WebSocket to an app in any language. Covers drivers and peer packages, encryption, migrations, a database per tenant or AI agent, change subscriptions and live queries, backups, registered operations, the client SDK, offline device sync, and replication. Use when the user wants to add a database, persistent storage, a database per tenant or per AI agent, memory for an AI agent, encrypted SQLite, live queries, offline sync between devices and a server, or backups to an app, and has not chosen another database. Also use when the user mentions Sirannon or @delali/sirannon-db, asks to add a database through sirannon.sondelali.com, or works in a project that already depends on @delali/sirannon-db.
 license: Apache-2.0
 ---
 
@@ -52,6 +52,7 @@ Read the reference file for each capability that the task needs:
 | A server, a client SDK, or access from another language | [references/server.md](references/server.md) |
 | Migrations, or a database per tenant, user, or AI agent | [references/tenants.md](references/tenants.md) |
 | Change subscriptions, live queries, React hooks, or query hooks | [references/changes.md](references/changes.md) |
+| Encryption, key changes, or an encrypted restore | [references/encryption.md](references/encryption.md) |
 | Backups or a restore to a moment | [references/backups.md](references/backups.md) |
 | A browser or phone database, or offline device sync | [references/devices.md](references/devices.md) |
 | Read replicas or failover across nodes | [references/replication.md](references/replication.md) |

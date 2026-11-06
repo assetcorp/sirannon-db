@@ -6,7 +6,7 @@
 [![types](https://img.shields.io/badge/types-TypeScript-blue)](https://www.npmjs.com/package/@delali/sirannon-db)
 [![license](https://img.shields.io/npm/l/@delali/sirannon-db)](https://github.com/assetcorp/sirannon-db/blob/main/LICENSE)
 
-Build a networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while a primary replicates its changes to other Sirannon nodes over gRPC.
+Build an encrypted, networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while a primary replicates its changes to other Sirannon nodes over gRPC.
 
 **Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** Use this page to get started, and turn to the [guides](#documentation) for the detail. The benchmark harness that measures Sirannon against Postgres 17 is under [`benchmarks/server`](https://github.com/assetcorp/sirannon-db/tree/main/benchmarks/server), where a Node load generator drives both engines and a Python step joins their results. The write-up generator rewrites [BENCHMARKS.md](https://github.com/assetcorp/sirannon-db/blob/main/BENCHMARKS.md) from the latest committed run.
 
@@ -61,7 +61,9 @@ import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
 const sirannon = new Sirannon({ driver: betterSqlite3() })
 const db = await sirannon.open('app', './data/app.db')
 
-await db.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)')
+await db.execute(
+  'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, active INTEGER NOT NULL DEFAULT 1)',
+)
 await db.execute('INSERT INTO users (name, email) VALUES (?, ?)', ['Ada', 'ada@example.com'])
 
 const users = await db.query<{ id: number; name: string }>('SELECT * FROM users')
@@ -79,11 +81,36 @@ const db = await sirannon.open('app', '/app.db', { walMode: false })
 
 On React Native, open the database the same way with `expoSqlite()`.
 
+### Encrypt a database
+
+On Node.js, install Sirannon's encrypting SQLite build beside the library:
+
+```bash
+pnpm add -E @delali/sirannon-db @delali/sirannon-sqlite
+```
+
+Create the better-sqlite3 driver with encryption enabled. Return 32 raw key bytes when Sirannon opens the database:
+
+```ts
+import { readFile } from 'node:fs/promises'
+import { Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+
+const loadLedgerKey = async () => new Uint8Array(await readFile('/run/secrets/ledger-key'))
+
+const sirannon = new Sirannon({ driver: betterSqlite3({ encryption: true }) })
+const db = await sirannon.open('ledger', './data/ledger.db', {
+  encryption: { key: async () => ({ key: await loadLedgerKey(), id: 'ledger-2026-11' }) },
+})
+```
+
+Store the key in a key service, a system keychain, or a secret file whose permissions restrict access to the application's operating-system account. Retain both keys until a key change finishes. Retain each backup chain's key for as long as you keep that chain. The [encryption guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/encryption.md) covers key changes, encrypted backups, server routes, and Expo's SQLCipher setup.
+
 ## Package exports
 
 | Import | What you get |
 | --- | --- |
-| `@delali/sirannon-db` | Core library: queries, transactions, CDC, live queries, migrations, backups, hooks, metrics, and lifecycle |
+| `@delali/sirannon-db` | Core library: queries, transactions, encryption, CDC, live queries, migrations, backups, hooks, metrics, and lifecycle |
 | `@delali/sirannon-db/driver/*` | SQLite driver adapters, listed in the table above |
 | `@delali/sirannon-db/file-migrations` | A loader for `.up.sql` and `.down.sql` files in a directory |
 | `@delali/sirannon-db/backup` | Backup destination types, chain records, and `restoreBackup` |
@@ -252,6 +279,7 @@ Read the [security guide](https://sirannon.sondelali.com/docs/security) for each
 | [Bulk load](https://sirannon.sondelali.com/docs/bulk-load) | One-transaction imports under relaxed durability, over the server, and through the client SDK |
 | [Migrations](https://sirannon.sondelali.com/docs/migrations) | File-based, programmatic, and bundled migrations, rollback, checksums, baselines, concurrency, and registry migrations |
 | [Hooks, metrics, and lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) | Before and after hooks, metrics callbacks, and the multi-tenant lifecycle |
+| [Encryption](https://github.com/assetcorp/sirannon-db/blob/main/docs/encryption.md) | Encrypted Node and Expo databases, key changes, encrypted backups, and operator routes |
 | [Backups](https://sirannon.sondelali.com/docs/backups) | Copies of an open database to a file and on a schedule, followed by the guides on [destinations](https://sirannon.sondelali.com/docs/backup-destinations), [continuous backups](https://sirannon.sondelali.com/docs/backup-chains), and [restores](https://sirannon.sondelali.com/docs/backup-restore) |
 | [Server](https://sirannon.sondelali.com/docs/server) | Registered operations on the server, caller identity, size limits, write shapes, `acceptSql`, the backup routes, HTTP routes, and the WebSocket protocol |
 | [Registered operations](https://sirannon.sondelali.com/docs/registered-operations) | Named reads and writes, identity-filled arguments, calls over HTTP and WebSocket, capabilities, and refusals |

@@ -6,6 +6,7 @@ import { assertHoldsStatement } from '../../core/driver/statement-text.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 
 /**
@@ -34,10 +35,17 @@ export interface BunSqliteOptions {
  */
 export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: false, rowCounts: false },
+    capabilities: {
+      multipleConnections: true,
+      extensions: true,
+      steppedCopy: false,
+      rowCounts: false,
+      encryption: false,
+    },
     resolveExtensionPath: extensionPath => resolve(extensionPath),
     createWriterContext: asyncLocalWriterContext,
     async open(path, options) {
+      refuseEncryptedOpen('bun:sqlite', options)
       const { Database } = await import('bun:sqlite')
       const db = new Database(path, { readonly: options?.readonly ?? false, safeIntegers: true, strict: true })
       if (options?.walMode !== false) {

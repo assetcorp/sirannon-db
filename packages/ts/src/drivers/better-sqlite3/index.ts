@@ -4,10 +4,21 @@ import { createStatementCache } from '../../core/driver/statement-cache.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { EncryptionError } from '../../core/encryption/errors.js'
+import { reportEncryptedPageFailures } from '../../core/encryption/page-errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { nodeDatabaseFiles } from '../node-files.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
+import {
+  assertKeyFitsFile,
+  classifyDatabaseFile,
+  ENCRYPTION_FEATURE,
+  type EncryptingDatabase,
+  keyConnection,
+  probeDatabaseFile,
+} from './encryption.js'
 import {
   countingStatement,
   ROW_COUNTS_FEATURE,
@@ -15,7 +26,7 @@ import {
   runCountedBatch,
   runCountedBatchSummary,
 } from './row-counting.js'
-import { loadSirannonSqlite } from './sirannon-sqlite.js'
+import { loadSirannonSqlite, type SirannonSqliteFeature } from './sirannon-sqlite.js'
 
 /**
  * Settings for the better-sqlite3 driver.
@@ -53,6 +64,16 @@ export interface BetterSqlite3Options {
    * needs Sirannon's SQLite, such as `rowCounts`, is set.
    */
   sqliteBindingPath?: string
+  /**
+   * Set it to `true` to open every database through `@delali/sirannon-sqlite`,
+   * which contains better-sqlite3 built against SQLite3 Multiple Ciphers, so
+   * that a database opened with the `encryption` option keeps every page as
+   * AEGIS-256 ciphertext and
+   * `changeEncryption` can encrypt, decrypt, or rekey a database. With it unset,
+   * the driver keeps better-sqlite3's own SQLite and fails an open with a key
+   * with `ENCRYPTION_UNSUPPORTED`.
+   */
+  encryption?: boolean
 }
 
 type BetterSqlite3Database = import('better-sqlite3').Database
@@ -78,7 +99,11 @@ function plainStatement(stmt: import('better-sqlite3').Statement): SQLiteStateme
   }
 }
 
-function createConnection(db: BetterSqlite3Database, taker: RowCountTaker | null): SQLiteConnection {
+function createConnection(
+  db: BetterSqlite3Database,
+  taker: RowCountTaker | null,
+  encrypting: EncryptingDatabase | null,
+): SQLiteConnection {
   const batchStatementFor = createStatementCache(sql => db.prepare(sql))
   const conn: SQLiteConnection = {
     async exec(sql: string): Promise<void> {
@@ -141,20 +166,64 @@ function createConnection(db: BetterSqlite3Database, taker: RowCountTaker | null
     },
   }
 
+  if (encrypting) {
+    conn.startChangeCapture = async () => {
+      encrypting.startChangeCapture()
+    }
+    conn.takeCapturedChanges = async () => encrypting.takeCapturedChanges()
+    conn.stopChangeCapture = async () => {
+      encrypting.stopChangeCapture()
+    }
+    conn.applyCapturedChanges = async changes => {
+      encrypting.applyChanges(changes)
+    }
+  }
+
   return conn
+}
+
+interface OpenedDatabase {
+  db: BetterSqlite3Database
+  taker: RowCountTaker | null
+  encrypting: EncryptingDatabase | null
+}
+
+function sirannonSqliteFeatures(driverOptions: BetterSqlite3Options | undefined): SirannonSqliteFeature[] {
+  const features: SirannonSqliteFeature[] = []
+  if (driverOptions?.encryption === true) features.push(ENCRYPTION_FEATURE)
+  if (driverOptions?.rowCounts === true) features.push(ROW_COUNTS_FEATURE)
+  return features
 }
 
 async function openDatabase(
   path: string,
   readonly: boolean,
   driverOptions: BetterSqlite3Options | undefined,
-): Promise<{ db: BetterSqlite3Database; taker: RowCountTaker | null }> {
-  if (driverOptions?.rowCounts !== true) {
+  rawKey: Uint8Array | undefined,
+): Promise<OpenedDatabase> {
+  const [first, ...rest] = sirannonSqliteFeatures(driverOptions)
+  if (first === undefined) {
     const Database = (await import('better-sqlite3')).default
-    return { db: new Database(path, { readonly }), taker: null }
+    return { db: new Database(path, { readonly }), taker: null, encrypting: null }
   }
-  const sqlite = await loadSirannonSqlite([ROW_COUNTS_FEATURE], driverOptions.sqliteBindingPath)
-  return { db: new sqlite.Database(path, { readonly, nativeBinding: sqlite.bindingPath }), taker: new RowCountTaker() }
+  const sqlite = await loadSirannonSqlite([first, ...rest], driverOptions?.sqliteBindingPath)
+  const openConnection = () => new sqlite.Database(path, { readonly, nativeBinding: sqlite.bindingPath })
+  if (driverOptions?.encryption === true) {
+    const kind = await classifyDatabaseFile(path)
+    const settled =
+      kind === 'unknown' ? probeDatabaseFile(() => openConnection() as unknown as EncryptingDatabase) : kind
+    assertKeyFitsFile(path, settled, rawKey !== undefined)
+  }
+  const db = openConnection()
+  const encrypting = driverOptions?.encryption === true ? (db as unknown as EncryptingDatabase) : null
+  try {
+    if (rawKey !== undefined && encrypting) keyConnection(encrypting, path, rawKey)
+    else db.pragma('temp_store = FILE')
+  } catch (err) {
+    db.close()
+    throw err
+  }
+  return { db, taker: driverOptions?.rowCounts === true ? new RowCountTaker() : null, encrypting }
 }
 
 /**
@@ -168,9 +237,11 @@ async function openDatabase(
 export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'betterSqlite3', config: driverOptions }
   const rowCounts = driverOptions?.rowCounts === true
+  const encryption = driverOptions?.encryption === true
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts },
+    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts, encryption },
     worker: workerEntry,
+    files: nodeDatabaseFiles,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, { ...hostOptions, countsRows: rowCounts })
       return host.connection
@@ -186,16 +257,29 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
       ),
     resolveExtensionPath: nodeResolveExtensionPath,
     async open(path, options) {
-      const { db, taker } = await openDatabase(path, options?.readonly ?? false, driverOptions)
-      db.defaultSafeIntegers(true)
-      if (options?.walMode !== false) db.pragma('journal_mode = WAL')
-      db.pragma(`synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
-      db.pragma('foreign_keys = ON')
-      db.pragma(`busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
-      if (options?.walAutoCheckpoint !== undefined) {
-        db.pragma(`wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      const rawKey = options?.encryption?.key
+      if (rawKey !== undefined && !encryption) {
+        throw new EncryptionError(
+          'The better-sqlite3 driver opens encrypted databases only when you create it with betterSqlite3({ encryption: true })',
+          'ENCRYPTION_UNSUPPORTED',
+        )
       }
-      return createConnection(db, taker)
+      const { db, taker, encrypting } = await openDatabase(path, options?.readonly ?? false, driverOptions, rawKey)
+      try {
+        db.defaultSafeIntegers(true)
+        if (options?.walMode !== false) db.pragma('journal_mode = WAL')
+        db.pragma(`synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
+        db.pragma('foreign_keys = ON')
+        db.pragma(`busy_timeout = ${driverOptions?.busyTimeout ?? 5000}`)
+        if (options?.walAutoCheckpoint !== undefined) {
+          db.pragma(`wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+        }
+      } catch (err) {
+        db.close()
+        throw err
+      }
+      const connection = createConnection(db, taker, encrypting)
+      return rawKey === undefined ? connection : reportEncryptedPageFailures(connection)
     },
   })
 }

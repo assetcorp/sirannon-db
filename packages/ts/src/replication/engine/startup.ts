@@ -36,8 +36,11 @@ export async function recoverHlcFromDurableState(engine: ReplicationEngine): Pro
   engine.hlc.receive(maxObserved)
 }
 
+const databaseRegistrations = new WeakMap<ReplicationEngine, () => void>()
+
 export async function startEngine(engine: ReplicationEngine): Promise<void> {
   if (engine.running) return
+  databaseRegistrations.set(engine, engine.database.registerReplicationEngine())
   engine.running = true
   engine.history.active = false
   await startEngineSteps(engine)
@@ -62,6 +65,7 @@ async function startEngineSteps(engine: ReplicationEngine): Promise<void> {
     primaryTerm: engine.coordinatorState?.primaryTerm ?? engine.config.transportConfig?.primaryTerm,
     protocolVersion:
       engine.config.coordinator?.compatibility?.protocolVersion ?? engine.config.transportConfig?.protocolVersion,
+    encrypted: engine.database.encryptedFile,
   }
   await engine.config.transport.connect(engine.nodeId, transportConfig)
   await refreshMemberAddresses(engine).catch((err: unknown) =>
@@ -137,6 +141,15 @@ async function startEngineSteps(engine: ReplicationEngine): Promise<void> {
 export async function stopEngine(engine: ReplicationEngine): Promise<void> {
   if (!engine.running) return
   engine.running = false
+  try {
+    await stopEngineSteps(engine)
+  } finally {
+    databaseRegistrations.get(engine)?.()
+    databaseRegistrations.delete(engine)
+  }
+}
+
+async function stopEngineSteps(engine: ReplicationEngine): Promise<void> {
   stopCoordinatorTimers(engine)
 
   engine.syncJoiner.stopTimers()

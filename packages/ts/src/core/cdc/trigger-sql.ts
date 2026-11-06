@@ -235,3 +235,89 @@ function buildJsonObject(columns: string[], ref: string): string {
 function escStr(name: string): string {
   return name.replace(/'/g, "''")
 }
+
+/**
+ * The names of the three temporary triggers through which a key change records the key of each row that a write to
+ * one table touches.
+ *
+ * @internal
+ */
+export interface KeyChangeCaptureTriggerNames {
+  readonly insert: string
+  readonly update: string
+  readonly delete: string
+}
+
+/**
+ * Creates the temporary triggers that write the key of each row that an insert, an update, or a delete on a table
+ * touches into a key change's log, where an update logs the key from before and the key from after.
+ *
+ * @param conn - The original's writer.
+ * @param triggers - The trigger names.
+ * @param table - The captured table in the main schema.
+ * @param log - The temporary log table, which the triggers address without a schema, as SQLite requires inside a
+ * trigger body.
+ * @param keys - The quoted columns that make up each row's key.
+ * @returns A promise that settles once every trigger exists.
+ * @internal
+ */
+export async function installKeyChangeCaptureTriggers(
+  conn: SQLiteConnection,
+  triggers: KeyChangeCaptureTriggerNames,
+  table: string,
+  log: string,
+  keys: readonly string[],
+): Promise<void> {
+  const logOf = (row: 'NEW' | 'OLD') =>
+    `INSERT INTO "${escId(log)}" VALUES (${keys.map(key => `${row}.${key}`).join(', ')});`
+  const on = `main."${escId(table)}"`
+  await conn.exec(`CREATE TEMP TRIGGER "${escId(triggers.insert)}" AFTER INSERT ON ${on} BEGIN ${logOf('NEW')} END`)
+  await conn.exec(
+    `CREATE TEMP TRIGGER "${escId(triggers.update)}" AFTER UPDATE ON ${on} BEGIN ${logOf('OLD')} ${logOf('NEW')} END`,
+  )
+  await conn.exec(`CREATE TEMP TRIGGER "${escId(triggers.delete)}" AFTER DELETE ON ${on} BEGIN ${logOf('OLD')} END`)
+}
+
+/**
+ * Drops a key change's temporary capture triggers on one table, skipping each one that does not exist.
+ *
+ * @param conn - The original's writer.
+ * @param triggers - The trigger names.
+ * @returns A promise that settles once every trigger is gone.
+ * @internal
+ */
+export async function dropKeyChangeCaptureTriggers(
+  conn: SQLiteConnection,
+  triggers: KeyChangeCaptureTriggerNames,
+): Promise<void> {
+  for (const name of [triggers.insert, triggers.update, triggers.delete]) {
+    await conn.exec(`DROP TRIGGER IF EXISTS temp."${escId(name)}"`)
+  }
+}
+
+/**
+ * Drops every trigger of the main schema, so that no trigger runs while a key change applies writes to the new file.
+ *
+ * @param conn - The connection to the new file.
+ * @returns The statements that create the triggers again.
+ * @internal
+ */
+export async function dropMainSchemaTriggers(conn: SQLiteConnection): Promise<string[]> {
+  const triggers = (await (
+    await conn.prepare("SELECT name, sql FROM main.sqlite_schema WHERE type = 'trigger' AND sql IS NOT NULL")
+  ).all()) as { name: string; sql: string }[]
+  for (const trigger of triggers) await conn.exec(`DROP TRIGGER main."${escId(trigger.name)}"`)
+  return triggers.map(trigger => trigger.sql)
+}
+
+/**
+ * Creates the triggers of the main schema again, once a key change has applied its last write to the new file.
+ *
+ * @param conn - The connection to the new file.
+ * @param statements - The statements that {@link dropMainSchemaTriggers} returned.
+ * @returns A promise that settles once every trigger exists.
+ * @internal
+ */
+export async function createMainSchemaTriggers(conn: SQLiteConnection, statements: readonly string[]): Promise<void> {
+  for (const statement of statements) await conn.exec(statement)
+}

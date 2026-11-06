@@ -1,16 +1,7 @@
 import { Worker } from 'node:worker_threads'
-import type {
-  BatchSummary,
-  Counted,
-  DatabaseCopyStep,
-  DriverWorkerEntry,
-  GroupRunOutcome,
-  OpenOptions,
-  RunResult,
-  SQLiteConnection,
-  SQLiteStatement,
-} from '../driver/types.js'
+import type { DatabaseCopyStep, DriverWorkerEntry, OpenOptions, SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
+import { workerHostConnection } from './host-connection.js'
 import { LateReplies } from './late-replies.js'
 import {
   clearPendingTimers,
@@ -22,7 +13,6 @@ import {
 import {
   canCarryBegin,
   leftTransactionUnbegun,
-  toWorkerGroupStatement,
   type WorkerRequest,
   type WorkerRequestBody,
   type WorkerResponse,
@@ -37,6 +27,7 @@ export interface WorkerHostOptions {
   writeTimeoutMs?: number
   maxRestarts?: number
   countsRows?: boolean
+  encryptionKey?: () => Promise<Uint8Array>
 }
 
 type OpenRequest = Extract<WorkerRequest, { kind: 'open' }>
@@ -63,6 +54,7 @@ export class WriterWorker {
     private readonly timeoutMs: number,
     private readonly maxRestarts: number,
     private readonly countsRows: boolean,
+    private readonly encryptionKey: (() => Promise<Uint8Array>) | undefined,
   ) {
     this.connection = this.makeConnection()
   }
@@ -78,6 +70,7 @@ export class WriterWorker {
       workerOptions?.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS,
       workerOptions?.maxRestarts ?? DEFAULT_MAX_RESTARTS,
       workerOptions?.countsRows === true,
+      workerOptions?.encryptionKey,
     )
     worker.spawn()
     try {
@@ -105,8 +98,22 @@ export class WriterWorker {
         this.fault(new SirannonError(`Writer worker exited with code ${code}`, 'WRITER_WORKER_EXIT'))
       }
     })
-    this.ready = this.send(this.openRequest).then(() => this.reloadExtensionsOntoRestartedConnection())
+    this.ready = this.openOnWorker().then(() => this.reloadExtensionsOntoRestartedConnection())
     this.ready.catch(() => {})
+  }
+
+  private async openOnWorker(): Promise<void> {
+    if (!this.encryptionKey) {
+      await this.send(this.openRequest)
+      return
+    }
+    const key = await this.encryptionKey()
+    try {
+      const options = { ...this.openRequest.options, encryption: { key } }
+      await this.send({ ...this.openRequest, options }, undefined, [key.buffer as ArrayBuffer])
+    } finally {
+      if (key.buffer.byteLength > 0) key.fill(0)
+    }
   }
 
   private async reloadExtensionsOntoRestartedConnection(): Promise<void> {
@@ -237,7 +244,11 @@ export class WriterWorker {
     this.spawn()
   }
 
-  private send(request: WorkerRequestBody, onStep?: (step: DatabaseCopyStep) => void): Promise<unknown> {
+  private send(
+    request: WorkerRequestBody,
+    onStep?: (step: DatabaseCopyStep) => void,
+    transfer: ArrayBuffer[] = [],
+  ): Promise<unknown> {
     const worker = this.worker
     if (!worker) {
       return Promise.reject(
@@ -270,7 +281,7 @@ export class WriterWorker {
         ...(onStep ? { onStep } : {}),
       })
       try {
-        worker.postMessage(message)
+        worker.postMessage(message, transfer)
       } catch (err) {
         this.pending.delete(id)
         if (timer) clearTimeout(timer)
@@ -296,78 +307,37 @@ export class WriterWorker {
       })
   }
 
-  private countedCalls(sql: string): Pick<SQLiteStatement, 'allCounted' | 'getCounted' | 'allRawCounted'> {
-    return {
-      allCounted: <T = unknown>(...params: unknown[]) =>
-        this.request({ kind: 'allCounted', sql, params }) as Promise<Counted<T[]>>,
-      getCounted: <T = unknown>(...params: unknown[]) =>
-        this.request({ kind: 'getCounted', sql, params }) as Promise<Counted<T | undefined>>,
-      allRawCounted: <T = unknown>(...params: unknown[]) =>
-        this.request({ kind: 'allRawCounted', sql, params }) as Promise<Counted<T[]>>,
-    }
-  }
-
   private makeConnection(): SQLiteConnection {
-    const conn: SQLiteConnection = {
-      exec: sql => this.request({ kind: 'exec', sql }) as Promise<void>,
-      prepare: async sql => ({
-        all: <T = unknown>(...params: unknown[]) => this.request({ kind: 'all', sql, params }) as Promise<T[]>,
-        get: <T = unknown>(...params: unknown[]) =>
-          this.request({ kind: 'get', sql, params }) as Promise<T | undefined>,
-        run: (...params: unknown[]) => this.request({ kind: 'run', sql, params }) as Promise<RunResult>,
-        allRaw: <T = unknown>(...params: unknown[]) => this.request({ kind: 'allRaw', sql, params }) as Promise<T[]>,
-        ...(this.countsRows ? this.countedCalls(sql) : {}),
-      }),
-      runBatch: (sql, paramsBatch) =>
-        this.request({ kind: 'runBatch', sql, paramsBatch: paramsBatch as unknown[][] }) as Promise<RunResult[]>,
-      runBatchSummary: (sql, paramsBatch) =>
-        this.request({
-          kind: 'runBatchSummary',
-          sql,
-          paramsBatch: paramsBatch as unknown[][],
-        }) as Promise<BatchSummary>,
-      runGroup: (units, opening) =>
-        this.request({
-          kind: 'runGroup',
-          units: units.map(unit => ({ statements: unit.statements.map(toWorkerGroupStatement) })),
-          ...(opening === undefined ? {} : { opening: toWorkerGroupStatement(opening) }),
-        }) as Promise<GroupRunOutcome[]>,
-      copyRunsOffCallerThread: true,
-      copyDatabase: request =>
-        this.request(
-          {
-            kind: 'copyDatabase',
-            destPath: request.destPath,
-            pagesPerStep: request.pagesPerStep,
-            ...(request.stallTimeoutMs === undefined ? {} : { stallTimeoutMs: request.stallTimeoutMs }),
-          },
-          request.onStep,
-        ) as Promise<DatabaseCopyStep>,
-      loadExtension: async (extensionPath: string) => {
-        await this.request({ kind: 'loadExtension', path: extensionPath })
-        if (!this.loadedExtensions.includes(extensionPath)) this.loadedExtensions.push(extensionPath)
-      },
-      transaction: async fn => {
-        this.transactionOpen = true
-        this.beginPending = true
-        try {
-          const result = await fn(conn)
-          if (!this.beginPending) await conn.exec('COMMIT')
-          return result
-        } catch (err) {
+    const conn: SQLiteConnection = workerHostConnection(
+      (request, onStep) => this.request(request, onStep),
+      this.countsRows,
+      {
+        loadExtension: async (extensionPath: string) => {
+          await this.request({ kind: 'loadExtension', path: extensionPath })
+          if (!this.loadedExtensions.includes(extensionPath)) this.loadedExtensions.push(extensionPath)
+        },
+        transaction: async fn => {
+          this.transactionOpen = true
+          this.beginPending = true
           try {
-            if (!this.beginPending) await conn.exec('ROLLBACK')
-          } catch {}
-          throw err
-        } finally {
-          this.transactionOpen = false
-          this.beginPending = false
-          this.beginCarrier = null
-          this.lostTransaction = null
-        }
+            const result = await fn(conn)
+            if (!this.beginPending) await conn.exec('COMMIT')
+            return result
+          } catch (err) {
+            try {
+              if (!this.beginPending) await conn.exec('ROLLBACK')
+            } catch {}
+            throw err
+          } finally {
+            this.transactionOpen = false
+            this.beginPending = false
+            this.beginCarrier = null
+            this.lostTransaction = null
+          }
+        },
+        close: () => this.close(),
       },
-      close: () => this.close(),
-    }
+    )
     return conn
   }
 

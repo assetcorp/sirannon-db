@@ -78,7 +78,7 @@ export function handleSnapshotManifest(sirannon: Sirannon): DbRouteHandler {
         epoch = await ensureCdcEpoch(writer)
       })
 
-      const conn = await sirannon.driver.open(database.path, { walMode: true })
+      const conn = await database.openFileConnection({ walMode: true })
       try {
         const tableNames = await tablesInFkOrder(conn)
         await refuseUngrantedTables(sirannon, dbId, tableNames, identity)
@@ -146,7 +146,7 @@ export function handleSnapshotPage(sirannon: Sirannon): DbRouteHandler {
     try {
       await refuseUngrantedTables(sirannon, dbId, [body.table], identity)
 
-      const conn = await sirannon.driver.open(database.path, { walMode: true })
+      const conn = await database.openFileConnection({ walMode: true })
       try {
         if (!(await selectTableExists(conn, body.table))) {
           sendError(res, 404, 'TABLE_NOT_FOUND', `Table '${body.table}' not found`)

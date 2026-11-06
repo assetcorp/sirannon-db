@@ -89,6 +89,21 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `MIGRATION_CONCURRENT` | A concurrent migration attempt could not be resolved. |
 | `MIGRATION_ROLLBACK_ERROR` | A rollback step failed. |
 
+### Encryption
+
+| Code | Description |
+|------|-------------|
+| `ENCRYPTION_UNSUPPORTED` | The driver, the engine, or an in-memory database cannot encrypt. |
+| `INVALID_ENCRYPTION_KEY` | A key was not exactly 32 bytes. |
+| `ENCRYPTION_KEY_UNAVAILABLE` | The key function threw or rejected. |
+| `ENCRYPTION_KEY_MISSING` | An encrypted file was opened without a key. |
+| `ENCRYPTION_KEY_REJECTED` | The key failed the authentication check of the first page. |
+| `DATABASE_NOT_ENCRYPTED` | A key was given for a plaintext file. |
+| `ENCRYPTED_PAGE_CORRUPT` | A page after the first failed its authentication check. |
+| `ENCRYPTION_REQUIRED` | A plaintext peer asked an encrypted node for batches or a snapshot. |
+| `ENCRYPTION_CHANGE_IN_PROGRESS` | A key change or a replication engine was started while a key change ran. |
+| `ENCRYPTION_CHANGE_ABORTED` | A key change met a schema change or a write it could not apply exactly, and left the database as it was. |
+
 ---
 
 ## Replication
@@ -111,6 +126,7 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `NODE_DRAINING` | The node is in maintenance drain mode. |
 | `PROTOCOL_VERSION_MISMATCH` | Node compatibility metadata is incompatible with the cluster. |
 | `UNSAFE_RECOVERY_REQUIRED` | Automatic recovery needs explicit operator action. |
+| `REPLICATION_ACTIVE` | A key change or a restore was started on a database that a running replication engine writes to. |
 
 ---
 
@@ -129,6 +145,8 @@ A runtime whose writer isolation differs may raise further internal codes for it
 | `INVALID_WS_BACKPRESSURE` | `maxWebSocketBackpressureBytes` fails validation or is below `maxBodyBytes`. |
 | `INVALID_CLOSE_TIMEOUT` | The `timeoutMs` of a server `close` is not a non-negative integer, or exceeds what the implementation's timer can hold. |
 | `INVALID_BACKUP_RESTORE` | `acceptBackupRestore` is true and the server has no `authenticate` hook. |
+| `INVALID_ENCRYPTION_CHANGE` | `acceptEncryptionChange` is true and the server has no `authenticate` hook or no `encryptionKeys` function. |
+| `ENCRYPTION_CHANGE_NOT_ACCEPTED` | The server keeps key changes off, because `acceptEncryptionChange` is false. |
 | `INVALID_DEVICE_SYNC` | `acceptDeviceSync` is true and the server has no `authenticate` hook. |
 | `BULK_LOAD_UNSUPPORTED` | The execution target provides no bulk load. |
 | `UNKNOWN_QUERY` | No operation of that name is registered for the database. |

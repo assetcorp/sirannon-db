@@ -38,6 +38,7 @@ export interface BackupChainBase {
     chainId: string;
     fingerprint?: string;
     finishedAt: number;
+    keyId?: string;
     kind: 'full';
     name: string;
     pieceBytes: number;
@@ -53,6 +54,7 @@ export interface BackupChainChange {
     checkpointed: boolean;
     fingerprint?: string;
     frameCount: number;
+    keyId?: string;
     kind: 'change';
     name: string;
     pieceBytes: number;
@@ -87,6 +89,7 @@ export class BackupCycle {
     // @internal
     constructor(request: BackupCycleRequest);
     chains(): Promise<BackupChain[]>;
+    forgetChain(): Promise<void>;
     runOnce(): Promise<BackupRunReport | undefined>;
     start(): Promise<void>;
     status(): BackupCycleStatus;
@@ -214,6 +217,7 @@ export interface BackupRestoreOptions {
     destinationTimeoutMs?: number;
     destPath: string;
     driver: SQLiteDriver;
+    encryption?: EncryptionOptions;
     moment?: number;
     onProgress?: (progress: BackupRestoreProgress) => void;
     replaceExisting?: boolean;

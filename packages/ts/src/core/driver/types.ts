@@ -3,6 +3,7 @@ import type { BackupCycleRequest } from '../backup/cycle-options.js'
 import type { BackupFileCopy, BackupRunReport, BackupRunRequest } from '../backup/report.js'
 import type { BackupScheduleRequest } from '../backup/schedule-request.js'
 import type { WorkerHostOptions } from '../worker/host.js'
+import type { DatabaseFileSystem } from './file-system.js'
 import type { RowCounts } from './row-counts.js'
 
 /** Describes the result of one write through the driver.
@@ -247,6 +248,28 @@ export interface SQLiteConnection {
     units: readonly { statements: readonly GroupRunStatement[] }[],
     opening?: GroupRunStatement,
   ): Promise<GroupRunOutcome[]>
+  /**
+   * Starts recording every row that later writes on this connection insert,
+   * update, or delete in the main database, through SQLite's session extension.
+   * Sirannon calls it on the writer while it holds the writer, at the instant
+   * that a key change copies its snapshot, so the snapshot and the recording
+   * start from the same committed state.
+   */
+  startChangeCapture?(): Promise<void>
+  /**
+   * Returns the rows that changed since the recording started or since the
+   * last call, as a SQLite changeset, and restarts the recording in the same
+   * step. Call it only while no transaction is open on the connection.
+   */
+  takeCapturedChanges?(): Promise<Uint8Array>
+  /** Stops the recording that {@link SQLiteConnection.startChangeCapture} started, and drops what it holds. */
+  stopChangeCapture?(): Promise<void>
+  /**
+   * Applies a changeset from {@link SQLiteConnection.takeCapturedChanges} to
+   * this connection's database with triggers off, and fails without applying
+   * any of it when a change does not match the rows that it expects.
+   */
+  applyCapturedChanges?(changes: Uint8Array): Promise<void>
 }
 
 /**
@@ -282,6 +305,13 @@ export interface OpenOptions {
    * open, including after a writer worker restarts.
    */
   walAutoCheckpoint?: number
+  /**
+   * The 32-byte key of an encrypted database. Sirannon sets it on every open
+   * of an encrypted database, and the driver keeps no reference to the key once
+   * `open` returns. A driver whose capabilities report `encryption` as false
+   * fails such an open with `ENCRYPTION_UNSUPPORTED`.
+   */
+  encryption?: { key: Uint8Array }
 }
 
 /** Describes what a driver's runtime supports.
@@ -301,6 +331,11 @@ export interface DriverCapabilities {
    * {@link SQLiteStatement.allCounted}.
    */
   rowCounts: boolean
+  /**
+   * `true` when the driver encrypts every page of the database file and its
+   * log under the 32-byte key that {@link OpenOptions.encryption} carries.
+   */
+  encryption: boolean
 }
 
 /**
@@ -351,4 +386,6 @@ export interface SQLiteDriver {
    * different library from the one that the operator named.
    */
   resolveExtensionPath?(extensionPath: string): string
+  /** The file operations that a key change and its recovery perform, which a driver for a runtime with a file system supplies. */
+  readonly files?: DatabaseFileSystem
 }

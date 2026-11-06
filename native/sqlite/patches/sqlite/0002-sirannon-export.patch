@@ -1,0 +1,170 @@
+Do not delete: this patch changes source from SQLite3 Multiple Ciphers
+(https://github.com/utelle/SQLite3MultipleCiphers), Copyright (c) 2019-2026
+Ulrich Telle, MIT licence. NOTICE at the repository root contains the licence
+text. The patch adds the SQL function sirannon_export(schema), which copies the
+main database into an attached database inside the caller's open transaction.
+It runs the copy steps of SQLite's VACUUM INTO, marked as VACUUM INTO so that
+the transfer keeps every rowid of the source, and the codec of the attached
+database encrypts each page that it writes, so a key change copies a snapshot
+to a file under another key. The patch also adds sirannon_copy_codec, which
+gives a backup's destination a copy of the source's cipher, so the key stays
+inside SQLite3 Multiple Ciphers.
+
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -162815,6 +162815,80 @@
+   return rc;
+ }
+
++static void sirannonExportFunc(
++  sqlite3_context *context,
++  int argc,
++  sqlite3_value **argv
++){
++  sqlite3 *db = sqlite3_context_db_handle(context);
++  const char *zTarget = (const char*)sqlite3_value_text(argv[0]);
++  int iTarget = zTarget ? sqlite3FindDbName(db, zTarget) : -1;
++  u64 saved_flags = db->flags;
++  u32 saved_mDbFlags = db->mDbFlags;
++  i64 saved_nChange = db->nChange;
++  i64 saved_nTotalChange = db->nTotalChange;
++  u8 saved_mTrace = db->mTrace;
++  char *zErrMsg = 0;
++  int rc;
++
++  UNUSED_PARAMETER(argc);
++  if( iTarget<2 ){
++    sqlite3_result_error(context,
++        "sirannon_export copies main into an attached database, and its argument names none", -1);
++    return;
++  }
++  db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks | SQLITE_Comments;
++  db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum | DBFLAG_VacuumInto;
++  db->flags &= ~(u64)(SQLITE_ForeignKeys | SQLITE_ReverseOrder
++                   | SQLITE_Defensive | SQLITE_CountRows);
++  db->mTrace = 0;
++
++  db->init.iDb = iTarget;
++  rc = execSql(db, &zErrMsg,
++      "SELECT sql FROM main.sqlite_schema"
++      " WHERE type='table'AND name<>'sqlite_sequence'"
++      " AND coalesce(rootpage,1)>0");
++  if( rc==SQLITE_OK ){
++    rc = execSql(db, &zErrMsg,
++        "SELECT sql FROM main.sqlite_schema WHERE type='index'");
++  }
++  db->init.iDb = 0;
++  if( rc==SQLITE_OK ){
++    rc = execSqlF(db, &zErrMsg,
++        "SELECT'INSERT INTO \"%w\".'||quote(name)"
++        "||' SELECT*FROM main.'||quote(name)"
++        "FROM \"%w\".sqlite_schema "
++        "WHERE type='table'AND coalesce(rootpage,1)>0",
++        zTarget, zTarget);
++  }
++  db->mDbFlags &= ~DBFLAG_Vacuum;
++  if( rc==SQLITE_OK ){
++    rc = execSqlF(db, &zErrMsg,
++        "INSERT INTO \"%w\".sqlite_schema"
++        " SELECT*FROM main.sqlite_schema"
++        " WHERE type IN('view','trigger')"
++        " OR(type='table'AND rootpage=0)",
++        zTarget);
++  }
++
++  db->init.iDb = 0;
++  db->flags = saved_flags;
++  db->mDbFlags = saved_mDbFlags;
++  db->nChange = saved_nChange;
++  db->nTotalChange = saved_nTotalChange;
++  db->mTrace = saved_mTrace;
++  if( rc!=SQLITE_OK ){
++    sqlite3_result_error(context, zErrMsg ? zErrMsg : sqlite3ErrStr(rc), -1);
++    sqlite3_result_error_code(context, rc);
++  }
++  sqlite3DbFree(db, zErrMsg);
++}
++
++SQLITE_PRIVATE int sirannonRegisterExport(sqlite3 *db){
++  return sqlite3_create_function(db, "sirannon_export", 1,
++      SQLITE_UTF8 | SQLITE_DIRECTONLY, 0, sirannonExportFunc, 0, 0);
++}
++
+ #endif  /* SQLITE_OMIT_VACUUM && SQLITE_OMIT_ATTACH */
+
+ /************** End of vacuum.c **********************************************/
+@@ -373376,6 +373450,63 @@
+ }
+ /*** End of #include "sqlite3mc_vfs.c" ***/
+
++SQLITE_API int
++sirannon_copy_codec(sqlite3* pDest, sqlite3* pSrc, const char* zSrcDb)
++{
++  int rc = SQLITE_OK;
++  Codec* srcCodec;
++  Codec* codec;
++  Btree* pBt;
++  int pageSize;
++  int reserved;
++
++  sqlite3_mutex_enter(pSrc->mutex);
++  srcCodec = sqlite3mcGetCodec(pSrc, zSrcDb);
++  if (srcCodec == NULL || !sqlite3mcIsEncrypted(srcCodec))
++  {
++    sqlite3_mutex_leave(pSrc->mutex);
++    return SQLITE_OK;
++  }
++  codec = (Codec*) sqlite3_malloc(sizeof(Codec));
++  rc = (codec != NULL) ? sqlite3mcCodecInit(codec) : SQLITE_NOMEM;
++  if (rc == SQLITE_OK)
++  {
++    rc = sqlite3mcCodecCopy(codec, srcCodec);
++  }
++  sqlite3_mutex_leave(pSrc->mutex);
++  if (rc != SQLITE_OK)
++  {
++    if (codec != NULL) sqlite3mcCodecFree(codec);
++    return rc;
++  }
++
++  sqlite3_mutex_enter(pDest->mutex);
++  if (!sqlite3mcIsEncryptionSupported(pDest, "main"))
++  {
++    sqlite3mcCodecFree(codec);
++    rc = SQLITE_ERROR;
++    sqlite3ErrorWithMsg(pDest, rc, "The backup destination opened through a VFS that cannot encrypt");
++    sqlite3_mutex_leave(pDest->mutex);
++    return rc;
++  }
++  pBt = pDest->aDb[0].pBt;
++  sqlite3mcSetDb(codec, pDest);
++  sqlite3mcSetBtree(codec, pBt);
++  pageSize = sqlite3mcGetPageSizeWriteCipher(codec);
++  reserved = sqlite3mcGetReservedWriteCipher(codec);
++  rc = mcAdjustBtree(pBt, pageSize, reserved, sqlite3mcGetLegacyWriteCipher(codec));
++  if (rc == SQLITE_OK)
++  {
++    sqlite3mcCodecSizeChange(codec, pageSize, reserved);
++    sqlite3mcSetCodec(pDest, "main", sqlite3_db_filename(pDest, "main"), codec);
++  }
++  else
++  {
++    sqlite3mcCodecFree(codec);
++  }
++  sqlite3_mutex_leave(pDest->mutex);
++  return rc;
++}
+
+ static int
+ mcRegisterCodecExtensions(sqlite3* db, char** pzErrMsg, const sqlite3_api_routines* pApi)
+@@ -373434,6 +373565,10 @@
+     rc = sqlite3_create_function(db, "sqlite3mc_version", 0, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+                                  NULL, sqlite3mcVersion, 0, 0);
+   }
++  if (rc == SQLITE_OK)
++  {
++    rc = sirannonRegisterExport(db);
++  }
+   return rc;
+ }
+

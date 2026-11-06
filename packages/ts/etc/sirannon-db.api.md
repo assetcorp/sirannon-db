@@ -53,6 +53,7 @@ export interface BackupChainBase {
     chainId: string;
     fingerprint?: string;
     finishedAt: number;
+    keyId?: string;
     kind: 'full';
     name: string;
     pieceBytes: number;
@@ -68,6 +69,7 @@ export interface BackupChainChange {
     checkpointed: boolean;
     fingerprint?: string;
     frameCount: number;
+    keyId?: string;
     kind: 'change';
     name: string;
     pieceBytes: number;
@@ -490,13 +492,20 @@ export class ConnectionPool {
     acquireWriter(): SQLiteConnection;
     // (undocumented)
     close(): Promise<void>;
+    closeReaders(drainTimeoutMs: number): Promise<void>;
+    closeWriter(): Promise<void>;
     connections(): readonly SQLiteConnection[];
     // (undocumented)
     static create(options: ConnectionPoolOptions): Promise<ConnectionPool>;
     // (undocumented)
     get isReadOnly(): boolean;
+    leaseReader(): SQLiteConnection;
     // (undocumented)
     get readerCount(): number;
+    releaseReader(): void;
+    reopen(): Promise<void>;
+    get suspended(): boolean;
+    withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
 }
 
 // @public
@@ -509,7 +518,11 @@ export interface ConnectionPoolOptions {
     // (undocumented)
     driver: SQLiteDriver;
     // (undocumented)
+    keyring?: EncryptionKeyring;
+    // (undocumented)
     path: string;
+    // (undocumented)
+    prepareReopened?: (connections: readonly SQLiteConnection[]) => Promise<void>;
     // (undocumented)
     readOnly?: boolean;
     // (undocumented)
@@ -547,7 +560,7 @@ export function createTenantResolver(options: TenantResolverOptions): (id: strin
 } | undefined;
 
 // @public
-export class Database extends DatabaseBackups {
+export class Database extends DatabaseEncryption {
     appliedMigrations(): Promise<AppliedMigrationRow[]>;
     // @internal (undocumented)
     applyChanges(batch: ReplicationBatch, resolver?: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
@@ -621,6 +634,29 @@ export interface DatabaseCopyStep {
 }
 
 // @public
+export class DatabaseEncryption extends DatabaseBackups {
+    // @internal
+    assertNoReplicationEngine(operation: string): void;
+    changeEncryption(change: EncryptionChange): Promise<EncryptionStatus>;
+    // @internal
+    get encryptedFile(): boolean;
+    encryptionStatus(): Promise<EncryptionStatus>;
+    // @internal
+    holdFileConnection(holder: FileConnectionHolder): () => void;
+    // @internal
+    openFileConnection(options: OpenOptions): Promise<SQLiteConnection>;
+    // @internal
+    registerReplicationEngine(): () => void;
+}
+
+// @public
+export interface DatabaseFileSystem {
+    readStart(path: string, length: number): Promise<Uint8Array | null>;
+    remove(path: string): Promise<void>;
+    rename(from: string, to: string): Promise<void>;
+}
+
+// @public
 export class DatabaseLifecycle {
     protected constructor(id: string, path: string, runtime: DatabaseRuntime, options?: DatabaseOptions);
     // @internal
@@ -667,6 +703,7 @@ export interface DatabaseOptions {
     cdcPollInterval?: number;
     cdcRetention?: number;
     deviceCursorRetention?: number;
+    encryption?: EncryptionOptions;
     maxChangesHeldForDevice?: number;
     readOnly?: boolean;
     readPoolSize?: number;
@@ -686,6 +723,7 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver;
 
 // @public
 export interface DriverCapabilities {
+    encryption: boolean;
     extensions: boolean;
     multipleConnections: boolean;
     rowCounts: boolean;
@@ -697,6 +735,58 @@ export interface DriverWorkerEntry {
     config?: unknown;
     exportName?: string;
     specifier: string;
+}
+
+// @public
+export interface EncryptionChange {
+    key: (() => EncryptionKey | Promise<EncryptionKey>) | null;
+}
+
+// @public
+export interface EncryptionChangeStatus {
+    error?: {
+        code: string;
+        message: string;
+    };
+    finishedAt?: number;
+    reopenError?: {
+        code: string;
+        message: string;
+    };
+    rounds?: number;
+    rowsCopied?: number;
+    startedAt?: number;
+    state: 'idle' | 'copying' | 'catching-up' | 'swapping' | 'done' | 'failed';
+    target?: 'encrypted' | 'plaintext';
+}
+
+// @public
+export class EncryptionError extends SirannonError {
+    constructor(message: string, code: EncryptionErrorCode, cause?: unknown);
+}
+
+// @public
+export type EncryptionErrorCode = 'ENCRYPTION_UNSUPPORTED' | 'INVALID_ENCRYPTION_KEY' | 'ENCRYPTION_KEY_UNAVAILABLE' | 'ENCRYPTION_KEY_MISSING' | 'ENCRYPTION_KEY_REJECTED' | 'DATABASE_NOT_ENCRYPTED' | 'ENCRYPTED_PAGE_CORRUPT' | 'ENCRYPTION_REQUIRED' | 'ENCRYPTION_CHANGE_IN_PROGRESS' | 'ENCRYPTION_CHANGE_ABORTED';
+
+// @public
+export type EncryptionKey = Uint8Array | {
+    key: Uint8Array;
+    id?: string;
+};
+
+// @public
+export interface EncryptionOptions {
+    key: () => EncryptionKey | Promise<EncryptionKey>;
+}
+
+// @public
+export interface EncryptionStatus {
+    change: EncryptionChangeStatus;
+    changedAt?: number;
+    cipher?: 'aegis-256' | 'sqlcipher-4';
+    cipherVersion?: string;
+    encrypted: boolean;
+    keyId?: string;
 }
 
 // @internal
@@ -983,6 +1073,9 @@ export type NodeHealthState = (typeof NODE_HEALTH_STATES)[number];
 
 // @public
 export interface OpenOptions {
+    encryption?: {
+        key: Uint8Array;
+    };
     readonly?: boolean;
     synchronous?: SynchronousLevel;
     walAutoCheckpoint?: number;
@@ -1036,7 +1129,7 @@ export function planBackupRestore(chains: readonly BackupChain[], moment: number
 export type PushHookContext = Parameters<BeforePushHook>[0];
 
 // @internal
-export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T[]>;
+export function query<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params, leasedFrom?: ConnectionPool): Promise<T[]>;
 
 // @public
 export class QueryError extends SirannonError {
@@ -1069,7 +1162,7 @@ export interface QueryMetrics {
 }
 
 // @internal
-export function queryOne<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params): Promise<T | undefined>;
+export function queryOne<T = Record<string, unknown>>(conn: SQLiteConnection, sql: string, params?: Params, leasedFrom?: ConnectionPool): Promise<T | undefined>;
 
 // @public
 export interface QueryOptions {
@@ -1202,12 +1295,14 @@ export type ServerExecutionTargetResolver = (databaseId: string) => ServerExecut
 export interface ServerOptions<Identity = unknown> {
     acceptBackupRestore?: boolean;
     acceptDeviceSync?: boolean;
+    acceptEncryptionChange?: boolean;
     acceptSql?: boolean;
     authenticate?: AuthenticateHook<Identity>;
     authorizeClusterStatus?: ClusterStatusAuthorizer;
     cdcRetentionMs?: number;
     cors?: boolean | CorsOptions;
     deviceCursorRetentionMs?: number;
+    encryptionKeys?: (databaseId: string, keyRef: string) => EncryptionKey | Promise<EncryptionKey>;
     getClusterStatus?: (databaseId: string) => ClusterStatusInfo | null;
     getReplicationStatus?: () => ReplicationStatusInfo | null;
     host?: string;
@@ -1245,7 +1340,7 @@ export class Sirannon {
     resolve(id: string): Promise<Database | undefined>;
     shutdown(): Promise<void>;
     // @internal
-    withDatabaseOffline<T>(id: string, action: (path: string) => Promise<T>): Promise<OfflineOutcome<T>>;
+    withDatabaseOffline<T>(id: string, action: (path: string, encryption?: EncryptionOptions) => Promise<T>): Promise<OfflineOutcome<T>>;
 }
 
 // @public
@@ -1273,6 +1368,7 @@ export type SnapshotHookContext = Parameters<BeforeSnapshotHook>[0];
 
 // @public
 export interface SQLiteConnection {
+    applyCapturedChanges?(changes: Uint8Array): Promise<void>;
     close(): Promise<void>;
     copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>;
     readonly copyRunsOffCallerThread?: boolean;
@@ -1284,6 +1380,9 @@ export interface SQLiteConnection {
     runGroup?(units: readonly {
         statements: readonly GroupRunStatement[];
     }[], opening?: GroupRunStatement): Promise<GroupRunOutcome[]>;
+    startChangeCapture?(): Promise<void>;
+    stopChangeCapture?(): Promise<void>;
+    takeCapturedChanges?(): Promise<Uint8Array>;
     transaction<T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
 }
 
@@ -1292,6 +1391,7 @@ export interface SQLiteDriver {
     readonly capabilities: DriverCapabilities;
     createBackupEngine?(driver: SQLiteDriver): BackupEngine;
     createWriterContext?(): WriterContext;
+    readonly files?: DatabaseFileSystem;
     open(path: string, options?: OpenOptions): Promise<SQLiteConnection>;
     resolveExtensionPath?(extensionPath: string): string;
     startWriterHost?(path: string, options: OpenOptions, hostOptions?: WorkerHostOptions): Promise<SQLiteConnection>;

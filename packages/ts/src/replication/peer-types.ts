@@ -16,6 +16,8 @@ export interface NodeInfo {
   primaryTerm?: bigint
   /** Holds the replication protocol version that the peer uses. */
   protocolVersion?: string
+  /** Records whether the peer announces an encrypted database. A peer that announces nothing counts as plaintext. */
+  encrypted: boolean
   /** Holds the time, in milliseconds since the Unix epoch, at which the peer connected. */
   joinedAt: number
   /** Holds the time, in milliseconds since the Unix epoch, of the last message from the peer. The bundled transports set it only when the peer connects. */

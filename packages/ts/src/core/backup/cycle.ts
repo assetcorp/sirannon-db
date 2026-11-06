@@ -281,6 +281,14 @@ export class BackupCycle {
     })
   }
 
+  /** Drops the chain that this stopped cycle extended, so that the next cycle starts a new chain with a full copy. */
+  forgetChain(): Promise<void> {
+    return this.runTurn(async () => {
+      await this.discardState()
+      await removeCycleState(this.stagingDir)
+    })
+  }
+
   private async discardState(): Promise<void> {
     const pending = this.state?.pending
     if (pending) await rm(stagedCapturePath(this.stagingDir, pending.sequence), { force: true })

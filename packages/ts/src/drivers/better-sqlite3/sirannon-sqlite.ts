@@ -17,6 +17,7 @@ interface SirannonSqliteModule {
  */
 export interface SirannonSqliteAddon {
   Statement?: { prototype?: Record<string, unknown> }
+  Database?: { prototype?: Record<string, unknown> }
 }
 
 /**

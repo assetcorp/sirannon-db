@@ -255,6 +255,7 @@ export class NodeDrainingError extends ReplicationError {
 
 // @public
 export interface NodeInfo {
+    encrypted: boolean;
     groupId?: string;
     id: string;
     joinedAt: number;
@@ -718,6 +719,7 @@ export interface ReplicationTransport {
     onSyncCompleteReceived(handler: (complete: SyncComplete, fromPeerId: string) => Promise<void>): void;
     onSyncRequested(handler: (request: SyncRequest, fromPeerId: string) => Promise<void>): void;
     peers(): ReadonlyMap<string, NodeInfo>;
+    refusePeer?(peerId: string, error: SirannonError): Promise<void>;
     requestSync(peerId: string, request: SyncRequest): Promise<void>;
     send(peerId: string, batch: ReplicationBatch): Promise<void>;
     sendAck(peerId: string, ack: ReplicationAck): Promise<void>;
@@ -859,6 +861,7 @@ export function toReplicationStatusInfo(status: ReplicationStatus): ReplicationS
 
 // @public
 export interface TransportConfig {
+    encrypted?: boolean;
     endpoints?: string[];
     groupId?: string;
     localRole?: TopologyRole;

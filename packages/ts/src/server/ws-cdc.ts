@@ -35,6 +35,7 @@ export interface CDCContext {
   tracker: ChangeTracker
   manager: SubscriptionManager
   stopPolling: () => void
+  releaseHold: () => void
   epoch: string
 }
 
@@ -65,6 +66,7 @@ export class CdcContextRegistry {
       const ctx = await promise
       if (this.closed) {
         ctx.stopPolling()
+        ctx.releaseHold()
         await ctx.cdcConn.close().catch(() => {})
         throw new SirannonError('WebSocket handler is shut down', 'HANDLER_CLOSED')
       }
@@ -84,6 +86,7 @@ export class CdcContextRegistry {
     if (!ctx || ctx.manager.size > 0) return
 
     ctx.stopPolling()
+    ctx.releaseHold()
     ctx.cdcConn.close().catch(() => {})
     this.contexts.delete(databaseId)
   }
@@ -94,6 +97,7 @@ export class CdcContextRegistry {
 
     for (const ctx of this.contexts.values()) {
       ctx.stopPolling()
+      ctx.releaseHold()
       try {
         await ctx.cdcConn.close()
       } catch {}
@@ -102,7 +106,7 @@ export class CdcContextRegistry {
   }
 
   private async createContext(database: Database): Promise<CDCContext> {
-    const cdcConn = await this.sirannon.driver.open(database.path, { walMode: true })
+    const cdcConn = await database.openFileConnection({ walMode: true })
 
     const retention = database.changeRetention.cdcRetention ?? this.retentionMs
     const deviceRetention = resolveDeviceRetentionPolicy(database.changeRetention, this.serverDeviceRetention)
@@ -123,21 +127,21 @@ export class CdcContextRegistry {
       throw new SirannonError(`Database '${database.id}' is closed`, 'DATABASE_CLOSED')
     }
 
-    let polling = false
+    const ctx: CDCContext = { cdcConn, tracker, manager, stopPolling: () => {}, releaseHold: () => {}, epoch }
+    let interval: ReturnType<typeof setInterval> | null = null
+    let inFlight: Promise<void> | null = null
     let consecutiveErrors = 0
     let tickCount = 0
     const MAX_CONSECUTIVE_ERRORS = 10
 
     const stopPolling = () => {
-      clearInterval(interval)
+      if (interval !== null) clearInterval(interval)
+      interval = null
     }
 
-    const tick = async () => {
-      if (manager.size === 0) return
-      if (polling) return
-      polling = true
+    const pollOnce = async () => {
       try {
-        const events = await tracker.poll(cdcConn)
+        const events = await tracker.poll(ctx.cdcConn)
         if (events.length > 0) {
           manager.dispatch(events)
         }
@@ -159,15 +163,37 @@ export class CdcContextRegistry {
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
           stopPolling()
         }
-      } finally {
-        polling = false
       }
     }
-    const interval = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
-      unref?: () => void
+    const tick = () => {
+      if (manager.size === 0 || inFlight !== null) return
+      inFlight = pollOnce().finally(() => {
+        inFlight = null
+      })
     }
-    interval.unref?.()
+    const startPolling = () => {
+      stopPolling()
+      consecutiveErrors = 0
+      const started = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
+        unref?: () => void
+      }
+      started.unref?.()
+      interval = started
+    }
 
-    return { cdcConn, tracker, manager, stopPolling, epoch }
+    ctx.stopPolling = stopPolling
+    startPolling()
+    ctx.releaseHold = database.holdFileConnection({
+      release: async () => {
+        stopPolling()
+        await inFlight
+        await ctx.cdcConn.close().catch(() => {})
+      },
+      reopen: async () => {
+        ctx.cdcConn = await database.openFileConnection({ walMode: true })
+        startPolling()
+      },
+    })
+    return ctx
   }
 }

@@ -57,7 +57,14 @@ export async function resolveBackupDatabase(
   return database
 }
 
-function refusedOnTheFirstTick(turn: Promise<unknown>): Promise<unknown> {
+/**
+ * Waits one event-loop tick for a started operation, so that a route can report an operation that fails at once.
+ *
+ * @param turn - The operation's promise.
+ * @returns The error that the operation failed with within that tick, or `undefined` while it still runs or after it succeeds.
+ * @internal
+ */
+export function refusedOnTheFirstTick(turn: Promise<unknown>): Promise<unknown> {
   const settled = turn.then(
     () => undefined,
     (err: unknown) => err ?? new SirannonError('The backup turn failed', 'BACKUP_ERROR'),

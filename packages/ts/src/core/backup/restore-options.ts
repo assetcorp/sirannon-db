@@ -1,4 +1,5 @@
 import type { SQLiteDriver } from '../driver/types.js'
+import type { EncryptionOptions } from '../encryption/types.js'
 import type { BackupDestination } from './destination.js'
 
 /** The number of change pieces in one batch when the caller sets none.
@@ -71,6 +72,11 @@ export interface BackupRestoreOptions {
   destinationTimeoutMs?: number
   /** Called after every piece that Sirannon fetches, and after every batch. */
   onProgress?: (progress: BackupRestoreProgress) => void
+  /**
+   * The key of the database that the restore rebuilds, which the backups of an encrypted database need. Sirannon
+   * opens the rebuilt file under this key, so the result holds ciphertext under the same key as the backups.
+   */
+  encryption?: EncryptionOptions
 }
 
 /** The report of one finished restore.

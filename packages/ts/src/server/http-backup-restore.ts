@@ -25,13 +25,14 @@ interface RestoreRequest {
 async function rebuildDatabase(request: RestoreRequest): Promise<void> {
   const { sirannon, runs, databaseId, location } = request
   try {
-    const outcome = await sirannon.withDatabaseOffline(databaseId, async destPath => {
+    const outcome = await sirannon.withDatabaseOffline(databaseId, async (destPath, encryption) => {
       await discardStagedChain(location.stagingDir)
       return restoreBackup({
         destination: location.destination,
         chainName: location.chainName,
         driver: sirannon.driver,
         destPath,
+        ...(encryption === undefined ? {} : { encryption }),
         replaceExisting: true,
         moment: request.moment,
         ...(location.destinationTimeoutMs === undefined ? {} : { destinationTimeoutMs: location.destinationTimeoutMs }),
@@ -92,6 +93,7 @@ export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs:
 
     let location: BackupChainLocation
     try {
+      database.assertNoReplicationEngine('restore')
       location = database.backupLocation()
     } catch (err) {
       sendCaughtError(res, abort, err)

@@ -21,15 +21,36 @@ export const ORDER_PADDING = 200
 
 export interface Placement {
   label: string
+  runtime: 'better-sqlite3' | 'node:sqlite'
   driver: () => SQLiteDriver
   writerWorker: boolean
 }
 
 export const PLACEMENTS: Placement[] = [
-  { label: 'better-sqlite3 with writes on the calling thread', driver: () => betterSqlite3(), writerWorker: false },
-  { label: 'better-sqlite3 with writes on the writer worker', driver: () => betterSqlite3(), writerWorker: true },
-  { label: 'node:sqlite with writes on the calling thread', driver: () => nodeSqlite(), writerWorker: false },
-  { label: 'node:sqlite with writes on the writer worker', driver: () => nodeSqlite(), writerWorker: true },
+  {
+    label: 'better-sqlite3 with writes on the calling thread',
+    runtime: 'better-sqlite3',
+    driver: () => betterSqlite3(),
+    writerWorker: false,
+  },
+  {
+    label: 'better-sqlite3 with writes on the writer worker',
+    runtime: 'better-sqlite3',
+    driver: () => betterSqlite3(),
+    writerWorker: true,
+  },
+  {
+    label: 'node:sqlite with writes on the calling thread',
+    runtime: 'node:sqlite',
+    driver: () => nodeSqlite(),
+    writerWorker: false,
+  },
+  {
+    label: 'node:sqlite with writes on the writer worker',
+    runtime: 'node:sqlite',
+    driver: () => nodeSqlite(),
+    writerWorker: true,
+  },
 ]
 
 export interface DestinationFaults {

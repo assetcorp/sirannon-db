@@ -137,7 +137,7 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
 }
 
 export function startPolling(
-  conn: SQLiteConnection,
+  connection: () => SQLiteConnection,
   tracker: ChangeTracker,
   manager: SubscriptionManager,
   intervalMs: number,
@@ -162,7 +162,7 @@ export function startPolling(
     polling = true
 
     try {
-      const events = await exclusive(() => tracker.poll(conn))
+      const events = await exclusive(() => tracker.poll(connection()))
       if (events.length > 0) {
         manager.dispatch(events)
       }
@@ -173,6 +173,7 @@ export function startPolling(
       if (tickCount >= CLEANUP_INTERVAL_TICKS) {
         tickCount = 0
         await exclusive(async () => {
+          const conn = connection()
           await applyDeviceCursorBoundary(conn, tracker, deviceRetention)
           await tracker.cleanup(conn)
         })

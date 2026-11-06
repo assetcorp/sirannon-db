@@ -98,6 +98,8 @@ Database {
   backupRestorePlan(moment): async -> BackupRestorePlan
   backupPiecesSafeToDelete(options?): async -> List<BackupChainRecord>
   loadExtension(extensionPath): async -> void
+  encryptionStatus(): async -> EncryptionStatus
+  changeEncryption(change: EncryptionChange): async -> EncryptionStatus
 
   onBeforeQuery(hook): DisposeFn
   onAfterQuery(hook): DisposeFn
@@ -116,6 +118,7 @@ DatabaseOptions {
   maxChangesHeldForDevice?: number   (default: 0, unlimited)      -- see 08-device-sync.md
   writerWorker?:    boolean or WriterWorkerOptions (default: off)
   backups?:         BackupCycleOptions (default: off)
+  encryption?:      EncryptionOptions (default: off)
 }
 
 ExecuteResult { changes: number, lastInsertRowId: number or bigint }
@@ -131,6 +134,7 @@ Params        = Map<string, any> or List<any>
 - **watch** installs CDC triggers on the table and starts the poll loop. **unwatch** removes them and stops polling once no table is watched. **on** returns a subscription builder; a subscription receives events only for tables that are watched.
 - **watch**, **unwatch**, and **on** match the table name against the schema in any ASCII letter case, as SQLite does, and the triggers record each change under the name that the schema stores. `watch` must fail with `CDC_ERROR` when the name matches no ordinary table, so a view and a virtual table both fail.
 - **live** returns a query result that change events keep current; see [Live Queries](#live-queries).
+- **encryptionStatus** and **changeEncryption** report and change how the file is encrypted; see [Encryption](#encryption).
 - **query options** carry `writeConcern` and `readConcern`. The core layer passes them to hooks and, for a replication execution target, to the replication engine, which enforces their meaning (see [03-replication.md](03-replication.md)). Plain core execution does not otherwise act on them.
 - **close** stops CDC polling, cancels scheduled backups, drains pending grouped writes, captures the change log a final time, closes the pool, and runs close listeners. Afterwards every method fails with `DATABASE_CLOSED`. While a device-sync snapshot load is in progress, reads and writes fail with `SNAPSHOT_IN_PROGRESS` (see [08-device-sync.md](08-device-sync.md)).
 
@@ -739,6 +743,7 @@ BackupChainBase {
   pieceBytes:   number
   bytesWritten: number
   fingerprint?: string
+  keyId?:       string
 }
 
 BackupChainChange {
@@ -755,6 +760,7 @@ BackupChainChange {
   bytesWritten: number
   checkpointed: boolean
   fingerprint?: string
+  keyId?:       string
 }
 
 BackupChainRecord = BackupChainBase or BackupChainChange
@@ -909,6 +915,60 @@ A driver reporting `extensions: false` refuses at step 6, and the message must s
 The load must apply to the writer, every reader, and every further connection the database has open. A connection the database opens afterwards must load every extension already loaded. A writer worker that restarts must load them onto its new connection. Loading and opening must not interleave.
 
 SQLite cannot unload an extension, so a load that fails part-way leaves it on the connections loaded before the failure.
+
+---
+
+## Encryption
+
+A database opened with `encryption` keeps every page of its file, its log, and every backup that it writes as ciphertext under one 32-byte key.
+
+```text
+EncryptionOptions { key: () -> async EncryptionKey }
+
+EncryptionKey = Bytes or { key: Bytes, id?: string }
+
+EncryptionChange { key: (() -> async EncryptionKey) or null }
+
+EncryptionStatus {
+  encrypted:      boolean
+  cipher?:        'aegis-256' | 'sqlcipher-4'
+  cipherVersion?: string
+  keyId?:         string
+  changedAt?:     number
+  change:         EncryptionChangeStatus
+}
+
+EncryptionChangeStatus {
+  state:       'idle' | 'copying' | 'catching-up' | 'swapping' | 'done' | 'failed'
+  target?:     'encrypted' | 'plaintext'
+  startedAt?:  number
+  finishedAt?: number
+  rowsCopied?: number
+  rounds?:     number
+  error?:      { code: string, message: string }
+  reopenError?: { code: string, message: string }
+}
+```
+
+Core must call `key` each time it opens the database's connections, which covers the open itself, a restarted writer worker, and the reopen after a restore or a key change, and must drop the returned bytes once those connections are open. Core must send the bytes to a writer worker once, through the worker's message port. A key that is not exactly 32 bytes, including a string, must fail the open with `INVALID_ENCRYPTION_KEY`, and a `key` function that throws or rejects must fail it with `ENCRYPTION_KEY_UNAVAILABLE`, carrying that failure as its cause. A database whose driver reports `encryption` false must fail an open that sets `encryption` with `ENCRYPTION_UNSUPPORTED`.
+
+Every full copy, change piece, and streamed copy of an encrypted database must hold ciphertext under the database's key, and a restore must rebuild the file under the key that the database was opened with. Every chain record must store the `keyId` of the key its pieces hold ciphertext under, where the key carried one. A restore must open the assembled file with the current key and fail with `ENCRYPTION_KEY_REJECTED` when that key fails, stating the chain's `keyId` where the record carries one.
+
+`encryptionStatus` reports whether the file is encrypted, the scheme that the file is encrypted under, the engine's cipher version, the `id` that came with the current key, the time of the last finished change, and the current or last key change. Core must store `keyId` and `changedAt` inside the database. No status, error, log line, or metric may contain a key.
+
+### Key Changes
+
+`changeEncryption` encrypts a plaintext database, changes the key of an encrypted one, or, with `key` null, removes encryption. It resolves with the status once the change ends, and `encryptionStatus` reports its progress while it runs. The change must copy a snapshot of the database to a new file under the target key, apply the writes committed since that snapshot in rounds, hold writes only for the last round, and then replace the file. Reads and writes proceed until that last round.
+
+The new file must hold every row, rowid, and change-log entry that the original holds. No trigger may run on the new file while the change applies writes to it, and the new file must carry every trigger of the original before the replacement. A schema change during the copy, and a write that the change cannot apply exactly, must stop the change with `ENCRYPTION_CHANGE_ABORTED`, delete the new file, and leave the database as it was. A second change while one runs must fail with `ENCRYPTION_CHANGE_IN_PROGRESS`, and a read-only database must fail `changeEncryption` with `READ_ONLY`. A database with a running replication engine registered must fail `changeEncryption` with `REPLICATION_ACTIVE` before it touches any file, because the engine's writer connection would stay on the replaced file.
+
+The replacement must hold writes, apply the last round, record in the marker that the replacement has begun, close every connection, checkpoint the log with truncation, delete the old log and shared-memory files, put the new file in place of the old one, write to the marker again so that those deletes and that rename reach the disk, and reopen, in that order. Where the file system replaces a file in one rename, core must use that rename; where it cannot, core must delete the old file and then rename the new file. Until the new file is in place, the old key must open the database; after it, the new key must. After the reopen, core must use the change's `key` for every later connection of that open, and the next backup turn must start a new chain with a full copy, because the earlier chain holds ciphertext under the earlier key.
+
+Once the new file is in place, the change has taken effect. A failure after that point, including a key function that fails on the reopen or an extension that fails to load into a reopened connection, must report `done` with `reopenError`, must leave the change's `key` as the key for every later connection of that open, and must never report `failed`, because an operator who reads `failed` can discard the only key that opens the file.
+
+Once the new file exists, core must create a marker beside the database. The marker is a plaintext SQLite database in rollback-journal mode with `synchronous = FULL`, and it holds the new file's first 16 bytes and whether the replacement has begun. SQLite's Unix file layer syncs the directory when it first syncs a new rollback journal, so each write to the marker makes the earlier renames and deletes in that directory durable, and core needs no file sync from the driver. Core must delete the marker after the reopen.
+
+An open that finds a marker must read the database file's first 16 bytes. When they match the marker, the new file replaced the original, and the open must delete any new file that the change left behind. When the database file is missing, the marker records that the replacement began, and the new file's first 16 bytes match the marker, the open must rename the new file into place. When the database file is missing in any other case, the open must fail with `DATABASE_OPEN_FAILED` and leave every file as it is. In every remaining case the original stands, and the open must delete the new file. After any of these steps except the failure, the open must delete the marker. When the key then fails, the open must fail with `ENCRYPTION_KEY_REJECTED`, stating whether the file needs the key from before the change or the key from after it.
 
 ---
 

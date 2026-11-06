@@ -1,12 +1,14 @@
 import { type OptionalDependency, optionalDependencyError } from '../../core/optional-dependency.js'
 import type { connectToEndpoint } from './client-streams.js'
 import type { forwardOverRpc } from './forward-rpc.js'
+import type { refusePeerStreams } from './peer-refusal.js'
 import type { startServer } from './server-streams.js'
 
 export interface GrpcRuntime {
   startServer: typeof startServer
   connectToEndpoint: typeof connectToEndpoint
   forwardOverRpc: typeof forwardOverRpc
+  refusePeerStreams: typeof refusePeerStreams
 }
 
 const GRPC_INSTALL_COMMAND = 'pnpm add -E @grpc/grpc-js @bufbuild/protobuf grpc-health-check'
@@ -33,14 +35,16 @@ export async function loadGrpcRuntime(): Promise<GrpcRuntime> {
   await requirePackage('@bufbuild/protobuf', () => import('@bufbuild/protobuf/wire'))
   await requirePackage('grpc-health-check', () => import('grpc-health-check'))
 
-  const [serverStreams, clientStreams, forwardRpc] = await Promise.all([
+  const [serverStreams, clientStreams, forwardRpc, peerRefusal] = await Promise.all([
     import('./server-streams.js'),
     import('./client-streams.js'),
     import('./forward-rpc.js'),
+    import('./peer-refusal.js'),
   ])
   return {
     startServer: serverStreams.startServer,
     connectToEndpoint: clientStreams.connectToEndpoint,
     forwardOverRpc: forwardRpc.forwardOverRpc,
+    refusePeerStreams: peerRefusal.refusePeerStreams,
   }
 }

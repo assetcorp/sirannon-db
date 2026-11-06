@@ -22,6 +22,8 @@ ServerOptions {
   sharedOperations?:              DatabaseOperations
   acceptSql?:                     boolean  (default: false)
   acceptBackupRestore?:           boolean  (default: false)
+  acceptEncryptionChange?:        boolean  (default: false)
+  encryptionKeys?:                (databaseId, keyRef: string) -> async EncryptionKey
   acceptDeviceSync?:              boolean  (default: false)           -- see 08-device-sync.md
   resolveExecutionTarget?:        (databaseId) -> ServerExecutionTarget or null
   getReplicationStatus?:          () -> ReplicationStatusInfo or null
@@ -132,6 +134,8 @@ Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded da
 | `POST /db/{id}/backup/safe-to-delete` | List the records no restore still needs |
 | `POST /db/{id}/backup/restore` | Rebuild the database from a moment |
 | `GET /db/{id}/backup/restore` | How that restore went |
+| `POST /db/{id}/encryption` | Encrypt the database, change its key, or remove encryption |
+| `GET /db/{id}/encryption` | How the database is encrypted, and how its key change went |
 | `GET /db/{id}/cluster` | Routing and authority metadata |
 | `GET /capabilities` | Announced server capabilities (see [08-device-sync.md](08-device-sync.md)) |
 | `GET /health`, `GET /health/ready` | Liveness and readiness |
@@ -218,7 +222,7 @@ A restore rebuilds the database at the path it already occupies, from the chain 
 
 The server answers `404 DATABASE_NOT_FOUND` for that identifier on every route while the rebuild proceeds. The first turn after the reopen starts a fresh chain with a full copy. A rebuild that fails still opens the database again. A close that fails leaves nothing open under the identifier. A reopen that fails after a rebuild succeeded reports `done`, with the report and a `reopenError`.
 
-The server answers `POST /db/{id}/backup/restore` with `202` and must not wait. A second restore of the same database while one is under way fails with `409 BACKUP_RESTORE_IN_PROGRESS`.
+The server answers `POST /db/{id}/backup/restore` with `202` and must not wait. A second restore of the same database while one is under way fails with `409 BACKUP_RESTORE_IN_PROGRESS`. A database with a running replication engine registered must fail `POST /db/{id}/backup/restore` with `409 REPLICATION_ACTIVE` before the server closes it.
 
 ```text
 BackupRestoreStatus {
@@ -235,6 +239,21 @@ BackupRestoreStatus {
 
 `GET /db/{id}/backup/restore` reads the server's own record, so it answers while that database is closed. It reports `idle` where no restore has started since the server did, and the server keeps one record per identifier, replaced by each new restore. `error` and `reopenError` state a message only where a `SirannonError` supplied one.
 
+### Encryption Endpoints
+
+The server serves the encryption routes to an operator, and runs `authenticate` before each of them.
+
+```text
+POST /db/{id}/encryption  { keyRef: string or null }  -> 202 { started: true }
+GET  /db/{id}/encryption                              -> EncryptionStatus
+```
+
+[02-core.md](02-core.md#encryption) defines `EncryptionStatus`.
+
+`acceptEncryptionChange` governs `POST /db/{id}/encryption` and defaults to false. With it false, the server must fail that route with `403 ENCRYPTION_CHANGE_NOT_ACCEPTED` before it resolves the database. A server configured with `acceptEncryptionChange` true and no `authenticate` hook or no `encryptionKeys` function must refuse to start with `INVALID_ENCRYPTION_CHANGE`.
+
+The server must resolve `keyRef` to a key through `encryptionKeys` before it answers, so that no key crosses the wire, and must start the change with that key, or with no key where `keyRef` is null. A `keyRef` that is not a string of 1 to 256 characters or null, and a missing `keyRef`, must fail with `400 INVALID_REQUEST`. The server answers `202` once the change has started, and must not wait for it to end. Both routes address an open database, and an identifier with none open fails with `404 DATABASE_NOT_FOUND`.
+
 ### Error Responses
 
 ```json
@@ -243,7 +262,7 @@ BackupRestoreStatus {
 
 `details` is present only when non-empty; coordinator-mode errors use it for routing context such as `currentPrimary`, `primaryTerm`, or `serverVersion`.
 
-A server must send no server file path to a client, over HTTP or WebSocket. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, `SERVER_DEPENDENCY_MISSING`, `TRANSPORT_DEPENDENCY_MISSING`, and `COORDINATOR_DEPENDENCY_MISSING`, whose messages name files on the server, a server must send a fixed message for the code and no `details`, and keep the full error for the operator.
+A server must send no server file path to a client, over HTTP or WebSocket. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, `SERVER_DEPENDENCY_MISSING`, `TRANSPORT_DEPENDENCY_MISSING`, `COORDINATOR_DEPENDENCY_MISSING`, `ENCRYPTION_UNSUPPORTED`, `INVALID_ENCRYPTION_KEY`, `ENCRYPTION_KEY_UNAVAILABLE`, `ENCRYPTION_KEY_MISSING`, `ENCRYPTION_KEY_REJECTED`, `DATABASE_NOT_ENCRYPTED`, `ENCRYPTED_PAGE_CORRUPT`, `ENCRYPTION_REQUIRED`, `ENCRYPTION_CHANGE_IN_PROGRESS`, and `ENCRYPTION_CHANGE_ABORTED`, whose messages name files on the server, a server must send a fixed message for the code and no `details`, and keep the full error for the operator.
 
 ### HTTP Status Codes
 
@@ -251,14 +270,14 @@ A server must send no server file path to a client, over HTTP or WebSocket. For 
 |--------|-------|
 | 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
-| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED` |
+| 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED`, `ENCRYPTION_CHANGE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
-| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS` |
+| 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS`, `ENCRYPTION_CHANGE_IN_PROGRESS`, `ENCRYPTION_REQUIRED`, `REPLICATION_ACTIVE` |
 | 413 | `PAYLOAD_TOO_LARGE` |
-| 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED` |
+| 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT`, `INVALID_ENCRYPTION_KEY`, `ENCRYPTION_KEY_MISSING`, `ENCRYPTION_KEY_REJECTED`, `DATABASE_NOT_ENCRYPTED`, `ENCRYPTED_PAGE_CORRUPT`, `ENCRYPTION_CHANGE_ABORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED` |
 | 502 | `BACKUP_DESTINATION_ERROR` |
-| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED` |
+| 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED`, `ENCRYPTION_KEY_UNAVAILABLE` |
 
 A code not listed defaults to 500, and an error carrying an explicit status uses it, which is how `authenticate` rejects with a status of its own. A `WRITE_OVERLOADED` response carries a `Retry-After` header in seconds, because the rejection is definite load shedding. `WRITER_WORKER_TIMEOUT` maps to 500 because its outcome is indeterminate. A coordinator-mode server that is not the current primary either forwards the write or rejects with `STALE_PRIMARY`, including the known primary endpoint as structured context when it has one.
 

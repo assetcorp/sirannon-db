@@ -1,0 +1,263 @@
+Do not delete: this patch changes source from better-sqlite3
+(https://github.com/WiseLibs/better-sqlite3), Copyright (c) 2017 Joshua Wise,
+MIT licence. NOTICE at the repository root contains the licence text.
+The patch adds a key method that hands SQLite3 Multiple Ciphers a raw 32-byte
+key, gives a backup's destination a copy of the source's cipher, and adds the
+calls that capture a connection's changes through SQLite's session extension
+and apply them to another database.
+
+--- a/src/objects/backup.cpp
++++ b/src/objects/backup.cpp
+@@ -1,3 +1,7 @@
++extern "C" {
++int sirannon_copy_codec(sqlite3* dest, sqlite3* source, const char* source_database);
++}
++
+ const napi_type_tag Backup::TYPE_TAG = RandomTypeTag();
+
+ Backup::Backup(const Napi::CallbackInfo& info) :
+@@ -65,6 +69,12 @@
+
+ 	sqlite3_extended_result_codes(dest_handle, 1);
+ 	sqlite3_limit(dest_handle, SQLITE_LIMIT_LENGTH, INT_MAX);
++	if (sirannon_copy_codec(dest_handle, db->GetHandle(), attached_name.c_str()) != SQLITE_OK) {
++		Database::ThrowSqliteError(env, addon, dest_handle);
++		int status = sqlite3_close(dest_handle);
++		assert(status == SQLITE_OK); ((void)status);
++		return env.Undefined();
++	}
+ 	sqlite3_backup* backup_handle = sqlite3_backup_init(dest_handle, "main", db->GetHandle(), attached_name.c_str());
+ 	if (backup_handle == NULL) {
+ 		Database::ThrowSqliteError(env, addon, dest_handle);
+--- a/src/objects/database.cpp
++++ b/src/objects/database.cpp
+@@ -22,7 +22,8 @@
+ 	addon(static_cast<Addon*>(info.Data())),
+ 	logger(),
+ 	stmts(),
+-	backups() {
++	backups(),
++	change_capture(NULL) {
+ 	TYPE_TAG_CONSTRUCTOR(info);
+ 	JS_new(info);
+ }
+@@ -40,6 +41,7 @@
+ 		for (Backup* backup : backups) backup->CloseHandles();
+ 		stmts.clear();
+ 		backups.clear();
++		DeleteChangeCapture();
+ 		int status = sqlite3_close(db_handle);
+ 		assert(status == SQLITE_OK); ((void)status);
+ 	}
+@@ -133,6 +135,11 @@
+ 		PrototypeMethod<Database, &Database::JS_close>("close", addon),
+ 		PrototypeMethod<Database, &Database::JS_defaultSafeIntegers>("defaultSafeIntegers", addon),
+ 		PrototypeMethod<Database, &Database::JS_unsafeMode>("unsafeMode", addon),
++		PrototypeMethod<Database, &Database::JS_key>("key", addon),
++		PrototypeMethod<Database, &Database::JS_startChangeCapture>("startChangeCapture", addon),
++		PrototypeMethod<Database, &Database::JS_takeCapturedChanges>("takeCapturedChanges", addon),
++		PrototypeMethod<Database, &Database::JS_stopChangeCapture>("stopChangeCapture", addon),
++		PrototypeMethod<Database, &Database::JS_applyChanges>("applyChanges", addon),
+ 	}, addon);
+ }
+
+@@ -421,6 +428,172 @@
+ 	return info.Env().Undefined();
+ }
+
++static const char RAW_KEY_HEX_DIGITS[] = "0123456789abcdef";
++static const size_t RAW_KEY_BYTES = 32;
++static const size_t RAW_KEYSPEC_BYTES = RAW_KEY_BYTES * 2 + 3;
++
++static void ZeroKeyMaterial(volatile char* data, size_t length) {
++	for (size_t i = 0; i < length; ++i) data[i] = 0;
++}
++
++static bool IsUint8Array(const Napi::Value& value) {
++	return value.IsTypedArray() && value.As<Napi::TypedArray>().TypedArrayType() == napi_uint8_array;
++}
++
++NODE_METHOD(Database::JS_key) {
++	UNWRAP_OR_RETURN(Database, db, info.This());
++	REQUIRE_DATABASE_OPEN(db);
++	REQUIRE_DATABASE_NOT_BUSY(db);
++	REQUIRE_DATABASE_NO_ITERATORS(db);
++	if (info.Length() < 1 || !IsUint8Array(info[0]) || info[0].As<Napi::Uint8Array>().ElementLength() != RAW_KEY_BYTES) {
++		return ThrowTypeError(info.Env(), "Expected a Uint8Array of exactly 32 bytes as the key");
++	}
++	Napi::Uint8Array key = info[0].As<Napi::Uint8Array>();
++	char keyspec[RAW_KEYSPEC_BYTES];
++	keyspec[0] = 'x';
++	keyspec[1] = '\'';
++	for (size_t i = 0; i < RAW_KEY_BYTES; ++i) {
++		keyspec[2 + i * 2] = RAW_KEY_HEX_DIGITS[key[i] >> 4];
++		keyspec[3 + i * 2] = RAW_KEY_HEX_DIGITS[key[i] & 0x0f];
++	}
++	keyspec[RAW_KEYSPEC_BYTES - 1] = '\'';
++	int status = sqlite3_key_v2(db->db_handle, "main", keyspec, static_cast<int>(RAW_KEYSPEC_BYTES));
++	ZeroKeyMaterial(keyspec, RAW_KEYSPEC_BYTES);
++	if (status != SQLITE_OK) {
++		ThrowSqliteError(info.Env(), db->addon, "SQLite refused the key", status);
++	}
++	return info.Env().Undefined();
++}
++
++static int CaptureEveryTableButSqliteSequence(void* context, const char* table) {
++	(void)context;
++	return sqlite3_stricmp(table, "sqlite_sequence") != 0;
++}
++
++int Database::CreateChangeCapture(sqlite3* db_handle, sqlite3_session** session) {
++	int status = sqlite3session_create(db_handle, "main", session);
++	if (status != SQLITE_OK) return status;
++	int track_tables_without_primary_key = 1;
++	status = sqlite3session_object_config(*session, SQLITE_SESSION_OBJCONFIG_ROWID, &track_tables_without_primary_key);
++	if (status == SQLITE_OK) {
++		sqlite3session_table_filter(*session, CaptureEveryTableButSqliteSequence, NULL);
++		status = sqlite3session_attach(*session, NULL);
++	}
++	if (status != SQLITE_OK) {
++		sqlite3session_delete(*session);
++		*session = NULL;
++	}
++	return status;
++}
++
++void Database::DeleteChangeCapture() {
++	if (change_capture != NULL) {
++		sqlite3session_delete(change_capture);
++		change_capture = NULL;
++	}
++}
++
++NODE_METHOD(Database::JS_startChangeCapture) {
++	UNWRAP_OR_RETURN(Database, db, info.This());
++	REQUIRE_DATABASE_OPEN(db);
++	REQUIRE_DATABASE_NOT_BUSY(db);
++	if (db->change_capture != NULL) {
++		return ThrowTypeError(info.Env(), "This connection already captures its changes");
++	}
++	int status = CreateChangeCapture(db->db_handle, &db->change_capture);
++	if (status != SQLITE_OK) {
++		ThrowSqliteError(info.Env(), db->addon, sqlite3_errstr(status), status);
++	}
++	return info.Env().Undefined();
++}
++
++NODE_METHOD(Database::JS_takeCapturedChanges) {
++	UNWRAP_OR_RETURN(Database, db, info.This());
++	REQUIRE_DATABASE_OPEN(db);
++	REQUIRE_DATABASE_NOT_BUSY(db);
++	REQUIRE_DATABASE_NO_ITERATORS(db);
++	if (db->change_capture == NULL) {
++		return ThrowTypeError(info.Env(), "This connection does not capture its changes");
++	}
++	if (!sqlite3_get_autocommit(db->db_handle)) {
++		return ThrowTypeError(info.Env(), "Captured changes can be taken only while no transaction is open");
++	}
++	int size = 0;
++	void* changes = NULL;
++	int status = sqlite3session_changeset(db->change_capture, &size, &changes);
++	if (status != SQLITE_OK) {
++		sqlite3_free(changes);
++		ThrowSqliteError(info.Env(), db->addon, sqlite3_errstr(status), status);
++		return info.Env().Undefined();
++	}
++	sqlite3_session* restarted = NULL;
++	status = CreateChangeCapture(db->db_handle, &restarted);
++	if (status != SQLITE_OK) {
++		sqlite3_free(changes);
++		ThrowSqliteError(info.Env(), db->addon, sqlite3_errstr(status), status);
++		return info.Env().Undefined();
++	}
++	sqlite3session_delete(db->change_capture);
++	db->change_capture = restarted;
++	Napi::Buffer<char> result = size > 0
++		? Napi::Buffer<char>::Copy(info.Env(), static_cast<char*>(changes), static_cast<size_t>(size))
++		: Napi::Buffer<char>::New(info.Env(), 0);
++	sqlite3_free(changes);
++	return result;
++}
++
++NODE_METHOD(Database::JS_stopChangeCapture) {
++	UNWRAP_OR_RETURN(Database, db, info.This());
++	db->DeleteChangeCapture();
++	return info.Env().Undefined();
++}
++
++static int AbortOnAnyConflict(void* context, int conflict, sqlite3_changeset_iter* iterator) {
++	(void)context;
++	(void)conflict;
++	(void)iterator;
++	return SQLITE_CHANGESET_ABORT;
++}
++
++NODE_METHOD(Database::JS_applyChanges) {
++	UNWRAP_OR_RETURN(Database, db, info.This());
++	REQUIRE_DATABASE_OPEN(db);
++	REQUIRE_DATABASE_NOT_BUSY(db);
++	REQUIRE_DATABASE_NO_ITERATORS(db);
++	if (info.Length() < 1 || !IsUint8Array(info[0])) {
++		return ThrowTypeError(info.Env(), "Expected a Uint8Array that holds the captured changes");
++	}
++	Napi::Uint8Array changes = info[0].As<Napi::Uint8Array>();
++	if (changes.ByteLength() > static_cast<size_t>(INT_MAX)) {
++		return ThrowRangeError(info.Env(), "The captured changes exceed the size that SQLite applies in one call");
++	}
++	int triggers_enabled = 1;
++	int defensive = 1;
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_ENABLE_TRIGGER, -1, &triggers_enabled);
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_DEFENSIVE, -1, &defensive);
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL);
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_DEFENSIVE, 0, NULL);
++	int status = sqlite3changeset_apply_v2(
++		db->db_handle,
++		static_cast<int>(changes.ByteLength()),
++		changes.Data(),
++		NULL,
++		AbortOnAnyConflict,
++		NULL,
++		NULL,
++		NULL,
++		SQLITE_CHANGESETAPPLY_FKNOACTION
++	);
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_ENABLE_TRIGGER, triggers_enabled, NULL);
++	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_DEFENSIVE, defensive, NULL);
++	if (status == SQLITE_ABORT) {
++		ThrowSqliteError(info.Env(), db->addon, "The captured changes conflict with the rows of this database", status);
++	} else if (status != SQLITE_OK) {
++		db->ThrowDatabaseError(info.Env());
++	}
++	return info.Env().Undefined();
++}
++
+ NODE_GETTER(Database::JS_open) {
+ 	UNWRAP_OR_RETURN(Database, db, info.This());
+ 	return Napi::Boolean::New(info.Env(), db->open);
+--- a/src/objects/database.hpp
++++ b/src/objects/database.hpp
+@@ -76,11 +76,18 @@
+ 	static NODE_METHOD(JS_close);
+ 	static NODE_METHOD(JS_defaultSafeIntegers);
+ 	static NODE_METHOD(JS_unsafeMode);
++	static NODE_METHOD(JS_key);
++	static NODE_METHOD(JS_startChangeCapture);
++	static NODE_METHOD(JS_takeCapturedChanges);
++	static NODE_METHOD(JS_stopChangeCapture);
++	static NODE_METHOD(JS_applyChanges);
+ 	static NODE_GETTER(JS_open);
+ 	static NODE_GETTER(JS_inTransaction);
+
+ 	static bool Deserialize(Napi::Env env, Napi::Object buffer, Addon* addon, sqlite3* db_handle, bool readonly);
+ 	static void FreeSerialization(Napi::Env env, char* data);
++	static int CreateChangeCapture(sqlite3* db_handle, sqlite3_session** session);
++	void DeleteChangeCapture();
+
+ 	static const int MAX_BUFFER_SIZE;
+ 	static const int MAX_STRING_SIZE;
+@@ -97,4 +104,5 @@
+ 	Napi::Reference<Napi::Value> logger;
+ 	std::set<Statement*, CompareStatement> stmts;
+ 	std::set<Backup*, CompareBackup> backups;
++	sqlite3_session* change_capture;
+ };

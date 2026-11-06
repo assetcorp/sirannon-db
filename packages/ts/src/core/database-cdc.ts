@@ -25,6 +25,7 @@ export class DatabaseCdcController {
   private stopPolling: (() => void) | null = null
   private stamper: SyncStamper | null = null
   private epochRequest: Promise<string> | null = null
+  private readonly liveConnectionListeners = new Set<() => void>()
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -65,7 +66,7 @@ export class DatabaseCdcController {
   async liveConnection(): Promise<{ conn: SQLiteConnection; run: RunExclusive }> {
     const open = this.openSnapshotConnection
     if (open === null) {
-      return { conn: this.acquireWriter(), run: this.runExclusive }
+      return { conn: await this.runExclusive(async () => this.acquireWriter()), run: this.runExclusive }
     }
 
     this.liveConnRequest ??= open().catch((err: unknown) => {
@@ -80,6 +81,49 @@ export class DatabaseCdcController {
     if (request === null) return
     this.liveConnRequest = null
     await request.then(conn => conn.close()).catch(() => {})
+  }
+
+  /**
+   * Registers a function that the controller calls when a key change closes the live connection to replace the file,
+   * so that each live query plans again on the connection that opens afterwards.
+   *
+   * @param listener - The function to call.
+   * @returns A function that removes the registration.
+   */
+  onLiveConnectionReplaced(listener: () => void): () => void {
+    this.liveConnectionListeners.add(listener)
+    return () => {
+      this.liveConnectionListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Closes the live connection before a key change replaces the file, after telling every live query to plan again
+   * on the connection that the next call opens once the replacement ends. Where live queries read through the
+   * pool's writer, {@link DatabaseCdcController.resumeOnReopenedPool} tells them instead, once that writer exists.
+   */
+  async releaseLiveConnection(): Promise<void> {
+    if (this.openSnapshotConnection === null) return
+    const request = this.liveConnRequest
+    this.liveConnRequest = null
+    this.replanLiveQueries()
+    if (request !== null) await request.then(conn => conn.close()).catch(() => {})
+  }
+
+  /**
+   * Starts polling again where polling was on, and has every live query that reads through the pool's writer plan
+   * again, after the pool opened its connections to the file that a key change left in place. The key change calls
+   * this while it holds the writer, so no live read reaches the closed writer.
+   */
+  resumeOnReopenedPool(): void {
+    if (this.openSnapshotConnection === null) this.replanLiveQueries()
+    if (this.stopPolling === null) return
+    this.stop()
+    this.ensurePolling()
+  }
+
+  private replanLiveQueries(): void {
+    for (const listener of [...this.liveConnectionListeners]) listener()
   }
 
   get subscriptions(): SubscriptionManager | null {
@@ -212,7 +256,7 @@ export class DatabaseCdcController {
     if (!this.tracker || !this.subscriptionManager) return
 
     this.stopPolling = startPolling(
-      this.acquireWriter(),
+      () => this.acquireWriter(),
       this.tracker,
       this.subscriptionManager,
       this.pollInterval,

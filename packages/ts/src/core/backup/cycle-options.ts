@@ -146,4 +146,6 @@ export interface BackupCycleRequest extends BackupCycleOptions {
   acquireWriter: () => SQLiteConnection
   /** Copies the whole database to the destination as the full copy that starts each chain. */
   fullCopy: (options: BackupToDestinationOptions) => Promise<BackupRunReport>
+  /** Returns the identifier that came with the database's current key, which each chain record stores. */
+  keyId?: () => string | undefined
 }

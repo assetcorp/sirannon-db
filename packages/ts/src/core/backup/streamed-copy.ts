@@ -19,6 +19,7 @@ import { BackupStreamHost } from './vfs/stream-host.js'
 import { readLogPosition } from './wal-log.js'
 
 const VFS_NAME = 'sirannon'
+const ENCRYPTING_VFS_PREFIX = 'multipleciphers-'
 const PIECE_BLOCK_BYTES = 512
 const DRAIN_POLL_MS = 1
 const STILL_TAKING_REPORT_MS = 5
@@ -35,8 +36,15 @@ export interface BackupStreamingSupport {
   openConnection(): Promise<SQLiteConnection>
 }
 
-function destinationUri(streamId: number): string {
-  return `file:sirannon-stream-${streamId}?vfs=${VFS_NAME}`
+async function destinationVfs(conn: SQLiteConnection): Promise<string> {
+  const engine = await (
+    await conn.prepare("SELECT 1 AS present FROM pragma_function_list WHERE name = 'sqlite3mc_version'")
+  ).get()
+  return engine === undefined ? VFS_NAME : `${ENCRYPTING_VFS_PREFIX}${VFS_NAME}`
+}
+
+function destinationUri(streamId: number, vfs: string): string {
+  return `file:sirannon-stream-${streamId}?vfs=${vfs}`
 }
 
 function sizeTheSteps(
@@ -119,6 +127,7 @@ export async function copyToDestinationStreamed(
     pageSize,
   )
   const copyRunsOffCallerThread = conn.copyRunsOffCallerThread === true
+  const vfs = await destinationVfs(conn)
   const host = await BackupStreamHost.start(support.openConnection, support.extensionPath)
   let streamId: number
   try {
@@ -132,7 +141,7 @@ export async function copyToDestinationStreamed(
     await host.stop().catch(() => undefined)
     throw err
   }
-  const uri = destinationUri(streamId)
+  const uri = destinationUri(streamId, vfs)
   const stillTaking = copyRunsOffCallerThread
     ? setInterval(() => {
         void host.reportStillTaking(streamId).catch(() => undefined)

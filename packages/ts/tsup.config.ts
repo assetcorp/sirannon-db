@@ -92,7 +92,7 @@ const declarationEntry = {
 export default defineConfig([
   {
     ...sharedOptions,
-    entry: nodeEntry,
+    entry: { ...nodeEntry, ...waSqliteEntry, ...untypedEntry, ...memoryTransportEntry },
     platform: 'node',
     dts: false,
     clean: false,
@@ -102,27 +102,6 @@ export default defineConfig([
     ...sharedOptions,
     entry: clientEntry,
     platform: 'browser',
-    dts: false,
-    clean: false,
-  },
-  {
-    ...sharedOptions,
-    entry: waSqliteEntry,
-    platform: 'browser',
-    dts: false,
-    clean: false,
-  },
-  {
-    ...sharedOptions,
-    entry: untypedEntry,
-    platform: 'browser',
-    dts: false,
-    clean: false,
-  },
-  {
-    ...sharedOptions,
-    entry: memoryTransportEntry,
-    platform: 'neutral',
     dts: false,
     clean: false,
   },

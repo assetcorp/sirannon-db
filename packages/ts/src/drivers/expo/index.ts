@@ -91,12 +91,15 @@ export function expoSqlite(): SQLiteDriver {
         },
 
         async transaction<T>(fn: (c: SQLiteConnection) => Promise<T>): Promise<T> {
-          let result: T | undefined
-          await dbHandle.withExclusiveTransactionAsync(async txDb => {
-            const txConn = buildConnectionFromHandle(txDb)
-            result = await fn(txConn)
-          })
-          return result as T
+          await dbHandle.execAsync('BEGIN')
+          try {
+            const result = await fn(conn)
+            await dbHandle.execAsync('COMMIT')
+            return result
+          } catch (err) {
+            await dbHandle.execAsync('ROLLBACK').catch(() => undefined)
+            throw err
+          }
         },
 
         async loadExtension(extensionPath: string): Promise<void> {

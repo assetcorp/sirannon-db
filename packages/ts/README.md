@@ -104,7 +104,7 @@ const db = await sirannon.open('ledger', './data/ledger.db', {
 })
 ```
 
-Store the key in a key service, a system keychain, or a secret file whose permissions restrict access to the application's operating-system account. Retain both keys until a key change finishes. The [encryption guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/encryption.md) covers key changes, encrypted backups, server routes, and Expo's SQLCipher setup.
+Store the key in a key service, a system keychain, or a secret file whose permissions restrict access to the application's operating-system account. Retain both keys until a key change finishes. Retain each backup chain's key for as long as you keep that chain. The [encryption guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/encryption.md) covers key changes, encrypted backups, server routes, and Expo's SQLCipher setup.
 
 ## Package exports
 

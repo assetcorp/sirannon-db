@@ -6,6 +6,7 @@ import {
   backupPiecesSafeToDelete,
   planBackupRestore,
 } from './backup/chain-queries.js'
+import { BackupCopyAdmission } from './backup/copy-admission.js'
 import type { BackupCycle } from './backup/cycle.js'
 import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
@@ -79,6 +80,8 @@ export class DatabaseBackupController {
   private cycle: BackupCycle | null = null
   private cycleOptions: BackupCycleOptions | null = null
   private cycleStarted: Promise<void> = Promise.resolve()
+  private readonly copies: BackupCopyAdmission
+  private readonly copyWriter: SQLiteConnection
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -87,7 +90,11 @@ export class DatabaseBackupController {
     private readonly databaseId: string,
     private readonly sourcePath: string,
     private readonly engine?: BackupEngine,
-  ) {}
+    private readonly keyId: () => string | undefined = () => undefined,
+  ) {
+    this.copies = new BackupCopyAdmission(runExclusive)
+    this.copyWriter = this.copies.writer(acquireWriter)
+  }
 
   private require(): BackupEngine {
     if (!this.engine) {
@@ -119,16 +126,16 @@ export class DatabaseBackupController {
 
   async backup(destPath: string): Promise<BackupFileReport> {
     const engine = this.require()
-    const copy = await startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
-      engine.backup(this.acquireWriter(), destPath, onFirstStep),
+    const copy = await startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+      engine.backup(this.copyWriter, destPath, onFirstStep),
     )
     return { ...copy, databaseId: this.databaseId, sourcePath: this.sourcePath }
   }
 
   backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
     const engine = this.require()
-    return startCopyWithoutHoldingWriter(this.runExclusive, onFirstStep =>
-      engine.copyToDestination(this.acquireWriter(), {
+    return startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+      engine.copyToDestination(this.copyWriter, {
         ...options,
         databaseId: this.databaseId,
         sourcePath: this.sourcePath,
@@ -140,11 +147,11 @@ export class DatabaseBackupController {
   schedule(options: BackupScheduleOptions): void {
     const engine = this.require()
     this.cancellers.push(
-      engine.schedule(this.acquireWriter(), {
+      engine.schedule(this.copyWriter, {
         ...options,
         databaseId: this.databaseId,
         sourcePath: this.sourcePath,
-        runExclusive: this.runExclusive,
+        runExclusive: this.copies.runAdmitted,
       }),
     )
   }
@@ -165,6 +172,7 @@ export class DatabaseBackupController {
       runExclusive: this.runExclusive,
       acquireWriter: this.acquireWriter,
       fullCopy: copyOptions => this.backupTo(copyOptions),
+      keyId: this.keyId,
     })
     this.cycleStarted = this.cycle.start().catch(err => {
       const onError = options.onError
@@ -220,6 +228,51 @@ export class DatabaseBackupController {
     const cycle = this.cycle
     await this.cycleStarted
     await cycle.stop()
+  }
+
+  /**
+   * Stops the backup cycle after one last capture, ahead of a key change that replaces the file.
+   *
+   * @returns `true` when a cycle was running, which {@link DatabaseBackupController.resumeCycle} starts again.
+   */
+  async pauseCycle(): Promise<boolean> {
+    if (!this.cycle || !this.cycleOptions) return false
+    await this.stopCycle()
+    return true
+  }
+
+  /**
+   * Stops new backup copies from starting ahead of a key change that replaces the file, and waits until SQLite has
+   * stopped writing every copy that started before, so that no copy reads pages from both files.
+   */
+  pauseCopies(): Promise<void> {
+    return this.copies.pause()
+  }
+
+  /** Lets backup copies start again once a key change has replaced the file or given up. */
+  resumeCopies(): void {
+    this.copies.resume()
+  }
+
+  /**
+   * Drops the chain that the paused backup cycle extended, so that the cycle starts a new chain with a full copy
+   * whenever it starts again, including in a process that starts after a crash during the key change.
+   */
+  async forgetPausedChain(): Promise<void> {
+    await this.cycle?.forgetChain()
+  }
+
+  /**
+   * Starts the backup cycle again after a key change, on a new chain whose first piece is a full copy when the file
+   * now holds ciphertext under another key.
+   *
+   * @param options - Whether the cycle starts a new chain.
+   */
+  async resumeCycle(options: { newChain: boolean }): Promise<void> {
+    const cycleOptions = this.cycleOptions
+    if (!cycleOptions) return
+    if (options.newChain) await this.cycle?.forgetChain()
+    this.startCycle(cycleOptions)
   }
 
   cancelAll(): void {

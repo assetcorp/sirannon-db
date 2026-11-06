@@ -90,7 +90,26 @@ async function open(
     )
   }
   const driver = (factory as (config?: unknown) => SQLiteDriver)(entry.config)
-  connection = await driver.open(path, options as Parameters<SQLiteDriver['open']>[1])
+  const openOptions = options as Parameters<SQLiteDriver['open']>[1]
+  try {
+    connection = await driver.open(path, openOptions)
+  } finally {
+    openOptions?.encryption?.key.fill(0)
+  }
+}
+
+function captureCall<K extends 'startChangeCapture' | 'takeCapturedChanges' | 'stopChangeCapture'>(
+  call: K,
+): NonNullable<SQLiteConnection[K]> {
+  const conn = requireConnection()
+  const member = conn[call]
+  if (!member) {
+    throw new SirannonError(
+      'The driver rebuilt inside the writer worker opens connections that cannot record their changes, so a key change cannot run on it',
+      'ENCRYPTION_UNSUPPORTED',
+    )
+  }
+  return member.bind(conn) as NonNullable<SQLiteConnection[K]>
 }
 
 const runningCopies = new Map<number, { aborted: boolean }>()
@@ -185,6 +204,14 @@ async function dispatch(req: WorkerRequest): Promise<WorkerResult> {
         runningCopies.delete(req.id)
       }
     }
+    case 'startChangeCapture':
+      await captureCall('startChangeCapture')()
+      return undefined
+    case 'takeCapturedChanges':
+      return captureCall('takeCapturedChanges')()
+    case 'stopChangeCapture':
+      await captureCall('stopChangeCapture')()
+      return undefined
     case 'close':
       if (connection) await connection.close()
       connection = null

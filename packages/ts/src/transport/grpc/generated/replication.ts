@@ -86,6 +86,7 @@ export interface Hello {
   groupId: string;
   primaryTerm: bigint;
   protocolVersion: string;
+  encrypted: boolean;
 }
 
 export interface ReplicationMessage {
@@ -1260,7 +1261,7 @@ export const AckPayload: MessageFns<AckPayload> = {
 };
 
 function createBaseHello(): Hello {
-  return { nodeId: "", role: "", groupId: "", primaryTerm: 0n, protocolVersion: "" };
+  return { nodeId: "", role: "", groupId: "", primaryTerm: 0n, protocolVersion: "", encrypted: false };
 }
 
 export const Hello: MessageFns<Hello> = {
@@ -1282,6 +1283,9 @@ export const Hello: MessageFns<Hello> = {
     }
     if (message.protocolVersion !== "") {
       writer.uint32(42).string(message.protocolVersion);
+    }
+    if (message.encrypted !== false) {
+      writer.uint32(48).bool(message.encrypted);
     }
     return writer;
   },
@@ -1333,6 +1337,14 @@ export const Hello: MessageFns<Hello> = {
           message.protocolVersion = reader.string();
           continue;
         }
+        case 6: {
+          if (tag !== 48) {
+            break;
+          }
+
+          message.encrypted = reader.bool();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1365,6 +1377,7 @@ export const Hello: MessageFns<Hello> = {
         : isSet(object.protocol_version)
         ? globalThis.String(object.protocol_version)
         : "",
+      encrypted: isSet(object.encrypted) ? globalThis.Boolean(object.encrypted) : false,
     };
   },
 
@@ -1385,6 +1398,9 @@ export const Hello: MessageFns<Hello> = {
     if (message.protocolVersion !== "") {
       obj.protocolVersion = message.protocolVersion;
     }
+    if (message.encrypted !== false) {
+      obj.encrypted = message.encrypted;
+    }
     return obj;
   },
 
@@ -1398,6 +1414,7 @@ export const Hello: MessageFns<Hello> = {
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
     message.protocolVersion = object.protocolVersion ?? "";
+    message.encrypted = object.encrypted ?? false;
     return message;
   },
 };

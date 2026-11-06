@@ -31,6 +31,7 @@
     "build": "rm -rf dist && tsup",
     "build:vfs": "node ../../native/vfs/build.mjs",
     "build:sqlite": "node ../../native/sqlite/build.mjs",
+    "build:expo-sqlcipher": "node ../../native/sqlite/build-expo-sqlcipher.mjs",
     "assemble:sqlite": "node ../../native/sqlite/assemble.mjs",
     "check:sqlite": "node ../../native/sqlite/check.mjs",
     "check:bundle": "node scripts/assert-browser-bundle.mjs",
@@ -153,6 +154,7 @@
     "@grpc/grpc-js": ">=1.10.0",
     "better-sqlite3": ">=12.0.0",
     "etcd3": ">=1.1.2",
+    "expo-file-system": ">=19.0.0",
     "expo-sqlite": ">=14.0.0",
     "grpc-health-check": ">=2.0.0",
     "react": ">=19.0.0",
@@ -170,6 +172,9 @@
       "optional": true
     },
     "better-sqlite3": {
+      "optional": true
+    },
+    "expo-file-system": {
       "optional": true
     },
     "expo-sqlite": {
@@ -202,12 +207,15 @@
     "@types/react-dom": "19.2.3",
     "@vitest/coverage-v8": "4.0.18",
     "better-sqlite3": "13.0.2",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
     "etcd3": "1.1.2",
+    "expo-file-system": "55.0.22",
     "expo-sqlite": "55.0.10",
     "fake-indexeddb": "6.2.5",
     "grpc-health-check": "2.1.0",
     "grpc-tools": "1.13.1",
     "jsdom": "29.1.1",
+    "libsodium-wrappers": "0.8.4",
     "node-api-headers": "1.9.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",

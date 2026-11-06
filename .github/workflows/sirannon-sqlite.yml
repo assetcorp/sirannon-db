@@ -144,7 +144,13 @@ jobs:
 
       - name: Run the library suites that need Sirannon's SQLite
         working-directory: packages/ts
-        run: pnpm vitest run src/__tests__/integration/row-counts
+        run: >-
+          pnpm vitest run src/__tests__/integration/row-counts
+          src/__tests__/integration/encryption/encrypted-files.test.ts
+          src/__tests__/integration/encryption/encrypted-backups.test.ts
+          src/__tests__/integration/encryption/key-change.test.ts
+          src/__tests__/integration/encryption/key-secrecy.test.ts
+          src/__tests__/integration/encryption/key-change-continuity.test.ts
         env:
           SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'
 
@@ -217,6 +223,12 @@ jobs:
 
       - name: Run the library suites that need Sirannon's SQLite
         working-directory: packages/ts
-        run: pnpm vitest run src/__tests__/integration/row-counts
+        run: >-
+          pnpm vitest run src/__tests__/integration/row-counts
+          src/__tests__/integration/encryption/encrypted-files.test.ts
+          src/__tests__/integration/encryption/encrypted-backups.test.ts
+          src/__tests__/integration/encryption/key-change.test.ts
+          src/__tests__/integration/encryption/key-secrecy.test.ts
+          src/__tests__/integration/encryption/key-change-continuity.test.ts
         env:
           SIRANNON_REQUIRE_SIRANNON_SQLITE: '1'

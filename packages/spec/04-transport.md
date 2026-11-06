@@ -34,19 +34,22 @@ ReplicationTransport {
   peers(): ReadonlyMap<string, NodeInfo>
 
   setPeerEndpoints?(endpoints: ReadonlyMap<string, string>): void
+  refusePeer?(peerId, error): async -> void
 }
 
 TransportConfig { endpoints?: List<string>, localRole?: 'primary' | 'replica',
-                  groupId?, primaryTerm?: number, protocolVersion?, metadata? }
+                  groupId?, primaryTerm?: number, protocolVersion?, encrypted?: boolean, metadata? }
 
 NodeInfo { id, groupId?, role: 'primary' | 'replica', primaryTerm?: number,
            protocolVersion?, joinedAt: number, lastSeenAt: number,
-           lastAckedSeq: number, metadata? }
+           lastAckedSeq: number, encrypted: boolean, metadata? }
 ```
 
-The engine supplies `localRole` from the configured topology, and in coordinator mode also `groupId`, `primaryTerm`, and `protocolVersion`. Peers are addressed by node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as does a send to a peer that is not connected. `forward` is a request-response call bounded by a deadline (default 30,000 ms).
+The engine supplies `localRole` from the configured topology, and in coordinator mode also `groupId`, `primaryTerm`, and `protocolVersion`. The engine supplies `encrypted` from its database, and the transport must send it in every `Hello`, sending false where it is absent. Peers are addressed by node ID. After `disconnect`, every send method fails with `TRANSPORT_ERROR`, as does a send to a peer that is not connected. `forward` is a request-response call bounded by a deadline (default 30,000 ms).
 
 In coordinator mode the engine passes no `endpoints` in `TransportConfig`. It calls `setPeerEndpoints`, where the transport provides it, with every other member's replication address keyed by node ID, whenever those addresses change. The transport then dials those addresses.
+
+`refusePeer` ends every `Replicate` and `Sync` stream with that peer, carrying the error's code. The gRPC transport must end each stream that it serves with status `FAILED_PRECONDITION` and the trailer `sirannon-error-code` set to that code, and must cancel each stream that it opened.
 
 ---
 
@@ -118,6 +121,7 @@ message Hello {
   string group_id         = 3;
   int64  primary_term     = 4;
   string protocol_version = 5;
+  bool   encrypted        = 6;
 }
 
 message ReplicationMessage {
@@ -233,7 +237,7 @@ In static mode the primary runs the gRPC server and replicas connect as clients:
 
 ### Peer Identity
 
-The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id` and `role`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
+The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id`, `role`, and `encrypted`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
 
 ### Stream Invariant
 

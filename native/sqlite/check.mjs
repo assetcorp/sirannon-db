@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -15,6 +17,13 @@ const MATCHES_PER_TOTAL = SEEDED_ROW_COUNT / DISTINCT_TOTAL_COUNT
 const LOOKUP_ID = 2500
 const LAST_CUSTOMER = `customer-${SEEDED_ROW_COUNT - 1}`
 const JSON_ELEMENTS = [1, 2, 3, 4]
+const SEALED_ROW_COUNT = 500
+const SEALED_TEXT = 'sealed-ledger-entry'
+const RAW_KEY_BYTES = 32
+const ENGINE_VERSION = /^SQLite3 Multiple Ciphers 2\./
+const CIPHER = 'aegis'
+const LEDGER_ROW_COUNT = 40
+const LEDGER_DELETED_ROWIDS = [3, 4, 5, 17, 18, 40]
 
 const counts = new Float64Array(2)
 
@@ -139,8 +148,94 @@ function checkTriggers(db) {
   assert.equal(takeCounts(removeCustomer).rowsWritten, 3)
 }
 
+function openKeyed(Database, cppdb, path, key) {
+  const db = new Database(path, { nativeBinding: binding })
+  db[cppdb].key(key)
+  db.pragma('temp_store = MEMORY')
+  return db
+}
+
+function sealedRows(db) {
+  return db.prepare('SELECT id, secret FROM sealed ORDER BY id').all()
+}
+
+function ledgerRows(db, schema) {
+  return db.prepare(`SELECT rowid, entry FROM ${schema}.ledger ORDER BY rowid`).all()
+}
+
+function rawKeyspec(key) {
+  return `x'${key.toString('hex')}'`
+}
+
+function checkExportKeepsRowids(db, directory) {
+  db.exec('CREATE TABLE ledger (entry TEXT NOT NULL)')
+  const insert = db.prepare('INSERT INTO ledger (entry) VALUES (?)')
+  for (let i = 1; i <= LEDGER_ROW_COUNT; i++) insert.run(`${SEALED_TEXT}-ledger-${i}`)
+  const remove = db.prepare('DELETE FROM ledger WHERE rowid = ?')
+  for (const rowid of LEDGER_DELETED_ROWIDS) remove.run(rowid)
+  const exportPath = join(directory, 'sealed-export.db')
+  db.prepare('ATTACH DATABASE ? AS exported KEY ?').run(exportPath, rawKeyspec(randomBytes(RAW_KEY_BYTES)))
+  db.exec('BEGIN')
+  db.prepare("SELECT sirannon_export('exported')").get()
+  db.exec('COMMIT')
+  assert.deepEqual(ledgerRows(db, 'exported'), ledgerRows(db, 'main'))
+  assert.equal(ledgerRows(db, 'exported').length, LEDGER_ROW_COUNT - LEDGER_DELETED_ROWIDS.length)
+  db.exec('DETACH DATABASE exported')
+  assert.equal(readFileSync(exportPath).includes(SEALED_TEXT), false)
+}
+
+async function checkBackupKeepsCipher(Database, cppdb, db, directory, key) {
+  const backupPath = join(directory, 'sealed-backup.db')
+  await db.backup(backupPath)
+  assert.equal(readFileSync(backupPath).includes(SEALED_TEXT), false)
+  const restored = openKeyed(Database, cppdb, backupPath, key)
+  assert.deepEqual(sealedRows(restored), sealedRows(db))
+  restored.close()
+}
+
+async function checkEncryption(Database, cppdb) {
+  const directory = mkdtempSync(join(tmpdir(), 'sirannon-sqlite-check-'))
+  try {
+    const path = join(directory, 'sealed.db')
+    const copyPath = join(directory, 'sealed-copy.db')
+    const key = randomBytes(RAW_KEY_BYTES)
+    const db = openKeyed(Database, cppdb, path, key)
+    assert.match(db.prepare('SELECT sqlite3mc_version() AS version').get().version, ENGINE_VERSION)
+    assert.equal(db.pragma('cipher', { simple: true }), CIPHER)
+    db.pragma('journal_mode = WAL')
+    db.exec('CREATE TABLE sealed (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)')
+    const copy = openKeyed(Database, cppdb, copyPath, key)
+    copy.exec('CREATE TABLE sealed (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)')
+
+    db[cppdb].startChangeCapture()
+    const insert = db.prepare('INSERT INTO sealed (secret) VALUES (?)')
+    db.transaction(() => {
+      for (let i = 0; i < SEALED_ROW_COUNT; i++) insert.run(`${SEALED_TEXT}-${i}`)
+    })()
+    copy[cppdb].applyChanges(db[cppdb].takeCapturedChanges())
+    db[cppdb].stopChangeCapture()
+    assert.deepEqual(sealedRows(copy), sealedRows(db))
+    assert.equal(sealedRows(db).length, SEALED_ROW_COUNT)
+    checkExportKeepsRowids(db, directory)
+    await checkBackupKeepsCipher(Database, cppdb, db, directory, key)
+    db.close()
+    copy.close()
+
+    for (const file of [path, copyPath]) assert.equal(readFileSync(file).includes(SEALED_TEXT), false)
+    const wrong = openKeyed(Database, cppdb, path, randomBytes(RAW_KEY_BYTES))
+    assert.throws(() => wrong.prepare('SELECT count(*) FROM sqlite_schema').get(), { code: 'SQLITE_NOTADB' })
+    wrong.close()
+    const reopened = openKeyed(Database, cppdb, path, key)
+    assert.equal(sealedRows(reopened).length, SEALED_ROW_COUNT)
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
 const fromSirannon = createRequire(pathToFileURL(referenceManifest))
 const Database = fromSirannon('better-sqlite3')
+const { cppdb } = fromSirannon(join(dirname(fromSirannon.resolve('better-sqlite3')), 'util.js'))
 const binding = addonPath()
 const db = new Database(':memory:', { nativeBinding: binding })
 db.pragma('foreign_keys = ON')
@@ -151,4 +246,5 @@ checkTriggers(db)
 assert.throws(() => scan.takeRowCounts(new Float64Array(1)), TypeError)
 db.close()
 assert.throws(() => scan.takeRowCounts(counts), TypeError)
-console.log(`Row counts match on ${hostTarget()} with Node ${process.version}, using ${binding}`)
+await checkEncryption(Database, cppdb)
+console.log(`Row counts match and encryption holds on ${hostTarget()} with Node ${process.version}, using ${binding}`)

@@ -68,7 +68,8 @@ export function isBackupChainBase(value: unknown): value is BackupChainBase {
     isWholeNumber(base.pieceCount) &&
     isAtLeastOne(base.pieceBytes) &&
     isWholeNumber(base.bytesWritten) &&
-    isTextOrAbsent(base.fingerprint)
+    isTextOrAbsent(base.fingerprint) &&
+    isTextOrAbsent(base.keyId)
   )
 }
 
@@ -96,6 +97,7 @@ export function isBackupChainChange(value: unknown): value is BackupChainChange 
     isAtLeastOne(change.pieceBytes) &&
     isWholeNumber(change.bytesWritten) &&
     typeof change.checkpointed === 'boolean' &&
-    isTextOrAbsent(change.fingerprint)
+    isTextOrAbsent(change.fingerprint) &&
+    isTextOrAbsent(change.keyId)
   )
 }

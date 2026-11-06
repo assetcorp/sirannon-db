@@ -2,8 +2,12 @@ import { defineDriver } from '../../core/driver/define.js'
 import { assertHoldsStatement } from '../../core/driver/statement-text.js'
 import { synchronousPragmaValue } from '../../core/driver/synchronous.js'
 import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core/driver/types.js'
+import { EncryptionError } from '../../core/encryption/errors.js'
+import { reportEncryptedPageFailures } from '../../core/encryption/page-errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { expoBindParams } from './bind.js'
+import { keyExpoConnection, probeExpoDatabase, readUnkeyedExpoSchema } from './encryption.js'
+import { expoDatabaseFiles } from './files.js'
 
 /**
  * Returns a driver that opens SQLite databases on a device through `expo-sqlite`.
@@ -17,19 +21,46 @@ import { expoBindParams } from './bind.js'
  */
 export function expoSqlite(): SQLiteDriver {
   return defineDriver({
-    capabilities: { multipleConnections: false, extensions: false, steppedCopy: false, rowCounts: false },
+    capabilities: {
+      multipleConnections: false,
+      extensions: false,
+      steppedCopy: false,
+      rowCounts: false,
+      encryption: true,
+    },
+    files: expoDatabaseFiles,
     async open(path, options) {
       const SQLite = await import('expo-sqlite')
-      const db = await SQLite.openDatabaseAsync(path, {
-        readOnly: options?.readonly,
-      } as Record<string, unknown>)
+      const openHandle = () =>
+        SQLite.openDatabaseAsync(path, {
+          readOnly: options?.readonly,
+          useNewConnection: true,
+        } as Record<string, unknown>)
       type SQLiteHandle = Awaited<ReturnType<typeof SQLite.openDatabaseAsync>>
+      const rawKey = options?.encryption?.key
+      if (rawKey !== undefined && (path === '' || path === ':memory:')) {
+        throw new EncryptionError('An in-memory database cannot be encrypted', 'ENCRYPTION_UNSUPPORTED')
+      }
+      if (rawKey !== undefined && (await probeExpoDatabase(openHandle)) === 'plaintext') {
+        throw new EncryptionError(
+          `The database ${path} is plaintext, so it opens without a key. Encrypt it through changeEncryption`,
+          'DATABASE_NOT_ENCRYPTED',
+        )
+      }
+      const db = await openHandle()
 
-      if (options?.walMode !== false) await db.execAsync('PRAGMA journal_mode = WAL')
-      await db.execAsync(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
-      await db.execAsync('PRAGMA foreign_keys = ON')
-      if (options?.walAutoCheckpoint !== undefined) {
-        await db.execAsync(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+      try {
+        if (rawKey !== undefined) await keyExpoConnection(db, path, rawKey)
+        else await readUnkeyedExpoSchema(db, path)
+        if (options?.walMode !== false) await db.execAsync('PRAGMA journal_mode = WAL')
+        await db.execAsync(`PRAGMA synchronous = ${synchronousPragmaValue(options?.synchronous)}`)
+        await db.execAsync('PRAGMA foreign_keys = ON')
+        if (options?.walAutoCheckpoint !== undefined) {
+          await db.execAsync(`PRAGMA wal_autocheckpoint = ${Math.trunc(options.walAutoCheckpoint)}`)
+        }
+      } catch (err) {
+        await db.closeAsync().catch(() => undefined)
+        throw err
       }
 
       const buildConnectionFromHandle = (dbHandle: SQLiteHandle): SQLiteConnection => ({
@@ -60,12 +91,15 @@ export function expoSqlite(): SQLiteDriver {
         },
 
         async transaction<T>(fn: (c: SQLiteConnection) => Promise<T>): Promise<T> {
-          let result: T | undefined
-          await dbHandle.withExclusiveTransactionAsync(async txDb => {
-            const txConn = buildConnectionFromHandle(txDb)
-            result = await fn(txConn)
-          })
-          return result as T
+          await dbHandle.execAsync('BEGIN')
+          try {
+            const result = await fn(conn)
+            await dbHandle.execAsync('COMMIT')
+            return result
+          } catch (err) {
+            await dbHandle.execAsync('ROLLBACK').catch(() => undefined)
+            throw err
+          }
         },
 
         async loadExtension(extensionPath: string): Promise<void> {
@@ -81,7 +115,7 @@ export function expoSqlite(): SQLiteDriver {
       })
 
       const conn = buildConnectionFromHandle(db)
-      return conn
+      return rawKey === undefined ? conn : reportEncryptedPageFailures(conn)
     },
   })
 }

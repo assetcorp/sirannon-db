@@ -4,6 +4,7 @@ import { SyncError } from '../errors.js'
 import { canonicaliseForChecksum } from '../log.js'
 import type { SyncAck, SyncBatch, SyncRequest, SyncTableManifest } from '../types.js'
 import { IDENTIFIER_RE } from './constants.js'
+import { encryptionRequired, refusePlaintextPeer, withholdsDataFrom } from './encryption-refusal.js'
 import type { ReplicationEngine } from './engine.js'
 import type { ActiveSyncSession, SyncAckWaiter } from './internal-types.js'
 import { advanceStreamDigest } from './sync-verification.js'
@@ -39,6 +40,14 @@ export class SyncServer {
     const engine = this.engine
     const knownPeers = engine.config.transport.peers()
     if (!knownPeers.has(fromPeerId)) return
+
+    if (withholdsDataFrom(engine, knownPeers.get(fromPeerId))) {
+      const refusal = encryptionRequired(fromPeerId)
+      await this.rejectSyncRequest(fromPeerId, request, `${refusal.code}: ${refusal.message}`).finally(() =>
+        refusePlaintextPeer(engine, fromPeerId),
+      )
+      return
+    }
 
     if (engine.isCoordinatorMode()) {
       try {

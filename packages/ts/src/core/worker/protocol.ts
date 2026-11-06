@@ -51,6 +51,9 @@ type WorkerRequestKinds =
     }
   | { id: number; kind: 'loadExtension'; path: string }
   | { id: number; kind: 'copyDatabase'; destPath: string; pagesPerStep: number; stallTimeoutMs?: number }
+  | { id: number; kind: 'startChangeCapture' }
+  | { id: number; kind: 'takeCapturedChanges' }
+  | { id: number; kind: 'stopChangeCapture' }
   | { id: number; kind: 'close' }
 
 export type WorkerRequest = WorkerRequestKinds & { begin?: true }

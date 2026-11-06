@@ -7,6 +7,7 @@ import {
   failingCopyDriver,
   PAGE_SIZE_FAILURE_MESSAGE,
 } from '../../helpers/fault-drivers/failing-copy-driver.js'
+import { holdingCopyDriver } from '../../helpers/fault-drivers/holding-copy-driver.js'
 import {
   CREATE_ORDERS,
   codeOf,
@@ -26,6 +27,7 @@ import {
 } from './harness.js'
 
 const LARGE_ORDER_COUNT = 20_000
+const WRITES_BEFORE_THE_COPY_GOES_ON = 3
 const STALL_PAST_THE_DEADLINE_MS = 31_500
 const HEX_RUN_ID = /^[0-9a-f]{16}$/
 
@@ -46,7 +48,7 @@ function everyRow(path: string): Record<string, unknown[]> {
   }
 }
 
-describe.each(PLACEMENTS)('copying a database to a file with $label', ({ driver, writerWorker }) => {
+describe.each(PLACEMENTS)('copying a database to a file with $label', ({ runtime, driver, writerWorker }) => {
   it('writes a file that opens as the same database and reports the file, the pages, and the time it took', async () => {
     const sourcePath = workspace.path('catalogue.db')
     const db = await workspace.registry(driver()).open('catalogue', sourcePath, { writerWorker })
@@ -82,7 +84,12 @@ describe.each(PLACEMENTS)('copying a database to a file with $label', ({ driver,
   })
 
   it('keeps taking writes for the whole copy with zero restarts, and copies one consistent moment', async () => {
-    const db = await workspace.registry(driver()).open('busy', workspace.path('busy.db'), { writerWorker })
+    const holding = holdingCopyDriver({
+      runtime,
+      countSql: 'SELECT count(*) AS n FROM orders',
+      releaseAtCount: LARGE_ORDER_COUNT + WRITES_BEFORE_THE_COPY_GOES_ON,
+    })
+    const db = await workspace.registry(holding).open('busy', workspace.path('busy.db'), { writerWorker })
     await seedOrders(db, 'seeded', LARGE_ORDER_COUNT, ORDER_PADDING)
     let copying = true
     let writesDuringCopy = 0

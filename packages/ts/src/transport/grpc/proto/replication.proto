@@ -68,6 +68,7 @@ message Hello {
   string group_id = 3;
   int64 primary_term = 4;
   string protocol_version = 5;
+  bool encrypted = 6;
 }
 
 message ReplicationMessage {

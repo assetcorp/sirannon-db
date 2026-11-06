@@ -53,6 +53,7 @@ export class InMemoryTransport implements ReplicationTransport {
   private localGroupId: string | undefined
   private localPrimaryTerm: bigint | undefined
   private localProtocolVersion: string | undefined
+  private localEncrypted = false
   private connected = false
   private readonly bus: MemoryBus
   private readonly connectedPeers = new Map<string, NodeInfo>()
@@ -86,6 +87,7 @@ export class InMemoryTransport implements ReplicationTransport {
     this.localGroupId = config.groupId
     this.localPrimaryTerm = config.primaryTerm
     this.localProtocolVersion = config.protocolVersion
+    this.localEncrypted = config.encrypted === true
     this.connected = true
     this.bus.join(localNodeId, this)
 
@@ -101,6 +103,7 @@ export class InMemoryTransport implements ReplicationTransport {
         role: peerTransport.role,
         primaryTerm: peerTransport.localPrimaryTerm,
         protocolVersion: peerTransport.localProtocolVersion,
+        encrypted: peerTransport.localEncrypted,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -113,6 +116,7 @@ export class InMemoryTransport implements ReplicationTransport {
         role: this.localRole,
         primaryTerm: this.localPrimaryTerm,
         protocolVersion: this.localProtocolVersion,
+        encrypted: this.localEncrypted,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,

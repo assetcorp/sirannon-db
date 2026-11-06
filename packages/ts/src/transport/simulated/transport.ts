@@ -40,6 +40,7 @@ export class SimulatedTransport implements ReplicationTransport {
   private localGroupId: string | undefined
   private localPrimaryTerm: bigint | undefined
   private localProtocolVersion: string | undefined
+  private localEncrypted = false
   private connected = false
   private readonly network: SimulatedNetwork
   readonly connectedPeers = new Map<string, NodeInfo>()
@@ -76,6 +77,7 @@ export class SimulatedTransport implements ReplicationTransport {
     this.localGroupId = config.groupId
     this.localPrimaryTerm = config.primaryTerm
     this.localProtocolVersion = config.protocolVersion
+    this.localEncrypted = config.encrypted === true
     this.connected = true
     this.network.register(localNodeId, this)
 
@@ -86,6 +88,7 @@ export class SimulatedTransport implements ReplicationTransport {
         role: peerTransport.localRole,
         primaryTerm: peerTransport.localPrimaryTerm,
         protocolVersion: peerTransport.localProtocolVersion,
+        encrypted: peerTransport.localEncrypted,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,
@@ -98,6 +101,7 @@ export class SimulatedTransport implements ReplicationTransport {
         role: this.localRole,
         primaryTerm: this.localPrimaryTerm,
         protocolVersion: this.localProtocolVersion,
+        encrypted: this.localEncrypted,
         joinedAt: Date.now(),
         lastSeenAt: Date.now(),
         lastAckedSeq: 0n,

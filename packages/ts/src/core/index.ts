@@ -35,8 +35,10 @@ export { ConnectionPool } from './connection-pool.js'
 export { Database } from './database.js'
 export type { BackupChainLocation } from './database-backup.js'
 export { DatabaseBackups } from './database-backups.js'
+export { DatabaseEncryption } from './database-encryption.js'
 export { DatabaseLifecycle } from './database-lifecycle.js'
 export { defineDriver } from './driver/define.js'
+export type { DatabaseFileSystem } from './driver/file-system.js'
 export { DEFAULT_SYNCHRONOUS, isSynchronousLevel, synchronousPragmaValue } from './driver/synchronous.js'
 export type {
   BatchSummary,
@@ -52,6 +54,15 @@ export type {
   SQLiteStatement,
   SynchronousLevel,
 } from './driver/types.js'
+export type { EncryptionErrorCode } from './encryption/errors.js'
+export { EncryptionError } from './encryption/errors.js'
+export type {
+  EncryptionChange,
+  EncryptionChangeStatus,
+  EncryptionKey,
+  EncryptionOptions,
+  EncryptionStatus,
+} from './encryption/types.js'
 export * from './errors.js'
 export { HookRegistry } from './hooks/registry.js'
 export * from './hooks/types.js'

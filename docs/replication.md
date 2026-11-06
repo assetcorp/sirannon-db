@@ -125,6 +125,65 @@ With `writeForwarding: true`, when you send a write to the replica's `engine.exe
 
 With `initialSync` on, which is the default, a new node copies the whole database before it serves reads. The source streams the schema and the table data in checksummed batches, and then it sends a manifest. The joining node passes through the phases `pending`, `syncing`, `catching-up`, and `ready`, and `engine.status().syncState.phase` gives the current one. For a database that is too large to copy over the network, copy the file yourself, and then start the replica with `initialSync: false` and with `resumeFromSeq` set to the sequence that your copy reached.
 
+## Replicate an encrypted database
+
+The engine reads and writes the file through the connections that you open, so an encrypted node opens each of them under the database key. Create the driver with `encryption: true`, give `sirannon.open` the key function, and pass the key to every `driver.open` call that the engine uses:
+
+```ts
+import { readFile } from 'node:fs/promises'
+import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
+import { betterSqlite3 } from '@delali/sirannon-db/driver/better-sqlite3'
+import { PrimaryReplicaTopology, ReplicationEngine } from '@delali/sirannon-db/replication'
+import { GrpcReplicationTransport } from '@delali/sirannon-db/transport/grpc'
+
+type KeyLoader = () => Promise<Uint8Array>
+
+const dbPath = './data/orders.db'
+const driver = betterSqlite3({ encryption: true })
+const loadKey: KeyLoader = async () => new Uint8Array(await readFile('/run/secrets/orders-key'))
+
+const sirannon = new Sirannon({ driver })
+const db = await sirannon.open('orders', dbPath, { encryption: { key: loadKey } })
+
+async function startReplication(key: KeyLoader) {
+  const writerConn = await driver.open(dbPath, { encryption: { key: await key() } })
+  const tracker = new ChangeTracker()
+  await tracker.watch(writerConn, 'orders')
+  const engine = new ReplicationEngine(db, writerConn, {
+    nodeId: 'primary-us-east-1',
+    topology: new PrimaryReplicaTopology('primary'),
+    transport: new GrpcReplicationTransport({
+      host: '0.0.0.0',
+      port: 4200,
+      tlsCert: './certs/primary.crt',
+      tlsKey: './certs/primary.key',
+      tlsCaCert: './certs/ca.crt',
+    }),
+    snapshotConnectionFactory: async () => driver.open(dbPath, { readonly: true, encryption: { key: await key() } }),
+    changeTracker: tracker,
+  })
+  await engine.start()
+  return { engine, writerConn }
+}
+
+let node = await startReplication(loadKey)
+```
+
+The key file in this example holds the 32 raw key bytes, and a secret store that returns those bytes works in the same way.
+
+A key change replaces the database file, which would leave the engine's writer connection on the old file. While an engine runs on a database, `db.changeEncryption` and a restore of that database therefore fail with `REPLICATION_ACTIVE` before they touch any file. To change the key of a node, stop its engine and close its writer connection, run the change, and then start replication again under the new key:
+
+```ts
+await node.engine.stop()
+await node.writerConn.close()
+
+const loadNewKey: KeyLoader = async () => new Uint8Array(await readFile('/run/secrets/orders-key-2'))
+await db.changeEncryption({ key: loadNewKey })
+node = await startReplication(loadNewKey)
+```
+
+Change one node at a time, so that the rest of the group keeps serving while that node is stopped. An encrypted node sends no batch and no snapshot to a plaintext peer, so encrypt the replicas first, then fail over to one of them, and encrypt the former primary last.
+
 ## Write concerns
 
 Pass a write concern to `engine.execute` in `primary.ts` to set how many replicas must acknowledge the write. A majority write on a primary with no connected replica fails with `WRITE_CONCERN_ERROR` once `timeoutMs` passes, so wait until a replica connects before you send one:

@@ -10,6 +10,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
 // @public
 export interface BetterSqlite3Options {
     busyTimeout?: number;
+    encryption?: boolean;
     rowCounts?: boolean;
     sqliteBindingPath?: string;
     vfsExtensionPath?: string;

@@ -2,6 +2,7 @@ const { existsSync } = require('node:fs')
 const { dirname, join, resolve } = require('node:path')
 const createDatabase = require('./lib/database')
 const SqliteError = require('./lib/sqlite-error')
+const { cppdb } = require('./lib/util')
 
 const ADDON_FILE_NAME = 'better_sqlite3.node'
 const MUSL_DIRECTORY = 'musl'
@@ -54,6 +55,32 @@ function loadAddon(nativeBinding) {
   return require(path)
 }
 
-module.exports = createDatabase(loadAddon, true)
+const Database = createDatabase(loadAddon, true)
+
+Database.prototype.key = function key(rawKey) {
+  this[cppdb].key(rawKey)
+  return this
+}
+
+Database.prototype.startChangeCapture = function startChangeCapture() {
+  this[cppdb].startChangeCapture()
+  return this
+}
+
+Database.prototype.takeCapturedChanges = function takeCapturedChanges() {
+  return this[cppdb].takeCapturedChanges()
+}
+
+Database.prototype.stopChangeCapture = function stopChangeCapture() {
+  this[cppdb].stopChangeCapture()
+  return this
+}
+
+Database.prototype.applyChanges = function applyChanges(changes) {
+  this[cppdb].applyChanges(changes)
+  return this
+}
+
+module.exports = Database
 module.exports.SqliteError = SqliteError
 module.exports.bindingPath = bindingPath

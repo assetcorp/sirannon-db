@@ -217,6 +217,8 @@ This canonical form is distinct from the [tagged value encoding](02-core.md#tagg
 
 ## Replication Engine
 
+A replication engine must register with its database when it starts and unregister when it stops, so that the database can refuse an operation that would replace the file under the engine's writer connection. A replication engine that starts while its database runs a key change must fail with `ENCRYPTION_CHANGE_IN_PROGRESS`.
+
 ### Configuration and Defaults
 
 | Parameter | Default | Normative |
@@ -301,6 +303,8 @@ PeerState {
 An acknowledgement advances `lastAckedSeq`, drops in-flight batches up to the acked sequence, and decrements `pendingBatches`. Applying a batch from a peer raises that peer's `lastReceivedHlc` to the batch's `hlcRange.max`. An in-flight batch older than `ackTimeoutMs` is expired, and `lastSentSeq` rewinds to the lost batch's start so retransmission resumes there.
 
 On connecting to the node it replicates from, a node that is `ready` or `catching-up` sends its applied sequence for that node's stream as a `ReplicationAck` with an empty `batchId`. An acknowledgement with an empty `batchId` sets the sender's `lastSentSeq` for that peer to `ackedSeq`, clears its in-flight batches, and resets `pendingBatches` to 0, so that the sender resends from the receiver's applied sequence.
+
+A node whose database is encrypted must send no batch and no snapshot to a peer whose `Hello` reports `encrypted` false, must refuse that peer's sync request with `ENCRYPTION_REQUIRED`, and must end that peer's streams with `ENCRYPTION_REQUIRED` through `refusePeer` where the transport provides it. A node whose database is plaintext may send to an encrypted peer, so that a group can encrypt its replicas, fail over to one of them, and then encrypt the former primary.
 
 ---
 

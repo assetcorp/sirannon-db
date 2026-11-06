@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ChangeTracker } from '../../../core/cdc/change-tracker.js'
 import { Database } from '../../../core/database.js'
-import type { SQLiteConnection, SQLiteDriver } from '../../../core/driver/types.js'
+import type { OpenOptions, SQLiteConnection, SQLiteDriver } from '../../../core/driver/types.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import { ReplicationEngine } from '../../../replication/engine.js'
 import { PrimaryReplicaTopology } from '../../../replication/topology/primary-replica.js'
@@ -34,6 +34,7 @@ export interface NodeRegistry {
   sirannon: Sirannon
   driver: SQLiteDriver
   databaseId: string
+  encryptionKey?: Uint8Array
 }
 
 export interface CreatePrimaryArgs {
@@ -60,7 +61,16 @@ function driverOf(registry: NodeRegistry | undefined): SQLiteDriver {
   return registry?.driver ?? testDriver
 }
 
+function keyedOpen(registry: NodeRegistry | undefined): OpenOptions {
+  const key = registry?.encryptionKey
+  return key === undefined ? {} : { encryption: { key: Uint8Array.from(key) } }
+}
+
 async function openDatabase(nodeId: string, dbPath: string, registry: NodeRegistry | undefined): Promise<Database> {
+  const key = registry?.encryptionKey
+  if (registry && key !== undefined) {
+    return registry.sirannon.open(registry.databaseId, dbPath, { encryption: { key: () => Uint8Array.from(key) } })
+  }
   if (registry) return registry.sirannon.open(registry.databaseId, dbPath)
   return Database.create(`db-${nodeId}`, dbPath, testDriver)
 }
@@ -99,7 +109,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
   const { tempDir, dbPath } = storage
 
   const driver = driverOf(args.registry)
-  const conn = await driver.open(dbPath)
+  const conn = await driver.open(dbPath, keyedOpen(args.registry))
   await conn.exec('PRAGMA journal_mode = WAL')
 
   const tracker = new ChangeTracker()
@@ -127,7 +137,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
     maxBatchChanges: 5_000,
     initialSync: false,
     changeTracker: tracker,
-    snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true }),
+    snapshotConnectionFactory: () => driver.open(dbPath, { readonly: true, ...keyedOpen(args.registry) }),
     syncBatchSize: 500,
     syncAckTimeoutMs: 10_000,
     ...args.configOverrides,
@@ -159,7 +169,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
   const storage = createNodeStorage(args.nodeId, args.storage)
   const { tempDir, dbPath } = storage
 
-  const conn = await driverOf(args.registry).open(dbPath)
+  const conn = await driverOf(args.registry).open(dbPath, keyedOpen(args.registry))
   await conn.exec('PRAGMA journal_mode = WAL')
 
   const tracker = new ChangeTracker()

@@ -1,6 +1,7 @@
 import type { BackupCycleOptions } from './backup/cycle-options.js'
 import type { BackupFileReport } from './backup/report.js'
 import type { SQLiteDriver, SynchronousLevel } from './driver/types.js'
+import type { EncryptionOptions } from './encryption/types.js'
 import type { HookConfig } from './hook-types.js'
 import type { MetricsConfig } from './metrics-types.js'
 import type { MigrationSource } from './migrations/types.js'
@@ -163,6 +164,14 @@ export interface DatabaseOptions {
    * off.
    */
   backups?: BackupCycleOptions
+  /**
+   * Encrypts every page of the database file, its write-ahead log, and every
+   * backup that Sirannon writes for it, under a 32-byte key that your function
+   * returns. The driver has to report `encryption` in its capabilities, and with
+   * any other driver the open throws `ENCRYPTION_UNSUPPORTED`. The default is
+   * off, which keeps the file as plaintext.
+   */
+  encryption?: EncryptionOptions
 }
 
 /** The limits and recovery settings for the writer worker thread.

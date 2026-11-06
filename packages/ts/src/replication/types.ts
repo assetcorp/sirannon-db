@@ -1,5 +1,6 @@
 import type { ChangeTracker } from '../core/cdc/change-tracker.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
+import type { SirannonError } from '../core/errors.js'
 import type { ConflictResolver, ReplicationBatch } from '../core/sync/types.js'
 import type { NodeHealth } from '../core/types.js'
 import type {
@@ -86,6 +87,8 @@ export interface TransportConfig {
   primaryTerm?: bigint
   /** Sets the replication protocol version that this node announces. */
   protocolVersion?: string
+  /** Sets whether this node announces an encrypted database. The replication engine fills it in when it starts. */
+  encrypted?: boolean
   /** Holds any other data for the transport to announce about this node. The bundled transports ignore it. */
   metadata?: Record<string, unknown>
 }
@@ -143,6 +146,9 @@ export interface ReplicationTransport {
 
   /** Dials the replication address of every peer in the map, keyed by node ID, and stops dialling any other address. In coordinator mode the engine calls it with the addresses in the members' sessions whenever those addresses change. */
   setPeerEndpoints?(endpoints: ReadonlyMap<string, string>): void
+
+  /** Ends every stream to one peer with the error's code, so that the peer learns why this node sends it nothing. The engine calls it when its database is encrypted and the peer's is plaintext. */
+  refusePeer?(peerId: string, error: SirannonError): Promise<void>
 }
 
 /**

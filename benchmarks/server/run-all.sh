@@ -241,6 +241,16 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
+stop_run() {
+  echo "================ run stopped ================"
+  echo "$1; a comparison needs every workload from every engine, so the run stops here" >&2
+  unit_stop bench-postgres.service
+  unit_stop bench-sirannon.service
+  sudo rm -rf "$PG_DATA_DIR" "$SIRANNON_DATA_DIR"
+  echo "finished with status 1"
+  exit 1
+}
+
 status=0
 read -r -a DURABILITY_LIST <<< "$DURABILITIES"
 total="${#DURABILITY_LIST[@]}"
@@ -257,11 +267,10 @@ for durability in "${DURABILITY_LIST[@]}"; do
       && verify_engine_cgroup bench-sirannon.service; then
       drop_caches
       BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-sirannon.service" \
-        run_driver_pass "${sirannon_args[@]}" || status=1
+        run_driver_pass "${sirannon_args[@]}" || stop_run "the sirannon ${durability} pass failed"
       record_engine_caps_proof bench-sirannon.service sirannon "$durability"
     else
-      echo "sirannon is not healthy under the verified caps; skipping its ${durability} pass" >&2
-      status=1
+      stop_run "sirannon is not healthy under the verified caps for its ${durability} pass"
     fi
     unit_stop bench-sirannon.service
     rm -rf "$SIRANNON_DATA_DIR"
@@ -274,11 +283,10 @@ for durability in "${DURABILITY_LIST[@]}"; do
       && verify_engine_cgroup bench-postgres.service; then
       drop_caches
       BENCH_ENGINE_CGROUP="/sys/fs/cgroup/system.slice/bench-postgres.service" \
-        run_driver_pass --engine postgres --durability "$durability" || status=1
+        run_driver_pass --engine postgres --durability "$durability" || stop_run "the postgres ${durability} pass failed"
       record_engine_caps_proof bench-postgres.service postgres "$durability"
     else
-      echo "postgres is not healthy under the verified caps; skipping its ${durability} pass" >&2
-      status=1
+      stop_run "postgres is not healthy under the verified caps for its ${durability} pass"
     fi
     unit_stop bench-postgres.service
   fi
@@ -288,14 +296,18 @@ for durability in "${DURABILITY_LIST[@]}"; do
   fi
 done
 
-echo "================ aggregate ================"
-run_with_deadline 600 env PYTHONPATH=src python3 -m sirannon_bench.aggregate || status=1
-
-if [ -n "${SMOKE}" ]; then
-  echo "================ writeup (skipped for smoke) ================"
+if ! engine_enabled sirannon || ! engine_enabled postgres; then
+  echo "================ aggregate and writeup (skipped: the comparison needs both engines) ================"
 else
-  echo "================ writeup ================"
-  python3 ../writeup/generate.py || status=1
+  echo "================ aggregate ================"
+  run_with_deadline 600 env PYTHONPATH=src python3 -m sirannon_bench.aggregate \
+    || stop_run "the comparison could not be built from this run's results"
+  if [ -n "${SMOKE}" ]; then
+    echo "================ writeup (skipped for smoke) ================"
+  else
+    echo "================ writeup ================"
+    python3 ../writeup/generate.py || status=1
+  fi
 fi
 
 echo "================ teardown ================"

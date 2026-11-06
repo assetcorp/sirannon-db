@@ -29,6 +29,15 @@ const INSERT_ORDER = 'INSERT INTO orders (customer_id, total, status, created_at
 const TAKE_STOCK = 'UPDATE products SET stock = CASE WHEN stock >= ? THEN stock - ? ELSE stock - ? + ? END WHERE id = ?'
 const CHARGE_CUSTOMER = 'UPDATE customers SET balance = balance - ? WHERE id = ?'
 
+interface StockLine {
+  quantity: number
+  productId: number
+}
+
+function inProductOrder(lines: StockLine[]): StockLine[] {
+  return [...lines].sort((a, b) => a.productId - b.productId)
+}
+
 function bothDialects(sql: string): StatementTemplate {
   return { sqliteSql: sql, postgresSql: sql }
 }
@@ -125,9 +134,13 @@ export function oltpWorkloads(): Workload[] {
             const total = Math.round(ctx.rng.fraction() * 500 * 100) / 100
             const sets: unknown[][] = [[customerId, total, 'pending', FIXED_TIMESTAMP]]
             const productCount = Math.min(ctx.dataSize, PRODUCT_COUNT_CAP)
+            const stockLines: StockLine[] = []
             for (let line = 0; line < ORDER_LINES; line++) {
               const quantity = ctx.rng.below(MAX_LINE_QUANTITY) + 1
-              sets.push([quantity, quantity, quantity, TPCC_2_4_2_2_RESTOCK_QUANTITY, ctx.rng.below(productCount) + 1])
+              stockLines.push({ quantity, productId: ctx.rng.below(productCount) + 1 })
+            }
+            for (const { quantity, productId } of inProductOrder(stockLines)) {
+              sets.push([quantity, quantity, quantity, TPCC_2_4_2_2_RESTOCK_QUANTITY, productId])
             }
             sets.push([total, customerId])
             return sets

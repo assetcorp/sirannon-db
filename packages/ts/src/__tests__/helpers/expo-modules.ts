@@ -51,13 +51,20 @@ function handleOf(db: StockDatabase.Database) {
       return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) }
     },
     async withExclusiveTransactionAsync(task: (tx: unknown) => Promise<void>) {
-      db.exec('BEGIN EXCLUSIVE')
+      const BetterSqlite = require('better-sqlite3') as typeof StockDatabase
+      const binding = expoSqlcipherBuild.binding
+      if (binding === null) throw new Error('The SQLCipher binding is missing')
+      const transaction = new BetterSqlite(db.name, { nativeBinding: binding })
+      transaction.unsafeMode(true)
       try {
-        await task(handle)
-        db.exec('COMMIT')
+        transaction.exec('BEGIN')
+        await task(handleOf(transaction))
+        transaction.exec('COMMIT')
       } catch (err) {
-        if (db.inTransaction) db.exec('ROLLBACK')
+        if (transaction.inTransaction) transaction.exec('ROLLBACK')
         throw err
+      } finally {
+        transaction.close()
       }
     },
     async closeAsync() {
@@ -67,16 +74,20 @@ function handleOf(db: StockDatabase.Database) {
   return handle
 }
 
-export const expoSqlcipherBuild: { binding: string | null } = { binding: null }
+export const expoSqlcipherBuild: { binding: string | null; directory: string } = { binding: null, directory: '/' }
 
 export function expoSqliteModule() {
   const BetterSqlite = require('better-sqlite3') as typeof StockDatabase
   return {
-    defaultDatabaseDirectory: '/',
+    get defaultDatabaseDirectory() {
+      return expoSqlcipherBuild.directory
+    },
     async openDatabaseAsync(name: string, options?: { readOnly?: boolean }) {
       const binding = expoSqlcipherBuild.binding
       if (binding === null) throw new Error('Set expoSqlcipherBuild.binding to a built expo-sqlite SQLCipher first')
-      const db = new BetterSqlite(name, { readonly: options?.readOnly === true, nativeBinding: binding })
+      const path =
+        name === ':memory:' ? name : `${expoSqlcipherBuild.directory.replace(/\/*$/, '')}/${name.replace(/^\/+/, '')}`
+      const db = new BetterSqlite(path, { readonly: options?.readOnly === true, nativeBinding: binding })
       db.unsafeMode(true)
       return handleOf(db)
     },

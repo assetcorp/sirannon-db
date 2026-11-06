@@ -1,3 +1,4 @@
+import { readMainDatabasePath } from '../backup/report.js'
 import { createMainSchemaTriggers, dropMainSchemaTriggers } from '../cdc/trigger-sql.js'
 import type { ConnectionPool } from '../connection-pool.js'
 import type { DatabaseBackupController } from '../database-backup.js'
@@ -120,6 +121,7 @@ export class KeyChangeRun {
   private chainForgotten = false
   private replaced = false
   private stranded = false
+  private nativePath = ''
 
   /**
    * Checks that the database can change its key, without touching any file.
@@ -194,9 +196,11 @@ export class KeyChangeRun {
     await removeKeyChangeMarker(this.files, path)
     const snapshot = await fileConnections.open({ walMode: false, walAutoCheckpoint: 0 })
     this.snapshot = snapshot
+    this.nativePath = await readMainDatabasePath(snapshot)
+    if (this.nativePath === '') throw keyChangeAborted('SQLite returned no path for the database file')
     const targetKey = this.target === null ? undefined : await resolveEncryptionKey(this.target)
     try {
-      await attachNewFile(snapshot, this.newPath, targetKey?.bytes)
+      await attachNewFile(snapshot, keyChangeFilePath(this.nativePath), targetKey?.bytes)
     } finally {
       wipeEncryptionKey(targetKey)
     }
@@ -230,7 +234,7 @@ export class KeyChangeRun {
     const source = keyring.keySource
     const originalKey = source === null ? undefined : await resolveEncryptionKey(source)
     try {
-      await attachOriginal(this.targetConn, path, originalKey?.bytes)
+      await attachOriginal(this.targetConn, this.nativePath, originalKey?.bytes)
     } finally {
       wipeEncryptionKey(originalKey)
     }

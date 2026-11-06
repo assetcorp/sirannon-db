@@ -82,7 +82,7 @@ const db = await sirannon.open('app', './data/app.db', {
 
 ## HTTP routes
 
-Clients URL-encode `{id}` and `{name}`, and the server decodes each one before it uses it. The server answers `400 INVALID_REQUEST` for an `{id}` that decodes to a path starting with a slash, a backslash, or a drive letter such as `C:`, and for one with a `.` or `..` part, such as `../../etc`. That rule means an `autoOpen` resolver that joins the identifier onto a directory can only name a file inside that directory, while a nested identifier such as `east/wing` still reaches its database. The `authenticate` hook runs before that refusal and receives such an identifier exactly as the client sent it. Until you set `acceptSql: true`, the server answers the five statement routes with `403 SQL_NOT_ACCEPTED`. Until you set `acceptDeviceSync: true`, it answers the four device-sync routes, `/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, with `403 DEVICE_SYNC_NOT_ACCEPTED`. The server serves every other route in every configuration.
+Clients URL-encode `{id}` and `{name}`, and the server decodes each one before it uses it. The server answers `400 INVALID_REQUEST` for an `{id}` that decodes to a path starting with a slash, a backslash, or a drive letter such as `C:`, and for one with a `.` or `..` part, such as `../../etc`. That rule means an `autoOpen` resolver that joins the identifier onto a directory can only name a file inside that directory, while a nested identifier such as `east/wing` still reaches its database. The `authenticate` hook runs before that refusal and receives such an identifier exactly as the client sent it. Until you set `acceptSql: true`, the server answers the five statement routes with `403 SQL_NOT_ACCEPTED`. Until you set `acceptDeviceSync: true`, it answers the four device-sync routes, `/changes`, `/migrations`, `/snapshot`, and `/snapshot/page`, with `403 DEVICE_SYNC_NOT_ACCEPTED`. The backup restore and encryption change routes have separate switches, which their sections below describe.
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -104,12 +104,35 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 | `POST` | `/db/{id}/backup/safe-to-delete` | Lists the records that no restore still needs |
 | `POST` | `/db/{id}/backup/restore` | Rebuilds the database from a moment and returns `202` |
 | `GET` | `/db/{id}/backup/restore` | Returns the outcome of that restore |
+| `POST` | `/db/{id}/encryption` | Encrypts, decrypts, or changes the key of a database and returns `202` |
+| `GET` | `/db/{id}/encryption` | Returns the database's encryption status and key-change progress |
 | `GET` | `/db/{id}/cluster` | Returns the role, replication group, current primary, primary term, read endpoints, and health |
 | `GET` | `/capabilities` | Returns the announced capabilities and the registry digest |
 | `GET` | `/health` | Answers a liveness check |
 | `GET` | `/health/ready` | Answers a readiness check with per-database status |
 
 Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
+
+## Encryption routes
+
+The server calls your `authenticate` hook before each encryption route. Reserve these routes for an operator credential, because the `POST` route can encrypt a plaintext database, replace its key, or store it as plaintext.
+
+The server refuses `POST /db/{id}/encryption` until you set `acceptEncryptionChange: true`. It also requires an `encryptionKeys` function, which resolves the caller's key reference inside the server:
+
+```ts
+const server = createServer(sirannon, {
+  authenticate: identifyOperator,
+  acceptEncryptionChange: true,
+  encryptionKeys: async (databaseId, keyRef) => ({
+    key: await keyService.dataKey(databaseId, keyRef),
+    id: keyRef,
+  }),
+})
+```
+
+`createServer` throws `INVALID_ENCRYPTION_CHANGE` when the change route has no `authenticate` hook or no `encryptionKeys` function. A change request sends `{ keyRef }`, where `keyRef` is a string of 1 to 256 characters or `null` to remove encryption. The server resolves a string through `encryptionKeys`, so the request carries no key bytes.
+
+The `POST` route returns `202` after the change starts. Read its progress and outcome from `GET /db/{id}/encryption`. The [encryption guide](encryption.md#over-the-server) covers the response, the error handling, and the matching local API.
 
 ## Backup routes
 

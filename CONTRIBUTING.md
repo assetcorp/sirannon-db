@@ -4,8 +4,10 @@ Thanks for your interest in Sirannon. This guide covers how to set up the reposi
 
 ## Prerequisites
 
-- Node.js 22 or newer.
-- pnpm 11.8.0, the version pinned in `package.json`. Run `corepack enable` and pnpm will match it.
+- Install Node.js 22 or newer.
+- Use pnpm 11.8.0, which is the version pinned in `package.json`. Run `corepack enable`, and pnpm will match it.
+- Install Zig 0.16.0 on Linux and Windows. On macOS, install Xcode Command Line Tools for their C and C++ compilers.
+- Install `unzip`, and make it available on `PATH`.
 
 ## Set up the repository
 
@@ -17,15 +19,34 @@ pnpm install
 
 ## Run the checks
 
-The same checks run in continuous integration, so run them before you open a pull request.
+Build the three native test libraries from the TypeScript package first:
+
+The VFS and Sirannon SQLite builds support Windows targets. The Expo SQLCipher test build supports Linux and macOS targets, so Windows contributors must execute the complete build and test sequence inside WSL or on a Linux or macOS machine.
 
 ```bash
-pnpm build       # build every package
-pnpm test        # run the unit test suites
-pnpm lint        # run Biome
-pnpm typecheck   # run the TypeScript compiler
-pnpm format      # apply Biome formatting
+cd packages/ts
+pnpm build:vfs
+pnpm build:sqlite
+pnpm build:expo-sqlcipher
+cd ../..
 ```
+
+Then run the same library checks that continuous integration runs:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm build
+pnpm check:bundle
+pnpm check:types
+pnpm check:api
+SIRANNON_REQUIRE_STREAMING_EXTENSION=1 \
+SIRANNON_REQUIRE_SIRANNON_SQLITE=1 \
+SIRANNON_REQUIRE_EXPO_SQLCIPHER=1 \
+pnpm test --skip-nx-cache
+```
+
+The three `SIRANNON_REQUIRE_*` settings make the test suite fail when a native library is absent. `--skip-nx-cache` forces Nx to execute the suite against the libraries that you have built for the current machine. Use `pnpm format` to apply Biome's formatting before you repeat the checks.
 
 The replication end-to-end, failover, and soak suites run from the TypeScript package. The end-to-end and soak suites need no Docker: they run two nodes in one process over loopback gRPC. Only the failover suite starts Docker containers, which it uses for a three-member etcd cluster and for Toxiproxy fault injection. The `Failover` workflow runs that suite on every pull request and on every push to `main`, and the workflow fails when Vitest skips any scenario.
 

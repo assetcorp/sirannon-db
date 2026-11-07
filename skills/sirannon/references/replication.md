@@ -1,6 +1,6 @@
 # Replication across nodes
 
-Replication adds read replicas behind one primary, and every write still goes to the primary. Primary-replica replication is stable, while automatic failover through etcd is experimental, so confirm with the user before you build failover.
+Replication adds read replicas behind one primary, and every write still goes to the primary. Primary-replica replication and automatic failover through etcd are both stable.
 
 1. Install the transport's peers with `pnpm add -E @grpc/grpc-js @bufbuild/protobuf grpc-health-check`, and `pnpm add -E etcd3` for failover.
 2. Read `distributed-replication.md` in the versioned documentation, and take every option from the installed types for `@delali/sirannon-db/replication`, `/transport/grpc`, and `/replication/coordinator/etcd`.

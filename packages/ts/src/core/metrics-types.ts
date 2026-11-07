@@ -18,9 +18,12 @@ export interface QueryMetrics {
    * The number of table and index rows that SQLite read while it executed the
    * statement, including the work of every trigger that the statement fired.
    * Sirannon sets it on every statement, failed or not, when the driver
-   * reports `rowCounts`, as `betterSqlite3({ rowCounts: true })` does.
+   * reports `rowCounts`, as `betterSqlite3({ rowCounts: true })` does. When
+   * the caller receives `WRITER_WORKER_TIMEOUT`, Sirannon waits for the writer
+   * worker to answer, then reports the statement with the counts that the
+   * worker sends, so these metrics can arrive after the caller's error.
    * Sirannon leaves it absent when the driver counts no rows, and when the
-   * writer worker times out, crashes, or exits while it executes the statement.
+   * writer worker crashes, exits, or closes before it answers.
    */
   rowsRead?: number
   /**

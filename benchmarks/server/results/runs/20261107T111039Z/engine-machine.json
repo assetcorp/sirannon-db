@@ -1,0 +1,11 @@
+{
+  "machine_label": "GCP c3-standard-8-lssd, us-central1-a",
+  "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
+  "logical_cpus": 8,
+  "total_memory_bytes": 33645887488,
+  "os": "Ubuntu 24.04.5 LTS",
+  "kernel": "7.0.0-1017-gcp",
+  "arch": "x86_64",
+  "engine_allowed_cpus": "0-7",
+  "engine_memory_max": "2G"
+}

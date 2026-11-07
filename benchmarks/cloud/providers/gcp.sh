@@ -48,7 +48,10 @@ prov_private_ip() {
 }
 
 prov_exists() {
-  gcloud compute instances describe "$VM_NAME" --project "$PROJECT" --zone "$ZONE" >/dev/null 2>&1
+  local found
+  found="$(gcloud compute instances list --project "$PROJECT" --zones "$ZONE" \
+    --filter="name=($VM_NAME)" --format='value(name)')" || return "$VM_EXISTENCE_UNKNOWN"
+  [ "$found" = "$VM_NAME" ]
 }
 
 _gcp_termination_time() {

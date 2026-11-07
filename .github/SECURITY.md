@@ -27,4 +27,4 @@ The server applies no rate limit and no query timeout. It listens on plain HTTP 
 
 ## What to expect
 
-The maintainer acknowledges every report. Once the maintainer confirms the problem, they'll prepare a fix and coordinate its disclosure with you. Coordinator-backed automatic failover and the etcd coordinator are experimental, so their design may still change.
+The maintainer acknowledges every report. Once the maintainer confirms the problem, they'll prepare a fix and coordinate its disclosure with you.

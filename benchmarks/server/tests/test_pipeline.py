@@ -12,7 +12,7 @@ from sirannon_bench.core.comparison import IncompleteRunError, build_comparison
 _WRITEUP_DIR = Path(__file__).resolve().parents[2] / "writeup"
 
 
-def _engine_report(engine: str, median_ops: float, p99: float, with_features: bool) -> dict:
+def _engine_report(engine: str, median_ops: float, p99: float, with_features: bool, under_slo: bool = True) -> dict:
     throughput = {
         "median_ops": median_ops,
         "mean_ops": median_ops,
@@ -25,7 +25,7 @@ def _engine_report(engine: str, median_ops: float, p99: float, with_features: bo
         "samples": [median_ops * 0.98, median_ops, median_ops * 1.02],
     }
     latency = {"p50": p99 / 3.0, "p95": p99 * 0.9, "p99": p99, "p999": p99 * 1.5, "max": p99 * 2.0, "mean": p99 / 3.0}
-    operating_point = {"target_rate": 16000, "under_slo": True, "throughput": throughput, "latency_ms": latency}
+    operating_point = {"target_rate": 16000, "under_slo": under_slo, "throughput": throughput, "latency_ms": latency}
     sweep = [
         {"target_rate": 1000, "throughput": throughput, "latency_ms": latency, "sustained": True},
         {"target_rate": 16000, "throughput": throughput, "latency_ms": latency, "sustained": True},
@@ -101,6 +101,76 @@ def test_writeup_renders_numbers(tmp_path: Path):
     document = server_section.comparison_document(source)
     assert "Sirannon and PostgreSQL on one host" in document
     assert "Point-select" in document
+
+
+def _rendered_comparison(tmp_path: Path, sirannon: dict, postgres: dict) -> tuple[dict, str]:
+    run_dir = tmp_path / "runs" / "20260101T000000Z"
+    run_dir.mkdir(parents=True)
+    _write(run_dir, "engine-sirannon-full.json", sirannon)
+    _write(run_dir, "engine-postgres-full.json", postgres)
+    manifest = {"run_id": "20260101T000000Z", "created_at": "2026-07-08T00:00:00+00:00", "environment": {}}
+    comparison = build_comparison(run_dir, manifest)
+
+    if str(_WRITEUP_DIR) not in sys.path:
+        sys.path.insert(0, str(_WRITEUP_DIR))
+    import server_section
+    from sources import Source
+
+    source = Source(run_id="20260101T000000Z", report_link="report.md", comparison=comparison)
+    return comparison["durabilities"]["full"]["workloads"][0], server_section.blocks(source)["comparison"]
+
+
+def _point_select_row(rendered: str) -> str:
+    return next(line for line in rendered.splitlines() if line.startswith("| Point-select"))
+
+
+def test_a_rate_that_missed_the_latency_target_never_beats_one_that_held_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full")
+    sirannon = _engine_report("sirannon", 24000.0, 5.1, True)
+    postgres = _engine_report("postgres", 31774.0, 510.8, False, under_slo=False)
+
+    row, rendered = _rendered_comparison(tmp_path, sirannon, postgres)
+    table_row = _point_select_row(rendered)
+
+    assert row["speedup"] is None
+    assert "**24.0K**" in table_row
+    assert "31.8K" in table_row
+    assert "**31.8K**" not in table_row
+    assert table_row.rstrip(" |").endswith("n/a")
+    assert "Point-select †" in table_row
+
+
+def test_no_engine_wins_a_workload_where_both_missed_the_latency_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full")
+    sirannon = _engine_report("sirannon", 22000.0, 103.0, True, under_slo=False)
+    postgres = _engine_report("postgres", 20700.0, 624.0, False, under_slo=False)
+
+    row, rendered = _rendered_comparison(tmp_path, sirannon, postgres)
+    table_row = _point_select_row(rendered)
+
+    assert row["speedup"] is None
+    assert "**" not in table_row
+    assert table_row.rstrip(" |").endswith("n/a")
+
+
+def test_the_higher_rate_wins_when_both_engines_held_the_latency_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("BENCH_DURABILITIES", "full")
+    sirannon = _engine_report("sirannon", 16000.0, 17.0, True)
+    postgres = _engine_report("postgres", 6250.0, 16.0, False)
+
+    row, rendered = _rendered_comparison(tmp_path, sirannon, postgres)
+    table_row = _point_select_row(rendered)
+
+    assert 2.4 < row["speedup"]["point"] < 2.7
+    assert "**16.0K**" in table_row
+    assert "**6.3K**" not in table_row
+    assert "†" not in table_row
 
 
 _RUN_ID = "20260101T000000Z"

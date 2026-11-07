@@ -39,6 +39,17 @@ def _missed_cell(curve: list[dict], engine: str, operating_rate: object, slo_ms:
     return HELD_EVERY_RATE
 
 
+def _operating_point_cells(sirannon: dict, postgres: dict) -> list[str]:
+    sides = (sirannon, postgres)
+    held = [side.get("under_slo", True) for side in sides]
+    if all(held):
+        return emphasize_best([side.get("ops_median") for side in sides], HIGHER_IS_BETTER, ops)
+    cells = [ops(side.get("ops_median")) for side in sides]
+    if not any(held):
+        return cells
+    return [f"**{cell}**" if engine_held else cell for cell, engine_held in zip(cells, held, strict=True)]
+
+
 def _searched_anywhere(node: dict) -> bool:
     for row in node.get("workloads", []):
         if searched_mark(row.get("sirannon")) or searched_mark(row.get("postgres")):
@@ -73,11 +84,7 @@ def _durability_table(node: dict, slo_ms: object) -> str:
         marker = "" if sirannon.get("under_slo", True) and postgres.get("under_slo", True) else " †"
         if marker:
             has_below_slo = True
-        sirannon_ops_cell, postgres_ops_cell = emphasize_best(
-            [sirannon.get("ops_median"), postgres.get("ops_median")],
-            HIGHER_IS_BETTER,
-            ops,
-        )
+        sirannon_ops_cell, postgres_ops_cell = _operating_point_cells(sirannon, postgres)
         body.append([
             workload_label(row.get("workload", "n/a")) + marker,
             sirannon_ops_cell + searched_mark(sirannon),
@@ -106,8 +113,9 @@ def _durability_table(node: dict, slo_ms: object) -> str:
     rendered = table(headers, aligns, body)
     if has_below_slo:
         rendered += (
-            "\n\n_A † marks a workload where an engine's p99 exceeded the target at every offered rate, so its "
-            "operating point is the highest rate that it sustained._"
+            "\n\n_A † marks a workload where an engine's p99 exceeded the target at every offered rate. For that "
+            "engine, the table gives the highest rate that it sustained, which is not an operating point. The table "
+            "therefore gives that workload no rate ratio, while the bold marks only an engine that held the target._"
         )
     return rendered
 
@@ -143,7 +151,8 @@ def throughput_block(source: Source, chart_dir: str) -> str:
         )
         parts.append(_durability_table(node, slo_ms))
     note = (
-        "_Bold marks the higher of the two operating points on each workload. Where both engines held the target "
+        "_Bold marks the higher of the two operating points on each workload, counting only the engines that held "
+        "the target. Where both engines held the target "
         "at the same rate, neither cell is bold. Each p99 comes from its own engine's operating point, so the two "
         "p99 columns can describe different offered rates. For both engines at one offered rate, use the sweep "
         "tables below. Each 'missed at' column gives the next offered rate above the operating point at which "

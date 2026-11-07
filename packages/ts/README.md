@@ -8,9 +8,9 @@
 
 Build an encrypted, networked SQLite service with connection pooling, change data capture, live queries, migrations, backups, device sync, and a client SDK. Applications reach Sirannon over HTTP or WebSocket, while a primary replicates its changes to other Sirannon nodes over gRPC.
 
-**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** Use this page to get started, and turn to the [guides](#documentation) for the detail. The benchmark harness that measures Sirannon against Postgres 17 is under [`benchmarks/server`](https://github.com/assetcorp/sirannon-db/tree/main/benchmarks/server), where a Node load generator drives both engines and a Python step joins their results. The write-up generator rewrites [BENCHMARKS.md](https://github.com/assetcorp/sirannon-db/blob/main/BENCHMARKS.md) from the latest committed run.
+**Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** Use this page to get started, and turn to the [guides](#documentation) for the detail. The benchmark harness that measures Sirannon against PostgreSQL 18 is under [`benchmarks/server`](https://github.com/assetcorp/sirannon-db/tree/main/benchmarks/server), where a Node load generator drives both engines and a Python step joins their results. The write-up generator rewrites [BENCHMARKS.md](https://github.com/assetcorp/sirannon-db/blob/main/BENCHMARKS.md) from the latest committed run.
 
-The core engine, server, client, and primary-replica replication are stable. Coordinator-backed failover, device sync, and the Bun and Expo drivers are experimental.
+The core engine, server, client, primary-replica replication, and coordinator-backed failover are stable. Device sync and the Bun and Expo drivers are experimental.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 

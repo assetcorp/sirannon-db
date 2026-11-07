@@ -57,7 +57,7 @@ Read the reference file for each capability that the task needs:
 | A browser or phone database, or offline device sync | [references/devices.md](references/devices.md) |
 | Read replicas or failover across nodes | [references/replication.md](references/replication.md) |
 
-Device sync, etcd failover, and the Bun and Expo drivers are experimental. Tell the user so before you build on one, and wait for them to confirm.
+Device sync and the Bun and Expo drivers are experimental. Tell the user so before you build on one, and wait for them to confirm.
 
 ## 5. Verify and report
 

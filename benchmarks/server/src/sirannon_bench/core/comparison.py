@@ -169,10 +169,11 @@ def _workload_rows(sirannon: dict, postgres: dict, order: list[str], seed: int) 
             continue
         sir_metrics = _operating_metrics(sir)
         pg_metrics = _operating_metrics(pg)
-        interval = speedup_interval(sir_metrics["ops_samples"], pg_metrics["ops_samples"], seed=seed)
         speedup = None
-        if interval is not None:
-            speedup = {"point": interval.point_estimate, "ci_low": interval.ci_low, "ci_high": interval.ci_high}
+        if sir_metrics["under_slo"] and pg_metrics["under_slo"]:
+            interval = speedup_interval(sir_metrics["ops_samples"], pg_metrics["ops_samples"], seed=seed)
+            if interval is not None:
+                speedup = {"point": interval.point_estimate, "ci_low": interval.ci_low, "ci_high": interval.ci_high}
         rows.append({
             "workload": name,
             "category": sir.get("category", ""),

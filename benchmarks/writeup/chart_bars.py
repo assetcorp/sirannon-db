@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from comparison_view import durability_label, workload_label
+from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
 
 from chart_paths import operating_points_chart, repo_chart_dir
@@ -14,6 +15,7 @@ from chart_style import (
     POSTGRES_LABEL,
     SIRANNON_COLOUR,
     SIRANNON_LABEL,
+    TEXT_COLOUR,
     caption,
     rate_label,
     save,
@@ -22,6 +24,13 @@ from chart_style import (
 
 ENGINES = ((SIRANNON_LABEL, "sirannon", SIRANNON_COLOUR), (POSTGRES_LABEL, "postgres", POSTGRES_COLOUR))
 BAR_HEIGHT = 0.38
+MISSED_TARGET_HATCH = "///"
+MISSED_TARGET_ALPHA = 0.45
+MISSED_TARGET_LABEL = "Missed the p99 target at every rate"
+
+
+def _missed_target(rows: list[dict], engine: str) -> list[bool]:
+    return [not (row.get(engine) or {}).get("under_slo", True) for row in rows]
 
 
 def _values(rows: list[dict], engine: str) -> tuple[list[float], list[float], list[float]]:
@@ -42,9 +51,10 @@ def operating_points_figure(repo_root: Path, run_id: str, durability: str, rows:
     positions = list(range(len(rows)))
     figure, axes = plt.subplots(figsize=(FIGURE_WIDTH_INCHES, 0.62 * len(rows) + 1.9))
 
+    any_missed = False
     for offset, (label, engine, colour) in zip((BAR_HEIGHT / 2, -BAR_HEIGHT / 2), ENGINES, strict=True):
         medians, lows, highs = _values(rows, engine)
-        axes.barh(
+        bars = axes.barh(
             [position + offset for position in positions],
             medians,
             height=BAR_HEIGHT,
@@ -53,6 +63,11 @@ def operating_points_figure(repo_root: Path, run_id: str, durability: str, rows:
             xerr=[lows, highs],
             error_kw={"ecolor": "#334155", "elinewidth": 0.9, "capsize": 2.5},
         )
+        for bar, missed in zip(bars.patches, _missed_target(rows, engine), strict=True):
+            if missed:
+                any_missed = True
+                bar.set_hatch(MISSED_TARGET_HATCH)
+                bar.set_alpha(MISSED_TARGET_ALPHA)
 
     style_axes(axes, "")
     axes.set_yticks(positions)
@@ -62,7 +77,11 @@ def operating_points_figure(repo_root: Path, run_id: str, durability: str, rows:
     axes.xaxis.set_major_formatter(FuncFormatter(rate_label))
     axes.set_xlabel("Operating point (requests per second, 95% confidence interval)")
     axes.grid(True, axis="y", alpha=0)
-    axes.legend(loc="lower right", ncols=2, fontsize=BASE_FONT_POINTS)
+    handles, labels = axes.get_legend_handles_labels()
+    if any_missed:
+        handles.append(Patch(facecolor="none", edgecolor=TEXT_COLOUR, hatch=MISSED_TARGET_HATCH))
+        labels.append(MISSED_TARGET_LABEL)
+    axes.legend(handles, labels, loc="lower right", ncols=len(handles), fontsize=BASE_FONT_POINTS)
 
     caption(
         figure,

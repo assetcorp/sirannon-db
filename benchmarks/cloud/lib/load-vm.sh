@@ -5,6 +5,8 @@ LOAD_VM_NAME="${LOAD_VM_NAME:-${VM_NAME}-load}"
 LOAD_MACHINE_TYPE="${LOAD_MACHINE_TYPE:-}"
 LOAD_MACHINE_LABEL="${BENCH_LOAD_MACHINE_LABEL:-}"
 ENGINE_TO_LOAD_KEY='$HOME/.ssh/bench_load'
+VM_ABSENT=1
+VM_EXISTENCE_UNKNOWN=2
 
 on_load_vm() {
   (
@@ -25,17 +27,28 @@ vm_create_if_missing() {
   prov_create
 }
 
+vm_existence() {
+  local state=0
+  prov_exists || state=$?
+  printf '%s\n' "$state"
+}
+
 vm_delete_if_present() {
-  if [ "$DRY_RUN" != "1" ] && ! prov_exists; then
-    log "$VM_NAME not found; nothing to delete"
-    return 0
+  if [ "$DRY_RUN" != "1" ]; then
+    local state
+    state="$(vm_existence)"
+    if [ "$state" = "$VM_ABSENT" ]; then
+      log "$VM_NAME not found; nothing to delete"
+      return 0
+    fi
+    [ "$state" = "0" ] || log "could not tell whether $VM_NAME exists; deleting it anyway"
   fi
   log "delete $VM_NAME"
   prov_delete
 }
 
 any_vm_exists() {
-  prov_exists 2>/dev/null || on_load_vm prov_exists 2>/dev/null
+  [ "$(vm_existence 2>/dev/null)" != "$VM_ABSENT" ] || [ "$(on_load_vm vm_existence 2>/dev/null)" != "$VM_ABSENT" ]
 }
 
 vm_ssh_user() {

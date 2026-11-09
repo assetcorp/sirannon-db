@@ -99,17 +99,14 @@ func (t *topologyTransport) onWrite(ctx context.Context, write func(databaseTran
 	return err
 }
 
-func perQueryLevel(call statementCall) ReadConcernLevel {
-	if call.readConcern == nil {
-		return ""
-	}
-	return call.readConcern.Level
-}
+const perQueryReadConcernRefused = "The topology-aware client applies its read_concern setting to every read; pass none per query"
 
 func (t *topologyTransport) query(ctx context.Context, call statementCall) ([]Row, error) {
-	level := perQueryLevel(call)
+	if call.readConcern != nil {
+		return nil, newError(CodeInvalidArgument, perQueryReadConcernRefused)
+	}
 	var rows []Row
-	err := t.onRead(ctx, level, func(transport databaseTransport) error {
+	err := t.onRead(ctx, "", func(transport databaseTransport) error {
 		var err error
 		rows, err = transport.query(ctx, call)
 		return err

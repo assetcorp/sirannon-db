@@ -39,7 +39,7 @@ var orderByID = sirannon.ReadRef[OrderArgs, OrderRow]{Name: "orderById"}
 orders, err := sirannon.Query(ctx, db, orderByID, OrderArgs{ID: int64(42)})
 ```
 
-`db.On("orders").Subscribe(ctx, callback)` delivers each change once and in order, and it resumes from the last change it delivered after the connection drops. `sirannon.Live` keeps the rows of a registered read current as the table changes. `sirannon.NewTopology` sends writes to the primary of a replication group and sends reads to the node that `TopologyOptions.ReadPreference` picks. It retries a read once on another node when the first node cannot answer, and it never resends a failed write.
+`db.On("orders").Subscribe(ctx, callback)` delivers changes in order. After the connection drops, it resumes from the last change that it delivered, so no change is missed or repeated while the server keeps the history after that change; once the server has pruned that history, the client calls the `OnReset` handler. `sirannon.Live` keeps the rows of a registered read current as the table changes. `sirannon.NewTopology` sends writes to the primary of a replication group and sends reads to the node that `TopologyOptions.ReadPreference` picks. It retries a read once on another node when the first node cannot answer, and it never resends a failed write.
 
 When the server takes no SQL, a statement fails with `SQL_NOT_ACCEPTED` before it leaves the client, while registered operations keep working. Every failure comes back as a `*sirannon.Error` that carries the server's code, message, details, and HTTP status, so `errors.As` reaches all four.
 

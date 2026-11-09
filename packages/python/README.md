@@ -15,7 +15,7 @@ with SirannonClient("http://localhost:9876") as client:
     rows = db.query("SELECT id, total FROM orders WHERE id = ?", [42])
 ```
 
-Every integer comes back as an `int` and every BLOB as `bytes`, including integers beyond 2^53. The client holds a typed method for every HTTP route of the server, calls registered operations through the references that `sirannon-codegen --python` writes, resumes a change subscription after a dropped connection with no change missed or repeated, keeps live queries current, and routes reads and writes across a replication group. Every failure raises `SirannonError` with the server's code unchanged.
+Every integer comes back as an `int` and every BLOB as `bytes`, including integers beyond 2^53. The client holds a typed method for every HTTP route of the server, and it calls registered operations through the references that `sirannon-codegen --python` writes. After a dropped connection, a change subscription resumes from the last change that it delivered, so no change is missed or repeated while the server keeps the history after that change; once the server has pruned that history, the client calls `on_reset`. Live queries stay current, and the topology-aware client routes reads and writes across a replication group. Every failure raises `SirannonError` with the server's code unchanged.
 
 The [Python client guide](https://github.com/assetcorp/sirannon-db/blob/main/docs/python-client.md) explains each of these.
 

@@ -68,12 +68,12 @@ class _Handles:
 
 
 class SirannonClient(Operations):
-    """Connects to one Sirannon server from code that does not use asyncio.
+    """Connects to one Sirannon server from synchronous code.
 
-    Each route of the server has a blocking method here, and `database(id)` returns the handle for statements,
-    registered operations, change subscriptions, and live queries. The client starts one background thread for
-    the connections and one that calls your callbacks, and only once you open a database. Close it with
-    `close`, or use it with `with`.
+    The client has one blocking method for each route of the server. Its `database(id)` method returns the
+    handle for statements, registered operations, change subscriptions, and live queries. Once you open a
+    database, the client starts two background threads: one for the connections and one that calls your
+    callbacks. Close the client with `close`, or use it with `with`.
     """
 
     def __init__(
@@ -89,17 +89,18 @@ class SirannonClient(Operations):
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         http_client: httpx.Client | None = None,
     ) -> None:
-        """Prepares a client for the server at `url`, and takes the settings that `AsyncSirannonClient` takes.
+        """Prepares a client for the server at `url`, with the settings that `AsyncSirannonClient` takes.
 
         Args:
             url: The server's base address, such as `https://db.example.com`.
             transport: `websocket` or `http`, as for `AsyncSirannonClient`.
             headers: The client sends these headers with every HTTP request and WebSocket handshake.
             websocket_protocols: The client offers these subprotocols after `sirannon.v1`.
-            auto_reconnect: Reconnect after a dropped WebSocket and restore every subscription.
+            auto_reconnect: When this is true, the client reconnects after a WebSocket drops and restores every
+                subscription.
             reconnect_interval_ms: The client waits this long between reconnection tries.
-            request_timeout_ms: The client waits this long for each answer, and 0 waits without a limit.
-            max_response_bytes: The client refuses an answer larger than this, and 0 accepts any size.
+            request_timeout_ms: The client waits this long for each answer, and with 0 it waits without a limit.
+            max_response_bytes: The client refuses an answer larger than this, and with 0 it accepts any size.
             http_client: An `httpx.Client` that the route methods send through, which the caller closes.
         """
         self._async = AsyncSirannonClient(
@@ -119,11 +120,11 @@ class SirannonClient(Operations):
         return self._async.database
 
     def database(self, database_id: str) -> RemoteDatabase:
-        """Returns the handle for one database, and keeps it, so a later call with the same id returns it again."""
+        """Returns the handle for one database and keeps it, so a later call with the same id returns that handle."""
         return self._handles.database(database_id, self._opener)
 
     def close(self) -> None:
-        """Closes every database handle and connection, and fails every call in flight with `TRANSPORT_ERROR`."""
+        """Closes every database handle and connection, so every call in flight fails with `TRANSPORT_ERROR`."""
         self._transport.close()
         client = self._async
 
@@ -142,10 +143,11 @@ class SirannonClient(Operations):
 
 
 class TopologyAwareClient:
-    """Connects to a replication group from code that does not use asyncio.
+    """Connects to a replication group from synchronous code.
 
-    It routes as `AsyncTopologyAwareClient` does: writes go to the primary, a failed write is raised and never
-    resent, and a read that cannot reach its node runs once more on another.
+    The client routes each call as `AsyncTopologyAwareClient` does. It sends writes to the primary and raises
+    the error of a failed write without sending the write again. When it cannot reach the node for a read, it
+    sends the read once more to another node.
     """
 
     def __init__(
@@ -187,11 +189,11 @@ class TopologyAwareClient:
         return self._async.database
 
     def database(self, database_id: str) -> RemoteDatabase:
-        """Returns the routed handle for one database, and keeps it, so a later call with the same id returns it."""
+        """Returns the routed handle for one database and keeps it, so a later call with the same id returns it."""
         return self._handles.database(database_id, self._opener)
 
     def close(self) -> None:
-        """Closes every database handle and connection, and fails every call in flight with `TRANSPORT_ERROR`."""
+        """Closes every database handle and connection, so every call in flight fails with `TRANSPORT_ERROR`."""
         client = self._async
 
         def closer(runtime: Runtime) -> None:

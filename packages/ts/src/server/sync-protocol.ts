@@ -64,17 +64,17 @@ export interface SyncBatch {
   changes: SyncChange[]
   /** The checksum over the batch's changes, which the server recomputes before it applies them. */
   checksum: string
-  /** Set when the batch ends part-way through a device transaction that the next batch continues. */
+  /** Whether the batch ends part-way through a device transaction that the next batch continues. */
   txContinues?: boolean
 }
 
 /**
- * The body of `POST /db/{id}/changes`, which applies a device's changes to the server's database.
+ * The body of `POST /db/{id}/changes`, the route that applies a device's changes to the server's database.
  *
  * @public
  */
 export interface ChangesRequest {
-  /** The schema version of the device's database, which the server compares with its own before it applies the batch. */
+  /** The schema version of the device's database, which the server compares with the schema version of its database before it applies the batch. */
   schemaVersion?: number
   /** The changes to apply. */
   batch: SyncBatch
@@ -88,7 +88,7 @@ export interface ChangesRequest {
 export interface ChangesResponse {
   /** How many changes the server applied. */
   applied: number
-  /** How many changes the server skipped, such as the changes of a batch it had applied before, an update to a missing row, or a change that lost to the server's row. */
+  /** How many changes the server skipped, such as the changes of a batch that it had applied before, an update to a missing row, or a change older than the server's version of the row. */
   skipped: number
   /** How many changes a conflict resolver settled. */
   conflicts: number

@@ -14,7 +14,7 @@ function summariseReport(report: BackupRestoreReport): BackupRestoreSummary {
   return summary
 }
 
-/** The report of one finished restore as the server sends it, which leaves out the path of the rebuilt database file on the server.
+/** The report of one finished restore as the server sends it, without the path of the rebuilt database file on the server.
  * @public
  */
 export interface BackupRestoreSummary extends Omit<BackupRestoreReport, 'destPath'> {}

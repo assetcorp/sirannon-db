@@ -46,9 +46,9 @@ def open_database(
 class AsyncSirannonClient(AsyncOperations):
     """Connects to one Sirannon server from asyncio code.
 
-    Each route of the server has a method here, and `database(id)` returns the handle for statements,
-    registered operations, change subscriptions, and live queries. Close the client with `aclose`, or use it
-    with `async with`.
+    The client has one method for each route of the server. Its `database(id)` method returns the handle for
+    statements, registered operations, change subscriptions, and live queries. Close the client with `aclose`,
+    or use it with `async with`.
     """
 
     def __init__(
@@ -64,19 +64,21 @@ class AsyncSirannonClient(AsyncOperations):
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Prepares a client for the server at `url`, which opens no connection until the first call.
+        """Prepares a client for the server at `url`, without opening a connection before the first call.
 
         Args:
             url: The server's base address, such as `https://db.example.com`.
-            transport: `websocket` sends statements over one WebSocket per database and supports
-                subscriptions and live queries, while `http` sends each statement as an HTTP request.
+            transport: With `websocket`, the client sends statements over one WebSocket for each database, and
+                only this transport supports subscriptions and live queries. With `http`, the client sends each
+                statement as an HTTP request.
             headers: The client sends these headers with every HTTP request and WebSocket handshake.
-            websocket_protocols: The client offers these subprotocols after `sirannon.v1`, which is how a
-                server's authentication hook can read a token from the handshake.
-            auto_reconnect: Reconnect after a dropped WebSocket and restore every subscription.
+            websocket_protocols: The client offers these subprotocols after `sirannon.v1`, such as a value that
+                holds a credential for a server that reads one from the handshake.
+            auto_reconnect: When this is true, the client reconnects after a WebSocket drops and restores every
+                subscription.
             reconnect_interval_ms: The client waits this long between reconnection tries.
-            request_timeout_ms: The client waits this long for each answer, and 0 waits without a limit.
-            max_response_bytes: The client refuses an answer larger than this, and 0 accepts any size.
+            request_timeout_ms: The client waits this long for each answer, and with 0 it waits without a limit.
+            max_response_bytes: The client refuses an answer larger than this, and with 0 it accepts any size.
             http_client: An `httpx.AsyncClient` to send HTTP requests through, which the caller closes.
         """
         self._settings = build_settings(
@@ -99,7 +101,7 @@ class AsyncSirannonClient(AsyncOperations):
         return self._settings
 
     def database(self, database_id: str) -> AsyncRemoteDatabase:
-        """Returns the handle for one database, and keeps it, so a later call with the same id returns it again."""
+        """Returns the handle for one database and keeps it, so a later call with the same id returns that handle."""
         if self._closed:
             raise closed_error()
         existing = self._databases.get(database_id)
@@ -113,7 +115,7 @@ class AsyncSirannonClient(AsyncOperations):
         self._databases.pop(database_id, None)
 
     async def aclose(self) -> None:
-        """Closes every database handle and connection, and fails every call in flight with `TRANSPORT_ERROR`."""
+        """Closes every database handle and connection, so every call in flight fails with `TRANSPORT_ERROR`."""
         if self._closed:
             return
         self._closed = True

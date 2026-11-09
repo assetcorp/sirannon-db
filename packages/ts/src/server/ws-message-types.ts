@@ -24,15 +24,15 @@ export const WS_CLIENT_MESSAGE_TYPES: readonly ClientMessageType[] = Object.free
 )
 
 /**
- * The message types that carry a SQL statement unless they name a registered operation, which a server that
- * accepts no SQL refuses.
+ * The message types that hold a SQL statement unless they give the name of a registered operation. A server that
+ * accepts no SQL refuses a message of these types that holds a statement.
  *
  * @internal
  */
 export const SQL_MESSAGE_TYPES: ReadonlySet<string> = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
 
 /**
- * The message types that may name a registered operation in place of a statement or a table.
+ * The message types that can give the name of a registered operation in place of a statement or a table.
  *
  * @internal
  */
@@ -41,8 +41,8 @@ export const NAMED_MESSAGE_TYPES: ReadonlySet<string> = new Set(['query', 'execu
 /**
  * Returns whether the server accepts a message of this `type`.
  *
- * @param type - The `type` that a client message carries.
- * @returns `true` when the type names a member of {@link WSClientMessage}.
+ * @param type - The `type` field of a client message.
+ * @returns `true` when the type matches a member of {@link WSClientMessage}.
  * @internal
  */
 export function isClientMessageType(type: string): type is ClientMessageType {

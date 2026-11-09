@@ -198,6 +198,10 @@ func (t *topologyTransport) close() {
 	}
 }
 
+// Database returns a [RemoteDatabase] whose calls the client routes across the replication group.
+// Later calls with the same identifier return the same value until you close it. Reads through it fail with INVALID_ARGUMENT when you pass [WithReadConcern], because
+// [TopologyOptions.ReadConcern] applies to every read. Database fails with INVALID_ARGUMENT for an
+// empty identifier and with TRANSPORT_ERROR once the client is closed.
 func (c *TopologyClient) Database(id string) (*RemoteDatabase, error) {
 	if id == "" {
 		return nil, invalidArgument("A database needs an identifier")
@@ -227,6 +231,9 @@ func (c *TopologyClient) Database(id string) (*RemoteDatabase, error) {
 	return database, nil
 }
 
+// Close closes every database that the client opened and waits for the client's background
+// goroutines to finish. It then closes the idle connections of the http.Client that NewTopology
+// created. A second call to Close returns at once.
 func (c *TopologyClient) Close() {
 	c.mutex.Lock()
 	if c.closed {

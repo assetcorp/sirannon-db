@@ -1,6 +1,6 @@
 # Sirannon Go client
 
-`github.com/assetcorp/sirannon-db/packages/go` connects a Go 1.26 program to a Sirannon server over WebSocket or HTTP. It holds a typed method for every route in the server's OpenAPI description, and its one dependency is `github.com/coder/websocket`.
+`github.com/assetcorp/sirannon-db/packages/go` connects a Go 1.26 program to a Sirannon server over WebSocket or HTTP. The package has a typed method for every route in the server's OpenAPI description, and it depends on one module, `github.com/coder/websocket`.
 
 ```bash
 go get github.com/assetcorp/sirannon-db/packages/go
@@ -20,7 +20,7 @@ if err != nil {
 rows, err := db.Query(ctx, "SELECT id, total FROM orders WHERE id = ?", []any{int64(42)})
 ```
 
-Every integer in a row comes back as an `int64` and every BLOB as a `[]byte`, including integers beyond 2^53, so a value reads back exactly as SQLite stores it. The client sends them the same way.
+The client returns every integer in a row as an `int64` and every BLOB as a `[]byte`, including integers beyond 2^53, so each value matches what SQLite stores. It encodes `int64` and `[]byte` arguments the same way when it sends them.
 
 A registered operation takes typed arguments and returns typed rows:
 
@@ -39,9 +39,11 @@ var orderByID = sirannon.ReadRef[OrderArgs, OrderRow]{Name: "orderById"}
 orders, err := sirannon.Query(ctx, db, orderByID, OrderArgs{ID: int64(42)})
 ```
 
-`db.On("orders").Subscribe(ctx, callback)` delivers changes in order. After the connection drops, it resumes from the last change that it delivered, so no change is missed or repeated while the server keeps the history after that change; once the server has pruned that history, the client calls the `OnReset` handler. `sirannon.Live` keeps the rows of a registered read current as the table changes. `sirannon.NewTopology` sends writes to the primary of a replication group and sends reads to the node that `TopologyOptions.ReadPreference` picks. It retries a read once on another node when the first node cannot answer, and it never resends a failed write.
+`db.On("orders").Subscribe(ctx, callback)` delivers changes in order. When the connection drops, the subscription resumes from the last change that it delivered. While the server keeps the history after that change, the subscription delivers each change once; once the server prunes that history, the client calls the `OnReset` handler. `sirannon.Live` updates the rows of a registered read as the table changes.
 
-When the server takes no SQL, a statement fails with `SQL_NOT_ACCEPTED` before it leaves the client, while registered operations keep working. Every failure comes back as a `*sirannon.Error` that carries the server's code, message, details, and HTTP status, so `errors.As` reaches all four.
+The client from `sirannon.NewTopology` sends writes to the primary of a replication group and sends reads to the node that `TopologyOptions.ReadPreference` selects. When a read fails because its node is down or the group's routing has changed, the client retries the read once on the node that its updated routing selects. It never resends a failed write.
+
+When the server accepts no SQL, the client refuses a statement with `SQL_NOT_ACCEPTED` before it sends anything, while registered operations work as usual. The client returns every failure as a `*sirannon.Error` with the server's code, message, details, and HTTP status, so `errors.As` gives you all four.
 
 ## Development
 

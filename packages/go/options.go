@@ -7,15 +7,23 @@ import (
 	"time"
 )
 
+// TransportKind is the protocol that the client uses to reach the server for each database.
 type TransportKind string
 
 const (
+	// TransportWebSocket makes the client open one WebSocket connection for each database.
+	// Subscriptions, live queries, and acknowledgements work only over this transport. The client uses
+	// it unless you set another.
 	TransportWebSocket TransportKind = "websocket"
-	TransportHTTP      TransportKind = "http"
+	// TransportHTTP makes the client send each call as a separate HTTP request.
+	TransportHTTP TransportKind = "http"
 )
 
 const (
-	NoTimeout                = time.Duration(-1)
+	// NoTimeout, set as [Options.RequestTimeout], makes the client wait for as long as the server
+	// takes. The context of each call still bounds the wait.
+	NoTimeout = time.Duration(-1)
+	// NoResponseLimit, set as [Options.MaxResponseBytes], makes the client read an answer of any size.
 	NoResponseLimit          = int64(-1)
 	defaultRequestTimeout    = 30 * time.Second
 	defaultReconnectInterval = time.Second
@@ -24,15 +32,38 @@ const (
 	headerTokenSymbols       = "!#$%&'*+-.^_`|~"
 )
 
+// Options holds the settings of a [Client]. The client applies a default to every field that you
+// leave unset.
 type Options struct {
-	Transport            TransportKind
-	Headers              map[string]string
-	WebSocketProtocols   []string
+	// Transport is the protocol that the client uses for each database. The client uses
+	// [TransportWebSocket] unless you set another.
+	Transport TransportKind
+	// Headers holds the headers that the client sends with every HTTP request and every WebSocket
+	// handshake, such as Authorization. New fails with INVALID_ARGUMENT for a header whose name is
+	// not a header token or whose value holds a line break or a NUL byte.
+	Headers map[string]string
+	// WebSocketProtocols lists further subprotocols that the client offers in the WebSocket handshake
+	// after sirannon.v1. New fails with INVALID_ARGUMENT unless each entry is a distinct header token.
+	WebSocketProtocols []string
+	// DisableAutoReconnect stops the client from reconnecting a WebSocket connection that drops while
+	// its database has open subscriptions or live queries.
 	DisableAutoReconnect bool
-	ReconnectInterval    time.Duration
-	RequestTimeout       time.Duration
-	MaxResponseBytes     int64
-	HTTPClient           *http.Client
+	// ReconnectInterval is how long the client waits before it reconnects a dropped WebSocket
+	// connection, which is one second unless you set it.
+	ReconnectInterval time.Duration
+	// RequestTimeout is the longest that the client waits for each call and each WebSocket
+	// handshake, which is 30 seconds unless you set it. [NoTimeout] makes the client wait for as long
+	// as the server takes, bounded only by the context of the call.
+	RequestTimeout time.Duration
+	// MaxResponseBytes is the size of the largest answer that the client reads, which is 64 MiB unless
+	// you set it. Over HTTP, the client stops reading an answer past this many bytes and fails with
+	// INVALID_RESPONSE. Over WebSocket, the client closes a connection whose message passes the limit.
+	// [NoResponseLimit] makes the client read whatever the server sends.
+	MaxResponseBytes int64
+	// HTTPClient sends every HTTP request and every WebSocket handshake. When you leave it unset, New
+	// creates an http.Client that follows no redirects. Close then releases the idle connections of
+	// that http.Client.
+	HTTPClient *http.Client
 }
 
 type settings struct {
@@ -143,6 +174,8 @@ func refuseRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+// CallOption changes one call of an [Operations] method. Pass any number of them as the last
+// arguments.
 type CallOption func(*callSettings)
 
 type callSettings struct {
@@ -150,12 +183,16 @@ type callSettings struct {
 	headers http.Header
 }
 
+// WithTimeout makes the client wait this long for the answer to this call, in place of
+// [Options.RequestTimeout]. A timeout of zero or less makes the client wait for as long as the
+// server takes, bounded only by the context.
 func WithTimeout(timeout time.Duration) CallOption {
 	return func(call *callSettings) {
 		call.timeout = &timeout
 	}
 }
 
+// WithHeader adds a header to this call, replacing a header of the same name from [Options.Headers].
 func WithHeader(name, value string) CallOption {
 	return func(call *callSettings) {
 		if call.headers == nil {
@@ -165,24 +202,33 @@ func WithHeader(name, value string) CallOption {
 	}
 }
 
+// QueryOption changes one read that [RemoteDatabase.Query] or [Query] sends.
 type QueryOption func(*queryOptions)
 
 type queryOptions struct {
 	readConcern *ReadConcern
 }
 
+// WithReadConcern asks the server to confirm level, such as [ReadConcernLevelMajority], before it
+// answers this read. A read through a [TopologyClient] fails with INVALID_ARGUMENT when you pass this
+// option, because [TopologyOptions.ReadConcern] applies to every read there.
 func WithReadConcern(level ReadConcernLevel) QueryOption {
 	return func(options *queryOptions) {
 		options.readConcern = &ReadConcern{Level: level}
 	}
 }
 
+// ExecuteOption changes one write that [RemoteDatabase.Transaction], [RemoteDatabase.Batch], or
+// [Execute] sends.
 type ExecuteOption func(*executeOptions)
 
 type executeOptions struct {
 	writeConcern *WriteConcern
 }
 
+// WithWriteConcern makes the server confirm this write only once the nodes that level requires have
+// acknowledged it. When the timeout is above zero, the server fails the call once that much time
+// passes without those acknowledgements.
 func WithWriteConcern(level WriteConcernLevel, timeout time.Duration) ExecuteOption {
 	return func(options *executeOptions) {
 		concern := &WriteConcern{Level: level}
@@ -213,12 +259,23 @@ func readExecuteOptions(options []ExecuteOption) executeOptions {
 	return resolved
 }
 
+// LoadOptions holds the settings of one [RemoteDatabase.Load].
 type LoadOptions struct {
+	// Durability is the writer's durability level during the load, which the server sets to
+	// [BulkLoadDurabilityOff] unless you set another.
 	Durability BulkLoadDurability
+	// Checkpoint sets whether the server checkpoints the WAL after this load, which it does unless you
+	// set Checkpoint to false. Set it to false on every batch except the last of a load that you split
+	// into batches, as [RemoteDatabase.LoadAll] does.
 	Checkpoint *bool
 }
 
+// LoadAllOptions holds the settings of [RemoteDatabase.LoadAll].
 type LoadAllOptions struct {
-	BatchSize  int
+	// BatchSize is the number of rows that each request holds, which is 1000 unless you set it.
+	// LoadAll fails with INVALID_ARGUMENT for a negative BatchSize.
+	BatchSize int
+	// Durability is the writer's durability level during the load, which the server sets to
+	// [BulkLoadDurabilityOff] unless you set another.
 	Durability BulkLoadDurability
 }

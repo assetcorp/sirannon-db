@@ -367,7 +367,7 @@
         "properties": {
           "acked": {
             "type": "boolean",
-            "description": "True, because the server answers only once it has recorded the acknowledgement."
+            "description": "This is always true, because the server answers only once it has recorded the acknowledgement."
           },
           "seq": {
             "type": "string",
@@ -407,7 +407,7 @@
         "required": [
           "__sirannon_blob"
         ],
-        "description": "A BLOB, which JSON has no type for. A row, a change event, a bind parameter, and a subscription filter carry every BLOB in this envelope. Decode it into a byte array, and send a byte array in the same envelope."
+        "description": "A BLOB, which JSON has no type for. The server and the client put every BLOB in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a byte array, and send a byte array in the same envelope."
       },
       "BulkLoadResult": {
         "type": "object",
@@ -463,7 +463,7 @@
         "required": [
           "__sirannon_int"
         ],
-        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. A row, a change event, a bind parameter, and a subscription filter carry such an integer in this envelope. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
+        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. The server and the client put such an integer in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
       },
       "QueryResponse": {
         "type": "object",

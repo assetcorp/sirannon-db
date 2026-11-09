@@ -7,6 +7,9 @@ import (
 	"sync"
 )
 
+// Operations has one method for every route that the server describes in its OpenAPI document, under
+// the route's name in Go form. Each method sends its request over HTTP whichever transport the client
+// uses. Because [Client] embeds Operations, you call each route on the Client.
 type Operations struct {
 	transport    *httpTransport
 	capabilities *capabilityCache
@@ -16,6 +19,9 @@ func (o *Operations) requireSQL(ctx context.Context) error {
 	return o.capabilities.requireSQL(ctx, o.transport.lifetime.Done())
 }
 
+// Client connects to one Sirannon server. Many goroutines can call one Client at once, so a program
+// can create one Client for each server and share it. Call [Client.Close] once you finish with it, so
+// that it releases its connections.
 type Client struct {
 	*Operations
 	base      string
@@ -56,6 +62,9 @@ func webSocketBase(base string) string {
 	return "ws://" + strings.TrimPrefix(base, "http://")
 }
 
+// New checks the server URL and the options and returns a Client, without opening a connection. It
+// accepts only an absolute http or https URL with no credentials, query string, or fragment, so any
+// other URL fails with INVALID_ARGUMENT, as does an option outside its range.
 func New(serverURL string, options Options) (*Client, error) {
 	base, err := normaliseServerURL(serverURL, "The server URL")
 	if err != nil {
@@ -79,6 +88,10 @@ func New(serverURL string, options Options) (*Client, error) {
 	}, nil
 }
 
+// Database returns the [RemoteDatabase] for the database with this identifier, which later calls
+// return again until you close it. Over the WebSocket transport, the client opens a separate
+// connection for the database when you send its first request. Database fails with
+// INVALID_ARGUMENT for an empty identifier and with TRANSPORT_ERROR once the client is closed.
 func (c *Client) Database(id string) (*RemoteDatabase, error) {
 	if id == "" {
 		return nil, invalidArgument("A database needs an identifier")
@@ -112,6 +125,10 @@ func (c *Client) Database(id string) (*RemoteDatabase, error) {
 	return database, nil
 }
 
+// Close closes every database that the client opened and waits for the client's background
+// goroutines to finish. It then closes the idle connections of the http.Client that New created.
+// After Close, every call on one of those databases fails with TRANSPORT_ERROR. A second call to
+// Close returns at once.
 func (c *Client) Close() {
 	c.mutex.Lock()
 	if c.closed {

@@ -10,29 +10,61 @@ import (
 	"time"
 )
 
+// ReadPreference sets which node of a replication group serves a read.
 type ReadPreference string
 
 const (
+	// ReadFromPrimary makes the client send every read to the primary. The client uses it unless you
+	// set another.
 	ReadFromPrimary ReadPreference = "primary"
+	// ReadFromReplica makes the client send each read to a reachable replica that it picks at random,
+	// or to the primary when no replica is reachable.
 	ReadFromReplica ReadPreference = "replica"
+	// ReadFromNearest makes the client send each read to the reachable node with the lowest latency.
+	// Under
+	// [DiscoveryStatic], the client measures each node's latency with GET /health and keeps the
+	// measurements for 60 seconds. Under [DiscoveryCoordinator], the client takes the first reachable
+	// endpoint that the cluster routing lists for the read concern.
 	ReadFromNearest ReadPreference = "nearest"
 )
 
+// Discovery sets how the client finds the addresses of the nodes in a replication group.
 type Discovery string
 
 const (
-	DiscoveryStatic      Discovery = "static"
+	// DiscoveryStatic makes the client use the Primary and Replicas that you set. The client uses it
+	// unless you set another.
+	DiscoveryStatic Discovery = "static"
+	// DiscoveryCoordinator makes the client fetch the routing of each database from
+	// GET /db/{id}/cluster and fetch it again when a call fails because the primary moved or a node
+	// stopped answering.
 	DiscoveryCoordinator Discovery = "coordinator"
 )
 
+// TopologyOptions holds the settings of a [TopologyClient]. NewTopology fails with INVALID_ARGUMENT
+// unless you set at least one of Primary, Replicas, or Endpoints.
 type TopologyOptions struct {
+	// Options holds the transport settings that the client applies to every node.
 	Options
-	Endpoints      []string
-	Primary        string
-	Replicas       []string
+	// Endpoints lists the nodes that the client asks first for the cluster routing under
+	// [DiscoveryCoordinator].
+	Endpoints []string
+	// Primary is the address of the node that takes writes under [DiscoveryStatic]. When you leave
+	// it unset, the client writes to the first address in Replicas, or else in Endpoints.
+	Primary string
+	// Replicas lists the addresses of the nodes that serve reads under [ReadFromReplica] and
+	// [ReadFromNearest].
+	Replicas []string
+	// ReadPreference sets the node for each read. The client uses [ReadFromPrimary] unless you set
+	// another.
 	ReadPreference ReadPreference
-	Discovery      Discovery
-	ReadConcern    ReadConcernLevel
+	// Discovery sets how the client finds the nodes. The client uses [DiscoveryStatic] unless you set
+	// another.
+	Discovery Discovery
+	// ReadConcern sets, under [DiscoveryCoordinator], which nodes may serve a read: the nodes that the
+	// cluster routing lists for this level, or the primary for a linearizable read. The client uses
+	// majority unless you set another level, but it ignores ReadConcern under [DiscoveryStatic].
+	ReadConcern ReadConcernLevel
 }
 
 type serverEndpoint struct {
@@ -50,6 +82,9 @@ type latencyProbe struct {
 	done chan struct{}
 }
 
+// TopologyClient sends the writes of each database to the primary of a replication group and sends
+// its reads to the node that matches [TopologyOptions.ReadPreference]. [NewTopology] returns it. Many
+// goroutines can call one TopologyClient at once.
 type TopologyClient struct {
 	settings    *settings
 	lifetime    context.Context
@@ -88,6 +123,9 @@ func normaliseList(urls []string, label string) ([]string, error) {
 	return normalised, nil
 }
 
+// NewTopology checks the options and returns a TopologyClient, without opening a connection. It
+// accepts only absolute http or https addresses with no credentials, query string, or fragment, so
+// any other address fails with INVALID_ARGUMENT, as does an option outside its range.
 func NewTopology(options TopologyOptions) (*TopologyClient, error) {
 	resolved, err := resolveSettings(options.Options)
 	if err != nil {

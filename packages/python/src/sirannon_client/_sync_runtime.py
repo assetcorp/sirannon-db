@@ -68,7 +68,7 @@ def call_sync(callback: Callable[..., Any], args: tuple[Any, ...], on_error: Err
 
 
 class Runtime:
-    """One event loop thread that runs the asyncio client, and one thread that calls your callbacks in order."""
+    """One event loop thread for the asyncio client, and one thread that calls your callbacks in order."""
 
     def __init__(self) -> None:
         self._loop = asyncio.new_event_loop()

@@ -54,12 +54,12 @@ function databaseOf(value: unknown, path: string, where: string): DatabaseManife
 /**
  * Checks the JSON that `sirannon-codegen --manifest` writes, and returns it as a manifest.
  *
- * Every database and operation name survives as written, including `constructor` and `__proto__`.
+ * The function keeps every database and operation name as written, including `constructor` and `__proto__`.
  *
  * @param data - The parsed JSON of the manifest file.
- * @param path - The path of the file, which an error message names.
+ * @param path - The path of the file, which appears in an error message.
  * @returns The manifest that the file describes.
- * @throws An `Error` that names the file and the first part of it that does not hold the manifest format.
+ * @throws An `Error` whose message gives the file and the first part of it that breaks the manifest format.
  *
  * @public
  */

@@ -81,10 +81,11 @@ interface GoReference {
 /**
  * Returns Go source that declares a typed `ReadRef` or `WriteRef` variable for every operation in a manifest.
  *
- * Each variable joins the database identifier and the operation name in PascalCase, such as `ItemsItemById` for
- * the `itemById` read of the `items` database, and the shared operations take the `Shared` prefix. Arguments and
- * derived columns become struct fields with JSON tags, and an operation with a name that a JSON tag cannot carry
- * takes a map in place of a struct. The source is laid out as `gofmt` lays it out.
+ * The name of each variable is the database identifier followed by the operation name in PascalCase, such as
+ * `ItemsItemById` for the `itemById` read of the `items` database. The names of the shared operations start with
+ * `Shared`. The function writes arguments and derived columns as struct fields with JSON tags. When an argument
+ * has a name that a JSON tag cannot hold, the function types the arguments as `map[string]any`, and when a column
+ * has such a name, it types the rows as `sirannon.Row`. The returned source matches what `gofmt` writes.
  *
  * @param manifest - The operations to render.
  * @param options - The package clause of the generated file.

@@ -18,11 +18,11 @@ class LiveState(Generic[RowT]):
     """What a live query holds at one moment."""
 
     status: LiveStatus
-    """`pending` before the first rows arrive, `ready` once they have, and `error` after a failure."""
+    """`pending` until the client receives the first rows, `ready` once it has them, and `error` after a failure."""
     rows: list[RowT] = field(default_factory=list)
-    """The current rows, in the order that the read returns them."""
+    """The current rows, in the order in which the read returns them."""
     revalidating: bool = False
-    """True while the connection is down, so that the rows can be out of date."""
+    """True while the connection is down, which means that the rows can be out of date."""
     error: SirannonError | None = None
     """The failure that ended the query, when `status` is `error`."""
 
@@ -32,7 +32,7 @@ class LiveUpdate(Generic[RowT]):
     """One change to a live query, which a listener receives."""
 
     kind: UpdateKind
-    """`rows` for a fresh result, `ops` for edits, `revalidating` after a disconnect, and `error`."""
+    """`rows` for a fresh result, `ops` for edits, `revalidating` after a disconnect, or `error` for a failure."""
     state: LiveState[RowT]
     """The state after the update."""
     ops: list[dict[str, Any]] = field(default_factory=list)

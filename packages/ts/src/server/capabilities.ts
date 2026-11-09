@@ -29,7 +29,7 @@ export const SQL_QUERY_CAPABILITY = 'query.sql'
 export type ServerCapability = (typeof REQUIRED_DEVICE_SYNC_CAPABILITIES)[number]
 
 /**
- * The body of `GET /capabilities`, which names what this server accepts.
+ * The body of `GET /capabilities`, which lists what this server accepts.
  *
  * @public
  */

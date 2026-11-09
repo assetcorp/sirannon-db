@@ -6,28 +6,28 @@ from typing import Any, Final
 
 
 class ErrorCodes:
-    """The codes that the client raises itself, which no server sends."""
+    """The codes that the client raises when it fails before the server answers."""
 
     CONNECTION_ERROR: Final = "CONNECTION_ERROR"
-    """The client could not reach the server, or the connection broke before the answer arrived."""
+    """The client could not reach the server, or the connection broke before the client received the answer."""
     TIMEOUT: Final = "TIMEOUT"
-    """The answer did not arrive within the request timeout."""
+    """The request timeout passed before the client received the answer."""
     TRANSPORT_ERROR: Final = "TRANSPORT_ERROR"
-    """The transport does not support the call, or the client has closed."""
+    """The call needs the WebSocket transport while the client uses HTTP, or the client is closed."""
     INVALID_RESPONSE: Final = "INVALID_RESPONSE"
-    """The answer held no JSON object, not the shape that the route documents, or a malformed envelope."""
+    """The answer held no JSON object, a shape other than the one that the route documents, or a bad envelope."""
     ROUTING_ERROR: Final = "ROUTING_ERROR"
     """The topology-aware client found no endpoint to send the call to."""
     NO_SAFE_PRIMARY: Final = "NO_SAFE_PRIMARY"
-    """The topology-aware client knows no primary to send a write to."""
+    """The replication group has no current primary to send a write to."""
     INVALID_ARGUMENT: Final = "INVALID_ARGUMENT"
-    """The caller passed a setting or a value that the client cannot use."""
+    """The client refused a setting or a value that the caller passed."""
     UNAUTHORIZED: Final = "UNAUTHORIZED"
-    """The server closed the WebSocket connection with code 4401, so the client does not reconnect."""
+    """The server closed the WebSocket connection with code 4401, so the client stops reconnecting."""
     FORBIDDEN: Final = "FORBIDDEN"
-    """The server closed the WebSocket connection with code 4403, so the client does not reconnect."""
+    """The server closed the WebSocket connection with code 4403, so the client stops reconnecting."""
     SQL_NOT_ACCEPTED: Final = "SQL_NOT_ACCEPTED"
-    """The server's capabilities leave out `query.sql`, so the client sent no statement."""
+    """The server's capabilities lack `query.sql`, so the client refused to send the statement."""
 
 
 SQL_REFUSED_MESSAGE: Final = (
@@ -44,13 +44,13 @@ class SirannonError(Exception):
     """
 
     code: str
-    """This machine-readable code says what failed, such as `DATABASE_NOT_FOUND`."""
+    """The machine-readable code of the failure, such as `DATABASE_NOT_FOUND`."""
     message: str
-    """This describes the failure, for a log or a person."""
+    """A description of the failure for a log or a person."""
     details: dict[str, Any]
-    """These values are behind the failure, where the server sent any."""
+    """The values behind the failure, where the server sent any."""
     status: int | None
-    """The HTTP status of the answer that carried this error, or None where no HTTP answer carried it."""
+    """The HTTP status of the answer that held this error, or None where no HTTP answer held it."""
 
     def __init__(
         self,

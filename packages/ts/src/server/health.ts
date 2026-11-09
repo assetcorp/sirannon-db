@@ -4,12 +4,12 @@ import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
 import { endResponse } from './connection-drain.js'
 
 /**
- * The body of `GET /health`, which the server sends while its process runs.
+ * The body of `GET /health`, which the server sends while its process is up.
  *
  * @public
  */
 export interface LivenessResponse {
-  /** Always `ok`, because a process that cannot answer sends nothing. */
+  /** This is always `ok`, because only a live process can answer. */
   status: 'ok'
 }
 
@@ -28,7 +28,7 @@ export interface DatabaseStatus {
 }
 
 /**
- * The body of `GET /health/ready`, which states whether the node can serve reads and writes.
+ * The body of `GET /health/ready`, with whether the node can serve reads and writes.
  *
  * @public
  */
@@ -40,12 +40,12 @@ export interface ReadinessResponse {
   status: 'ok' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
   /** One entry for each database that the registry holds open. */
   databases: DatabaseStatus[]
-  /** The replication state of this node, which the server reports when it runs with replication. */
+  /** The replication state of this node, which the server reports when replication is on. */
   replication?: ReplicationReadiness
 }
 
 /**
- * The replication state of one node, as `GET /health/ready` reports it.
+ * The replication state of one node, as the server reports it in `GET /health/ready`.
  *
  * @public
  */
@@ -76,9 +76,9 @@ export interface ReplicationReadiness {
     /** Whether the controller is off, waiting, leading the group, or has lost its lease. */
     state: 'disabled' | 'standby' | 'active' | 'lost'
   }
-  /** The replicas that the group counts as in sync. */
+  /** The replicas that are in sync with the primary. */
   inSyncReplicas?: string[]
-  /** The replicas that have fallen behind. */
+  /** The replicas that lag behind the primary. */
   laggingReplicas?: string[]
   /** How far this node has caught up with the primary. */
   syncState?: string

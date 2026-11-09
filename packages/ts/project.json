@@ -36,6 +36,22 @@
       },
       "dependsOn": ["build"]
     },
+    "api-description": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "pnpm run api-description",
+        "cwd": "packages/ts"
+      }
+    },
+    "api-description:write": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "pnpm run api-description:write",
+        "cwd": "packages/ts"
+      }
+    },
     "test": {
       "executor": "nx:run-commands",
       "options": {

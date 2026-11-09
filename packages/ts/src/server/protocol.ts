@@ -166,8 +166,15 @@ export interface LoadRequest {
  */
 export type LoadResponse = BulkLoadResult
 
+/**
+ * The server's answer to a device's acknowledgement.
+ *
+ * @public
+ */
 export interface AckResponse {
+  /** True, because the server answers only once it has recorded the acknowledgement. */
   acked: boolean
+  /** The sequence that the device acknowledged, as a decimal string. */
   seq: string
 }
 
@@ -179,13 +186,22 @@ export interface AckResponse {
 export interface ErrorResponse {
   /** A machine-readable code, a human-readable message, and any details that the route adds. */
   error: {
+    /** The machine-readable code of the error, which the client passes to the caller unchanged. */
     code: string
+    /** What went wrong, for a log or a person. */
     message: string
+    /** The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, present only when it holds a value. */
     details?: Record<string, unknown>
   }
 }
 
+/**
+ * The body of `GET /db/{id}/cluster`, which states where a client sends the database's writes and reads.
+ *
+ * @public
+ */
 export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
+  /** The primary term that this node reports as current, as a decimal string so that a 64-bit term stays exact. */
   primaryTerm?: string
 }
 

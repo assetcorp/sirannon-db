@@ -5,7 +5,7 @@ const WORKFLOW_DIR = '.github/workflows'
 const MINIMUM_RELEASE_AGE_DAYS = 4
 const MINIMUM_RELEASE_AGE_MINUTES = MINIMUM_RELEASE_AGE_DAYS * 24 * 60
 const PACKAGE_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies']
-const OIDC_WORKFLOWS = new Set(['.github/workflows/publish.yml'])
+const OIDC_WORKFLOWS = new Set(['.github/workflows/publish.yml', '.github/workflows/publish-clients.yml'])
 const ALLOWED_REMOTE_DEPENDENCIES = new Map([['uWebSockets.js', 'github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4']])
 const ALLOWED_REMOTE_LOCKFILE_REFERENCES = [
   'https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4',
@@ -52,7 +52,7 @@ const checkWorkflows = () => {
     }
 
     if (!OIDC_WORKFLOWS.has(file) && /^\s*id-token:\s*write\s*$/m.test(content)) {
-      failures.push(`${file}: id-token: write is only allowed in a workflow that publishes to npm`)
+      failures.push(`${file}: id-token: write is only allowed in a workflow that publishes to npm or PyPI`)
     }
   }
 

@@ -166,6 +166,8 @@ const invoices = await db.query(sharedOperations.reads.openInvoices, {})
 
 The generated file also exports `registryDigest`, which is the registry's digest at the time that you generated the file.
 
+`--python <file>` writes the references for the [Python client](python-client.md), and `--go <file>` writes them for the [Go client](go-client.md), in the package that `--go-package <name>` gives and `operations` by default. Pass any of `--out`, `--python`, and `--go` together to write each file from one registry. `--from-manifest <file>` reads a manifest that `--manifest` wrote in place of a registry module, so a Python or Go project can generate its references from a file that the server's build commits. When two operations would generate the same identifier, the generator names both and writes no file.
+
 Each read gets the row type built from its `columns`. A read that declares no `columns` gets its row type from the statement text, but only when it declares no arguments and fills none from identity, because an argument can change which statement the read returns. Every other read leaves the row shape open.
 
 ## Errors

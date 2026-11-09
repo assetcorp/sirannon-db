@@ -28,9 +28,22 @@ export const SQL_QUERY_CAPABILITY = 'query.sql'
 
 export type ServerCapability = (typeof REQUIRED_DEVICE_SYNC_CAPABILITIES)[number]
 
+/**
+ * The body of `GET /capabilities`, which names what this server accepts.
+ *
+ * @public
+ */
 export interface CapabilitiesResponse {
+  /**
+   * The capabilities that the server announces, such as `query.sql` when it accepts SQL statements and `query.named`
+   * when it serves registered operations.
+   */
   capabilities: string[]
-  registry?: { digest: string }
+  /** The digest of the registered operations, which the server sends when it serves any. */
+  registry?: {
+    /** A hash over every registered database identifier, operation kind, operation name, and argument name. */
+    digest: string
+  }
 }
 
 export interface CapabilitiesOptions {

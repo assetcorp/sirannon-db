@@ -1,0 +1,59 @@
+{
+  "name": "sirannon-python",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "python3 scripts/tools.py ruff check .",
+          "python3 scripts/tools.py ruff format --check ."
+        ],
+        "parallel": false,
+        "cwd": "packages/python"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "python3 scripts/tools.py mypy",
+        "cwd": "packages/python"
+      }
+    },
+    "generate": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "python3 scripts/tools.py python -m generator",
+        "cwd": "packages/python"
+      }
+    },
+    "generate:write": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "python3 scripts/tools.py python -m generator --write",
+        "cwd": "packages/python"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["sirannon-ts:build"],
+      "options": {
+        "command": "python3 scripts/tools.py pytest",
+        "cwd": "packages/python"
+      }
+    },
+    "package": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "python3 scripts/tools.py python -m build --no-isolation --outdir dist .",
+        "cwd": "packages/python"
+      }
+    }
+  }
+}

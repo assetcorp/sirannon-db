@@ -12,6 +12,8 @@
       "!.claude",
       "!**/generated",
       "!**/routeTree.gen.ts",
+      "!packages/ts/openapi.json",
+      "!packages/ts/asyncapi.json",
       "!benchmarks/server/results/runs"
     ]
   },

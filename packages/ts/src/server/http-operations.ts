@@ -2,6 +2,7 @@ import type { HttpResponse } from 'uWebSockets.js'
 import type { OperationArguments, OperationStatement } from '../core/operation-registry.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ServerExecutionTargetResolver } from '../core/types.js'
+import type { UncheckedBody } from './backup-protocol.js'
 import type { ResponseAbort } from './http-common.js'
 import {
   parseBody,
@@ -15,12 +16,9 @@ import {
 import { findRead, findWrite, isRefusal, type OperationSets, resolveArguments } from './operation-lookup.js'
 import { decodeBoundParams, toExecuteResponse } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
+import type { OperationExecuteRequest, OperationExecuteResponse, OperationQueryRequest } from './wire-types.js'
 
-export interface OperationRequest {
-  args?: Record<string, unknown>
-  readConcern?: unknown
-  writeConcern?: unknown
-}
+type OperationRequest = UncheckedBody<OperationQueryRequest & OperationExecuteRequest>
 
 export type OperationRouteHandler = (
   res: HttpResponse,
@@ -36,7 +34,7 @@ function parseOperationBody(res: HttpResponse, rawBody: Buffer): OperationReques
   return parseBody<OperationRequest>(res, rawBody)
 }
 
-function decodeArguments(res: HttpResponse, raw: Record<string, unknown> | undefined): OperationArguments | null {
+function decodeArguments(res: HttpResponse, raw: unknown): OperationArguments | null {
   if (raw === undefined) return {}
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     sendError(res, 400, 'INVALID_REQUEST', 'Field "args" must be an object')
@@ -159,7 +157,7 @@ export function handleOperationExecute<I>(
             return txResults
           }, txOptions)
       if (abort.aborted) return
-      sendJson(res, { results: results.map(toExecuteResponse) })
+      sendJson(res, { results: results.map(toExecuteResponse) } satisfies OperationExecuteResponse)
     } catch (err) {
       sendCaughtError(res, abort, err)
     }

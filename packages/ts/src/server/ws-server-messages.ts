@@ -206,7 +206,9 @@ export interface WSErrorMessage {
   id: string
   /** A machine-readable code and a human-readable message. */
   error: {
+    /** The machine-readable code of the error, which the client passes to the caller unchanged. */
     code: string
+    /** What went wrong, for a log or a person. */
     message: string
   }
 }

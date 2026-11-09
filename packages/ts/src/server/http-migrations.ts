@@ -5,19 +5,41 @@ import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.j
 import type { DbRouteHandler } from './http-handler.js'
 import { schemaVersionValidationError } from './sync-protocol.js'
 
+/**
+ * The body of `POST /db/{id}/migrations`, which lists the migrations that the database has applied.
+ *
+ * @public
+ */
 export interface MigrationListRequest {
+  /** The schema version of the device, so that the server sends the statements of every later migration. */
   after?: number
 }
 
+/**
+ * One migration that the database has applied.
+ *
+ * @public
+ */
 export interface MigrationListEntry {
+  /** The version of the migration. */
   version: number
+  /** The name of the migration. */
   name: string
+  /** The checksum of the migration's statements, or null when the database recorded none. */
   checksum: string | null
+  /** The statements of a migration later than `after`, which the server sends when it holds them. */
   up?: string
 }
 
+/**
+ * The migrations that the database has applied.
+ *
+ * @public
+ */
 export interface MigrationListResponse {
+  /** The schema version of the server's database. */
   serverVersion: number
+  /** Every migration that the database has applied, in version order. */
   migrations: MigrationListEntry[]
 }
 

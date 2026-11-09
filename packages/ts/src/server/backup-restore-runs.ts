@@ -1,13 +1,23 @@
 import type { BackupRestoreProgress, BackupRestoreReport } from '../core/backup/restore-options.js'
 import { SirannonError } from '../core/errors.js'
-import { clientErrorMessage } from './client-error.js'
+import { clientErrorMessage, UNEXPECTED_ERROR_MESSAGE } from './client-error.js'
 
 function describeFailure(err: unknown): { code: string; message: string } {
   return {
     code: err instanceof SirannonError ? err.code : 'INTERNAL_ERROR',
-    message: err instanceof SirannonError ? clientErrorMessage(err) : 'An unexpected error occurred',
+    message: err instanceof SirannonError ? clientErrorMessage(err) : UNEXPECTED_ERROR_MESSAGE,
   }
 }
+
+function summariseReport(report: BackupRestoreReport): BackupRestoreSummary {
+  const { destPath: _serverPath, ...summary } = report
+  return summary
+}
+
+/** The report of one finished restore as the server sends it, which leaves out the path of the rebuilt database file on the server.
+ * @public
+ */
+export interface BackupRestoreSummary extends Omit<BackupRestoreReport, 'destPath'> {}
 
 /** The state of one database's restore. `idle` means that no restore has started since the server started.
  * @public
@@ -28,16 +38,26 @@ export interface BackupRestoreStatus {
   finishedAt?: number
   /** The restore's progress, which the server updates after it fetches each piece. */
   progress?: BackupRestoreProgress
-  /** The report of a finished restore. */
-  report?: BackupRestoreReport
+  /** The report of a finished restore, without the path of the rebuilt database file. */
+  report?: BackupRestoreSummary
   /**
    * The error that stopped the rebuilt database from opening again. The rebuilt
    * data is on disk, but the registry has no database open under the identifier,
    * so restart the process when you see this error.
    */
-  reopenError?: { code: string; message: string }
+  reopenError?: {
+    /** The machine-readable code of the error. */
+    code: string
+    /** What went wrong, for a log or a person. */
+    message: string
+  }
   /** The error that stopped a failed restore. */
-  error?: { code: string; message: string }
+  error?: {
+    /** The machine-readable code of the error. */
+    code: string
+    /** What went wrong, for a log or a person. */
+    message: string
+  }
 }
 
 /**
@@ -95,7 +115,7 @@ export class BackupRestoreRuns {
       moment: this.runs.get(databaseId)?.moment ?? report.restoresTo,
       startedAt: report.startedAt,
       finishedAt: report.finishedAt,
-      report,
+      report: summariseReport(report),
       ...(reopenFailure === undefined ? {} : { reopenError: describeFailure(reopenFailure) }),
     })
   }

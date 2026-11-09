@@ -104,6 +104,7 @@ vite.config.ts.timestamp-*
 
 __pycache__/
 *.py[cod]
+.venv/
 
 .nx/
 

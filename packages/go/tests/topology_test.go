@@ -148,6 +148,32 @@ func TestCoordinatorDiscoveryFailsWithRoutingErrorWhenNoNodeServesRouting(t *tes
 	}
 }
 
+func TestTopologyClientRefusesAPerQueryReadConcernBeforeSendingTheRead(t *testing.T) {
+	server := startServer(t, serverConfig{})
+	ctx := testContext(t)
+	client, err := sirannon.NewTopology(sirannon.TopologyOptions{Primary: server.url, Replicas: []string{server.url}, ReadPreference: sirannon.ReadFromReplica})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	db, _ := client.Database("per-query-concern")
+	if _, err := db.Execute(ctx, insertItemSQL, []any{int64(7), "seven", int64(1) << 60, []byte{7}}); err != nil {
+		t.Fatalf("write through the topology client: %v", err)
+	}
+	refusals := map[string]error{}
+	_, refusals["a statement"] = db.Query(ctx, "SELECT id FROM items", nil, sirannon.WithReadConcern(sirannon.ReadConcernLevelLinearizable))
+	_, refusals["a registered read"] = sirannon.Query(ctx, db, itemByID, itemArgs{ID: int64(7)}, sirannon.WithReadConcern(sirannon.ReadConcernLevelMajority))
+	for kind, err := range refusals {
+		if sirannon.ErrorCode(err) != sirannon.CodeInvalidArgument || !strings.Contains(err.Error(), "pass none per query") {
+			t.Fatalf("%s with a per-query read concern gave %v, want INVALID_ARGUMENT", kind, err)
+		}
+	}
+	rows, err := sirannon.Query(ctx, db, itemByID, itemArgs{ID: int64(7)})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("the same read without a per-query concern gave %d rows and %v", len(rows), err)
+	}
+}
+
 func TestTopologyOptionsRejectUnusableSettings(t *testing.T) {
 	cases := []sirannon.TopologyOptions{
 		{},

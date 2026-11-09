@@ -1,0 +1,10 @@
+anyio==4.15.1
+build==1.6.1
+hatchling==1.33.0
+httpx==0.28.1
+mypy==2.4.1
+pydantic==2.14.2
+pytest==9.2.0
+ruff==0.17.3
+typing-extensions==4.16.0
+websockets==17.4

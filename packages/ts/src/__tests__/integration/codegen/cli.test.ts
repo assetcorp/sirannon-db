@@ -94,9 +94,14 @@ describe('the sirannon-codegen command', () => {
       workspace.write('unrelated.mjs', 'export const unrelated = 1\n')
       workspace.write('scalar.mjs', 'export const operations = 5\n')
       const cases: Array<[label: string, args: string[], message: string | RegExp]> = [
-        ['no arguments', [], '--registry and --out are both required'],
-        ['no output path', ['--registry', registry], '--registry and --out are both required'],
-        ['no registry', ['--out', out], '--registry and --out are both required'],
+        ['no arguments', [], 'Pass exactly one of --registry and --from-manifest'],
+        ['no output path', ['--registry', registry], 'Pass at least one of --out, --python, and --go'],
+        ['no registry', ['--out', out], 'Pass exactly one of --registry and --from-manifest'],
+        [
+          'both a registry and a manifest',
+          ['--registry', registry, '--from-manifest', workspace.path('manifest.json'), '--out', out],
+          'Pass exactly one of --registry and --from-manifest',
+        ],
         [
           'a misspelt flag',
           ['--registry', registry, '--out', out, '--exprot', 'operations'],
@@ -146,7 +151,7 @@ describe('the sirannon-codegen command', () => {
         if (typeof message === 'string') expect(outcome?.stderr, label).toContain(message)
         else expect(outcome?.stderr, label).toMatch(message)
       }
-      expect(outcomes[0]?.stderr).toContain('sirannon-codegen --registry <module> --out <file>')
+      expect(outcomes[0]?.stderr).toContain('sirannon-codegen (--registry <module> | --from-manifest <file>)')
       expect(existsSync(out)).toBe(false)
     },
     CLI_TIMEOUT_MS,

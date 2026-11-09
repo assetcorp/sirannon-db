@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RequestDeniedError } from '../../../core/errors.js'
@@ -113,7 +114,7 @@ describe('the restore route', () => {
     expect(running.body).toMatchObject({ state: 'running', moment })
     for (const answer of offline) expect([answer.status, errorCodeOf(answer.body)]).toEqual([404, 'DATABASE_NOT_FOUND'])
     expect([second.status, errorCodeOf(second.body)]).toEqual([409, 'BACKUP_RESTORE_IN_PROGRESS'])
-    expect(settled).toMatchObject({ state: 'done', moment, report: { destPath: orders.path } })
+    expect(settled).toMatchObject({ state: 'done', moment, report: { chainId: expect.any(String) } })
     expect(settled.report?.restoresTo).toBeLessThanOrEqual(moment)
     expect(settled.reopenError).toBeUndefined()
     expect(integrityOf(orders.path)).toBe('ok')
@@ -203,7 +204,7 @@ describe('the restore route', () => {
     expect(early).toMatchObject({ state: 'failed', moment: 1_000, error: { code: 'BACKUP_CHAIN_BROKEN' } })
     expect(stalled.status).toBe(202)
     expect(stall).toMatchObject({ state: 'failed', error: { code: 'BACKUP_DESTINATION_ERROR' } })
-    expect(stall.error?.message).toMatch(/150ms/)
+    expect(stall.error?.message).toBe('The backup destination failed the request')
     expect(stallMs).toBeLessThan(5_000)
     expect([unsupported.status, errorCodeOf(unsupported.body)]).toEqual([501, 'BACKUP_UNSUPPORTED'])
     expect([unknown.status, errorCodeOf(unknown.body)]).toEqual([404, 'DATABASE_NOT_FOUND'])
@@ -247,7 +248,7 @@ describe('the restore route', () => {
     expect(outcome).toMatchObject({
       state: 'done',
       moment,
-      report: { destPath: orders.path },
+      report: { chainId: expect.any(String) },
       reopenError: { code: expect.any(String) },
     })
     expect([afterReopen.status, errorCodeOf(afterReopen.body)]).toEqual([404, 'DATABASE_NOT_FOUND'])
@@ -259,6 +260,44 @@ describe('the restore route', () => {
     expect((await sendRaw(served.base, 'POST', '/db/orders/query', COUNT)).body).toEqual({
       rows: atMoment.map(label => ({ label })),
     })
+  })
+
+  it('sends no server file path in either status route after a restore and after a turn that the operating system fails with a path', async () => {
+    const sirannon = trackedRegistry()
+    const orders = await openBackedUp(sirannon, dir, 'orders')
+    const served = await serveRegistry(sirannon, { ...OPERATOR, acceptSql: true, acceptBackupRestore: true })
+    await chainWithMoment(served.base, orders)
+    const restoring = await postJson(served.base, '/db/orders/backup/restore', {})
+    const restored = await restoreSettled(served.base, 'orders')
+    const reopened = await sirannon.resolve('orders')
+    if (reopened === undefined) throw new Error('the restored database did not open again')
+    await waitUntil(
+      () => reopened.backupStatus().lastRun !== undefined && !reopened.backupStatus().running,
+      'the opening full copy of the restored database',
+    )
+    const unmountedVolume = join(dir, 'unmounted-volume', 'piece')
+    orders.destination.faults.holdWrite = async () => {
+      await readFile(unmountedVolume)
+    }
+    await addLabels(reopened, ['after-restore'])
+    const failing = await sendRaw(served.base, 'POST', '/db/orders/backup')
+    await waitUntil(() => reopened.backupStatus().lastError !== undefined, 'the failed turn')
+    orders.destination.faults.holdWrite = undefined
+    const cycleStatus = await sendRaw(served.base, 'GET', '/db/orders/backup')
+    const restoreStatus = await sendRaw(served.base, 'GET', '/db/orders/backup/restore')
+
+    expect(restoring.status).toBe(202)
+    expect(restored.state).toBe('done')
+    expect(failing.status).toBe(202)
+    expect(reopened.backupStatus().lastError?.message).toContain(unmountedVolume)
+    expect(cycleStatus.status).toBe(200)
+    expect(cycleStatus.body).toMatchObject({
+      lastRun: { chainId: expect.any(String) },
+      lastError: { code: expect.any(String) },
+    })
+    expect(cycleStatus.text).not.toContain(dir)
+    expect(restoreStatus.body).toMatchObject({ state: 'done', report: { chainId: expect.any(String) } })
+    expect(restoreStatus.text).not.toContain(dir)
   })
 
   it('restores while clients keep writing and a backup turn is under way, keeping no refused write and losing no row from before the moment', async () => {

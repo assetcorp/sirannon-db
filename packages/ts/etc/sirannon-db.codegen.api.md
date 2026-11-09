@@ -8,12 +8,17 @@
 export function buildOperationManifest<I>(registry: OperationRegistry<I>, shared?: DatabaseOperations<I>): OperationManifest;
 
 // @public
-export const CODEGEN_USAGE = "sirannon-codegen --registry <module> --out <file> [--manifest <file>] [--export <name>] [--shared-export <name>] [--package <name>]\n\nReads the operations that you register with a server and writes the typed\nreferences through which a client calls them. The generator takes the\nper-database registry from the 'operations' export, or from the default\nexport, and the operations for every database from the 'sharedOperations'\nexport. The generator imports the registry module, so run it under a loader\nthat reads your source format when that format is not JavaScript.";
+export const CODEGEN_USAGE = "sirannon-codegen (--registry <module> | --from-manifest <file>) [--out <file>] [--python <file>] [--go <file>] [--go-package <name>] [--manifest <file>] [--export <name>] [--shared-export <name>] [--package <name>]\n\nReads the operations that you register with a server and writes the typed\nreferences through which a client calls them: TypeScript to --out, Python to\n--python, and Go to --go, in the package that --go-package gives. The\ngenerator takes the per-database registry from the 'operations' export, or\nfrom the default export, and the operations for every database from the\n'sharedOperations' export. The generator imports the registry module, so run\nit under a loader that reads your source format when that format is not\nJavaScript. --from-manifest reads a manifest that --manifest wrote, so a\nPython or Go project can generate its references from a committed file.";
 
 // @public
 export interface DatabaseManifest {
     reads: Record<string, OperationShape>;
     writes: Record<string, OperationShape>;
+}
+
+// @public
+export interface GoRenderOptions {
+    packageName?: string;
 }
 
 // @public
@@ -35,12 +40,21 @@ export interface OperationShape {
 }
 
 // @public
+export function parseOperationManifest(data: unknown, path: string): OperationManifest;
+
+// @public
+export function renderGoOperations(manifest: OperationManifest, options?: GoRenderOptions): string;
+
+// @public
 export function renderOperationTypes(manifest: OperationManifest, options?: RenderOptions): string;
 
 // @public
 export interface RenderOptions {
     packageName?: string;
 }
+
+// @public
+export function renderPythonOperations(manifest: OperationManifest): string;
 
 // @public
 export function runCodegen(argv: readonly string[]): Promise<void>;

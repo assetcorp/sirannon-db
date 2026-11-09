@@ -1,0 +1,167 @@
+name: Publish clients
+
+on:
+  push:
+    tags:
+      - 'packages/python/v*'
+      - 'packages/go/v*'
+
+permissions:
+  contents: read
+
+jobs:
+  python-checks:
+    name: Python client checks
+    if: startsWith(github.ref_name, 'packages/python/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
+      - name: Build Sirannon's SQLite for the test server
+        working-directory: packages/ts
+        run: pnpm build:sqlite
+
+      - name: Lint, typecheck, test, and check the generated code
+        run: pnpm nx run-many -t lint typecheck generate test -p sirannon-python
+
+  python:
+    name: Python client to PyPI
+    needs: python-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: publish-to-pypi
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.11'
+
+      - name: Refuse a tag outside main or one that differs from pyproject.toml
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::The tag $TAG points at a commit that main does not hold, so merge the change before tagging it."
+            exit 1
+          fi
+          declared="$(python3 -c 'import tomllib; print(tomllib.load(open("packages/python/pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "packages/python/v${declared}" != "$TAG" ]; then
+            echo "::error::The tag $TAG does not match version $declared in packages/python/pyproject.toml."
+            exit 1
+          fi
+
+      - name: Build the wheel and the source distribution
+        working-directory: packages/python
+        run: python3 scripts/tools.py python -m build --no-isolation --outdir dist .
+
+      - name: Publish to PyPI through trusted publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
+        with:
+          packages-dir: packages/python/dist
+
+  go:
+    name: Go client to the Go module proxy
+    if: startsWith(github.ref_name, 'packages/go/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse a tag outside main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::The tag $TAG points at a commit that main does not hold, so merge the change before tagging it."
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/go/go.mod
+          cache-dependency-path: |
+            packages/go/go.sum
+            packages/go/tests/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
+      - name: Build Sirannon's SQLite for the test server
+        working-directory: packages/ts
+        run: pnpm build:sqlite
+
+      - name: Lint, typecheck, test, and check the generated code
+        run: pnpm nx run-many -t lint typecheck generate test -p sirannon-go
+
+      - name: Ask the Go module proxy to fetch the tagged release
+        working-directory: ${{ runner.temp }}
+        env:
+          TAG: ${{ github.ref_name }}
+          GOPROXY: https://proxy.golang.org
+        run: go list -m "github.com/assetcorp/sirannon-db/packages/go@${TAG#packages/go/}"

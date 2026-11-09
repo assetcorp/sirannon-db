@@ -1,0 +1,60 @@
+{
+  "name": "sirannon-go",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }",
+          "go vet ./...",
+          "cd tests && go vet ./..."
+        ],
+        "parallel": false,
+        "cwd": "packages/go"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "go build ./...",
+          "cd tests && go test -count=1 -run '^$' ./..."
+        ],
+        "parallel": false,
+        "cwd": "packages/go"
+      }
+    },
+    "generate": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go run ./internal/generator",
+        "cwd": "packages/go"
+      }
+    },
+    "generate:write": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "go run ./internal/generator -write",
+        "cwd": "packages/go"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["sirannon-ts:build"],
+      "options": {
+        "commands": [
+          "go test -race -count=1 ./...",
+          "cd tests && go test -race -count=1 ./..."
+        ],
+        "parallel": false,
+        "cwd": "packages/go"
+      }
+    }
+  }
+}

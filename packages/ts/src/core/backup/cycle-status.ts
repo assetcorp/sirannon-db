@@ -43,6 +43,21 @@ export interface BackupCycleStatus {
   lastError?: BackupCycleError
 }
 
+const failuresRaisedBySirannon = new WeakSet<BackupCycleError>()
+
+/**
+ * Returns whether Sirannon raised the error behind a recorded failure, as opposed
+ * to the operating system, a driver, or a destination, whose messages can include
+ * the paths of files on the server.
+ *
+ * @param failure - A failure that a backup cycle recorded.
+ * @returns `true` when the failure's code and message come from a `SirannonError`.
+ * @internal
+ */
+export function raisedBySirannon(failure: BackupCycleError): boolean {
+  return failuresRaisedBySirannon.has(failure)
+}
+
 /**
  * Records what the cycle is doing, so that a caller can read the status at any
  * moment without handling every callback.
@@ -98,7 +113,7 @@ export class BackupCycleStatusRecorder {
    */
   failed(err: Error, chainId?: string): void {
     const at = Date.now()
-    this.latestError = {
+    const recorded: BackupCycleError = {
       code: err instanceof SirannonError ? err.code : 'BACKUP_ERROR',
       message: err.message,
       at,
@@ -106,6 +121,8 @@ export class BackupCycleStatusRecorder {
       ...(chainId === undefined ? {} : { chainId }),
       ...(this.latestProgress === undefined ? {} : { progress: this.latestProgress }),
     }
+    if (err instanceof SirannonError) failuresRaisedBySirannon.add(recorded)
+    this.latestError = recorded
   }
 
   /**

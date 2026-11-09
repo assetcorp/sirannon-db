@@ -2,12 +2,13 @@ import { discardStagedChain } from '../core/backup/cycle-capture.js'
 import { restoreBackup } from '../core/backup/restore.js'
 import type { BackupChainLocation } from '../core/database-backup.js'
 import type { Sirannon } from '../core/sirannon.js'
-import type { BackupRestoreRequest } from './backup-protocol.js'
+import type { BackupRestoreRequest, UncheckedBody } from './backup-protocol.js'
 import { BACKUP_RESTORE_NOT_ACCEPTED_MESSAGE, restoreRequestValidationError } from './backup-protocol.js'
 import type { BackupRestoreRuns } from './backup-restore-runs.js'
 import { parseOptionalBody, resolveBackupDatabase } from './http-backups.js'
 import { sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
+import type { StartedResponse } from './wire-types.js'
 
 function restoreAlreadyRunning(databaseId: string): string {
   return `A restore of database '${databaseId}' is already under way, and it keeps that file to itself until it finishes`
@@ -74,7 +75,7 @@ export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs:
       return
     }
 
-    const body = parseOptionalBody<BackupRestoreRequest>(res, rawBody)
+    const body = parseOptionalBody<UncheckedBody<BackupRestoreRequest>>(res, rawBody)
     if (!body) return
 
     const validationError = restoreRequestValidationError(body)
@@ -115,7 +116,7 @@ export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs:
       ...(body.batchSize === undefined ? {} : { batchSize: body.batchSize as number }),
     })
     if (abort.aborted) return
-    sendJson(res, { started: true }, '202 Accepted')
+    sendJson(res, { started: true } satisfies StartedResponse, '202 Accepted')
   }
 }
 

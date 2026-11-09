@@ -1,5 +1,5 @@
 import type { HttpResponse } from 'uWebSockets.js'
-import type { BackupCycleStatus } from '../core/backup/cycle-status.js'
+import { type BackupCycleError, type BackupCycleStatus, raisedBySirannon } from '../core/backup/cycle-status.js'
 import type { Database } from '../core/database.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
@@ -7,9 +7,13 @@ import type {
   BackupChainResponse,
   BackupSafeToDeleteRequest,
   BackupSafeToDeleteResponse,
+  BackupStatusResponse,
+  BackupTriggerResponse,
   BackupVerifyRequest,
+  UncheckedBody,
 } from './backup-protocol.js'
 import { restorableFromValidationError, verifyNameValidationError } from './backup-protocol.js'
+import { clientMessageFor, UNEXPECTED_ERROR_MESSAGE } from './client-error.js'
 import type { ResponseAbort } from './http-common.js'
 import { parseBody, sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
@@ -75,6 +79,22 @@ export function refusedOnTheFirstTick(turn: Promise<unknown>): Promise<unknown> 
   return Promise.race([settled, tick])
 }
 
+function failureForClients(failure: BackupCycleError): BackupCycleError {
+  const message = raisedBySirannon(failure) ? clientMessageFor(failure) : UNEXPECTED_ERROR_MESSAGE
+  return { ...failure, message }
+}
+
+function statusForClients(status: BackupCycleStatus): BackupStatusResponse {
+  const { lastRun, lastError, ...rest } = status
+  const answer: BackupStatusResponse = rest
+  if (lastRun !== undefined) {
+    const { sourcePath: _serverPath, ...summary } = lastRun
+    answer.lastRun = summary
+  }
+  if (lastError !== undefined) answer.lastError = failureForClients(lastError)
+  return answer
+}
+
 function readStatus(res: HttpResponse, abort: ResponseAbort, database: Database): BackupCycleStatus | null {
   try {
     return database.backupStatus()
@@ -112,7 +132,7 @@ export function handleBackupTrigger(sirannon: Sirannon): DbRouteHandler {
       return
     }
     if (abort.aborted) return
-    sendJson(res, { started: true }, '202 Accepted')
+    sendJson(res, { started: true } satisfies BackupTriggerResponse, '202 Accepted')
   }
 }
 
@@ -129,7 +149,7 @@ export function handleBackupStatus(sirannon: Sirannon): DbGetRouteHandler {
     if (!database) return
     const status = readStatus(res, abort, database)
     if (!status || abort.aborted) return
-    sendJson(res, status)
+    sendJson(res, statusForClients(status))
   }
 }
 
@@ -164,7 +184,7 @@ export function handleBackupChain(sirannon: Sirannon): DbGetRouteHandler {
  */
 export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
-    const body = parseOptionalBody<BackupVerifyRequest>(res, rawBody)
+    const body = parseOptionalBody<UncheckedBody<BackupVerifyRequest>>(res, rawBody)
     if (!body) return
 
     const name = body.name
@@ -198,7 +218,7 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
  */
 export function handleBackupSafeToDelete(sirannon: Sirannon): DbRouteHandler {
   return async (res, dbId, rawBody, abort) => {
-    const body = parseOptionalBody<BackupSafeToDeleteRequest>(res, rawBody)
+    const body = parseOptionalBody<UncheckedBody<BackupSafeToDeleteRequest>>(res, rawBody)
     if (!body) return
 
     const restorableFromError = restorableFromValidationError(body.restorableFrom)

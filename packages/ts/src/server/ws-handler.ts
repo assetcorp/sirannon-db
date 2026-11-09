@@ -15,8 +15,10 @@ import { DEFAULT_MAX_UNACKNOWLEDGED_CHANGES } from './ws-device-stream.js'
 import { WSFrameWriter } from './ws-frame-writer.js'
 import type { WSLiveDeps } from './ws-live.js'
 import { handleLiveSubscribeMessage } from './ws-live.js'
+import { isClientMessageType, NAMED_MESSAGE_TYPES, SQL_MESSAGE_TYPES } from './ws-message-types.js'
 import type { WSNamedContext } from './ws-named.js'
 import { handleNamedExecuteMessage, handleNamedQueryMessage } from './ws-named.js'
+import { OpeningMessages } from './ws-opening-messages.js'
 import type { WSOperationContext } from './ws-operations.js'
 import {
   handleBatchMessage,
@@ -28,6 +30,7 @@ import {
 import { closeGoingAway, InFlightRequests, SHUTTING_DOWN_MESSAGE, SHUTTING_DOWN_REASON } from './ws-shutdown.js'
 import type { SubscriptionAttachment, WSSubscribeDeps } from './ws-subscribe.js'
 import { handleSubscribeMessage } from './ws-subscribe.js'
+import { handleUnsubscribeMessage } from './ws-unsubscribe.js'
 
 export type { WSConnection, WSSendOutcome } from './ws-connection.js'
 
@@ -35,9 +38,7 @@ const DEFAULT_MAX_PAYLOAD_LENGTH = 1_048_576
 
 const DEFAULT_MAX_BACKPRESSURE_BYTES = 16 * 1_048_576
 
-const SQL_MESSAGE_TYPES = new Set(['query', 'execute', 'transaction', 'batch', 'load'])
-
-const NAMED_MESSAGE_TYPES = new Set(['query', 'execute', 'subscribe'])
+const TOO_MANY_OPENING_MESSAGES_REASON = 'Too many messages arrived before the database opened'
 
 /**
  * Serves the WebSocket protocol for one server: queries, writes, change subscriptions, and live queries.
@@ -56,6 +57,7 @@ export class WSHandler<Identity = unknown> {
   private readonly acceptDeviceSync: boolean
   private readonly operations: OperationSource
   private readonly frames = new WSFrameWriter(conn => this.handleOverload(conn))
+  private readonly opening: OpeningMessages
   private closed = false
 
   constructor(sirannon: Sirannon, options?: WSHandlerOptions<Identity>) {
@@ -68,9 +70,19 @@ export class WSHandler<Identity = unknown> {
     this.socketResumeBytes = Math.ceil((options?.maxBackpressureBytes ?? DEFAULT_MAX_BACKPRESSURE_BYTES) / 2)
     this.resolveExecutionTarget = options?.resolveExecutionTarget
     this.cdc = new CdcContextRegistry(sirannon, toChangeRetentionOptions(options))
+    this.opening = new OpeningMessages(this.maxPayloadLength)
   }
 
   async handleOpen(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
+    this.opening.begin(conn)
+    try {
+      await this.openConnection(conn, databaseId, identity)
+    } finally {
+      for (const data of this.opening.finish(conn)) this.handleMessage(conn, data)
+    }
+  }
+
+  private async openConnection(conn: WSConnection, databaseId: string, identity?: unknown): Promise<void> {
     if (this.refuseWhileClosed(conn)) return
 
     let database: Database | undefined
@@ -106,7 +118,7 @@ export class WSHandler<Identity = unknown> {
       conn.close(1008, 'Database not found')
       return
     }
-    if (this.refuseWhileClosed(conn)) return
+    if (this.refuseWhileClosed(conn) || !this.opening.opening(conn)) return
 
     this.connections.set(conn, {
       databaseId,
@@ -141,7 +153,10 @@ export class WSHandler<Identity = unknown> {
 
   handleMessage(conn: WSConnection, data: string): void {
     const state = this.connections.get(conn)
-    if (!state) return
+    if (!state) {
+      if (this.opening.hold(conn, data) === 'full') conn.close(WS_CLOSE_OVERLOADED, TOO_MANY_OPENING_MESSAGES_REASON)
+      return
+    }
 
     if (exceedsUtf8Bytes(data, this.maxPayloadLength)) {
       conn.close(WS_CLOSE_MESSAGE_TOO_BIG, 'PAYLOAD_TOO_LARGE')
@@ -202,6 +217,10 @@ export class WSHandler<Identity = unknown> {
     id: string,
     name: string | null,
   ): Promise<void> | undefined {
+    if (!isClientMessageType(type)) {
+      this.frames.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${type}'`)
+      return undefined
+    }
     switch (type) {
       case 'query':
         if (name !== null) return handleNamedQueryMessage(this.namedContext(conn, state), msg, id, name)
@@ -219,13 +238,15 @@ export class WSHandler<Identity = unknown> {
         if (name !== null) return handleLiveSubscribeMessage(this.liveDeps(), conn, state, msg, id, name)
         return handleSubscribeMessage(this.subscribeDeps(), conn, state, msg, id)
       case 'unsubscribe':
-        this.handleUnsubscribe(conn, state, id)
+        handleUnsubscribeMessage(this.subscribeDeps(), conn, state, id)
         return undefined
       case 'ack':
         return handleAckMessage(this.subscribeDeps(), conn, state, msg, id)
-      default:
-        this.frames.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${type}'`)
+      default: {
+        const unhandled: never = type
+        this.frames.sendError(conn, id, 'UNKNOWN_TYPE', `Unknown message type: '${String(unhandled)}'`)
         return undefined
+      }
     }
   }
 
@@ -238,6 +259,7 @@ export class WSHandler<Identity = unknown> {
   }
 
   handleClose(conn: WSConnection): void {
+    this.opening.finish(conn)
     const state = this.connections.get(conn)
     if (!state) return
 
@@ -338,19 +360,6 @@ export class WSHandler<Identity = unknown> {
       closeFaulted: conn => conn.close(1011, 'Device stream failed'),
       handleOverload: conn => this.handleOverload(conn),
     }
-  }
-
-  private handleUnsubscribe(conn: WSConnection, state: ConnectionState, id: string): void {
-    const sub = state.subscriptions.get(id)
-    if (!sub) {
-      this.frames.sendError(conn, id, 'SUBSCRIPTION_NOT_FOUND', `Subscription '${id}' not found`)
-      return
-    }
-
-    sub.unsubscribe()
-    state.subscriptions.delete(id)
-    this.frames.send(conn, { type: 'unsubscribed', id })
-    this.cdc.maybeCleanup(state.databaseId)
   }
 
   private async resolveTarget(databaseId: string): Promise<ServerExecutionTarget | null> {

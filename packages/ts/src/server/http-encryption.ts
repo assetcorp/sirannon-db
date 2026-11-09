@@ -8,12 +8,13 @@ import { clientMessageFor } from './client-error.js'
 import { parseOptionalBody, refusedOnTheFirstTick } from './http-backups.js'
 import { sendCaughtError, sendError, sendJson } from './http-common.js'
 import type { DbGetRouteHandler, DbRouteHandler } from './http-handler.js'
+import type { EncryptionChangeRequest, StartedResponse } from './wire-types.js'
 
 const MAX_KEY_REF_LENGTH = 256
 
 const ENCRYPTION_CHANGE_REQUEST = v.object({
   keyRef: v.nullable(v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_KEY_REF_LENGTH))),
-})
+} satisfies { [Field in keyof EncryptionChangeRequest]-?: v.GenericSchema<unknown, EncryptionChangeRequest[Field]> })
 
 const ENCRYPTION_CHANGE_NOT_ACCEPTED_MESSAGE =
   'This server does not change database keys over the wire; turn on acceptEncryptionChange to open the route'
@@ -127,7 +128,7 @@ export function handleEncryptionChange(sirannon: Sirannon, settings: EncryptionC
       return
     }
     if (abort.aborted) return
-    sendJson(res, { started: true }, '202 Accepted')
+    sendJson(res, { started: true } satisfies StartedResponse, '202 Accepted')
   }
 }
 

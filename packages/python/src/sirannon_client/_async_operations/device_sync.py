@@ -37,8 +37,8 @@ class DeviceSyncOperations(AsyncOperationsBase):
         Args:
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
-            body: The body of `POST /db/{id}/changes`, which applies a device's changes to the
-                server's database.
+            body: The body of `POST /db/{id}/changes`, the route that applies a device's
+                changes to the server's database.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.
             headers: The client adds these headers to this request, replacing any of the same name.
@@ -76,8 +76,8 @@ class DeviceSyncOperations(AsyncOperationsBase):
         Args:
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
-            body: The body of `POST /db/{id}/migrations`, which lists the migrations that the
-                database has applied.
+            body: The body of `POST /db/{id}/migrations`, the route that lists the migrations
+                that the database has applied.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.
             headers: The client adds these headers to this request, replacing any of the same name.
@@ -150,7 +150,7 @@ class DeviceSyncOperations(AsyncOperationsBase):
         Args:
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
-            body: The body of `POST /db/{id}/snapshot/page`, which asks for one page of a
+            body: The body of `POST /db/{id}/snapshot/page`, the request for one page of a
                 table's rows.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.

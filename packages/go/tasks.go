@@ -73,11 +73,17 @@ func reportFailure(onError func(error), failure error) {
 	onError(failure)
 }
 
+// CallbackPanic is the error that the [OnError] handler receives when a subscription callback or a
+// live query listener panics. The client recovers from the panic and keeps delivering changes and
+// updates.
 type CallbackPanic struct {
+	// Value is the value that the callback passed to panic.
 	Value any
+	// Stack is the stack trace of the goroutine at the panic.
 	Stack []byte
 }
 
+// Error returns "a callback panicked: " followed by the value that the callback passed to panic.
 func (p *CallbackPanic) Error() string {
 	return fmt.Sprintf("a callback panicked: %v", p.Value)
 }

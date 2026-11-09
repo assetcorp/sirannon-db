@@ -6,7 +6,7 @@ export const SNAPSHOT_DEFAULT_PAGE_ROWS = 500
 export const SNAPSHOT_PAGE_BYTE_CAP = 8 * 1024 * 1024
 
 /**
- * The body of `POST /db/{id}/snapshot`, which describes everything a device needs to copy the database.
+ * The body of `POST /db/{id}/snapshot`, with everything that a device needs to copy the database.
  *
  * @public
  */
@@ -19,7 +19,7 @@ export interface SnapshotManifestResponse {
   epoch: string
   /** The statements that create the database's tables, in foreign key order, followed by its other schema objects such as indexes. */
   schema: string[]
-  /** Each table to copy, in the order that its foreign keys need, with its row count. */
+  /** Each table to copy, in foreign key order, with its row count. */
   tables: SnapshotManifestTable[]
   /** The migrations that the database has applied. */
   migrations: SnapshotManifestMigration[]
@@ -52,7 +52,7 @@ export interface SnapshotManifestMigration {
 }
 
 /**
- * The body of `POST /db/{id}/snapshot/page`, which asks for one page of a table's rows.
+ * The body of `POST /db/{id}/snapshot/page`, the request for one page of a table's rows.
  *
  * @public
  */
@@ -61,7 +61,7 @@ export interface SnapshotPageRequest {
   table: string
   /** The key of the last row of the previous page, which the server reads past. Leave it out for the first page. */
   afterKey?: unknown[]
-  /** The most rows to return, from 1 to 1000. Defaults to 500. */
+  /** The most rows to return, from 1 to 1000, which is 500 when you leave it out. */
   limit?: number
 }
 

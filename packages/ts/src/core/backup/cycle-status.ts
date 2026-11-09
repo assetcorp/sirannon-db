@@ -47,8 +47,8 @@ const failuresRaisedBySirannon = new WeakSet<BackupCycleError>()
 
 /**
  * Returns whether Sirannon raised the error behind a recorded failure, as opposed
- * to the operating system, a driver, or a destination, whose messages can name
- * files on the server.
+ * to the operating system, a driver, or a destination, whose messages can include
+ * the paths of files on the server.
  *
  * @param failure - A failure that a backup cycle recorded.
  * @returns `true` when the failure's code and message come from a `SirannonError`.

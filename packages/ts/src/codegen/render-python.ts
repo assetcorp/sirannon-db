@@ -56,9 +56,10 @@ const OUTSIDE_PRINTABLE_ASCII = /[^\x20-\x7e]/gu
 /**
  * Returns Python source that declares a typed `ReadRef` or `WriteRef` for every operation in a manifest.
  *
- * Each database becomes a class whose `Reads` and `Writes` classes hold one reference per operation, and the
- * shared operations become the `SharedOperations` class. Every argument and every derived column becomes a key of
- * a `TypedDict`, so a type checker refuses an argument or a column that the server does not serve.
+ * The function writes one class for each database, whose nested `Reads` and `Writes` classes hold one reference per
+ * operation, and it writes the shared operations as the `SharedOperations` class. Every argument and every derived
+ * column becomes a key of a `TypedDict`, so a type checker accepts only the arguments and columns that the operation
+ * defines.
  *
  * @param manifest - The operations to render.
  * @returns The Python source to write.

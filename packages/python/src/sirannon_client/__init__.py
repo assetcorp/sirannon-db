@@ -1,4 +1,4 @@
-"""Python client for the Sirannon database server."""
+"""The sirannon_client package connects Python code to a Sirannon database server."""
 
 from sirannon_client._async_client import AsyncSirannonClient
 from sirannon_client._async_topology import AsyncTopologyAwareClient

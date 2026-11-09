@@ -8,6 +8,9 @@ import (
 
 const defaultLoadBatchSize = 1000
 
+// RemoteDatabase sends statements, registered operations, subscriptions, and live queries to one
+// database on the server. [Client.Database] and [TopologyClient.Database] return it. Many goroutines
+// can call one RemoteDatabase at once.
 type RemoteDatabase struct {
 	id        string
 	transport databaseTransport
@@ -23,6 +26,7 @@ func newRemoteDatabase(parent context.Context, id string, transport databaseTran
 	return &RemoteDatabase{id: id, transport: transport, sqlGate: sqlGate, lifetime: lifetime, cancel: cancel, onClose: onClose}
 }
 
+// ID returns the identifier of the database.
 func (d *RemoteDatabase) ID() string {
 	return d.id
 }
@@ -58,6 +62,9 @@ func (d *RemoteDatabase) digest(ctx context.Context, refresh bool) (string, erro
 	return cache.registryDigest(ctx, refresh, d.lifetime.Done())
 }
 
+// Query sends one read statement and returns its rows. The params argument takes a []any of
+// positional values, a map[string]any of named values, or nil. When the server refuses SQL
+// statements, Query fails with SQL_NOT_ACCEPTED before the client sends the statement.
 func (d *RemoteDatabase) Query(ctx context.Context, sql string, params any, options ...QueryOption) ([]Row, error) {
 	var rows []Row
 	err := d.run(ctx, func(ctx context.Context) error {
@@ -71,6 +78,9 @@ func (d *RemoteDatabase) Query(ctx context.Context, sql string, params any, opti
 	return rows, err
 }
 
+// Execute sends one write statement and returns what it changed. It takes params in the same forms
+// as [RemoteDatabase.Query]. Like Query, it fails with SQL_NOT_ACCEPTED before sending anything when
+// the server refuses SQL statements.
 func (d *RemoteDatabase) Execute(ctx context.Context, sql string, params any) (ExecuteResult, error) {
 	var result ExecuteResult
 	err := d.run(ctx, func(ctx context.Context) error {
@@ -90,6 +100,8 @@ func (d *RemoteDatabase) Execute(ctx context.Context, sql string, params any) (E
 	return result, err
 }
 
+// Transaction sends the statements as one transaction, so either all of them take effect or none
+// does. It returns one result for each statement in order, or INVALID_ARGUMENT for an empty list.
 func (d *RemoteDatabase) Transaction(ctx context.Context, statements []Statement, options ...ExecuteOption) ([]ExecuteResult, error) {
 	if len(statements) == 0 {
 		return nil, invalidArgument("A transaction needs at least one statement")
@@ -106,6 +118,9 @@ func (d *RemoteDatabase) Transaction(ctx context.Context, statements []Statement
 	return results, err
 }
 
+// Batch sends one statement with every parameter set in paramsBatch, which the server commits in one
+// transaction. It returns one result for each parameter set, or INVALID_ARGUMENT for an empty
+// paramsBatch.
 func (d *RemoteDatabase) Batch(ctx context.Context, sql string, paramsBatch []any, options ...ExecuteOption) ([]ExecuteResult, error) {
 	var results []ExecuteResult
 	err := d.run(ctx, func(ctx context.Context) error {
@@ -119,6 +134,10 @@ func (d *RemoteDatabase) Batch(ctx context.Context, sql string, paramsBatch []an
 	return results, err
 }
 
+// Load sends one statement with every parameter set in paramsBatch and returns the totals. The server
+// relaxes the writer's durability during the load and restores the configured durability before it
+// answers. If the server crashes during a load, SQLite rolls back the uncommitted rows, so you can
+// send the same load again.
 func (d *RemoteDatabase) Load(ctx context.Context, sql string, paramsBatch []any, options LoadOptions) (LoadResult, error) {
 	var result LoadResult
 	err := d.run(ctx, func(ctx context.Context) error {
@@ -132,6 +151,10 @@ func (d *RemoteDatabase) Load(ctx context.Context, sql string, paramsBatch []any
 	return result, err
 }
 
+// LoadAll sends one statement with every parameter set that rows yields, in requests of
+// [LoadAllOptions.BatchSize] rows. The server checkpoints the WAL only after the last request,
+// because LoadAll sets [LoadOptions.Checkpoint] to false on every earlier one. When a request fails,
+// LoadAll stops and returns the totals of the requests before it together with the error.
 func (d *RemoteDatabase) LoadAll(ctx context.Context, sql string, rows iter.Seq[any], options LoadAllOptions) (LoadResult, error) {
 	batchSize := options.BatchSize
 	if batchSize < 0 {
@@ -210,6 +233,8 @@ func (d *RemoteDatabase) openLive(ctx context.Context, name string, args map[str
 	return handle, err
 }
 
+// Ack tells the server that the device with the identifier deviceID has stored every change up to
+// seq. It needs the WebSocket transport, so it fails with TRANSPORT_ERROR over HTTP.
 func (d *RemoteDatabase) Ack(ctx context.Context, deviceID string, seq int64) (*AckResponse, error) {
 	var answer *AckResponse
 	err := d.run(ctx, func(ctx context.Context) error {
@@ -220,10 +245,14 @@ func (d *RemoteDatabase) Ack(ctx context.Context, deviceID string, seq int64) (*
 	return answer, err
 }
 
+// On returns a [SubscriptionBuilder] for the changes to table.
 func (d *RemoteDatabase) On(table string) *SubscriptionBuilder {
 	return &SubscriptionBuilder{database: d, table: table}
 }
 
+// Close closes the database's connection, so every later call on it fails with TRANSPORT_ERROR. A
+// later call to Database with the same identifier returns a new RemoteDatabase. A second call to
+// Close returns at once.
 func (d *RemoteDatabase) Close() {
 	d.closeOnce.Do(func() {
 		d.cancel()

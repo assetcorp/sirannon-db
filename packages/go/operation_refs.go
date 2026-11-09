@@ -8,16 +8,28 @@ import (
 	"sync"
 )
 
+// NoArgs is the argument type of a registered operation that takes no arguments.
 type NoArgs struct{}
 
+// ReadRef refers to a registered read whose arguments have the type Args and whose rows have the
+// type R, which is either [Row] or a struct whose JSON tags match the columns. sirannon-codegen writes
+// one ReadRef for each read that the server registers.
 type ReadRef[Args any, R any] struct {
+	// Name is the name of the operation in the server's registry.
 	Name string
 }
 
+// WriteRef refers to a registered write whose arguments have the type Args. sirannon-codegen writes
+// one WriteRef for each write that the server registers.
 type WriteRef[Args any] struct {
+	// Name is the name of the operation in the server's registry.
 	Name string
 }
 
+// Query calls the registered read that ref refers to and returns its rows as R. The args value must
+// encode as a JSON object, so pass a struct or a map. The client leaves a field at its zero value
+// when its column is missing or NULL. A column whose value does not fit its field fails the call
+// with INVALID_RESPONSE. Pass [WithReadConcern] to set how current the data must be.
 func Query[Args any, R any](ctx context.Context, db *RemoteDatabase, ref ReadRef[Args, R], args Args, options ...QueryOption) ([]R, error) {
 	if db == nil {
 		return nil, invalidArgument("Query needs a database")
@@ -45,6 +57,9 @@ func Query[Args any, R any](ctx context.Context, db *RemoteDatabase, ref ReadRef
 	return converted, nil
 }
 
+// Execute calls the registered write that ref refers to and returns one result for each statement of
+// the write, in the order in which the server executed them. Pass [WithWriteConcern]
+// to set which nodes must acknowledge the write before the server confirms it.
 func Execute[Args any](ctx context.Context, db *RemoteDatabase, ref WriteRef[Args], args Args, options ...ExecuteOption) ([]ExecuteResult, error) {
 	if db == nil {
 		return nil, invalidArgument("Execute needs a database")
@@ -56,6 +71,8 @@ func Execute[Args any](ctx context.Context, db *RemoteDatabase, ref WriteRef[Arg
 	return db.executeOperation(ctx, ref.Name, encoded, options)
 }
 
+// Live opens a [LiveQuery] on the registered read that ref refers to and returns once the server
+// confirms it. Live needs the WebSocket transport. Of the options, it applies only [OnError].
 func Live[Args any, R any](ctx context.Context, db *RemoteDatabase, ref ReadRef[Args, R], args Args, options ...SubscribeOption) (*LiveQuery[R], error) {
 	if db == nil {
 		return nil, invalidArgument("Live needs a database")

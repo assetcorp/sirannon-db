@@ -42,11 +42,12 @@ def _urls(values: Sequence[str] | None, name: str) -> list[str]:
 class AsyncTopologyAwareClient:
     """Connects to a replication group from asyncio code, sending writes to the primary and reads by preference.
 
-    In `static` discovery the client uses the `primary` and `replicas` that you list. A read that cannot reach a
-    replica sets it aside for five seconds and runs once more on another node. In `coordinator` discovery the
-    client reads `GET /db/{id}/cluster` from the `endpoints` that you list, follows the primary that it names,
-    and moves subscriptions when the primary changes. A failed write is raised to you and never resent, so a
-    write reaches the server twice only when you send it twice.
+    In `static` discovery, the client uses the `primary` and `replicas` that you list. When the client cannot
+    reach a replica for a read, it sets that replica aside for five seconds and sends the read once more to
+    another node. In `coordinator` discovery, the client fetches `GET /db/{id}/cluster` from the `endpoints`
+    that you list and sends writes to the primary in that routing. When the primary changes, the client moves
+    every subscription to the new routing. The client raises the error of a failed write without sending the
+    write again, so a write reaches the server twice only when you send it twice.
     """
 
     def __init__(
@@ -67,23 +68,25 @@ class AsyncTopologyAwareClient:
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        """Prepares a client for a replication group, which opens no connection until the first call.
+        """Prepares a client for a replication group, without opening a connection before the first call.
 
         Args:
             primary: The primary's base address, for a group that you list by hand.
             replicas: The replicas' base addresses, for a group that you list by hand.
             endpoints: The nodes that the client asks for routing in `coordinator` discovery.
             read_preference: `primary`, `replica` for a random replica, or `nearest` for the lowest latency.
-            discovery: `static` uses the nodes that you list, and `coordinator` asks the group.
-            read_concern: The read concern that every read requires, which chooses the node in `coordinator`
-                discovery and travels with each read.
+            discovery: With `static`, the client uses the nodes that you list, while with `coordinator` it
+                fetches the routing from the group.
+            read_concern: The read concern that every read requires. In `coordinator` discovery, the client
+                picks the node for each read by this level, and it sends the level with each read.
             transport: `websocket` or `http`, as for `SirannonClient`.
             headers: The client sends these headers with every request, discovery read, and handshake.
             websocket_protocols: The client offers these subprotocols after `sirannon.v1`.
-            auto_reconnect: Reconnect after a dropped WebSocket and restore every subscription.
+            auto_reconnect: When this is true, the client reconnects after a WebSocket drops and restores every
+                subscription.
             reconnect_interval_ms: The client waits this long between reconnection tries.
-            request_timeout_ms: The client waits this long for each answer, and 0 waits without a limit.
-            max_response_bytes: The client refuses an answer larger than this, and 0 accepts any size.
+            request_timeout_ms: The client waits this long for each answer, and with 0 it waits without a limit.
+            max_response_bytes: The client refuses an answer larger than this, and with 0 it accepts any size.
             http_client: An `httpx.AsyncClient` to send HTTP requests through, which the caller closes.
         """
         if read_preference not in ("primary", "replica", "nearest"):
@@ -126,7 +129,7 @@ class AsyncTopologyAwareClient:
         self._closed = False
 
     def database(self, database_id: str) -> AsyncRemoteDatabase:
-        """Returns the routed handle for one database, and keeps it, so a later call with the same id returns it."""
+        """Returns the routed handle for one database and keeps it, so a later call with the same id returns it."""
         if self._closed:
             raise closed_error()
         existing = self._databases.get(database_id)
@@ -163,7 +166,7 @@ class AsyncTopologyAwareClient:
         return opened
 
     async def aclose(self) -> None:
-        """Closes every database handle and connection, and fails every call in flight with `TRANSPORT_ERROR`."""
+        """Closes every database handle and connection, so every call in flight fails with `TRANSPORT_ERROR`."""
         if self._closed:
             return
         self._closed = True

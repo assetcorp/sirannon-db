@@ -53,8 +53,9 @@ import type {
 /**
  * An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly.
  *
- * A row, a change event, a bind parameter, and a subscription filter carry such an integer in this envelope. Decode
- * it into a 64-bit integer, and send an integer outside that range in the same envelope.
+ * The server and the client put such an integer in this envelope wherever it appears in a row, a change event, a bind
+ * parameter, or a subscription filter. Decode it into a 64-bit integer, and send an integer outside that range in the
+ * same envelope.
  *
  * @public
  */
@@ -66,8 +67,8 @@ export interface IntegerEnvelope {
 /**
  * A BLOB, which JSON has no type for.
  *
- * A row, a change event, a bind parameter, and a subscription filter carry every BLOB in this envelope. Decode it into
- * a byte array, and send a byte array in the same envelope.
+ * The server and the client put every BLOB in this envelope wherever it appears in a row, a change event, a bind
+ * parameter, or a subscription filter. Decode it into a byte array, and send a byte array in the same envelope.
  *
  * @public
  */
@@ -77,7 +78,7 @@ export interface BlobEnvelope {
 }
 
 /**
- * The body of `POST /db/{id}/query/{name}`, which runs a registered read.
+ * The body of `POST /db/{id}/query/{name}`, the route that executes a registered read.
  *
  * @public
  */
@@ -89,7 +90,7 @@ export interface OperationQueryRequest {
 }
 
 /**
- * The body of `POST /db/{id}/execute/{name}`, which runs a registered write in one transaction.
+ * The body of `POST /db/{id}/execute/{name}`, the route that executes a registered write in one transaction.
  *
  * @public
  */
@@ -106,19 +107,20 @@ export interface OperationExecuteRequest {
  * @public
  */
 export interface OperationExecuteResponse {
-  /** One result per statement of the registered write, in the order that the transaction ran them. */
+  /** One result per statement of the registered write, in the order in which the transaction executed them. */
   results: ExecuteResponse[]
 }
 
 /**
- * The body of `POST /db/{id}/encryption`, which encrypts the database, changes its key, or removes its encryption.
+ * The body of `POST /db/{id}/encryption`, the route that encrypts the database, changes its key, or removes its
+ * encryption.
  *
  * @public
  */
 export interface EncryptionChangeRequest {
   /**
    * The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the target key, or null
-   * to remove encryption. No key crosses the wire.
+   * to remove encryption. The request holds the name only, so only the server holds the key.
    */
   keyRef: string | null
 }
@@ -129,13 +131,13 @@ export interface EncryptionChangeRequest {
  * @public
  */
 export interface StartedResponse {
-  /** Always true, because the server sends this answer only once the work has started. */
+  /** This is always true, because the server sends this answer only once the work has started. */
   started: true
 }
 
 /**
- * Every type that a request or a response of the HTTP API carries, keyed by the schema name that the OpenAPI file
- * gives it.
+ * Every type that a request or a response of the HTTP API holds, keyed by the schema name that the OpenAPI file gives
+ * it.
  *
  * @internal
  */

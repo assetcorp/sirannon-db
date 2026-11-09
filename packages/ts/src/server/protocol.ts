@@ -172,7 +172,7 @@ export type LoadResponse = BulkLoadResult
  * @public
  */
 export interface AckResponse {
-  /** True, because the server answers only once it has recorded the acknowledgement. */
+  /** This is always true, because the server answers only once it has recorded the acknowledgement. */
   acked: boolean
   /** The sequence that the device acknowledged, as a decimal string. */
   seq: string
@@ -190,13 +190,13 @@ export interface ErrorResponse {
     code: string
     /** What went wrong, for a log or a person. */
     message: string
-    /** The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, present only when it holds a value. */
+    /** The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, which the server includes only when it holds a value. */
     details?: Record<string, unknown>
   }
 }
 
 /**
- * The body of `GET /db/{id}/cluster`, which states where a client sends the database's writes and reads.
+ * The body of `GET /db/{id}/cluster`, with the nodes to which a client sends the database's writes and reads.
  *
  * @public
  */

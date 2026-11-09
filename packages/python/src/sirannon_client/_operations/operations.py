@@ -35,7 +35,8 @@ class OperationsOperations(SyncOperationsBase):
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
             name: The name of the registered operation, percent-encoded.
-            body: The body of `POST /db/{id}/query/{name}`, which runs a registered read.
+            body: The body of `POST /db/{id}/query/{name}`, the route that executes a
+                registered read.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.
             headers: The client adds these headers to this request, replacing any of the same name.
@@ -75,8 +76,8 @@ class OperationsOperations(SyncOperationsBase):
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
             name: The name of the registered operation, percent-encoded.
-            body: The body of `POST /db/{id}/execute/{name}`, which runs a registered write in
-                one transaction.
+            body: The body of `POST /db/{id}/execute/{name}`, the route that executes a
+                registered write in one transaction.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.
             headers: The client adds these headers to this request, replacing any of the same name.

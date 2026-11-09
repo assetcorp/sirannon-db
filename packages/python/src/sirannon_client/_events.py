@@ -18,7 +18,7 @@ _background: set[asyncio.Future[Any]] = set()
 
 @dataclass(frozen=True)
 class ChangeEvent:
-    """One row change that a subscription delivers."""
+    """One row change, as the client passes it to a subscription callback."""
 
     type: str
     """`insert`, `update`, or `delete`."""
@@ -33,7 +33,7 @@ class ChangeEvent:
     old_row: dict[str, Any] | None = None
     """The row before an update, where the server sends it."""
     extra: dict[str, Any] = field(default_factory=dict)
-    """The fields that device sync adds, such as `hlc`, `origin`, `rowId`, `txId`, and `txEnd`."""
+    """The device sync fields that the server sends, such as `hlc`, `origin`, `rowId`, `txId`, and `txEnd`."""
 
 
 EXTRA_EVENT_FIELDS = ("hlc", "origin", "rowId", "txId", "txEnd")

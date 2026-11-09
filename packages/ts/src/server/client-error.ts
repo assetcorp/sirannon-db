@@ -1,8 +1,8 @@
 import type { SirannonError } from '../core/errors.js'
 
 /**
- * The message that the server sends a client for an error that Sirannon did not raise, because such an error can name
- * files and other details of the server's machine.
+ * The message that the server sends a client for an error from outside Sirannon, because such an error can include
+ * file paths and other details of the server's machine.
  *
  * @internal
  */

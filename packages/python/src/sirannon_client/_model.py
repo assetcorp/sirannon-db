@@ -8,8 +8,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, ValidatorFunctionWr
 class ApiModel(BaseModel):
     """Every request, response, and message model of the Sirannon API derives from this class.
 
-    A model accepts its fields under the snake_case attribute name or the camelCase name that the server
-    writes, and it keeps any field that it does not declare, so an answer from a newer server still parses.
+    A model accepts each field under its snake_case attribute name or under the camelCase name that the server
+    writes. It also keeps every field that it does not declare, so that an answer from a newer server still
+    parses.
     """
 
     model_config = ConfigDict(

@@ -6,7 +6,7 @@ import type { DbRouteHandler } from './http-handler.js'
 import { schemaVersionValidationError } from './sync-protocol.js'
 
 /**
- * The body of `POST /db/{id}/migrations`, which lists the migrations that the database has applied.
+ * The body of `POST /db/{id}/migrations`, the route that lists the migrations that the database has applied.
  *
  * @public
  */

@@ -184,8 +184,8 @@ type BackupRestoreRequest struct {
 	// The moment, in epoch milliseconds, to restore the database to. When it is absent, the server uses
 	// the current time, so it restores the newest state that the destination stores.
 	Moment *float64 `json:"moment,omitempty"`
-	// How many change pieces the server replays between one checkpoint and the next, from 1 to 4096.
-	// Defaults to 16.
+	// How many change pieces the server replays between one checkpoint and the next, from 1 to 4096, which
+	// is 16 when you leave it out.
 	BatchSize *float64 `json:"batchSize,omitempty"`
 }
 
@@ -239,8 +239,8 @@ type BackupRestoreStatusError struct {
 	Message string `json:"message"`
 }
 
-// BackupRestoreSummary: The report of one finished restore as the server sends it, which leaves out
-// the path of the rebuilt database file on the server.
+// BackupRestoreSummary: The report of one finished restore as the server sends it, without the path of
+// the rebuilt database file on the server.
 type BackupRestoreSummary struct {
 	// The chain that Sirannon restores from.
 	ChainID string `json:"chainId"`
@@ -267,8 +267,8 @@ type BackupRestoreSummary struct {
 	BatchCount float64 `json:"batchCount"`
 }
 
-// BackupRunSummary: The report of one finished backup as the server sends it, which leaves out the
-// path of the source database file on the server.
+// BackupRunSummary: The report of one finished backup as the server sends it, without the path of the
+// source database file on the server.
 type BackupRunSummary struct {
 	// The identifier of the source database.
 	DatabaseID string `json:"databaseId"`
@@ -381,7 +381,7 @@ type BackupStatusResponse struct {
 // BackupTriggerResponse: The server's answer when a caller triggers a backup, which it sends once it
 // accepts the turn and before the backup finishes.
 type BackupTriggerResponse struct {
-	// Always true, because the server sends this answer only after it accepts the turn.
+	// This is always true, because the server sends this answer only after it accepts the turn.
 	Started bool `json:"started"`
 }
 
@@ -427,9 +427,9 @@ type BatchResponse struct {
 	Results []ExecuteResponse `json:"results"`
 }
 
-// BlobEnvelope: A BLOB, which JSON has no type for. A row, a change event, a bind parameter, and a
-// subscription filter carry every BLOB in this envelope. Decode it into a byte array, and send a byte
-// array in the same envelope.
+// BlobEnvelope: A BLOB, which JSON has no type for. The server and the client put every BLOB in this
+// envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter.
+// Decode it into a byte array, and send a byte array in the same envelope.
 type BlobEnvelope struct {
 	// The bytes in uppercase hexadecimal, two digits per byte, where an empty string is an empty BLOB.
 	SirannonBlob string `json:"__sirannon_blob"`
@@ -446,7 +446,7 @@ const (
 	BulkLoadDurabilityNormal BulkLoadDurability = "normal"
 )
 
-// CapabilitiesResponse: The body of `GET /capabilities`, which names what this server accepts.
+// CapabilitiesResponse: The body of `GET /capabilities`, which lists what this server accepts.
 type CapabilitiesResponse struct {
 	// The capabilities that the server announces, such as `query.sql` when it accepts SQL statements and
 	// `query.named` when it serves registered operations.
@@ -462,11 +462,11 @@ type CapabilitiesResponseRegistry struct {
 	Digest string `json:"digest"`
 }
 
-// ChangesRequest: The body of `POST /db/{id}/changes`, which applies a device's changes to the
-// server's database.
+// ChangesRequest: The body of `POST /db/{id}/changes`, the route that applies a device's changes to
+// the server's database.
 type ChangesRequest struct {
-	// The schema version of the device's database, which the server compares with its own before it
-	// applies the batch.
+	// The schema version of the device's database, which the server compares with the schema version of
+	// its database before it applies the batch.
 	SchemaVersion *float64 `json:"schemaVersion,omitempty"`
 	// The changes to apply.
 	Batch SyncBatch `json:"batch"`
@@ -476,8 +476,8 @@ type ChangesRequest struct {
 type ChangesResponse struct {
 	// How many changes the server applied.
 	Applied float64 `json:"applied"`
-	// How many changes the server skipped, such as the changes of a batch it had applied before, an update
-	// to a missing row, or a change that lost to the server's row.
+	// How many changes the server skipped, such as the changes of a batch that it had applied before, an
+	// update to a missing row, or a change older than the server's version of the row.
 	Skipped float64 `json:"skipped"`
 	// How many changes a conflict resolver settled.
 	Conflicts float64 `json:"conflicts"`
@@ -494,8 +494,8 @@ type ClusterReadEndpointInfo struct {
 	ReadConcerns []ReadConcernLevel `json:"readConcerns"`
 }
 
-// ClusterStatusResponse: The body of `GET /db/{id}/cluster`, which states where a client sends the
-// database's writes and reads.
+// ClusterStatusResponse: The body of `GET /db/{id}/cluster`, with the nodes to which a client sends
+// the database's writes and reads.
 type ClusterStatusResponse struct {
 	// The identifier of the database that this status describes.
 	DatabaseID string `json:"databaseId"`
@@ -538,11 +538,12 @@ type DatabaseStatus struct {
 	Closed bool `json:"closed"`
 }
 
-// EncryptionChangeRequest: The body of `POST /db/{id}/encryption`, which encrypts the database,
-// changes its key, or removes its encryption.
+// EncryptionChangeRequest: The body of `POST /db/{id}/encryption`, the route that encrypts the
+// database, changes its key, or removes its encryption.
 type EncryptionChangeRequest struct {
 	// The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the target
-	// key, or null to remove encryption. No key crosses the wire.
+	// key, or null to remove encryption. The request holds the name only, so only the server holds the
+	// key.
 	KeyRef *string `json:"keyRef"`
 }
 
@@ -621,8 +622,8 @@ type ErrorResponseError struct {
 	Code string `json:"code"`
 	// What went wrong, for a log or a person.
 	Message string `json:"message"`
-	// The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`,
-	// present only when it holds a value.
+	// The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, which
+	// the server includes only when it holds a value.
 	Details map[string]any `json:"details,omitzero"`
 }
 
@@ -646,17 +647,17 @@ type ExecuteResponse struct {
 }
 
 // IntegerEnvelope: An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers
-// cannot hold exactly. A row, a change event, a bind parameter, and a subscription filter carry such
-// an integer in this envelope. Decode it into a 64-bit integer, and send an integer outside that range
-// in the same envelope.
+// cannot hold exactly. The server and the client put such an integer in this envelope wherever it
+// appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a
+// 64-bit integer, and send an integer outside that range in the same envelope.
 type IntegerEnvelope struct {
 	// The integer in decimal, of 1 to 19 digits with an optional leading `-`.
 	SirannonInt string `json:"__sirannon_int"`
 }
 
-// LivenessResponse: The body of `GET /health`, which the server sends while its process runs.
+// LivenessResponse: The body of `GET /health`, which the server sends while its process is up.
 type LivenessResponse struct {
-	// Always `ok`, because a process that cannot answer sends nothing.
+	// This is always `ok`, because only a live process can answer.
 	Status string `json:"status"`
 }
 
@@ -697,8 +698,8 @@ type MigrationListEntry struct {
 	Up *string `json:"up,omitempty"`
 }
 
-// MigrationListRequest: The body of `POST /db/{id}/migrations`, which lists the migrations that the
-// database has applied.
+// MigrationListRequest: The body of `POST /db/{id}/migrations`, the route that lists the migrations
+// that the database has applied.
 type MigrationListRequest struct {
 	// The schema version of the device, so that the server sends the statements of every later migration.
 	After *float64 `json:"after,omitempty"`
@@ -712,8 +713,8 @@ type MigrationListResponse struct {
 	Migrations []MigrationListEntry `json:"migrations"`
 }
 
-// OperationExecuteRequest: The body of `POST /db/{id}/execute/{name}`, which runs a registered write
-// in one transaction.
+// OperationExecuteRequest: The body of `POST /db/{id}/execute/{name}`, the route that executes a
+// registered write in one transaction.
 type OperationExecuteRequest struct {
 	// The arguments that the registered write takes, by name. The server fills the arguments that come
 	// from identity.
@@ -724,11 +725,13 @@ type OperationExecuteRequest struct {
 
 // OperationExecuteResponse: The body that `POST /db/{id}/execute/{name}` returns.
 type OperationExecuteResponse struct {
-	// One result per statement of the registered write, in the order that the transaction ran them.
+	// One result per statement of the registered write, in the order in which the transaction executed
+	// them.
 	Results []ExecuteResponse `json:"results"`
 }
 
-// OperationQueryRequest: The body of `POST /db/{id}/query/{name}`, which runs a registered read.
+// OperationQueryRequest: The body of `POST /db/{id}/query/{name}`, the route that executes a
+// registered read.
 type OperationQueryRequest struct {
 	// The arguments that the registered read takes, by name. The server fills the arguments that come from
 	// identity.
@@ -768,8 +771,8 @@ const (
 	ReadConcernLevelLinearizable ReadConcernLevel = "linearizable"
 )
 
-// ReadinessResponse: The body of `GET /health/ready`, which states whether the node can serve reads
-// and writes.
+// ReadinessResponse: The body of `GET /health/ready`, with whether the node can serve reads and
+// writes.
 type ReadinessResponse struct {
 	// What the node can do now: `ok` when it is healthy, `degraded` when a database has closed, and the
 	// replication health state otherwise. One of `ok`, `degraded`, `failing_over`, `unavailable`,
@@ -777,11 +780,12 @@ type ReadinessResponse struct {
 	Status string `json:"status"`
 	// One entry for each database that the registry holds open.
 	Databases []DatabaseStatus `json:"databases"`
-	// The replication state of this node, which the server reports when it runs with replication.
+	// The replication state of this node, which the server reports when replication is on.
 	Replication *ReplicationReadiness `json:"replication,omitempty"`
 }
 
-// ReplicationReadiness: The replication state of one node, as `GET /health/ready` reports it.
+// ReplicationReadiness: The replication state of one node, as the server reports it in `GET
+// /health/ready`.
 type ReplicationReadiness struct {
 	// Whether this node is the primary or a replica.
 	Role string `json:"role"`
@@ -801,9 +805,9 @@ type ReplicationReadiness struct {
 	Coordinator *ReplicationReadinessCoordinator `json:"coordinator,omitempty"`
 	// The state of this node's failover controller.
 	Controller *ReplicationReadinessController `json:"controller,omitempty"`
-	// The replicas that the group counts as in sync.
+	// The replicas that are in sync with the primary.
 	InSyncReplicas []string `json:"inSyncReplicas,omitzero"`
-	// The replicas that have fallen behind.
+	// The replicas that lag behind the primary.
 	LaggingReplicas []string `json:"laggingReplicas,omitzero"`
 	// How far this node has caught up with the primary.
 	SyncState *string `json:"syncState,omitempty"`
@@ -842,8 +846,8 @@ type SnapshotManifestMigration struct {
 	Checksum *string `json:"checksum"`
 }
 
-// SnapshotManifestResponse: The body of `POST /db/{id}/snapshot`, which describes everything a device
-// needs to copy the database.
+// SnapshotManifestResponse: The body of `POST /db/{id}/snapshot`, with everything that a device needs
+// to copy the database.
 type SnapshotManifestResponse struct {
 	// The identifier of the database that the snapshot copies.
 	DatabaseID string `json:"databaseId"`
@@ -855,7 +859,7 @@ type SnapshotManifestResponse struct {
 	// The statements that create the database's tables, in foreign key order, followed by its other schema
 	// objects such as indexes.
 	Schema []string `json:"schema"`
-	// Each table to copy, in the order that its foreign keys need, with its row count.
+	// Each table to copy, in foreign key order, with its row count.
 	Tables []SnapshotManifestTable `json:"tables"`
 	// The migrations that the database has applied.
 	Migrations []SnapshotManifestMigration `json:"migrations"`
@@ -869,15 +873,15 @@ type SnapshotManifestTable struct {
 	RowCount float64 `json:"rowCount"`
 }
 
-// SnapshotPageRequest: The body of `POST /db/{id}/snapshot/page`, which asks for one page of a table's
-// rows.
+// SnapshotPageRequest: The body of `POST /db/{id}/snapshot/page`, the request for one page of a
+// table's rows.
 type SnapshotPageRequest struct {
 	// The table to read.
 	Table string `json:"table"`
 	// The key of the last row of the previous page, which the server reads past. Leave it out for the
 	// first page.
 	AfterKey []any `json:"afterKey,omitzero"`
-	// The most rows to return, from 1 to 1000. Defaults to 500.
+	// The most rows to return, from 1 to 1000, which is 500 when you leave it out.
 	Limit *float64 `json:"limit,omitempty"`
 }
 
@@ -896,7 +900,7 @@ type SnapshotPageResponse struct {
 // StartedResponse: The server's answer when it has started work that finishes after it replies, such
 // as a restore or a key change.
 type StartedResponse struct {
-	// Always true, because the server sends this answer only once the work has started.
+	// This is always true, because the server sends this answer only once the work has started.
 	Started bool `json:"started"`
 }
 
@@ -917,7 +921,7 @@ type SyncBatch struct {
 	Changes []SyncChange `json:"changes"`
 	// The checksum over the batch's changes, which the server recomputes before it applies them.
 	Checksum string `json:"checksum"`
-	// Set when the batch ends part-way through a device transaction that the next batch continues.
+	// Whether the batch ends part-way through a device transaction that the next batch continues.
 	TxContinues *bool `json:"txContinues,omitempty"`
 }
 
@@ -996,7 +1000,7 @@ const (
 
 // AckResponse: The server's answer to a device's acknowledgement.
 type AckResponse struct {
-	// True, because the server answers only once it has recorded the acknowledgement.
+	// This is always true, because the server answers only once it has recorded the acknowledgement.
 	Acked bool `json:"acked"`
 	// The sequence that the device acknowledged, as a decimal string.
 	Seq string `json:"seq"`

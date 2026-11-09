@@ -13,7 +13,7 @@ import (
 //   - id: The identifier of the database, percent-encoded, so that an identifier holding a slash
 //     reaches the database stored under it.
 //   - name: The name of the registered operation, percent-encoded.
-//   - body: The body of `POST /db/{id}/query/{name}`, which runs a registered read.
+//   - body: The body of `POST /db/{id}/query/{name}`, the route that executes a registered read.
 //
 // Answers:
 //   - HTTP 200: The server answered the request.
@@ -46,8 +46,8 @@ func (o *Operations) QueryOperation(ctx context.Context, id string, name string,
 //   - id: The identifier of the database, percent-encoded, so that an identifier holding a slash
 //     reaches the database stored under it.
 //   - name: The name of the registered operation, percent-encoded.
-//   - body: The body of `POST /db/{id}/execute/{name}`, which runs a registered write in one
-//     transaction.
+//   - body: The body of `POST /db/{id}/execute/{name}`, the route that executes a registered write in
+//     one transaction.
 //
 // Answers:
 //   - HTTP 200: The server answered the request.

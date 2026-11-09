@@ -83,7 +83,7 @@ def discard(work: Awaitable[Any]) -> None:
 
 
 class AsyncSubscription:
-    """A change subscription, which delivers events until you call `unsubscribe`."""
+    """A change subscription, whose events the client delivers until you call `unsubscribe`."""
 
     def __init__(self, streams: Streams, subscription_id: str) -> None:
         self._streams = streams
@@ -103,7 +103,7 @@ class AsyncSubscriptionBuilder:
         self._conditions = conditions
 
     def filter(self, conditions: Mapping[str, Any]) -> AsyncSubscriptionBuilder:
-        """Returns a builder that delivers only the changes whose row matches every column value in `conditions`."""
+        """Returns a builder whose subscription receives only changes to rows holding every value in `conditions`."""
         return AsyncSubscriptionBuilder(self._database, self._table, {**(self._conditions or {}), **conditions})
 
     async def subscribe(
@@ -115,10 +115,10 @@ class AsyncSubscriptionBuilder:
     ) -> AsyncSubscription:
         """Opens the subscription and returns once the server confirms it.
 
-        The client calls `callback` with each change, in the order of the server's change log, and resumes from
-        the last change that it delivered after a reconnection. When the server no longer holds the history
-        since then, it calls `on_reset`, so read the table again there. A callback may be a coroutine function,
-        and the client passes any error that a callback raises to `on_error`.
+        The client calls `callback` with each change in the order of the server's change log. After a
+        reconnection, it resumes from the last change that it delivered. When the server has pruned the history
+        after that change, the client calls `on_reset`, so read the table again there. A callback can be a
+        coroutine function, and the client passes any error that a callback raises to `on_error`.
         """
         streams = self._database._streams_for("Subscriptions")
         subscription_id = await self._database._guarded(
@@ -128,7 +128,7 @@ class AsyncSubscriptionBuilder:
 
 
 class AsyncLiveQuery(LiveRows[RowT]):
-    """A registered read whose rows the server keeps current, applying each edit in the order that it arrives."""
+    """A registered read whose rows the client updates with each edit, in the order in which the server sent it."""
 
     def __init__(self, on_error: ErrorHandler | None) -> None:
         super().__init__(on_error)
@@ -140,7 +140,7 @@ class AsyncLiveQuery(LiveRows[RowT]):
         return self.state.rows
 
     def subscribe(self, listener: Callable[[LiveUpdate[RowT]], Any]) -> Callable[[], None]:
-        """Calls `listener` with every update, and returns a function that removes it."""
+        """Calls `listener` with every update and returns a function that removes it."""
         return self.listen(listener)
 
     def close(self) -> None:
@@ -232,7 +232,7 @@ class AsyncRemoteDatabase:
     ) -> list[RowT]: ...
 
     async def query(self, statement: Any, params: Any = None, *, read_concern: ConcernArg = None) -> list[Any]:
-        """Runs a read and returns its rows, with every integer and BLOB as the database stores it.
+        """Sends a read and returns its rows, with every integer and BLOB as the database stores it.
 
         Pass a statement and its bind parameters, a registered read and its arguments, or a registered read
         called with its arguments. The client sends a statement only to a server whose capabilities include
@@ -260,10 +260,11 @@ class AsyncRemoteDatabase:
     async def execute(
         self, statement: Any, params: Any = None, *, write_concern: ConcernArg = None
     ) -> ExecuteResponse | list[ExecuteResponse]:
-        """Runs a write. A statement returns one result, and a registered write returns one result per statement.
+        """Sends a write and returns one result for a statement, or one result per statement for a registered write.
 
         `last_insert_row_id` holds the number or the decimal string that the server sends. When a write fails,
-        the client raises the server's error and sends nothing again, so resend it yourself where that is safe.
+        the client raises the server's error without sending the write again, so resend it yourself where that is
+        safe.
         """
         operation = write_call(statement, params)
         if operation is not None:
@@ -275,7 +276,7 @@ class AsyncRemoteDatabase:
         return validated(ExecuteResponse, await self._guarded(self._channel.execute(_sql(statement), params)))
 
     async def transaction(self, statements: Sequence[Mapping[str, Any]]) -> list[ExecuteResponse]:
-        """Runs every statement in one transaction, and returns one result per statement."""
+        """Sends every statement as one transaction and returns one result per statement."""
         listed = statement_list(statements)
         await self._assert_sql()
         return results_of(await self._guarded(self._channel.transaction(listed)))
@@ -283,7 +284,7 @@ class AsyncRemoteDatabase:
     async def batch(
         self, sql: str, params_batch: Iterable[Params], *, write_concern: ConcernArg = None
     ) -> list[ExecuteResponse]:
-        """Runs one statement once per parameter set, in one transaction."""
+        """Sends one statement with every parameter set, which the server commits in one transaction."""
         encoded = [bind_values(params) for params in params_batch]
         level = concern(write_concern, "write_concern")
         await self._assert_sql()
@@ -297,7 +298,7 @@ class AsyncRemoteDatabase:
         durability: str | None = None,
         checkpoint: bool | None = None,
     ) -> LoadResponse:
-        """Runs one statement once per parameter set at the bulk-load durability, and returns the totals."""
+        """Sends one statement with every parameter set at the bulk-load durability and returns the totals."""
         encoded = [bind_values(params) for params in params_batch]
         await self._assert_sql()
         payload = await self._guarded(self._channel.load(_sql(sql), encoded, durability, checkpoint))
@@ -311,7 +312,7 @@ class AsyncRemoteDatabase:
         batch_size: int = DEFAULT_LOAD_BATCH_SIZE,
         durability: str | None = None,
     ) -> LoadResponse:
-        """Loads rows of any number in batches of `batch_size`, checkpointing only after the last batch."""
+        """Loads any number of rows in batches of `batch_size`. The server checkpoints only after the last batch."""
         planner = LoadPlanner(batch_size)
         await self._assert_sql()
 
@@ -337,7 +338,7 @@ class AsyncRemoteDatabase:
         *,
         on_error: ErrorHandler | None = None,
     ) -> AsyncLiveQuery[RowT]:
-        """Opens a live query on a registered read and returns once its first rows arrive."""
+        """Opens a live query on a registered read and returns once the client receives its first rows."""
         streams = self._streams_for("Live queries")
         name, args = read_call(operation, args) or (operation, args)
         if not isinstance(name, str) or not name:
@@ -349,14 +350,14 @@ class AsyncRemoteDatabase:
         return query
 
     async def ack(self, device_id: str, seq: int) -> AckResponse:
-        """Records that a device has applied every change up to `seq`, which device sync uses for pacing."""
+        """Tells the server that a device has stored every change up to `seq`, so the server can send it more."""
         if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
             raise invalid_argument("ack seq must be a whole number of at least 0")
         streams = self._streams_for("Acknowledgements")
         return validated(AckResponse, await self._guarded(streams.ack(device_id, seq)))
 
     async def aclose(self) -> None:
-        """Cancels every call of this database still in flight, which then fails with `TRANSPORT_ERROR`."""
+        """Cancels every call of this database still in flight, so each one fails with `TRANSPORT_ERROR`."""
         if self._closed:
             return
         self._closed = True

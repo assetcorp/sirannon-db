@@ -6,35 +6,66 @@ import (
 	"strconv"
 )
 
+// Row holds one result row under its column names. The client stores an integer as an int64,
+// including one beyond 2^53, and a BLOB as a []byte.
 type Row = map[string]any
 
+// Statement is one statement of a [RemoteDatabase.Transaction].
 type Statement struct {
-	SQL    string
+	// SQL is the text of the statement.
+	SQL string
+	// Params holds the values that the server binds to the statement: a []any of positional values, a
+	// map[string]any of named values, or nil when the statement takes none.
 	Params any
 }
 
+// ExecuteResult holds what one write statement changed.
 type ExecuteResult struct {
-	Changes         int64
+	// Changes is the number of rows that the statement inserted, updated, or deleted.
+	Changes int64
+	// LastInsertRowID is the rowid that SQLite reports for the most recent insert once the statement
+	// completes.
 	LastInsertRowID int64
 }
 
+// LoadResult holds the totals of a bulk load.
 type LoadResult struct {
+	// RowsLoaded is the number of parameter sets that the load applied.
 	RowsLoaded int64
-	Changes    int64
+	// Changes is the number of rows that the load inserted, updated, or deleted.
+	Changes int64
 }
 
+// ChangeEvent holds one change to a row, as the client passes it to a subscription callback.
 type ChangeEvent struct {
-	Type      string
-	Table     string
-	Row       Row
-	OldRow    Row
-	Seq       int64
+	// Type is insert, update, or delete.
+	Type string
+	// Table is the table of the changed row.
+	Table string
+	// Row holds the row's values after the change, or an empty Row when the server sends none.
+	Row Row
+	// OldRow holds the row's values before an update or a delete, and nil for an insert.
+	OldRow Row
+	// Seq is the position of this change in the database's change log, which the client uses to
+	// resume a subscription after the last change that it delivered.
+	Seq int64
+	// Timestamp is the number of milliseconds since the Unix epoch at the moment when the database
+	// recorded the change.
 	Timestamp float64
-	HLC       string
-	Origin    string
-	RowID     string
-	TxID      string
-	TxEnd     bool
+	// HLC is the hybrid logical clock stamp that the writing node gave this change, or "" when the
+	// change has no stamp.
+	HLC string
+	// Origin is the identifier of the node or device that wrote the change, or "" when the server
+	// sends none.
+	Origin string
+	// RowID is the primary key of the changed row, encoded as a string.
+	RowID string
+	// TxID is the identifier of the transaction that made the change, or "" when the change has no
+	// stamp.
+	TxID string
+	// TxEnd is true on the last change of a transaction that passes the subscription's filter, so
+	// that you can apply each transaction as a whole.
+	TxEnd bool
 }
 
 type statementCall struct {

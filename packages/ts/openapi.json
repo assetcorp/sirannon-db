@@ -1382,7 +1382,7 @@
           },
           "batchSize": {
             "type": "number",
-            "description": "How many change pieces the server replays between one checkpoint and the next, from 1 to 4096. Defaults to 16."
+            "description": "How many change pieces the server replays between one checkpoint and the next, from 1 to 4096, which is 16 when you leave it out."
           }
         },
         "description": "The moment to which the server rebuilds the database, and how many change pieces it replays in one batch."
@@ -1527,7 +1527,7 @@
           "framesApplied",
           "batchCount"
         ],
-        "description": "The report of one finished restore as the server sends it, which leaves out the path of the rebuilt database file on the server."
+        "description": "The report of one finished restore as the server sends it, without the path of the rebuilt database file on the server."
       },
       "BackupRunSummary": {
         "type": "object",
@@ -1640,7 +1640,7 @@
           "pieceBytes",
           "restarts"
         ],
-        "description": "The report of one finished backup as the server sends it, which leaves out the path of the source database file on the server."
+        "description": "The report of one finished backup as the server sends it, without the path of the source database file on the server."
       },
       "BackupSafeToDeleteRequest": {
         "type": "object",
@@ -1746,7 +1746,7 @@
           "started": {
             "type": "boolean",
             "const": true,
-            "description": "Always true, because the server sends this answer only after it accepts the turn."
+            "description": "This is always true, because the server sends this answer only after it accepts the turn."
           }
         },
         "required": [
@@ -1869,7 +1869,7 @@
         "required": [
           "__sirannon_blob"
         ],
-        "description": "A BLOB, which JSON has no type for. A row, a change event, a bind parameter, and a subscription filter carry every BLOB in this envelope. Decode it into a byte array, and send a byte array in the same envelope."
+        "description": "A BLOB, which JSON has no type for. The server and the client put every BLOB in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a byte array, and send a byte array in the same envelope."
       },
       "BulkLoadDurability": {
         "type": "string",
@@ -1906,14 +1906,14 @@
         "required": [
           "capabilities"
         ],
-        "description": "The body of `GET /capabilities`, which names what this server accepts."
+        "description": "The body of `GET /capabilities`, which lists what this server accepts."
       },
       "ChangesRequest": {
         "type": "object",
         "properties": {
           "schemaVersion": {
             "type": "number",
-            "description": "The schema version of the device's database, which the server compares with its own before it applies the batch."
+            "description": "The schema version of the device's database, which the server compares with the schema version of its database before it applies the batch."
           },
           "batch": {
             "$ref": "#/components/schemas/SyncBatch",
@@ -1923,7 +1923,7 @@
         "required": [
           "batch"
         ],
-        "description": "The body of `POST /db/{id}/changes`, which applies a device's changes to the server's database."
+        "description": "The body of `POST /db/{id}/changes`, the route that applies a device's changes to the server's database."
       },
       "ChangesResponse": {
         "type": "object",
@@ -1934,7 +1934,7 @@
           },
           "skipped": {
             "type": "number",
-            "description": "How many changes the server skipped, such as the changes of a batch it had applied before, an update to a missing row, or a change that lost to the server's row."
+            "description": "How many changes the server skipped, such as the changes of a batch that it had applied before, an update to a missing row, or a change older than the server's version of the row."
           },
           "conflicts": {
             "type": "number",
@@ -2061,7 +2061,7 @@
           "health",
           "healthReason"
         ],
-        "description": "The body of `GET /db/{id}/cluster`, which states where a client sends the database's writes and reads."
+        "description": "The body of `GET /db/{id}/cluster`, with the nodes to which a client sends the database's writes and reads."
       },
       "DatabaseStatus": {
         "type": "object",
@@ -2098,13 +2098,13 @@
                 "type": "string"
               }
             ],
-            "description": "The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the target key, or null to remove encryption. No key crosses the wire."
+            "description": "The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the target key, or null to remove encryption. The request holds the name only, so only the server holds the key."
           }
         },
         "required": [
           "keyRef"
         ],
-        "description": "The body of `POST /db/{id}/encryption`, which encrypts the database, changes its key, or removes its encryption."
+        "description": "The body of `POST /db/{id}/encryption`, the route that encrypts the database, changes its key, or removes its encryption."
       },
       "EncryptionChangeStatus": {
         "type": "object",
@@ -2242,7 +2242,7 @@
               "details": {
                 "type": "object",
                 "additionalProperties": true,
-                "description": "The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, present only when it holds a value."
+                "description": "The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, which the server includes only when it holds a value."
               }
             },
             "required": [
@@ -2323,7 +2323,7 @@
         "required": [
           "__sirannon_int"
         ],
-        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. A row, a change event, a bind parameter, and a subscription filter carry such an integer in this envelope. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
+        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. The server and the client put such an integer in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
       },
       "LivenessResponse": {
         "type": "object",
@@ -2331,13 +2331,13 @@
           "status": {
             "type": "string",
             "const": "ok",
-            "description": "Always `ok`, because a process that cannot answer sends nothing."
+            "description": "This is always `ok`, because only a live process can answer."
           }
         },
         "required": [
           "status"
         ],
-        "description": "The body of `GET /health`, which the server sends while its process runs."
+        "description": "The body of `GET /health`, which the server sends while its process is up."
       },
       "LoadRequest": {
         "type": "object",
@@ -2437,7 +2437,7 @@
             "description": "The schema version of the device, so that the server sends the statements of every later migration."
           }
         },
-        "description": "The body of `POST /db/{id}/migrations`, which lists the migrations that the database has applied."
+        "description": "The body of `POST /db/{id}/migrations`, the route that lists the migrations that the database has applied."
       },
       "MigrationListResponse": {
         "type": "object",
@@ -2473,7 +2473,7 @@
             "description": "The acknowledgements that the server waits for before it confirms this write."
           }
         },
-        "description": "The body of `POST /db/{id}/execute/{name}`, which runs a registered write in one transaction."
+        "description": "The body of `POST /db/{id}/execute/{name}`, the route that executes a registered write in one transaction."
       },
       "OperationExecuteResponse": {
         "type": "object",
@@ -2483,7 +2483,7 @@
             "items": {
               "$ref": "#/components/schemas/ExecuteResponse"
             },
-            "description": "One result per statement of the registered write, in the order that the transaction ran them."
+            "description": "One result per statement of the registered write, in the order in which the transaction executed them."
           }
         },
         "required": [
@@ -2504,7 +2504,7 @@
             "description": "The read concern that this read requires."
           }
         },
-        "description": "The body of `POST /db/{id}/query/{name}`, which runs a registered read."
+        "description": "The body of `POST /db/{id}/query/{name}`, the route that executes a registered read."
       },
       "QueryRequest": {
         "type": "object",
@@ -2599,14 +2599,14 @@
           },
           "replication": {
             "$ref": "#/components/schemas/ReplicationReadiness",
-            "description": "The replication state of this node, which the server reports when it runs with replication."
+            "description": "The replication state of this node, which the server reports when replication is on."
           }
         },
         "required": [
           "status",
           "databases"
         ],
-        "description": "The body of `GET /health/ready`, which states whether the node can serve reads and writes."
+        "description": "The body of `GET /health/ready`, with whether the node can serve reads and writes."
       },
       "ReplicationReadiness": {
         "type": "object",
@@ -2681,14 +2681,14 @@
             "items": {
               "type": "string"
             },
-            "description": "The replicas that the group counts as in sync."
+            "description": "The replicas that are in sync with the primary."
           },
           "laggingReplicas": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The replicas that have fallen behind."
+            "description": "The replicas that lag behind the primary."
           },
           "syncState": {
             "type": "string",
@@ -2733,7 +2733,7 @@
           "localSeq",
           "healthReason"
         ],
-        "description": "The replication state of one node, as `GET /health/ready` reports it."
+        "description": "The replication state of one node, as the server reports it in `GET /health/ready`."
       },
       "SnapshotManifestMigration": {
         "type": "object",
@@ -2792,7 +2792,7 @@
             "items": {
               "$ref": "#/components/schemas/SnapshotManifestTable"
             },
-            "description": "Each table to copy, in the order that its foreign keys need, with its row count."
+            "description": "Each table to copy, in foreign key order, with its row count."
           },
           "migrations": {
             "type": "array",
@@ -2810,7 +2810,7 @@
           "tables",
           "migrations"
         ],
-        "description": "The body of `POST /db/{id}/snapshot`, which describes everything a device needs to copy the database."
+        "description": "The body of `POST /db/{id}/snapshot`, with everything that a device needs to copy the database."
       },
       "SnapshotManifestTable": {
         "type": "object",
@@ -2844,13 +2844,13 @@
           },
           "limit": {
             "type": "number",
-            "description": "The most rows to return, from 1 to 1000. Defaults to 500."
+            "description": "The most rows to return, from 1 to 1000, which is 500 when you leave it out."
           }
         },
         "required": [
           "table"
         ],
-        "description": "The body of `POST /db/{id}/snapshot/page`, which asks for one page of a table's rows."
+        "description": "The body of `POST /db/{id}/snapshot/page`, the request for one page of a table's rows."
       },
       "SnapshotPageResponse": {
         "type": "object",
@@ -2895,7 +2895,7 @@
           "started": {
             "type": "boolean",
             "const": true,
-            "description": "Always true, because the server sends this answer only once the work has started."
+            "description": "This is always true, because the server sends this answer only once the work has started."
           }
         },
         "required": [
@@ -2953,7 +2953,7 @@
           },
           "txContinues": {
             "type": "boolean",
-            "description": "Set when the batch ends part-way through a device transaction that the next batch continues."
+            "description": "Whether the batch ends part-way through a device transaction that the next batch continues."
           }
         },
         "required": [

@@ -229,7 +229,7 @@ class BackupRestoreRequest(ApiModel):
     """
     batch_size: int | float | None = Field(default=None, alias="batchSize")
     """How many change pieces the server replays between one checkpoint and the next, from 1 to
-    4096. Defaults to 16.
+    4096, which is 16 when you leave it out.
     """
 
 
@@ -261,8 +261,8 @@ class BackupRestoreStatusError(ApiModel):
 
 
 class BackupRestoreSummary(ApiModel):
-    """The report of one finished restore as the server sends it, which leaves out the path of the
-    rebuilt database file on the server.
+    """The report of one finished restore as the server sends it, without the path of the rebuilt
+    database file on the server.
     """
 
     chain_id: str = Field(alias="chainId")
@@ -320,8 +320,8 @@ class BackupRestoreStatus(ApiModel):
 
 
 class BackupRunSummary(ApiModel):
-    """The report of one finished backup as the server sends it, which leaves out the path of the
-    source database file on the server.
+    """The report of one finished backup as the server sends it, without the path of the source
+    database file on the server.
     """
 
     database_id: str = Field(alias="databaseId")
@@ -447,7 +447,7 @@ class BackupTriggerResponse(ApiModel):
     """
 
     started: Literal[True]
-    """Always true, because the server sends this answer only after it accepts the turn."""
+    """This is always true, because the server sends this answer only after it accepts the turn."""
 
 
 class BackupVerifyRequest(ApiModel):
@@ -526,9 +526,9 @@ class BatchResponse(ApiModel):
 
 
 class BlobEnvelope(ApiModel):
-    """A BLOB, which JSON has no type for. A row, a change event, a bind parameter, and a
-    subscription filter carry every BLOB in this envelope. Decode it into a byte array, and send
-    a byte array in the same envelope.
+    """A BLOB, which JSON has no type for. The server and the client put every BLOB in this
+    envelope wherever it appears in a row, a change event, a bind parameter, or a subscription
+    filter. Decode it into a byte array, and send a byte array in the same envelope.
     """
 
     sirannon_blob: str = Field(alias="__sirannon_blob")
@@ -555,7 +555,7 @@ class CapabilitiesResponseRegistry(ApiModel):
 
 
 class CapabilitiesResponse(ApiModel):
-    """The body of `GET /capabilities`, which names what this server accepts."""
+    """The body of `GET /capabilities`, which lists what this server accepts."""
 
     capabilities: list[str]
     """The capabilities that the server announces, such as `query.sql` when it accepts SQL
@@ -621,18 +621,18 @@ class SyncBatch(ApiModel):
     checksum: str
     """The checksum over the batch's changes, which the server recomputes before it applies them."""
     tx_continues: bool | None = Field(default=None, alias="txContinues")
-    """Set when the batch ends part-way through a device transaction that the next batch continues.
+    """Whether the batch ends part-way through a device transaction that the next batch continues.
     """
 
 
 class ChangesRequest(ApiModel):
-    """The body of `POST /db/{id}/changes`, which applies a device's changes to the server's
-    database.
+    """The body of `POST /db/{id}/changes`, the route that applies a device's changes to the
+    server's database.
     """
 
     schema_version: int | float | None = Field(default=None, alias="schemaVersion")
-    """The schema version of the device's database, which the server compares with its own before
-    it applies the batch.
+    """The schema version of the device's database, which the server compares with the schema
+    version of its database before it applies the batch.
     """
     batch: SyncBatch
     """The changes to apply."""
@@ -644,8 +644,8 @@ class ChangesResponse(ApiModel):
     applied: int | float
     """How many changes the server applied."""
     skipped: int | float
-    """How many changes the server skipped, such as the changes of a batch it had applied before,
-    an update to a missing row, or a change that lost to the server's row.
+    """How many changes the server skipped, such as the changes of a batch that it had applied
+    before, an update to a missing row, or a change older than the server's version of the row.
     """
     conflicts: int | float
     """How many changes a conflict resolver settled."""
@@ -676,8 +676,8 @@ class ClusterStatusResponseCurrentPrimaryObject(ApiModel):
 
 
 class ClusterStatusResponse(ApiModel):
-    """The body of `GET /db/{id}/cluster`, which states where a client sends the database's writes
-    and reads.
+    """The body of `GET /db/{id}/cluster`, with the nodes to which a client sends the database's
+    writes and reads.
     """
 
     database_id: str = Field(alias="databaseId")
@@ -725,13 +725,14 @@ class DatabaseStatus(ApiModel):
 
 
 class EncryptionChangeRequest(ApiModel):
-    """The body of `POST /db/{id}/encryption`, which encrypts the database, changes its key, or
-    removes its encryption.
+    """The body of `POST /db/{id}/encryption`, the route that encrypts the database, changes its
+    key, or removes its encryption.
     """
 
     key_ref: str | None = Field(alias="keyRef")
     """The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the
-    target key, or null to remove encryption. No key crosses the wire.
+    target key, or null to remove encryption. The request holds the name only, so only the
+    server holds the key.
     """
 
 
@@ -813,7 +814,7 @@ class ErrorResponseError(ApiModel):
     """What went wrong, for a log or a person."""
     details: dict[str, Any] | None = None
     """The routing context of the error, such as `currentPrimary`, `primaryTerm`, or
-    `serverVersion`, present only when it holds a value.
+    `serverVersion`, which the server includes only when it holds a value.
     """
 
 
@@ -837,9 +838,9 @@ class ExecuteRequest(ApiModel):
 
 class IntegerEnvelope(ApiModel):
     """An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold
-    exactly. A row, a change event, a bind parameter, and a subscription filter carry such an
-    integer in this envelope. Decode it into a 64-bit integer, and send an integer outside that
-    range in the same envelope.
+    exactly. The server and the client put such an integer in this envelope wherever it appears
+    in a row, a change event, a bind parameter, or a subscription filter. Decode it into a
+    64-bit integer, and send an integer outside that range in the same envelope.
     """
 
     sirannon_int: str = Field(alias="__sirannon_int")
@@ -847,10 +848,10 @@ class IntegerEnvelope(ApiModel):
 
 
 class LivenessResponse(ApiModel):
-    """The body of `GET /health`, which the server sends while its process runs."""
+    """The body of `GET /health`, which the server sends while its process is up."""
 
     status: Literal["ok"]
-    """Always `ok`, because a process that cannot answer sends nothing."""
+    """This is always `ok`, because only a live process can answer."""
 
 
 class LoadRequest(ApiModel):
@@ -898,8 +899,8 @@ class MigrationListEntry(ApiModel):
 
 
 class MigrationListRequest(ApiModel):
-    """The body of `POST /db/{id}/migrations`, which lists the migrations that the database has
-    applied.
+    """The body of `POST /db/{id}/migrations`, the route that lists the migrations that the
+    database has applied.
     """
 
     after: int | float | None = None
@@ -918,8 +919,8 @@ class MigrationListResponse(ApiModel):
 
 
 class OperationExecuteRequest(ApiModel):
-    """The body of `POST /db/{id}/execute/{name}`, which runs a registered write in one
-    transaction.
+    """The body of `POST /db/{id}/execute/{name}`, the route that executes a registered write in
+    one transaction.
     """
 
     args: dict[str, Any] | None = None
@@ -934,8 +935,8 @@ class OperationExecuteResponse(ApiModel):
     """The body that `POST /db/{id}/execute/{name}` returns."""
 
     results: list[ExecuteResponse]
-    """One result per statement of the registered write, in the order that the transaction ran
-    them.
+    """One result per statement of the registered write, in the order in which the transaction
+    executed them.
     """
 
 
@@ -947,7 +948,7 @@ class ReadConcern(ApiModel):
 
 
 class OperationQueryRequest(ApiModel):
-    """The body of `POST /db/{id}/query/{name}`, which runs a registered read."""
+    """The body of `POST /db/{id}/query/{name}`, the route that executes a registered read."""
 
     args: dict[str, Any] | None = None
     """The arguments that the registered read takes, by name. The server fills the arguments that
@@ -994,7 +995,7 @@ class ReplicationReadinessCoordinator(ApiModel):
 
 
 class ReplicationReadiness(ApiModel):
-    """The replication state of one node, as `GET /health/ready` reports it."""
+    """The replication state of one node, as the server reports it in `GET /health/ready`."""
 
     role: str
     """Whether this node is the primary or a replica."""
@@ -1015,9 +1016,9 @@ class ReplicationReadiness(ApiModel):
     controller: ReplicationReadinessController | None = None
     """The state of this node's failover controller."""
     in_sync_replicas: list[str] | None = Field(default=None, alias="inSyncReplicas")
-    """The replicas that the group counts as in sync."""
+    """The replicas that are in sync with the primary."""
     lagging_replicas: list[str] | None = Field(default=None, alias="laggingReplicas")
-    """The replicas that have fallen behind."""
+    """The replicas that lag behind the primary."""
     sync_state: str | None = Field(default=None, alias="syncState")
     """How far this node has caught up with the primary."""
     health_reason: Annotated[
@@ -1046,7 +1047,7 @@ class ReplicationReadiness(ApiModel):
 
 
 class ReadinessResponse(ApiModel):
-    """The body of `GET /health/ready`, which states whether the node can serve reads and writes."""
+    """The body of `GET /health/ready`, with whether the node can serve reads and writes."""
 
     status: Annotated[Literal["ok", "degraded", "failing_over", "unavailable", "repairing", "syncing"], OPEN_ENUM]
     """What the node can do now: `ok` when it is healthy, `degraded` when a database has closed,
@@ -1055,8 +1056,7 @@ class ReadinessResponse(ApiModel):
     databases: list[DatabaseStatus]
     """One entry for each database that the registry holds open."""
     replication: ReplicationReadiness | None = None
-    """The replication state of this node, which the server reports when it runs with replication.
-    """
+    """The replication state of this node, which the server reports when replication is on."""
 
 
 class SnapshotManifestMigration(ApiModel):
@@ -1080,7 +1080,7 @@ class SnapshotManifestTable(ApiModel):
 
 
 class SnapshotManifestResponse(ApiModel):
-    """The body of `POST /db/{id}/snapshot`, which describes everything a device needs to copy the
+    """The body of `POST /db/{id}/snapshot`, with everything that a device needs to copy the
     database.
     """
 
@@ -1097,13 +1097,13 @@ class SnapshotManifestResponse(ApiModel):
     other schema objects such as indexes.
     """
     tables: list[SnapshotManifestTable]
-    """Each table to copy, in the order that its foreign keys need, with its row count."""
+    """Each table to copy, in foreign key order, with its row count."""
     migrations: list[SnapshotManifestMigration]
     """The migrations that the database has applied."""
 
 
 class SnapshotPageRequest(ApiModel):
-    """The body of `POST /db/{id}/snapshot/page`, which asks for one page of a table's rows."""
+    """The body of `POST /db/{id}/snapshot/page`, the request for one page of a table's rows."""
 
     table: str
     """The table to read."""
@@ -1112,7 +1112,7 @@ class SnapshotPageRequest(ApiModel):
     the first page.
     """
     limit: int | float | None = None
-    """The most rows to return, from 1 to 1000. Defaults to 500."""
+    """The most rows to return, from 1 to 1000, which is 500 when you leave it out."""
 
 
 class SnapshotPageResponse(ApiModel):
@@ -1134,7 +1134,7 @@ class StartedResponse(ApiModel):
     """
 
     started: Literal[True]
-    """Always true, because the server sends this answer only once the work has started."""
+    """This is always true, because the server sends this answer only once the work has started."""
 
 
 class TransactionStatement(ApiModel):
@@ -1166,7 +1166,9 @@ class AckResponse(ApiModel):
     """The server's answer to a device's acknowledgement."""
 
     acked: bool
-    """True, because the server answers only once it has recorded the acknowledgement."""
+    """This is always true, because the server answers only once it has recorded the
+    acknowledgement.
+    """
     seq: str
     """The sequence that the device acknowledged, as a decimal string."""
 

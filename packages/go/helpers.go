@@ -179,6 +179,8 @@ func unionMismatch(name string, data []byte) error {
 	return fmt.Errorf("the JSON %s fits none of the forms of %s", preview, name)
 }
 
+// Nullable holds a model field that can be absent, null, or a value, so that the three encode
+// differently. The zero value is absent, so encoding/json leaves it out of a field tagged omitzero.
 type Nullable[T any] struct {
 	value T
 	state nullableState
@@ -192,26 +194,34 @@ const (
 	nullablePresent
 )
 
+// Null returns a Nullable that encodes as null.
 func Null[T any]() Nullable[T] {
 	return Nullable[T]{state: nullableNull}
 }
 
+// Value returns a Nullable that holds value.
 func Value[T any](value T) Nullable[T] {
 	return Nullable[T]{value: value, state: nullablePresent}
 }
 
+// Get returns the value and true when n holds a value, or the zero value and false when n is absent
+// or null.
 func (n Nullable[T]) Get() (T, bool) {
 	return n.value, n.state == nullablePresent
 }
 
+// IsNull reports whether n is null.
 func (n Nullable[T]) IsNull() bool {
 	return n.state == nullableNull
 }
 
+// IsZero reports whether n is absent. encoding/json calls IsZero on a field tagged omitzero, and it
+// leaves the field out when IsZero returns true.
 func (n Nullable[T]) IsZero() bool {
 	return n.state == nullableAbsent
 }
 
+// MarshalJSON encodes the value that n holds, or null when n holds no value.
 func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	if n.state != nullablePresent {
 		return []byte("null"), nil
@@ -219,6 +229,8 @@ func (n Nullable[T]) MarshalJSON() ([]byte, error) {
 	return encodeWire(n.value)
 }
 
+// UnmarshalJSON decodes JSON null into a null Nullable, and any other JSON into a Nullable that holds
+// the decoded value.
 func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
 	if jsonKindOf(data) == "null" {
 		*n = Null[T]()
@@ -232,6 +244,8 @@ func (n *Nullable[T]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Ptr returns a pointer to a copy of value, which you can use to set an optional field such as
+// [LoadOptions.Checkpoint].
 func Ptr[T any](value T) *T {
 	return &value
 }

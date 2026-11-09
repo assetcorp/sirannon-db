@@ -11,11 +11,11 @@ export const BACKUP_RESTORE_NOT_ACCEPTED_MESSAGE =
  * @public
  */
 export interface BackupTriggerResponse {
-  /** Always true, because the server sends this answer only after it accepts the turn. */
+  /** This is always true, because the server sends this answer only after it accepts the turn. */
   started: true
 }
 
-/** The report of one finished backup as the server sends it, which leaves out the path of the source database file on the server.
+/** The report of one finished backup as the server sends it, without the path of the source database file on the server.
  * @public
  */
 export interface BackupRunSummary extends Omit<BackupRunReport, 'sourcePath'> {}
@@ -71,7 +71,7 @@ export interface BackupSafeToDeleteResponse {
 export interface BackupRestoreRequest {
   /** The moment, in epoch milliseconds, to restore the database to. When it is absent, the server uses the current time, so it restores the newest state that the destination stores. */
   moment?: number
-  /** How many change pieces the server replays between one checkpoint and the next, from 1 to 4096. Defaults to 16. */
+  /** How many change pieces the server replays between one checkpoint and the next, from 1 to 4096, which is 16 when you leave it out. */
   batchSize?: number
 }
 

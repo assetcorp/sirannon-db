@@ -1,7 +1,7 @@
 import type { DatabaseManifest, OperationManifest } from './manifest.js'
 
 /**
- * Identifies who asked for a generated name, so that a collision names both operations.
+ * Identifies who asked for a generated name, so that the error for a collision gives both operations.
  *
  * @internal
  */
@@ -13,7 +13,8 @@ export interface NameClaimant {
 }
 
 /**
- * Hands out generated identifiers and throws when two operations would generate the same one.
+ * Records each generated identifier with the operation that claimed it, and throws when two operations would
+ * generate the same one.
  *
  * @internal
  */
@@ -21,7 +22,7 @@ export class GeneratedNames {
   private readonly declared = new Map<string, NameClaimant>()
 
   /**
-   * Returns `generated` once nothing else has claimed it.
+   * Claims `generated` for the claimant and returns it unchanged.
    *
    * @param generated - The identifier to declare.
    * @param claimant - The operation that the identifier belongs to.
@@ -46,7 +47,7 @@ export class GeneratedNames {
  * @internal
  */
 export interface OperationGroup {
-  /** The PascalCase stem of every name that the group generates. */
+  /** The PascalCase stem of every name that the generator derives for the group. */
   stem: string
   /** The operations of the group. */
   operations: DatabaseManifest
@@ -92,7 +93,7 @@ export function operationGroups(manifest: OperationManifest): OperationGroup[] {
  * @param group - The group that holds the operation.
  * @param kind - Whether the operation is a read or a write.
  * @param name - The registered name of the operation.
- * @returns A claimant that names the group, the kind, and the operation.
+ * @returns A claimant whose label gives the group, the kind, and the operation.
  *
  * @internal
  */

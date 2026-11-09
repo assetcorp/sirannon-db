@@ -63,8 +63,8 @@ class EncryptionOperations(SyncOperationsBase):
         Args:
             id: The identifier of the database, percent-encoded, so that an identifier
                 holding a slash reaches the database stored under it.
-            body: The body of `POST /db/{id}/encryption`, which encrypts the database, changes
-                its key, or removes its encryption.
+            body: The body of `POST /db/{id}/encryption`, the route that encrypts the
+                database, changes its key, or removes its encryption.
             timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
                 setting, and 0 waits for as long as the server takes.
             headers: The client adds these headers to this request, replacing any of the same name.

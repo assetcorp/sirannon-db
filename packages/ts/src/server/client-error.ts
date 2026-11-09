@@ -1,5 +1,13 @@
 import type { SirannonError } from '../core/errors.js'
 
+/**
+ * The message that the server sends a client for an error that Sirannon did not raise, because such an error can name
+ * files and other details of the server's machine.
+ *
+ * @internal
+ */
+export const UNEXPECTED_ERROR_MESSAGE = 'An unexpected error occurred'
+
 const OPTIONAL_PACKAGE_MISSING = 'The server is missing an optional package that this request needs'
 
 const SERVER_FAULT_MESSAGES: ReadonlyMap<string, string> = new Map([
@@ -22,6 +30,8 @@ const SERVER_FAULT_MESSAGES: ReadonlyMap<string, string> = new Map([
   ['ENCRYPTION_REQUIRED', 'An encrypted node sends no data to a node that holds a plaintext database'],
   ['ENCRYPTION_CHANGE_IN_PROGRESS', 'A key change is running on this database'],
   ['ENCRYPTION_CHANGE_ABORTED', 'The key change stopped and left the database under its current key'],
+  ['BACKUP_ERROR', 'The backup failed on the server'],
+  ['BACKUP_DESTINATION_ERROR', 'The backup destination failed the request'],
 ])
 
 /**

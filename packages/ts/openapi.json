@@ -1,0 +1,3146 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sirannon HTTP API",
+    "version": "1.0.0",
+    "description": "The HTTP API of a Sirannon server. Set the base URL of your client to the address where the server listens. Every value that a row, a bind parameter, or a change event carries follows the tagged value encoding: an integer outside the range from -(2^53 - 1) to 2^53 - 1 travels as an IntegerEnvelope and a BLOB as a BlobEnvelope. An operation that carries x-sirannon-sql-statement sends a SQL statement, so a client reads GET /capabilities first and refuses the call with SQL_NOT_ACCEPTED when the capabilities leave out query.sql.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "tags": [
+    {
+      "name": "Server"
+    },
+    {
+      "name": "Statements"
+    },
+    {
+      "name": "Operations"
+    },
+    {
+      "name": "Backups"
+    },
+    {
+      "name": "Encryption"
+    },
+    {
+      "name": "DeviceSync"
+    }
+  ],
+  "paths": {
+    "/capabilities": {
+      "get": {
+        "operationId": "getCapabilities",
+        "summary": "Returns the capabilities that the server announces, such as query.sql when it accepts SQL statements, and the digest of its registered operations.",
+        "tags": [
+          "Server"
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Returns ok while the server process runs.",
+        "tags": [
+          "Server"
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "getReadiness",
+        "summary": "Returns whether each open database and the replication of this node can serve requests.",
+        "tags": [
+          "Server"
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/cluster": {
+      "get": {
+        "operationId": "getClusterStatus",
+        "summary": "Returns the primary, the primary term, and the readable nodes of the database, to a caller that the server authorises for routing metadata.",
+        "tags": [
+          "Server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/query": {
+      "post": {
+        "operationId": "query",
+        "summary": "Runs one read statement and returns its rows, on a server that accepts SQL.",
+        "tags": [
+          "Statements"
+        ],
+        "x-sirannon-sql-statement": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/execute": {
+      "post": {
+        "operationId": "execute",
+        "summary": "Runs one write statement, on a server that accepts SQL.",
+        "tags": [
+          "Statements"
+        ],
+        "x-sirannon-sql-statement": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecuteResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/transaction": {
+      "post": {
+        "operationId": "transaction",
+        "summary": "Runs every statement in one transaction, so that all succeed or all fail, on a server that accepts SQL.",
+        "tags": [
+          "Statements"
+        ],
+        "x-sirannon-sql-statement": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/batch": {
+      "post": {
+        "operationId": "batch",
+        "summary": "Runs one statement once for each parameter set, in one transaction, on a server that accepts SQL.",
+        "tags": [
+          "Statements"
+        ],
+        "x-sirannon-sql-statement": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/load": {
+      "post": {
+        "operationId": "load",
+        "summary": "Loads rows while the writer runs at relaxed durability, on a server that accepts SQL.",
+        "tags": [
+          "Statements"
+        ],
+        "x-sirannon-sql-statement": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/query/{name}": {
+      "post": {
+        "operationId": "queryOperation",
+        "summary": "Runs a registered read by name and returns its rows.",
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "The name of the registered operation, percent-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationQueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/execute/{name}": {
+      "post": {
+        "operationId": "executeOperation",
+        "summary": "Runs a registered write by name, in one transaction, and returns one result for each of its statements.",
+        "tags": [
+          "Operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "The name of the registered operation, percent-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationExecuteResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/backup": {
+      "post": {
+        "operationId": "triggerBackup",
+        "summary": "Starts one turn of the backup checkpoint cycle and answers before the turn finishes.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The server accepted the work and answered before it finished.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupTriggerResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getBackupStatus",
+        "summary": "Returns what the backup cycle is doing and the results of its recent turns.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/backup/chain": {
+      "get": {
+        "operationId": "listBackupChains",
+        "summary": "Returns every chain of backups that the destination stores.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupChainResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/backup/verify": {
+      "post": {
+        "operationId": "verifyBackup",
+        "summary": "Reads one stored backup back from the destination and checks it.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupVerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupVerifyResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/backup/safe-to-delete": {
+      "post": {
+        "operationId": "listBackupsSafeToDelete",
+        "summary": "Returns the stored backups that no restore from the given moment onwards needs.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupSafeToDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupSafeToDeleteResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/backup/restore": {
+      "post": {
+        "operationId": "restoreBackup",
+        "summary": "Starts rebuilding the database from its backups at a moment, on a server that accepts restores.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The server accepted the work and answered before it finished.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getBackupRestoreStatus",
+        "summary": "Returns how the last restore of the database went.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRestoreStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/encryption": {
+      "post": {
+        "operationId": "changeEncryption",
+        "summary": "Starts encrypting the database, changing its key, or removing its encryption, on a server that accepts key changes.",
+        "tags": [
+          "Encryption"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EncryptionChangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The server accepted the work and answered before it finished.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getEncryptionStatus",
+        "summary": "Returns how the database is encrypted and how its last key change went.",
+        "tags": [
+          "Encryption"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EncryptionStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/changes": {
+      "post": {
+        "operationId": "applyChanges",
+        "summary": "Applies a batch of changes that a device pushes, on a server that accepts device sync.",
+        "tags": [
+          "DeviceSync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangesResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/migrations": {
+      "post": {
+        "operationId": "listMigrations",
+        "summary": "Returns the migrations that the database has applied, on a server that accepts device sync.",
+        "tags": [
+          "DeviceSync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MigrationListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/snapshot": {
+      "post": {
+        "operationId": "getSnapshotManifest",
+        "summary": "Returns the schema, tables, and starting sequence that a device copies the database from, on a server that accepts device sync.",
+        "tags": [
+          "DeviceSync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotManifestResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/db/{id}/snapshot/page": {
+      "post": {
+        "operationId": "getSnapshotPage",
+        "summary": "Returns one page of a table for a device to copy, on a server that accepts device sync.",
+        "tags": [
+          "DeviceSync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotPageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotPageResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BackupChain": {
+        "type": "object",
+        "properties": {
+          "chainId": {
+            "type": "string",
+            "description": "The identifier of this chain."
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that Sirannon started the chain."
+          },
+          "previousChainId": {
+            "type": "string",
+            "description": "The identifier of the previous chain, where this chain replaces one."
+          },
+          "base": {
+            "$ref": "#/components/schemas/BackupChainBase",
+            "description": "The full copy that the chain starts from. After someone deletes that record, this field is absent, so no restore can use the chain."
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupChainChange"
+            },
+            "description": "The change pieces, oldest first."
+          }
+        },
+        "required": [
+          "chainId",
+          "startedAt",
+          "changes"
+        ],
+        "description": "One full copy and every change piece that Sirannon captures after it."
+      },
+      "BackupChainBase": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "full",
+            "description": "The kind of record."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that this copy begins."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name that Sirannon stores the pieces of this copy under at the destination."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The identifier that Sirannon reports the progress of this copy under."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the copy finished. A restore to any earlier moment needs an older chain."
+          },
+          "pieceCount": {
+            "type": "number",
+            "description": "The number of pieces that Sirannon stores the copy in."
+          },
+          "pieceBytes": {
+            "type": "number",
+            "description": "The size of one whole piece, in bytes."
+          },
+          "bytesWritten": {
+            "type": "number",
+            "description": "The number of bytes that Sirannon stores at the destination."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The SHA-256 of the copy, present while fingerprinting is on."
+          },
+          "keyId": {
+            "type": "string",
+            "description": "The identifier that came with the key that this copy holds ciphertext under, where the key came with one."
+          }
+        },
+        "required": [
+          "kind",
+          "chainId",
+          "name",
+          "runId",
+          "finishedAt",
+          "pieceCount",
+          "pieceBytes",
+          "bytesWritten"
+        ],
+        "description": "The full copy at the head of a chain. Sirannon restores from this copy and then applies the change pieces on top of it."
+      },
+      "BackupChainChange": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "change",
+            "description": "The kind of record."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that this piece extends, which identifies the full copy that the piece applies on top of."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name that Sirannon stores this piece under at the destination."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The identifier that Sirannon reports the progress of this capture under."
+          },
+          "sequence": {
+            "type": "number",
+            "description": "The position of this piece in its chain, counted from one."
+          },
+          "position": {
+            "$ref": "#/components/schemas/BackupChainPosition",
+            "description": "The range of log frames that this piece holds."
+          },
+          "capturedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that Sirannon captured the frames. A restore stops at a capture time such as this one."
+          },
+          "frameCount": {
+            "type": "number",
+            "description": "The number of log frames in this piece."
+          },
+          "pieceCount": {
+            "type": "number",
+            "description": "The number of destination pieces that Sirannon stores these frames in."
+          },
+          "pieceBytes": {
+            "type": "number",
+            "description": "The size of one whole piece, in bytes."
+          },
+          "bytesWritten": {
+            "type": "number",
+            "description": "The number of bytes that Sirannon stores at the destination."
+          },
+          "checkpointed": {
+            "type": "boolean",
+            "description": "Whether the checkpoint after this capture emptied the log."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The SHA-256 of the frames, present while fingerprinting is on."
+          },
+          "keyId": {
+            "type": "string",
+            "description": "The identifier that came with the key that these frames hold ciphertext under, where the key came with one."
+          }
+        },
+        "required": [
+          "kind",
+          "chainId",
+          "name",
+          "runId",
+          "sequence",
+          "position",
+          "capturedAt",
+          "frameCount",
+          "pieceCount",
+          "pieceBytes",
+          "bytesWritten",
+          "checkpointed"
+        ],
+        "description": "One change piece, which holds the log frames that a database writes between the previous capture and this one."
+      },
+      "BackupChainPosition": {
+        "type": "object",
+        "properties": {
+          "logSequence": {
+            "type": "number",
+            "description": "The checkpoint sequence of the log that holds these frames. SQLite adds one to it each time it restarts the log."
+          },
+          "salt1": {
+            "type": "number",
+            "description": "The first salt of that log. Together with `salt2`, it identifies the generation of the log that holds the frames."
+          },
+          "salt2": {
+            "type": "number",
+            "description": "The second salt of that log."
+          },
+          "firstFrame": {
+            "type": "number",
+            "description": "The first frame in the piece, counted from one."
+          },
+          "lastFrame": {
+            "type": "number",
+            "description": "The last frame in the piece."
+          }
+        },
+        "required": [
+          "logSequence",
+          "salt1",
+          "salt2",
+          "firstFrame",
+          "lastFrame"
+        ],
+        "description": "The range of write-ahead log frames that one change piece holds."
+      },
+      "BackupChainRecord": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/BackupChainBase"
+          },
+          {
+            "$ref": "#/components/schemas/BackupChainChange"
+          }
+        ],
+        "description": "Either the full copy at the head of a chain or one change piece along it."
+      },
+      "BackupChainResponse": {
+        "type": "object",
+        "properties": {
+          "chains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupChain"
+            },
+            "description": "One entry per chain, newest first, each with its full copy and its change pieces in order."
+          }
+        },
+        "required": [
+          "chains"
+        ],
+        "description": "Every chain in the backup destination."
+      },
+      "BackupCycleError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The error code, which a caller matches on."
+          },
+          "message": {
+            "type": "string",
+            "description": "A sentence for the log of the operator that describes the failure."
+          },
+          "at": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that Sirannon recorded the failure."
+          },
+          "durationMs": {
+            "type": "number",
+            "description": "The time from the start of the turn to the failure, in milliseconds."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that the cycle held when the failure occurred, where it held one."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/BackupProgress",
+            "description": "The progress of the backup at the failure. Sirannon leaves this field out for a failure before the copy begins. For a failure part-way through, it records the backup identifier, the pages left to copy, and the pieces and bytes already stored at the destination."
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "at",
+          "durationMs"
+        ],
+        "description": "A failure of one turn of the cycle."
+      },
+      "BackupLogPosition": {
+        "type": "object",
+        "properties": {
+          "logSequence": {
+            "type": "number",
+            "description": "The checkpoint sequence of the log. SQLite adds one to it each time it restarts the log."
+          },
+          "salt1": {
+            "type": "number",
+            "description": "The first salt of that log. Together with `salt2`, it identifies the generation of the log."
+          },
+          "salt2": {
+            "type": "number",
+            "description": "The second salt of that log."
+          },
+          "lastFrame": {
+            "type": "number",
+            "description": "The last frame that commits a transaction, counted from one, or zero where the log holds no such frame."
+          }
+        },
+        "required": [
+          "logSequence",
+          "salt1",
+          "salt2",
+          "lastFrame"
+        ],
+        "description": "The position of the write-ahead log of a database at one moment. A full copy records this position, so that you can tell which generation of the log the database was on when the copy finished. SQLite restarts the log after a checkpoint that empties it, and it writes a new pair of salts into the log at each restart. The backup cycle runs a checkpoint after each capture and none between a full copy and the first change piece of its chain, so those two records hold the same salts. A change piece holds later salts than the piece before it whenever the checkpoint between the two empties the log. A reader can keep a checkpoint from emptying the log, which leaves the log on its current generation, so two consecutive change pieces can hold the same salts."
+      },
+      "BackupProgress": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "description": "The identifier of the backup that this progress describes."
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "copy",
+              "transfer"
+            ],
+            "description": "Whether Sirannon is copying pages or sending pieces."
+          },
+          "totalPages": {
+            "type": "number",
+            "description": "The total number of pages to copy. For a change piece, this is the number of log frames in the piece."
+          },
+          "remainingPages": {
+            "type": "number",
+            "description": "The number of pages left to copy. On the staged route, every report of the transfer phase states zero, since the copy finishes before the transfer starts. On the streamed route, the two phases overlap, so a transfer report states the pages left at the latest step."
+          },
+          "restarts": {
+            "type": "number",
+            "description": "The number of times so far that SQLite restarts the copy from page one. A change piece reports zero, since Sirannon reads the log for it and copies no pages."
+          },
+          "piecesWritten": {
+            "type": "number",
+            "description": "The number of pieces stored at the destination so far."
+          },
+          "bytesWritten": {
+            "type": "number",
+            "description": "The number of bytes stored at the destination so far."
+          }
+        },
+        "required": [
+          "runId",
+          "phase",
+          "totalPages",
+          "remainingPages",
+          "restarts",
+          "piecesWritten",
+          "bytesWritten"
+        ],
+        "description": "The progress of one backup, which Sirannon reports after each step of the copy and after each piece that it stores."
+      },
+      "BackupRestoreProgress": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "full-copy",
+              "changes"
+            ],
+            "description": "Whether Sirannon is fetching the full copy or applying the change pieces on top of it."
+          },
+          "piecesFetched": {
+            "type": "number",
+            "description": "The number of pieces fetched so far."
+          },
+          "bytesFetched": {
+            "type": "number",
+            "description": "The number of bytes fetched so far."
+          },
+          "changesApplied": {
+            "type": "number",
+            "description": "The number of change pieces applied so far."
+          },
+          "changesTotal": {
+            "type": "number",
+            "description": "The total number of change pieces in the plan."
+          }
+        },
+        "required": [
+          "phase",
+          "piecesFetched",
+          "bytesFetched",
+          "changesApplied",
+          "changesTotal"
+        ],
+        "description": "The progress of one restore, which Sirannon reports after every piece that it fetches and after every batch."
+      },
+      "BackupRestoreRequest": {
+        "type": "object",
+        "properties": {
+          "moment": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, to restore the database to. When it is absent, the server uses the current time, so it restores the newest state that the destination stores."
+          },
+          "batchSize": {
+            "type": "number",
+            "description": "How many change pieces the server replays between one checkpoint and the next, from 1 to 4096. Defaults to 16."
+          }
+        },
+        "description": "The moment to which the server rebuilds the database, and how many change pieces it replays in one batch."
+      },
+      "BackupRestoreState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "idle",
+          "done",
+          "failed"
+        ],
+        "description": "The state of one database's restore. `idle` means that no restore has started since the server started."
+      },
+      "BackupRestoreStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/BackupRestoreState",
+            "description": "The state of the restore."
+          },
+          "moment": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the caller asked to restore to."
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "When the restore started, in epoch milliseconds."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "When the restore finished, in epoch milliseconds, whether it succeeded or failed."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/BackupRestoreProgress",
+            "description": "The restore's progress, which the server updates after it fetches each piece."
+          },
+          "report": {
+            "$ref": "#/components/schemas/BackupRestoreSummary",
+            "description": "The report of a finished restore, without the path of the rebuilt database file."
+          },
+          "reopenError": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "The error that stopped the rebuilt database from opening again. The rebuilt data is on disk, but the registry has no database open under the identifier, so restart the process when you see this error."
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "The error that stopped a failed restore."
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "description": "What the server reports about the restore of one database."
+      },
+      "BackupRestoreSummary": {
+        "type": "object",
+        "properties": {
+          "chainId": {
+            "type": "string",
+            "description": "The chain that Sirannon restores from."
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the restore started."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the restore finished."
+          },
+          "durationMs": {
+            "type": "number",
+            "description": "The length of the restore, in milliseconds."
+          },
+          "pieceCount": {
+            "type": "number",
+            "description": "The number of stored pieces that Sirannon fetches, for the full copy and every change piece."
+          },
+          "baseName": {
+            "type": "string",
+            "description": "The name that Sirannon stores the full copy of the chain under."
+          },
+          "restoresTo": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the rebuilt database reflects, which is the capture time of the last change piece applied, or the finish time of the full copy where Sirannon applies none."
+          },
+          "bytesFetched": {
+            "type": "number",
+            "description": "The number of bytes that Sirannon fetches."
+          },
+          "changesApplied": {
+            "type": "number",
+            "description": "The number of change pieces that Sirannon applies."
+          },
+          "framesApplied": {
+            "type": "number",
+            "description": "The number of log frames in those pieces."
+          },
+          "batchCount": {
+            "type": "number",
+            "description": "The number of batches that Sirannon applies the change pieces in, each with a checkpoint of its own."
+          }
+        },
+        "required": [
+          "chainId",
+          "startedAt",
+          "finishedAt",
+          "durationMs",
+          "pieceCount",
+          "baseName",
+          "restoresTo",
+          "bytesFetched",
+          "changesApplied",
+          "framesApplied",
+          "batchCount"
+        ],
+        "description": "The report of one finished restore as the server sends it, which leaves out the path of the rebuilt database file on the server."
+      },
+      "BackupRunSummary": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "The identifier of the source database."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that this backup is part of. A full copy begins a chain, and every later change piece extends it."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The identifier that Sirannon reports the progress of this backup under."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "full",
+              "change"
+            ],
+            "description": "Whether the backup holds the whole database or the log frames written since the previous capture."
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "staged",
+              "streamed"
+            ],
+            "description": "Whether Sirannon sends the bytes through a local file, which is `staged`, or without one, which is `streamed`."
+          },
+          "destinationName": {
+            "type": "string",
+            "description": "The name that Sirannon stores the pieces under at the destination. Sirannon writes only this name at the destination, because the journal that SQLite opens next to a copy stays on local disk."
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the backup started."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "The moment, in epoch milliseconds, that the backup finished."
+          },
+          "durationMs": {
+            "type": "number",
+            "description": "The length of the whole backup, in milliseconds."
+          },
+          "copyMs": {
+            "type": "number",
+            "description": "The time, in milliseconds, that SQLite spends copying pages."
+          },
+          "transferMs": {
+            "type": "number",
+            "description": "The time, in milliseconds, that Sirannon spends storing pieces at the destination."
+          },
+          "pageCount": {
+            "type": "number",
+            "description": "The number of pages that SQLite copies."
+          },
+          "pageSize": {
+            "type": "number",
+            "description": "The size of one page, in bytes."
+          },
+          "bytesWritten": {
+            "type": "number",
+            "description": "The number of bytes that Sirannon stores at the destination."
+          },
+          "pieceCount": {
+            "type": "number",
+            "description": "The number of pieces that Sirannon stores at the destination."
+          },
+          "pieceBytes": {
+            "type": "number",
+            "description": "The size of one whole piece, in bytes."
+          },
+          "restarts": {
+            "type": "number",
+            "description": "The number of times that SQLite restarts the copy from page one."
+          },
+          "position": {
+            "$ref": "#/components/schemas/BackupChainPosition",
+            "description": "The range of log frames that a change piece holds. A full copy leaves this field out."
+          },
+          "logPosition": {
+            "$ref": "#/components/schemas/BackupLogPosition",
+            "description": "The position of the write-ahead log when a full copy finishes. Sirannon reads the log after SQLite copies the last page, so if a writer commits between those two steps, this position can include a frame that the copy lacks. A change piece states its range of log frames in BackupRunReport.position, and a database without a write-ahead log leaves out both fields."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The SHA-256 of the copied file, present while fingerprinting is on."
+          }
+        },
+        "required": [
+          "databaseId",
+          "chainId",
+          "runId",
+          "kind",
+          "route",
+          "destinationName",
+          "startedAt",
+          "finishedAt",
+          "durationMs",
+          "copyMs",
+          "transferMs",
+          "pageCount",
+          "pageSize",
+          "bytesWritten",
+          "pieceCount",
+          "pieceBytes",
+          "restarts"
+        ],
+        "description": "The report of one finished backup as the server sends it, which leaves out the path of the source database file on the server."
+      },
+      "BackupSafeToDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "restorableFrom": {
+            "type": "number",
+            "description": "The earliest moment, in epoch milliseconds, that you must still be able to restore to. When it is absent, the server lists only the backups that you cannot restore from."
+          }
+        },
+        "description": "How far back you must still be able to restore."
+      },
+      "BackupSafeToDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupChainRecord"
+            },
+            "description": "The records that you can delete, oldest first."
+          }
+        },
+        "required": [
+          "records"
+        ],
+        "description": "The records that you no longer need for any restore."
+      },
+      "BackupSkip": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/BackupSkipReason",
+            "description": "The condition that applies."
+          },
+          "message": {
+            "type": "string",
+            "description": "A sentence for the log of the operator that describes the skip."
+          },
+          "nodeId": {
+            "type": "string",
+            "description": "The identifier of this node, where a group source supplies one."
+          },
+          "preferredNodeId": {
+            "type": "string",
+            "description": "The identifier of the node that takes the backups, where Sirannon picks one."
+          },
+          "uncapturedLogBytes": {
+            "type": "number",
+            "description": "The size in bytes of the write-ahead log on this node at the skip. An alert on this value as it rises warns you that the log on a node is growing, well before `maxUncapturedLogBytes` ends its chain."
+          }
+        },
+        "required": [
+          "reason",
+          "message"
+        ],
+        "description": "One turn that the cycle skips, and the reason for the skip."
+      },
+      "BackupSkipReason": {
+        "type": "string",
+        "enum": [
+          "not-preferred",
+          "group-unavailable",
+          "previous-run-active"
+        ],
+        "description": "The reason that one turn of the cycle writes nothing. `'not-preferred'` means that another node, or no node, takes the backups of this group. `'group-unavailable'` means that Sirannon cannot read the membership of the group. `'previous-run-active'` means that the previous turn is still in progress."
+      },
+      "BackupStatusResponse": {
+        "type": "object",
+        "properties": {
+          "lastRun": {
+            "$ref": "#/components/schemas/BackupRunSummary",
+            "description": "The report of the most recent backup that the cycle finished, without the path of the source database file."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "Whether a turn is in progress."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that the cycle extends, where it holds one."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/BackupProgress",
+            "description": "The progress of the current turn, which Sirannon clears between turns."
+          },
+          "lastSkip": {
+            "$ref": "#/components/schemas/BackupSkip",
+            "description": "The most recent skipped turn, and the reason for the skip."
+          },
+          "lastError": {
+            "$ref": "#/components/schemas/BackupCycleError",
+            "description": "The most recent failure of a turn."
+          }
+        },
+        "required": [
+          "running"
+        ],
+        "description": "The checkpoint cycle's current activity, and the results of its recent turns, as the server sends them."
+      },
+      "BackupTriggerResponse": {
+        "type": "object",
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always true, because the server sends this answer only after it accepts the turn."
+          }
+        },
+        "required": [
+          "started"
+        ],
+        "description": "The server's answer when a caller triggers a backup, which it sends once it accepts the turn and before the backup finishes."
+      },
+      "BackupVerifyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name under which the destination stores the backup, as it appears in every chain record."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "The backup to read back from the destination."
+      },
+      "BackupVerifyResponse": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name that Sirannon stores the pieces under."
+          },
+          "chainId": {
+            "type": "string",
+            "description": "The chain that holds this record."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "full",
+              "change"
+            ],
+            "description": "Whether this is the full copy at the head of that chain or one change piece along it."
+          },
+          "pieceCount": {
+            "type": "number",
+            "description": "The number of pieces at the destination."
+          },
+          "bytesRead": {
+            "type": "number",
+            "description": "The total size of those pieces, in bytes."
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The SHA-256 that Sirannon computes over the bytes that it reads, present where the record holds a fingerprint to compare against."
+          }
+        },
+        "required": [
+          "name",
+          "chainId",
+          "kind",
+          "pieceCount",
+          "bytesRead"
+        ],
+        "description": "The result of reading one stored backup from a destination and checking it against its record."
+      },
+      "BatchRequest": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute for each parameter set."
+          },
+          "paramsBatch": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                {
+                  "type": "array",
+                  "items": {}
+                }
+              ]
+            },
+            "description": "One parameter set for each execution of the statement."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms the batch."
+          }
+        },
+        "required": [
+          "sql",
+          "paramsBatch"
+        ],
+        "description": "The body of `POST /db/{id}/batch`, which the server commits atomically in one transaction with one fsync."
+      },
+      "BatchResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecuteResponse"
+            },
+            "description": "One result per parameter set, in order."
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "description": "The body that a batch route returns."
+      },
+      "BlobEnvelope": {
+        "type": "object",
+        "properties": {
+          "__sirannon_blob": {
+            "type": "string",
+            "description": "The bytes in uppercase hexadecimal, two digits per byte, where an empty string is an empty BLOB."
+          }
+        },
+        "required": [
+          "__sirannon_blob"
+        ],
+        "description": "A BLOB, which JSON has no type for. A row, a change event, a bind parameter, and a subscription filter carry every BLOB in this envelope. Decode it into a byte array, and send a byte array in the same envelope."
+      },
+      "BulkLoadDurability": {
+        "type": "string",
+        "enum": [
+          "off",
+          "normal"
+        ],
+        "description": "The synchronous level during a bulk load. At 'off', SQLite documents that a power loss or an operating-system crash can corrupt the database, so 'off' suits only a load that the operator can re-run from scratch. At 'normal', a WAL-mode database stays safe from corruption, which suits a load into a database whose existing data the operator must keep."
+      },
+      "CapabilitiesResponse": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The capabilities that the server announces, such as `query.sql` when it accepts SQL statements and `query.named` when it serves registered operations."
+          },
+          "registry": {
+            "type": "object",
+            "properties": {
+              "digest": {
+                "type": "string",
+                "description": "A hash over every registered database identifier, operation kind, operation name, and argument name."
+              }
+            },
+            "required": [
+              "digest"
+            ],
+            "description": "The digest of the registered operations, which the server sends when it serves any."
+          }
+        },
+        "required": [
+          "capabilities"
+        ],
+        "description": "The body of `GET /capabilities`, which names what this server accepts."
+      },
+      "ChangesRequest": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "description": "The schema version of the device's database, which the server compares with its own before it applies the batch."
+          },
+          "batch": {
+            "$ref": "#/components/schemas/SyncBatch",
+            "description": "The changes to apply."
+          }
+        },
+        "required": [
+          "batch"
+        ],
+        "description": "The body of `POST /db/{id}/changes`, which applies a device's changes to the server's database."
+      },
+      "ChangesResponse": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "number",
+            "description": "How many changes the server applied."
+          },
+          "skipped": {
+            "type": "number",
+            "description": "How many changes the server skipped, such as the changes of a batch it had applied before, an update to a missing row, or a change that lost to the server's row."
+          },
+          "conflicts": {
+            "type": "number",
+            "description": "How many changes a conflict resolver settled."
+          }
+        },
+        "required": [
+          "applied",
+          "skipped",
+          "conflicts"
+        ],
+        "description": "How the server applied a device's batch."
+      },
+      "ClusterReadEndpointInfo": {
+        "type": "object",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "description": "The identifier of the node at this endpoint."
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "The address that a client sends its reads to."
+          },
+          "readConcerns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadConcernLevel"
+            },
+            "description": "The read concerns that this node meets now."
+          }
+        },
+        "required": [
+          "nodeId",
+          "endpoint",
+          "readConcerns"
+        ],
+        "description": "One node that a client can read from, and the read concerns that the node meets now."
+      },
+      "ClusterStatusResponse": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "The identifier of the database that this status describes."
+          },
+          "replicationGroupId": {
+            "type": "string",
+            "description": "The identifier of the node's replication group."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "replica"
+            ],
+            "description": "Whether this node is the primary, which accepts writes, or a replica, which serves reads."
+          },
+          "currentPrimary": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string",
+                    "description": "The identifier of the primary node."
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "description": "The address at which a client reaches the primary."
+                  }
+                },
+                "required": [
+                  "nodeId"
+                ]
+              }
+            ],
+            "description": "The primary that this node reports as current, or null when the node reports none."
+          },
+          "readEndpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterReadEndpointInfo"
+            },
+            "description": "Every node that a client can read from, with the read concerns that each one meets."
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "degraded",
+              "failing_over",
+              "unavailable",
+              "repairing",
+              "syncing",
+              "healthy"
+            ],
+            "description": "What this node can do now."
+          },
+          "healthReason": {
+            "type": "string",
+            "enum": [
+              "repairing",
+              "in-sync",
+              "lagging",
+              "coordinator-unreachable",
+              "draining",
+              "faulted",
+              "not-member",
+              "sync-pending",
+              "no-group-state"
+            ],
+            "description": "The condition behind that health state."
+          },
+          "primaryTerm": {
+            "type": "string",
+            "description": "The primary term that this node reports as current, as a decimal string so that a 64-bit term stays exact."
+          }
+        },
+        "required": [
+          "databaseId",
+          "health",
+          "healthReason"
+        ],
+        "description": "The body of `GET /db/{id}/cluster`, which states where a client sends the database's writes and reads."
+      },
+      "DatabaseStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The identifier under which the registry holds the database."
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "Whether the database refuses writes."
+          },
+          "closed": {
+            "type": "boolean",
+            "description": "Whether the database has closed, which makes the readiness status `degraded`."
+          }
+        },
+        "required": [
+          "id",
+          "readOnly",
+          "closed"
+        ],
+        "description": "Whether one open database can serve requests."
+      },
+      "EncryptionChangeRequest": {
+        "type": "object",
+        "properties": {
+          "keyRef": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The name, of 1 to 256 characters, that the server's `encryptionKeys` function turns into the target key, or null to remove encryption. No key crosses the wire."
+          }
+        },
+        "required": [
+          "keyRef"
+        ],
+        "description": "The body of `POST /db/{id}/encryption`, which encrypts the database, changes its key, or removes its encryption."
+      },
+      "EncryptionChangeStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "done",
+              "failed",
+              "copying",
+              "catching-up",
+              "swapping"
+            ],
+            "description": "`idle` before any change, `copying` while Sirannon copies a snapshot to the new file, `catching-up` while it applies the writes committed since that snapshot, `swapping` while it holds writes and replaces the file, and `done` or `failed` once the change ends."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "encrypted",
+              "plaintext"
+            ],
+            "description": "Whether the change encrypts the file or stores it as plaintext."
+          },
+          "startedAt": {
+            "type": "number",
+            "description": "The time at which the change started, in milliseconds since the Unix epoch."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "The time at which the change ended, in milliseconds since the Unix epoch."
+          },
+          "rowsCopied": {
+            "type": "number",
+            "description": "The number of rows that the snapshot copy wrote to the new file."
+          },
+          "rounds": {
+            "type": "number",
+            "description": "The number of rounds in which Sirannon applied the writes committed since the snapshot."
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "The code and message of the error that stopped the change."
+          },
+          "reopenError": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "The code and message of an error that came after the new file was in place, such as a key function that failed when the connections reopened. The change is `done` and the file holds ciphertext under the new key, so keep that key, and close and open the database again with it."
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "description": "The progress of the current key change, or the outcome of the last one."
+      },
+      "EncryptionStatus": {
+        "type": "object",
+        "properties": {
+          "encrypted": {
+            "type": "boolean",
+            "description": "Whether the database file holds ciphertext."
+          },
+          "cipher": {
+            "type": "string",
+            "enum": [
+              "aegis-256",
+              "sqlcipher-4"
+            ],
+            "description": "The scheme that an encrypted file uses: `aegis-256` from the better-sqlite3 driver, or `sqlcipher-4` from the Expo driver."
+          },
+          "cipherVersion": {
+            "type": "string",
+            "description": "The version of the encryption engine, which an encrypted database reports."
+          },
+          "keyId": {
+            "type": "string",
+            "description": "The identifier that came with the current key."
+          },
+          "changedAt": {
+            "type": "number",
+            "description": "The time at which the last key change finished, in milliseconds since the Unix epoch."
+          },
+          "change": {
+            "$ref": "#/components/schemas/EncryptionChangeStatus",
+            "description": "The current key change, or the last one."
+          }
+        },
+        "required": [
+          "encrypted",
+          "change"
+        ],
+        "description": "Reports whether a database is encrypted, under which key, and how its last key change went."
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error, which the client passes to the caller unchanged."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, present only when it holds a value."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "A machine-readable code, a human-readable message, and any details that the route adds."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "The body that every failed route returns."
+      },
+      "ExecuteRequest": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to the statement, by name or by position."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms this write."
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "description": "Body of `POST /db/{id}/execute`."
+      },
+      "ExecuteResponse": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "number",
+            "description": "The number of rows that the statement inserted, updated, or deleted."
+          },
+          "lastInsertRowId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "The row id that SQLite assigned to the last inserted row, as a decimal string when it exceeds the safe integer range."
+          }
+        },
+        "required": [
+          "changes",
+          "lastInsertRowId"
+        ],
+        "description": "The body that a write route returns."
+      },
+      "IntegerEnvelope": {
+        "type": "object",
+        "properties": {
+          "__sirannon_int": {
+            "type": "string",
+            "description": "The integer in decimal, of 1 to 19 digits with an optional leading `-`."
+          }
+        },
+        "required": [
+          "__sirannon_int"
+        ],
+        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. A row, a change event, a bind parameter, and a subscription filter carry such an integer in this envelope. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "description": "Always `ok`, because a process that cannot answer sends nothing."
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "description": "The body of `GET /health`, which the server sends while its process runs."
+      },
+      "LoadRequest": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute for each parameter set."
+          },
+          "paramsBatch": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                {
+                  "type": "array",
+                  "items": {}
+                }
+              ]
+            },
+            "description": "One parameter set per row."
+          },
+          "durability": {
+            "$ref": "#/components/schemas/BulkLoadDurability",
+            "description": "The writer's durability level during the load. Defaults to 'off'."
+          },
+          "checkpoint": {
+            "type": "boolean",
+            "description": "Whether the server checkpoints the WAL after this load. Defaults to true, so set it to false on every batch except the last of a multi-batch import."
+          }
+        },
+        "required": [
+          "sql",
+          "paramsBatch"
+        ],
+        "description": "The body of `POST /db/{id}/load`, which loads rows while the server relaxes the writer's durability. The server restores the configured durability before it sends the response. When the process crashes during a load, SQLite rolls back the uncommitted rows, so the client can send the load again."
+      },
+      "LoadResponse": {
+        "type": "object",
+        "properties": {
+          "rowsLoaded": {
+            "type": "number",
+            "description": "The number of parameter sets that the load applied."
+          },
+          "changes": {
+            "type": "number",
+            "description": "The number of rows that the load inserted, updated, or deleted."
+          }
+        },
+        "required": [
+          "rowsLoaded",
+          "changes"
+        ],
+        "description": "The totals for a bulk load, which Sirannon sums across rows so that a large load keeps no per-row results in memory."
+      },
+      "MigrationListEntry": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "description": "The version of the migration."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the migration."
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The checksum of the migration's statements, or null when the database recorded none."
+          },
+          "up": {
+            "type": "string",
+            "description": "The statements of a migration later than `after`, which the server sends when it holds them."
+          }
+        },
+        "required": [
+          "version",
+          "name",
+          "checksum"
+        ],
+        "description": "One migration that the database has applied."
+      },
+      "MigrationListRequest": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "number",
+            "description": "The schema version of the device, so that the server sends the statements of every later migration."
+          }
+        },
+        "description": "The body of `POST /db/{id}/migrations`, which lists the migrations that the database has applied."
+      },
+      "MigrationListResponse": {
+        "type": "object",
+        "properties": {
+          "serverVersion": {
+            "type": "number",
+            "description": "The schema version of the server's database."
+          },
+          "migrations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MigrationListEntry"
+            },
+            "description": "Every migration that the database has applied, in version order."
+          }
+        },
+        "required": [
+          "serverVersion",
+          "migrations"
+        ],
+        "description": "The migrations that the database has applied."
+      },
+      "OperationExecuteRequest": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The arguments that the registered write takes, by name. The server fills the arguments that come from identity."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms this write."
+          }
+        },
+        "description": "The body of `POST /db/{id}/execute/{name}`, which runs a registered write in one transaction."
+      },
+      "OperationExecuteResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecuteResponse"
+            },
+            "description": "One result per statement of the registered write, in the order that the transaction ran them."
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "description": "The body that `POST /db/{id}/execute/{name}` returns."
+      },
+      "OperationQueryRequest": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The arguments that the registered read takes, by name. The server fills the arguments that come from identity."
+          },
+          "readConcern": {
+            "$ref": "#/components/schemas/ReadConcern",
+            "description": "The read concern that this read requires."
+          }
+        },
+        "description": "The body of `POST /db/{id}/query/{name}`, which runs a registered read."
+      },
+      "QueryRequest": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to the statement, by name or by position."
+          },
+          "readConcern": {
+            "$ref": "#/components/schemas/ReadConcern",
+            "description": "The read concern that this read requires."
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "description": "Body of `POST /db/{id}/query`."
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "The rows that the statement returned, with blobs and large integers in their tagged wire form."
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "description": "The body that a read route returns."
+      },
+      "ReadConcern": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/ReadConcernLevel",
+            "description": "The level that the node must confirm before it responds."
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "description": "How current the data must be before a node serves a read."
+      },
+      "ReadConcernLevel": {
+        "type": "string",
+        "enum": [
+          "local",
+          "majority",
+          "linearizable"
+        ],
+        "description": "How current the data must be before a node serves a read."
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "failing_over",
+              "unavailable",
+              "repairing",
+              "syncing"
+            ],
+            "description": "What the node can do now: `ok` when it is healthy, `degraded` when a database has closed, and the replication health state otherwise."
+          },
+          "databases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DatabaseStatus"
+            },
+            "description": "One entry for each database that the registry holds open."
+          },
+          "replication": {
+            "$ref": "#/components/schemas/ReplicationReadiness",
+            "description": "The replication state of this node, which the server reports when it runs with replication."
+          }
+        },
+        "required": [
+          "status",
+          "databases"
+        ],
+        "description": "The body of `GET /health/ready`, which states whether the node can serve reads and writes."
+      },
+      "ReplicationReadiness": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "Whether this node is the primary or a replica."
+          },
+          "writeForwarding": {
+            "type": "boolean",
+            "description": "Whether this node forwards the writes that it receives to the primary."
+          },
+          "peers": {
+            "type": "number",
+            "description": "How many peers this node replicates with."
+          },
+          "localSeq": {
+            "type": "string",
+            "description": "The highest change sequence that this node has stored, as a decimal string."
+          },
+          "replicationGroupId": {
+            "type": "string",
+            "description": "The identifier of this node's replication group."
+          },
+          "primaryTerm": {
+            "type": "string",
+            "description": "The primary term that this node reports as current, as a decimal string."
+          },
+          "currentPrimary": {
+            "type": "string",
+            "description": "The identifier of the node that this node reports as the current primary."
+          },
+          "coordinator": {
+            "type": "object",
+            "properties": {
+              "connected": {
+                "type": "boolean",
+                "description": "Whether this node reaches the coordinator."
+              },
+              "authority": {
+                "type": "boolean",
+                "description": "Whether this node holds the primary authority."
+              }
+            },
+            "required": [
+              "connected",
+              "authority"
+            ],
+            "description": "Whether this node reaches the coordinator, and whether it holds the primary authority."
+          },
+          "controller": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "disabled",
+                  "standby",
+                  "active",
+                  "lost"
+                ],
+                "description": "Whether the controller is off, waiting, leading the group, or has lost its lease."
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "description": "The state of this node's failover controller."
+          },
+          "inSyncReplicas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The replicas that the group counts as in sync."
+          },
+          "laggingReplicas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The replicas that have fallen behind."
+          },
+          "syncState": {
+            "type": "string",
+            "description": "How far this node has caught up with the primary."
+          },
+          "healthReason": {
+            "type": "string",
+            "enum": [
+              "repairing",
+              "in-sync",
+              "lagging",
+              "coordinator-unreachable",
+              "draining",
+              "faulted",
+              "not-member",
+              "sync-pending",
+              "no-group-state"
+            ],
+            "description": "The condition behind this node's health state."
+          },
+          "readAvailability": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "available"
+            ],
+            "description": "Whether this node serves reads now."
+          },
+          "writeAvailability": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "available"
+            ],
+            "description": "Whether this node serves writes now."
+          }
+        },
+        "required": [
+          "role",
+          "writeForwarding",
+          "peers",
+          "localSeq",
+          "healthReason"
+        ],
+        "description": "The replication state of one node, as `GET /health/ready` reports it."
+      },
+      "SnapshotManifestMigration": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "description": "The version of the migration."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the migration."
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The checksum of the migration's statements, or null when the database recorded none."
+          }
+        },
+        "required": [
+          "version",
+          "name",
+          "checksum"
+        ],
+        "description": "One migration that the database has applied."
+      },
+      "SnapshotManifestResponse": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "The identifier of the database that the snapshot copies."
+          },
+          "startSeq": {
+            "type": "string",
+            "description": "The change sequence from which a device subscribes once it has copied every page, as a decimal string."
+          },
+          "epoch": {
+            "type": "string",
+            "description": "The identifier of the database's change sequence space."
+          },
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The statements that create the database's tables, in foreign key order, followed by its other schema objects such as indexes."
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotManifestTable"
+            },
+            "description": "Each table to copy, in the order that its foreign keys need, with its row count."
+          },
+          "migrations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotManifestMigration"
+            },
+            "description": "The migrations that the database has applied."
+          }
+        },
+        "required": [
+          "databaseId",
+          "startSeq",
+          "epoch",
+          "schema",
+          "tables",
+          "migrations"
+        ],
+        "description": "The body of `POST /db/{id}/snapshot`, which describes everything a device needs to copy the database."
+      },
+      "SnapshotManifestTable": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the table."
+          },
+          "rowCount": {
+            "type": "number",
+            "description": "How many rows the table held when the server wrote the manifest."
+          }
+        },
+        "required": [
+          "name",
+          "rowCount"
+        ],
+        "description": "One table that a snapshot copies."
+      },
+      "SnapshotPageRequest": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string",
+            "description": "The table to read."
+          },
+          "afterKey": {
+            "type": "array",
+            "items": {},
+            "description": "The key of the last row of the previous page, which the server reads past. Leave it out for the first page."
+          },
+          "limit": {
+            "type": "number",
+            "description": "The most rows to return, from 1 to 1000. Defaults to 500."
+          }
+        },
+        "required": [
+          "table"
+        ],
+        "description": "The body of `POST /db/{id}/snapshot/page`, which asks for one page of a table's rows."
+      },
+      "SnapshotPageResponse": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {},
+            "description": "The rows of this page."
+          },
+          "checksum": {
+            "type": "string",
+            "description": "The checksum over the rows of this page."
+          },
+          "done": {
+            "type": "boolean",
+            "description": "Whether this is the table's last page."
+          },
+          "nextKey": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The key to send as `afterKey` for the next page, or null on the last page."
+          }
+        },
+        "required": [
+          "rows",
+          "checksum",
+          "done",
+          "nextKey"
+        ],
+        "description": "One page of a table's rows, with each column value in its tagged wire form."
+      },
+      "StartedResponse": {
+        "type": "object",
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always true, because the server sends this answer only once the work has started."
+          }
+        },
+        "required": [
+          "started"
+        ],
+        "description": "The server's answer when it has started work that finishes after it replies, such as a restore or a key change."
+      },
+      "SyncBatch": {
+        "type": "object",
+        "properties": {
+          "sourceNodeId": {
+            "type": "string",
+            "description": "The 32-character hexadecimal identifier of the device that pushes the batch."
+          },
+          "batchId": {
+            "type": "string",
+            "description": "The device's identifier for this batch, of 1 to 128 characters."
+          },
+          "fromSeq": {
+            "type": "string",
+            "description": "The first change sequence that the batch covers, as a decimal string."
+          },
+          "toSeq": {
+            "type": "string",
+            "description": "The last change sequence that the batch covers, as a decimal string."
+          },
+          "hlcRange": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "type": "string",
+                "description": "The lowest stamp in the batch."
+              },
+              "max": {
+                "type": "string",
+                "description": "The highest stamp in the batch."
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "description": "The lowest and the highest hybrid logical clock stamp in the batch."
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncChange"
+            },
+            "description": "The changes, from 1 to 1000 of them, in the order that the device made them."
+          },
+          "checksum": {
+            "type": "string",
+            "description": "The checksum over the batch's changes, which the server recomputes before it applies them."
+          },
+          "txContinues": {
+            "type": "boolean",
+            "description": "Set when the batch ends part-way through a device transaction that the next batch continues."
+          }
+        },
+        "required": [
+          "sourceNodeId",
+          "batchId",
+          "fromSeq",
+          "toSeq",
+          "hlcRange",
+          "changes",
+          "checksum"
+        ],
+        "description": "The batch of row changes that a device pushes, with the range of the device's change log that it covers."
+      },
+      "SyncChange": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "string",
+            "description": "The table of the changed row."
+          },
+          "operation": {
+            "type": "string",
+            "description": "Whether the device inserted, updated, or deleted the row."
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The primary key of the changed row, encoded as a string."
+          },
+          "primaryKey": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The primary key columns of the changed row and their values."
+          },
+          "hlc": {
+            "type": "string",
+            "description": "The hybrid logical clock stamp that the device gave this change."
+          },
+          "txId": {
+            "type": "string",
+            "description": "The identifier of the device transaction that made this change."
+          },
+          "nodeId": {
+            "type": "string",
+            "description": "The 32-character hexadecimal identifier of the device, which equals the batch's `sourceNodeId`."
+          },
+          "newData": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ],
+            "description": "The row's values after the change, or null for a delete."
+          },
+          "oldData": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ],
+            "description": "The row's values before the change, or null for an insert."
+          },
+          "seq": {
+            "type": "string",
+            "description": "The position of this change in the device's change log, as a decimal string."
+          }
+        },
+        "required": [
+          "table",
+          "operation",
+          "rowId",
+          "primaryKey",
+          "hlc",
+          "txId",
+          "nodeId",
+          "newData",
+          "oldData"
+        ],
+        "description": "One row change inside a device-sync batch, with each column value in its tagged wire form."
+      },
+      "TransactionRequest": {
+        "type": "object",
+        "properties": {
+          "statements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionStatement"
+            },
+            "description": "The statements to execute, in order."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms the transaction."
+          }
+        },
+        "required": [
+          "statements"
+        ],
+        "description": "Body of `POST /db/{id}/transaction`, whose statements all succeed or all fail."
+      },
+      "TransactionResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecuteResponse"
+            },
+            "description": "One result per statement, in the order that the transaction executed them."
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "description": "The body that a transaction route returns."
+      },
+      "TransactionStatement": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to the statement, by name or by position."
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "description": "One statement inside a transaction or a registered write."
+      },
+      "WriteConcern": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/WriteConcernLevel",
+            "description": "Which nodes must acknowledge the write before the call returns."
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "The number of milliseconds to wait for those acknowledgements before the call fails."
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "description": "Which nodes must acknowledge a write, and how long the caller waits for their acknowledgements."
+      },
+      "WriteConcernLevel": {
+        "type": "string",
+        "enum": [
+          "local",
+          "majority",
+          "all"
+        ],
+        "description": "Which nodes must acknowledge a write before the call returns."
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "The server refused the request or failed to answer it, with a code that says why.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  }
+}

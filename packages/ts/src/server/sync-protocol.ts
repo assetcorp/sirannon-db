@@ -11,34 +11,86 @@ const NODE_ID_RE = /^[0-9a-f]{32}$/
 const TABLE_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 const OPERATIONS = new Set(['insert', 'update', 'delete'])
 
-export interface ChangesRequest {
-  schemaVersion?: number
-  batch: {
-    sourceNodeId: string
-    batchId: string
-    fromSeq: string
-    toSeq: string
-    hlcRange: { min: string; max: string }
-    changes: {
-      table: string
-      operation: string
-      rowId: string
-      primaryKey: Record<string, unknown>
-      hlc: string
-      txId: string
-      nodeId: string
-      newData: Record<string, unknown> | null
-      oldData: Record<string, unknown> | null
-      seq?: string
-    }[]
-    checksum: string
-    txContinues?: boolean
-  }
+/**
+ * One row change inside a device-sync batch, with each column value in its tagged wire form.
+ *
+ * @public
+ */
+export interface SyncChange {
+  /** The table of the changed row. */
+  table: string
+  /** Whether the device inserted, updated, or deleted the row. */
+  operation: string
+  /** The primary key of the changed row, encoded as a string. */
+  rowId: string
+  /** The primary key columns of the changed row and their values. */
+  primaryKey: Record<string, unknown>
+  /** The hybrid logical clock stamp that the device gave this change. */
+  hlc: string
+  /** The identifier of the device transaction that made this change. */
+  txId: string
+  /** The 32-character hexadecimal identifier of the device, which equals the batch's `sourceNodeId`. */
+  nodeId: string
+  /** The row's values after the change, or null for a delete. */
+  newData: Record<string, unknown> | null
+  /** The row's values before the change, or null for an insert. */
+  oldData: Record<string, unknown> | null
+  /** The position of this change in the device's change log, as a decimal string. */
+  seq?: string
 }
 
+/**
+ * The batch of row changes that a device pushes, with the range of the device's change log that it covers.
+ *
+ * @public
+ */
+export interface SyncBatch {
+  /** The 32-character hexadecimal identifier of the device that pushes the batch. */
+  sourceNodeId: string
+  /** The device's identifier for this batch, of 1 to 128 characters. */
+  batchId: string
+  /** The first change sequence that the batch covers, as a decimal string. */
+  fromSeq: string
+  /** The last change sequence that the batch covers, as a decimal string. */
+  toSeq: string
+  /** The lowest and the highest hybrid logical clock stamp in the batch. */
+  hlcRange: {
+    /** The lowest stamp in the batch. */
+    min: string
+    /** The highest stamp in the batch. */
+    max: string
+  }
+  /** The changes, from 1 to 1000 of them, in the order that the device made them. */
+  changes: SyncChange[]
+  /** The checksum over the batch's changes, which the server recomputes before it applies them. */
+  checksum: string
+  /** Set when the batch ends part-way through a device transaction that the next batch continues. */
+  txContinues?: boolean
+}
+
+/**
+ * The body of `POST /db/{id}/changes`, which applies a device's changes to the server's database.
+ *
+ * @public
+ */
+export interface ChangesRequest {
+  /** The schema version of the device's database, which the server compares with its own before it applies the batch. */
+  schemaVersion?: number
+  /** The changes to apply. */
+  batch: SyncBatch
+}
+
+/**
+ * How the server applied a device's batch.
+ *
+ * @public
+ */
 export interface ChangesResponse {
+  /** How many changes the server applied. */
   applied: number
+  /** How many changes the server skipped, such as the changes of a batch it had applied before, an update to a missing row, or a change that lost to the server's row. */
   skipped: number
+  /** How many changes a conflict resolver settled. */
   conflicts: number
 }
 

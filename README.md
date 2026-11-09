@@ -128,6 +128,8 @@ const users = await db.query<{ id: number; name: string }>('SELECT * FROM users'
 | [Registered operations](docs/operations.md) | Named statements, identity-filled arguments, capabilities, and code generation |
 | [Live queries](docs/live-queries.md) | Maintained query results locally, over the network, and in React |
 | [Client SDK](docs/client.md) | Transports, subscriptions, topology-aware routing, and read concern |
+| [Python client](docs/python-client.md) | The sync and async Python clients, typed operation references, subscriptions, and replication groups |
+| [Go client](docs/go-client.md) | The Go client, typed operation references, subscriptions, and replication groups |
 | [Device sync](docs/device-sync.md) | Offline-first two-way sync between a device's local database and a server |
 | [Distributed replication](docs/replication.md) | Replication, first sync, write and read concerns, coordinator failover, resolvers, and transports |
 | [Configuration reference](docs/configuration.md) | Every option table, from `SirannonOptions` to `GrpcReplicationOptions` |

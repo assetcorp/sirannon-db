@@ -103,3 +103,7 @@ The client offers the plain `sirannon.v1` identifier ahead of the protocols that
 When a server refuses the upgrade, it closes with 4401 for an unauthenticated caller and 4403 for a caller that it doesn't permit. The client raises `UNAUTHORIZED` or `FORBIDDEN` and leaves that connection closed, because the same credential would fail every later attempt. For every other close code, it raises `CONNECTION_ERROR` and reconnects as long as any subscription remains open.
 
 The `ClientOptions` and `TopologyAwareClientOptions` tables are in the [configuration reference](configuration.md).
+
+## Other languages
+
+The [Python client](python-client.md) and the [Go client](go-client.md) follow the same contract, including the value envelopes, the resumed subscriptions, and the topology routing that this guide describes.

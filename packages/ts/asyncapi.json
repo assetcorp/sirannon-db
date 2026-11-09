@@ -1,0 +1,1414 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "Sirannon WebSocket API",
+    "version": "1.0.0",
+    "description": "The WebSocket protocol of a Sirannon server. A client connects to /db/{id}, offering the subprotocol sirannon.v1 when it offers any, and sends JSON text frames. Every client message carries a string id that the server repeats in its reply. Every value that a row, a bind parameter, a filter, or a change event carries follows the tagged value encoding: an integer outside the range from -(2^53 - 1) to 2^53 - 1 travels as an IntegerEnvelope and a BLOB as a BlobEnvelope. The server closes the connection with code 4401 or 4403 when the authenticate hook refuses the caller, and a client must not reconnect after either code.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "defaultContentType": "application/json",
+  "channels": {
+    "database": {
+      "address": "/db/{id}",
+      "title": "One database",
+      "description": "Queries, writes, change subscriptions, and live queries on one database. Offer the subprotocol sirannon.v1 ahead of any other subprotocol.",
+      "parameters": {
+        "id": {
+          "description": "The identifier of the database, percent-encoded."
+        }
+      },
+      "messages": {
+        "subscribe": {
+          "$ref": "#/components/messages/subscribe"
+        },
+        "unsubscribe": {
+          "$ref": "#/components/messages/unsubscribe"
+        },
+        "ack": {
+          "$ref": "#/components/messages/ack"
+        },
+        "query": {
+          "$ref": "#/components/messages/query"
+        },
+        "execute": {
+          "$ref": "#/components/messages/execute"
+        },
+        "transaction": {
+          "$ref": "#/components/messages/transaction"
+        },
+        "batch": {
+          "$ref": "#/components/messages/batch"
+        },
+        "load": {
+          "$ref": "#/components/messages/load"
+        },
+        "subscribed": {
+          "$ref": "#/components/messages/subscribed"
+        },
+        "unsubscribed": {
+          "$ref": "#/components/messages/unsubscribed"
+        },
+        "change": {
+          "$ref": "#/components/messages/change"
+        },
+        "changes": {
+          "$ref": "#/components/messages/changes"
+        },
+        "live": {
+          "$ref": "#/components/messages/live"
+        },
+        "result": {
+          "$ref": "#/components/messages/result"
+        },
+        "error": {
+          "$ref": "#/components/messages/error"
+        }
+      },
+      "bindings": {
+        "ws": {
+          "bindingVersion": "0.1.0"
+        }
+      }
+    }
+  },
+  "operations": {
+    "sendSubscribe": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Opens a change subscription on a table, resuming after sinceSeq when the server retains that history, or a live query on the registered read that name gives.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/subscribe"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/subscribed"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendUnsubscribe": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Ends the subscription or the live query that id gives.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/unsubscribe"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/unsubscribed"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendAck": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Records that a device has stored every change up to seq, on a server that accepts device sync.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/ack"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendQuery": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Runs a read statement, on a server that accepts SQL, or the registered read that name gives.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/query"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendExecute": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Runs a write statement, on a server that accepts SQL, or the registered write that name gives.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/execute"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendTransaction": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Runs every statement in one transaction, on a server that accepts SQL.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/transaction"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendBatch": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Runs one statement once for each parameter set, in one transaction, on a server that accepts SQL.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/batch"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "sendLoad": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Loads rows while the writer runs at relaxed durability, on a server that accepts SQL.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/load"
+        }
+      ],
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/database"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/database/messages/result"
+          },
+          {
+            "$ref": "#/channels/database/messages/error"
+          }
+        ]
+      }
+    },
+    "receiveSubscribed": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Confirms a subscription, with the sequence it is live from, or the first rows of a live query.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/subscribed"
+        }
+      ]
+    },
+    "receiveUnsubscribed": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Confirms that a subscription has ended.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/unsubscribed"
+        }
+      ]
+    },
+    "receiveChange": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Delivers one change to a subscribed table.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/change"
+        }
+      ]
+    },
+    "receiveChanges": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Delivers several changes in ascending seq order, on a device subscription that asks for stagedStream.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/changes"
+        }
+      ]
+    },
+    "receiveLive": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Moves a live query to its new result with operations to apply in order, replaces its rows, or states that the server is reading it again.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/live"
+        }
+      ]
+    },
+    "receiveResult": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Answers a read, a write, a transaction, a batch, a load, or an ack.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/result"
+        }
+      ]
+    },
+    "receiveError": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/database"
+      },
+      "summary": "Reports that a request failed, with the code that says why, or that the connection cannot open.",
+      "messages": [
+        {
+          "$ref": "#/channels/database/messages/error"
+        }
+      ]
+    }
+  },
+  "components": {
+    "schemas": {
+      "AckResponse": {
+        "type": "object",
+        "properties": {
+          "acked": {
+            "type": "boolean",
+            "description": "This is always true, because the server answers only once it has recorded the acknowledgement."
+          },
+          "seq": {
+            "type": "string",
+            "description": "The sequence that the device acknowledged, as a decimal string."
+          }
+        },
+        "required": [
+          "acked",
+          "seq"
+        ],
+        "description": "The server's answer to a device's acknowledgement."
+      },
+      "BatchResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecuteResponse"
+            },
+            "description": "One result per parameter set, in order."
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "description": "The body that a batch route returns."
+      },
+      "BlobEnvelope": {
+        "type": "object",
+        "properties": {
+          "__sirannon_blob": {
+            "type": "string",
+            "description": "The bytes in uppercase hexadecimal, two digits per byte, where an empty string is an empty BLOB."
+          }
+        },
+        "required": [
+          "__sirannon_blob"
+        ],
+        "description": "A BLOB, which JSON has no type for. The server and the client put every BLOB in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a byte array, and send a byte array in the same envelope."
+      },
+      "BulkLoadResult": {
+        "type": "object",
+        "properties": {
+          "rowsLoaded": {
+            "type": "number",
+            "description": "The number of parameter sets that the load applied."
+          },
+          "changes": {
+            "type": "number",
+            "description": "The number of rows that the load inserted, updated, or deleted."
+          }
+        },
+        "required": [
+          "rowsLoaded",
+          "changes"
+        ],
+        "description": "The totals for a bulk load, which Sirannon sums across rows so that a large load keeps no per-row results in memory."
+      },
+      "ExecuteResponse": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "number",
+            "description": "The number of rows that the statement inserted, updated, or deleted."
+          },
+          "lastInsertRowId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "The row id that SQLite assigned to the last inserted row, as a decimal string when it exceeds the safe integer range."
+          }
+        },
+        "required": [
+          "changes",
+          "lastInsertRowId"
+        ],
+        "description": "The body that a write route returns."
+      },
+      "IntegerEnvelope": {
+        "type": "object",
+        "properties": {
+          "__sirannon_int": {
+            "type": "string",
+            "description": "The integer in decimal, of 1 to 19 digits with an optional leading `-`."
+          }
+        },
+        "required": [
+          "__sirannon_int"
+        ],
+        "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. The server and the client put such an integer in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "The rows that the statement returned, with blobs and large integers in their tagged wire form."
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "description": "The body that a read route returns."
+      },
+      "ReadConcern": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/ReadConcernLevel",
+            "description": "The level that the node must confirm before it responds."
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "description": "How current the data must be before a node serves a read."
+      },
+      "ReadConcernLevel": {
+        "type": "string",
+        "enum": [
+          "local",
+          "majority",
+          "linearizable"
+        ],
+        "description": "How current the data must be before a node serves a read."
+      },
+      "TransactionResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecuteResponse"
+            },
+            "description": "One result per statement, in the order that the transaction executed them."
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "description": "The body that a transaction route returns."
+      },
+      "TransactionStatement": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to the statement, by name or by position."
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "description": "One statement inside a transaction or a registered write."
+      },
+      "WriteConcern": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/WriteConcernLevel",
+            "description": "Which nodes must acknowledge the write before the call returns."
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "The number of milliseconds to wait for those acknowledgements before the call fails."
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "description": "Which nodes must acknowledge a write, and how long the caller waits for their acknowledgements."
+      },
+      "WriteConcernLevel": {
+        "type": "string",
+        "enum": [
+          "local",
+          "majority",
+          "all"
+        ],
+        "description": "Which nodes must acknowledge a write before the call returns."
+      },
+      "WSAckMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "ack",
+            "description": "The message type for an acknowledgement."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "deviceId": {
+            "type": "string",
+            "description": "The identifier of the device that sends the acknowledgement."
+          },
+          "seq": {
+            "type": "string",
+            "description": "The highest sequence that the device has stored, as a decimal string."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "deviceId",
+          "seq"
+        ],
+        "description": "A device's acknowledgement of every change that it has stored up to a sequence."
+      },
+      "WSBatchMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "batch",
+            "description": "The message type for a batch."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute for each parameter set."
+          },
+          "paramsBatch": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                {
+                  "type": "array",
+                  "items": {}
+                }
+              ]
+            },
+            "description": "One parameter set for each execution of the statement."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms the batch."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "sql",
+          "paramsBatch"
+        ],
+        "description": "A request to execute one statement with many parameter sets in a single server-side transaction."
+      },
+      "WSChangeMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "change",
+            "description": "The message type for a single change event."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription that this change is for."
+          },
+          "event": {
+            "$ref": "#/components/schemas/WSWireChangeEvent",
+            "description": "The change itself."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "event"
+        ],
+        "description": "One change event for a subscriber."
+      },
+      "WSChangesMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "changes",
+            "description": "The message type for several change events."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription that these changes are for."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WSWireChangeEvent"
+            },
+            "description": "The changes, in ascending sequence order."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "events"
+        ],
+        "description": "Several change events in one frame, in ascending seq order. The server sends this frame only on a device subscription that asks for `stagedStream`, and each event has the same fields as the event in a `change` frame."
+      },
+      "WSErrorMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "error",
+            "description": "The message type for a failure."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier from the request, or an empty string when the server cannot read one."
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "The machine-readable code of the error, which the client passes to the caller unchanged."
+              },
+              "message": {
+                "type": "string",
+                "description": "What went wrong, for a log or a person."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "A machine-readable code and a human-readable message."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "error"
+        ],
+        "description": "The server's report that a request failed."
+      },
+      "WSExecuteMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "execute",
+            "description": "The message type for a write."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute, which the server executes only when it accepts SQL."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to that statement, by name or by position."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of a registered write to execute in place of `sql`."
+          },
+          "args": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The arguments that the registered write takes."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms this write."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "A request to execute a write, either as SQL or by the name of a registered write."
+      },
+      "WSLiveMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "live",
+            "description": "The message type for a live-query update."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription that this update is for."
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WSLiveOp"
+            },
+            "description": "The edits that move the result set to its new state."
+          },
+          "rows": {
+            "type": "array",
+            "items": {},
+            "description": "A complete replacement result set."
+          },
+          "revalidating": {
+            "type": "boolean",
+            "description": "Set while the server reads the query again."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "A live query's new state, which is the edits that move it, a full replacement, or a notice that the server has started to read the query again."
+      },
+      "WSLiveOp": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "insert",
+                "description": "Which edit this is: `'insert'` for a row added, `'update'` for a row changed in place, `'delete'` for a row removed."
+              },
+              "index": {
+                "type": "number",
+                "description": "The zero-based position in the result set that the edit applies to."
+              },
+              "row": {
+                "description": "The row that is now at that position."
+              }
+            },
+            "required": [
+              "op",
+              "index",
+              "row"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "update",
+                "description": "The edit type for a row changed in place."
+              },
+              "index": {
+                "type": "number",
+                "description": "The position of the row that changed."
+              },
+              "row": {
+                "description": "The row's new values."
+              }
+            },
+            "required": [
+              "op",
+              "index",
+              "row"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "delete",
+                "description": "The edit type for a removed row."
+              },
+              "index": {
+                "type": "number",
+                "description": "The position of the removed row."
+              }
+            },
+            "required": [
+              "op",
+              "index"
+            ]
+          }
+        ],
+        "description": "One edit to a live query's result set, as a position and the row at that position."
+      },
+      "WSLoadMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "load",
+            "description": "The message type for a load."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute for each parameter set."
+          },
+          "paramsBatch": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                {
+                  "type": "array",
+                  "items": {}
+                }
+              ]
+            },
+            "description": "One parameter set per row."
+          },
+          "durability": {
+            "type": "string",
+            "enum": [
+              "off",
+              "normal"
+            ],
+            "description": "The writer's durability level during the load. Defaults to 'off'."
+          },
+          "checkpoint": {
+            "type": "boolean",
+            "description": "Whether the server checkpoints the WAL after this load. Defaults to true."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "sql",
+          "paramsBatch"
+        ],
+        "description": "A request to import many rows at relaxed durability, which the server restores before it replies."
+      },
+      "WSQueryMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "query",
+            "description": "The message type for a read."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "sql": {
+            "type": "string",
+            "description": "The statement to execute, which the server executes only when it accepts SQL."
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ],
+            "description": "The values to bind to that statement, by name or by position."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of a registered read to execute in place of `sql`."
+          },
+          "args": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The arguments that the registered read takes."
+          },
+          "readConcern": {
+            "$ref": "#/components/schemas/ReadConcern",
+            "description": "The read concern that this read requires."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "A request to execute a read, either as SQL or by the name of a registered read."
+      },
+      "WSResultMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "result",
+            "description": "The message type for a reply to a read, write, transaction, batch, load, or acknowledgement."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier from the request."
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ExecuteResponse"
+              },
+              {
+                "$ref": "#/components/schemas/TransactionResponse"
+              },
+              {
+                "$ref": "#/components/schemas/BatchResponse"
+              },
+              {
+                "$ref": "#/components/schemas/BulkLoadResult"
+              },
+              {
+                "$ref": "#/components/schemas/AckResponse"
+              }
+            ],
+            "description": "The reply body, whose shape depends on the request."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "data"
+        ],
+        "description": "The server's reply to a read, write, transaction, batch, load, or acknowledgement."
+      },
+      "WSSubscribedMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "subscribed",
+            "description": "The message type for a subscription confirmation."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription that is now open."
+          },
+          "maxUnacknowledgedChanges": {
+            "type": "number",
+            "description": "The number of changes that the server sends past the device's acknowledged cursor before it pauses delivery. The server sends it only for a device subscription."
+          },
+          "seq": {
+            "type": "string",
+            "description": "The seq from which the subscription is live. A client that has not yet received any change stores this seq as its resume cursor, so that after a reconnect during a quiet period, the server still replays every change that the client missed."
+          },
+          "resync": {
+            "type": "boolean",
+            "description": "Set when the server cannot replay from the requested `sinceSeq`, because that seq is older than the history that the server retains, the client's `epoch` differs from the server's, or the replay fails. The server skips the replay and the subscription starts from the server's current position, so the client must treat its earlier state as stale and read it again."
+          },
+          "epoch": {
+            "type": "string",
+            "description": "The identifier of the sequence space that this subscription streams from. The client stores it and sends it back when it resumes, so that the server answers a cursor from a different database with `resync: true`."
+          },
+          "rows": {
+            "type": "array",
+            "items": {},
+            "description": "The first result set of a live query, which the server sends when the subscription names a registered read."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "The server's confirmation that a subscription is open, with the cursor and the epoch that it streams from."
+      },
+      "WSSubscribeMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "subscribe",
+            "description": "The message type for a subscribe."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its replies and change events."
+          },
+          "table": {
+            "type": "string",
+            "description": "The table to subscribe to."
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Several tables to subscribe to at once."
+          },
+          "filter": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Narrows the subscription to rows whose columns equal these values."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of a registered read, so that the server opens a live query on that read."
+          },
+          "args": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The arguments that the registered read takes."
+          },
+          "registryDigest": {
+            "type": "string",
+            "description": "The digest of the operation registry that the client built its live query against."
+          },
+          "sinceSeq": {
+            "type": "string",
+            "description": "The highest `seq` that the client has processed. When it is present, the server replays every retained change with a greater seq before it sends live events, so that a reconnecting subscriber receives the changes that it missed. When the server answers with `resync: true`, it skips the replay. The client sends the value as a decimal string, so that a value beyond `Number.MAX_SAFE_INTEGER` stays exact."
+          },
+          "epoch": {
+            "type": "string",
+            "description": "The `epoch` that the server reported with this cursor. A `sinceSeq` is valid only within the sequence space that produced it, so when this epoch differs from the server's own, the server answers with `resync: true` and skips the replay."
+          },
+          "deviceId": {
+            "type": "string",
+            "description": "The device's identifier, which makes this a device-sync subscription."
+          },
+          "schemaVersion": {
+            "type": "number",
+            "description": "The schema version of the device's local database, which the server checks before it opens the stream."
+          },
+          "stagedStream": {
+            "type": "boolean",
+            "description": "Set to true when this device stages pulled changes durably and acknowledges staged sequences. The server then packs several events into each `changes` frame and can pause the stream at any event. The server accepts it only with `deviceId`."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "A request to open a change subscription on one or more tables, or a live query on a registered read."
+      },
+      "WSTransactionMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "transaction",
+            "description": "The message type for a transaction."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier that the client chooses, which the server repeats in its reply."
+          },
+          "statements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionStatement"
+            },
+            "description": "The statements to execute, in order."
+          },
+          "writeConcern": {
+            "$ref": "#/components/schemas/WriteConcern",
+            "description": "The acknowledgements that the server waits for before it confirms the transaction."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "statements"
+        ],
+        "description": "A request to execute every statement in one server-side transaction, to which the server replies once with all the results. The server makes no round trip to the client between statements, so it holds the single writer lock only while the statements execute."
+      },
+      "WSUnsubscribedMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "unsubscribed",
+            "description": "The message type for an unsubscribe confirmation."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription that has ended."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "The server's confirmation that a subscription has ended."
+      },
+      "WSUnsubscribeMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "unsubscribe",
+            "description": "The message type for an unsubscribe."
+          },
+          "id": {
+            "type": "string",
+            "description": "The identifier of the subscription to end."
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "description": "A request to end a subscription."
+      },
+      "WSWireChangeEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "insert",
+              "update",
+              "delete"
+            ],
+            "description": "Whether the row was inserted, updated, or deleted."
+          },
+          "table": {
+            "type": "string",
+            "description": "The table of the row."
+          },
+          "row": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The row's values after the change."
+          },
+          "oldRow": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The row's values before an update or a delete."
+          },
+          "seq": {
+            "type": "string",
+            "description": "The position of this change in the database's change log, as a decimal string."
+          },
+          "timestamp": {
+            "type": "number",
+            "description": "Milliseconds since the Unix epoch, from when the database recorded the change."
+          },
+          "hlc": {
+            "type": "string",
+            "description": "The hybrid logical clock stamp that the writing node gave this change."
+          },
+          "origin": {
+            "type": "string",
+            "description": "The identifier of the node or device that wrote the change."
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The primary key of the changed row, encoded as a string."
+          },
+          "txId": {
+            "type": "string",
+            "description": "The identifier of the transaction that made this change."
+          },
+          "txEnd": {
+            "type": "boolean",
+            "description": "Set on the last change of a transaction."
+          }
+        },
+        "required": [
+          "type",
+          "table",
+          "row",
+          "seq",
+          "timestamp"
+        ],
+        "description": "One change event in its wire form, with the sequence as a decimal string, so that JSON keeps a value beyond the safe integer range exact."
+      }
+    },
+    "messages": {
+      "subscribe": {
+        "name": "subscribe",
+        "title": "WSSubscribeMessage",
+        "summary": "Opens a change subscription on a table, resuming after sinceSeq when the server retains that history, or a live query on the registered read that name gives.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSSubscribeMessage"
+        }
+      },
+      "unsubscribe": {
+        "name": "unsubscribe",
+        "title": "WSUnsubscribeMessage",
+        "summary": "Ends the subscription or the live query that id gives.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSUnsubscribeMessage"
+        }
+      },
+      "ack": {
+        "name": "ack",
+        "title": "WSAckMessage",
+        "summary": "Records that a device has stored every change up to seq, on a server that accepts device sync.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSAckMessage"
+        }
+      },
+      "query": {
+        "name": "query",
+        "title": "WSQueryMessage",
+        "summary": "Runs a read statement, on a server that accepts SQL, or the registered read that name gives.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSQueryMessage"
+        }
+      },
+      "execute": {
+        "name": "execute",
+        "title": "WSExecuteMessage",
+        "summary": "Runs a write statement, on a server that accepts SQL, or the registered write that name gives.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSExecuteMessage"
+        }
+      },
+      "transaction": {
+        "name": "transaction",
+        "title": "WSTransactionMessage",
+        "summary": "Runs every statement in one transaction, on a server that accepts SQL.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSTransactionMessage"
+        }
+      },
+      "batch": {
+        "name": "batch",
+        "title": "WSBatchMessage",
+        "summary": "Runs one statement once for each parameter set, in one transaction, on a server that accepts SQL.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSBatchMessage"
+        }
+      },
+      "load": {
+        "name": "load",
+        "title": "WSLoadMessage",
+        "summary": "Loads rows while the writer runs at relaxed durability, on a server that accepts SQL.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSLoadMessage"
+        }
+      },
+      "subscribed": {
+        "name": "subscribed",
+        "title": "WSSubscribedMessage",
+        "summary": "Confirms a subscription, with the sequence it is live from, or the first rows of a live query.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSSubscribedMessage"
+        }
+      },
+      "unsubscribed": {
+        "name": "unsubscribed",
+        "title": "WSUnsubscribedMessage",
+        "summary": "Confirms that a subscription has ended.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSUnsubscribedMessage"
+        }
+      },
+      "change": {
+        "name": "change",
+        "title": "WSChangeMessage",
+        "summary": "Delivers one change to a subscribed table.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSChangeMessage"
+        }
+      },
+      "changes": {
+        "name": "changes",
+        "title": "WSChangesMessage",
+        "summary": "Delivers several changes in ascending seq order, on a device subscription that asks for stagedStream.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSChangesMessage"
+        }
+      },
+      "live": {
+        "name": "live",
+        "title": "WSLiveMessage",
+        "summary": "Moves a live query to its new result with operations to apply in order, replaces its rows, or states that the server is reading it again.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSLiveMessage"
+        }
+      },
+      "result": {
+        "name": "result",
+        "title": "WSResultMessage",
+        "summary": "Answers a read, a write, a transaction, a batch, a load, or an ack.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSResultMessage"
+        }
+      },
+      "error": {
+        "name": "error",
+        "title": "WSErrorMessage",
+        "summary": "Reports that a request failed, with the code that says why, or that the connection cannot open.",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/WSErrorMessage"
+        }
+      }
+    }
+  }
+}

@@ -86,7 +86,12 @@ export interface ClusterStatusInfo {
   /** Whether this node is the primary, which accepts writes, or a replica, which serves reads. */
   role?: 'primary' | 'replica'
   /** The primary that this node reports as current, or null when the node reports none. */
-  currentPrimary?: { nodeId: string; endpoint?: string } | null
+  currentPrimary?: {
+    /** The identifier of the primary node. */
+    nodeId: string
+    /** The address at which a client reaches the primary. */
+    endpoint?: string
+  } | null
   /** The primary term that this node reports as current. */
   primaryTerm?: bigint
   /** Every node that a client can read from, with the read concerns that each one meets. */

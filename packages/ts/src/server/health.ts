@@ -3,41 +3,91 @@ import type { Sirannon } from '../core/sirannon.js'
 import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
 import { endResponse } from './connection-drain.js'
 
-interface LivenessResponse {
+/**
+ * The body of `GET /health`, which the server sends while its process is up.
+ *
+ * @public
+ */
+export interface LivenessResponse {
+  /** This is always `ok`, because only a live process can answer. */
   status: 'ok'
 }
 
-interface DatabaseStatus {
+/**
+ * Whether one open database can serve requests.
+ *
+ * @public
+ */
+export interface DatabaseStatus {
+  /** The identifier under which the registry holds the database. */
   id: string
+  /** Whether the database refuses writes. */
   readOnly: boolean
+  /** Whether the database has closed, which makes the readiness status `degraded`. */
   closed: boolean
 }
 
-interface ReadinessResponse {
+/**
+ * The body of `GET /health/ready`, with whether the node can serve reads and writes.
+ *
+ * @public
+ */
+export interface ReadinessResponse {
+  /**
+   * What the node can do now: `ok` when it is healthy, `degraded` when a database has closed, and the replication
+   * health state otherwise.
+   */
   status: 'ok' | 'degraded' | 'failing_over' | 'unavailable' | 'repairing' | 'syncing'
+  /** One entry for each database that the registry holds open. */
   databases: DatabaseStatus[]
-  replication?: {
-    role: string
-    writeForwarding: boolean
-    peers: number
-    localSeq: string
-    replicationGroupId?: string
-    primaryTerm?: string
-    currentPrimary?: string
-    coordinator?: {
-      connected: boolean
-      authority: boolean
-    }
-    controller?: {
-      state: 'disabled' | 'standby' | 'active' | 'lost'
-    }
-    inSyncReplicas?: string[]
-    laggingReplicas?: string[]
-    syncState?: string
-    healthReason: NodeHealthReason
-    readAvailability?: 'available' | 'unavailable'
-    writeAvailability?: 'available' | 'unavailable'
+  /** The replication state of this node, which the server reports when replication is on. */
+  replication?: ReplicationReadiness
+}
+
+/**
+ * The replication state of one node, as the server reports it in `GET /health/ready`.
+ *
+ * @public
+ */
+export interface ReplicationReadiness {
+  /** Whether this node is the primary or a replica. */
+  role: string
+  /** Whether this node forwards the writes that it receives to the primary. */
+  writeForwarding: boolean
+  /** How many peers this node replicates with. */
+  peers: number
+  /** The highest change sequence that this node has stored, as a decimal string. */
+  localSeq: string
+  /** The identifier of this node's replication group. */
+  replicationGroupId?: string
+  /** The primary term that this node reports as current, as a decimal string. */
+  primaryTerm?: string
+  /** The identifier of the node that this node reports as the current primary. */
+  currentPrimary?: string
+  /** Whether this node reaches the coordinator, and whether it holds the primary authority. */
+  coordinator?: {
+    /** Whether this node reaches the coordinator. */
+    connected: boolean
+    /** Whether this node holds the primary authority. */
+    authority: boolean
   }
+  /** The state of this node's failover controller. */
+  controller?: {
+    /** Whether the controller is off, waiting, leading the group, or has lost its lease. */
+    state: 'disabled' | 'standby' | 'active' | 'lost'
+  }
+  /** The replicas that are in sync with the primary. */
+  inSyncReplicas?: string[]
+  /** The replicas that lag behind the primary. */
+  laggingReplicas?: string[]
+  /** How far this node has caught up with the primary. */
+  syncState?: string
+  /** The condition behind this node's health state. */
+  healthReason: NodeHealthReason
+  /** Whether this node serves reads now. */
+  readAvailability?: 'available' | 'unavailable'
+  /** Whether this node serves writes now. */
+  writeAvailability?: 'available' | 'unavailable'
 }
 
 export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void {

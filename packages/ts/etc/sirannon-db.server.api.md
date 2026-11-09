@@ -11,8 +11,8 @@ export interface BackupChainResponse {
 
 // @public
 export interface BackupRestoreRequest {
-    batchSize?: unknown;
-    moment?: unknown;
+    batchSize?: number;
+    moment?: number;
 }
 
 // @public
@@ -31,14 +31,14 @@ export interface BackupRestoreStatus {
         code: string;
         message: string;
     };
-    report?: BackupRestoreReport;
+    report?: BackupRestoreSummary;
     startedAt?: number;
     state: BackupRestoreState;
 }
 
 // @public
 export interface BackupSafeToDeleteRequest {
-    restorableFrom?: unknown;
+    restorableFrom?: number;
 }
 
 // @public
@@ -47,7 +47,9 @@ export interface BackupSafeToDeleteResponse {
 }
 
 // @public
-export type BackupStatusResponse = BackupCycleStatus;
+export interface BackupStatusResponse extends Omit<BackupCycleStatus, 'lastRun'> {
+    lastRun?: BackupRunSummary;
+}
 
 // @public
 export interface BackupTriggerResponse {
@@ -56,7 +58,7 @@ export interface BackupTriggerResponse {
 
 // @public
 export interface BackupVerifyRequest {
-    name?: unknown;
+    name: string;
 }
 
 // @public

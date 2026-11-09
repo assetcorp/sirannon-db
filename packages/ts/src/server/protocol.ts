@@ -141,10 +141,12 @@ export interface BatchResponse {
 }
 
 /**
- * The body of `POST /db/{id}/load`, which loads rows while the server relaxes the
- * writer's durability. The server restores the configured durability before it
- * sends the response. When the process crashes during a load, SQLite rolls back the
- * uncommitted rows, so the client can send the load again.
+ * The body of `POST /db/{id}/load`, the route that loads rows while the server relaxes
+ * the writer's durability. The server restores the configured durability before it
+ * sends the response. The server writes every row of a load in one transaction, so
+ * when the process crashes before the commit, SQLite rolls the rows back and the
+ * database holds none of them. When the connection fails, however, the caller cannot
+ * tell whether the load committed, so check the table before you send the load again.
  *
  * @public
  */
@@ -166,8 +168,15 @@ export interface LoadRequest {
  */
 export type LoadResponse = BulkLoadResult
 
+/**
+ * The server's answer to a device's acknowledgement.
+ *
+ * @public
+ */
 export interface AckResponse {
+  /** This is always true, because the server answers only once it has recorded the acknowledgement. */
   acked: boolean
+  /** The sequence that the device acknowledged, as a decimal string. */
   seq: string
 }
 
@@ -179,13 +188,22 @@ export interface AckResponse {
 export interface ErrorResponse {
   /** A machine-readable code, a human-readable message, and any details that the route adds. */
   error: {
+    /** The machine-readable code of the error, which the client passes to the caller unchanged. */
     code: string
+    /** What went wrong, for a log or a person. */
     message: string
+    /** The routing context of the error, such as `currentPrimary`, `primaryTerm`, or `serverVersion`, which the server includes only when it holds a value. */
     details?: Record<string, unknown>
   }
 }
 
+/**
+ * The body of `GET /db/{id}/cluster`, with the nodes to which a client sends the database's writes and reads.
+ *
+ * @public
+ */
 export type ClusterStatusResponse = Omit<ClusterStatusInfo, 'primaryTerm'> & {
+  /** The primary term that this node reports as current, as a decimal string so that a 64-bit term stays exact. */
   primaryTerm?: string
 }
 

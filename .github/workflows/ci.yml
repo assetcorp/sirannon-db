@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: 22
+            python-version: '3.11'
+          - node-version: 24
+            python-version: '3.14'
 
     steps:
       - name: Checkout
@@ -34,6 +38,19 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
+
+      - name: Setup Python ${{ matrix.python-version }} for the Python client
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Go for the Go client
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/go/go.mod
+          cache-dependency-path: |
+            packages/go/go.sum
+            packages/go/tests/go.sum
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -72,6 +89,22 @@ jobs:
 
       - name: Assert the published API is documented and its reports are current
         run: pnpm check:api
+
+      - name: Assert openapi.json and asyncapi.json match the server's types
+        run: pnpm nx run sirannon-ts:api-description
+
+      - name: Assert the Python and Go clients match openapi.json and asyncapi.json
+        run: pnpm nx run-many -t generate
+
+      - name: Assert the generated operation references in the client tests are current
+        run: |
+          pnpm --dir packages/ts run client-operations:write
+          drift="$(git status --porcelain -- packages/python packages/go)"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            git diff -- packages/python packages/go
+            exit 1
+          fi
 
       - name: Test
         run: pnpm test

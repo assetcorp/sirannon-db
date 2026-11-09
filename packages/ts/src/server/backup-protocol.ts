@@ -1,5 +1,6 @@
 import type { BackupChain, BackupChainRecord } from '../core/backup/chain.js'
 import type { BackupCycleStatus } from '../core/backup/cycle-status.js'
+import type { BackupRunReport } from '../core/backup/report.js'
 import { MAX_RESTORE_BATCH_SIZE } from '../core/backup/restore-options.js'
 import type { BackupVerifyResult } from '../core/backup/verify.js'
 
@@ -10,14 +11,22 @@ export const BACKUP_RESTORE_NOT_ACCEPTED_MESSAGE =
  * @public
  */
 export interface BackupTriggerResponse {
-  /** Always true, because the server sends this answer only after it accepts the turn. */
+  /** This is always true, because the server sends this answer only after it accepts the turn. */
   started: true
 }
 
-/** The checkpoint cycle's current activity, and the results of its recent turns.
+/** The report of one finished backup as the server sends it, without the path of the source database file on the server.
  * @public
  */
-export type BackupStatusResponse = BackupCycleStatus
+export interface BackupRunSummary extends Omit<BackupRunReport, 'sourcePath'> {}
+
+/** The checkpoint cycle's current activity, and the results of its recent turns, as the server sends them.
+ * @public
+ */
+export interface BackupStatusResponse extends Omit<BackupCycleStatus, 'lastRun'> {
+  /** The report of the most recent backup that the cycle finished, without the path of the source database file. */
+  lastRun?: BackupRunSummary
+}
 
 /** Every chain in the backup destination.
  * @public
@@ -32,7 +41,7 @@ export interface BackupChainResponse {
  */
 export interface BackupVerifyRequest {
   /** The name under which the destination stores the backup, as it appears in every chain record. */
-  name?: unknown
+  name: string
 }
 
 /** The result of reading one backup back from the destination.
@@ -45,7 +54,7 @@ export type BackupVerifyResponse = BackupVerifyResult
  */
 export interface BackupSafeToDeleteRequest {
   /** The earliest moment, in epoch milliseconds, that you must still be able to restore to. When it is absent, the server lists only the backups that you cannot restore from. */
-  restorableFrom?: unknown
+  restorableFrom?: number
 }
 
 /** The records that you no longer need for any restore.
@@ -61,10 +70,17 @@ export interface BackupSafeToDeleteResponse {
  */
 export interface BackupRestoreRequest {
   /** The moment, in epoch milliseconds, to restore the database to. When it is absent, the server uses the current time, so it restores the newest state that the destination stores. */
-  moment?: unknown
-  /** How many change pieces the server replays between one checkpoint and the next. Defaults to 16. */
-  batchSize?: unknown
+  moment?: number
+  /** How many change pieces the server replays between one checkpoint and the next, from 1 to 4096, which is 16 when you leave it out. */
+  batchSize?: number
 }
+
+/**
+ * A request body before the server checks it, with every field that the caller may send held as an unchecked value.
+ *
+ * @internal
+ */
+export type UncheckedBody<T> = { [K in keyof T]?: unknown }
 
 function wholeNumberError(field: string, value: unknown, atLeast: number, atMost?: number): string | null {
   if (value === undefined) return null
@@ -106,7 +122,7 @@ export function restorableFromValidationError(value: unknown): string | null {
  * @param body - The body of the restore request.
  * @returns The error message, or null when both fields are valid or absent.
  */
-export function restoreRequestValidationError(body: BackupRestoreRequest): string | null {
+export function restoreRequestValidationError(body: UncheckedBody<BackupRestoreRequest>): string | null {
   return (
     wholeNumberError('moment', body.moment, 0) ??
     wholeNumberError('batchSize', body.batchSize, 1, MAX_RESTORE_BATCH_SIZE)

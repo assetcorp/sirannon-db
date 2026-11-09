@@ -2,6 +2,7 @@ import type { OperationArguments } from '../core/operation-registry.js'
 import type { OperationSource } from './operation-lookup.js'
 import { decodeBoundParams, toExecuteResponse, validateReadConcern, validateWriteConcern } from './protocol.js'
 import { queryWireRows } from './wire-rows.js'
+import type { OperationExecuteResponse } from './wire-types.js'
 import type { WSOperationContext } from './ws-operations.js'
 import { toReadOptions } from './ws-operations.js'
 
@@ -91,7 +92,7 @@ export async function handleNamedExecuteMessage(
           }
           return collected
         }, options)
-    ctx.sendResult(id, { results: results.map(toExecuteResponse) })
+    ctx.sendResult(id, { results: results.map(toExecuteResponse) } satisfies OperationExecuteResponse)
   } catch (err) {
     ctx.sendCaughtError(id, err)
   }

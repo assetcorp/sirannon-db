@@ -44,7 +44,10 @@
     "test:failover": "vitest run --config vitest.failover.config.ts",
     "test:large": "vitest run --config vitest.large.config.ts",
     "test:soak": "vitest run --config vitest.soak.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc -p scripts/tsconfig.json",
+    "api-description": "tsx scripts/api-description/generate.ts",
+    "api-description:write": "tsx scripts/api-description/generate.ts --write",
+    "client-operations:write": "node dist/codegen/cli.mjs --registry scripts/client-test-operations.mjs --python ../python/tests/generated_operations.py --go ../go/tests/testoperations/operations.go --go-package testoperations",
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -122,7 +125,9 @@
     "./transport/grpc": {
       "types": "./dist/transport/grpc.d.ts",
       "import": "./dist/transport/grpc.mjs"
-    }
+    },
+    "./openapi.json": "./openapi.json",
+    "./asyncapi.json": "./asyncapi.json"
   },
   "typesVersions": {
     "*": {
@@ -142,6 +147,8 @@
   },
   "files": [
     "dist",
+    "openapi.json",
+    "asyncapi.json",
     "LICENSE",
     "NOTICE"
   ],

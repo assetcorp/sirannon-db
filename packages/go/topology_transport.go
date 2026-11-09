@@ -99,7 +99,7 @@ func (t *topologyTransport) onWrite(ctx context.Context, write func(databaseTran
 	return err
 }
 
-const perQueryReadConcernRefused = "The topology-aware client applies its read_concern setting to every read; pass none per query"
+const perQueryReadConcernRefused = "The topology-aware client applies TopologyOptions.ReadConcern to every read; pass no WithReadConcern per query"
 
 func (t *topologyTransport) query(ctx context.Context, call statementCall) ([]Row, error) {
 	if call.readConcern != nil {

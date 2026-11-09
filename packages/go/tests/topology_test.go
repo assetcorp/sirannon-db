@@ -164,7 +164,7 @@ func TestTopologyClientRefusesAPerQueryReadConcernBeforeSendingTheRead(t *testin
 	_, refusals["a statement"] = db.Query(ctx, "SELECT id FROM items", nil, sirannon.WithReadConcern(sirannon.ReadConcernLevelLinearizable))
 	_, refusals["a registered read"] = sirannon.Query(ctx, db, itemByID, itemArgs{ID: int64(7)}, sirannon.WithReadConcern(sirannon.ReadConcernLevelMajority))
 	for kind, err := range refusals {
-		if sirannon.ErrorCode(err) != sirannon.CodeInvalidArgument || !strings.Contains(err.Error(), "pass none per query") {
+		if sirannon.ErrorCode(err) != sirannon.CodeInvalidArgument || !strings.Contains(err.Error(), "pass no WithReadConcern per query") {
 			t.Fatalf("%s with a per-query read concern gave %v, want INVALID_ARGUMENT", kind, err)
 		}
 	}

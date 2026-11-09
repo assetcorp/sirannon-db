@@ -141,10 +141,12 @@ export interface BatchResponse {
 }
 
 /**
- * The body of `POST /db/{id}/load`, which loads rows while the server relaxes the
- * writer's durability. The server restores the configured durability before it
- * sends the response. When the process crashes during a load, SQLite rolls back the
- * uncommitted rows, so the client can send the load again.
+ * The body of `POST /db/{id}/load`, the route that loads rows while the server relaxes
+ * the writer's durability. The server restores the configured durability before it
+ * sends the response. The server writes every row of a load in one transaction, so
+ * when the process crashes before the commit, SQLite rolls the rows back and the
+ * database holds none of them. When the connection fails, however, the caller cannot
+ * tell whether the load committed, so check the table before you send the load again.
  *
  * @public
  */

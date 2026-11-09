@@ -271,6 +271,10 @@ describe('the restore route', () => {
     const restored = await restoreSettled(served.base, 'orders')
     const reopened = await sirannon.resolve('orders')
     if (reopened === undefined) throw new Error('the restored database did not open again')
+    await waitUntil(
+      () => reopened.backupStatus().lastRun !== undefined && !reopened.backupStatus().running,
+      'the opening full copy of the restored database',
+    )
     const unmountedVolume = join(dir, 'unmounted-volume', 'piece')
     orders.destination.faults.holdWrite = async () => {
       await readFile(unmountedVolume)

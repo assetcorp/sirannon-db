@@ -136,8 +136,10 @@ func (d *RemoteDatabase) Batch(ctx context.Context, sql string, paramsBatch []an
 
 // Load sends one statement with every parameter set in paramsBatch and returns the totals. The server
 // relaxes the writer's durability during the load and restores the configured durability before it
-// answers. If the server crashes during a load, SQLite rolls back the uncommitted rows, so you can
-// send the same load again.
+// answers. The server writes every row of a load in one transaction, so if the server crashes before
+// the commit, SQLite rolls the rows back and the database holds none of them. If the connection
+// fails, however, you cannot tell whether the load committed, so check the table before you send the
+// load again.
 func (d *RemoteDatabase) Load(ctx context.Context, sql string, paramsBatch []any, options LoadOptions) (LoadResult, error) {
 	var result LoadResult
 	err := d.run(ctx, func(ctx context.Context) error {

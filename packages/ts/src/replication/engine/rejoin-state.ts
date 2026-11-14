@@ -7,8 +7,6 @@
 export class RejoinState {
   /** Is true while this node starts the full copy that rebuilds it, so that it starts one copy at a time. */
   syncStarting = false
-  /** Is true while this node compares its history as a demoted primary, so that it starts no rebuild until it has found whether it must quarantine its rows. */
-  evaluatingFormerPrimary = false
   /** Holds the primary term in which this node finished the full copy that rejoins it, or null before it finishes one. */
   copiedTerm: bigint | null = null
   /** Is true while this node asks the coordinator to admit it after that copy, so that it sends one request at a time. */

@@ -5,6 +5,7 @@ import {
   deleteColumnVersions,
   deletePeerState,
   deleteStampedChangesUpToSeq,
+  insertRolledBackChangesAfterHlc,
   selectHistoryBase,
   selectMaxChangeSeq,
   selectNewestHistoryChange,
@@ -28,15 +29,18 @@ function tracksTermHistory(engine: ReplicationEngine): boolean {
 }
 
 function reconcilesTermHistory(engine: ReplicationEngine): boolean {
-  if (!tracksTermHistory(engine) || engine.history.heldPrimaryInAnchoredTerm) return false
+  if (!tracksTermHistory(engine)) return false
   const state = engine.coordinatorState
+  const history = engine.history
+  if (history.heldPrimaryInAnchoredTerm && (!state || state.primaryTerm === history.anchoredTerm)) return false
   if (!state) return true
   return !state.repairingNodeIds.includes(engine.nodeId) && !state.faultedNodeIds.includes(engine.nodeId)
 }
 
 /**
  * Returns whether this replica has reconciled its history with the current primary's, which it must do before it
- * applies a batch or reports a position in that primary's log. A former primary and a repairing or faulted node
+ * applies a batch or reports a position in that primary's log. A former primary reconciles as any replica does once
+ * the group has moved to a later term. A primary in the term whose history it holds, and a repairing or faulted node,
  * rejoin through their own paths, so this check passes for them.
  *
  * @param engine - The replica's engine.
@@ -56,9 +60,9 @@ export function isAnchoredToCurrentTerm(engine: ReplicationEngine): boolean {
  * history the replica has not reconciled: the replica asks the primary where their histories meet and keeps serving its
  * data until the answer arrives. It sends the request again when no answer arrives within `syncAckTimeoutMs`.
  *
- * A primary, a node that held primary authority in its reconciled term, a repairing or faulted node, and a node that
- * is still copying start nothing, because the primary's history is their own, a former primary rejoins through the
- * former-primary path, and the repair and copy paths reconcile the others.
+ * A primary and a node that held primary authority in the current term start nothing, because the primary's history
+ * is their own. A repairing or faulted node and a node that is still copying start nothing either, because the repair
+ * and copy paths reconcile them.
  *
  * @param engine - The replica's engine.
  *
@@ -174,8 +178,8 @@ export function keepTermHistoryCurrent(engine: ReplicationEngine): void {
 /**
  * Returns whether a replica may process a batch, which it may only once it has reconciled its history with the
  * history of the batch's term, and starts that reconciliation when the batch belongs to a term that it has not
- * reconciled. A former primary and a repairing or faulted node may process every batch, because they rejoin through
- * their own paths.
+ * reconciled. A primary in the term whose history it holds and a repairing or faulted node may process every batch,
+ * because they rejoin through separate paths.
  *
  * @param engine - The replica's engine.
  * @param batch - The batch, which carries the term of the primary that sent it.
@@ -309,8 +313,10 @@ async function rollBack(engine: ReplicationEngine, complete: SyncComplete, fromP
 /**
  * Records, after a verified full copy in coordinator mode, that the replica's history now starts at the copy.
  *
- * In one transaction the replica forgets the change-log history and column versions from before the copy, which no
- * longer describe its rows, and remembers the copy's newest history transaction. In the same transaction it keeps only
+ * In one transaction the replica keeps, in its table of rolled-back changes, every history change stamped after the
+ * copy's newest history transaction, because the copy replaced the rows that those changes wrote. It then forgets the
+ * change-log history and column versions from before the copy, which no longer describe its rows, and remembers the
+ * copy's newest history transaction. In the same transaction it keeps only
  * the applied positions in the source's log up to the copy, takes the copy's term as its reconciled term, and deletes
  * its quarantine record. When the group shows the replica as repairing in the copy's term, the replica also notes
  * that it has finished the copy that rejoins it, so that it can ask for admission to the in-sync set.
@@ -331,9 +337,12 @@ export async function recordCopiedHistory(
   history.resumeRequest.clear()
   const term = complete.primaryTerm
   if (!tracksTermHistory(engine) || term === undefined) return
+  const origins = historyOrigins(engine)
+  const copiedThroughHlc = complete.historyPoint?.hlc ?? null
   await history.exclusive(() =>
     engine.writerConn.transaction(async tx => {
       await upsertQuarantined(tx, false)
+      await insertRolledBackChangesAfterHlc(tx, CHANGES_TABLE, origins, copiedThroughHlc, term, Date.now() / 1000)
       await deleteStampedChangesUpToSeq(tx, CHANGES_TABLE, await selectMaxChangeSeq(tx, CHANGES_TABLE))
       await deleteColumnVersions(tx)
       await upsertHistoryBase(tx, complete.historyPoint ?? null)

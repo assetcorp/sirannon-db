@@ -88,7 +88,7 @@ export class TermHistory {
   active = false
   /** Holds the primary term whose history this node last reconciled its own with, or null before the first time. */
   anchoredTerm: bigint | null = null
-  /** Is true when this node held primary authority in its reconciled term, so that only the former-primary path rejoins it. */
+  /** Is true when this node held primary authority in its reconciled term, so that it reconciles only once the group moves to a later term. */
   heldPrimaryInAnchoredTerm = false
   /** Holds the term whose start this node recorded as primary, or null before it records one. */
   termStartTerm: bigint | null = null

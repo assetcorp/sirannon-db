@@ -7,11 +7,11 @@ import {
   startEnvironment,
 } from './gate-environment.js'
 
-export function useFailoverEnvironment(): () => GateEnvironment {
+export function useFailoverEnvironment(nodeIds?: readonly string[]): () => GateEnvironment {
   let environment: GateEnvironment | null = null
 
   beforeAll(async () => {
-    environment = await startEnvironment()
+    environment = await startEnvironment(nodeIds)
   }, 240_000)
 
   beforeEach(async () => {

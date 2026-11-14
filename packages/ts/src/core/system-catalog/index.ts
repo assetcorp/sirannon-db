@@ -106,6 +106,13 @@ export {
 } from './replication-history-meta.js'
 export { ensureBatchApplyTables, ensureReplicationStateTables } from './replication-tables.js'
 export {
+  deleteRolledBackChanges,
+  ensureRolledBackChangesTable,
+  insertRolledBackChangesAfterHlc,
+  type RolledBackChange,
+  selectRolledBackChanges,
+} from './rolled-back-changes-table.js'
+export {
   type IndexColumnRow,
   type IndexListRow,
   indexColumns,

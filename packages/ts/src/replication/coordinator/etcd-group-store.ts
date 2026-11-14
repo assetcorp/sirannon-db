@@ -3,6 +3,7 @@ import { CoordinatorError, NoSafePrimaryError } from '../errors.js'
 import { parseGroupState, parseNodeSession, serializeGroupState } from './etcd-codec.js'
 import { nodeSessionKey, replicationGroupKey } from './etcd-connection.js'
 import { assertRaiseFeatureLevelInput, nextFeatureLevelState } from './feature-level-rules.js'
+import { overwriteGroupInput } from './group-overwrite.js'
 import {
   assertNonEmpty,
   assertNonNegativeSeq,
@@ -13,11 +14,12 @@ import {
   groupMemberIds,
   isEligiblePromotionSession,
   MIN_AUTOMATIC_FAILOVER_VOTERS,
-  markDisplacedPrimaryForRepair,
   nextAdmittedInSyncState,
   nextInSyncSetState,
   nextMaintenanceState,
   normaliseNodeIds,
+  recordInSyncMajority,
+  removeDisplacedPrimaryFromInSyncSet,
 } from './group-rules.js'
 import type {
   AddVoterInput,
@@ -68,7 +70,7 @@ export class EtcdGroupStore {
   ) {}
 
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
-    const state = buildReplicationGroupState(input)
+    const state = buildReplicationGroupState(overwriteGroupInput(input))
     await this.namespace.put(replicationGroupKey(input.clusterId, input.groupId)).value(serializeGroupState(state))
     return cloneReplicationGroupState(state)
   }
@@ -176,14 +178,14 @@ export class EtcdGroupStore {
       durabilityPointSeq: 0n,
       updatedAtMs: Date.now(),
     }
-    markDisplacedPrimaryForRepair(next, current.currentPrimary?.nodeId, input.nextPrimary.nodeId)
-    const nextRaw = serializeGroupState(next)
+    removeDisplacedPrimaryFromInSyncSet(next, current.currentPrimary?.nodeId, input.nextPrimary.nodeId)
+    const nextRaw = serializeGroupState(recordInSyncMajority(next))
     const result = await this.namespace
       .if(key, 'Value', '==', currentRaw)
       .then(this.namespace.put(key).value(nextRaw))
       .commit()
     if (result.succeeded) {
-      return { advanced: true, state: cloneReplicationGroupState(next) }
+      return { advanced: true, state: parseGroupState(nextRaw) }
     }
 
     return { advanced: false, state: await this.getReplicationGroupState(input.clusterId, input.groupId) }
@@ -291,7 +293,7 @@ export class EtcdGroupStore {
         return { changed: false, state: null }
       }
       const state = parseGroupState(storedRaw)
-      const next = mutate(state)
+      const next = recordInSyncMajority(mutate(state))
       if (next === state) {
         return { changed: false, state: cloneReplicationGroupState(state) }
       }

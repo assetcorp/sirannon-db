@@ -1,3 +1,5 @@
+import { majorityOf } from '../coordinator/group-rules.js'
+import type { ReplicationGroupState } from '../coordinator/types.js'
 import { DEFAULT_MAX_REPLICA_LAG_MS } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
@@ -60,10 +62,34 @@ function overdueSeq(engine: ReplicationEngine, nowMs: number): bigint | null {
   return oldest && oldest.atMs <= cutoffMs ? oldest.seq : null
 }
 
+function compareAcked(engine: ReplicationEngine, left: string, right: string): number {
+  const leftAcked = engine.peerTracker.connectionAckedSeq(left) ?? -1n
+  const rightAcked = engine.peerTracker.connectionAckedSeq(right) ?? -1n
+  if (leftAcked === rightAcked) return 0
+  return leftAcked < rightAcked ? -1 : 1
+}
+
+function removableLagging(state: ReplicationGroupState, lagging: string[]): string[] {
+  const voters = state.votingDataBearingNodeIds
+  const inSyncVoters = state.inSyncNodeIds.filter(nodeId => voters.includes(nodeId)).length
+  let removableVoters = Math.max(0, inSyncVoters - majorityOf(voters.length))
+  const removed: string[] = []
+  for (const nodeId of lagging) {
+    if (!state.inSyncNodeIds.includes(nodeId)) continue
+    if (voters.includes(nodeId)) {
+      if (removableVoters === 0) continue
+      removableVoters -= 1
+    }
+    removed.push(nodeId)
+  }
+  return removed
+}
+
 /**
- * Removes from the in-sync set, as primary, every replica that has not acknowledged over its current connection a
- * change that this node assigned more than `maxReplicaLagMs` earlier. The coordinator refuses a removal that leaves
- * fewer in-sync voters than a majority of the voters, and the replica then stays in the set.
+ * Removes from the in-sync set, as primary, the replicas that have not acknowledged over their current connection a
+ * change that this node assigned more than `maxReplicaLagMs` earlier, most behind first. It removes only as many
+ * voters as leave a majority of the voters in the set, because the coordinator refuses a removal below that floor,
+ * and it sends no request when no replica can leave.
  *
  * @param engine - The primary's engine.
  * @returns A promise that settles once the coordinator has answered, or at once when no replica lags.
@@ -80,12 +106,14 @@ export async function removeLaggingReplicas(engine: ReplicationEngine): Promise<
   sampleAssignedSeq(engine, engine.lastLocalSeq, nowMs)
   const overdue = overdueSeq(engine, nowMs)
   if (overdue === null) return
-  const lagging = state.inSyncNodeIds.filter(nodeId => {
-    if (nodeId === engine.nodeId) return false
-    const acked = engine.peerTracker.connectionAckedSeq(nodeId)
-    return acked === undefined || acked < overdue
-  })
-  if (lagging.length === 0) return
+  const lagging = state.inSyncNodeIds
+    .filter(nodeId => {
+      if (nodeId === engine.nodeId) return false
+      const acked = engine.peerTracker.connectionAckedSeq(nodeId)
+      return acked === undefined || acked < overdue
+    })
+    .sort((left, right) => compareAcked(engine, left, right))
+  if (removableLagging(state, lagging).length === 0) return
 
   inSync.removing = true
   try {
@@ -94,8 +122,9 @@ export async function removeLaggingReplicas(engine: ReplicationEngine): Promise<
       known: state,
       primaryTerm: state.primaryTerm,
       change: base => {
-        const kept = base.inSyncNodeIds.filter(nodeId => !lagging.includes(nodeId))
-        return kept.length === base.inSyncNodeIds.length ? null : { inSyncNodeIds: kept }
+        const removed = removableLagging(base, lagging)
+        if (removed.length === 0) return null
+        return { inSyncNodeIds: base.inSyncNodeIds.filter(nodeId => !removed.includes(nodeId)) }
       },
     })
   } finally {

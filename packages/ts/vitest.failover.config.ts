@@ -5,7 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/__tests__/failover/**/*.test.ts'],
-    exclude: ['node_modules/**', 'dist/**'],
+    exclude: ['node_modules/**', 'dist/**', 'src/__tests__/failover/**/*.stress.test.ts'],
     testTimeout: 120_000,
     hookTimeout: 60_000,
     passWithNoTests: false,

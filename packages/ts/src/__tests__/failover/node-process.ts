@@ -36,6 +36,7 @@ export interface FailoverNodeConfig {
   initialSync?: boolean
   backupDirectory?: string
   dieAfterGroupCreate?: boolean
+  publishedRelease?: boolean
   compatibility: {
     packageVersion: string
     specVersion: string

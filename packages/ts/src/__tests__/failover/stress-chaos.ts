@@ -159,6 +159,17 @@ export const freezeEtcdMember: ChaosAction = async context => {
   }
 }
 
+export const restartEveryNodeInPlace: ChaosAction = async context => {
+  const primaryId = await currentPrimaryId(context)
+  const [firstReplicaId, ...otherReplicaIds] = context.members.filter(nodeId => nodeId !== primaryId)
+  const order = firstReplicaId === undefined ? [primaryId] : [firstReplicaId, primaryId, ...otherReplicaIds]
+  for (const nodeId of order) {
+    await killNode(context.environment, nodeId)
+    await rejoin(context, nodeId)
+    await waitForInSyncSet(context.environment, context.members, HEAL_TIMEOUT_MS)
+  }
+}
+
 export const rollingRestart: ChaosAction = async context => {
   for (const replicaId of await replicaIds(context)) {
     await killNode(context.environment, replicaId)

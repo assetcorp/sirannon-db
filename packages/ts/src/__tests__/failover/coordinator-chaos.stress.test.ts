@@ -13,6 +13,7 @@ import {
   failOverFromKilledPrimary,
   freezeEtcdMember,
   PRODUCTION_TIMINGS,
+  restartEveryNodeInPlace,
   restartPrimaryInPlace,
   restartReplica,
   rollingRestart,
@@ -64,7 +65,12 @@ async function cycleChaos(run: StressRun, actions: ReadonlyArray<[string, ChaosA
   }
 }
 
-async function finishAndVerify(scenario: string, run: StressRun, extra: Record<string, unknown> = {}): Promise<void> {
+async function finishAndVerify(
+  scenario: string,
+  run: StressRun,
+  extra: Record<string, unknown> = {},
+  steadyFromMs = 0,
+): Promise<void> {
   await run.load.stop()
   await run.sampler.stop()
   const { environment, members, windows } = run.context
@@ -76,7 +82,9 @@ async function finishAndVerify(scenario: string, run: StressRun, extra: Record<s
   const rolledBack = members.flatMap(nodeId => readRolledBackItemInsertIds(dbPathFor(environment, nodeId)))
   const acknowledgedButRolledBack = rolledBack.filter(id => acknowledged.has(id))
   const steadyFailures = run.load.failures.filter(
-    failure => !windows.some(window => failure.atMs >= window.startMs && failure.atMs <= window.endMs),
+    failure =>
+      failure.atMs >= steadyFromMs &&
+      !windows.some(window => failure.atMs >= window.startMs && failure.atMs <= window.endMs),
   )
   const report = {
     scenario,
@@ -143,6 +151,40 @@ describe('a three-voter group under sustained majority writes, link latency, and
       expect(await recordedFeatureLevel(env)).toBe(2)
     },
     soakMs + SETUP_ALLOWANCE_MS,
+  )
+})
+
+describe('a three-voter group upgraded node by node from the published 0.4.0 release under sustained majority writes', () => {
+  const environment = useFailoverEnvironment()
+
+  it(
+    'loses no acknowledged write while 0.4.0 and current nodes share the group, and then raises the feature level',
+    async () => {
+      const env = environment()
+      await startCluster(env, { everyNode: { ...PRODUCTION_TIMINGS, publishedRelease: true } })
+      expect(await recordedFeatureLevel(env)).toBe(1)
+      await addLinkLatency(env)
+
+      const run = beginLoad(env, NODE_IDS)
+      await delay(LEVEL_PHASE_MS)
+      const upgradeStartMs = Date.now()
+      await runChaos(run.context, 'upgrade-from-0.4.0', restartEveryNodeInPlace)
+      await delay(STEADY_INTERVAL_MS)
+      await env.coordinator.raiseFeatureLevel({ clusterId: CLUSTER_ID, groupId: GROUP_ID, featureLevel: 2 })
+      await delay(STEADY_INTERVAL_MS)
+      await cycleChaos(
+        run,
+        [
+          ['kill-primary-and-fail-over', failOverFromKilledPrimary],
+          ['restart-replica', restartReplica],
+        ],
+        Date.now() + LEVEL_PHASE_MS,
+      )
+      const failuresUnderPublishedRelease = run.load.failures.filter(failure => failure.atMs < upgradeStartMs).length
+      await finishAndVerify('upgrade-from-0.4.0', run, { failuresUnderPublishedRelease }, upgradeStartMs)
+      expect(await recordedFeatureLevel(env)).toBe(2)
+    },
+    SETUP_ALLOWANCE_MS * 2,
   )
 })
 

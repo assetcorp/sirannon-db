@@ -1,18 +1,12 @@
 import { readFileSync } from 'node:fs'
-import { ChangeTracker } from '../../core/cdc/change-tracker.js'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import type { LiveQuery } from '../../core/live/types.js'
-import { Sirannon } from '../../core/sirannon.js'
 import type { DatabaseOptions, QueryOptions } from '../../core/types.js'
-import { coordinatorBackupGroup } from '../../replication/backup-group.js'
-import { toClusterStatusInfo, toReplicationStatusInfo } from '../../replication/cluster-status.js'
-import { createEtcdCoordinator, type EtcdClusterCoordinator } from '../../replication/coordinator/etcd.js'
-import { ReplicationEngine } from '../../replication/engine.js'
-import { PrimaryReplicaTopology } from '../../replication/topology/primary-replica.js'
-import { createServer, type SirannonServer } from '../../server/index.js'
-import { GrpcReplicationTransport } from '../../transport/grpc/index.js'
-import { testDriver } from '../helpers/test-driver.js'
+import type { EtcdClusterCoordinator } from '../../replication/coordinator/etcd.js'
+import type { ReplicationEngine as ReplicationEngineType } from '../../replication/engine.js'
+import type { SirannonServer } from '../../server/index.js'
+import type { GrpcReplicationTransport as GrpcReplicationTransportType } from '../../transport/grpc/index.js'
 import {
   numberPayload,
   optionalArrayPayload,
@@ -35,11 +29,35 @@ interface RequestMessage {
 }
 
 interface RunningNode {
-  engine: ReplicationEngine
+  engine: ReplicationEngineType
   database: Database
-  transport: GrpcReplicationTransport
+  transport: GrpcReplicationTransportType
   shutdown: () => Promise<void>
 }
+
+type ClusterNodeLibrary = typeof import('./cluster-node-library.js')
+
+const rawConfig = process.env.SIRANNON_FAILOVER_NODE_CONFIG
+if (!rawConfig) {
+  throw new Error('SIRANNON_FAILOVER_NODE_CONFIG is required')
+}
+const config = JSON.parse(rawConfig) as FailoverNodeConfig
+const library: ClusterNodeLibrary = config.publishedRelease
+  ? ((await import('./cluster-node-library-published.js')) as unknown as ClusterNodeLibrary)
+  : await import('./cluster-node-library.js')
+const {
+  ChangeTracker,
+  Sirannon,
+  coordinatorBackupGroup,
+  createEtcdCoordinator,
+  createServer,
+  GrpcReplicationTransport,
+  PrimaryReplicaTopology,
+  ReplicationEngine,
+  testDriver,
+  toClusterStatusInfo,
+  toReplicationStatusInfo,
+} = library
 
 class ProxiedGrpcTransport extends GrpcReplicationTransport {
   override setPeerEndpoints(endpoints: ReadonlyMap<string, string>): void {
@@ -69,11 +87,6 @@ const SCHEMA = `
   )
 `
 
-const rawConfig = process.env.SIRANNON_FAILOVER_NODE_CONFIG
-if (!rawConfig) {
-  throw new Error('SIRANNON_FAILOVER_NODE_CONFIG is required')
-}
-const config = JSON.parse(rawConfig) as FailoverNodeConfig
 const databaseId = config.groupId
 const recentErrors: unknown[] = []
 const inSyncUpdateHold = new CoordinatorCallHold()

@@ -75,6 +75,7 @@ export interface NodeOptions {
   awaitReady?: boolean
   initialSync?: boolean
   dieAfterGroupCreate?: boolean
+  publishedRelease?: boolean
 }
 
 export async function startEnvironment(nodeIds: readonly string[] = NODE_IDS): Promise<GateEnvironment> {
@@ -228,6 +229,7 @@ export async function startNode(
     initialSync: options.initialSync ?? true,
     backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
     dieAfterGroupCreate: options.dieAfterGroupCreate,
+    publishedRelease: options.publishedRelease,
     compatibility: options.compatibility ?? COMPATIBILITY,
   }
 

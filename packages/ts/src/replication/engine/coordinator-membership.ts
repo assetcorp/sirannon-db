@@ -7,7 +7,8 @@ import {
   refreshCoordinatorState,
 } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
-import { ensureAnchoredToCurrentTerm, isAnchoredToCurrentTerm, restartWithFullCopy } from './history-anchor.js'
+import { restartWithFullCopy } from './full-copy-restart.js'
+import { ensureAnchoredToCurrentTerm, isAnchoredToCurrentTerm } from './history-anchor.js'
 import { keepCoordinatorState, removeLocalNodeFromInSyncSet } from './local-membership.js'
 import { reportEngineError } from './report-error.js'
 

@@ -138,6 +138,23 @@ async function undoChange(
 }
 
 /**
+ * Returns the timestamp in this node's history of the last transaction that it shares with the current primary,
+ * which this node finds in its change log or as the transaction that its last full copy ended with.
+ *
+ * @param tx - The connection that runs the caller's transaction.
+ * @param point - The last transaction that the node shares with the primary.
+ * @returns The transaction's timestamp, or null when the node holds no record of it.
+ *
+ * @internal
+ */
+export async function selectSharedPointHlc(tx: SQLiteConnection, point: SyncHistoryPoint): Promise<string | null> {
+  const logged = await selectHistoryTransaction(tx, CHANGES_TABLE, point.txId)
+  if (logged) return logged.hlc
+  const base = await selectHistoryBase(tx)
+  return base !== null && base.txId === point.txId ? base.hlc : null
+}
+
+/**
  * Returns true once this node has discarded every change in its history stamped after the last transaction that it
  * shares with the current primary, and has recorded that it applied the primary's log up to `sourceSeq`, all in one
  * transaction.
@@ -148,10 +165,9 @@ async function undoChange(
  * the change-log entries for its undo statements unstamped, so that local subscribers and live queries receive the
  * reverse changes while no other node receives them and the group's history leaves them out.
  *
- * The node returns false in three cases, because it then needs a full copy to hold the primary's history. When it
- * holds no record of the shared transaction, or when a full copy left it holding a later transaction than the shared
- * one, it changes nothing. When one of the discarded changes is a schema change, it only keeps the discarded changes
- * in its table of rolled-back changes, so that the full copy loses none of them.
+ * The node changes nothing and returns false in three cases, because it then needs a full copy to hold the primary's
+ * history. These are when it holds no record of the shared transaction, when a full copy left it holding a later
+ * transaction than the shared one, and when one of the discarded changes is a schema change.
  *
  * @param engine - The engine of the replica that reconciles its history.
  * @param point - The last transaction that the node shares with the primary.
@@ -172,13 +188,12 @@ export function rollBackToHistoryPoint(
   return engine.history.exclusive(() =>
     engine.writerConn.transaction(async tx => {
       const base = await selectHistoryBase(tx)
-      const logged = await selectHistoryTransaction(tx, CHANGES_TABLE, point.txId)
-      const cut = logged?.hlc ?? (base !== null && base.txId === point.txId ? base.hlc : null)
+      const cut = await selectSharedPointHlc(tx, point)
       if (cut === null || (base !== null && base.hlc > cut)) return false
       const origins = historyOrigins(engine)
       const divergent = await selectHistoryChangesAfterHlc(tx, CHANGES_TABLE, origins, cut)
-      await insertRolledBackChangesAfterHlc(tx, CHANGES_TABLE, origins, cut, term, Date.now() / 1000)
       if (divergent.some(row => row.operation.toUpperCase() === 'DDL')) return false
+      await insertRolledBackChangesAfterHlc(tx, CHANGES_TABLE, origins, cut, term, Date.now() / 1000)
       const pkColumnsByTable = new Map<string, string[]>()
       for (const row of divergent) {
         await undoChange(tx, row, pkColumnsByTable)

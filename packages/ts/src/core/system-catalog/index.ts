@@ -109,6 +109,7 @@ export {
   deleteRolledBackChanges,
   ensureRolledBackChangesTable,
   insertRolledBackChangesAfterHlc,
+  insertRolledBackChangesNotFromPrimary,
   type RolledBackChange,
   selectRolledBackChanges,
 } from './rolled-back-changes-table.js'

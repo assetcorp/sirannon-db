@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { CHANGES_TABLE } from '../../core/internal-tables.js'
 import {
   deleteAppliedChangesAfterSeq,
@@ -6,16 +5,15 @@ import {
   deletePeerState,
   deleteStampedChangesUpToSeq,
   insertRolledBackChangesAfterHlc,
-  selectHistoryBase,
   selectMaxChangeSeq,
-  selectNewestHistoryChange,
   setForeignKeysEnabled,
   upsertAnchoredTerm,
   upsertHistoryBase,
   upsertQuarantined,
 } from '../../core/system-catalog/index.js'
-import type { ReplicationBatch, SyncAck, SyncComplete, SyncHistoryPoint } from '../types.js'
+import type { ReplicationBatch, SyncAck, SyncComplete } from '../types.js'
 import type { ReplicationEngine } from './engine.js'
+import { keepUnsharedChanges, requestHistoryPoint, startFullCopy } from './full-copy-restart.js'
 import { rollBackToHistoryPoint } from './history-rollback.js'
 import { initialSyncState, servesItsData } from './internal-types.js'
 import { reportEngineError } from './report-error.js'
@@ -26,6 +24,13 @@ const SCHEMA_SYNC_TABLE = '__schema__'
 
 function tracksTermHistory(engine: ReplicationEngine): boolean {
   return engine.isCoordinatorMode()
+}
+
+function awaitsFullCopy(engine: ReplicationEngine): boolean {
+  const state = engine.coordinatorState
+  if (!state || engine.syncState.phase !== 'ready' || state.currentPrimary?.nodeId === engine.nodeId) return false
+  if (state.faultedNodeIds.includes(engine.nodeId)) return true
+  return state.repairingNodeIds.includes(engine.nodeId) && engine.rejoin.copiedTerm !== state.primaryTerm
 }
 
 function reconcilesTermHistory(engine: ReplicationEngine): boolean {
@@ -77,58 +82,9 @@ export function ensureAnchoredToCurrentTerm(engine: ReplicationEngine): void {
   if (!primaryId || primaryId === engine.nodeId) return
   if (!servesItsData(engine.syncState.phase)) return
   if (history.resumeRequest.awaitsAnswerIn(state.primaryTerm, engine.syncAckTimeoutMs)) return
-  requestHistoryReconcile(engine, primaryId, state.primaryTerm).catch((err: unknown) =>
+  requestHistoryPoint(engine, primaryId, state.primaryTerm, false).catch((err: unknown) =>
     reportEngineError(engine, err, 'history-reconcile-request', true),
   )
-}
-
-async function requestHistoryReconcile(engine: ReplicationEngine, primaryId: string, term: bigint): Promise<void> {
-  const history = engine.history
-  const requestId = randomUUID()
-  history.reconciling = true
-  history.resumeRequest.start(requestId, term)
-  const tail = await selectHistoryTail(engine)
-  if (!history.resumeRequest.matches(requestId)) return
-  if (tail === null) {
-    await restartWithFullCopy(engine)
-    return
-  }
-  await engine.config.transport.requestSync(
-    primaryId,
-    engine.decorate({
-      requestId,
-      joinerNodeId: engine.nodeId,
-      completedTables: [],
-      supportsStreamVerification: true,
-      historyTail: tail,
-    }),
-  )
-}
-
-async function selectHistoryTail(engine: ReplicationEngine): Promise<SyncHistoryPoint | null> {
-  const conn = engine.writerConn
-  const newest = await selectNewestHistoryChange(conn, CHANGES_TABLE, historyOrigins(engine))
-  const base = await selectHistoryBase(conn)
-  const tail = newest !== null && (base === null || newest.hlc > base.hlc) ? newest : base
-  return tail === null ? null : { hlc: tail.hlc, txId: tail.txId }
-}
-
-/**
- * Makes a node that serves its data stop serving it and ask its source for a full copy, which replaces every row. A
- * node that is already copying keeps its copy going.
- *
- * @param engine - The node's engine.
- * @returns A promise that settles once the node has sent its sync request.
- *
- * @internal
- */
-export async function restartWithFullCopy(engine: ReplicationEngine): Promise<void> {
-  engine.history.resumeRequest.clear()
-  if (!servesItsData(engine.syncState.phase)) return
-  engine.highestSourceSeqSeen = 0n
-  engine.syncState = { ...initialSyncState(), phase: 'pending' }
-  await engine.log.setSyncMeta('pending')
-  await engine.syncJoiner.initiateSync()
 }
 
 function copyHasReplacedRows(engine: ReplicationEngine): boolean {
@@ -178,8 +134,10 @@ export function keepTermHistoryCurrent(engine: ReplicationEngine): void {
 /**
  * Returns whether a replica may process a batch, which it may only once it has reconciled its history with the
  * history of the batch's term, and starts that reconciliation when the batch belongs to a term that it has not
- * reconciled. A primary in the term whose history it holds and a repairing or faulted node may process every batch,
- * because they rejoin through separate paths.
+ * reconciled. A faulted node, and a repairing node that has not finished the full copy for the current term, process
+ * no batch while they serve their data, because the batch would join the history that they keep before the copy. A
+ * primary in the term whose history it holds and a repairing node that is copying may process every batch, because
+ * they rejoin through separate paths.
  *
  * @param engine - The replica's engine.
  * @param batch - The batch, which carries the term of the primary that sent it.
@@ -188,6 +146,7 @@ export function keepTermHistoryCurrent(engine: ReplicationEngine): void {
  * @internal
  */
 export function acceptsBatchTerm(engine: ReplicationEngine, batch: ReplicationBatch): boolean {
+  if (awaitsFullCopy(engine)) return false
   if (engine.history.anchoredTerm === batch.primaryTerm || !reconcilesTermHistory(engine)) return true
   ensureAnchoredToCurrentTerm(engine)
   return false
@@ -221,8 +180,9 @@ export function applyInAnchoredTerm<T>(
  * Handles the current primary's answer to this replica's request to reconcile its history. A resumed answer makes the
  * replica discard its history after the transaction that the answer names, in one transaction, record that it has
  * applied the primary's log up to the answer's position, take the answer's term as its reconciled term, and report
- * that position to the primary. Any other answer, or a resumed one that the replica cannot apply, makes the replica
- * stop serving its data and ask for a full copy.
+ * that position to the primary. Any other answer, a resumed one that the replica cannot apply, and an answer to a
+ * request that the replica sent only before a full copy make the replica keep every history change that the primary
+ * can lack, stop serving its data, and ask for a full copy.
  *
  * @param engine - The replica's engine.
  * @param complete - The primary's answer.
@@ -240,8 +200,10 @@ export async function handleHistoryAnswer(
   if (!history.resumeRequest.matches(complete.requestId)) return false
   if (complete.primaryTerm !== history.resumeRequest.term) return false
   if (engine.coordinatorState?.currentPrimary?.nodeId !== fromPeerId) return false
+  const keepsBeforeCopy = history.resumeRequest.keepsBeforeCopy
   history.resumeRequest.clear()
   if (
+    !keepsBeforeCopy &&
     complete.resumed === true &&
     servesItsData(engine.syncState.phase) &&
     (await rollBack(engine, complete, fromPeerId))
@@ -254,7 +216,14 @@ export async function handleHistoryAnswer(
     await reportSnapshotPosition(engine, fromPeerId, complete.snapshotSeq)
     return true
   }
-  await restartWithFullCopy(engine)
+  if (complete.primaryTerm !== undefined) {
+    await keepUnsharedChanges(
+      engine,
+      complete.resumed === true ? complete.historyPoint : undefined,
+      complete.primaryTerm,
+    )
+  }
+  await startFullCopy(engine)
   return true
 }
 
@@ -280,8 +249,8 @@ export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fr
 
 /**
  * Handles a copy batch that answers this replica's request to reconcile its history, which a primary from an earlier
- * release sends because it reads no history transaction in the request: the replica stops serving its data and asks
- * for a full copy.
+ * release sends because it reads no history transaction in the request: the replica keeps every history change that
+ * the primary did not write, stops serving its data, and asks for a full copy.
  *
  * @param engine - The replica's engine.
  * @param requestId - The request ID that the batch carries.
@@ -290,8 +259,12 @@ export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fr
  * @internal
  */
 export async function handleHistoryCopyBatch(engine: ReplicationEngine, requestId: string): Promise<boolean> {
-  if (!engine.history.resumeRequest.matches(requestId)) return false
-  await restartWithFullCopy(engine)
+  const request = engine.history.resumeRequest
+  if (!request.matches(requestId)) return false
+  const term = request.term
+  request.clear()
+  if (term !== null) await keepUnsharedChanges(engine, undefined, term)
+  await startFullCopy(engine)
   return true
 }
 

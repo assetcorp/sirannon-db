@@ -13,6 +13,7 @@ import type { ForwardedTransactionResult } from '../types.js'
 import { extractDroppedTable, SAFE_SQL_PREFIX_RE } from './constants.js'
 import { resolveWriteConcern } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { noteAssignedSeq } from './in-sync-lag.js'
 import { ReplicationTransaction, type ReplicationTransactionHooks } from './replication-transaction.js'
 import { replicatedSchemaChangeOf } from './schema-statement.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
@@ -82,9 +83,7 @@ export class LocalExecutor {
     )
 
     const newSeq = await engine.log.getLocalSeq()
-    if (newSeq > engine.lastLocalSeq) {
-      engine.lastLocalSeq = newSeq
-    }
+    noteAssignedSeq(engine, newSeq)
 
     if (isDdl) {
       if (droppedTable !== null && engine.tracker) {
@@ -215,9 +214,7 @@ export class LocalExecutor {
     })
 
     const newSeq = await engine.log.getLocalSeq()
-    if (newSeq > engine.lastLocalSeq) {
-      engine.lastLocalSeq = newSeq
-    }
+    noteAssignedSeq(engine, newSeq)
 
     if (sawDdl) {
       if (droppedTables.length > 0 && engine.tracker) {
@@ -284,9 +281,7 @@ export class LocalExecutor {
     })
 
     const newSeq = await engine.log.getLocalSeq()
-    if (newSeq > engine.lastLocalSeq) {
-      engine.lastLocalSeq = newSeq
-    }
+    noteAssignedSeq(engine, newSeq)
 
     if (hooks.sawDdl) {
       if (hooks.droppedTables.length > 0 && engine.tracker) {

@@ -28,6 +28,7 @@ export interface FailoverNodeConfig {
   votingDataBearingNodeIds?: string[]
   seedSchema: boolean
   sessionTtlMs: number
+  maxReplicaLagMs?: number
   controllerLeaseTtlMs: number
   controllerTickIntervalMs: number
   controllerEnabled: boolean

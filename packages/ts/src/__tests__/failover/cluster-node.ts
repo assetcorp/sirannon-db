@@ -210,6 +210,7 @@ async function startClusterNode(): Promise<RunningNode> {
       coordinator,
       votingDataBearingNodeIds: config.votingDataBearingNodeIds,
       sessionTtlMs: config.sessionTtlMs,
+      maxReplicaLagMs: config.maxReplicaLagMs,
       controller: {
         enabled: config.controllerEnabled,
         leaseTtlMs: config.controllerLeaseTtlMs,

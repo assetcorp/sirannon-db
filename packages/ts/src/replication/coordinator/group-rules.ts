@@ -10,6 +10,52 @@ import type {
 } from './types.js'
 
 export const MIN_AUTOMATIC_FAILOVER_VOTERS = 3
+export const MAX_GROUP_VOTERS = 7
+export const FIRST_FEATURE_LEVEL = 1
+export const IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL = 2
+
+/**
+ * Returns how many voters make up a majority of a group's voters.
+ *
+ * @param voterCount - The number of voters in the group.
+ * @returns More than half of `voterCount`.
+ *
+ * @internal
+ */
+export function majorityOf(voterCount: number): number {
+  return Math.floor(voterCount / 2) + 1
+}
+
+/**
+ * Refuses a group whose voters and pending voters number more than seven.
+ *
+ * @param voterCount - The number of voters and pending voters that the group would hold.
+ * @param groupId - The group's ID, for the error message.
+ * @throws RangeError when `voterCount` exceeds seven.
+ *
+ * @internal
+ */
+export function assertVoterCap(voterCount: number, groupId: string): void {
+  if (voterCount > MAX_GROUP_VOTERS) {
+    throw new RangeError(
+      `Replication group '${groupId}' would hold ${voterCount} voters and pending voters, more than the limit of ${MAX_GROUP_VOTERS}`,
+    )
+  }
+}
+
+/**
+ * Refuses a feature level that is not a whole number of at least 1.
+ *
+ * @param featureLevel - The level to check.
+ * @throws RangeError for any other value.
+ *
+ * @internal
+ */
+export function assertFeatureLevel(featureLevel: number): void {
+  if (!Number.isSafeInteger(featureLevel) || featureLevel < FIRST_FEATURE_LEVEL) {
+    throw new RangeError(`featureLevel must be a safe integer of at least ${FIRST_FEATURE_LEVEL}`)
+  }
+}
 
 export function assertNonEmpty(value: string, name: string): void {
   if (value.length === 0) {
@@ -173,6 +219,11 @@ export function nextInSyncSetState(
     input.durabilityPointSeq !== undefined && input.durabilityPointSeq > state.durabilityPointSeq
       ? input.durabilityPointSeq
       : state.durabilityPointSeq
+  const primaryRemoval = input.expectedPrimaryNodeId !== undefined && inSyncNodeIds.length < state.inSyncNodeIds.length
+  if (primaryRemoval && inSyncNodeIds.length < majorityOf(state.votingDataBearingNodeIds.length)) {
+    if (durabilityPointSeq === state.durabilityPointSeq) return state
+    return { ...state, durabilityPointSeq, updatedAtMs: nowMs }
+  }
   if (arraysEqual(inSyncNodeIds, state.inSyncNodeIds) && durabilityPointSeq === state.durabilityPointSeq) {
     return state
   }
@@ -186,15 +237,21 @@ export function nextAdmittedInSyncState(
 ): ReplicationGroupState {
   assertNodeInGroup(state, input.nodeId)
   const pendingVoter = state.pendingVoterNodeIds.includes(input.nodeId)
+  const repairing = state.repairingNodeIds.includes(input.nodeId)
+  const pendingVoterNeedsCopy = pendingVoter && state.featureLevel < IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL
   if (
     state.currentPrimary?.nodeId !== input.sourceNodeId ||
     (input.expectedPrimaryTerm !== undefined && state.primaryTerm !== input.expectedPrimaryTerm) ||
     state.drainingNodeIds.includes(input.nodeId) ||
     state.faultedNodeIds.includes(input.nodeId) ||
-    ((pendingVoter || state.repairingNodeIds.includes(input.nodeId)) && input.rejoinSyncCompleted !== true) ||
+    ((pendingVoterNeedsCopy || repairing) && input.rejoinSyncCompleted !== true) ||
     input.appliedSeq < state.durabilityPointSeq
   ) {
     return state
+  }
+  if (input.clearRepairingOnly === true) {
+    if (!repairing) return state
+    return { ...state, repairingNodeIds: removeNodeId(state.repairingNodeIds, input.nodeId), updatedAtMs: nowMs }
   }
   const inSyncNodeIds = state.inSyncNodeIds.includes(input.nodeId)
     ? state.inSyncNodeIds
@@ -274,6 +331,9 @@ export function buildReplicationGroupState(
   const pendingVoterNodeIds = normaliseNodeIds(input.pendingVoterNodeIds ?? [], 'pendingVoterNodeIds')
   assertNonNegativeTerm(input.primaryTerm ?? 0n)
   assertNonNegativeSeq(input.durabilityPointSeq ?? 0n, 'durabilityPointSeq')
+  const featureLevel = input.featureLevel ?? FIRST_FEATURE_LEVEL
+  assertFeatureLevel(featureLevel)
+  assertVoterCap(votingDataBearingNodeIds.length + pendingVoterNodeIds.length, input.groupId)
   assertPrimaryInGroup(input.currentPrimary ?? null, votingDataBearingNodeIds)
   for (const nodeId of pendingVoterNodeIds) {
     if (votingDataBearingNodeIds.includes(nodeId)) {
@@ -299,6 +359,7 @@ export function buildReplicationGroupState(
     faultedNodeIds,
     pendingVoterNodeIds,
     compatibility: cloneCompatibility(input.compatibility),
+    featureLevel,
     updatedAtMs: nowMs,
   }
 }

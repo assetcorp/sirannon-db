@@ -4,9 +4,10 @@ import type { InFlightBatch, PeerState } from './types.js'
 
 interface Waiter {
   seq: bigint
-  kind: 'majority' | 'all' | 'configured-majority' | 'configured-all'
+  kind: 'majority' | 'all' | 'configured-majority' | 'configured-all' | 'condition'
   localNodeId?: string
   votingNodeIds?: string[]
+  met?: () => boolean
   resolve: () => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -260,6 +261,47 @@ export class PeerTracker {
     })
   }
 
+  /**
+   * Returns once a condition holds, checking it now, after every acknowledgement, and after every call to
+   * {@link PeerTracker.recheckWaiters}. The condition runs synchronously, so that a caller can record its outcome in
+   * the same step in which it holds.
+   *
+   * @param met - Returns true once the wait is over.
+   * @param timeoutMs - How many milliseconds to wait before the promise rejects.
+   * @param timeoutMessage - The message of the error that the promise rejects with.
+   * @returns A promise that resolves once `met` returns true.
+   * @throws WriteConcernError when `met` still returns false after `timeoutMs`.
+   */
+  waitUntil(met: () => boolean, timeoutMs: number, timeoutMessage: string): Promise<void> {
+    if (met()) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(waiter)
+        reject(new WriteConcernError(timeoutMessage))
+      }, timeoutMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+      timer.unref?.()
+      const waiter: Waiter = { seq: 0n, kind: 'condition', met, resolve, reject, timer }
+      this.waiters.add(waiter)
+    })
+  }
+
+  /**
+   * Checks every waiting condition again, for a change that is no acknowledgement, such as a new in-sync set.
+   */
+  recheckWaiters(): void {
+    this.checkWaiters()
+  }
+
+  /**
+   * Returns the highest sequence that a peer has acknowledged over its current connection.
+   *
+   * @param nodeId - The peer's node ID.
+   * @returns That sequence, 0 before the peer acknowledges anything, or undefined while the peer is not connected.
+   */
+  connectionAckedSeq(nodeId: string): bigint | undefined {
+    return this.connectionAcks.get(nodeId)
+  }
+
   ackedConfiguredNodeIds(seq: bigint, localNodeId: string, votingNodeIds: string[]): string[] {
     const acked = new Set<string>()
     if (votingNodeIds.includes(localNodeId)) {
@@ -296,6 +338,14 @@ export class PeerTracker {
     const connected = this.connectedPeerCount()
     for (const waiter of this.waiters) {
       let needed: number
+      if (waiter.kind === 'condition') {
+        if (waiter.met?.()) {
+          clearTimeout(waiter.timer)
+          this.waiters.delete(waiter)
+          waiter.resolve()
+        }
+        continue
+      }
       if (waiter.kind === 'majority') {
         needed = Math.floor(connected / 2) + 1
       } else if (waiter.kind === 'configured-majority') {

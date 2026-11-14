@@ -37,6 +37,7 @@ interface RawKeyValue {
   value: string
   create_revision?: string
   mod_revision?: string
+  version?: string
   lease?: string
 }
 
@@ -146,6 +147,15 @@ export class EtcdOracle {
       `clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(groupId)}`,
     )
     return kv ? parseObject(kv.value) : null
+  }
+
+  async groupRecordVersion(): Promise<number> {
+    const response = await this.range({
+      key: encode(
+        this.fullKey(`clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`),
+      ),
+    })
+    return Number(response.kvs?.[0]?.version ?? 0)
   }
 
   async keysUnderPrefix(): Promise<string[]> {

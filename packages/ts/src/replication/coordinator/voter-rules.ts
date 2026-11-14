@@ -1,5 +1,6 @@
 import {
   assertNonEmpty,
+  assertVoterCap,
   isGroupMember,
   normaliseNodeIds,
   removeNodeId,
@@ -43,7 +44,8 @@ export function votersMatch(state: ReplicationGroupState, expectedVoterNodeIds: 
  * @param input - The node to add and the voters that the caller read.
  * @param nowMs - The time to record as the state's last change.
  * @returns The new state, or `state` itself when the voters differ.
- * @throws RangeError while the group has a pending voter, and for a node that is already a member.
+ * @throws RangeError while the group has a pending voter, for a node that is already a member, and when the group
+ * already holds seven voters.
  */
 export function nextAddVoterState(
   state: ReplicationGroupState,
@@ -59,6 +61,7 @@ export function nextAddVoterState(
   if (isGroupMember(state, input.nodeId)) {
     throw new RangeError(`Node '${input.nodeId}' is already a member of replication group '${state.groupId}'`)
   }
+  assertVoterCap(state.votingDataBearingNodeIds.length + 1, state.groupId)
   return {
     ...state,
     pendingVoterNodeIds: [input.nodeId],

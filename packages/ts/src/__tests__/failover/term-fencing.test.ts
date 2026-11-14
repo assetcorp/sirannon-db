@@ -75,7 +75,7 @@ describe('the primary term on every message', () => {
     await expectExactlyOneWritablePrimary(env, promoted, 2n)
   })
 
-  it('fails with STALE_PRIMARY a majority write whose in-sync update reaches etcd after its primary is demoted and rejoins, and leaves the new term untouched', async () => {
+  it('acknowledges a majority write once every in-sync voter holds it while the removal of a stalled voter waits, and leaves the new term untouched when that removal reaches etcd after the primary is demoted', async () => {
     const env = environment()
     await startCluster(env)
     const shared = itemRow(1, NODE_A, 'before-the-cut')
@@ -85,10 +85,11 @@ describe('the primary term on every message', () => {
     await setReplicationLinks(env, NODE_A, false, [NODE_B])
     const demoted = requireNode(env, NODE_A)
     await demoted.holdInSyncUpdates({ removesNodeId: NODE_B })
-    const inFlight = itemRow(2, NODE_A, 'acknowledged-by-c-during-the-demotion')
-    const write = expectRejectsWith(writeItemMajority(demoted, inFlight, 15_000, 120_000), ['STALE_PRIMARY'])
+    const inFlight = itemRow(2, NODE_A, 'held-by-every-in-sync-voter-before-the-demotion')
+    const write = writeItemMajority(demoted, inFlight, 15_000, 120_000)
     await waitForCondition(async () => (await demoted.heldInSyncUpdates()) > 0, 15_000)
     await setReplicationLinks(env, NODE_A, true, [NODE_B])
+    await write
     await waitForItemsOnDisk(env, NODE_IDS, [shared, inFlight], 15_000)
 
     const advanced = await env.coordinator.compareAndAdvancePrimaryTerm({
@@ -108,7 +109,6 @@ describe('the primary term on every message', () => {
       `${NODE_A} rebuilt and back in the in-sync set of term 2`,
     )
     await demoted.releaseInSyncUpdates()
-    await write
 
     await holdsThroughout(
       async () => {

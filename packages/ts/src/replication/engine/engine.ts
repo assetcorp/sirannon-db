@@ -48,6 +48,7 @@ import {
 import { assertCoordinatorModeConfig } from './coordinator-lifecycle.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, executeTransaction, forwardStatements, query, transaction } from './data-api.js'
+import { InSyncState } from './in-sync-state.js'
 import { initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { MemberAddresses } from './member-addresses.js'
@@ -168,9 +169,7 @@ export class ReplicationEngine extends EventEmitter {
   /** @internal */
   coordinatorLastContactMs = 0
   /** @internal */
-  inSyncReconcileTimer: ReturnType<typeof setInterval> | null = null
-  /** @internal */
-  inSyncReconciling = false
+  readonly inSync = new InSyncState()
   /** @internal */
   lastSentSeq = 0n
   /** @internal */

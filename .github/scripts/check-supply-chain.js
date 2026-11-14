@@ -6,7 +6,9 @@ const MINIMUM_RELEASE_AGE_DAYS = 4
 const MINIMUM_RELEASE_AGE_MINUTES = MINIMUM_RELEASE_AGE_DAYS * 24 * 60
 const PACKAGE_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies']
 const OIDC_WORKFLOWS = new Set(['.github/workflows/publish.yml', '.github/workflows/publish-clients.yml'])
-const ALLOWED_REMOTE_DEPENDENCIES = new Map([['uWebSockets.js', 'github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4']])
+const ALLOWED_REMOTE_DEPENDENCIES = new Map([
+  ['uWebSockets.js', 'github:uNetworking/uWebSockets.js#dddd8ffd1b2c28a66022160923ca92f064cdacb4'],
+])
 const ALLOWED_REMOTE_LOCKFILE_REFERENCES = [
   'https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/dddd8ffd1b2c28a66022160923ca92f064cdacb4',
 ]
@@ -139,7 +141,7 @@ const checkLockfile = () => {
     return failures
   }
 
-  for (const match of content.matchAll(/https:\/\/codeload\.github\.com\/[^\s}:'"]+/g)) {
+  for (const match of content.matchAll(/https:\/\/codeload\.github\.com\/[^\s}:'"()]+/g)) {
     if (!ALLOWED_REMOTE_LOCKFILE_REFERENCES.includes(match[0])) {
       failures.push(`pnpm-lock.yaml contains unapproved remote tarball '${match[0]}'`)
     }

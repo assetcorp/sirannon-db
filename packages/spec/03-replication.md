@@ -237,6 +237,7 @@ A replication engine must register with its database when it starts and unregist
 | `syncAckTimeoutMs` | 30,000 | No |
 | `catchUpDeadlineMs` | 600,000 | No |
 | `coordinator.sessionTtlMs` | 10,000 | Yes |
+| `coordinator.maxReplicaLagMs` | 1,000 | Yes |
 | `coordinator.controller` (enabled) | true | Yes |
 | `coordinator.controller.leaseTtlMs` | 10,000 | Yes |
 | `coordinator.controller.tickIntervalMs` | 1,000 | No |
@@ -258,7 +259,7 @@ A receiver accepts a batch only while it is `ready` or `catching-up`, and it pro
 After a local commit the engine can wait for acknowledgements.
 
 - `local`: return after the local commit.
-- `majority`: static mode waits for `floor(connectedPeers / 2) + 1` peers; coordinator mode waits for a majority of the configured voting data-bearing nodes, counting the primary's own durable commit.
+- `majority`: in static mode the engine waits for `floor(connectedPeers / 2) + 1` peers; in coordinator mode the engine waits until every node in the in-sync set holds the write, counting its local commit, and acknowledges the write only while those nodes are a majority of the voters (see [In-Sync Set and Promotion](09-failover.md#in-sync-set-and-promotion)).
 - `all`: static mode waits for all connected peers; coordinator mode waits for all configured voting nodes that are not drained.
 
 A concern not met within the timeout (default 5,000 ms) fails with `WRITE_CONCERN_ERROR`. When a write states no concern, static mode returns after the local commit and coordinator mode uses `majority`. A coordinator-mode `majority` write remains durable across automatic failover when only the failed primary is lost and an eligible in-sync replica remains; `local` is an explicit opt-in and is not failover-safe.

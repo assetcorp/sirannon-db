@@ -26,6 +26,7 @@ export type AcquireControllerLeaseResult = {
 // @public
 export interface AdmitNodeToInSyncSetInput {
     appliedSeq: bigint;
+    clearRepairingOnly?: boolean;
     clusterId: string;
     expectedPrimaryTerm?: bigint;
     groupId: string;
@@ -53,6 +54,9 @@ export class BatchValidationError extends ReplicationError {
 }
 
 // @public
+export function clearRolledBackChanges(engine: ReplicationEngine): Promise<void>;
+
+// @public
 export interface ClusterCoordinator {
     addVoter(input: AddVoterInput): Promise<VoterChangeResult>;
     admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null>;
@@ -63,6 +67,7 @@ export interface ClusterCoordinator {
     getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>;
     getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>;
     promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>;
+    raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null>;
     registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>;
     releaseLease(leaseId: string): Promise<boolean>;
     removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>;
@@ -170,6 +175,7 @@ export interface CoordinatorNodeSession {
     compatibility?: CoordinatorCompatibilityMetadata;
     dataBearing: boolean;
     endpoint?: string;
+    featureLevel?: number;
     groupIds: string[];
     lease: CoordinatorLease;
     metadata?: Record<string, unknown>;
@@ -301,6 +307,7 @@ export class PeerTracker {
     allPeerStates(): PeerState[];
     // (undocumented)
     connectedPeerCount(): number;
+    connectionAckedSeq(nodeId: string): bigint | undefined;
     // (undocumented)
     expireTimedOutBatches(nodeId: string, nowMs: number, timeoutMs: number): boolean;
     forgetConnectionAcks(nodeId: string): void;
@@ -310,6 +317,7 @@ export class PeerTracker {
     onAckReceived(nodeId: string, ackedSeq: bigint): void;
     // (undocumented)
     onBatchApplied(nodeId: string, highestHlc: string): void;
+    recheckWaiters(): void;
     // (undocumented)
     recordInFlightBatch(nodeId: string, batch: InFlightBatch): void;
     // (undocumented)
@@ -326,6 +334,7 @@ export class PeerTracker {
     waitForConfiguredMajority(seq: bigint, localNodeId: string, votingNodeIds: string[], timeoutMs: number): Promise<void>;
     // (undocumented)
     waitForMajority(seq: bigint, timeoutMs: number): Promise<void>;
+    waitUntil(met: () => boolean, timeoutMs: number, timeoutMessage: string): Promise<void>;
 }
 
 // @public
@@ -367,6 +376,7 @@ export interface RegisterNodeSessionInput {
     compatibility?: CoordinatorCompatibilityMetadata;
     dataBearing?: boolean;
     endpoint?: string;
+    featureLevel?: number;
     groupIds?: string[];
     metadata?: Record<string, unknown>;
     nodeId: string;
@@ -519,9 +529,7 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly initialSync: boolean;
     // @internal (undocumented)
-    inSyncReconcileTimer: ReturnType<typeof setInterval> | null;
-    // @internal (undocumented)
-    inSyncReconciling: boolean;
+    readonly inSync: InSyncState;
     // @internal (undocumented)
     isCoordinatorMode(): boolean;
     // @internal (undocumented)
@@ -617,7 +625,9 @@ export interface ReplicationGroupState {
     drainingNodeIds: string[];
     durabilityPointSeq: bigint;
     faultedNodeIds: string[];
+    featureLevel: number;
     groupId: string;
+    inSyncMajorityTerm: bigint;
     inSyncNodeIds: string[];
     pendingVoterNodeIds: string[];
     primaryTerm: bigint;
@@ -730,6 +740,25 @@ export interface ReplicationTransport {
 }
 
 // @public
+export interface RolledBackChange {
+    comparedWithPrimary: boolean;
+    hlc: string;
+    newData: string | null;
+    nodeId: string;
+    oldData: string | null;
+    operation: string;
+    rolledBackAt: number;
+    rolledBackInTerm: bigint;
+    rowId: string;
+    seq: bigint;
+    tableName: string;
+    txId: string;
+}
+
+// @public
+export function rolledBackChanges(engine: ReplicationEngine): Promise<RolledBackChange[]>;
+
+// @public
 export interface SetReplicationGroupStateInput {
     clusterId: string;
     compatibility?: CoordinatorCompatibilityMetadata;
@@ -737,7 +766,9 @@ export interface SetReplicationGroupStateInput {
     drainingNodeIds?: string[];
     durabilityPointSeq?: bigint;
     faultedNodeIds?: string[];
+    featureLevel?: number;
     groupId: string;
+    inSyncMajorityTerm?: bigint;
     inSyncNodeIds?: string[];
     pendingVoterNodeIds?: string[];
     primaryTerm?: bigint;

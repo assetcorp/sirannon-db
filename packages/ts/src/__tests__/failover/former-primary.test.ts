@@ -96,6 +96,9 @@ describe('a former primary that comes back', () => {
     const promoted = (await waitForPrimary(env, [NODE_B, NODE_C], 30_000)).currentPrimary.nodeId
     await killNode(env, NODE_A)
     expect(readMetaValue(dbPathFor(env, NODE_A), QUARANTINED_META_KEY)).not.toBe('true')
+    const beforeRebuild = itemRow(3, promoted, 'before-the-rebuild')
+    await writeItemMajority(requireNode(env, promoted), beforeRebuild)
+    acknowledged.push(beforeRebuild)
 
     await env.coordinator.updateNodeMaintenance({
       clusterId: CLUSTER_ID,
@@ -117,7 +120,7 @@ describe('a former primary that comes back', () => {
       30_000,
       `${NODE_A} rebuilt and back in the in-sync set`,
     )
-    const afterRebuild = itemRow(3, promoted, 'after-the-rebuild')
+    const afterRebuild = itemRow(4, promoted, 'after-the-rebuild')
     await writeItemMajority(requireNode(env, promoted), afterRebuild)
     acknowledged.push(afterRebuild)
     const rebuiltRows = await waitForIdenticalFiles(env, NODE_IDS, 20_000)

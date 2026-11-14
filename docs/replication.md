@@ -311,6 +311,10 @@ Every restart repeats that proof, because a restarted replica leaves the in-sync
 
 While a node is pending, the coordinator accepts only the removal of that node. The coordinator refuses to remove the current primary, and it refuses to remove a voter when that would leave fewer in-sync voters than a majority of the voters that remain. A pending voter counts in neither number, so you can always remove one, even from a group that has lost its majority. A removed node refuses reads and writes with `TOPOLOGY_ERROR`, and the primary stops sending it changes. When a voter change commits while a write waits for its majority, the primary acknowledges the write only once a majority of the new voters holds it.
 
+### Upgrading a group from 0.4
+
+Upgrade a group that runs 0.4 one node at a time, and restart each node in place under the same `nodeId`, waiting for it to return to the in-sync set before you move to the next one. Under a steady stream of `majority` writes, a 0.4 primary can keep only itself in the in-sync set, so when it stops the controller can find no replica to promote, and writes fail with `NO_SAFE_PRIMARY` until the primary starts again on the new release with its rows in place. Once every node runs the new release, raise the group's feature level to 2 with `raiseFeatureLevel` on the coordinator, and start no 0.4 node after that.
+
 [Backups in a replication group](backups.md#backups-in-a-replication-group) describes how each node uses the same coordinator to work out which node takes the group's backups.
 
 ## Conflict resolution
@@ -353,7 +357,7 @@ The WebSocket connection is for applications, which send queries, writes, and CD
 
 One primary per replication group serialises the ordinary writes before replication. When a receiving node applies a batch that changes a row that already exists, it calls the resolver that you configured. The built-in choices are last-writer-wins by HLC, `PrimaryWins`, and `FieldMerge` with per-column HLCs.
 
-In coordinator mode, a former primary that returns with writes that no other node received undoes those writes and rejoins the group without an operator, as MongoDB's rollback does. The node keeps a copy of each write that it undid, and `rolledBackChanges(engine)` returns them so that you can review them and apply again the ones that still matter. Once you have reviewed them, `clearRolledBackChanges(engine)` deletes them. Sirannon never acknowledged a `majority` write that a former primary undoes this way, because that write never reached a majority of the voters.
+In coordinator mode, a former primary that returns with writes that no other node received undoes those writes and rejoins the group without an operator, as MongoDB's rollback does. The node keeps a copy of each write that it undid, including before it rebuilds itself through a full copy, and `rolledBackChanges(engine)` returns them so that you can review them and apply again the ones that still matter. Once you have reviewed them, `clearRolledBackChanges(engine)` deletes them. Sirannon never acknowledged a `majority` write that a former primary undoes this way, because that write never reached a majority of the voters.
 
 ### What happens under a network partition?
 

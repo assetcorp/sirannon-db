@@ -2,8 +2,8 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { ROLLED_BACK_CHANGES_TABLE } from '../internal-tables.js'
 
 /**
- * Describes one change that this node undid when it reconciled its history with a new primary's, which the node keeps
- * so that an operator can review a write that the group never held on a majority of its voters.
+ * Describes one change that this node undid or replaced when it reconciled its history with a new primary's, which
+ * the node keeps so that an operator can review a write that the group never held on a majority of its voters.
  *
  * @public
  */
@@ -30,6 +30,11 @@ export interface RolledBackChange {
   txId: string
   /** Holds the hybrid logical clock timestamp of the change. */
   hlc: string
+  /**
+   * Is true when the node compared its history with the primary's and found that the primary lacked the change. Is
+   * false when the primary no longer kept the history to compare against, so that the primary can also hold the change.
+   */
+  comparedWithPrimary: boolean
 }
 
 interface RolledBackChangeRow {
@@ -44,7 +49,14 @@ interface RolledBackChangeRow {
   node_id: string
   tx_id: string
   hlc: string
+  compared_with_primary: number | bigint
 }
+
+const INSERT_ROLLED_BACK_COLUMNS =
+  'seq, rolled_back_at, rolled_back_in_term, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc, compared_with_primary'
+
+const KEEP_STRONGER_COMPARISON =
+  'ON CONFLICT(seq) DO UPDATE SET compared_with_primary = MAX(compared_with_primary, excluded.compared_with_primary)'
 
 function originPlaceholders(originCount: number): string {
   return Array.from({ length: originCount }, () => '?').join(', ')
@@ -72,15 +84,16 @@ export async function ensureRolledBackChangesTable(conn: SQLiteConnection): Prom
       new_data TEXT,
       node_id TEXT NOT NULL,
       tx_id TEXT NOT NULL,
-      hlc TEXT NOT NULL
+      hlc TEXT NOT NULL,
+      compared_with_primary INTEGER NOT NULL
     )`,
   )
 }
 
 /**
  * Copies every history change stamped later than one timestamp from the change log into the table of rolled-back
- * changes, so that the copies outlast the undo that follows in the same transaction. A change that the table already
- * keeps stays as it is.
+ * changes, marked as compared with the primary, so that the copies outlast the undo or full copy that follows. A change
+ * that the table already keeps stays, and takes the compared mark.
  *
  * @param conn - The connection that runs the undo's transaction.
  * @param changesTable - The change log table.
@@ -101,13 +114,46 @@ export async function insertRolledBackChangesAfterHlc(
 ): Promise<void> {
   if (origins.length === 0) return
   const stmt = await conn.prepare(
-    `INSERT OR IGNORE INTO "${ROLLED_BACK_CHANGES_TABLE}"
-      (seq, rolled_back_at, rolled_back_in_term, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc)
-     SELECT seq, ?, ?, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc FROM "${changesTable}"
+    `INSERT INTO "${ROLLED_BACK_CHANGES_TABLE}" (${INSERT_ROLLED_BACK_COLUMNS})
+     SELECT seq, ?, ?, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc, 1 FROM "${changesTable}"
      WHERE hlc != '' AND hlc > ? AND node_id IN (${originPlaceholders(origins.length)})
-     ORDER BY seq`,
+     ORDER BY seq
+     ${KEEP_STRONGER_COMPARISON}`,
   )
   await stmt.run(nowSeconds, term.toString(), hlc ?? '', ...origins)
+}
+
+/**
+ * Copies every history change that the primary did not write from the change log into the table of rolled-back
+ * changes, marked as not compared with the primary, for a full copy that follows when the primary no longer keeps the
+ * history that the node would compare against. A change that the table already keeps stays as it is.
+ *
+ * @param conn - The writer connection.
+ * @param changesTable - The change log table.
+ * @param origins - The IDs of the group members whose changes form the history.
+ * @param primaryNodeId - The current primary's node ID, whose own changes the primary holds.
+ * @param term - The primary term of the full copy that follows.
+ * @param nowSeconds - The time to record, in seconds since the Unix epoch.
+ * @returns A promise that settles once SQLite has copied the changes, at once when `origins` is empty.
+ * @internal
+ */
+export async function insertRolledBackChangesNotFromPrimary(
+  conn: SQLiteConnection,
+  changesTable: string,
+  origins: readonly string[],
+  primaryNodeId: string,
+  term: bigint,
+  nowSeconds: number,
+): Promise<void> {
+  if (origins.length === 0) return
+  const stmt = await conn.prepare(
+    `INSERT INTO "${ROLLED_BACK_CHANGES_TABLE}" (${INSERT_ROLLED_BACK_COLUMNS})
+     SELECT seq, ?, ?, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc, 0 FROM "${changesTable}"
+     WHERE hlc != '' AND node_id IN (${originPlaceholders(origins.length)}) AND node_id != ?
+     ORDER BY seq
+     ${KEEP_STRONGER_COMPARISON}`,
+  )
+  await stmt.run(nowSeconds, term.toString(), ...origins, primaryNodeId)
 }
 
 /**
@@ -119,8 +165,7 @@ export async function insertRolledBackChangesAfterHlc(
  */
 export async function selectRolledBackChanges(conn: SQLiteConnection): Promise<RolledBackChange[]> {
   const stmt = await conn.prepare(
-    `SELECT seq, rolled_back_at, rolled_back_in_term, table_name, operation, row_id, old_data, new_data, node_id, tx_id, hlc
-     FROM "${ROLLED_BACK_CHANGES_TABLE}" ORDER BY id`,
+    `SELECT ${INSERT_ROLLED_BACK_COLUMNS} FROM "${ROLLED_BACK_CHANGES_TABLE}" ORDER BY id`,
   )
   const rows = (await stmt.all()) as RolledBackChangeRow[]
   return rows.map(row => ({
@@ -135,6 +180,7 @@ export async function selectRolledBackChanges(conn: SQLiteConnection): Promise<R
     nodeId: row.node_id,
     txId: row.tx_id,
     hlc: row.hlc,
+    comparedWithPrimary: Number(row.compared_with_primary) === 1,
   }))
 }
 

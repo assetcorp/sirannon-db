@@ -8,6 +8,7 @@ import {
   deleteHistoryChangesAfterHlc,
   deletePeerState,
   type HistoryChangeRow,
+  insertRolledBackChangesAfterHlc,
   prepareInsertAppliedChange,
   selectHistoryBase,
   selectHistoryChangesAfterHlc,
@@ -141,14 +142,16 @@ async function undoChange(
  * shares with the current primary, and has recorded that it applied the primary's log up to `sourceSeq`, all in one
  * transaction.
  *
- * The node undoes each discarded change from the row images that its change log stores, newest first, and deletes the
- * discarded changes and the column versions that they stamped. The node leaves the change-log entries for its undo
- * statements unstamped, so that local subscribers and live queries receive the reverse changes while no other node
- * receives them and the group's history leaves them out.
+ * The node first copies the discarded changes into its table of rolled-back changes, so that an operator can review a
+ * write that only this node held. It then undoes each discarded change from the row images that its change log
+ * stores, newest first, and deletes the discarded changes and the column versions that they stamped. The node leaves
+ * the change-log entries for its undo statements unstamped, so that local subscribers and live queries receive the
+ * reverse changes while no other node receives them and the group's history leaves them out.
  *
- * The node changes nothing and returns false in three cases, because it then needs a full copy to hold the primary's
- * history. These are when it holds no record of the shared transaction, when a full copy left it holding a later
- * transaction than the shared one, and when one of the discarded changes is a schema change.
+ * The node returns false in three cases, because it then needs a full copy to hold the primary's history. When it
+ * holds no record of the shared transaction, or when a full copy left it holding a later transaction than the shared
+ * one, it changes nothing. When one of the discarded changes is a schema change, it only keeps the discarded changes
+ * in its table of rolled-back changes, so that the full copy loses none of them.
  *
  * @param engine - The engine of the replica that reconciles its history.
  * @param point - The last transaction that the node shares with the primary.
@@ -174,6 +177,8 @@ export function rollBackToHistoryPoint(
       if (cut === null || (base !== null && base.hlc > cut)) return false
       const origins = historyOrigins(engine)
       const divergent = await selectHistoryChangesAfterHlc(tx, CHANGES_TABLE, origins, cut)
+      await insertRolledBackChangesAfterHlc(tx, CHANGES_TABLE, origins, cut, term, Date.now() / 1000)
+      if (divergent.some(row => row.operation.toUpperCase() === 'DDL')) return false
       const pkColumnsByTable = new Map<string, string[]>()
       for (const row of divergent) {
         await undoChange(tx, row, pkColumnsByTable)

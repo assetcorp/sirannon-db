@@ -32,8 +32,8 @@ function holdsWrite(engine: ReplicationEngine, nodeId: string, seq: bigint): boo
 function inSyncVotersHold(engine: ReplicationEngine, seq: bigint, state: ReplicationGroupState): boolean {
   const holders = inSyncCopyHolderIds(engine, state)
   const voters = state.votingDataBearingNodeIds
-  const votingHolders = holders.filter(nodeId => voters.includes(nodeId)).length
-  if (votingHolders < majorityOf(voters.length)) return false
+  const recordedVoters = new Set([engine.nodeId, ...state.inSyncNodeIds].filter(nodeId => voters.includes(nodeId)))
+  if (recordedVoters.size < majorityOf(voters.length)) return false
   return holders.every(nodeId => holdsWrite(engine, nodeId, seq))
 }
 

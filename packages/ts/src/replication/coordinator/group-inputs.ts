@@ -37,6 +37,8 @@ export interface SetReplicationGroupStateInput {
   compatibility?: CoordinatorCompatibilityMetadata
   /** Sets the group's feature level, which defaults to 1. */
   featureLevel?: number
+  /** Sets the last term in which the in-sync set held a majority of the voters. A new group defaults to 0, and an overwrite of an existing group defaults to `primaryTerm`, so that a restarted primary proves its copy before it keeps its duty. */
+  inSyncMajorityTerm?: bigint
 }
 
 /**

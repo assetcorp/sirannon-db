@@ -29,7 +29,7 @@ import { removeLaggingReplicas } from './in-sync-lag.js'
 import { applyCoordinatorRestartRules } from './local-membership.js'
 import { refreshMemberAddresses } from './member-addresses.js'
 import { reportEngineError } from './report-error.js'
-import { beginRestartProof, checkRestartProofDeadline } from './restart-proof.js'
+import { beginRestartProof, checkRestartProof } from './restart-proof.js'
 import {
   ensurePrimaryTermStart,
   forgetUnheldFirstPrimaryTermStart,
@@ -47,11 +47,13 @@ function localCoordinatorPrimary(engine: ReplicationEngine): { nodeId: string; e
 
 /**
  * Refuses a replication config that coordinator mode cannot run with: one without a stable node ID, and one that
- * configures peer addresses, which coordinator mode takes from the members' sessions.
+ * configures peer addresses, which coordinator mode takes from the members' sessions, and one with a replica lag limit
+ * that is not a positive whole number of milliseconds.
  *
  * @param config - The replication config that the engine receives.
  * @throws AuthorityError when coordinator mode has no `nodeId`.
  * @throws TopologyError when coordinator mode has `transportConfig.endpoints`.
+ * @throws RangeError when `coordinator.maxReplicaLagMs` is not a positive safe integer.
  *
  * @internal
  */
@@ -59,6 +61,10 @@ export function assertCoordinatorModeConfig(config: ReplicationConfig): void {
   if (!config.coordinator) return
   if (!config.nodeId) {
     throw new AuthorityError('Coordinator mode requires a stable persisted nodeId')
+  }
+  const lagMs = config.coordinator.maxReplicaLagMs
+  if (lagMs !== undefined && (!Number.isSafeInteger(lagMs) || lagMs <= 0)) {
+    throw new RangeError('coordinator.maxReplicaLagMs must be a positive safe integer')
   }
   if (config.transportConfig?.endpoints !== undefined) {
     throw new TopologyError(COORDINATOR_ENDPOINTS_REFUSAL)
@@ -177,9 +183,7 @@ function sessionTtlMs(config: CoordinatorModeConfig): number {
 function startInSyncReconcileLoop(engine: ReplicationEngine): void {
   const timer = setInterval(() => {
     keepTermHistoryCurrent(engine)
-    checkRestartProofDeadline(engine).catch((err: unknown) =>
-      reportEngineError(engine, err, 'restart-proof-deadline', true),
-    )
+    checkRestartProof(engine).catch((err: unknown) => reportEngineError(engine, err, 'restart-proof-check', true))
     reconcileInSyncSet(engine).catch((err: unknown) =>
       reportEngineError(engine, err, 'coordinator-in-sync-reconcile', true),
     )

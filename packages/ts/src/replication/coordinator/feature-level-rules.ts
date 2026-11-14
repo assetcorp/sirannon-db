@@ -30,7 +30,8 @@ export function supportedFeatureLevel(session: CoordinatorNodeSession): number {
 
 /**
  * Returns the group state after a raise of its feature level, which needs a live session from every member that
- * supports the new level.
+ * supports the new level. The raise also records the current term as one in which the in-sync set held a majority,
+ * because a record that a lower level wrote can lack that fact.
  *
  * @param state - The group state that the coordinator holds.
  * @param input - The level to raise the group to.
@@ -67,5 +68,6 @@ export function nextFeatureLevelState(
       )
     }
   }
-  return { ...state, featureLevel: input.featureLevel, updatedAtMs: nowMs }
+  const inSyncMajorityTerm = state.inSyncMajorityTerm > state.primaryTerm ? state.inSyncMajorityTerm : state.primaryTerm
+  return { ...state, featureLevel: input.featureLevel, inSyncMajorityTerm, updatedAtMs: nowMs }
 }

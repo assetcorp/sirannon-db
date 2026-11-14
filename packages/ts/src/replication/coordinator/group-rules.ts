@@ -27,6 +27,22 @@ export function majorityOf(voterCount: number): number {
 }
 
 /**
+ * Returns the group state with its in-sync majority term set to the current term when the in-sync set holds a
+ * majority of the voters, so that every coordinator write that gives the set a majority also records that fact.
+ *
+ * @param state - The group state that a coordinator write is about to store.
+ * @returns `state` itself when the record already holds, and otherwise a copy that records the current term.
+ *
+ * @internal
+ */
+export function recordInSyncMajority(state: ReplicationGroupState): ReplicationGroupState {
+  const voters = state.votingDataBearingNodeIds
+  const inSyncVoters = state.inSyncNodeIds.filter(nodeId => voters.includes(nodeId)).length
+  if (state.inSyncMajorityTerm >= state.primaryTerm || inSyncVoters < majorityOf(voters.length)) return state
+  return { ...state, inSyncMajorityTerm: state.primaryTerm }
+}
+
+/**
  * Refuses a group whose voters and pending voters number more than seven.
  *
  * @param voterCount - The number of voters and pending voters that the group would hold.
@@ -155,14 +171,13 @@ export function sameNodeIdSet(left: readonly string[], right: readonly string[])
   return left.length === right.length && left.every(nodeId => right.includes(nodeId))
 }
 
-export function markDisplacedPrimaryForRepair(
+export function removeDisplacedPrimaryFromInSyncSet(
   state: ReplicationGroupState,
   displacedPrimaryId: string | undefined,
   nextPrimaryId: string,
 ): void {
   if (!displacedPrimaryId || displacedPrimaryId === nextPrimaryId) return
   state.inSyncNodeIds = removeNodeId(state.inSyncNodeIds, displacedPrimaryId)
-  state.repairingNodeIds = setMembership(state.repairingNodeIds, displacedPrimaryId, true)
 }
 
 export function cloneCompatibility(
@@ -346,7 +361,7 @@ export function buildReplicationGroupState(
   assertSubset(repairingNodeIds, memberNodeIds, 'repairingNodeIds')
   assertSubset(faultedNodeIds, memberNodeIds, 'faultedNodeIds')
 
-  return {
+  return recordInSyncMajority({
     clusterId: input.clusterId,
     groupId: input.groupId,
     votingDataBearingNodeIds,
@@ -360,8 +375,9 @@ export function buildReplicationGroupState(
     pendingVoterNodeIds,
     compatibility: cloneCompatibility(input.compatibility),
     featureLevel,
+    inSyncMajorityTerm: input.inSyncMajorityTerm ?? 0n,
     updatedAtMs: nowMs,
-  }
+  })
 }
 
 export function cloneReplicationGroupState(state: ReplicationGroupState): ReplicationGroupState {

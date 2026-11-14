@@ -3,7 +3,7 @@ import {
   cloneMetadata,
   cloneReplicationGroupState,
   isEligiblePromotionSession,
-  markDisplacedPrimaryForRepair,
+  removeDisplacedPrimaryFromInSyncSet,
 } from './group-rules.js'
 import type {
   CoordinatorLease,
@@ -193,7 +193,7 @@ export function movePrimary(state: ReplicationGroupState, nextPrimary: { nodeId:
   state.primaryTerm += 1n
   state.durabilityPointSeq = 0n
   state.currentPrimary = { ...nextPrimary }
-  markDisplacedPrimaryForRepair(state, displacedPrimaryId, nextPrimary.nodeId)
+  removeDisplacedPrimaryFromInSyncSet(state, displacedPrimaryId, nextPrimary.nodeId)
 }
 
 export function nodeSessionKey(clusterId: string, nodeId: string): string {

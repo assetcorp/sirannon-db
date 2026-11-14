@@ -6,12 +6,10 @@
 export interface RestartProof {
   /** Holds the highest sequence that the restarted node has assigned in its change log. */
   highestAssignedSeq: bigint
-  /** Holds the time, in milliseconds since the Unix epoch, after which the node gives up and marks itself repairing. */
+  /** Holds the time, in milliseconds since the Unix epoch, after which the node gives up and marks itself repairing while other in-sync voters stay silent. */
   deadlineMs: number
-  /** Lists the in-sync voters, other than this node, whose report can prove it. */
-  voterIds: string[]
-  /** Holds the in-sync voters that reported a higher applied sequence than `highestAssignedSeq`. */
-  readonly higherReports: Set<string>
+  /** Holds the latest applied sequence of this node's log that each other voter has reported. */
+  readonly reports: Map<string, bigint>
   /** Is true while the node writes the outcome of the proof to the coordinator. */
   settling: boolean
 }

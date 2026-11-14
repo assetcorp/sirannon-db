@@ -1,16 +1,14 @@
 import { selectQuarantined, upsertQuarantined } from '../../core/system-catalog/index.js'
 import { IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL, isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
-import { AuthorityError } from '../errors.js'
 import {
   applyCoordinatorState,
-  errorDetails,
   hasCurrentPrimaryAuthorityFor,
   refreshCoordinatorState,
 } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
-import { isAnchoredToCurrentTerm, restartWithFullCopy } from './history-anchor.js'
-import { keepCoordinatorState, markLocalNodeRepairing, removeLocalNodeFromInSyncSet } from './local-membership.js'
+import { ensureAnchoredToCurrentTerm, isAnchoredToCurrentTerm, restartWithFullCopy } from './history-anchor.js'
+import { keepCoordinatorState, removeLocalNodeFromInSyncSet } from './local-membership.js'
 import { reportEngineError } from './report-error.js'
 
 /**
@@ -72,9 +70,8 @@ export async function recordQuarantineIfFaulted(
 }
 
 /**
- * Prepares a restarted node's rejoin before it connects to its peers. The node loads its quarantine record, writes
- * the record when the group shows it as faulted, and compares its history as a former primary unless it is repairing
- * with the record in place, because such a node rebuilds through a full copy without another comparison.
+ * Prepares a restarted node's rejoin before it connects to its peers. The node loads its quarantine record, and writes
+ * the record when the group shows that an operator faulted it.
  *
  * @param engine - The node's engine.
  * @returns A promise that settles once the node has prepared its rejoin.
@@ -87,9 +84,6 @@ export async function prepareCoordinatorRejoinIfNeeded(engine: ReplicationEngine
   const state = engine.coordinatorState ?? (await refreshCoordinatorState(engine))
   if (!state) return
   await recordQuarantineIfFaulted(engine, state)
-  if (!requiresCoordinatorRejoin(engine, state)) return
-  if (requiresCoordinatorRejoinSync(engine, state) && engine.rejoin.quarantineRecorded) return
-  await evaluateFormerPrimaryHistory(engine, state)
 }
 
 /**
@@ -273,7 +267,7 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
 export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, state: ReplicationGroupState): void {
   const rejoin = engine.rejoin
   if (!state.repairingNodeIds.includes(engine.nodeId)) rejoin.copiedTerm = null
-  if (!engine.running || !engine.history.active || rejoin.syncStarting || rejoin.evaluatingFormerPrimary) return
+  if (!engine.running || !engine.history.active || rejoin.syncStarting) return
   if (!requiresCoordinatorRejoinSync(engine, state) || rejoin.copiedTerm === state.primaryTerm) return
   if (engine.syncState.phase === 'syncing') return
   const sourceNodeId = state.currentPrimary?.nodeId
@@ -289,12 +283,13 @@ export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, sta
 }
 
 /**
- * Handles this node's demotion from primary. The node marks itself repairing and compares its history with the new
- * primary's, and it rebuilds through a full copy when the comparison leaves it repairing.
+ * Handles this node's demotion from primary. The node leaves the in-sync set and reconciles its history with the new
+ * primary's as any replica does, which keeps every change that only this node held in its table of rolled-back
+ * changes, and it rebuilds through a full copy when the group shows it as repairing.
  *
  * @param engine - The former primary's engine.
  * @param state - The group state that names the new primary.
- * @returns A promise that settles once the node has started its rebuild or quarantined itself.
+ * @returns A promise that settles once the node has left the in-sync set and started to rejoin.
  *
  * @internal
  */
@@ -302,55 +297,11 @@ export async function handleFormerPrimaryDemotion(
   engine: ReplicationEngine,
   state: ReplicationGroupState,
 ): Promise<void> {
-  engine.rejoin.evaluatingFormerPrimary = true
-  let evaluatedState: ReplicationGroupState
-  try {
-    const repairingState = await markLocalNodeRepairing(engine, state)
-    evaluatedState = await evaluateFormerPrimaryHistory(engine, repairingState)
-  } finally {
-    engine.rejoin.evaluatingFormerPrimary = false
-  }
-  startCoordinatorRejoinSyncIfReady(engine, evaluatedState)
-}
-
-async function evaluateFormerPrimaryHistory(
-  engine: ReplicationEngine,
-  state: ReplicationGroupState,
-): Promise<ReplicationGroupState> {
-  const config = engine.config.coordinator
-  const currentPrimary = state.currentPrimary
-  if (!config || !currentPrimary || state.faultedNodeIds.includes(engine.nodeId)) return state
-
-  const localWriteSeq = await engine.log.getLocalWriteSeq()
-  const currentPrimaryAckedSeq = await engine.log.getPeerAckedSeq(currentPrimary.nodeId)
-  if (localWriteSeq <= currentPrimaryAckedSeq) {
-    return state
-  }
-
-  let nextState = await removeLocalNodeFromInSyncSet(
+  const next = await removeLocalNodeFromInSyncSet(
     engine,
     state,
-    'the removal of a former primary that holds local-only writes',
+    'the departure of a demoted primary from the in-sync set',
   )
-  const faulted = await config.coordinator.updateNodeMaintenance({
-    clusterId: config.clusterId,
-    groupId: config.groupId,
-    nodeId: engine.nodeId,
-    repairing: false,
-    faulted: true,
-  })
-  nextState = faulted ?? nextState
-  engine.coordinatorState = nextState
-  engine.coordinatorAuthority = false
-  await recordQuarantineIfFaulted(engine, nextState)
-  engine.emitError({
-    error: new AuthorityError('Former primary returned with local-only writes and was quarantined', 'AUTHORITY_LOST', {
-      ...errorDetails(engine, nextState),
-      localWriteSeq: localWriteSeq.toString(),
-      currentPrimaryAckedSeq: currentPrimaryAckedSeq.toString(),
-    }),
-    operation: 'coordinator-former-primary-divergence',
-    recoverable: false,
-  })
-  return nextState
+  ensureAnchoredToCurrentTerm(engine)
+  startCoordinatorRejoinSyncIfReady(engine, next)
 }

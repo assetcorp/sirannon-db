@@ -222,6 +222,8 @@ export interface ReplicationGroupState {
   compatibility?: CoordinatorCompatibilityMetadata
   /** Holds the group's feature level, which an operator raises once every member supports the next one. At level 1 the primary records the durability point of every write, and from level 2 it records it only when its term starts. A group state written before this field existed reads as level 1. */
   featureLevel: number
+  /** Holds the last term in which the in-sync set held a majority of the voters, which is the only kind of term in which the primary can acknowledge a `majority` write. A group state written before this field existed reads as 0. */
+  inSyncMajorityTerm: bigint
   /** Holds the time, in milliseconds since the Unix epoch, of the last change to this state. */
   updatedAtMs: number
 }

@@ -2,6 +2,7 @@ export { FieldMergeResolver } from '../core/sync/conflict/field-merge.js'
 export { LWWResolver } from '../core/sync/conflict/lww.js'
 export { PrimaryWinsResolver } from '../core/sync/conflict/primary-wins.js'
 export { HLC } from '../core/sync/hlc.js'
+export type { RolledBackChange } from '../core/system-catalog/rolled-back-changes-table.js'
 export type { CoordinatorBackupGroupOptions } from './backup-group.js'
 export { coordinatorBackupGroup } from './backup-group.js'
 export {
@@ -55,6 +56,7 @@ export {
 export { ReplicationLog } from './log.js'
 export { generateNodeId, validateNodeId } from './node-id.js'
 export { PeerTracker } from './peer-tracker.js'
+export { clearRolledBackChanges, rolledBackChanges } from './rolled-back-changes.js'
 export { PrimaryReplicaTopology } from './topology/primary-replica.js'
 export type {
   ApplyResult,

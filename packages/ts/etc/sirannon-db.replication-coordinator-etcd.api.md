@@ -21,6 +21,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
     getLiveNodeSession(clusterId: string, nodeId: string): Promise<CoordinatorNodeSession | null>;
     getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null>;
     promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>;
+    raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null>;
     registerNodeSession(input: RegisterNodeSessionInput): Promise<CoordinatorNodeSession>;
     releaseLease(leaseId: string): Promise<boolean>;
     removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>;

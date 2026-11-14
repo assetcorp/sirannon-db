@@ -5,10 +5,10 @@ import type { ReplicationEngine } from './engine.js'
 import { ensurePrimaryTermStart, historyOrigins } from './term-history.js'
 
 /**
- * Sends the changes in this node's replication log to its peers in batches, on a timer. Each tick fills a peer's
- * window of `maxPendingBatches` unacknowledged batches, so that a peer that falls behind catches up while new writes
- * arrive. In coordinator mode, the
- * loop sends only while this node holds primary authority and has recorded the start of its term, only to the group's
+ * Sends the changes in this node's replication log to its peers in batches, on a timer. Each tick fills the slots that
+ * a peer's window of `maxPendingBatches` unacknowledged batches has open when the tick starts, so that a peer that
+ * falls behind catches up while new writes arrive, and a send that fails frees no slot within the same tick. In
+ * coordinator mode, the loop sends only while this node holds primary authority and has recorded the start of its term, only to the group's
  * members, and it sends every change of the group's history that the log holds, including the changes that this node
  * applied from earlier primaries; otherwise, the topology's `shouldReplicateTo` picks the peers.
  *
@@ -93,7 +93,8 @@ export class SenderLoop {
         continue
       }
       engine.peerTracker.expireTimedOutBatches(peerId, nowMs, engine.ackTimeoutMs)
-      while (peerState.pendingBatches < engine.maxPendingBatches) {
+      const openSlots = engine.maxPendingBatches - peerState.pendingBatches
+      for (let sent = 0; sent < openSlots; sent++) {
         if (!(await this.sendNextBatch(peerId, peerState, origins, nowMs))) break
       }
     }

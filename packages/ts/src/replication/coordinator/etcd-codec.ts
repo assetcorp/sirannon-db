@@ -1,6 +1,6 @@
 import * as v from 'valibot'
 import { CoordinatorError } from '../errors.js'
-import { cloneCompatibility, cloneMetadata } from './group-rules.js'
+import { cloneCompatibility, cloneMetadata, FIRST_FEATURE_LEVEL } from './group-rules.js'
 import type {
   CoordinatorCompatibilityMetadata,
   CoordinatorLease,
@@ -32,6 +32,7 @@ export interface SerializedNodeSession {
   dataBearing: boolean
   voting: boolean
   compatibility?: CoordinatorCompatibilityMetadata
+  featureLevel?: number
   metadata?: Record<string, unknown>
 }
 
@@ -48,6 +49,7 @@ export interface SerializedReplicationGroupState {
   faultedNodeIds: string[]
   pendingVoterNodeIds?: string[]
   compatibility?: CoordinatorCompatibilityMetadata
+  featureLevel?: number
   updatedAtMs: number
 }
 
@@ -86,7 +88,7 @@ export function parseLeaseIdForEntry(kind: LeaseKind, raw: string): string | nul
 }
 
 export function serializeGroupState(state: ReplicationGroupState): string {
-  const { pendingVoterNodeIds, ...rest } = state
+  const { pendingVoterNodeIds, featureLevel, ...rest } = state
   const serialized: SerializedReplicationGroupState = {
     ...rest,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
@@ -99,6 +101,7 @@ export function serializeGroupState(state: ReplicationGroupState): string {
     faultedNodeIds: [...state.faultedNodeIds],
     ...(pendingVoterNodeIds.length > 0 ? { pendingVoterNodeIds: [...pendingVoterNodeIds] } : {}),
     compatibility: cloneCompatibility(state.compatibility),
+    ...(featureLevel > FIRST_FEATURE_LEVEL ? { featureLevel } : {}),
   }
   return JSON.stringify(serialized)
 }
@@ -125,6 +128,7 @@ const SERIALIZED_GROUP_STATE_SCHEMA = v.object({
       protocolVersion: v.optional(v.string()),
     }),
   ),
+  featureLevel: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(FIRST_FEATURE_LEVEL))),
   updatedAtMs: v.number(),
 })
 
@@ -132,8 +136,8 @@ const SERIALIZED_GROUP_STATE_SCHEMA = v.object({
  * Reads a replication-group record that the etcd coordinator stored, in this release's format or an earlier one's.
  *
  * @param raw - The JSON text that etcd holds for the group.
- * @returns The group state, with no pending voters, no faulted nodes, and a durability point of 0 where the record
- * omits them.
+ * @returns The group state, with no pending voters, no faulted nodes, a durability point of 0, and feature level 1
+ * where the record omits them.
  * @throws CoordinatorError when the text is not a group record that this release can read.
  *
  * @internal
@@ -166,5 +170,6 @@ export function parseGroupState(raw: string): ReplicationGroupState {
     faultedNodeIds: [...(value.faultedNodeIds ?? [])],
     pendingVoterNodeIds: [...(value.pendingVoterNodeIds ?? [])],
     compatibility: cloneCompatibility(value.compatibility),
+    featureLevel: value.featureLevel ?? FIRST_FEATURE_LEVEL,
   }
 }

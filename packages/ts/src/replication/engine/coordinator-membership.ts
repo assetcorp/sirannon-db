@@ -1,5 +1,5 @@
 import { selectQuarantined, upsertQuarantined } from '../../core/system-catalog/index.js'
-import { isGroupMember } from '../coordinator/group-rules.js'
+import { IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL, isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { AuthorityError } from '../errors.js'
 import {
@@ -96,7 +96,8 @@ export async function prepareCoordinatorRejoinIfNeeded(engine: ReplicationEngine
  * Asks the coordinator to admit this replica to the in-sync set once it has applied the current primary's log up to
  * the durability point and reconciled its history with that primary's. A repairing replica asks only after it has
  * finished, from the current primary, the full copy that rejoins it in the current term, and a draining replica leaves
- * the in-sync set.
+ * the in-sync set. From feature level 2, the replica only clears its repairing flag after that copy, and the primary
+ * admits it from its acknowledgements.
  *
  * @param engine - The replica's engine.
  * @returns A promise that settles once the coordinator has answered, or at once when the replica is not ready.
@@ -125,6 +126,8 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
   const rejoinSyncCompleted = engine.rejoin.copiedTerm === state.primaryTerm
   if (repairing && !rejoinSyncCompleted) return keepCoordinatorState(engine, state)
 
+  const primaryAdmits = state.featureLevel >= IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL
+  if (primaryAdmits && !repairing) return keepCoordinatorState(engine, state)
   const appliedSeq = await engine.log.getLastAppliedSeq(sourceNodeId)
   if (appliedSeq < state.durabilityPointSeq) return keepCoordinatorState(engine, state)
 
@@ -136,6 +139,7 @@ export async function markCoordinatorSyncReady(engine: ReplicationEngine): Promi
     appliedSeq,
     expectedPrimaryTerm: state.primaryTerm,
     rejoinSyncCompleted,
+    ...(primaryAdmits ? { clearRepairingOnly: true } : {}),
   })
   const next = admitted ?? state
   applyCoordinatorState(engine, next)
@@ -171,10 +175,16 @@ export async function admitRejoinedNodeIfReady(engine: ReplicationEngine): Promi
   }
 }
 
+function admissionSeq(engine: ReplicationEngine, state: ReplicationGroupState): bigint {
+  const acknowledged = engine.inSync.acknowledgedSeq
+  return acknowledged > state.durabilityPointSeq ? acknowledged : state.durabilityPointSeq
+}
+
 /**
- * Asks the coordinator, as primary, to admit a replica whose acknowledgements reach the durability point. The
- * coordinator admits it only while this node is still the primary in the term that it read, and never admits a
- * repairing replica on its acknowledgements.
+ * Asks the coordinator, as primary, to admit a replica whose acknowledgements reach both the durability point and the
+ * highest sequence that this node has acknowledged. From the moment that it asks, this node counts the replica among
+ * the in-sync voters of every write that it acknowledges. The coordinator admits the replica only while this node is
+ * still the primary in the term that it read, and never admits a repairing replica on its acknowledgements.
  *
  * @param engine - The primary's engine.
  * @param nodeId - The replica's node ID.
@@ -190,30 +200,37 @@ export async function handleCoordinatorAckProgress(
 ): Promise<void> {
   const config = engine.config.coordinator
   const state = engine.coordinatorState
+  const pendingAdmissions = engine.inSync.pendingAdmissions
   if (!config || !state) return
-  if (nodeId === engine.nodeId) return
-  if (!hasCurrentPrimaryAuthorityFor(engine, state)) return
+  if (nodeId === engine.nodeId || pendingAdmissions.has(nodeId)) return
+  if (!hasCurrentPrimaryAuthorityFor(engine, state) || engine.inSync.restartProof) return
   if (engine.history.termStartTerm !== state.primaryTerm) return
   if (state.inSyncNodeIds.includes(nodeId)) return
   if (state.repairingNodeIds.includes(nodeId) || state.faultedNodeIds.includes(nodeId)) return
-  if (!state.votingDataBearingNodeIds.includes(nodeId)) return
-  if (ackedSeq < state.durabilityPointSeq) return
+  if (state.drainingNodeIds.includes(nodeId)) return
+  if (!isGroupMember(state, nodeId)) return
+  if (ackedSeq < admissionSeq(engine, state)) return
 
-  const admitted = await config.coordinator.admitNodeToInSyncSet({
-    clusterId: config.clusterId,
-    groupId: config.groupId,
-    nodeId,
-    sourceNodeId: engine.nodeId,
-    appliedSeq: ackedSeq,
-    expectedPrimaryTerm: state.primaryTerm,
-  })
-  if (!admitted) return
-
-  applyCoordinatorState(engine, admitted)
+  pendingAdmissions.add(nodeId)
+  try {
+    const admitted = await config.coordinator.admitNodeToInSyncSet({
+      clusterId: config.clusterId,
+      groupId: config.groupId,
+      nodeId,
+      sourceNodeId: engine.nodeId,
+      appliedSeq: ackedSeq,
+      expectedPrimaryTerm: state.primaryTerm,
+    })
+    if (admitted) applyCoordinatorState(engine, admitted)
+  } finally {
+    pendingAdmissions.delete(nodeId)
+    engine.peerTracker.recheckWaiters()
+  }
 }
 
 /**
- * Admits, as primary, every replica whose acknowledgements reach the durability point and that the in-sync set lacks.
+ * Admits, as primary, every replica whose acknowledgements over its current connection reach the durability point and
+ * the highest sequence that this node has acknowledged, and that the in-sync set lacks.
  *
  * @param engine - The primary's engine.
  * @returns A promise that settles once every admission attempt finishes.
@@ -221,25 +238,25 @@ export async function handleCoordinatorAckProgress(
  * @internal
  */
 export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<void> {
-  if (!engine.running || engine.inSyncReconciling) return
+  if (!engine.running || engine.inSync.reconciling) return
   const state = engine.coordinatorState
   if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return
 
-  const caughtUpNodeIds = engine.peerTracker.ackedConfiguredNodeIds(
-    state.durabilityPointSeq,
-    engine.nodeId,
-    state.votingDataBearingNodeIds,
-  )
-  const pending = caughtUpNodeIds.filter(nodeId => nodeId !== engine.nodeId && !state.inSyncNodeIds.includes(nodeId))
+  const pending: Array<{ nodeId: string; ackedSeq: bigint }> = []
+  for (const nodeId of [...state.votingDataBearingNodeIds, ...state.pendingVoterNodeIds]) {
+    if (nodeId === engine.nodeId || state.inSyncNodeIds.includes(nodeId)) continue
+    const ackedSeq = engine.peerTracker.connectionAckedSeq(nodeId)
+    if (ackedSeq !== undefined && ackedSeq >= admissionSeq(engine, state)) pending.push({ nodeId, ackedSeq })
+  }
   if (pending.length === 0) return
 
-  engine.inSyncReconciling = true
+  engine.inSync.reconciling = true
   try {
-    for (const nodeId of pending) {
-      await handleCoordinatorAckProgress(engine, nodeId, state.durabilityPointSeq)
+    for (const { nodeId, ackedSeq } of pending) {
+      await handleCoordinatorAckProgress(engine, nodeId, ackedSeq)
     }
   } finally {
-    engine.inSyncReconciling = false
+    engine.inSync.reconciling = false
   }
 }
 

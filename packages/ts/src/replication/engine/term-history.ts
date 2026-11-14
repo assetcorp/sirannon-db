@@ -17,6 +17,7 @@ import type { SyncHistoryPoint, SyncRequest } from '../types.js'
 import { FIRST_PRIMARY_TERM } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { restartLagClock } from './in-sync-lag.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
 import { unrefTimer } from './timers.js'
 
@@ -208,7 +209,8 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
  * once it loses authority.
  *
  * A primary that the group shows as repairing or faulted records nothing, because its file may lack acknowledged
- * writes, and a term start that it recorded would let it keep primary duty when it restarts.
+ * writes, and a term start that it recorded would let it keep primary duty when it restarts. A restarted primary that
+ * still waits to prove that it lost no acknowledged write records nothing either, until it holds a new term.
  *
  * @param engine - The engine of the node that holds primary authority.
  * @returns A promise that settles once the term start is recorded, or at once when this node is not primary or the
@@ -219,7 +221,7 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
 export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void> {
   const state = engine.coordinatorState
   const history = engine.history
-  if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return Promise.resolve()
+  if (!state || !hasCurrentPrimaryAuthorityFor(engine, state) || engine.inSync.restartProof) return Promise.resolve()
   if (state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
     return Promise.resolve()
   }
@@ -250,6 +252,9 @@ async function recordPrimaryTermStart(engine: ReplicationEngine, state: Replicat
   engine.history.anchoredTerm = term
   engine.history.heldPrimaryInAnchoredTerm = true
   engine.history.termStartSeq = seq
+  engine.inSync.acknowledgedSeq = seq
+  engine.inSync.pendingAdmissions.clear()
+  restartLagClock(engine)
   engine.history.termStartTerm = term
 }
 

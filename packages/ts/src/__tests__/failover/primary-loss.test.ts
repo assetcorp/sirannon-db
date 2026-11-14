@@ -159,7 +159,7 @@ describe('losing the primary', () => {
 
   it('sends the subscribers and live queries of a replica a delete for every row that it discards after a failover', async () => {
     const env = environment()
-    await startCluster(env)
+    await startCluster(env, { perNode: { [NODE_A]: { maxReplicaLagMs: 60_000 } } })
     await writeItemMajority(requireNode(env, NODE_A), itemRow(1, NODE_A, 'acknowledged-by-majority'))
     await waitForInSyncSet(env, [NODE_A, NODE_B, NODE_C], 15_000)
     const replica = requireNode(env, NODE_C)

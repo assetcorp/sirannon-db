@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { NoSafePrimaryError } from '../errors.js'
+import { assertRaiseFeatureLevelInput, nextFeatureLevelState } from './feature-level-rules.js'
 import {
   assertNonEmpty,
   assertNonNegativeSeq,
@@ -7,7 +8,6 @@ import {
   assertPositiveTtl,
   assertPrimaryInGroup,
   buildReplicationGroupState,
-  cloneCompatibility,
   cloneMetadata,
   cloneReplicationGroupState,
   MIN_AUTOMATIC_FAILOVER_VOTERS,
@@ -16,6 +16,7 @@ import {
   nextMaintenanceState,
 } from './group-rules.js'
 import {
+  buildNodeSession,
   ControllerLeaseWatchers,
   cloneLease,
   cloneNodeSession,
@@ -43,6 +44,7 @@ import type {
   CreateReplicationGroupStateResult,
   NodeSessionWatcher,
   PromoteEligibleReplicaInput,
+  RaiseFeatureLevelInput,
   RegisterNodeSessionInput,
   RemoveVoterInput,
   ReplicationGroupState,
@@ -152,30 +154,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.nodeId, 'nodeId')
     assertPositiveTtl(input.ttlMs)
 
-    const grantedAtMs = this.now()
-    const lease: CoordinatorLease = {
-      id: this.idFactory(),
-      kind: 'node-session',
-      clusterId: input.clusterId,
-      holderId: input.nodeId,
-      ttlMs: input.ttlMs,
-      grantedAtMs,
-      expiresAtMs: grantedAtMs + input.ttlMs,
-      metadata: cloneMetadata(input.metadata),
-    }
-    const session: CoordinatorNodeSession = {
-      clusterId: input.clusterId,
-      nodeId: input.nodeId,
-      lease,
-      endpoint: input.endpoint,
-      replicationEndpoint: input.replicationEndpoint,
-      groupIds: [...(input.groupIds ?? [])],
-      dataBearing: input.dataBearing ?? true,
-      voting: input.voting ?? true,
-      compatibility: cloneCompatibility(input.compatibility),
-      metadata: cloneMetadata(input.metadata),
-    }
-
+    const session = buildNodeSession(input, this.idFactory(), this.now())
     this.nodeSessions.set(nodeSessionKey(input.clusterId, input.nodeId), session)
     this.notifyNodeSessionWatchers(input.clusterId)
     return cloneNodeSession(session)
@@ -276,9 +255,8 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     if (input.durabilityPointSeq !== undefined) {
       assertNonNegativeSeq(input.durabilityPointSeq, 'durabilityPointSeq')
     }
-    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
-      nextInSyncSetState(state, input, this.now()),
-    )
+    return this.transitionGroup(input.clusterId, input.groupId, state => nextInSyncSetState(state, input, this.now()))
+      .state
   }
 
   async admitNodeToInSyncSet(input: AdmitNodeToInSyncSetInput): Promise<ReplicationGroupState | null> {
@@ -288,9 +266,9 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.sourceNodeId, 'sourceNodeId')
     assertNonNegativeSeq(input.appliedSeq, 'appliedSeq')
 
-    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
+    return this.transitionGroup(input.clusterId, input.groupId, state =>
       nextAdmittedInSyncState(state, input, this.now()),
-    )
+    ).state
   }
 
   async updateNodeMaintenance(input: UpdateNodeMaintenanceInput): Promise<ReplicationGroupState | null> {
@@ -298,9 +276,19 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     assertNonEmpty(input.groupId, 'groupId')
     assertNonEmpty(input.nodeId, 'nodeId')
 
-    return this.applyGroupTransition(input.clusterId, input.groupId, state =>
-      nextMaintenanceState(state, input, this.now()),
-    )
+    return this.transitionGroup(input.clusterId, input.groupId, state => nextMaintenanceState(state, input, this.now()))
+      .state
+  }
+
+  async raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null> {
+    assertRaiseFeatureLevelInput(input)
+    const sessionFor = (nodeId: string): CoordinatorNodeSession | null => {
+      const session = this.nodeSessions.get(nodeSessionKey(input.clusterId, nodeId))
+      return session && this.isLeaseLive(session.lease) ? session : null
+    }
+    return this.transitionGroup(input.clusterId, input.groupId, state =>
+      nextFeatureLevelState(state, input, sessionFor, this.now()),
+    ).state
   }
 
   async promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState> {
@@ -333,14 +321,6 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     state.updatedAtMs = this.now()
     this.notifyReplicationGroupWatchers(state)
     return cloneReplicationGroupState(state)
-  }
-
-  private applyGroupTransition(
-    clusterId: string,
-    groupId: string,
-    transition: (state: ReplicationGroupState) => ReplicationGroupState,
-  ): ReplicationGroupState | null {
-    return this.transitionGroup(clusterId, groupId, transition).state
   }
 
   private transitionGroup(

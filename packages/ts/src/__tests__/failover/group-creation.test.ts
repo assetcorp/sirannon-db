@@ -34,10 +34,10 @@ function recordedTermStart(env: GateEnvironment, nodeId: string): { term: string
   return raw === null ? null : (JSON.parse(raw) as { term: string; seq: string })
 }
 
-async function isPrimaryInFirstTerm(env: GateEnvironment, nodeId: string): Promise<boolean> {
+async function holdsPrimaryDuty(env: GateEnvironment, nodeId: string): Promise<boolean> {
   const group = await env.etcdOracle.group()
   if (!group) return true
-  return group.currentPrimary?.nodeId === nodeId && group.primaryTerm === 1n && !group.repairingNodeIds.includes(nodeId)
+  return group.currentPrimary?.nodeId === nodeId && !group.repairingNodeIds.includes(nodeId)
 }
 
 describe('creating a replication group', () => {
@@ -66,12 +66,12 @@ describe('creating a replication group', () => {
 
     await Promise.all([
       startCluster(env),
-      holdsThroughout(() => isPrimaryInFirstTerm(env, NODE_A), 10_000, `${NODE_A} to keep primary duty in term 1`),
+      holdsThroughout(() => holdsPrimaryDuty(env, NODE_A), 10_000, `${NODE_A} to keep primary duty`),
     ])
 
     const restarted = await storedGroup(env)
     expect(restarted.currentPrimary?.nodeId).toBe(NODE_A)
-    expect(restarted.primaryTerm).toBe(1n)
+    expect(restarted.primaryTerm).toBe(2n)
     expect(restarted.repairingNodeIds).toEqual([])
     const row = itemRow(1, NODE_A, 'first-write-after-restart')
     await writeItemMajority(requireNode(env, NODE_A), row)

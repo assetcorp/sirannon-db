@@ -16,9 +16,10 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 
 ## Replication groups
 
-- A **voter** is one of a replication group's voting copies. Sirannon acknowledges a `majority` write once most voters hold it, and only a voter can become primary.
-- The **in-sync set** holds the voters that have proved they hold every acknowledged write, so only they serve majority reads or become primary.
-- The **durability point** is the position in the primary's change log up to which a majority of voters holds every write.
+- A **voter** is one of a replication group's voting copies. A group holds at most seven voters, and only a voter can become primary.
+- The **in-sync set** holds the voters that have proved they hold every acknowledged write, so only they serve majority reads or become primary. Sirannon acknowledges a `majority` write once every copy in the set holds it, provided that the set holds most of the voters.
+- The **durability point** is the position in the primary's change log that a copy must hold before the primary admits it to the in-sync set. From feature level 2, the primary sets it only when its term starts.
+- A group's **feature level** records which rules its copies follow. Every copy registers the highest level that it supports, and an operator raises the group's level once every copy supports the new one.
 - A copy **drains** when an operator takes it out of service. A draining copy takes no writes and leaves the in-sync set, and a draining primary hands its duty to another copy.
 - A **rebuild in place** is a copy that restarts under its own node ID with an empty or replaced file and copies the whole database from the primary. It rejoins the in-sync set only once it proves that it holds every acknowledged write.
 

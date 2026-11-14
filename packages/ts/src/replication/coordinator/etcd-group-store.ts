@@ -2,6 +2,7 @@ import type { Namespace, Watcher } from 'etcd3'
 import { CoordinatorError, NoSafePrimaryError } from '../errors.js'
 import { parseGroupState, parseNodeSession, serializeGroupState } from './etcd-codec.js'
 import { nodeSessionKey, replicationGroupKey } from './etcd-connection.js'
+import { assertRaiseFeatureLevelInput, nextFeatureLevelState } from './feature-level-rules.js'
 import {
   assertNonEmpty,
   assertNonNegativeSeq,
@@ -9,6 +10,7 @@ import {
   assertPrimaryInGroup,
   buildReplicationGroupState,
   cloneReplicationGroupState,
+  groupMemberIds,
   isEligiblePromotionSession,
   MIN_AUTOMATIC_FAILOVER_VOTERS,
   markDisplacedPrimaryForRepair,
@@ -26,6 +28,7 @@ import type {
   CoordinatorWatchDisposer,
   CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RaiseFeatureLevelInput,
   RemoveVoterInput,
   ReplicationGroupState,
   ReplicationGroupWatcher,
@@ -95,6 +98,22 @@ export class EtcdGroupStore {
     return this.transitionGroupState(input.clusterId, input.groupId, state =>
       nextRemoveVoterState(state, input, Date.now()),
     )
+  }
+
+  async raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null> {
+    assertRaiseFeatureLevelInput(input)
+    const known = await this.getReplicationGroupState(input.clusterId, input.groupId)
+    if (!known) return null
+    const sessions = new Map<string, CoordinatorNodeSession | null>()
+    for (const nodeId of groupMemberIds(known)) {
+      sessions.set(nodeId, await this.getLiveNodeSession(input.clusterId, nodeId))
+    }
+    const sessionFor = (nodeId: string): CoordinatorNodeSession | null => sessions.get(nodeId) ?? null
+    return (
+      await this.transitionGroupState(input.clusterId, input.groupId, state =>
+        nextFeatureLevelState(state, input, sessionFor, Date.now()),
+      )
+    ).state
   }
 
   async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {

@@ -57,6 +57,7 @@ export interface NodeOptions {
   createsGroup?: boolean
   voters?: readonly string[]
   sessionTtlMs?: number
+  maxReplicaLagMs?: number
   controllerLeaseTtlMs?: number
   controllerTickIntervalMs?: number
   controllerEnabled?: boolean
@@ -210,6 +211,7 @@ export async function startNode(
     votingDataBearingNodeIds: options.createsGroup ? [...(options.voters ?? NODE_IDS)] : undefined,
     seedSchema: options.seedSchema ?? false,
     sessionTtlMs: options.sessionTtlMs ?? 1_500,
+    maxReplicaLagMs: options.maxReplicaLagMs,
     controllerLeaseTtlMs: options.controllerLeaseTtlMs ?? 1_500,
     controllerTickIntervalMs: options.controllerTickIntervalMs ?? 200,
     controllerEnabled: options.controllerEnabled ?? true,

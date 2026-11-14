@@ -5,7 +5,51 @@ import {
   isEligiblePromotionSession,
   markDisplacedPrimaryForRepair,
 } from './group-rules.js'
-import type { CoordinatorLease, CoordinatorNodeSession, ReplicationGroupState } from './types.js'
+import type {
+  CoordinatorLease,
+  CoordinatorNodeSession,
+  RegisterNodeSessionInput,
+  ReplicationGroupState,
+} from './types.js'
+
+/**
+ * Returns the session that the in-memory coordinator records for a registration.
+ *
+ * @param input - The node's registration.
+ * @param leaseId - The ID to give the session's lease.
+ * @param grantedAtMs - The time, in milliseconds since the Unix epoch, at which the lease starts.
+ * @returns The session, whose lease expires `input.ttlMs` after `grantedAtMs`.
+ *
+ * @internal
+ */
+export function buildNodeSession(
+  input: RegisterNodeSessionInput,
+  leaseId: string,
+  grantedAtMs: number,
+): CoordinatorNodeSession {
+  return {
+    clusterId: input.clusterId,
+    nodeId: input.nodeId,
+    lease: {
+      id: leaseId,
+      kind: 'node-session',
+      clusterId: input.clusterId,
+      holderId: input.nodeId,
+      ttlMs: input.ttlMs,
+      grantedAtMs,
+      expiresAtMs: grantedAtMs + input.ttlMs,
+      metadata: cloneMetadata(input.metadata),
+    },
+    endpoint: input.endpoint,
+    replicationEndpoint: input.replicationEndpoint,
+    groupIds: [...(input.groupIds ?? [])],
+    dataBearing: input.dataBearing ?? true,
+    voting: input.voting ?? true,
+    compatibility: cloneCompatibility(input.compatibility),
+    ...(input.featureLevel === undefined ? {} : { featureLevel: input.featureLevel }),
+    metadata: cloneMetadata(input.metadata),
+  }
+}
 
 class ClusterWatchers<T> {
   private readonly byKey = new Map<string, Set<(value: T) => void>>()

@@ -208,7 +208,7 @@ Use a read concern to say how current a read must be. A node in coordinator mode
 
 | Level | What the node must prove |
 | --- | --- |
-| `local` | The node makes no check, and the read returns local state that a later failover can quarantine. |
+| `local` | The node makes no check, and the read returns local state that a later failover can roll back. |
 | `majority` | The node is in the in-sync set and is neither draining nor repairing. |
 | `linearizable` | The node is the current primary, and it confirms its authority for the current term with the coordinator before it serves the read. |
 
@@ -353,7 +353,7 @@ The WebSocket connection is for applications, which send queries, writes, and CD
 
 One primary per replication group serialises the ordinary writes before replication. When a receiving node applies a batch that changes a row that already exists, it calls the resolver that you configured. The built-in choices are last-writer-wins by HLC, `PrimaryWins`, and `FieldMerge` with per-column HLCs.
 
-The package has no command that merges a divergent former primary back into the group. In coordinator mode, Sirannon quarantines a former primary that holds local-only writes and takes it out of service, and an operator then rebuilds or restores that node before it rejoins.
+In coordinator mode, a former primary that returns with writes that no other node received undoes those writes and rejoins the group without an operator, as MongoDB's rollback does. The node keeps a copy of each write that it undid, and `rolledBackChanges(engine)` returns them so that you can review them and apply again the ones that still matter. Once you have reviewed them, `clearRolledBackChanges(engine)` deletes them. Sirannon never acknowledged a `majority` write that a former primary undoes this way, because that write never reached a majority of the voters.
 
 ### What happens under a network partition?
 

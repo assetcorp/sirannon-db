@@ -132,11 +132,19 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
 
   it('answers reads of the SQLite catalogue with what the file holds', async () => {
     const ws = await RawSocket.open(`${served.wsBase}/db/notes`)
+    for (const table of ['temp_store_directory', 'data_store_directory', 'writable_schema', 'café_sirannon_archive']) {
+      const answer = await postJson(served.base, '/db/notes/execute', { sql: `CREATE TABLE ${table} (id INTEGER)` })
+      expect(answer.status).toBe(200)
+    }
     const reads = [
       "SELECT name, type FROM sqlite_master WHERE name = 'notes'",
       "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
       'SELECT name, seq FROM sqlite_sequence',
       "SELECT name FROM pragma_table_info('notes') ORDER BY cid",
+      "PRAGMA table_info('temp_store_directory')",
+      'PRAGMA main.table_info = "writable_schema"',
+      'PRAGMA table_info([data_store_directory])',
+      'PRAGMA table_info(café_sirannon_archive)',
     ]
 
     for (const [index, sql] of reads.entries()) {

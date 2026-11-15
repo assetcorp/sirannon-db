@@ -24,9 +24,10 @@ import {
   requireNode,
 } from './gate-environment.js'
 import { useFailoverEnvironment } from './gate-lifecycle.js'
-import { waitForNoSafePrimaryReport } from './gate-observations.js'
+import { statusOf, waitForNoSafePrimaryReport, waitForStatus } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
+import { holdsThroughout } from './gate-support.js'
 import { type ItemRow, insertStrayItem, readHighestAppliedSeq, readHighestOwnChangeSeq } from './sqlite-oracle.js'
 
 const WRITE_REFUSALS = ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY', 'NODE_DRAINING', 'AUTHORITY_LOST']
@@ -185,6 +186,40 @@ describe('operators changing a running group', () => {
     if (!row) throw new Error('no row was written')
     await waitForInSyncSet(env, NODE_IDS, 20_000)
     await waitForItemsOnDisk(env, NODE_IDS, [row], 15_000)
+  })
+
+  it('keeps a copying replica out of the in-sync set after its repair flag is cleared at durability point zero', async () => {
+    const env = environment()
+    await startCluster(env)
+    expect((await env.etcdOracle.group())?.durabilityPointSeq).toBe(0n)
+    const replica = requireNode(env, NODE_C)
+    const links = [grpcProxyName(NODE_A, NODE_C), grpcProxyName(NODE_C, NODE_A)]
+    for (const link of links) await env.toxiproxy.addLatency(link, 'copy-delay', 1_000)
+    await env.coordinator.updateNodeMaintenance({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      nodeId: NODE_C,
+      repairing: true,
+    })
+    await waitForStatus(replica, status => status.syncState?.phase === 'syncing', 15_000, 'a copy in progress')
+    await env.coordinator.updateNodeMaintenance({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      nodeId: NODE_C,
+      repairing: false,
+    })
+    await holdsThroughout(
+      async () => {
+        const status = await statusOf(replica)
+        const group = await env.etcdOracle.group()
+        return status.syncState?.phase === 'ready' || group?.inSyncNodeIds.includes(NODE_C) === false
+      },
+      4_000,
+      'the unfinished replica to stay outside the in-sync set',
+    )
+    for (const link of links) await env.toxiproxy.clearToxic(link, 'copy-delay')
+    await waitForInSyncSet(env, NODE_IDS, 30_000)
+    expect(await waitForIdenticalFiles(env, NODE_IDS, 15_000)).toEqual([])
   })
 
   it('promotes nobody while every replica is set aside, and promotes the replica that an operator vouches for with its applied position', async () => {

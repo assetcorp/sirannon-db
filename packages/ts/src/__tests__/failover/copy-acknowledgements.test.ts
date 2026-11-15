@@ -8,6 +8,7 @@ import {
   GROUP_ID,
   killNode,
   NODE_A,
+  NODE_B,
   NODE_C,
   NODE_IDS,
   requireNode,
@@ -53,6 +54,8 @@ describe('acknowledgements from a replica that a full copy rebuilds', () => {
     const replica = requireNode(env, NODE_C)
     const primary = requireNode(env, NODE_A)
     const earlierCopy = readMetaValue(dbPathFor(env, NODE_C), COPY_REQUEST_META_KEY) ?? undefined
+    expect(earlierCopy).toBeTypeOf('string')
+    expect(earlierCopy).not.toBe('')
     const appliedBeforeTheCopy = readHighestAppliedSeq(dbPathFor(env, NODE_C), NODE_A)
     expect(appliedBeforeTheCopy).toBeGreaterThanOrEqual(readHighestOwnChangeSeq(dbPathFor(env, NODE_A), NODE_A))
 
@@ -104,13 +107,28 @@ describe('acknowledgements from a replica that a full copy rebuilds', () => {
     const write = requireNode(env, NODE_A).execute(
       'INSERT INTO failover_items (id, owner, value, note) VALUES (?, ?, ?, ?)',
       [4, NODE_A, 4, 'all-during-the-copy'],
-      { writeConcern: { level: 'all', timeoutMs: 1_500 } },
+      { writeConcern: { level: 'all', timeoutMs: 4_000 } },
+    )
+    let writeSettled = false
+    void write.then(
+      () => {
+        writeSettled = true
+      },
+      () => {
+        writeSettled = true
+      },
     )
     const rejection = expectRejectsWith(write, ['WRITE_CONCERN_ERROR'])
     await waitForCondition(async () => readHighestOwnChangeSeq(primaryPath, NODE_A) > before, 5_000)
     const copyRequestIds = [undefined, '', 'uncompleted-copy', 'x'.repeat(1024 * 1024)]
     const term = await currentTerm(env)
     const writtenSeq = readHighestOwnChangeSeq(primaryPath, NODE_A)
+    await waitForStatus(
+      primary,
+      status => status.peers.some(peer => peer.nodeId === NODE_B && BigInt(peer.lastAckedSeq) >= writtenSeq),
+      2_000,
+      'the other voter to acknowledge the write before the forged acknowledgements',
+    )
     for (const [index, copyRequestId] of copyRequestIds.entries()) {
       await replica.sendRawAck(NODE_A, {
         batchId: '',
@@ -126,6 +144,9 @@ describe('acknowledgements from a replica that a full copy rebuilds', () => {
       status => status.peers.some(peer => peer.nodeId === NODE_C && BigInt(peer.lastAckedSeq) === writtenSeq + 3n),
       2_000,
       'every invalid copy proof processed before the copy can finish',
+    )
+    expect(writeSettled, 'the write must remain pending after the primary processes every invalid copy proof').toBe(
+      false,
     )
 
     await rejection

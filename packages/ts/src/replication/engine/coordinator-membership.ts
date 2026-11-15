@@ -9,6 +9,7 @@ import {
 import type { ReplicationEngine } from './engine.js'
 import { restartWithFullCopy } from './full-copy-restart.js'
 import { ensureAnchoredToCurrentTerm, isAnchoredToCurrentTerm } from './history-anchor.js'
+import { servesItsData } from './internal-types.js'
 import { keepCoordinatorState, removeLocalNodeFromInSyncSet } from './local-membership.js'
 import { reportEngineError } from './report-error.js'
 
@@ -179,7 +180,9 @@ function admissionSeq(engine: ReplicationEngine, state: ReplicationGroupState): 
  * Asks the coordinator, as primary, to admit a replica whose acknowledgements reach both the durability point and the
  * highest sequence that this node has acknowledged. From the moment that it asks, this node counts the replica among
  * the in-sync voters of every write that it acknowledges. The coordinator admits the replica only while this node is
- * still the primary in the term that it read, and never admits a repairing replica on its acknowledgements.
+ * still the primary in the term that it read, and never admits a repairing replica on its acknowledgements. This node
+ * asks only while the replica's current connection still holds an acknowledgement of `ackedSeq` or later, so that an
+ * acknowledgement that this node discarded when the replica started a full copy admits nobody.
  *
  * @param engine - The primary's engine.
  * @param nodeId - The replica's node ID.
@@ -198,6 +201,8 @@ export async function handleCoordinatorAckProgress(
   const pendingAdmissions = engine.inSync.pendingAdmissions
   if (!config || !state) return
   if (nodeId === engine.nodeId || pendingAdmissions.has(nodeId)) return
+  const connectionAcked = engine.peerTracker.connectionAckedSeq(nodeId)
+  if (connectionAcked === undefined || connectionAcked < ackedSeq) return
   if (!hasCurrentPrimaryAuthorityFor(engine, state) || engine.inSync.restartProof) return
   if (engine.history.termStartTerm !== state.primaryTerm) return
   if (state.inSyncNodeIds.includes(nodeId)) return
@@ -206,9 +211,8 @@ export async function handleCoordinatorAckProgress(
   if (!isGroupMember(state, nodeId)) return
   if (ackedSeq < admissionSeq(engine, state)) return
 
-  pendingAdmissions.add(nodeId)
-  try {
-    const admitted = await config.coordinator.admitNodeToInSyncSet({
+  const admission: Promise<void> = config.coordinator
+    .admitNodeToInSyncSet({
       clusterId: config.clusterId,
       groupId: config.groupId,
       nodeId,
@@ -216,11 +220,15 @@ export async function handleCoordinatorAckProgress(
       appliedSeq: ackedSeq,
       expectedPrimaryTerm: state.primaryTerm,
     })
-    if (admitted) applyCoordinatorState(engine, admitted)
-  } finally {
-    pendingAdmissions.delete(nodeId)
-    engine.peerTracker.recheckWaiters()
-  }
+    .then(admitted => {
+      if (admitted) applyCoordinatorState(engine, admitted)
+    })
+    .finally(() => {
+      if (pendingAdmissions.get(nodeId) === admission) pendingAdmissions.delete(nodeId)
+      engine.peerTracker.recheckWaiters()
+    })
+  pendingAdmissions.set(nodeId, admission)
+  await admission
 }
 
 /**
@@ -255,10 +263,21 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
   }
 }
 
+function cancelRebuildForClearedRepairFlag(engine: ReplicationEngine): void {
+  const rejoin = engine.rejoin
+  if (!rejoin.rebuildingForRepairFlag || !servesItsData(engine.syncState.phase)) return
+  rejoin.rebuildingForRepairFlag = false
+  rejoin.repairGeneration++
+  engine.history.keptBeforeCopyTerm = null
+  if (engine.history.resumeRequest.keepsBeforeCopy) engine.history.resumeRequest.clear()
+}
+
 /**
  * Starts the full copy that rebuilds a repairing node, whether the node is waiting for its first copy or serves its
  * data. A node that is copying, that is comparing its history as a demoted primary, or that has already finished the
- * copy for the current term starts nothing.
+ * copy for the current term starts nothing. A group state that no longer shows a node that serves its data as
+ * repairing cancels the rebuild that the flag started, so that the node keeps its rows and writes no repairing flag
+ * over the operator's change.
  *
  * @param engine - The node's engine.
  * @param state - The group state that the node read.
@@ -267,7 +286,10 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
  */
 export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, state: ReplicationGroupState): void {
   const rejoin = engine.rejoin
-  if (!state.repairingNodeIds.includes(engine.nodeId)) rejoin.copiedTerm = null
+  if (!state.repairingNodeIds.includes(engine.nodeId)) {
+    rejoin.copiedTerm = null
+    cancelRebuildForClearedRepairFlag(engine)
+  }
   if (!engine.running || !engine.history.active || rejoin.syncStarting) return
   if (!requiresCoordinatorRejoinSync(engine, state) || rejoin.copiedTerm === state.primaryTerm) return
   if (engine.syncState.phase === 'syncing') return
@@ -275,7 +297,13 @@ export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, sta
   if (!sourceNodeId || !engine.config.transport.peers().has(sourceNodeId)) return
 
   rejoin.syncStarting = true
-  const rebuild = engine.syncState.phase === 'pending' ? engine.syncJoiner.initiateSync() : restartWithFullCopy(engine)
+  const servingItsData = servesItsData(engine.syncState.phase)
+  if (servingItsData && !rejoin.rebuildingForRepairFlag) {
+    rejoin.rebuildingForRepairFlag = true
+    rejoin.repairGeneration++
+    engine.history.keptBeforeCopyTerm = null
+  }
+  const rebuild = servingItsData ? restartWithFullCopy(engine) : engine.syncJoiner.initiateSync()
   rebuild
     .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-rejoin-sync', true))
     .finally(() => {

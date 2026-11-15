@@ -20,7 +20,7 @@ const WRITE_PROGRESS_PURPOSE = 'the progress of a write that it acknowledges'
  * @internal
  */
 export function inSyncCopyHolderIds(engine: ReplicationEngine, state: ReplicationGroupState): string[] {
-  return [...new Set([engine.nodeId, ...state.inSyncNodeIds, ...engine.inSync.pendingAdmissions])]
+  return [...new Set([engine.nodeId, ...state.inSyncNodeIds, ...engine.inSync.pendingAdmissions.keys()])]
 }
 
 function holdsWrite(engine: ReplicationEngine, nodeId: string, seq: bigint): boolean {
@@ -39,7 +39,7 @@ function inSyncVotersHold(engine: ReplicationEngine, seq: bigint, state: Replica
 
 function eligibleVotersHold(engine: ReplicationEngine, seq: bigint, state: ReplicationGroupState): boolean {
   const eligible = state.votingDataBearingNodeIds.filter(nodeId => !state.drainingNodeIds.includes(nodeId))
-  return [...eligible, ...engine.inSync.pendingAdmissions].every(nodeId => holdsWrite(engine, nodeId, seq))
+  return [...eligible, ...engine.inSync.pendingAdmissions.keys()].every(nodeId => holdsWrite(engine, nodeId, seq))
 }
 
 function noteAcknowledged(engine: ReplicationEngine, seq: bigint): void {

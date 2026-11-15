@@ -28,6 +28,18 @@ export interface AssignedSeqSample {
 }
 
 /**
+ * Names the full copy whose completion a joiner has to prove before its acknowledgements count again.
+ *
+ * @internal
+ */
+export interface CopyProof {
+  /** Identifies the joiner's sync request that the primary reset the joiner for. */
+  requestId: string
+  /** Holds the primary term in which the primary reset the joiner. */
+  term: bigint
+}
+
+/**
  * Holds the primary's view of the in-sync set between coordinator writes: the admissions that it has requested, the
  * highest sequence that it has acknowledged, the samples that time each replica's lag, and the timers that keep the
  * set current.
@@ -43,12 +55,14 @@ export class InSyncState {
   reconciling = false
   /** Is true while a removal of lagging replicas waits for the coordinator. */
   removing = false
-  /** Lists the replicas whose admission this node has requested and the coordinator has not yet answered. */
-  readonly pendingAdmissions = new Set<string>()
+  /** Holds each replica's pending admission until the coordinator has answered, so that a full copy can wait for it. */
+  readonly pendingAdmissions = new Map<string, Promise<void>>()
   /** Holds the highest sequence that this node has acknowledged as primary in its current term. */
   acknowledgedSeq = 0n
   /** Holds the samples of this node's newest assigned sequence, oldest first. */
   readonly assignedSamples: AssignedSeqSample[] = []
   /** Holds the restart proof that this node waits for, or null while it waits for none. */
   restartProof: RestartProof | null = null
+  /** Holds, for each joiner that this node reset for a full copy, the copy that the joiner's acknowledgements must name. */
+  readonly copyProofs = new Map<string, CopyProof>()
 }

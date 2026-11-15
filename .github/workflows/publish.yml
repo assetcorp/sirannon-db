@@ -21,25 +21,108 @@ on:
         default: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 env:
   VFS_TARGETS: darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64
 
 jobs:
+  changes:
+    name: Decide whether this push changes more than a release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_only: ${{ steps.scope.outputs.release_only }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compare the push with the commit before it
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: node .github/scripts/ci-scope.js --release-only
+
+  release-proof:
+    name: Find the suites that main has already passed on these inputs
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      proven: ${{ steps.lookup.outputs.proven }}
+      ci_suites: ${{ steps.lookup.outputs.ci_suites }}
+      failover: ${{ steps.lookup.outputs.failover }}
+      vfs_platform_run: ${{ steps.lookup.outputs.vfs_platform_run }}
+      sqlite_platform_run: ${{ steps.lookup.outputs.sqlite_platform_run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Look up main's passing push runs on the same inputs
+        id: lookup
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/proven-suites.js --lookup
+
   extension:
     name: Streaming extension
+    needs: [changes, release-proof]
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' }}
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/streaming-extension.yml
+    with:
+      from-source: ${{ github.event_name == 'workflow_dispatch' }}
+      reuse-checks-from-run: ${{ needs.release-proof.outputs.vfs_platform_run }}
 
   sqlite:
     name: Sirannon SQLite
+    needs: [changes, release-proof]
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' }}
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/sirannon-sqlite.yml
+    with:
+      from-source: ${{ github.event_name == 'workflow_dispatch' }}
+      reuse-checks-from-run: ${{ needs.release-proof.outputs.sqlite_platform_run }}
+
+  ci:
+    name: CI
+    needs: release-proof
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.release-proof.outputs.ci_suites != 'none' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      suites: ${{ needs.release-proof.outputs.ci_suites }}
+
+  failover:
+    name: Failover
+    needs: release-proof
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.release-proof.outputs.failover != 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/failover.yml
 
   plan:
     name: Decide whether this push earns a prerelease
-    if: github.event_name == 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.changes.outputs.release_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       publish: ${{ steps.resolve.outputs.publish }}
       version: ${{ steps.resolve.outputs.version }}
@@ -55,8 +138,14 @@ jobs:
   prerelease:
     name: Prerelease under the next dist-tag
     needs: [plan, extension, sqlite]
-    if: needs.plan.outputs.publish == 'true'
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.publish == 'true'
+      && needs.extension.result == 'success' && needs.sqlite.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: publish-next
       cancel-in-progress: false
@@ -124,9 +213,19 @@ jobs:
 
   publish:
     name: Release & Publish
-    needs: [extension, sqlite]
-    if: github.event_name == 'workflow_dispatch'
+    needs: [release-proof, extension, sqlite, ci, failover]
+    if: >-
+      ${{ !cancelled() && github.event_name == 'workflow_dispatch'
+      && needs.extension.result == 'success'
+      && needs.sqlite.result == 'success'
+      && contains(fromJSON('["success","skipped"]'), needs.ci.result)
+      && contains(fromJSON('["success","skipped"]'), needs.failover.result) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
 
     steps:
       - name: Checkout
@@ -134,6 +233,33 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Require the tip of main
+        if: ${{ !inputs.dry-run }}
+        env:
+          RELEASED_COMMIT: ${{ github.sha }}
+          RELEASED_REF: ${{ github.ref }}
+        run: |
+          git fetch --quiet origin main
+          tip="$(git rev-parse origin/main)"
+          if [ "$RELEASED_REF" != 'refs/heads/main' ] || [ "$tip" != "$RELEASED_COMMIT" ]; then
+            echo "A release publishes only the tip of main, which is $tip, and this run tested $RELEASED_COMMIT on $RELEASED_REF"
+            exit 1
+          fi
+
+      - name: Download the binaries that this release built
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sirannon-*
+          path: ${{ runner.temp }}/release-binaries
+
+      - name: Require every suite to have passed here or on main's same inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NATIVE_ARTIFACTS: ${{ runner.temp }}/release-binaries
+          REUSED_SUITES: ${{ needs.release-proof.outputs.proven }}
+        run: node .github/scripts/proven-suites.js --gate
 
       - name: Setup pnpm
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -153,9 +279,6 @@ jobs:
 
       - name: Build
         run: pnpm nx run sirannon-ts:build
-
-      - name: Test
-        run: pnpm nx run sirannon-ts:test
 
       - name: Configure git
         run: |

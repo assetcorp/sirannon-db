@@ -5,19 +5,47 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: failover-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: failover-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Decide whether this push changes more than a release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_only: ${{ steps.scope.outputs.release_only }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Compare the push with the commit before it
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: node .github/scripts/ci-scope.js --release-only
+
   failover:
-    name: Coordinator failover (Node 24)
+    name: Coordinator failover (Node 24), part ${{ matrix.part }} of 2
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
 
     steps:
       - name: Checkout
@@ -36,7 +64,9 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Failover scenarios
-        run: pnpm nx run sirannon-ts:test:failover --reporter=default --reporter=json --outputFile.json=failover-results.json
+        run: >-
+          pnpm nx run sirannon-ts:test:failover --shard=${{ matrix.part }}/2
+          --reporter=default --reporter=json --outputFile.json=failover-results.json
 
       - name: Refuse skipped scenarios
         working-directory: packages/ts

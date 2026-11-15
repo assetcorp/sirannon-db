@@ -7,16 +7,8 @@ import type { EtcdClusterCoordinator } from '../../replication/coordinator/etcd.
 import type { ReplicationEngine as ReplicationEngineType } from '../../replication/engine.js'
 import type { SirannonServer } from '../../server/index.js'
 import type { GrpcReplicationTransport as GrpcReplicationTransportType } from '../../transport/grpc/index.js'
-import {
-  numberPayload,
-  optionalArrayPayload,
-  parseBatch,
-  parseForwardRequest,
-  parseSyncBatch,
-  parseSyncRequest,
-  serializeError,
-  stringPayload,
-} from './cluster-node-payloads.js'
+import { numberPayload, optionalArrayPayload, serializeError, stringPayload } from './cluster-node-payloads.js'
+import { handleTransportCommand, proxiedTransportClass } from './cluster-node-transport.js'
 import { CoordinatorCallHold } from './coordinator-call-hold.js'
 import { directoryDestination } from './directory-destination.js'
 import type { FailoverNodeConfig, SerializedError } from './node-process.js'
@@ -59,16 +51,7 @@ const {
   toReplicationStatusInfo,
 } = library
 
-class ProxiedGrpcTransport extends GrpcReplicationTransport {
-  override setPeerEndpoints(endpoints: ReadonlyMap<string, string>): void {
-    const proxied = new Map<string, string>()
-    for (const nodeId of endpoints.keys()) {
-      const proxy = config.peerProxyEndpoints[nodeId]
-      if (proxy !== undefined) proxied.set(nodeId, proxy)
-    }
-    super.setPeerEndpoints(proxied)
-  }
-}
+const ProxiedGrpcTransport = proxiedTransportClass(GrpcReplicationTransport, config.peerProxyEndpoints)
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS failover_items (
@@ -168,6 +151,11 @@ async function startClusterNode(): Promise<RunningNode> {
   coordinator.updateInSyncSet = async input => {
     await inSyncUpdateHold.pass(input)
     return sendInSyncUpdate(input)
+  }
+  const sendAdmission = coordinator.admitNodeToInSyncSet.bind(coordinator)
+  coordinator.admitNodeToInSyncSet = async input => {
+    await inSyncUpdateHold.pass(input)
+    return sendAdmission(input)
   }
   if (config.dieAfterGroupCreate) {
     const createGroup = coordinator.createReplicationGroupState.bind(coordinator)
@@ -342,7 +330,11 @@ async function handleMessage(message: RequestMessage): Promise<void> {
     }
     if (command === 'holdInSyncUpdates') {
       const removesNodeId = payload.removesNodeId
-      inSyncUpdateHold.hold(typeof removesNodeId === 'string' ? { removesNodeId } : {})
+      inSyncUpdateHold.hold({
+        ...(typeof removesNodeId === 'string' ? { removesNodeId } : {}),
+        admissions: payload.admissions === true,
+        ...(typeof payload.admitsNodeId === 'string' ? { admitsNodeId: payload.admitsNodeId } : {}),
+      })
       sendResponse(id, true, null)
       return
     }
@@ -361,24 +353,9 @@ async function handleMessage(message: RequestMessage): Promise<void> {
       sendResponse(id, true, null)
       return
     }
-    if (command === 'sendRawBatch') {
-      await transport.send(stringPayload(payload, 'peerId'), parseBatch(payload.batch))
-      sendResponse(id, true, null)
-      return
-    }
-    if (command === 'requestRawSync') {
-      await transport.requestSync(stringPayload(payload, 'peerId'), parseSyncRequest(payload.request))
-      sendResponse(id, true, null)
-      return
-    }
-    if (command === 'sendRawSyncBatch') {
-      await transport.sendSyncBatch(stringPayload(payload, 'peerId'), parseSyncBatch(payload.batch))
-      sendResponse(id, true, null)
-      return
-    }
-    if (command === 'sendRawForward') {
-      await transport.forward(stringPayload(payload, 'peerId'), parseForwardRequest(payload.request))
-      sendResponse(id, true, null)
+    const transportResult = await handleTransportCommand(transport, command, payload)
+    if (transportResult !== undefined) {
+      sendResponse(id, true, transportResult)
       return
     }
     if (command === 'shutdown') {

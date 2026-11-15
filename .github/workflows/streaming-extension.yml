@@ -1,19 +1,55 @@
 name: Streaming extension
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_call:
+    inputs:
+      from-source:
+        description: Build every binary from source and leave the cache alone, as a release does
+        required: false
+        type: boolean
+        default: false
+      reuse-checks-from-run:
+        description: A push run of publish.yml on main that passed these platform checks on the same inputs, so that each binary that matches that run's byte for byte reuses its check
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
+env:
+  SIRANNON_REQUIRE_STREAMING_EXTENSION: '1'
+
 jobs:
+  scope:
+    name: Decide whether this change needs the streamed backup checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+
+      - name: Compare the change with the paths that the streamed backup checks read
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/ci-scope.js --platform-checks vfs
+
   build:
     name: Build ${{ matrix.target }}
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.run != 'false' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -71,9 +107,12 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build the extension
-        working-directory: packages/ts
-        run: pnpm build:vfs ${{ matrix.target }}
+      - name: Restore or build the extension
+        uses: ./.github/actions/native-binary
+        with:
+          binary: vfs
+          target: ${{ matrix.target }}
+          from-source: ${{ inputs.from-source == true }}
 
       - name: Upload the binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -82,38 +121,59 @@ jobs:
           path: ${{ matrix.output }}/sirannonvfs.*
           if-no-files-found: error
 
+  select:
+    name: Choose the streamed backup checks that this run owes
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      artifacts: ${{ steps.select.outputs.artifacts }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the binaries that this run built
+        if: inputs.reuse-checks-from-run != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sirannon-vfs-*
+          path: ${{ runner.temp }}/built
+
+      - name: Compare each binary with the one that main's passing run checked
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REUSE_RUN: ${{ inputs.reuse-checks-from-run }}
+          LOCAL_ARTIFACTS: ${{ runner.temp }}/built
+          CHECK_MATRIX: >-
+            [
+            {"label": "linux-x64", "runner": "ubuntu-latest", "artifact": "sirannon-vfs-linux-x64", "output": "native/npm/linux-x64"},
+            {"label": "linux-arm64", "runner": "ubuntu-24.04-arm", "artifact": "sirannon-vfs-linux-arm64", "output": "native/npm/linux-arm64"},
+            {"label": "win32-x64", "runner": "windows-latest", "artifact": "sirannon-vfs-win32-x64", "output": "native/npm/win32-x64"},
+            {"label": "win32-arm64", "runner": "windows-11-arm", "artifact": "sirannon-vfs-win32-arm64", "output": "native/npm/win32-arm64"},
+            {"label": "darwin-arm64", "runner": "macos-15", "artifact": "sirannon-vfs-darwin-arm64", "output": "native/npm/darwin-arm64"},
+            {"label": "darwin-x64", "runner": "macos-15-intel", "artifact": "sirannon-vfs-darwin-x64", "output": "native/npm/darwin-x64"},
+            {"label": "linux-x64 musl", "artifact": "sirannon-vfs-linux-x64-musl"},
+            {"label": "linux-arm64 musl", "artifact": "sirannon-vfs-linux-arm64-musl"}
+            ]
+        run: node .github/scripts/native-binary-match.js --select
+
   stream:
     name: Streamed backup on ${{ matrix.label }}
-    needs: build
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(needs.select.outputs.matrix, '"runner"') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - label: linux-x64
-            runner: ubuntu-latest
-            artifact: sirannon-vfs-linux-x64
-            output: native/npm/linux-x64
-          - label: linux-arm64
-            runner: ubuntu-24.04-arm
-            artifact: sirannon-vfs-linux-arm64
-            output: native/npm/linux-arm64
-          - label: win32-x64
-            runner: windows-latest
-            artifact: sirannon-vfs-win32-x64
-            output: native/npm/win32-x64
-          - label: win32-arm64
-            runner: windows-11-arm
-            artifact: sirannon-vfs-win32-arm64
-            output: native/npm/win32-arm64
-          - label: darwin-arm64
-            runner: macos-15
-            artifact: sirannon-vfs-darwin-arm64
-            output: native/npm/darwin-arm64
-          - label: darwin-x64
-            runner: macos-15-intel
-            artifact: sirannon-vfs-darwin-x64
-            output: native/npm/darwin-x64
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -143,8 +203,10 @@ jobs:
 
   musl:
     name: Streamed backup on linux-x64 musl
-    needs: build
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.artifacts), 'sirannon-vfs-linux-x64-musl') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container: node:24-alpine
 
     steps:
@@ -166,3 +228,26 @@ jobs:
       - name: Run the streamed backup suite on Node's own SQLite
         working-directory: packages/ts
         run: pnpm vitest run src/__tests__/integration/backups/streamed-node-sqlite
+
+  musl-arm64:
+    name: Streamed backup on linux-arm64 musl
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.artifacts), 'sirannon-vfs-linux-arm64-musl') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the musl binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sirannon-vfs-linux-arm64-musl
+          path: native/npm/linux-arm64/musl
+
+      - name: Run the streamed backup suite on Node's own SQLite inside Alpine
+        run: >-
+          docker run --rm -e SIRANNON_REQUIRE_STREAMING_EXTENSION=1 -v "$PWD:/work" -w /work node:24-alpine sh -euc
+          'corepack enable pnpm && pnpm install --frozen-lockfile --ignore-scripts &&
+          cd packages/ts && pnpm vitest run src/__tests__/integration/backups/streamed-node-sqlite'

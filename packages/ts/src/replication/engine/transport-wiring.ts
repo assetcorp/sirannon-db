@@ -4,6 +4,7 @@ import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { NodeInfo, ReplicationBatch } from '../types.js'
 import { assertInboundCoordinatorMessage, assertNoRestartProofPending, resolverFor } from './coordinator-authority.js'
 import { handleCoordinatorAckProgress } from './coordinator-membership.js'
+import { creditsAcknowledgement } from './copy-proof.js'
 import { forgetPeerRefusal } from './encryption-refusal.js'
 import type { ReplicationEngine } from './engine.js'
 import {
@@ -13,7 +14,7 @@ import {
   isAnchoredToCurrentTerm,
 } from './history-anchor.js'
 import { servesItsData } from './internal-types.js'
-import { isPositionReport, positionReport } from './position-report.js'
+import { acknowledgement, isPositionReport, positionReport } from './position-report.js'
 import { reportEngineError } from './report-error.js'
 import { noteRestartReport } from './restart-proof.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
@@ -36,10 +37,10 @@ async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, 
   await engine.config.transport.sendAck(peer.id, positionReport(engine, appliedSeq))
 }
 
-function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint): void {
+function persistAckProgress(engine: ReplicationEngine, nodeId: string, ackedSeq: bigint, credited = true): void {
   engine.log
     .setLastAppliedSeq(nodeId, ackedSeq)
-    .then(() => handleCoordinatorAckProgress(engine, nodeId, ackedSeq))
+    .then(() => (credited ? handleCoordinatorAckProgress(engine, nodeId, ackedSeq) : undefined))
     .catch((err: unknown) => {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'ack-state-persist', peerId: nodeId, recoverable: true })
@@ -117,14 +118,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         engine.highestSourceSeqSeen = batch.toSeq
       }
 
-      await engine.config.transport.sendAck(
-        fromPeerId,
-        engine.decorate({
-          batchId: batch.batchId,
-          ackedSeq: batch.toSeq,
-          nodeId: engine.nodeId,
-        }),
-      )
+      await engine.config.transport.sendAck(fromPeerId, acknowledgement(engine, batch.batchId, batch.toSeq))
     } catch (err: unknown) {
       const wrappedErr = err instanceof Error ? err : new Error(String(err))
       engine.emitError({ error: wrappedErr, operation: 'batch-received', peerId: fromPeerId, recoverable: true })
@@ -171,8 +165,9 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
     assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
       .then(() => {
         if (isPositionReport(ack)) engine.peerTracker.resumeFrom(ack.nodeId, ack.ackedSeq)
-        engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq)
-        persistAckProgress(engine, ack.nodeId, ack.ackedSeq)
+        const credited = creditsAcknowledgement(engine, ack)
+        engine.peerTracker.onAckReceived(ack.nodeId, ack.ackedSeq, credited)
+        persistAckProgress(engine, ack.nodeId, ack.ackedSeq, credited)
       })
       .catch((err: unknown) => {
         const wrappedErr = err instanceof Error ? err : new Error(String(err))

@@ -43,7 +43,7 @@ export class PeerTracker {
   private readonly waiters = new Set<Waiter>()
 
   addPeer(nodeId: string): void {
-    this.connectionAcks.set(nodeId, 0n)
+    this.connectionAcks.delete(nodeId)
     const existing = this.peers.get(nodeId)
     if (existing) {
       existing.connected = true
@@ -73,18 +73,21 @@ export class PeerTracker {
   /**
    * Discards the acknowledgements that a peer sent over its current connection, so that the peer counts towards a
    * write concern or an admission only after it acknowledges again. Call it when the peer's coordinator session
-   * changes, because a new session can belong to a process with another file.
+   * changes, because a new session can belong to a process with another file, and when the peer starts a full copy,
+   * because the copy replaces the rows that those acknowledgements describe.
    *
    * @param nodeId - The peer's node ID.
    */
   forgetConnectionAcks(nodeId: string): void {
-    if (this.connectionAcks.has(nodeId)) this.connectionAcks.set(nodeId, 0n)
+    this.connectionAcks.delete(nodeId)
   }
 
-  onAckReceived(nodeId: string, ackedSeq: bigint): void {
+  onAckReceived(nodeId: string, ackedSeq: bigint, credited = true): void {
     const connectionAcked = this.connectionAcks.get(nodeId)
-    if (connectionAcked !== undefined && ackedSeq > connectionAcked) this.connectionAcks.set(nodeId, ackedSeq)
     const peer = this.peers.get(nodeId)
+    if (credited && peer?.connected && (connectionAcked === undefined || ackedSeq > connectionAcked)) {
+      this.connectionAcks.set(nodeId, ackedSeq)
+    }
     if (peer && ackedSeq > peer.lastAckedSeq) {
       peer.lastAckedSeq = ackedSeq
       const ackedCount = peer.inFlightBatches.filter(b => b.toSeq <= ackedSeq).length
@@ -103,7 +106,7 @@ export class PeerTracker {
   }
 
   restartProgress(sentSeq: bigint): void {
-    for (const nodeId of this.connectionAcks.keys()) this.connectionAcks.set(nodeId, 0n)
+    this.connectionAcks.clear()
     for (const peer of this.peers.values()) {
       peer.lastAckedSeq = 0n
       peer.lastSentSeq = sentSeq
@@ -296,7 +299,7 @@ export class PeerTracker {
    * Returns the highest sequence that a peer has acknowledged over its current connection.
    *
    * @param nodeId - The peer's node ID.
-   * @returns That sequence, 0 before the peer acknowledges anything, or undefined while the peer is not connected.
+   * @returns That sequence, or undefined before an acknowledgement or while the peer is disconnected.
    */
   connectionAckedSeq(nodeId: string): bigint | undefined {
     return this.connectionAcks.get(nodeId)

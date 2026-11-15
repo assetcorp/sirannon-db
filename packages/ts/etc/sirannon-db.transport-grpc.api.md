@@ -24,8 +24,11 @@ export function fromColumnValue(cv: ColumnValue): unknown;
 // @public
 export interface GrpcReplicationOptions {
     forwardDeadlineMs?: number;
+    helloTimeoutMs?: number;
     host?: string;
     insecure?: boolean;
+    keepaliveIntervalMs?: number;
+    keepaliveTimeoutMs?: number;
     port?: number;
     tlsCaCert?: string;
     tlsCert?: string;
@@ -109,6 +112,8 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     syncCompleteHandler: SyncCompleteHandler | null;
     // @internal (undocumented)
     syncRequestHandler: SyncRequestHandler | null;
+    // @internal (undocumented)
+    readonly timing: ConnectionTiming;
     // @internal (undocumented)
     validateTlsIdentity(call: {
         getAuthContext(): unknown;

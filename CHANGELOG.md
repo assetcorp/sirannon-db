@@ -1,3 +1,24 @@
+## 0.4.1 (2026-11-15)
+
+### 🚀 Features
+
+- **clients:** add generated Python and Go clients with an OpenAPI and AsyncAPI description ([f43654e](https://github.com/assetcorp/sirannon-db/commit/f43654e))
+- **replication:** roll back a former primary's unreplicated writes into a review table, prove a restarted primary's writes, and fill each peer's send window ([35645eb](https://github.com/assetcorp/sirannon-db/commit/35645eb))
+
+### 🩹 Fixes
+
+- **benchmark:** lift the Postgres transaction timeout while loading data ([2112ed3](https://github.com/assetcorp/sirannon-db/commit/2112ed3))
+- **clients:** check the table before resending a load, and await the restored database's first backup in its test ([a86cddc](https://github.com/assetcorp/sirannon-db/commit/a86cddc))
+- **go:** refuse a per-query read concern on the topology client ([bc4f871](https://github.com/assetcorp/sirannon-db/commit/bc4f871))
+- **go:** name the Go read-concern setting in the topology refusal ([214a225](https://github.com/assetcorp/sirannon-db/commit/214a225))
+- **replication:** acknowledge coordinator-mode majority writes against the in-sync set ([6275782](https://github.com/assetcorp/sirannon-db/commit/6275782))
+- **replication:** keep a node's unshared changes before a full copy, and keep the rows of a primary that 0.4 wrote ([fc9dab2](https://github.com/assetcorp/sirannon-db/commit/fc9dab2))
+- **replication:** send at most the window's open slots each tick, so a peer whose sends fail cannot spin the sender ([53a6f55](https://github.com/assetcorp/sirannon-db/commit/53a6f55))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.4.0 (2026-11-06)
 
 ### 🚀 Features

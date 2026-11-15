@@ -132,7 +132,11 @@ function identifierError(name: string, state: StatementState): string | null {
 
 function wordError(word: string, statementStart: boolean, state: StatementState): string | null {
   const lowerWord = word.toLowerCase()
-  if (statementStart) {
+  if ((state.verb === 'explain' && lowerWord === 'query') || (state.verb === 'explain query' && lowerWord === 'plan')) {
+    state.verb += ` ${lowerWord}`
+    return null
+  }
+  if (statementStart || state.verb === 'explain' || state.verb === 'explain query plan') {
     state.verb = lowerWord
     if (lowerWord === 'attach' || lowerWord === 'detach') return ATTACH_MESSAGE
     return identifierError(word, state)

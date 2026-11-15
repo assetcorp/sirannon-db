@@ -15,6 +15,7 @@ const ENTRY_POINTS: EntryPoint[] = [
   ['executeTransaction', (db, sql) => db.executeTransaction([{ sql: 'DELETE FROM notes WHERE id < 0' }, { sql }])],
   ['transaction execute', (db, sql) => db.transaction(tx => tx.execute(sql))],
   ['transaction query', (db, sql) => db.transaction(tx => tx.query(sql))],
+  ['transaction database execute', (db, sql) => db.transaction(() => db.execute(sql))],
   ['bulkLoad', (db, sql) => db.bulkLoad(sql, [[]])],
 ]
 
@@ -244,6 +245,8 @@ describe.each(DRIVER_PLACEMENTS)('statement prefixes with $label', ({ driver, wr
       `\ufeffPRAGMA main.'temp_store_directory' = '${workspace.path('')}'`,
       `\ufeffPRAGMA data_store_directory = '${workspace.path('')}'`,
       '\ufeffPRAGMA writable_schema = 1',
+      `\ufeffEXPLAIN PRAGMA temp_store_directory = '${workspace.path('')}'`,
+      `\ufeffEXPLAIN QUERY PLAN PRAGMA temp_store_directory = '${workspace.path('')}'`,
     ]
     for (let opening = 0; opening < 2; opening++) {
       const registry = workspace.registry({ driver: driver() })
@@ -263,5 +266,60 @@ describe.each(DRIVER_PLACEMENTS)('statement prefixes with $label', ({ driver, wr
       expect(processTempStoreDirectory(true)).toEqual([])
       await registry.shutdown()
     }
+  })
+
+  it('refuses reserved pragmas after EXPLAIN during concurrent writes and query hooks', async () => {
+    const path = workspace.path('explained.db')
+    const db = await workspace.registry({ driver: driver() }).open('explained', path, { writerWorker })
+    await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY)')
+    const refused = [
+      `EXPLAIN PRAGMA temp_store_directory = '${workspace.path('')}'`,
+      `explain /* prefix */ query -- plan follows\n plan pragma 'main'.'TEMP_STORE_DIRECTORY'('${workspace.path('')}')`,
+      `EXPLAIN PRAGMA data_store_directory = '${workspace.path('')}'`,
+      'EXPLAIN QUERY PLAN PRAGMA "writable_schema" = 1',
+    ]
+    for (const sql of refused) {
+      for (const [label, call] of ENTRY_POINTS) {
+        await expect(call(db, sql), `${label}: ${sql}`).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+      }
+      await expect(db.live(sql)).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+    }
+    const sql = refused[0]
+    const settled = await Promise.allSettled([
+      db.execute('INSERT INTO notes VALUES (1)'),
+      db.query(sql),
+      db.executeTransaction([{ sql: 'INSERT INTO notes VALUES (2)' }, { sql }]),
+      db.execute('INSERT INTO notes VALUES (3)'),
+    ])
+    expect(settled.map(outcome => (outcome.status === 'rejected' ? outcome.reason.code : 'ok'))).toEqual([
+      'ok',
+      'FORBIDDEN_SQL',
+      'FORBIDDEN_SQL',
+      'ok',
+    ])
+    expect(columnRaw(path, 'SELECT id FROM notes ORDER BY id')).toEqual([1n, 3n])
+
+    const trigger = 'EXPLAIN QUERY PLAN SELECT id FROM notes'
+    let nested: Promise<unknown> | undefined
+    const removeHook = db.onBeforeQuery(context => {
+      if (context.sql === trigger) nested = expect(db.execute(sql)).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+    })
+    await db.query(trigger)
+    expect(nested).toBeDefined()
+    await nested
+    removeHook()
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect(await db.query(trigger)).toEqual(
+        readRaw(path, trigger).map(row => ({
+          ...row,
+          id: Number(row.id),
+          parent: Number(row.parent),
+          notused: Number(row.notused),
+        })),
+      )
+      await expect(db.execute(sql)).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+    }
+    expect(processTempStoreDirectory()).toEqual([])
+    expect(processTempStoreDirectory(true)).toEqual([])
   })
 })

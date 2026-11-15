@@ -1,4 +1,10 @@
-import type { ForwardedTransaction, ReplicationBatch, SyncBatch, SyncRequest } from '../../replication/types.js'
+import type {
+  ForwardedTransaction,
+  ReplicationAck,
+  ReplicationBatch,
+  SyncBatch,
+  SyncRequest,
+} from '../../replication/types.js'
 import type { SerializedError } from './node-process.js'
 
 export function serializeError(err: unknown): SerializedError {
@@ -64,6 +70,18 @@ export function parseBatch(value: unknown): ReplicationBatch {
     fromSeq: BigInt(batch.fromSeq),
     toSeq: BigInt(batch.toSeq),
     primaryTerm: batch.primaryTerm === undefined ? undefined : BigInt(batch.primaryTerm),
+  }
+}
+
+export function parseAck(value: unknown): ReplicationAck {
+  const ack = objectPayload(value, 'ack') as unknown as ReplicationAck & {
+    ackedSeq: string
+    primaryTerm?: string
+  }
+  return {
+    ...ack,
+    ackedSeq: BigInt(ack.ackedSeq),
+    primaryTerm: ack.primaryTerm === undefined ? undefined : BigInt(ack.primaryTerm),
   }
 }
 

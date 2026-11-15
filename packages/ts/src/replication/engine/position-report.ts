@@ -14,7 +14,25 @@ const POSITION_REPORT_BATCH_ID = ''
  * @internal
  */
 export function positionReport(engine: ReplicationEngine, ackedSeq: bigint): ReplicationAck {
-  return engine.decorate({ batchId: POSITION_REPORT_BATCH_ID, ackedSeq, nodeId: engine.nodeId })
+  return acknowledgement(engine, POSITION_REPORT_BATCH_ID, ackedSeq)
+}
+
+/**
+ * Returns an acknowledgement stamped with this node's group and term. In coordinator mode it also names, as
+ * `copyRequestId`, the last full copy that this node completed, which proves to a primary that the acknowledgement
+ * describes the copied rows.
+ *
+ * @param engine - The engine of the node that acknowledges.
+ * @param batchId - The acknowledged batch's ID, or the empty string for a position report.
+ * @param ackedSeq - The highest position in the sender's log that this node has applied.
+ * @returns The stamped acknowledgement.
+ *
+ * @internal
+ */
+export function acknowledgement(engine: ReplicationEngine, batchId: string, ackedSeq: bigint): ReplicationAck {
+  const ack = engine.decorate({ batchId, ackedSeq, nodeId: engine.nodeId })
+  const copyRequestId = engine.isCoordinatorMode() ? engine.history.copyRequestId : null
+  return copyRequestId === null ? ack : { ...ack, copyRequestId }
 }
 
 /**

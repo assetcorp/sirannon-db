@@ -2,7 +2,13 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { QueryOptions } from '../../core/types.js'
-import type { ForwardedTransaction, ReplicationBatch, SyncBatch, SyncRequest } from '../../replication/types.js'
+import type {
+  ForwardedTransaction,
+  ReplicationAck,
+  ReplicationBatch,
+  SyncBatch,
+  SyncRequest,
+} from '../../replication/types.js'
 
 export type FailoverNodeRole = 'primary' | 'replica'
 
@@ -191,7 +197,9 @@ export class FailoverNodeProcess {
     return (await this.request('liveItemIds', {}, 10_000)) as number[] | null
   }
 
-  async holdInSyncUpdates(filter: { removesNodeId?: string } = {}): Promise<void> {
+  async holdInSyncUpdates(
+    filter: { removesNodeId?: string; admissions?: boolean; admitsNodeId?: string } = {},
+  ): Promise<void> {
     await this.request('holdInSyncUpdates', filter, 10_000)
   }
 
@@ -209,8 +217,22 @@ export class FailoverNodeProcess {
     await this.request('reconnectTransport', {}, 20_000)
   }
 
+  async copyTraffic(
+    action: 'hold' | 'release' | 'count' | 'received',
+    kind?: 'request' | 'batch' | 'ack',
+    peerId?: string,
+  ): Promise<number> {
+    const count = await this.request('copyTraffic', { action, kind, peerId }, 10_000)
+    if (typeof count !== 'number') throw new Error('The traffic hold returned no count')
+    return count
+  }
+
   async sendRawBatch(peerId: string, batch: ReplicationBatch): Promise<void> {
     await this.request('sendRawBatch', { peerId, batch: serializeJson(batch) }, 20_000)
+  }
+
+  async sendRawAck(peerId: string, ack: ReplicationAck): Promise<void> {
+    await this.request('sendRawAck', { peerId, ack: serializeJson(ack) }, 20_000)
   }
 
   async requestRawSync(peerId: string, request: SyncRequest): Promise<void> {

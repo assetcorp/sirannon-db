@@ -1,0 +1,63 @@
+name: Native binary
+description: Restores one native binary from the cache entry that its build inputs key, and builds it from source on a miss or when from-source is true.
+
+inputs:
+  binary:
+    description: vfs for the streaming extension, sqlite for Sirannon's SQLite, or expo-sqlcipher for the SQLCipher that the Expo tests load
+    required: true
+  target:
+    description: The build target, such as linux-x64-musl, or empty for the runner's own platform
+    required: false
+    default: ''
+  from-source:
+    description: true to build from source and leave the cache alone, as a release does
+    required: false
+    default: 'false'
+
+outputs:
+  key:
+    description: The cache key that the binary's build inputs produce
+    value: ${{ steps.key.outputs.key }}
+  cache-hit:
+    description: true when the binary came from the cache
+    value: ${{ steps.restore.outputs.cache-hit == 'true' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Key the ${{ inputs.binary }} binary by every input that its build reads
+      id: key
+      shell: bash
+      env:
+        BINARY: ${{ inputs.binary }}
+        TARGET: ${{ inputs.target }}
+      run: node .github/scripts/native-build-key.mjs "$BINARY" "$TARGET"
+
+    - name: Restore the ${{ inputs.binary }} binary from the cache
+      id: restore
+      if: inputs.from-source != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Build the ${{ inputs.binary }} binary from source
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: packages/ts
+      env:
+        BINARY: ${{ inputs.binary }}
+        TARGET: ${{ steps.key.outputs.target }}
+      run: pnpm "build:$BINARY" "$TARGET"
+
+    - name: Save the ${{ inputs.binary }} binary to the cache
+      if: inputs.from-source != 'true' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Copy better-sqlite3's JavaScript next to the cached Sirannon SQLite
+      if: inputs.binary == 'sqlite' && steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      run: node --input-type=module -e "const { copyBetterSqliteJavaScript } = await import('./native/sqlite/better-sqlite3-source.mjs'); console.log(copyBetterSqliteJavaScript())"

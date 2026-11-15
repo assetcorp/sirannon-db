@@ -27,6 +27,7 @@ import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { waitForNoSafePrimaryReport } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
+import { holdsThroughout, waitForCondition } from './gate-support.js'
 import { type ItemRow, insertStrayItem, readHighestAppliedSeq, readHighestOwnChangeSeq } from './sqlite-oracle.js'
 
 const WRITE_REFUSALS = ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY', 'NODE_DRAINING', 'AUTHORITY_LOST']
@@ -185,6 +186,49 @@ describe('operators changing a running group', () => {
     if (!row) throw new Error('no row was written')
     await waitForInSyncSet(env, NODE_IDS, 20_000)
     await waitForItemsOnDisk(env, NODE_IDS, [row], 15_000)
+  })
+
+  it('keeps a copying replica out of the in-sync set from the primary reset after its repair flag is cleared at durability point zero, and completes a majority write made before the reset', async () => {
+    const env = environment()
+    await startCluster(env)
+    expect((await env.etcdOracle.group())?.durabilityPointSeq).toBe(0n)
+    const replica = requireNode(env, NODE_C)
+    const primary = requireNode(env, NODE_A)
+    await replica.copyTraffic('hold', 'request', NODE_A)
+    await primary.copyTraffic('hold', 'batch', NODE_C)
+    await env.coordinator.updateNodeMaintenance({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      nodeId: NODE_C,
+      repairing: true,
+    })
+    await waitForCondition(async () => (await replica.copyTraffic('count')) > 0, 15_000)
+    await env.coordinator.updateNodeMaintenance({
+      clusterId: CLUSTER_ID,
+      groupId: GROUP_ID,
+      nodeId: NODE_C,
+      repairing: false,
+    })
+    const writtenBeforeTheReset = itemRow(1, NODE_A, 'before-the-reset')
+    const majorityWrite = writeItemMajority(requireNode(env, NODE_A), writtenBeforeTheReset).then(
+      () => 'acknowledged',
+      (err: unknown) => err,
+    )
+    await waitForItemsOnDisk(env, [NODE_A], [writtenBeforeTheReset], 5_000)
+    await replica.copyTraffic('release')
+    await waitForCondition(async () => (await primary.copyTraffic('count')) > 0, 10_000)
+    await holdsThroughout(
+      async () => {
+        const group = await env.etcdOracle.group()
+        return group?.inSyncNodeIds.includes(NODE_C) === false
+      },
+      500,
+      'the unfinished replica to stay outside the in-sync set',
+    )
+    expect(await majorityWrite).toBe('acknowledged')
+    await primary.copyTraffic('release')
+    await waitForInSyncSet(env, NODE_IDS, 30_000)
+    expect(await waitForIdenticalFiles(env, NODE_IDS, 15_000)).toEqual([writtenBeforeTheReset])
   })
 
   it('promotes nobody while every replica is set aside, and promotes the replica that an operator vouches for with its applied position', async () => {

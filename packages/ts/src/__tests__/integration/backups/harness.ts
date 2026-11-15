@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -79,8 +89,38 @@ function nameDirectory(root: string, name: string): string {
   return join(root, encodeURIComponent(name))
 }
 
-export function directoryDestination(root: string, options: { claims?: boolean } = {}): DirectoryDestination {
+export interface DirectoryDestinationOptions {
+  claims?: boolean
+  blockingFileCalls?: boolean
+}
+
+interface PieceFiles {
+  write(path: string, bytes: Uint8Array, flag?: string): Promise<void>
+  rename(from: string, to: string): Promise<void>
+  read(path: string): Promise<Buffer>
+  list(directory: string): Promise<string[]>
+  size(path: string): Promise<number>
+}
+
+const NONBLOCKING_PIECE_FILES: PieceFiles = {
+  write: (path, bytes, flag) => writeFile(path, bytes, flag ? { flag } : undefined),
+  rename: (from, to) => rename(from, to),
+  read: path => readFile(path),
+  list: directory => readdir(directory),
+  size: async path => (await stat(path)).size,
+}
+
+const BLOCKING_PIECE_FILES: PieceFiles = {
+  write: async (path, bytes, flag) => writeFileSync(path, bytes, flag ? { flag } : undefined),
+  rename: async (from, to) => renameSync(from, to),
+  read: async path => readFileSync(path),
+  list: async directory => readdirSync(directory),
+  size: async path => statSync(path).size,
+}
+
+export function directoryDestination(root: string, options: DirectoryDestinationOptions = {}): DirectoryDestination {
   mkdirSync(root, { recursive: true })
+  const files = options.blockingFileCalls ? BLOCKING_PIECE_FILES : NONBLOCKING_PIECE_FILES
   const faults: DestinationFaults = {}
   const writes: { name: string; index: number }[] = []
   const pieceFile = (name: string, index: number) => join(nameDirectory(root, name), String(index))
@@ -90,8 +130,8 @@ export function directoryDestination(root: string, options: { claims?: boolean }
     if (faults.refuseWrite?.(name, index)) throw new Error(`the bucket refused piece ${index} of '${name}'`)
     mkdirSync(nameDirectory(root, name), { recursive: true })
     const target = pieceFile(name, index)
-    await writeFile(`${target}${WRITING_SUFFIX}`, bytes)
-    await rename(`${target}${WRITING_SUFFIX}`, target)
+    await files.write(`${target}${WRITING_SUFFIX}`, bytes)
+    await files.rename(`${target}${WRITING_SUFFIX}`, target)
     writes.push({ name, index })
   }
 
@@ -103,7 +143,7 @@ export function directoryDestination(root: string, options: { claims?: boolean }
     async readPiece(name, index) {
       await faults.holdRead?.(name, index)
       if (faults.refuseRead?.(name, index)) throw new Error(`the bucket refused to return piece ${index} of '${name}'`)
-      const bytes = new Uint8Array(await readFile(pieceFile(name, index)))
+      const bytes = new Uint8Array(await files.read(pieceFile(name, index)))
       faults.afterRead?.(name, index)
       return bytes
     },
@@ -111,11 +151,11 @@ export function directoryDestination(root: string, options: { claims?: boolean }
       await faults.holdList?.(name)
       if (faults.refuseList?.(name)) throw new Error(`the bucket refused to list '${name}'`)
       const directory = nameDirectory(root, name)
-      const entries = await readdir(directory).catch(() => [] as string[])
+      const entries = await files.list(directory).catch(() => [] as string[])
       const listed: BackupPiece[] = []
       for (const entry of entries) {
         if (entry.endsWith(WRITING_SUFFIX)) continue
-        listed.push({ index: Number(entry), byteLength: (await stat(join(directory, entry))).size })
+        listed.push({ index: Number(entry), byteLength: await files.size(join(directory, entry)) })
       }
       return listed.sort((left, right) => right.index - left.index)
     },
@@ -152,7 +192,7 @@ export function directoryDestination(root: string, options: { claims?: boolean }
       if (faults.claimTaken?.(name, index)) return false
       mkdirSync(nameDirectory(root, name), { recursive: true })
       try {
-        await writeFile(pieceFile(name, index), bytes, { flag: 'wx' })
+        await files.write(pieceFile(name, index), bytes, 'wx')
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
         throw err
@@ -169,7 +209,7 @@ export interface Workspace {
   path(name: string): string
   registry(driver?: SQLiteDriver): Sirannon
   open(name: string, options?: DatabaseOptions, driver?: SQLiteDriver): Promise<Database>
-  destination(name?: string, options?: { claims?: boolean }): DirectoryDestination
+  destination(name?: string, options?: DirectoryDestinationOptions): DirectoryDestination
   dispose(): Promise<void>
 }
 

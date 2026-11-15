@@ -24,10 +24,10 @@ import {
   requireNode,
 } from './gate-environment.js'
 import { useFailoverEnvironment } from './gate-lifecycle.js'
-import { statusOf, waitForNoSafePrimaryReport, waitForStatus } from './gate-observations.js'
+import { waitForNoSafePrimaryReport } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
-import { holdsThroughout } from './gate-support.js'
+import { holdsThroughout, waitForCondition } from './gate-support.js'
 import { type ItemRow, insertStrayItem, readHighestAppliedSeq, readHighestOwnChangeSeq } from './sqlite-oracle.js'
 
 const WRITE_REFUSALS = ['TOPOLOGY_ERROR', 'STALE_PRIMARY', 'NO_SAFE_PRIMARY', 'NODE_DRAINING', 'AUTHORITY_LOST']
@@ -193,15 +193,16 @@ describe('operators changing a running group', () => {
     await startCluster(env)
     expect((await env.etcdOracle.group())?.durabilityPointSeq).toBe(0n)
     const replica = requireNode(env, NODE_C)
-    const links = [grpcProxyName(NODE_A, NODE_C), grpcProxyName(NODE_C, NODE_A)]
-    for (const link of links) await env.toxiproxy.addLatency(link, 'copy-delay', 1_000)
+    const primary = requireNode(env, NODE_A)
+    await replica.copyTraffic('hold', 'request', NODE_A)
+    await primary.copyTraffic('hold', 'batch', NODE_C)
     await env.coordinator.updateNodeMaintenance({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
       nodeId: NODE_C,
       repairing: true,
     })
-    await waitForStatus(replica, status => status.syncState?.phase === 'syncing', 15_000, 'a copy in progress')
+    await waitForCondition(async () => (await replica.copyTraffic('count')) > 0, 15_000)
     await env.coordinator.updateNodeMaintenance({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
@@ -213,23 +214,19 @@ describe('operators changing a running group', () => {
       () => 'acknowledged',
       (err: unknown) => err,
     )
-    await waitForStatus(
-      replica,
-      status => status.syncState?.phase === 'ready' || (status.syncState?.totalTables ?? 0) > 0,
-      15_000,
-      'the primary to reset the replica and stream the copy',
-    )
+    await waitForItemsOnDisk(env, [NODE_A], [writtenBeforeTheReset], 5_000)
+    await replica.copyTraffic('release')
+    await waitForCondition(async () => (await primary.copyTraffic('count')) > 0, 10_000)
     await holdsThroughout(
       async () => {
-        const status = await statusOf(replica)
         const group = await env.etcdOracle.group()
-        return status.syncState?.phase === 'ready' || group?.inSyncNodeIds.includes(NODE_C) === false
+        return group?.inSyncNodeIds.includes(NODE_C) === false
       },
-      4_000,
+      500,
       'the unfinished replica to stay outside the in-sync set',
     )
     expect(await majorityWrite).toBe('acknowledged')
-    for (const link of links) await env.toxiproxy.clearToxic(link, 'copy-delay')
+    await primary.copyTraffic('release')
     await waitForInSyncSet(env, NODE_IDS, 30_000)
     expect(await waitForIdenticalFiles(env, NODE_IDS, 15_000)).toEqual([writtenBeforeTheReset])
   })

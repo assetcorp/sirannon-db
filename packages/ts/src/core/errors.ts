@@ -161,10 +161,12 @@ export class CDCError extends SirannonError {
 
 /**
  * Thrown when a statement through the query API names a `_sirannon` table,
- * modifies a `sqlite_` table, contains ATTACH or DETACH, or sets
- * `PRAGMA writable_schema`. Sirannon rejects these statements to keep its
+ * modifies a `sqlite_` table, contains ATTACH, DETACH, or VACUUM INTO, or uses
+ * `PRAGMA writable_schema`, `PRAGMA temp_store_directory`, or
+ * `PRAGMA data_store_directory`. Sirannon rejects these statements to keep its
  * change log, its replication ledger, and SQLite's schema catalogue out of the
- * caller's reach.
+ * caller's reach, and so that a statement writes only to the database file
+ * that it targets.
  *
  * @public
  */

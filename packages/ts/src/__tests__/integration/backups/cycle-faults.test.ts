@@ -135,7 +135,10 @@ describe('a backup cycle whose destination refuses, hangs, or loses what it held
   })
 
   it('stops a turn whose destination hangs once destinationTimeoutMs passes, and sends that capture later', async () => {
-    const node = await openCycleNode(workspace, 'hung', { backups: { destinationTimeoutMs: 150 } })
+    const node = await openCycleNode(workspace, 'hung', {
+      destination: workspace.destination('hung-bucket', { blockingFileCalls: true }),
+      backups: { destinationTimeoutMs: 150 },
+    })
     await createOrders(node.db)
     await node.db.captureBackupChanges()
     await addOrders(node.db, ['held-up'])
@@ -151,7 +154,7 @@ describe('a backup cycle whose destination refuses, hangs, or loses what it held
     await node.db.captureBackupChanges()
     await expectRestoresTo(workspace, node.destination, ['held-up'], 'hung')
 
-    const claiming = workspace.destination('claim-bucket')
+    const claiming = workspace.destination('claim-bucket', { blockingFileCalls: true })
     claiming.faults.holdWrite = name => (name === CHAIN_LIST_NAME ? new Promise<void>(() => {}) : undefined)
     const unclaimed = await openCycleNode(workspace, 'unclaimed', {
       destination: claiming,

@@ -44,8 +44,12 @@ interface BuiltChain {
   labels: string[]
 }
 
-async function buildChain(rounds: number, pieceBytes?: number): Promise<BuiltChain> {
-  const node = await openCycleNode(workspace, 'source', { backups: pieceBytes ? { pieceBytes } : {} })
+async function buildChain(
+  rounds: number,
+  pieceBytes?: number,
+  destination?: DirectoryDestination,
+): Promise<BuiltChain> {
+  const node = await openCycleNode(workspace, 'source', { destination, backups: pieceBytes ? { pieceBytes } : {} })
   await node.db.captureBackupChanges()
   await pause(3)
   await createOrders(node.db)
@@ -289,7 +293,7 @@ describe('restoring a chain the destination damaged or lost part of', () => {
   })
 
   it('stops a destination that hangs during a restore once destinationTimeoutMs passes', async () => {
-    const chain = await buildChain(1)
+    const chain = await buildChain(1, undefined, workspace.destination('hung-bucket', { blockingFileCalls: true }))
     const change = changeRecords(chain.records)[0]
     const destPath = workspace.path('hung.db')
     const hangs: [string, () => void, string][] = [

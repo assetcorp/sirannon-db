@@ -180,7 +180,9 @@ function admissionSeq(engine: ReplicationEngine, state: ReplicationGroupState): 
  * Asks the coordinator, as primary, to admit a replica whose acknowledgements reach both the durability point and the
  * highest sequence that this node has acknowledged. From the moment that it asks, this node counts the replica among
  * the in-sync voters of every write that it acknowledges. The coordinator admits the replica only while this node is
- * still the primary in the term that it read, and never admits a repairing replica on its acknowledgements.
+ * still the primary in the term that it read, and never admits a repairing replica on its acknowledgements. This node
+ * asks only while the replica's current connection still holds an acknowledgement of `ackedSeq` or later, so that an
+ * acknowledgement that this node discarded when the replica started a full copy admits nobody.
  *
  * @param engine - The primary's engine.
  * @param nodeId - The replica's node ID.
@@ -199,6 +201,8 @@ export async function handleCoordinatorAckProgress(
   const pendingAdmissions = engine.inSync.pendingAdmissions
   if (!config || !state) return
   if (nodeId === engine.nodeId || pendingAdmissions.has(nodeId)) return
+  const connectionAcked = engine.peerTracker.connectionAckedSeq(nodeId)
+  if (connectionAcked === undefined || connectionAcked < ackedSeq) return
   if (!hasCurrentPrimaryAuthorityFor(engine, state) || engine.inSync.restartProof) return
   if (engine.history.termStartTerm !== state.primaryTerm) return
   if (state.inSyncNodeIds.includes(nodeId)) return

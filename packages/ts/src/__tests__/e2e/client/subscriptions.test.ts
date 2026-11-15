@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { SirannonClient } from '../../../client/index.js'
 import { SirannonError } from '../../../core/errors.js'
 import type { ChangeEvent } from '../../../core/types.js'
-import { waitUntil } from '../lib/served-registry.js'
+import { waitUntil, within } from '../lib/served-registry.js'
 import {
   changeLogSeqs,
   DATABASE_ID,
@@ -17,6 +17,11 @@ import {
 } from './harness.js'
 
 const RECONNECT_INTERVAL_MS = 25
+const OVERFLOW_PADDING_BYTES = 16_000
+const OVERFLOW_BATCH_ROWS = 100
+const OVERFLOW_FIRST_ROUND_ROWS = 600
+const OVERFLOW_MOST_ROWS = 9_000
+const OVERFLOW_ROUND_DEADLINE_MS = 30_000
 
 afterEach(releaseClientServers)
 
@@ -322,24 +327,46 @@ describe('table subscriptions through the published client', () => {
       .subscribe(event => {
         received.push(event)
       })
-    const padding = 'p'.repeat(5_000)
+    const padding = 'p'.repeat(OVERFLOW_PADDING_BYTES)
+    let written = 0
+    let roundRows = OVERFLOW_FIRST_ROUND_ROWS
 
-    box.stallServerFrames()
-    for (let start = 0; start < 600; start += 100) {
-      await shop.database.executeBatch(
-        INSERT_ORDER,
-        Array.from({ length: 100 }, (_, index) => [`${padding}-${start + index}`, start + index]),
+    while (box.upgrades < 2) {
+      if (written + roundRows > OVERFLOW_MOST_ROWS) {
+        throw new Error(`The server kept the stalled connection open through ${written} rows`)
+      }
+      box.stallServerFrames()
+      for (let start = written; start < written + roundRows; start += OVERFLOW_BATCH_ROWS) {
+        await shop.database.executeBatch(
+          INSERT_ORDER,
+          Array.from({ length: OVERFLOW_BATCH_ROWS }, (_, index) => [`${padding}-${start + index}`, start + index]),
+        )
+      }
+      written += roundRows
+      roundRows *= 2
+      await pause(500)
+      box.releaseServerFrames()
+      await within(
+        (async () => {
+          while (box.upgrades < 2 && received.length < written) await pause(5)
+        })(),
+        'the stalled changes to arrive or the client to reconnect',
+        OVERFLOW_ROUND_DEADLINE_MS,
       )
     }
-    await pause(500)
-    box.releaseServerFrames()
-    await waitUntil(() => received.length === 600, 'all 600 changes after the overflow')
+    await within(
+      (async () => {
+        while (received.length < written) await pause(5)
+      })(),
+      `all ${written} changes after the overflow`,
+      OVERFLOW_ROUND_DEADLINE_MS,
+    )
     client.close()
 
     expect(box.upgrades).toBeGreaterThanOrEqual(2)
     expect(received.map(event => event.seq)).toEqual(changeLogSeqs(shop.path, 'orders'))
-    expect(received.map(event => event.row.total)).toEqual(Array.from({ length: 600 }, (_, index) => index))
-  })
+    expect(received.map(event => event.row.total)).toEqual(Array.from({ length: written }, (_, index) => index))
+  }, 120_000)
 
   it('passes a change it cannot decode to onError, ignores frames for nothing it holds, and delivers what follows', async () => {
     const shop = await servedShop({ customers: [] })
